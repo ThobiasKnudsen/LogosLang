@@ -1,0 +1,8 @@
+[package]
+name = "seed"
+version = "0.1.0"
+edition = "2021"
+description = "The Logos bootstrap seed: node model, lexer, parser, interpreter, and Cranelift backend."
+
+[dependencies]
+regex = "1"
