@@ -1,0 +1,262 @@
+
+language := type undefined
+logos := language undefined
+
+declare := fn (lang:&mut language, name:string) -> &mut dyad ( ? )
+assign := fn (node:&mut dyad, type:dyad@, value:void@) -> void! ( ? )
+assign(declare(&mut logos, «:»), ?, ?)
+assign(declare(&mut logos, «=»), ?, ?)
+assign(declare(&mut logos, «:=»), ?, ?)
+assign(declare(&mut logos, «rational_number»), type, ?)
+assign(declare(&mut logos, «^-?[0-9]+(?:\.[0-9]+)?$»), rational_number, ?)
+
+dyad := struct (type := dyad@ undefined, value := void@ undefined)
+
+type := type (
+    shared precedence := f64 2.0
+    shared associativity := u8 left_to_right
+    shared constructor := fn (tokens : &mut array dyad, idx : u64) -> void! undefined
+    shared destructor := ? undefined
+)
+
+struct := type (
+    shared constructor = fn (tokens : &mut array dyad, idx : u64) -> void! (
+        if idx+1 >= tokens.size
+            error «not enough tokens after struct to evaluate it»
+        if tokens[idx].type != token
+            error «node at idx is not a token»
+        if tokens[idx].value != struct
+            error «token at idx does not denote struct»
+        # build the struct type from the following body scope — TBD
+    )
+    names : hashtable string u32
+    fields : array dyad
+    size_bytes : u64
+)
+
+hashtable := struct (
+
+)
+
+token := struct (
+
+)
+
+array := type (
+    shared constructor = fn (tokens : &mut array dyad, idx : u64) -> void! (
+        if idx+1 >= tokens.size
+            error «no element type after array»
+        if tokens[idx].type != token
+            error «node at idx is not a token»
+        if tokens[idx].value != array
+            error «token at idx does not denote array»
+        if (@tokens[idx+1].value).type != type
+            error «token after array is not a type»
+        # specialize this array type to the element type at idx+1 — TBD
+    )
+    element := type undefined
+    size := u64 0
+    capacity := u64 0
+    content := void@ undefined
+)
+
+mut := type (
+    shared constructor = fn (tokens : &mut array dyad, idx : u64) -> void! (
+        if idx+1 >= tokens.size
+            error «no type after mut to make mutable»
+        if tokens[idx].type != token
+            error «node at idx is not a token»
+        if tokens[idx].value != mut
+            error «token at idx does not denote mut»
+        if (@tokens[idx+1].value).type != type
+            error «token after mut is not a type»
+        # set the mutability bit on this level's value pointer — TBD
+    )
+)
+
+fn := type (
+    shared constructor = fn (tokens : &mut array dyad, idx : u64) -> void! ( ? )
+    shared compile     = fn () -> void! ( ? )       # read own body, lower it to bcode
+    shared run         = fn () -> void! ( ? )       # invoke own bcode; FAIL if bcode is NULL (freshness is the checker's job, not run's)
+    shared interpret   = fn () -> void! ( ? )       # walk own body directly; no compilation needed
+    input  : struct
+    output : ?
+    body   : ?                                       # the reflectable LG body
+    bcode  : exec@                                   # the opaque compiled machine code (NULL until compiled)
+)
+
+@ : undefined
+-> : undefined
+
+\\ : undefined
+\« : undefined
+\» : undefined
+
+\: : undefined
+\= : undefined
+\:\= : undefined
+
+. : undefined
+
++ : undefined
+- : undefined
+* : undefined
+/ : undefined
+% : undefined
+^ : undefined
+< : undefined
+> : undefined
+== : undefined
+<= : undefined
+>= : undefined
+!= : undefined
+& : undefined
+mut : undefined
+( : undefined
+) : undefined
+[ : undefined
+] : undefined
+
+string : type
+u8 : type
+u16 : type
+u32 : type
+u64 : type
+i8 : type
+i16 : type
+i32 : type
+i64 : type
+f32 : type
+f64 : type
+void@ : type
+exec@ : type
+
+if : undefined
+else : undefined
+for : undefined
+while : undefined
+and : undefined
+or : undefined
+xor : undefined
+not : undefined
+
+
+a := mut type mut i32 32
+a {
+    value --m-> {
+        value -> 32
+    }
+    type -> {
+        value --m-> {
+            value -> copy i32.value
+        }
+        type -> type
+    }
+}
+
+i32 {
+    type -> type
+    value -> [what ever fields for i32 is defined as]
+}
+
+mut {
+    type -> type
+    value -> [what ever fields for mut is defined as]
+}
+
+type {
+    type -> type
+    value -> struct { # will not lay out all of type's value in the same format for now
+        precedence : f64
+        associativity : u8
+        constructor : fn (tokens : &mut array dyad, idx : u64) -> void!
+        destructor : ?
+        fields : struct
+    }
+}
+
+
+type {
+  type -> type
+  value -> {
+    type -> struct
+    value -> {
+      names -> {
+        type -> hashtable
+        value ->  {
+          arr -> {
+            type -> array
+            value -> {
+              element_type -> struct (key:string, value:u32)
+              size -> {type -> u64, value -> ?}
+              capacity -> {type -> u64, value -> ?}
+              data -> [
+                {key -> "precedence", value = 0},
+                {key -> "associativity", value = 1},
+                {key -> "constructor", value = 2},
+                {key -> "fields", value = 3},
+                {key -> "destructor", value = 4}
+
+              ]
+            }
+          }
+        }
+      }
+      fields -> {
+        type -> array
+        value -> {
+          element_type -> dyad
+          size -> {type -> u64, value -> ?}
+          capacity -> {type -> u64, value -> ?}
+          data -> [
+            {
+              type -> f64
+              value -> undefined
+            }, {
+              type -> u8
+              value -> undefined
+            }, {
+              type -> {
+                type -> fn
+                value -> {
+                  input -> struct (tokens : &mut array dyad, idx : u64)
+                  output -> void!
+                }
+              }
+              value -> undefined
+            }, {
+              type -> struct
+              value -> undefined
+            }, {
+              type -> ?
+              value -> undefined
+            }
+
+          ]
+        }
+      }
+      size_bytes -> {
+        type -> u64
+        value -> undefined
+      }
+    }
+  }
+}
+
+a = a + 1
+{
+    type -> =
+    value -> {
+        lhs -> a
+        rhs -> {
+            type -> +
+            value -> {
+                lhs -> a
+                rhs -> {
+                    type -> rational_number
+                    value -> 1
+                }
+            }
+        }
+    }
+}
