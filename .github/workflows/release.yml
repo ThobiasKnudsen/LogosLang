@@ -63,6 +63,14 @@ jobs:
           fi
           echo "OK: $TAG is a valid release tag (previous highest: ${highest:+v}${highest:-none})."
 
+      - name: Verify the docs are consistent for this release
+        # Every in-progress doc (version > the previous release R) must be named
+        # exactly $TAG, so the snapshot set this tag freezes is internally consistent.
+        # The website renders these same files; the guard lives in .github/scripts.
+        env:
+          TAG: ${{ github.ref_name }}
+        run: bash .github/scripts/docs-check.sh release "$TAG"
+
   create-release:
     needs: gate
     runs-on: ubuntu-latest

@@ -1,0 +1,73 @@
+name: docs
+
+# The website (ThobiasKnudsen/LogosLangWebsite) renders the files under docs/. The
+# versioning guard lives here, next to the docs, so it can block bad edits before they
+# merge. Three responsibilities:
+#
+#   - test / validate (pull_request): self-test the guard, then enforce the docs
+#     versioning model (valid prefixes, freeze of released snapshots, forward-only
+#     edits). Make `validate` a REQUIRED status check on the default branch.
+#   - notify-website (push to main touching docs/**): ping the website so it rebuilds
+#     and picks up the changed docs. The website build re-clones this repo's docs.
+#
+# Reuses secret WEBSITE_DISPATCH_TOKEN (see release.yml): a fine-grained PAT scoped to
+# ThobiasKnudsen/LogosLangWebsite with Contents: read & write.
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - '.github/scripts/docs-check.sh'
+      - '.github/scripts/docs-check.test.sh'
+      - '.github/workflows/docs.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Self-test the docs guard
+        run: bash .github/scripts/docs-check.test.sh
+
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags so the freeze guard can diff against R
+          fetch-tags: true
+      - name: Validate the docs versioning model
+        run: bash .github/scripts/docs-check.sh validate
+
+  notify-website:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    # Collapse a burst of doc pushes into a single rebuild notification.
+    concurrency:
+      group: docs-notify-website
+      cancel-in-progress: true
+    steps:
+      - name: Dispatch docs-sync to the website repo
+        env:
+          TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "WEBSITE_DISPATCH_TOKEN not set; cannot notify the website." >&2
+            exit 0
+          fi
+          curl -sf -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/ThobiasKnudsen/LogosLangWebsite/dispatches \
+            -d '{"event_type":"docs-sync"}'
+          echo "Notified the website to rebuild (docs changed)."
