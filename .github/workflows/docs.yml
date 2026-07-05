@@ -14,12 +14,13 @@ name: docs
 # ThobiasKnudsen/LogosLangWebsite with Contents: read & write.
 
 on:
+  # `test` and `validate` are REQUIRED status checks on the default branch, so they must
+  # report on EVERY pull request. Do NOT add a `paths:` filter here: a PR that touches no
+  # docs would then skip this workflow, leaving the required checks stuck at "Expected,
+  # waiting for status to be reported" forever and blocking the merge. `validate` is cheap
+  # and path-independent (it checks the docs tree's current state and its diff since the
+  # last release tag), so it is a fast no-op on a PR that changes no docs.
   pull_request:
-    paths:
-      - 'docs/**'
-      - '.github/scripts/docs-check.sh'
-      - '.github/scripts/docs-check.test.sh'
-      - '.github/workflows/docs.yml'
   push:
     branches: [main]
     paths:
