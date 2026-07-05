@@ -1,6 +1,6 @@
 
-language := type undefined
-logos := language undefined
+language := type ?
+logos := language ?
 
 declare := fn (lang:&mut language, name:string) -> &mut dyad ( ? )
 assign := fn (node:&mut dyad, type:dyad@, value:void@) -> void! ( ? )
@@ -10,13 +10,13 @@ assign(declare(&mut logos, «:=»), ?, ?)
 assign(declare(&mut logos, «rational_number»), type, ?)
 assign(declare(&mut logos, «^-?[0-9]+(?:\.[0-9]+)?$»), rational_number, ?)
 
-dyad := struct (type := dyad@ undefined, value := void@ undefined)
+dyad := struct (type := dyad@ ?, value := void@ ?)
 
 type := type (
     shared precedence := f64 2.0
     shared associativity := u8 left_to_right
-    shared constructor := fn (tokens : &mut array dyad, idx : u64) -> void! undefined
-    shared destructor := ? undefined
+    shared constructor := fn (tokens : &mut array dyad, idx : u64) -> void! ?
+    shared destructor := ? ?
 )
 
 struct := type (
@@ -54,10 +54,10 @@ array := type (
             error «token after array is not a type»
         # specialize this array type to the element type at idx+1 — TBD
     )
-    element := type undefined
+    element := type ?
     size := u64 0
     capacity := u64 0
-    content := void@ undefined
+    content := void@ ?
 )
 
 mut := type (
@@ -85,37 +85,37 @@ fn := type (
     bcode  : exec@                                   # the opaque compiled machine code (NULL until compiled)
 )
 
-@ : undefined
--> : undefined
+@ : ?
+-> : ?
 
-\\ : undefined
-\« : undefined
-\» : undefined
+\\ : ?
+\« : ?
+\» : ?
 
-\: : undefined
-\= : undefined
-\:\= : undefined
+\: : ?
+\= : ?
+\:\= : ?
 
-. : undefined
+. : ?
 
-+ : undefined
-- : undefined
-* : undefined
-/ : undefined
-% : undefined
-^ : undefined
-< : undefined
-> : undefined
-== : undefined
-<= : undefined
->= : undefined
-!= : undefined
-& : undefined
-mut : undefined
-( : undefined
-) : undefined
-[ : undefined
-] : undefined
++ : ?
+- : ?
+* : ?
+/ : ?
+% : ?
+^ : ?
+< : ?
+> : ?
+== : ?
+<= : ?
+>= : ?
+!= : ?
+& : ?
+mut : ?
+( : ?
+) : ?
+[ : ?
+] : ?
 
 string : type
 u8 : type
@@ -131,14 +131,14 @@ f64 : type
 void@ : type
 exec@ : type
 
-if : undefined
-else : undefined
-for : undefined
-while : undefined
-and : undefined
-or : undefined
-xor : undefined
-not : undefined
+if : ?
+else : ?
+for : ?
+while : ?
+and : ?
+or : ?
+xor : ?
+not : ?
 
 
 a := mut type mut i32 32
@@ -211,10 +211,10 @@ type {
           data -> [
             {
               type -> f64
-              value -> undefined
+              value -> ?
             }, {
               type -> u8
-              value -> undefined
+              value -> ?
             }, {
               type -> {
                 type -> fn
@@ -223,13 +223,13 @@ type {
                   output -> void!
                 }
               }
-              value -> undefined
+              value -> ?
             }, {
               type -> struct
-              value -> undefined
+              value -> ?
             }, {
               type -> ?
-              value -> undefined
+              value -> ?
             }
 
           ]
@@ -237,7 +237,7 @@ type {
       }
       size_bytes -> {
         type -> u64
-        value -> undefined
+        value -> ?
       }
     }
   }
@@ -245,16 +245,16 @@ type {
 
 a = a + 1
 {
-    type -> =
-    value -> {
-        lhs -> a
-        rhs -> {
-            type -> +
-            value -> {
-                lhs -> a
-                rhs -> {
-                    type -> rational_number
-                    value -> 1
+    type:dyad@ -> =
+    value:void@ -> {
+        lhs:dyad@ -> a
+        rhs:dyad@ -> {
+            type:dyad@ -> +
+            value:void@ -> {
+                lhs:dyad@ -> a
+                rhs:dyad@ -> {
+                    type:dyad@ -> rational_number
+                    value:void@ -> "1"
                 }
             }
         }
