@@ -19,6 +19,7 @@ use std::collections::HashSet;
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::lex::{RegexTrie, RegexTrieError};
+use crate::store::Store;
 
 /// A pending, not-yet-reduced token: the source span it was lexed from and, once
 /// resolved, the identity it denotes. A token's identity locks at reduction, so
@@ -155,6 +156,30 @@ impl ParsingTape {
         }
         Some(cell)
     }
+
+    /// Append `cell` at the end and move the cursor to it. Used by the driver as
+    /// it shifts operands and operators onto the frontier.
+    pub fn push(&mut self, cell: Cell) {
+        self.cells.push(cell);
+        self.cursor = self.cells.len() - 1;
+    }
+
+    /// The cell at absolute index `i`, or `None` if out of range.
+    pub fn cell(&self, i: usize) -> Option<&Cell> {
+        self.cells.get(i)
+    }
+
+    /// Reduce a binary operator: replace the three cells at `i - 1`, `i`, `i + 1`
+    /// with a single reduced `dyad`. Returns false if `i` is not flanked by two
+    /// cells. The cursor is clamped to the shortened tape.
+    pub fn reduce_binary(&mut self, i: usize, dyad: DyadPtr) -> bool {
+        if i == 0 || i + 1 >= self.cells.len() {
+            return false;
+        }
+        self.cells.splice(i - 1..=i + 1, [Cell::Dyad(dyad)]);
+        self.cursor = self.cursor.min(self.cells.len().saturating_sub(1));
+        true
+    }
 }
 
 /// A resolved name: how many source bytes it matched and the single identity
@@ -263,6 +288,191 @@ impl ScopeStack {
             Err(e) => return Err(e),
         }
         trie.insert(name, IdContext::new(identity, scope));
+        Ok(())
+    }
+}
+
+/// Operator associativity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Assoc {
+    Left,
+    Right,
+}
+
+/// A core identity's native parse-time behaviour: how the driver schedules the
+/// token and how its dyad is built. Core identities are hand-built natives (see
+/// `crate::core`); a self-hosted Logos would carry this as graph metadata on the
+/// type instead. In this seed the driver owns tape scheduling and the `build`
+/// functions only construct the node; general tape-driving constructors (needed
+/// for macros and token-rewriting operators) come later.
+#[derive(Clone, Copy)]
+pub enum Construct {
+    /// A literal/atom: build a leaf node from the matched source span.
+    Atom(fn(&mut Store, DyadPtr, &str) -> Result<DyadPtr, ParseError>),
+    /// An infix binary operator with a precedence and associativity: build a node
+    /// from its operator identity and two already-reduced operands.
+    Infix {
+        precedence: f64,
+        assoc: Assoc,
+        build: fn(&mut Store, DyadPtr, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>,
+    },
+}
+
+/// Why elaboration failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParseError {
+    /// Name resolution failed.
+    Resolve(ResolveError),
+    /// An operator lacked a reduced operand on one side.
+    MissingOperand,
+    /// The tape did not reduce to a single dyad (a dangling operator or operand).
+    Trailing,
+    /// The input held no expression.
+    Empty,
+}
+
+/// The one-pass elaborator: lexes on demand, resolves names against the scope
+/// stack, and reduces the tape by operator precedence, running each identity's
+/// native `Construct`. The scheduling is a deferred-reduction operator
+/// precedence over the explicit tape (not Pratt): operators wait on the tape as
+/// pending tokens until precedence says to reduce them.
+pub struct Parser<'a> {
+    source: &'a str,
+    pos: usize,
+    tape: ParsingTape,
+    scopes: ScopeStack,
+    store: &'a mut Store,
+    trie: &'a mut RegexTrie,
+    metas: &'a std::collections::HashMap<DyadPtr, Construct>,
+}
+
+impl<'a> Parser<'a> {
+    /// A parser over `source`, resolving against `scopes` and `metas`, allocating
+    /// into `store`, and lexing via `trie`.
+    pub fn new(
+        source: &'a str,
+        store: &'a mut Store,
+        trie: &'a mut RegexTrie,
+        metas: &'a std::collections::HashMap<DyadPtr, Construct>,
+        scopes: ScopeStack,
+    ) -> Self {
+        Parser { source, pos: 0, tape: ParsingTape::new(), scopes, store, trie, metas }
+    }
+
+    /// Advance past ASCII whitespace.
+    fn skip_ws(&mut self) {
+        let bytes = self.source.as_bytes();
+        while self.pos < bytes.len() && bytes[self.pos].is_ascii_whitespace() {
+            self.pos += 1;
+        }
+    }
+
+    /// Parse one expression to a single dyad, consuming the source.
+    pub fn parse_expression(&mut self) -> Result<DyadPtr, ParseError> {
+        loop {
+            self.skip_ws();
+            if self.pos >= self.source.len() {
+                break;
+            }
+            let source = self.source;
+            let start = self.pos;
+            let r = self
+                .scopes
+                .resolve(self.trie, &source[start..])
+                .map_err(ParseError::Resolve)?;
+            self.pos = start + r.matched;
+            let id = r.identity;
+
+            match self.metas.get(&id).copied() {
+                // A plain operand: a reference to the resolved identity.
+                None => self.tape.push(Cell::Dyad(id)),
+                // A literal: build its leaf now from the matched span.
+                Some(Construct::Atom(build)) => {
+                    let span = &source[start..start + r.matched];
+                    let dyad = build(self.store, id, span)?;
+                    self.tape.push(Cell::Dyad(dyad));
+                }
+                // An operator: reduce anything binding tighter to its left, then
+                // shift it onto the tape as a pending token.
+                Some(Construct::Infix { precedence, assoc, .. }) => {
+                    self.reduce_pending(precedence, assoc)?;
+                    self.tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
+                }
+            }
+        }
+        self.reduce_all()?;
+        match self.tape.len() {
+            0 => Err(ParseError::Empty),
+            1 => self.tape.cell(0).and_then(Cell::as_dyad).ok_or(ParseError::MissingOperand),
+            _ => Err(ParseError::Trailing),
+        }
+    }
+
+    /// Reduce the pending operator at the tape tail while it binds at least as
+    /// tightly as an incoming operator of `prec`/`assoc` (strictly tighter, or
+    /// equal when the incoming one is left-associative).
+    fn reduce_pending(&mut self, prec: f64, assoc: Assoc) -> Result<(), ParseError> {
+        loop {
+            let n = self.tape.len();
+            if n < 3 {
+                break;
+            }
+            let op_idx = n - 2;
+            let op_id = match self.tape.cell(op_idx) {
+                Some(Cell::Token(t)) => t.identity,
+                _ => break,
+            };
+            let lhs = match self.tape.cell(op_idx - 1).and_then(Cell::as_dyad) {
+                Some(d) => d,
+                None => break,
+            };
+            let rhs = match self.tape.cell(op_idx + 1).and_then(Cell::as_dyad) {
+                Some(d) => d,
+                None => break,
+            };
+            let (prev_prec, build) = match self.metas.get(&op_id).copied() {
+                Some(Construct::Infix { precedence, build, .. }) => (precedence, build),
+                _ => break,
+            };
+            if !(prev_prec > prec || (prev_prec == prec && assoc == Assoc::Left)) {
+                break;
+            }
+            let dyad = build(self.store, op_id, lhs, rhs)?;
+            self.tape.reduce_binary(op_idx, dyad);
+        }
+        Ok(())
+    }
+
+    /// At end of input, reduce every remaining pending operator (right to left,
+    /// as the precedence invariant leaves them).
+    fn reduce_all(&mut self) -> Result<(), ParseError> {
+        while self.tape.len() > 1 {
+            let n = self.tape.len();
+            if n < 3 {
+                return Err(ParseError::Trailing);
+            }
+            let op_idx = n - 2;
+            let op_id = match self.tape.cell(op_idx) {
+                Some(Cell::Token(t)) => t.identity,
+                _ => return Err(ParseError::Trailing),
+            };
+            let lhs = self
+                .tape
+                .cell(op_idx - 1)
+                .and_then(Cell::as_dyad)
+                .ok_or(ParseError::MissingOperand)?;
+            let rhs = self
+                .tape
+                .cell(op_idx + 1)
+                .and_then(Cell::as_dyad)
+                .ok_or(ParseError::MissingOperand)?;
+            let build = match self.metas.get(&op_id).copied() {
+                Some(Construct::Infix { build, .. }) => build,
+                _ => return Err(ParseError::Trailing),
+            };
+            let dyad = build(self.store, op_id, lhs, rhs)?;
+            self.tape.reduce_binary(op_idx, dyad);
+        }
         Ok(())
     }
 }

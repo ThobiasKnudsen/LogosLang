@@ -13,16 +13,21 @@ use crate::dyad::{Dyad, DyadPtr};
 /// into it stay stable even as new chunks are appended.
 const CHUNK: usize = 4096;
 
-/// An append-only arena of dyads with stable addresses.
+/// An append-only arena of dyads with stable addresses, plus side arenas for the
+/// variable-width blobs a node's `value` points at: operand structs (a run of
+/// `dyad@` fields) and literal bytes. Each blob is boxed, so its heap address is
+/// stable, and the keeper `Vec` holds ownership for the store's lifetime.
 #[derive(Default)]
 pub struct Store {
     chunks: Vec<Vec<Dyad>>,
+    operands: Vec<Box<[DyadPtr]>>,
+    blobs: Vec<Box<[u8]>>,
 }
 
 impl Store {
     /// A fresh, empty store.
     pub fn new() -> Self {
-        Store { chunks: Vec::new() }
+        Store { chunks: Vec::new(), operands: Vec::new(), blobs: Vec::new() }
     }
 
     /// Store `dyad` and return its stable address (its id).
@@ -43,6 +48,25 @@ impl Store {
     /// Store a dyad with the given `ty` and `value` fields and return its address.
     pub fn alloc_raw(&mut self, ty: DyadPtr, value: *mut u8) -> DyadPtr {
         self.alloc(Dyad { ty, value })
+    }
+
+    /// Store an operand struct (a run of `dyad@` fields, e.g. a binary op's
+    /// `{lhs, rhs}`) and return a `void@` to it. Read back by casting to
+    /// `*const DyadPtr` and indexing. The returned pointer is 8-aligned.
+    pub fn alloc_operands(&mut self, fields: &[DyadPtr]) -> *mut u8 {
+        let boxed: Box<[DyadPtr]> = fields.into();
+        let ptr = boxed.as_ptr() as *mut u8;
+        self.operands.push(boxed);
+        ptr
+    }
+
+    /// Store literal bytes (e.g. a numeric literal's digits) and return a `void@`
+    /// to them. Length is the caller's to track.
+    pub fn alloc_bytes(&mut self, bytes: &[u8]) -> *mut u8 {
+        let boxed: Box<[u8]> = bytes.into();
+        let ptr = boxed.as_ptr() as *mut u8;
+        self.blobs.push(boxed);
+        ptr
     }
 
     /// Total number of dyads stored.
@@ -88,6 +112,31 @@ mod tests {
             assert_eq!((*first).value, tag(1));
         }
         assert_eq!(s.len(), CHUNK * 2 + 1);
+    }
+
+    #[test]
+    fn operands_round_trip_and_stay_stable() {
+        let mut s = Store::new();
+        let (lhs, rhs) = (tag(1) as DyadPtr, tag(2) as DyadPtr);
+        let ops = s.alloc_operands(&[lhs, rhs]);
+        // Churn other allocations to force the keeper Vec to grow.
+        for _ in 0..1000 {
+            s.alloc_operands(&[tag(9) as DyadPtr]);
+        }
+        unsafe {
+            let p = ops as *const DyadPtr;
+            assert_eq!(*p, lhs);
+            assert_eq!(*p.add(1), rhs);
+        }
+    }
+
+    #[test]
+    fn literal_bytes_round_trip() {
+        let mut s = Store::new();
+        let p = s.alloc_bytes(b"123");
+        unsafe {
+            assert_eq!(std::slice::from_raw_parts(p, 3), b"123");
+        }
     }
 
     #[test]
