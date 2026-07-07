@@ -15,18 +15,16 @@ dyad := struct (type := dyad@ ?, value := void@ ?)
 type := type (
     shared precedence := f64 2.0
     shared associativity := u8 left_to_right
-    shared constructor := fn (tokens : &mut array dyad, idx : u64) -> void! ?
+    shared constructor := fn (tape : parsing_tape) -> void! ?
     shared destructor := ? ?
 )
 
 struct := type (
-    shared constructor = fn (tokens : &mut array dyad, idx : u64) -> void! (
-        if idx+1 >= tokens.size
-            error «not enough tokens after struct to evaluate it»
-        if tokens[idx].type != token
-            error «node at idx is not a token»
-        if tokens[idx].value != struct
-            error «token at idx does not denote struct»
+    shared constructor = fn (tape : parsing_tape) -> void! (
+        if tape[0].type != token
+            error «offset 0 is not a token»
+        if tape[0].value != struct
+            error «token does not denote struct»
         # build the struct type from the following body scope — TBD
     )
     names : hashtable string u32
@@ -38,21 +36,32 @@ hashtable := struct (
 
 )
 
-token := struct (
+id_context := struct (
+    identity := dyad@ ?      # the declared identity this spelling denotes
+    scope    := dyad@ ?      # the enclosing scope it was declared in; O(1) open-scope membership picks the live one
+)
 
+token := struct (
+    text := string ?         # the matched source span; resolved against the name index to the one id_context live in the open scopes at reduction
+)
+
+parsing_tape := struct (
+    # the working frontier: reduced-but-not-final dyads interleaved with pending tokens (lexed-in-flight
+    # and lazily lexed-ahead). tape[0] is the token of the identity being constructed; negative offsets
+    # reach left into reduced context, positive offsets lazily lex ahead. disposable, rebuilt from source.
+    shared insert := ? ?     # splice tokens/dyads into the frontier (the macro / custom-syntax mechanism)
+    shared remove := ? ?     # remove from the frontier
 )
 
 array := type (
-    shared constructor = fn (tokens : &mut array dyad, idx : u64) -> void! (
-        if idx+1 >= tokens.size
-            error «no element type after array»
-        if tokens[idx].type != token
-            error «node at idx is not a token»
-        if tokens[idx].value != array
-            error «token at idx does not denote array»
-        if (@tokens[idx+1].value).type != type
+    shared constructor = fn (tape : parsing_tape) -> void! (
+        if tape[0].type != token
+            error «offset 0 is not a token»
+        if tape[0].value != array
+            error «token does not denote array»
+        if (@tape[1].value).type != type
             error «token after array is not a type»
-        # specialize this array type to the element type at idx+1 — TBD
+        # specialize this array type to the element type at offset 1 — TBD
     )
     element := type ?
     size := u64 0
@@ -61,24 +70,21 @@ array := type (
 )
 
 mut := type (
-    shared constructor = fn (tokens : &mut array dyad, idx : u64) -> void! (
-        if idx+1 >= tokens.size
-            error «no type after mut to make mutable»
-        if tokens[idx].type != token
-            error «node at idx is not a token»
-        if tokens[idx].value != mut
-            error «token at idx does not denote mut»
-        if (@tokens[idx+1].value).type != type
+    shared constructor = fn (tape : parsing_tape) -> void! (
+        if tape[0].type != token
+            error «offset 0 is not a token»
+        if tape[0].value != mut
+            error «token does not denote mut»
+        if (@tape[1].value).type != type
             error «token after mut is not a type»
         # set the mutability bit on this level's value pointer — TBD
     )
 )
 
 fn := type (
-    shared constructor = fn (tokens : &mut array dyad, idx : u64) -> void! ( ? )
+    shared constructor = fn (tape : parsing_tape) -> void! ( ? )
     shared compile     = fn () -> void! ( ? )       # read own body, lower it to bcode
-    shared run         = fn () -> void! ( ? )       # invoke own bcode; FAIL if bcode is NULL (freshness is the checker's job, not run's)
-    shared interpret   = fn () -> void! ( ? )       # walk own body directly; no compilation needed
+    shared run         = fn () -> void! ( ? )       # if bcode present jump to it; if bcode is NULL walk body directly. interpretation is run's null-bcode path, not a separate function
     input  : struct
     output : ?
     body   : ?                                       # the reflectable LG body
@@ -169,7 +175,7 @@ type {
     value -> struct { # will not lay out all of type's value in the same format for now
         precedence : f64
         associativity : u8
-        constructor : fn (tokens : &mut array dyad, idx : u64) -> void!
+        constructor : fn (tape : parsing_tape) -> void!
         destructor : ?
         fields : struct
     }
@@ -219,7 +225,7 @@ type {
               type -> {
                 type -> fn
                 value -> {
-                  input -> struct (tokens : &mut array dyad, idx : u64)
+                  input -> struct (tape : parsing_tape)
                   output -> void!
                 }
               }
