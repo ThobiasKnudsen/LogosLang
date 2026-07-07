@@ -5,4 +5,5 @@
 //! `regex_trie.zig` / `regex_splitting.zig` from the `zig_pivot` branch.
 
 pub mod dyad;
+pub mod id_context;
 pub mod lex;

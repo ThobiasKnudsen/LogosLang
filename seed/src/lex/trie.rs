@@ -8,18 +8,21 @@
 //! greedy longest-match, trying the literal child first and falling back to the
 //! node's combined regex.
 //!
-//! The stored value is a [`DyadPtr`] — a pointer to the node that the matched
-//! text denotes (the Zig original stored a type-erased `?*anyopaque` here). The
-//! trie does **not** own those dyads (they live in the graph/store), so it only
-//! holds and returns the pointer; nothing is freed on removal.
+//! The stored value is a list of [`IdContext`]s: the identities the matched text
+//! can denote, each paired with the scope it was declared in. The trie does
+//! **not** own the dyads those contexts point at (they live in the graph/store),
+//! so it only holds and returns them; nothing is freed on removal. A spelling
+//! declared in several scopes accumulates several contexts, and resolution
+//! against the open scopes picks the one live candidate (see [`resolve`] and
+//! [`crate::id_context`]).
 //!
 //! Differences from the Zig original, all behaviour-preserving:
 //! - PCRE2 is replaced by the Rust `regex` crate (`regex::bytes`, byte-oriented
 //!   like the PCRE2 8-bit API). Lookaround/backreferences therefore cannot
 //!   compile; [`RegexTrieError::BadPattern`] surfaces that instead of panicking.
-//! - Because the value is a `Copy` pointer the trie does not own, the Zig's
-//!   shared-value/`freed`-flag bookkeeping collapses to copying the pointer to
-//!   each alternation path; `remove` compares pointers directly.
+//! - Because a context is a `Copy` value the trie does not own, the Zig's
+//!   shared-value/`freed`-flag bookkeeping collapses to copying the context to
+//!   each alternation path; `remove` matches on the declaring scope.
 //! - The lazily-built matcher lives behind `RefCell`/`Cell`, so `get` is `&self`.
 //! - Alternatives are identified by named capture groups `(?P<gN>..)` rather than
 //!   ovector positions, which is immune to capture groups inside a pattern.
@@ -30,6 +33,7 @@ use std::cell::{Cell, RefCell};
 use regex::bytes::Regex;
 
 use crate::dyad::DyadPtr;
+use crate::id_context::IdContext;
 
 use super::regex_splitting::{is_pure_literal, regex_splitting, Segment};
 
@@ -41,33 +45,51 @@ const EOW: usize = 0;
 /// Errors surfaced by trie operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegexTrieError {
-    /// `get`/`remove` found no matching entry.
+    /// `get`/`remove` found no matching entry for the spelling.
     NodeNotFound,
-    /// `insert` hit an entry that already carries a value.
-    DuplicateLeafValue,
+    /// `insert` found the spelling already declared in the same scope: a name
+    /// may not be redeclared while another declaration in its own scope is live.
+    RedeclaredInScope,
+    /// `resolve` matched a known spelling, but none of its candidates was
+    /// declared in a currently open scope: a genuine out-of-scope use.
+    OutOfScope,
+    /// `resolve` found more than one live candidate for a spelling. Impossible
+    /// under the no-shadowing rule, so it signals a corrupt index.
+    AmbiguousResolution,
     /// A residual regex segment failed to compile with the `regex` crate.
     BadPattern(String),
 }
 
-/// The value stored at an end-of-word node: the pattern key and the dyad it
-/// denotes. Alternation paths of one `insert` each carry a copy with the same
-/// `data` pointer.
+/// The value stored at an end-of-word node: the pattern key and the list of
+/// `id_context`s the matched text can denote (one per declaring scope).
+/// Alternation paths of one `insert` each carry a copy of the same context.
 #[derive(Debug)]
 pub struct Leaf {
     pub regex_key: String,
-    pub data: DyadPtr,
+    pub contexts: Vec<IdContext>,
 }
 
-/// The result of a successful lookup. `regex_key` borrows the stored entry;
-/// `data` is the (copied) dyad pointer.
+/// The result of a successful lookup. `regex_key` and `contexts` borrow the
+/// stored entry. `contexts` is the full candidate list; use
+/// [`RegexTrie::resolve`] to pick the one live in the open scopes.
 #[derive(Debug)]
 pub struct MatchResult<'a> {
     /// Number of bytes consumed from the start of the input.
     pub matched: usize,
     /// The pattern key that matched.
     pub regex_key: &'a str,
-    /// The dyad the matched text denotes.
-    pub data: DyadPtr,
+    /// Every identity the matched text can denote, one per declaring scope.
+    pub contexts: &'a [IdContext],
+}
+
+/// A resolved lookup: how many bytes matched, and the single identity live in
+/// the open scopes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Resolved {
+    /// Number of bytes consumed from the start of the input.
+    pub matched: usize,
+    /// The identity live in the open scopes.
+    pub identity: DyadPtr,
 }
 
 struct RegexEntry {
@@ -259,44 +281,48 @@ impl RegexTrie {
 
     // --- insert -------------------------------------------------------------
 
-    /// Insert `key` (a literal or regex pattern) denoting dyad `data`.
-    pub fn insert(&mut self, key: &str, data: DyadPtr) -> Result<(), RegexTrieError> {
+    /// Add `ctx` under `key` (a literal or regex pattern). A spelling may carry
+    /// several contexts, one per scope it is declared in, so this appends rather
+    /// than replaces. Fails with [`RegexTrieError::RedeclaredInScope`] if `key`
+    /// already has a context declared in `ctx.scope`.
+    pub fn insert(&mut self, key: &str, ctx: IdContext) -> Result<(), RegexTrieError> {
         debug_assert!(!key.is_empty());
 
         if is_pure_literal(key) {
-            return self.insert_literal_fast(key, data);
+            return self.insert_literal_fast(key, ctx);
         }
 
         let paths = regex_splitting(key);
 
-        // Phase 1: build structure and reject duplicates before assigning anything.
+        // Phase 1: build structure and reject same-scope redeclaration before
+        // touching any context list.
         for path in &paths {
             let leaf = Self::walk_create(self, path);
             leaf.ensure_eow();
-            if leaf.leaf_value.is_some() {
-                return Err(RegexTrieError::DuplicateLeafValue);
+            if leaf_has_scope(&leaf.leaf_value, ctx.scope) {
+                return Err(RegexTrieError::RedeclaredInScope);
             }
         }
 
-        // Phase 2: every path of this insert points at the same dyad.
+        // Phase 2: every path of this insert carries the same context.
         for path in &paths {
             let leaf = Self::walk_create(self, path);
-            leaf.leaf_value = Some(Leaf { regex_key: key.to_string(), data });
+            push_context(&mut leaf.leaf_value, key, ctx);
         }
         Ok(())
     }
 
     /// Fast path for pure-literal keys: walk byte-by-byte, no splitting.
-    fn insert_literal_fast(&mut self, s: &str, data: DyadPtr) -> Result<(), RegexTrieError> {
+    fn insert_literal_fast(&mut self, s: &str, ctx: IdContext) -> Result<(), RegexTrieError> {
         let mut current = self;
         for &c in s.as_bytes() {
             current = current.lit_child_or_create(c);
         }
         current.ensure_eow();
-        if current.leaf_value.is_some() {
-            return Err(RegexTrieError::DuplicateLeafValue);
+        if leaf_has_scope(&current.leaf_value, ctx.scope) {
+            return Err(RegexTrieError::RedeclaredInScope);
         }
-        current.leaf_value = Some(Leaf { regex_key: s.to_string(), data });
+        push_context(&mut current.leaf_value, s, ctx);
         Ok(())
     }
 
@@ -360,7 +386,7 @@ impl RegexTrie {
                         return Ok(MatchResult {
                             matched: len,
                             regex_key: &val.regex_key,
-                            data: val.data,
+                            contexts: &val.contexts,
                         });
                     }
                 }
@@ -369,9 +395,37 @@ impl RegexTrie {
 
         if max_matched > 0 {
             let val = max_value.expect("EOW reached implies a stored value");
-            return Ok(MatchResult { matched: max_matched, regex_key: &val.regex_key, data: val.data });
+            return Ok(MatchResult {
+                matched: max_matched,
+                regex_key: &val.regex_key,
+                contexts: &val.contexts,
+            });
         }
         Err(RegexTrieError::NodeNotFound)
+    }
+
+    /// Resolve `string` to the single identity live in the open scopes. `is_open`
+    /// reports whether a scope dyad is currently open (an ancestor on the scope
+    /// stack); resolution keeps the candidates whose declaring scope is open.
+    ///
+    /// Because shadowing is disallowed, exactly one candidate survives. Zero live
+    /// candidates for a *known* spelling is [`RegexTrieError::OutOfScope`] (a
+    /// precise error, distinct from an unknown spelling's
+    /// [`RegexTrieError::NodeNotFound`]); more than one is
+    /// [`RegexTrieError::AmbiguousResolution`], which cannot happen unless the
+    /// index is corrupt.
+    pub fn resolve(
+        &self,
+        string: &str,
+        is_open: impl Fn(DyadPtr) -> bool,
+    ) -> Result<Resolved, RegexTrieError> {
+        let m = self.get(string)?;
+        let mut live = m.contexts.iter().filter(|c| is_open(c.scope));
+        match (live.next(), live.next()) {
+            (None, _) => Err(RegexTrieError::OutOfScope),
+            (Some(c), None) => Ok(Resolved { matched: m.matched, identity: c.identity }),
+            (Some(_), Some(_)) => Err(RegexTrieError::AmbiguousResolution),
+        }
     }
 
     /// Every match at the start of `string`, exploring all paths. Slower than
@@ -384,7 +438,11 @@ impl RegexTrie {
         while let Some((current, pos)) = stack.pop() {
             if current.check_eow() {
                 if let Some(v) = &current.leaf_value {
-                    out.push(MatchResult { matched: pos, regex_key: &v.regex_key, data: v.data });
+                    out.push(MatchResult {
+                        matched: pos,
+                        regex_key: &v.regex_key,
+                        contexts: &v.contexts,
+                    });
                 }
             }
             if pos >= bytes.len() {
@@ -424,47 +482,63 @@ impl RegexTrie {
 
     // --- remove -------------------------------------------------------------
 
-    /// Remove the entry for `regex_key` and return the dyad it denoted. Errors
-    /// with [`RegexTrieError::NodeNotFound`] if any of the key's paths is absent
-    /// or they do not all point at the same dyad.
-    pub fn remove(&mut self, regex_key: &str) -> Result<DyadPtr, RegexTrieError> {
+    /// Remove the `id_context` declared in `scope` for `regex_key` and return the
+    /// identity it denoted. This is the structural-deletion path: only that one
+    /// scope's context is dropped, and a leaf is pruned only when its last
+    /// context goes (siblings and outer declarations of the same spelling stay).
+    /// Errors with [`RegexTrieError::NodeNotFound`] if any of the key's paths
+    /// lacks a context in `scope`, or they do not all denote the same identity.
+    pub fn remove(&mut self, regex_key: &str, scope: DyadPtr) -> Result<DyadPtr, RegexTrieError> {
         debug_assert!(!regex_key.is_empty());
         let paths = regex_splitting(regex_key);
 
-        // Verify every path resolves to the same dyad before mutating anything.
+        // Verify every path holds this scope's context and they agree on the
+        // identity before mutating anything.
         let mut held: Option<DyadPtr> = None;
         for path in &paths {
             let node = self.locate(path).filter(|n| n.check_eow());
-            let lv = match node.and_then(|n| n.leaf_value.as_ref()) {
-                Some(v) if v.regex_key == regex_key => v,
+            let ident = match node.and_then(|n| n.leaf_value.as_ref()) {
+                Some(v) if v.regex_key == regex_key => {
+                    match v.contexts.iter().find(|c| c.scope == scope) {
+                        Some(c) => c.identity,
+                        None => return Err(RegexTrieError::NodeNotFound),
+                    }
+                }
                 _ => return Err(RegexTrieError::NodeNotFound),
             };
             match held {
-                None => held = Some(lv.data),
-                Some(h) if h == lv.data => {}
+                None => held = Some(ident),
+                Some(h) if h == ident => {}
                 Some(_) => return Err(RegexTrieError::NodeNotFound),
             }
         }
 
-        // Clear the value at each path's leaf and prune now-empty nodes.
+        // Drop this scope's context at each path's leaf and prune leaves that
+        // lose their last context.
         for path in &paths {
             let steps = flatten(path);
-            Self::prune_remove(self, &steps, 0);
+            Self::prune_remove(self, &steps, 0, scope);
         }
 
         Ok(held.expect("at least one path verified"))
     }
 
-    /// Recursively descend `steps` from `node`, clearing the leaf at the end and
-    /// pruning empty children on the way back up. Returns true if `node` itself
-    /// became empty and the caller should drop the link to it.
-    fn prune_remove(node: &mut RegexTrie, steps: &[Step], i: usize) -> bool {
+    /// Recursively descend `steps` from `node`, dropping `scope`'s context at the
+    /// end (clearing the leaf only when its last context goes) and pruning empty
+    /// children on the way back up. Returns true if `node` itself became empty and
+    /// the caller should drop the link to it.
+    fn prune_remove(node: &mut RegexTrie, steps: &[Step], i: usize, scope: DyadPtr) -> bool {
         if i == steps.len() {
-            node.leaf_value = None;
-            let eow = node.child_indices[EOW];
-            if eow != NONE {
-                node.child_indices[EOW] = NONE;
-                node.children[eow as usize] = None;
+            if let Some(leaf) = &mut node.leaf_value {
+                leaf.contexts.retain(|c| c.scope != scope);
+                if leaf.contexts.is_empty() {
+                    node.leaf_value = None;
+                    let eow = node.child_indices[EOW];
+                    if eow != NONE {
+                        node.child_indices[EOW] = NONE;
+                        node.children[eow as usize] = None;
+                    }
+                }
             }
             return !node.has_children() && node.leaf_value.is_none() && !node.check_eow();
         }
@@ -476,7 +550,7 @@ impl RegexTrie {
                     return false;
                 }
                 let child_empty = match &mut node.children[idx as usize] {
-                    Some(child) => Self::prune_remove(child, steps, i + 1),
+                    Some(child) => Self::prune_remove(child, steps, i + 1, scope),
                     None => return false,
                 };
                 if child_empty {
@@ -486,7 +560,8 @@ impl RegexTrie {
             }
             Step::Regex(p) => match node.regexes.iter().position(|e| &e.pattern == p) {
                 Some(ri) => {
-                    let child_empty = Self::prune_remove(&mut node.regexes[ri].node, steps, i + 1);
+                    let child_empty =
+                        Self::prune_remove(&mut node.regexes[ri].node, steps, i + 1, scope);
                     if child_empty {
                         node.matcher_dirty.set(true);
                         node.regexes.remove(ri);
@@ -614,6 +689,19 @@ enum Step {
     Regex(String),
 }
 
+/// True if `leaf` already holds a context declared in `scope`.
+fn leaf_has_scope(leaf: &Option<Leaf>, scope: DyadPtr) -> bool {
+    matches!(leaf, Some(l) if l.contexts.iter().any(|c| c.scope == scope))
+}
+
+/// Append `ctx` to `leaf`, creating the `Leaf` (keyed by `key`) if absent.
+fn push_context(leaf: &mut Option<Leaf>, key: &str, ctx: IdContext) {
+    match leaf {
+        Some(l) => l.contexts.push(ctx),
+        None => *leaf = Some(Leaf { regex_key: key.to_string(), contexts: vec![ctx] }),
+    }
+}
+
 /// Flatten a split path into per-byte literal steps and regex steps.
 fn flatten(path: &[Segment]) -> Vec<Step> {
     let mut v = Vec::new();
@@ -635,137 +723,216 @@ mod tests {
     use crate::dyad::Dyad;
 
     /// Leak a distinct dyad and return a pointer to it (its address is its id).
-    /// Leaking is fine in tests — the process exits.
+    /// Leaking is fine in tests: the process exits. Serves for both identities
+    /// and scopes, since a scope is just a dyad.
     fn dummy(tag: usize) -> DyadPtr {
         Box::into_raw(Box::new(Dyad { ty: std::ptr::null_mut(), value: tag as *mut u8 }))
+    }
+
+    /// An `id_context` in `scope` for `identity`.
+    fn ic(identity: DyadPtr, scope: DyadPtr) -> IdContext {
+        IdContext::new(identity, scope)
     }
 
     #[test]
     fn literal_longest_match() {
         // The `a = a + 1` operator set: `:` vs `:=` must disambiguate by length.
+        let root = dummy(100);
         let mut t = RegexTrie::new();
         let (colon, colon_eq, eq, plus) = (dummy(1), dummy(2), dummy(3), dummy(4));
-        t.insert(":", colon).unwrap();
-        t.insert(":=", colon_eq).unwrap();
-        t.insert("=", eq).unwrap();
-        t.insert("+", plus).unwrap();
+        t.insert(":", ic(colon, root)).unwrap();
+        t.insert(":=", ic(colon_eq, root)).unwrap();
+        t.insert("=", ic(eq, root)).unwrap();
+        t.insert("+", ic(plus, root)).unwrap();
 
         let m = t.get(":=").unwrap();
         assert_eq!(m.matched, 2);
         assert_eq!(m.regex_key, ":=");
-        assert_eq!(m.data, colon_eq);
+        assert_eq!(m.contexts[0].identity, colon_eq);
 
         let m = t.get(":x").unwrap();
         assert_eq!(m.matched, 1);
-        assert_eq!(m.data, colon);
+        assert_eq!(m.contexts[0].identity, colon);
 
-        assert_eq!(t.get("=").unwrap().data, eq);
+        // resolve picks the single candidate live in the open scope.
+        let r = t.resolve("=", |s| s == root).unwrap();
+        assert_eq!(r.matched, 1);
+        assert_eq!(r.identity, eq);
     }
 
     #[test]
     fn regex_branch_matches() {
+        let root = dummy(100);
         let mut t = RegexTrie::new();
         let num = dummy(1);
-        t.insert("[0-9]+", num).unwrap();
+        t.insert("[0-9]+", ic(num, root)).unwrap();
         let m = t.get("123abc").unwrap();
         assert_eq!(m.matched, 3);
-        assert_eq!(m.data, num);
+        assert_eq!(m.contexts[0].identity, num);
     }
 
     #[test]
     fn literal_beats_regex_at_same_node() {
         // get() commits to the literal child; the regex is only the fallback.
+        let root = dummy(100);
         let mut t = RegexTrie::new();
         let (kw, ident) = (dummy(1), dummy(2));
-        t.insert("if", kw).unwrap();
-        t.insert("[a-z]+", ident).unwrap();
+        t.insert("if", ic(kw, root)).unwrap();
+        t.insert("[a-z]+", ic(ident, root)).unwrap();
 
-        assert_eq!(t.get("if").unwrap().data, kw);
-        assert_eq!(t.get("foo").unwrap().data, ident);
+        assert_eq!(t.get("if").unwrap().contexts[0].identity, kw);
+        assert_eq!(t.get("foo").unwrap().contexts[0].identity, ident);
     }
 
     #[test]
     fn unknown_input_is_not_found() {
+        let root = dummy(100);
         let mut t = RegexTrie::new();
-        t.insert("foo", dummy(1)).unwrap();
+        t.insert("foo", ic(dummy(1), root)).unwrap();
         assert!(matches!(t.get("bar"), Err(RegexTrieError::NodeNotFound)));
     }
 
     #[test]
-    fn duplicate_insert_rejected() {
+    fn redeclaration_in_same_scope_rejected() {
+        // No shadowing: a name may not be redeclared while its own scope is live.
+        let root = dummy(100);
         let mut t = RegexTrie::new();
-        t.insert("dup", dummy(1)).unwrap();
-        assert_eq!(t.insert("dup", dummy(2)), Err(RegexTrieError::DuplicateLeafValue));
+        t.insert("dup", ic(dummy(1), root)).unwrap();
+        assert_eq!(
+            t.insert("dup", ic(dummy(2), root)),
+            Err(RegexTrieError::RedeclaredInScope)
+        );
+    }
+
+    #[test]
+    fn same_spelling_two_scopes_resolves_by_open_scope() {
+        // The core sealed behaviour: one spelling declared in two scopes; both
+        // contexts are stored and resolution picks the one whose scope is open.
+        let (outer, inner) = (dummy(100), dummy(101));
+        let mut t = RegexTrie::new();
+        let (id_outer, id_inner) = (dummy(1), dummy(2));
+        t.insert("x", ic(id_outer, outer)).unwrap();
+        t.insert("x", ic(id_inner, inner)).unwrap();
+
+        assert_eq!(t.get("x").unwrap().contexts.len(), 2);
+        assert_eq!(t.resolve("x", |s| s == outer).unwrap().identity, id_outer);
+        assert_eq!(t.resolve("x", |s| s == inner).unwrap().identity, id_inner);
+    }
+
+    #[test]
+    fn known_spelling_out_of_scope_is_precise_error() {
+        // A declared name used where its scope is closed lexes fine, then fails
+        // resolution with OutOfScope, not NodeNotFound.
+        let scope = dummy(100);
+        let mut t = RegexTrie::new();
+        t.insert("y", ic(dummy(1), scope)).unwrap();
+        assert!(t.get("y").is_ok());
+        assert_eq!(t.resolve("y", |_| false), Err(RegexTrieError::OutOfScope));
+    }
+
+    #[test]
+    fn two_live_candidates_is_corruption_error() {
+        // Cannot arise under no-shadowing, but resolve reports it as the canary.
+        let (a, b) = (dummy(100), dummy(101));
+        let mut t = RegexTrie::new();
+        t.insert("z", ic(dummy(1), a)).unwrap();
+        t.insert("z", ic(dummy(2), b)).unwrap();
+        assert_eq!(t.resolve("z", |_| true), Err(RegexTrieError::AmbiguousResolution));
     }
 
     #[test]
     fn insert_then_use_in_same_pass() {
-        // V1PLAN Phase 2: declare a token, then immediately lex a use of it.
+        // V1PLAN Phase 3: declare a token, then immediately lex a use of it.
+        let root = dummy(100);
         let mut t = RegexTrie::new();
-        t.insert("=", dummy(1)).unwrap();
+        t.insert("=", ic(dummy(1), root)).unwrap();
         assert!(t.get("widget").is_err());
         let widget = dummy(42);
-        t.insert("widget", widget).unwrap();
+        t.insert("widget", ic(widget, root)).unwrap();
         let m = t.get("widget = 1").unwrap();
         assert_eq!(m.matched, 6);
-        assert_eq!(m.data, widget);
+        assert_eq!(m.contexts[0].identity, widget);
     }
 
     #[test]
-    fn alternation_shares_one_value() {
+    fn alternation_shares_one_context() {
+        let root = dummy(100);
         let mut t = RegexTrie::new();
         let d = dummy(7);
-        t.insert("ab|cd", d).unwrap();
+        t.insert("ab|cd", ic(d, root)).unwrap();
         assert_eq!(t.get("ab").unwrap().matched, 2);
-        assert_eq!(t.get("ab").unwrap().data, d);
-        assert_eq!(t.get("cd").unwrap().data, d);
+        assert_eq!(t.get("ab").unwrap().contexts[0].identity, d);
+        assert_eq!(t.get("cd").unwrap().contexts[0].identity, d);
 
-        // Removing the key returns the shared dyad and drops both paths.
-        assert_eq!(t.remove("ab|cd").unwrap(), d);
+        // Removing the scope's context returns the shared identity and drops both paths.
+        assert_eq!(t.remove("ab|cd", root).unwrap(), d);
         assert!(t.get("ab").is_err());
         assert!(t.get("cd").is_err());
     }
 
     #[test]
+    fn remove_one_scope_keeps_the_other() {
+        // Structural deletion drops only the dying scope's context.
+        let (outer, inner) = (dummy(100), dummy(101));
+        let mut t = RegexTrie::new();
+        let (id_outer, id_inner) = (dummy(1), dummy(2));
+        t.insert("x", ic(id_outer, outer)).unwrap();
+        t.insert("x", ic(id_inner, inner)).unwrap();
+
+        assert_eq!(t.remove("x", inner).unwrap(), id_inner);
+        let m = t.get("x").unwrap();
+        assert_eq!(m.contexts.len(), 1);
+        assert_eq!(t.resolve("x", |s| s == outer).unwrap().identity, id_outer);
+    }
+
+    #[test]
     fn remove_literal_then_gone() {
+        let root = dummy(100);
         let mut t = RegexTrie::new();
         let (foo, foobar) = (dummy(1), dummy(2));
-        t.insert("foo", foo).unwrap();
-        t.insert("foobar", foobar).unwrap();
-        assert_eq!(t.remove("foo").unwrap(), foo);
+        t.insert("foo", ic(foo, root)).unwrap();
+        t.insert("foobar", ic(foobar, root)).unwrap();
+        assert_eq!(t.remove("foo", root).unwrap(), foo);
         assert!(t.get("foo").is_err());
         // The longer key sharing the prefix survives.
-        assert_eq!(t.get("foobar").unwrap().data, foobar);
+        assert_eq!(t.get("foobar").unwrap().contexts[0].identity, foobar);
     }
 
     #[test]
     fn remove_missing_is_error() {
+        let root = dummy(100);
+        let other = dummy(101);
         let mut t = RegexTrie::new();
-        t.insert("foo", dummy(1)).unwrap();
-        assert_eq!(t.remove("bar"), Err(RegexTrieError::NodeNotFound));
+        t.insert("foo", ic(dummy(1), root)).unwrap();
+        // Wrong spelling.
+        assert_eq!(t.remove("bar", root), Err(RegexTrieError::NodeNotFound));
+        // Right spelling, wrong scope.
+        assert_eq!(t.remove("foo", other), Err(RegexTrieError::NodeNotFound));
     }
 
     #[test]
     fn get_all_matches_finds_every_path() {
+        let root = dummy(100);
         let mut t = RegexTrie::new();
         let (lit_a, ident) = (dummy(1), dummy(2));
-        t.insert("a", lit_a).unwrap();
-        t.insert("[a-z]+", ident).unwrap();
+        t.insert("a", ic(lit_a, root)).unwrap();
+        t.insert("[a-z]+", ic(ident, root)).unwrap();
 
         let mut ms = t.get_all_matches("abc").unwrap();
         ms.sort_by_key(|m| m.matched);
         assert_eq!(ms.len(), 2);
         assert_eq!(ms[0].matched, 1);
-        assert_eq!(ms[0].data, lit_a);
+        assert_eq!(ms[0].contexts[0].identity, lit_a);
         assert_eq!(ms[1].matched, 3);
-        assert_eq!(ms[1].data, ident);
+        assert_eq!(ms[1].contexts[0].identity, ident);
     }
 
     #[test]
     fn bad_pattern_surfaces_error() {
         // Lookaround is unsupported by the `regex` crate; report it cleanly.
+        let root = dummy(100);
         let mut t = RegexTrie::new();
-        t.insert("(?=foo)", dummy(1)).unwrap();
+        t.insert("(?=foo)", ic(dummy(1), root)).unwrap();
         match t.get("foobar") {
             Err(RegexTrieError::BadPattern(_)) => {}
             other => panic!("expected BadPattern, got {other:?}"),
