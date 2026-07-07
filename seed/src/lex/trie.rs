@@ -12,9 +12,11 @@
 //! can denote, each paired with the scope it was declared in. The trie does
 //! **not** own the dyads those contexts point at (they live in the graph/store),
 //! so it only holds and returns them; nothing is freed on removal. A spelling
-//! declared in several scopes accumulates several contexts, and resolution
-//! against the open scopes picks the one live candidate (see [`resolve`] and
-//! [`crate::id_context`]).
+//! declared in several scopes accumulates several contexts; `get` returns the
+//! whole candidate list, and the parser's scope stack picks the one live in the
+//! open scopes. Resolution *policy* (scope filtering, no-shadowing,
+//! out-of-scope, ambiguity) lives in the parser (`crate::parse`), not here: the
+//! trie is the pure name index.
 //!
 //! Differences from the Zig original, all behaviour-preserving:
 //! - PCRE2 is replaced by the Rust `regex` crate (`regex::bytes`, byte-oriented
@@ -42,20 +44,12 @@ const NONE: u32 = u32::MAX;
 /// Byte index reserved as the end-of-word marker.
 const EOW: usize = 0;
 
-/// Errors surfaced by trie operations.
+/// Errors surfaced by trie operations. Resolution policy (scope filtering,
+/// no-shadowing, out-of-scope, ambiguity) lives in the parser, not here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegexTrieError {
     /// `get`/`remove` found no matching entry for the spelling.
     NodeNotFound,
-    /// `insert` found the spelling already declared in the same scope: a name
-    /// may not be redeclared while another declaration in its own scope is live.
-    RedeclaredInScope,
-    /// `resolve` matched a known spelling, but none of its candidates was
-    /// declared in a currently open scope: a genuine out-of-scope use.
-    OutOfScope,
-    /// `resolve` found more than one live candidate for a spelling. Impossible
-    /// under the no-shadowing rule, so it signals a corrupt index.
-    AmbiguousResolution,
     /// A residual regex segment failed to compile with the `regex` crate.
     BadPattern(String),
 }
@@ -80,16 +74,6 @@ pub struct MatchResult<'a> {
     pub regex_key: &'a str,
     /// Every identity the matched text can denote, one per declaring scope.
     pub contexts: &'a [IdContext],
-}
-
-/// A resolved lookup: how many bytes matched, and the single identity live in
-/// the open scopes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Resolved {
-    /// Number of bytes consumed from the start of the input.
-    pub matched: usize,
-    /// The identity live in the open scopes.
-    pub identity: DyadPtr,
 }
 
 struct RegexEntry {
@@ -282,48 +266,33 @@ impl RegexTrie {
     // --- insert -------------------------------------------------------------
 
     /// Add `ctx` under `key` (a literal or regex pattern). A spelling may carry
-    /// several contexts, one per scope it is declared in, so this appends rather
-    /// than replaces. Fails with [`RegexTrieError::RedeclaredInScope`] if `key`
-    /// already has a context declared in `ctx.scope`.
-    pub fn insert(&mut self, key: &str, ctx: IdContext) -> Result<(), RegexTrieError> {
+    /// several contexts, one per scope it is declared in, so this appends. The
+    /// no-shadowing rule (rejecting a redeclaration whose scope is currently
+    /// live) is the parser's, since it needs the scope stack; the trie only
+    /// stores.
+    pub fn insert(&mut self, key: &str, ctx: IdContext) {
         debug_assert!(!key.is_empty());
 
         if is_pure_literal(key) {
             return self.insert_literal_fast(key, ctx);
         }
 
-        let paths = regex_splitting(key);
-
-        // Phase 1: build structure and reject same-scope redeclaration before
-        // touching any context list.
-        for path in &paths {
+        // Every alternation path of this insert carries the same context.
+        for path in &regex_splitting(key) {
             let leaf = Self::walk_create(self, path);
             leaf.ensure_eow();
-            if leaf_has_scope(&leaf.leaf_value, ctx.scope) {
-                return Err(RegexTrieError::RedeclaredInScope);
-            }
-        }
-
-        // Phase 2: every path of this insert carries the same context.
-        for path in &paths {
-            let leaf = Self::walk_create(self, path);
             push_context(&mut leaf.leaf_value, key, ctx);
         }
-        Ok(())
     }
 
     /// Fast path for pure-literal keys: walk byte-by-byte, no splitting.
-    fn insert_literal_fast(&mut self, s: &str, ctx: IdContext) -> Result<(), RegexTrieError> {
+    fn insert_literal_fast(&mut self, s: &str, ctx: IdContext) {
         let mut current = self;
         for &c in s.as_bytes() {
             current = current.lit_child_or_create(c);
         }
         current.ensure_eow();
-        if leaf_has_scope(&current.leaf_value, ctx.scope) {
-            return Err(RegexTrieError::RedeclaredInScope);
-        }
         push_context(&mut current.leaf_value, s, ctx);
-        Ok(())
     }
 
     // --- get ----------------------------------------------------------------
@@ -402,30 +371,6 @@ impl RegexTrie {
             });
         }
         Err(RegexTrieError::NodeNotFound)
-    }
-
-    /// Resolve `string` to the single identity live in the open scopes. `is_open`
-    /// reports whether a scope dyad is currently open (an ancestor on the scope
-    /// stack); resolution keeps the candidates whose declaring scope is open.
-    ///
-    /// Because shadowing is disallowed, exactly one candidate survives. Zero live
-    /// candidates for a *known* spelling is [`RegexTrieError::OutOfScope`] (a
-    /// precise error, distinct from an unknown spelling's
-    /// [`RegexTrieError::NodeNotFound`]); more than one is
-    /// [`RegexTrieError::AmbiguousResolution`], which cannot happen unless the
-    /// index is corrupt.
-    pub fn resolve(
-        &self,
-        string: &str,
-        is_open: impl Fn(DyadPtr) -> bool,
-    ) -> Result<Resolved, RegexTrieError> {
-        let m = self.get(string)?;
-        let mut live = m.contexts.iter().filter(|c| is_open(c.scope));
-        match (live.next(), live.next()) {
-            (None, _) => Err(RegexTrieError::OutOfScope),
-            (Some(c), None) => Ok(Resolved { matched: m.matched, identity: c.identity }),
-            (Some(_), Some(_)) => Err(RegexTrieError::AmbiguousResolution),
-        }
     }
 
     /// Every match at the start of `string`, exploring all paths. Slower than
@@ -689,11 +634,6 @@ enum Step {
     Regex(String),
 }
 
-/// True if `leaf` already holds a context declared in `scope`.
-fn leaf_has_scope(leaf: &Option<Leaf>, scope: DyadPtr) -> bool {
-    matches!(leaf, Some(l) if l.contexts.iter().any(|c| c.scope == scope))
-}
-
 /// Append `ctx` to `leaf`, creating the `Leaf` (keyed by `key`) if absent.
 fn push_context(leaf: &mut Option<Leaf>, key: &str, ctx: IdContext) {
     match leaf {
@@ -740,10 +680,10 @@ mod tests {
         let root = dummy(100);
         let mut t = RegexTrie::new();
         let (colon, colon_eq, eq, plus) = (dummy(1), dummy(2), dummy(3), dummy(4));
-        t.insert(":", ic(colon, root)).unwrap();
-        t.insert(":=", ic(colon_eq, root)).unwrap();
-        t.insert("=", ic(eq, root)).unwrap();
-        t.insert("+", ic(plus, root)).unwrap();
+        t.insert(":", ic(colon, root));
+        t.insert(":=", ic(colon_eq, root));
+        t.insert("=", ic(eq, root));
+        t.insert("+", ic(plus, root));
 
         let m = t.get(":=").unwrap();
         assert_eq!(m.matched, 2);
@@ -754,10 +694,7 @@ mod tests {
         assert_eq!(m.matched, 1);
         assert_eq!(m.contexts[0].identity, colon);
 
-        // resolve picks the single candidate live in the open scope.
-        let r = t.resolve("=", |s| s == root).unwrap();
-        assert_eq!(r.matched, 1);
-        assert_eq!(r.identity, eq);
+        assert_eq!(t.get("=").unwrap().contexts[0].identity, eq);
     }
 
     #[test]
@@ -765,7 +702,7 @@ mod tests {
         let root = dummy(100);
         let mut t = RegexTrie::new();
         let num = dummy(1);
-        t.insert("[0-9]+", ic(num, root)).unwrap();
+        t.insert("[0-9]+", ic(num, root));
         let m = t.get("123abc").unwrap();
         assert_eq!(m.matched, 3);
         assert_eq!(m.contexts[0].identity, num);
@@ -777,8 +714,8 @@ mod tests {
         let root = dummy(100);
         let mut t = RegexTrie::new();
         let (kw, ident) = (dummy(1), dummy(2));
-        t.insert("if", ic(kw, root)).unwrap();
-        t.insert("[a-z]+", ic(ident, root)).unwrap();
+        t.insert("if", ic(kw, root));
+        t.insert("[a-z]+", ic(ident, root));
 
         assert_eq!(t.get("if").unwrap().contexts[0].identity, kw);
         assert_eq!(t.get("foo").unwrap().contexts[0].identity, ident);
@@ -788,56 +725,24 @@ mod tests {
     fn unknown_input_is_not_found() {
         let root = dummy(100);
         let mut t = RegexTrie::new();
-        t.insert("foo", ic(dummy(1), root)).unwrap();
+        t.insert("foo", ic(dummy(1), root));
         assert!(matches!(t.get("bar"), Err(RegexTrieError::NodeNotFound)));
     }
 
     #[test]
-    fn redeclaration_in_same_scope_rejected() {
-        // No shadowing: a name may not be redeclared while its own scope is live.
-        let root = dummy(100);
-        let mut t = RegexTrie::new();
-        t.insert("dup", ic(dummy(1), root)).unwrap();
-        assert_eq!(
-            t.insert("dup", ic(dummy(2), root)),
-            Err(RegexTrieError::RedeclaredInScope)
-        );
-    }
-
-    #[test]
-    fn same_spelling_two_scopes_resolves_by_open_scope() {
-        // The core sealed behaviour: one spelling declared in two scopes; both
-        // contexts are stored and resolution picks the one whose scope is open.
+    fn same_spelling_two_scopes_are_both_stored() {
+        // The trie stores one context per declaring scope; picking the live one
+        // is the parser's job (see crate::parse).
         let (outer, inner) = (dummy(100), dummy(101));
         let mut t = RegexTrie::new();
         let (id_outer, id_inner) = (dummy(1), dummy(2));
-        t.insert("x", ic(id_outer, outer)).unwrap();
-        t.insert("x", ic(id_inner, inner)).unwrap();
+        t.insert("x", ic(id_outer, outer));
+        t.insert("x", ic(id_inner, inner));
 
-        assert_eq!(t.get("x").unwrap().contexts.len(), 2);
-        assert_eq!(t.resolve("x", |s| s == outer).unwrap().identity, id_outer);
-        assert_eq!(t.resolve("x", |s| s == inner).unwrap().identity, id_inner);
-    }
-
-    #[test]
-    fn known_spelling_out_of_scope_is_precise_error() {
-        // A declared name used where its scope is closed lexes fine, then fails
-        // resolution with OutOfScope, not NodeNotFound.
-        let scope = dummy(100);
-        let mut t = RegexTrie::new();
-        t.insert("y", ic(dummy(1), scope)).unwrap();
-        assert!(t.get("y").is_ok());
-        assert_eq!(t.resolve("y", |_| false), Err(RegexTrieError::OutOfScope));
-    }
-
-    #[test]
-    fn two_live_candidates_is_corruption_error() {
-        // Cannot arise under no-shadowing, but resolve reports it as the canary.
-        let (a, b) = (dummy(100), dummy(101));
-        let mut t = RegexTrie::new();
-        t.insert("z", ic(dummy(1), a)).unwrap();
-        t.insert("z", ic(dummy(2), b)).unwrap();
-        assert_eq!(t.resolve("z", |_| true), Err(RegexTrieError::AmbiguousResolution));
+        let m = t.get("x").unwrap();
+        assert_eq!(m.contexts.len(), 2);
+        let ids: Vec<_> = m.contexts.iter().map(|c| c.identity).collect();
+        assert!(ids.contains(&id_outer) && ids.contains(&id_inner));
     }
 
     #[test]
@@ -845,10 +750,10 @@ mod tests {
         // V1PLAN Phase 3: declare a token, then immediately lex a use of it.
         let root = dummy(100);
         let mut t = RegexTrie::new();
-        t.insert("=", ic(dummy(1), root)).unwrap();
+        t.insert("=", ic(dummy(1), root));
         assert!(t.get("widget").is_err());
         let widget = dummy(42);
-        t.insert("widget", ic(widget, root)).unwrap();
+        t.insert("widget", ic(widget, root));
         let m = t.get("widget = 1").unwrap();
         assert_eq!(m.matched, 6);
         assert_eq!(m.contexts[0].identity, widget);
@@ -859,7 +764,7 @@ mod tests {
         let root = dummy(100);
         let mut t = RegexTrie::new();
         let d = dummy(7);
-        t.insert("ab|cd", ic(d, root)).unwrap();
+        t.insert("ab|cd", ic(d, root));
         assert_eq!(t.get("ab").unwrap().matched, 2);
         assert_eq!(t.get("ab").unwrap().contexts[0].identity, d);
         assert_eq!(t.get("cd").unwrap().contexts[0].identity, d);
@@ -876,13 +781,13 @@ mod tests {
         let (outer, inner) = (dummy(100), dummy(101));
         let mut t = RegexTrie::new();
         let (id_outer, id_inner) = (dummy(1), dummy(2));
-        t.insert("x", ic(id_outer, outer)).unwrap();
-        t.insert("x", ic(id_inner, inner)).unwrap();
+        t.insert("x", ic(id_outer, outer));
+        t.insert("x", ic(id_inner, inner));
 
         assert_eq!(t.remove("x", inner).unwrap(), id_inner);
         let m = t.get("x").unwrap();
         assert_eq!(m.contexts.len(), 1);
-        assert_eq!(t.resolve("x", |s| s == outer).unwrap().identity, id_outer);
+        assert_eq!(m.contexts[0].identity, id_outer);
     }
 
     #[test]
@@ -890,8 +795,8 @@ mod tests {
         let root = dummy(100);
         let mut t = RegexTrie::new();
         let (foo, foobar) = (dummy(1), dummy(2));
-        t.insert("foo", ic(foo, root)).unwrap();
-        t.insert("foobar", ic(foobar, root)).unwrap();
+        t.insert("foo", ic(foo, root));
+        t.insert("foobar", ic(foobar, root));
         assert_eq!(t.remove("foo", root).unwrap(), foo);
         assert!(t.get("foo").is_err());
         // The longer key sharing the prefix survives.
@@ -903,7 +808,7 @@ mod tests {
         let root = dummy(100);
         let other = dummy(101);
         let mut t = RegexTrie::new();
-        t.insert("foo", ic(dummy(1), root)).unwrap();
+        t.insert("foo", ic(dummy(1), root));
         // Wrong spelling.
         assert_eq!(t.remove("bar", root), Err(RegexTrieError::NodeNotFound));
         // Right spelling, wrong scope.
@@ -915,8 +820,8 @@ mod tests {
         let root = dummy(100);
         let mut t = RegexTrie::new();
         let (lit_a, ident) = (dummy(1), dummy(2));
-        t.insert("a", ic(lit_a, root)).unwrap();
-        t.insert("[a-z]+", ic(ident, root)).unwrap();
+        t.insert("a", ic(lit_a, root));
+        t.insert("[a-z]+", ic(ident, root));
 
         let mut ms = t.get_all_matches("abc").unwrap();
         ms.sort_by_key(|m| m.matched);
@@ -932,7 +837,7 @@ mod tests {
         // Lookaround is unsupported by the `regex` crate; report it cleanly.
         let root = dummy(100);
         let mut t = RegexTrie::new();
-        t.insert("(?=foo)", ic(dummy(1), root)).unwrap();
+        t.insert("(?=foo)", ic(dummy(1), root));
         match t.get("foobar") {
             Err(RegexTrieError::BadPattern(_)) => {}
             other => panic!("expected BadPattern, got {other:?}"),
