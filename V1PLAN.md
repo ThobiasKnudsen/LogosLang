@@ -42,7 +42,7 @@ seed/                           # single binary+lib crate
       trie.rs          ⚠        # regex-trie: 256-array literal path + regex-crate leaves; leaf = list of id_context; incremental insert
       token.rs                  # token = {text/denoted}; tape-resident, not a persistent record (source spans live in a derived source-map)
     parse.rs           ⚠        # the parser: parsing tape + scope stack + name resolution (id_context filtered by O(1) open-scope membership, no shadowing) + the lexical `gate` access check (fail-closed, erases); deferred-reduction operator-precedence driver; on-demand lex; runs native constructors
-    interp.rs                   # run's null-bcode body-walk (tree-walk) + stack frames
+    run.rs                      # run: jump to bcode if present, else null-bcode body-walk (tree-walk) + stack frames
     endpoints.rs                # ~30–40 native run() ops
     compile/
       types.rs                  # LG type -> Cranelift type / layout
@@ -62,7 +62,7 @@ seed/                           # single binary+lib crate
 
 **Phase 3 ⚠ — One-pass parser/elaborator.** Deferred-reduction operator-precedence driver over the explicit **parsing tape**, keyed on float `precedence` + `associativity` with one token of lookahead (not Pratt, whose hidden stack cannot express token-rewriting operators like the `X` case); pulls tokens on demand (so declarations land in the trie before later tokens lex); runs each token's native `constructor`; resolves names via the parser's own scope stack. Constructors for `:`,`=`,`:=`, `struct`,`array`,`mut`,`fn`, application, `+`/operators (monomorphizing in the constructor — `rational_number` literals mold to the sibling operand's type here). *Test:* parse `a = a + 1` and the `type`/`struct` defs into the LG shape the sketch shows. *The heart; mixed grind + care.*
 
-**Phase 4 — Interpret tier.** `run`'s null-`bcode` body-walk (the tree-walk; interpretation is not a separate `fn` function); stack frames for locals (recursion works here); the ~30–40 endpoint natives (their `run`): binding, field/apply, arith/compare, `if`/`else`/`while`/`for`, `alloc`/`drop`/`&`/`@`, literal eval, `error`. *Mostly grind.*
+**Phase 4 — Run tier.** `run` is one primitive: jump to `bcode` if present, else the null-`bcode` body-walk (the tree-walk; interpretation is not a separate `fn` function). `run` depends on `compile`: the leaves it bottoms out in must already be executable, so the core primitives are installed as native `bcode` first (compiling the leaves) and `run` jumps to them. Stack frames for locals (recursion works here); the ~30–40 endpoint natives (their `run`): binding, field/apply, arith/compare, `if`/`else`/`while`/`for`, `alloc`/`drop`/`&`/`@`, literal eval, `error`. *Mostly grind.*
 
 **▶ Milestone 1 — `a = a + 1` runs interpreted.**
 

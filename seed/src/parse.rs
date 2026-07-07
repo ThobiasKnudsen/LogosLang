@@ -329,6 +329,8 @@ pub enum ParseError {
     Trailing,
     /// The input held no expression.
     Empty,
+    /// A numeric literal's digits did not parse.
+    BadLiteral,
 }
 
 /// The one-pass elaborator: lexes on demand, resolves names against the scope

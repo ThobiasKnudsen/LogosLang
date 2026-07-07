@@ -9,4 +9,5 @@ pub mod dyad;
 pub mod id_context;
 pub mod lex;
 pub mod parse;
+pub mod run;
 pub mod store;
