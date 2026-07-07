@@ -7,3 +7,4 @@
 pub mod dyad;
 pub mod id_context;
 pub mod lex;
+pub mod store;
