@@ -64,8 +64,9 @@ pub struct Leaf {
 }
 
 /// The result of a successful lookup. `regex_key` and `contexts` borrow the
-/// stored entry. `contexts` is the full candidate list; use
-/// [`RegexTrie::resolve`] to pick the one live in the open scopes.
+/// stored entry. `contexts` is the full candidate list; the trie is a pure index,
+/// so the parser's [`ScopeStack::resolve`](crate::parse::ScopeStack::resolve)
+/// picks the one live in the open scopes.
 #[derive(Debug)]
 pub struct MatchResult<'a> {
     /// Number of bytes consumed from the start of the input.

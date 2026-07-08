@@ -21,17 +21,22 @@ use crate::id_context::IdContext;
 use crate::lex::{RegexTrie, RegexTrieError};
 use crate::store::Store;
 
-/// A pending, not-yet-reduced token: the source span it was lexed from and, once
-/// resolved, the identity it denotes. A token's identity locks at reduction, so
-/// until then it may be rewritten (a higher-precedence operator to its right can
-/// change it); a reduced [`Cell::Dyad`] is frozen against that.
+/// A pending, not-yet-reduced token: the source span it was lexed from and the
+/// identity it denotes. In the target model a token's identity is not fixed until
+/// it reduces into its dyad, so a higher-precedence operator to its right can still
+/// rewrite it (the token-rewriting mechanism); a reduced [`Cell::Dyad`] is frozen
+/// against that. The v1 driver builds no such operators, so it resolves each name
+/// eagerly at scan and pushes the token with `identity` already set: the
+/// null-until-reduction path ([`Token::new`]) is real but, until macros arrive, is
+/// exercised only by the tape tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Token {
     /// Byte offset of the token in the source.
     pub start: usize,
     /// Byte length of the matched span.
     pub len: usize,
-    /// The identity this token resolves to, or null until resolved.
+    /// The identity this token denotes, or null until resolved. The v1 driver sets
+    /// it eagerly at scan; deferred resolution arrives with token-rewriting operators.
     pub identity: DyadPtr,
 }
 

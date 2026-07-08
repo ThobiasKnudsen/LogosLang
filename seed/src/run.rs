@@ -37,9 +37,11 @@ pub enum RunError {
 /// core primitives' natives here.
 pub type Bcode = HashMap<DyadPtr, RunFn>;
 
-/// A running evaluation. Holds the `bcode` table `run` dispatches through; the
-/// call stack carries operands (each `run` call is a frame), per the sealed
-/// stack calling convention.
+/// A running evaluation. Holds only the `bcode` table `run` dispatches through;
+/// the tree-walk carries operands on the native Rust call stack (each `run` is a
+/// frame), so no explicit operand stack is materialized here. DESIGN's stack
+/// calling convention — where `run`/`compile` take no arguments and operands ride
+/// an explicit stack — is the compiled tier's target, not the interpreter's.
 pub struct Runtime<'a> {
     bcode: &'a Bcode,
 }

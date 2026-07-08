@@ -8,7 +8,7 @@ assign(declare(&mut logos, «:»), ?, ?)
 assign(declare(&mut logos, «=»), ?, ?)
 assign(declare(&mut logos, «:=»), ?, ?)
 assign(declare(&mut logos, «rational_number»), type, ?)
-assign(declare(&mut logos, «^-?[0-9]+(?:\.[0-9]+)?$»), rational_number, ?)
+assign(declare(&mut logos, «-?[0-9]+(?:\.[0-9]+)?»), rational_number, ?)   # unanchored: the lexer longest-matches a prefix of the remaining input, so no ^…$
 
 dyad := struct (type := dyad@ ?, value := void@ ?)
 
