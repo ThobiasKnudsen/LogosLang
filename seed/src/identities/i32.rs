@@ -7,10 +7,13 @@ use cranelift_codegen::ir::Value;
 use super::Cx;
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
+use crate::id_context::IdContext;
 
-/// Register `i32` and its lowering rule.
+/// Register `i32`: its spelling (so it resolves as a field/type name) and its
+/// lowering rule.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let id = cx.store.alloc_raw(cx.type_, std::ptr::null_mut());
+    cx.trie.insert("i32", IdContext::new(id, cx.root_scope));
     cx.lower.insert(id, lower);
     id
 }

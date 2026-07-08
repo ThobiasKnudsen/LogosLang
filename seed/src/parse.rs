@@ -331,6 +331,20 @@ pub enum Construct {
     Open,
     /// A closing bracket `)`: ends the current scope's body.
     Close,
+    /// The `struct` keyword: parse the following `( field-list )` into a struct
+    /// node. The field list is a bespoke sub-parse ([`Parser::parse_struct`]),
+    /// because a field name is a *fresh* spelling the eager-resolve driver cannot
+    /// resolve; it is reused for a function's parameter list (DESIGN ›A function's
+    /// surface‹: the parameter list *is* a struct).
+    Struct,
+    /// A field separator `,`: ends the current field's type expression the way `)`
+    /// ends a scope. The field-list parser consumes it; the generic driver treats
+    /// it as a structural break.
+    Separator,
+    /// A declaration colon `:` in `name : type`: separates a field name from its
+    /// type. v1 appears only inside a field list; the general declaration operator
+    /// is later.
+    Colon,
 }
 
 /// Why elaboration failed.
@@ -348,6 +362,11 @@ pub enum ParseError {
     BadLiteral,
     /// An opening `(` had no matching `)`.
     UnclosedBracket,
+    /// A construct that requires a `(` (a `struct`/parameter list) was not
+    /// followed by one.
+    ExpectedOpen,
+    /// A field list expected a field name where it found neither a name nor `)`.
+    ExpectedField,
 }
 
 /// The one-pass elaborator: lexes on demand, resolves names against the scope
@@ -407,6 +426,132 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Peek the next token's `Construct` without consuming it. `None` at end of
+    /// input or when the token is not a known structural identity: a fresh name
+    /// resolves to nothing here and is read raw by the field-list parser instead.
+    fn peek_kind(&mut self) -> Option<(DyadPtr, usize, Construct)> {
+        self.skip_ws();
+        let source = self.source;
+        if self.pos >= source.len() {
+            return None;
+        }
+        let r = self.scopes.resolve(self.trie, &source[self.pos..]).ok()?;
+        let c = self.metas.get(&r.identity).copied()?;
+        Some((r.identity, r.matched, c))
+    }
+
+    /// Consume the `(` that opens a field list, or fail.
+    fn expect_open(&mut self) -> Result<(), ParseError> {
+        match self.peek_kind() {
+            Some((_, matched, Construct::Open)) => {
+                self.pos += matched;
+                Ok(())
+            }
+            _ => Err(ParseError::ExpectedOpen),
+        }
+    }
+
+    /// Consume a `:` if the next token is one, reporting whether it was.
+    fn consume_colon(&mut self) -> bool {
+        match self.peek_kind() {
+            Some((_, matched, Construct::Colon)) => {
+                self.pos += matched;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Consume a `,` if the next token is one, reporting whether it was.
+    fn consume_separator(&mut self) -> bool {
+        match self.peek_kind() {
+            Some((_, matched, Construct::Separator)) => {
+                self.pos += matched;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether the next token is a closing `)` (peek, no consume).
+    fn at_close(&mut self) -> bool {
+        matches!(self.peek_kind(), Some((_, _, Construct::Close)))
+    }
+
+    /// Read a raw identifier `[A-Za-z_][A-Za-z0-9_]*` at the cursor, advancing past
+    /// it, returning its `(start, len)`; `None` if the next non-space byte does not
+    /// begin an identifier. Declaration position reads fresh names raw, since they
+    /// are not yet in the name index to resolve (the sketch's `declare(name:string)`).
+    fn lex_identifier(&mut self) -> Option<(usize, usize)> {
+        self.skip_ws();
+        let bytes = self.source.as_bytes();
+        let start = self.pos;
+        match bytes.get(start) {
+            Some(&b) if b.is_ascii_alphabetic() || b == b'_' => {}
+            _ => return None,
+        }
+        let mut end = start + 1;
+        while let Some(&b) = bytes.get(end) {
+            if b.is_ascii_alphanumeric() || b == b'_' {
+                end += 1;
+            } else {
+                break;
+            }
+        }
+        self.pos = end;
+        Some((start, end - start))
+    }
+
+    /// Parse a `( field-list )` into a struct node. `struct_type` is the identity
+    /// that introduced it (`struct`, or later `fn`'s parameter list). Fields are
+    /// `name : type` or a bare `name`, separated by `,`; each becomes a `:`
+    /// declaration dyad `{ty: field-type, value: undefined}` whose name is declared
+    /// in the struct's own scope. The node is
+    /// `{ty: struct_type, value -> [scope, field0 … fieldN, null]}` (scope at index
+    /// 0, null-terminated). Fresh field names are read raw here, which is why the
+    /// field list needs its own sub-parse rather than the generic driver.
+    pub fn parse_struct(&mut self, struct_type: DyadPtr) -> Result<DyadPtr, ParseError> {
+        self.expect_open()?;
+        // The struct's own scope: an address-only marker in v1 (the typed `scope`
+        // core identity is later). Field names are declared into it.
+        let scope = self.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut());
+        self.scopes.push(scope);
+
+        let mut fields = Vec::new();
+        loop {
+            if self.at_close() {
+                break;
+            }
+            let (start, len) = self.lex_identifier().ok_or(ParseError::ExpectedField)?;
+            // `self.source` is `&'a str` (Copy), so this slice is independent of the
+            // `&mut self` the reentrant type-parse and the declaration then need.
+            let source = self.source;
+            let name = &source[start..start + len];
+            // Optional `: type`; a bare name leaves the field's type slot undefined.
+            let ty = if self.consume_colon() {
+                self.parse_expression()?
+            } else {
+                std::ptr::null_mut()
+            };
+            let field = self.store.alloc_raw(ty, std::ptr::null_mut());
+            self.scopes.declare(self.trie, name, field).map_err(ParseError::Resolve)?;
+            fields.push(field);
+            if !self.consume_separator() {
+                break;
+            }
+        }
+
+        self.scopes.pop();
+        self.expect_close()?;
+
+        let mut ops = Vec::with_capacity(fields.len() + 2);
+        ops.push(scope);
+        ops.extend_from_slice(&fields);
+        ops.push(std::ptr::null_mut());
+        let value = self.store.alloc_operands(&ops);
+        Ok(self.store.alloc_raw(struct_type, value))
+    }
+
     /// Parse one expression to a single dyad, consuming source from the current
     /// position. Each call drives its own tape, so a prefix constructor can parse
     /// its operand by calling this again (the parser is a service the constructors
@@ -427,9 +572,10 @@ impl<'a> Parser<'a> {
             let id = r.identity;
             let c = self.metas.get(&id).copied();
 
-            // A close bracket ends this (sub-)expression; leave it unconsumed for
-            // the opener that started the scope.
-            if matches!(c, Some(Construct::Close)) {
+            // A structural delimiter (`)`, `,`, `:`) ends this (sub-)expression;
+            // leave it unconsumed for the enclosing constructor (the opener that
+            // started the scope, or the field-list parser).
+            if matches!(c, Some(Construct::Close | Construct::Separator | Construct::Colon)) {
                 break;
             }
             self.pos = start + r.matched;
@@ -457,14 +603,22 @@ impl<'a> Parser<'a> {
                     self.expect_close()?;
                     tape.push(Cell::Dyad(body));
                 }
+                // The `struct` keyword: parse its `( field-list )` into a struct
+                // node (a bespoke sub-parse; fresh field names can't be resolved).
+                Some(Construct::Struct) => {
+                    let s = self.parse_struct(id)?;
+                    tape.push(Cell::Dyad(s));
+                }
                 // An operator: reduce anything binding tighter to its left, then
                 // shift it onto the tape as a pending token.
                 Some(Construct::Infix { precedence, assoc, .. }) => {
                     self.reduce_pending(&mut tape, precedence, assoc)?;
                     tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
                 }
-                // Handled by the close-bracket peek above.
-                Some(Construct::Close) => unreachable!("close bracket ends the loop"),
+                // Handled by the structural-break peek above.
+                Some(Construct::Close | Construct::Separator | Construct::Colon) => {
+                    unreachable!("structural delimiter ends the loop")
+                }
             }
         }
         self.reduce_all(&mut tape)?;

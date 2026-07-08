@@ -32,6 +32,8 @@ mod fn_mod;
 mod i32_mod;
 #[path = "return.rs"]
 mod return_mod;
+#[path = "struct.rs"]
+mod struct_mod;
 mod assign;
 mod paren;
 mod plus;
@@ -53,6 +55,9 @@ pub struct Core {
     pub plus: DyadPtr,
     /// `rational_number` (numeric literal carrier); a data type.
     pub rational: DyadPtr,
+    /// `struct`, the type whose constructor derives a layout from a field list
+    /// (and whose field list is a function's parameter list).
+    pub struct_: DyadPtr,
     /// The parser's table: parse-time behaviour keyed by identity.
     pub metas: HashMap<DyadPtr, Construct>,
     /// One run version: each function identity's `bcode`.
@@ -87,9 +92,22 @@ impl Core {
         fn_mod::register_syntax(&mut cx);
         paren::register(&mut cx);
         return_mod::register(&mut cx);
+        let struct_ = struct_mod::register(&mut cx);
 
         let Cx { metas, bcode, lower, .. } = cx;
-        Core { type_, root_scope, fn_type, i32_, assign, plus, rational, metas, bcode, lower }
+        Core {
+            type_,
+            root_scope,
+            fn_type,
+            i32_,
+            assign,
+            plus,
+            rational,
+            struct_,
+            metas,
+            bcode,
+            lower,
+        }
     }
 }
 
@@ -317,6 +335,104 @@ mod tests {
         // SAFETY: `call`/`func`/body are valid nodes in `store`.
         let result = unsafe { rt.run(call) }.unwrap();
         assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn parses_an_empty_struct() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+
+        let node = {
+            let mut p = Parser::new("struct ()", &mut store, &mut trie, &core.metas, scopes);
+            p.parse_expression().unwrap()
+        };
+
+        // `{ty: struct, value -> [scope, null]}`: a scope, zero fields.
+        unsafe {
+            assert_eq!((*node).ty, core.struct_);
+            let ops = (*node).value as *const DyadPtr;
+            assert!(!(*ops).is_null()); // scope at index 0
+            assert!((*ops.add(1)).is_null()); // terminator: no fields
+        }
+    }
+
+    #[test]
+    fn parses_a_struct_with_typed_fields() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+
+        let node = {
+            let mut p =
+                Parser::new("struct (x : i32, y : i32)", &mut store, &mut trie, &core.metas, scopes);
+            p.parse_expression().unwrap()
+        };
+
+        // Two `:` declaration fields, each typed i32 with an undefined value.
+        let (scope, fx, fy) = unsafe {
+            assert_eq!((*node).ty, core.struct_);
+            let ops = (*node).value as *const DyadPtr;
+            assert!((*ops.add(3)).is_null()); // terminator after two fields
+            (*ops, *ops.add(1), *ops.add(2))
+        };
+        unsafe {
+            assert_eq!((*fx).ty, core.i32_);
+            assert!((*fx).value.is_null());
+            assert_eq!((*fy).ty, core.i32_);
+            assert!((*fy).value.is_null());
+        }
+
+        // The field names are declared in the struct's own scope (index 0).
+        let mut inner = ScopeStack::new();
+        inner.push(scope);
+        assert_eq!(inner.resolve(&trie, "x").unwrap().identity, fx);
+        assert_eq!(inner.resolve(&trie, "y").unwrap().identity, fy);
+    }
+
+    #[test]
+    fn parses_a_bare_name_field() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+
+        let node = {
+            let mut p = Parser::new("struct (t)", &mut store, &mut trie, &core.metas, scopes);
+            p.parse_expression().unwrap()
+        };
+
+        // A bare name: one field with an undefined type slot.
+        let (scope, ft) = unsafe {
+            let ops = (*node).value as *const DyadPtr;
+            assert!((*ops.add(2)).is_null()); // terminator after one field
+            (*ops, *ops.add(1))
+        };
+        unsafe {
+            assert!((*ft).ty.is_null()); // bare name: type undefined
+            assert!((*ft).value.is_null());
+        }
+
+        let mut inner = ScopeStack::new();
+        inner.push(scope);
+        assert_eq!(inner.resolve(&trie, "t").unwrap().identity, ft);
+    }
+
+    #[test]
+    fn struct_without_parens_is_an_error() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+
+        let mut p = Parser::new("struct 40", &mut store, &mut trie, &core.metas, scopes);
+        assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::ExpectedOpen));
     }
 
     #[test]
