@@ -1,0 +1,228 @@
+//! The seed's hand-built core identities (V1PLAN Phase 1), one file each.
+//!
+//! Everything in Logos is an identity, but only the seed's *native* identities
+//! are authored in Rust; identities created while a program runs are graph data,
+//! never source files. This folder is that bounded native kernel: the node cell
+//! ([`dyad`]) and name-resolution pairing ([`id_context`]) the substrate is
+//! built from, plus each primitive (`type`, `fn`, `i32`, `rational`, `=`, `+`).
+//!
+//! Each primitive file defines exactly one identity: its node, its spelling, and
+//! its behaviour across the phases (parse `Construct`, run `bcode`, compile
+//! lowering). [`Core::build`] wires them into the graph and the per-phase tables.
+//! The tables are held per phase (parser/run/compile) rather than on the nodes,
+//! so a new run or compile *version* is a new table, not a graph rewrite.
+
+use std::collections::HashMap;
+
+use crate::compile::LowerTable;
+use crate::dyad::DyadPtr;
+use crate::parse::{Construct, ParseError};
+use crate::run::Bcode;
+use crate::lex::RegexTrie;
+use crate::store::Store;
+
+pub mod dyad;
+pub mod id_context;
+
+#[path = "type.rs"]
+mod type_mod;
+#[path = "fn.rs"]
+mod fn_mod;
+#[path = "i32.rs"]
+mod i32_mod;
+mod assign;
+mod plus;
+mod rational;
+
+/// The core identities and the per-phase tables that drive them.
+pub struct Core {
+    /// The `Type : Type` self-loop, the one node whose type is itself.
+    pub type_: DyadPtr,
+    /// The scope every core identity is declared in.
+    pub root_scope: DyadPtr,
+    /// `fn`, the type whose values are functions.
+    pub fn_type: DyadPtr,
+    /// `i32`, the type of an integer variable/value.
+    pub i32_: DyadPtr,
+    /// `=` (assignment); a function.
+    pub assign: DyadPtr,
+    /// `+` (addition); a function.
+    pub plus: DyadPtr,
+    /// `rational_number` (numeric literal carrier); a data type.
+    pub rational: DyadPtr,
+    /// The parser's table: parse-time behaviour keyed by identity.
+    pub metas: HashMap<DyadPtr, Construct>,
+    /// One run version: each function identity's `bcode`.
+    pub bcode: Bcode,
+    /// One compile version: each operation's Cranelift lowering rule.
+    pub lower: LowerTable,
+}
+
+impl Core {
+    /// Hand-build the core graph into `store`, registering spellings in `trie`.
+    pub fn build(store: &mut Store, trie: &mut RegexTrie) -> Core {
+        // Foundational types first: others reference them.
+        let type_ = type_mod::register_root(store);
+        let root_scope = store.alloc_raw(type_, std::ptr::null_mut());
+        let fn_type = fn_mod::register(store, type_);
+
+        // Then the behaviour-bearing identities, via a shared build context.
+        let mut cx = Cx {
+            store,
+            trie,
+            type_,
+            fn_type,
+            root_scope,
+            metas: HashMap::new(),
+            bcode: HashMap::new(),
+            lower: HashMap::new(),
+        };
+        let i32_ = i32_mod::register(&mut cx);
+        let rational = rational::register(&mut cx);
+        let assign = assign::register(&mut cx);
+        let plus = plus::register(&mut cx);
+
+        let Cx { metas, bcode, lower, .. } = cx;
+        Core { type_, root_scope, fn_type, i32_, assign, plus, rational, metas, bcode, lower }
+    }
+}
+
+/// The shared context each identity registers itself into: the store and name
+/// index to build in, the foundational type handles it may reference, and the
+/// per-phase tables it fills.
+pub(crate) struct Cx<'a> {
+    store: &'a mut Store,
+    trie: &'a mut RegexTrie,
+    type_: DyadPtr,
+    fn_type: DyadPtr,
+    root_scope: DyadPtr,
+    metas: HashMap<DyadPtr, Construct>,
+    bcode: Bcode,
+    lower: LowerTable,
+}
+
+/// Build a binary application `{ty: op, value: {lhs, rhs}}`. The shared `Infix`
+/// constructor: `=` and `+` differ only in precedence/associativity, not shape.
+pub(crate) fn build_binary(
+    store: &mut Store,
+    op: DyadPtr,
+    lhs: DyadPtr,
+    rhs: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
+    let operands = store.alloc_operands(&[lhs, rhs]);
+    Ok(store.alloc_raw(op, operands))
+}
+
+/// The two `dyad@` operands of a binary application node.
+///
+/// # Safety
+/// `node.value` must point at an operand struct of at least two `dyad@` fields,
+/// as produced by [`build_binary`].
+pub(crate) unsafe fn operands(node: DyadPtr) -> (DyadPtr, DyadPtr) {
+    let p = (*node).value as *const DyadPtr;
+    (*p, *p.add(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compile::compile_nullary_i32;
+    use crate::parse::{Parser, ScopeStack};
+    use crate::run::Runtime;
+
+    #[test]
+    fn parses_a_equals_a_plus_one() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        // Declare the variable `a` in the root scope.
+        let a = store.alloc_raw(core.i32_, std::ptr::null_mut());
+        scopes.declare(&mut trie, "a", a).unwrap();
+
+        let root = {
+            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, scopes);
+            p.parse_expression().unwrap()
+        };
+
+        // Expect the tree =(a, +(a, 1)).
+        unsafe {
+            assert_eq!((*root).ty, core.assign);
+            let top = (*root).value as *const DyadPtr;
+            assert_eq!(*top, a); // =.lhs is the variable a
+            let sum = *top.add(1); // =.rhs is the + application
+            assert_eq!((*sum).ty, core.plus);
+            let sops = (*sum).value as *const DyadPtr;
+            assert_eq!(*sops, a); // +.lhs is a
+            let one = *sops.add(1); // +.rhs is the literal
+            assert_eq!((*one).ty, core.rational);
+            assert_eq!(std::ptr::read_unaligned((*one).value as *const i32), 1);
+        }
+    }
+
+    #[test]
+    fn runs_a_equals_a_plus_one() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        // `a` is an i32 variable initialised to 0.
+        let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
+        let a = store.alloc_raw(core.i32_, a_val);
+        scopes.declare(&mut trie, "a", a).unwrap();
+
+        let root = {
+            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, scopes);
+            p.parse_expression().unwrap()
+        };
+
+        // run `a = a + 1`: yields 1 and leaves a holding 1.
+        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        // SAFETY: `root` is the valid dyad tree just parsed into `store`.
+        let result = unsafe { rt.run(root) }.unwrap();
+        assert_eq!(result, 1);
+        unsafe {
+            assert_eq!(std::ptr::read_unaligned(a_val as *const i32), 1);
+        }
+    }
+
+    #[test]
+    fn jit_matches_the_interpreter() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
+        let a = store.alloc_raw(core.i32_, a_val);
+        scopes.declare(&mut trie, "a", a).unwrap();
+
+        let root = {
+            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, scopes);
+            p.parse_expression().unwrap()
+        };
+
+        // Oracle: the interpreter, from a = 0.
+        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        // SAFETY: `root` is the valid tree just parsed.
+        let interp = unsafe { rt.run(root) }.unwrap();
+        let interp_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
+
+        // Reset a to 0, then JIT-compile and call, and diff against the oracle.
+        unsafe { std::ptr::write_unaligned(a_val as *mut i32, 0) };
+        // SAFETY: `root`/`a` live in `store`, which outlives the call.
+        let compiled = unsafe { compile_nullary_i32(&core.lower, root) }.unwrap();
+        let jit = unsafe { compiled.call_i32() };
+        let jit_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
+
+        assert_eq!(interp, 1);
+        assert_eq!(i64::from(jit), interp); // same result
+        assert_eq!(jit_a, interp_a); // same side effect on a
+        assert_eq!(jit_a, 1);
+    }
+}

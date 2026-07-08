@@ -1,0 +1,22 @@
+//! `i32`: the type of a 32-bit integer value. A data type (its type is `type`);
+//! its values carry four bytes. It has no run behaviour (data is read through its
+//! layout) but does carry a compile lowering: a variable reads from its storage.
+
+use cranelift_codegen::ir::Value;
+
+use super::Cx;
+use crate::compile::{CompileError, Lowerer};
+use crate::dyad::DyadPtr;
+
+/// Register `i32` and its lowering rule.
+pub(super) fn register(cx: &mut Cx) -> DyadPtr {
+    let id = cx.store.alloc_raw(cx.type_, std::ptr::null_mut());
+    cx.lower.insert(id, lower);
+    id
+}
+
+/// Lower an `i32` variable to a load from its baked storage address.
+fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    let addr = unsafe { (*node).value };
+    Ok(lw.load_i32(addr))
+}
