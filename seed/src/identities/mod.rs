@@ -30,7 +30,10 @@ mod type_mod;
 mod fn_mod;
 #[path = "i32.rs"]
 mod i32_mod;
+#[path = "return.rs"]
+mod return_mod;
 mod assign;
+mod paren;
 mod plus;
 mod rational;
 
@@ -82,6 +85,8 @@ impl Core {
         let assign = assign::register(&mut cx);
         let plus = plus::register(&mut cx);
         fn_mod::register_syntax(&mut cx);
+        paren::register(&mut cx);
+        return_mod::register(&mut cx);
 
         let Cx { metas, bcode, lower, .. } = cx;
         Core { type_, root_scope, fn_type, i32_, assign, plus, rational, metas, bcode, lower }
@@ -222,6 +227,65 @@ mod tests {
         unsafe {
             assert_eq!(std::ptr::read_unaligned(a_val as *const i32), 1);
         }
+    }
+
+    #[test]
+    fn runs_a_returning_scope() {
+        // `( return 40 + 2 )`: the brackets delimit a scope; `return` yields its
+        // value. Runs to 42.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+
+        let node = {
+            let mut p = Parser::new("( return 40 + 2 )", &mut store, &mut trie, &core.metas, scopes);
+            p.parse_expression().unwrap()
+        };
+
+        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        // SAFETY: `node` is the valid dyad tree just parsed.
+        let result = unsafe { rt.run(node) }.unwrap();
+        assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn nested_scopes_and_bare_return() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        // Bare `return` (no brackets) yields to the top-level expression.
+        let bare = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new("return 7", &mut store, &mut trie, &core.metas, s);
+            p.parse_expression().unwrap()
+        };
+        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        assert_eq!(unsafe { rt.run(bare) }.unwrap(), 7);
+
+        // Nested brackets group correctly.
+        let nested = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new("( ( return 5 ) )", &mut store, &mut trie, &core.metas, s);
+            p.parse_expression().unwrap()
+        };
+        assert_eq!(unsafe { rt.run(nested) }.unwrap(), 5);
+    }
+
+    #[test]
+    fn unclosed_bracket_is_an_error() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+
+        let mut p = Parser::new("( return 1", &mut store, &mut trie, &core.metas, scopes);
+        assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::UnclosedBracket));
     }
 
     #[test]

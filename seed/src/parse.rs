@@ -326,6 +326,11 @@ pub enum Construct {
         assoc: Assoc,
         build: fn(&mut Store, DyadPtr, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>,
     },
+    /// An opening bracket `(`: parse the body up to the matching close, and the
+    /// scope's value is what that body yields (its `return`).
+    Open,
+    /// A closing bracket `)`: ends the current scope's body.
+    Close,
 }
 
 /// Why elaboration failed.
@@ -341,6 +346,8 @@ pub enum ParseError {
     Empty,
     /// A numeric literal's digits did not parse.
     BadLiteral,
+    /// An opening `(` had no matching `)`.
+    UnclosedBracket,
 }
 
 /// The one-pass elaborator: lexes on demand, resolves names against the scope
@@ -378,6 +385,28 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Consume the closing `)` that matches an opening `(`, or fail if the body
+    /// ended at something else (or the end of input).
+    fn expect_close(&mut self) -> Result<(), ParseError> {
+        self.skip_ws();
+        let source = self.source;
+        if self.pos >= source.len() {
+            return Err(ParseError::UnclosedBracket);
+        }
+        let start = self.pos;
+        let r = self
+            .scopes
+            .resolve(self.trie, &source[start..])
+            .map_err(ParseError::Resolve)?;
+        match self.metas.get(&r.identity).copied() {
+            Some(Construct::Close) => {
+                self.pos = start + r.matched;
+                Ok(())
+            }
+            _ => Err(ParseError::UnclosedBracket),
+        }
+    }
+
     /// Parse one expression to a single dyad, consuming source from the current
     /// position. Each call drives its own tape, so a prefix constructor can parse
     /// its operand by calling this again (the parser is a service the constructors
@@ -395,10 +424,17 @@ impl<'a> Parser<'a> {
                 .scopes
                 .resolve(self.trie, &source[start..])
                 .map_err(ParseError::Resolve)?;
-            self.pos = start + r.matched;
             let id = r.identity;
+            let c = self.metas.get(&id).copied();
 
-            match self.metas.get(&id).copied() {
+            // A close bracket ends this (sub-)expression; leave it unconsumed for
+            // the opener that started the scope.
+            if matches!(c, Some(Construct::Close)) {
+                break;
+            }
+            self.pos = start + r.matched;
+
+            match c {
                 // A plain operand: a reference to the resolved identity.
                 None => tape.push(Cell::Dyad(id)),
                 // A literal: build its leaf now from the matched span.
@@ -414,12 +450,21 @@ impl<'a> Parser<'a> {
                     let dyad = build(self.store, id, operand)?;
                     tape.push(Cell::Dyad(dyad));
                 }
+                // An opening bracket: parse the body up to the matching close,
+                // consume that close, and push the body as the scope's value.
+                Some(Construct::Open) => {
+                    let body = self.parse_expression()?;
+                    self.expect_close()?;
+                    tape.push(Cell::Dyad(body));
+                }
                 // An operator: reduce anything binding tighter to its left, then
                 // shift it onto the tape as a pending token.
                 Some(Construct::Infix { precedence, assoc, .. }) => {
                     self.reduce_pending(&mut tape, precedence, assoc)?;
                     tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
                 }
+                // Handled by the close-bracket peek above.
+                Some(Construct::Close) => unreachable!("close bracket ends the loop"),
             }
         }
         self.reduce_all(&mut tape)?;
