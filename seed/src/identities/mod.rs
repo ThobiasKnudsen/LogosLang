@@ -161,7 +161,7 @@ pub(crate) unsafe fn operands(node: DyadPtr) -> (DyadPtr, DyadPtr) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compile::compile_nullary_i32;
+    use crate::compile::{compile_fn, compile_nullary_i32};
     use crate::parse::{Parser, ScopeStack};
     use crate::run::Runtime;
 
@@ -576,6 +576,54 @@ mod tests {
         unsafe { std::ptr::write_unaligned(a_val as *mut i32, 0) };
         // SAFETY: `root`/`a` live in `store`, which outlives the call.
         let compiled = unsafe { compile_nullary_i32(&core.lower, root) }.unwrap();
+        let jit = unsafe { compiled.call_i32() };
+        let jit_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
+
+        assert_eq!(interp, 1);
+        assert_eq!(i64::from(jit), interp); // same result
+        assert_eq!(jit_a, interp_a); // same side effect on a
+        assert_eq!(jit_a, 1);
+    }
+
+    #[test]
+    fn milestone_2_fn_runs_interpreted_and_jit_identically() {
+        // Milestone 2: the smoke test wrapped in a function, run both interpreted
+        // and Cranelift-JIT-compiled, results and the side effect on `a` diffed.
+        // The interpreter is the oracle.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
+        let a = store.alloc_raw(core.i32_, a_val);
+        scopes.declare(&mut trie, "a", a).unwrap();
+
+        // `fn () -> i32 ( a = a + 1 )`: the smoke test, wrapped in a function.
+        let func = {
+            let mut p = Parser::new(
+                "fn () -> i32 ( a = a + 1 )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                scopes,
+            );
+            p.parse_expression().unwrap()
+        };
+
+        // Oracle: interpret an application of the function, from a = 0.
+        let call = store.alloc_raw(func, std::ptr::null_mut());
+        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        // SAFETY: `call`/`func`/body are valid nodes just parsed into `store`.
+        let interp = unsafe { rt.run(call) }.unwrap();
+        let interp_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
+
+        // Reset a to 0, JIT-compile the function's body, call, and diff.
+        unsafe { std::ptr::write_unaligned(a_val as *mut i32, 0) };
+        // SAFETY: `func` is the fn node just built; `a`'s storage outlives the call.
+        let compiled = unsafe { compile_fn(&core.lower, func) }.unwrap();
         let jit = unsafe { compiled.call_i32() };
         let jit_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
 

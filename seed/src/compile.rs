@@ -21,6 +21,7 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{default_libcall_names, Linkage, Module};
 
 use crate::dyad::DyadPtr;
+use crate::parse::FN_BODY;
 
 /// A lowering rule: emit the IR for a node and return the SSA value it computes,
 /// recursing on operands via [`Lowerer::lower`].
@@ -107,6 +108,22 @@ impl Compiled {
         let f: extern "C" fn() -> i32 = std::mem::transmute(self.ptr);
         f()
     }
+}
+
+/// Compile a nullary `fn () -> i32` by lowering its body. Reads the function
+/// node's `body` field (see [`crate::parse::FN_BODY`]) and delegates to
+/// [`compile_nullary_i32`]. Parameters and non-`i32` returns need the calling
+/// convention and wider lowering, which are later; this handles the nullary-`i32`
+/// case (DESIGN Milestone 2).
+///
+/// # Safety
+/// `fn_node` must be a valid function node (`{ty: fn, value -> [input, output,
+/// body]}`) from the store, and any storage its body references must outlive every
+/// call to the returned [`Compiled`].
+pub unsafe fn compile_fn(lower: &LowerTable, fn_node: DyadPtr) -> Result<Compiled, CompileError> {
+    let fields = (*fn_node).value as *const DyadPtr;
+    let body = *fields.add(FN_BODY);
+    compile_nullary_i32(lower, body)
 }
 
 /// Compile `root` as a nullary function returning `i32`.

@@ -315,6 +315,16 @@ pub struct CoreTypes {
     pub struct_: DyadPtr,
 }
 
+/// The fields of a function node's value struct, in order, as built by
+/// [`Parser::parse_fn`]: the input `struct`, the return type, and the reflectable
+/// body. `run` and `compile` read the body through [`FN_BODY`]; `bcode` is not a
+/// node field in this seed (compiled code lives in the run version's table).
+pub const FN_INPUT: usize = 0;
+/// See [`FN_INPUT`].
+pub const FN_OUTPUT: usize = 1;
+/// See [`FN_INPUT`].
+pub const FN_BODY: usize = 2;
+
 /// A core identity's native parse-time behaviour: how the driver schedules the
 /// token and how its dyad is built. Core identities are hand-built natives (see
 /// `crate::identities`); a self-hosted Logos would carry this as graph metadata

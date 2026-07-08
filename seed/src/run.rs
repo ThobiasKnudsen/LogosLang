@@ -20,11 +20,7 @@
 use std::collections::HashMap;
 
 use crate::dyad::DyadPtr;
-
-/// Index of the `body` field in a function node's `[input, output, body]` value
-/// struct (built by `crate::parse::Parser::parse_fn`). `bcode` is not a node field
-/// in this seed: compiled code lives in the run version's table.
-const FN_BODY_FIELD: usize = 2;
+use crate::parse::FN_BODY;
 
 /// A function's implementation for one run version. Takes the application node
 /// and returns its scalar result, recursing on operands via [`Runtime::run`].
@@ -82,7 +78,7 @@ impl<'a> Runtime<'a> {
                     if fields.is_null() {
                         return Err(RunError::NotRunnable(op));
                     }
-                    let body = *fields.add(FN_BODY_FIELD);
+                    let body = *fields.add(FN_BODY);
                     if body.is_null() {
                         return Err(RunError::NotRunnable(op));
                     }
