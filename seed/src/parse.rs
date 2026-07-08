@@ -304,6 +304,17 @@ pub enum Assoc {
     Right,
 }
 
+/// The core type handles the parser needs to type the nodes it opens: a `scope`
+/// for each field list, a `struct` for each parameter/field list. Bundled so that
+/// adding a handle does not churn [`Parser::new`]'s signature.
+#[derive(Debug, Clone, Copy)]
+pub struct CoreTypes {
+    /// `scope`: the type of each scope the parser opens.
+    pub scope: DyadPtr,
+    /// `struct`: the type of a parameter-list / field-list node.
+    pub struct_: DyadPtr,
+}
+
 /// A core identity's native parse-time behaviour: how the driver schedules the
 /// token and how its dyad is built. Core identities are hand-built natives (see
 /// `crate::identities`); a self-hosted Logos would carry this as graph metadata
@@ -345,6 +356,14 @@ pub enum Construct {
     /// type. v1 appears only inside a field list; the general declaration operator
     /// is later.
     Colon,
+    /// The `fn` keyword: parse a function literal `fn ( params ) -> ret ( body )`
+    /// (DESIGN ›A function's surface‹) via [`Parser::parse_fn`]. The parameter list
+    /// is a `struct` (step 2's field list); the body is a `( )` scope with the
+    /// parameters open.
+    Fn,
+    /// The return arrow `->` in a fn signature: separates the parameter list from
+    /// the return type. Consumed by [`Parser::parse_fn`].
+    Arrow,
 }
 
 /// Why elaboration failed.
@@ -367,6 +386,10 @@ pub enum ParseError {
     ExpectedOpen,
     /// A field list expected a field name where it found neither a name nor `)`.
     ExpectedField,
+    /// A fn signature's parameter list was not followed by `->`.
+    ExpectedArrow,
+    /// A fn signature's `->` was not followed by a return type.
+    ExpectedReturnType,
 }
 
 /// The one-pass elaborator: lexes on demand, resolves names against the scope
@@ -381,25 +404,23 @@ pub struct Parser<'a> {
     store: &'a mut Store,
     trie: &'a mut RegexTrie,
     metas: &'a std::collections::HashMap<DyadPtr, Construct>,
-    /// The `scope` core identity: the type given to each scope node the parser
-    /// opens (a struct/parameter-list scope). Held so the parser can build a typed
-    /// scope without reaching back into the core.
-    scope_type: DyadPtr,
+    /// The core type handles the parser types opened nodes with (see [`CoreTypes`]).
+    types: CoreTypes,
 }
 
 impl<'a> Parser<'a> {
     /// A parser over `source`, resolving against `scopes` and `metas`, allocating
-    /// into `store`, and lexing via `trie`. `scope_type` is the `scope` identity
-    /// the parser types the scopes it opens with.
+    /// into `store`, and lexing via `trie`. `types` are the core handles the parser
+    /// types the scopes and structs it opens with.
     pub fn new(
         source: &'a str,
         store: &'a mut Store,
         trie: &'a mut RegexTrie,
         metas: &'a std::collections::HashMap<DyadPtr, Construct>,
-        scope_type: DyadPtr,
+        types: CoreTypes,
         scopes: ScopeStack,
     ) -> Self {
-        Parser { source, pos: 0, scopes, store, trie, metas, scope_type }
+        Parser { source, pos: 0, scopes, store, trie, metas, types }
     }
 
     /// Advance past ASCII whitespace.
@@ -520,7 +541,7 @@ impl<'a> Parser<'a> {
         self.expect_open()?;
         // The struct's own scope: a `scope`-typed node keyed by address for
         // open-scope membership. Field names are declared into it.
-        let scope = self.store.alloc_raw(self.scope_type, std::ptr::null_mut());
+        let scope = self.store.alloc_raw(self.types.scope, std::ptr::null_mut());
         self.scopes.push(scope);
 
         let mut fields = Vec::new();
@@ -558,6 +579,58 @@ impl<'a> Parser<'a> {
         Ok(self.store.alloc_raw(struct_type, value))
     }
 
+    /// Parse a function literal `fn ( params ) -> ret ( body )` (DESIGN ›A
+    /// function's surface‹), given `fn_type` (the resolved `fn` identity). The
+    /// parameter list is a `struct` (the step-2 field list); the return type after
+    /// `->` is a single type identity; the body is a `( )` scope parsed with the
+    /// parameter scope reopened, so parameters resolve inside it. The node is
+    /// `{ty: fn, value -> [input, output, body]}` — the params struct, the return
+    /// type, and the reflectable body — with no `bcode` until it is compiled (the
+    /// run version's `bcode` table supplies that; see `crate::run`).
+    pub fn parse_fn(&mut self, fn_type: DyadPtr) -> Result<DyadPtr, ParseError> {
+        // The parameter list is a struct; parse_struct opens and closes its scope.
+        let input = self.parse_struct(self.types.struct_)?;
+        self.expect_arrow()?;
+        let output = self.parse_return_type()?;
+
+        // Reopen the parameter scope (the input struct's `value[0]`) so the body
+        // resolves parameters, then parse the `( body )`.
+        // SAFETY: `input` is the struct just built; its `value[0]` is its scope.
+        let scope = unsafe { *((*input).value as *const DyadPtr) };
+        self.scopes.push(scope);
+        self.expect_open()?;
+        let body = self.parse_expression()?;
+        self.expect_close()?;
+        self.scopes.pop();
+
+        let value = self.store.alloc_operands(&[input, output, body]);
+        Ok(self.store.alloc_raw(fn_type, value))
+    }
+
+    /// Consume the `->` that separates a fn's parameter list from its return type.
+    fn expect_arrow(&mut self) -> Result<(), ParseError> {
+        match self.peek_kind() {
+            Some((_, matched, Construct::Arrow)) => {
+                self.pos += matched;
+                Ok(())
+            }
+            _ => Err(ParseError::ExpectedArrow),
+        }
+    }
+
+    /// Parse a fn's return type: a single resolved type identity (`i32`, …). v1
+    /// return types are one identity; compound type expressions arrive later.
+    fn parse_return_type(&mut self) -> Result<DyadPtr, ParseError> {
+        self.skip_ws();
+        let source = self.source;
+        if self.pos >= source.len() {
+            return Err(ParseError::ExpectedReturnType);
+        }
+        let r = self.scopes.resolve(self.trie, &source[self.pos..]).map_err(ParseError::Resolve)?;
+        self.pos += r.matched;
+        Ok(r.identity)
+    }
+
     /// Parse one expression to a single dyad, consuming source from the current
     /// position. Each call drives its own tape, so a prefix constructor can parse
     /// its operand by calling this again (the parser is a service the constructors
@@ -578,10 +651,13 @@ impl<'a> Parser<'a> {
             let id = r.identity;
             let c = self.metas.get(&id).copied();
 
-            // A structural delimiter (`)`, `,`, `:`) ends this (sub-)expression;
-            // leave it unconsumed for the enclosing constructor (the opener that
-            // started the scope, or the field-list parser).
-            if matches!(c, Some(Construct::Close | Construct::Separator | Construct::Colon)) {
+            // A structural delimiter (`)`, `,`, `:`, `->`) ends this
+            // (sub-)expression; leave it unconsumed for the enclosing constructor
+            // (the opener that started the scope, the field-list or fn parser).
+            if matches!(
+                c,
+                Some(Construct::Close | Construct::Separator | Construct::Colon | Construct::Arrow)
+            ) {
                 break;
             }
             self.pos = start + r.matched;
@@ -615,6 +691,11 @@ impl<'a> Parser<'a> {
                     let s = self.parse_struct(id)?;
                     tape.push(Cell::Dyad(s));
                 }
+                // The `fn` keyword: parse a `fn ( params ) -> ret ( body )` literal.
+                Some(Construct::Fn) => {
+                    let f = self.parse_fn(id)?;
+                    tape.push(Cell::Dyad(f));
+                }
                 // An operator: reduce anything binding tighter to its left, then
                 // shift it onto the tape as a pending token.
                 Some(Construct::Infix { precedence, assoc, .. }) => {
@@ -622,7 +703,9 @@ impl<'a> Parser<'a> {
                     tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
                 }
                 // Handled by the structural-break peek above.
-                Some(Construct::Close | Construct::Separator | Construct::Colon) => {
+                Some(
+                    Construct::Close | Construct::Separator | Construct::Colon | Construct::Arrow,
+                ) => {
                     unreachable!("structural delimiter ends the loop")
                 }
             }

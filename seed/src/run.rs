@@ -21,6 +21,11 @@ use std::collections::HashMap;
 
 use crate::dyad::DyadPtr;
 
+/// Index of the `body` field in a function node's `[input, output, body]` value
+/// struct (built by `crate::parse::Parser::parse_fn`). `bcode` is not a node field
+/// in this seed: compiled code lives in the run version's table.
+const FN_BODY_FIELD: usize = 2;
+
 /// A function's implementation for one run version. Takes the application node
 /// and returns its scalar result, recursing on operands via [`Runtime::run`].
 pub type RunFn = fn(&mut Runtime, DyadPtr) -> Result<i64, RunError>;
@@ -69,9 +74,15 @@ impl<'a> Runtime<'a> {
             match self.bcode.get(&op).copied() {
                 Some(bcode) => bcode(self, node),
                 None => {
-                    // Null bcode: interpretation is walking the body, the node the
-                    // function's `value` points at.
-                    let body = (*op).value as DyadPtr;
+                    // Null bcode: interpret by walking the function's `body`, the
+                    // third field of its `[input, output, body]` value struct
+                    // (built by `Parser::parse_fn`). A function with no value struct
+                    // or a null body is not runnable.
+                    let fields = (*op).value as *const DyadPtr;
+                    if fields.is_null() {
+                        return Err(RunError::NotRunnable(op));
+                    }
+                    let body = *fields.add(FN_BODY_FIELD);
                     if body.is_null() {
                         return Err(RunError::NotRunnable(op));
                     }

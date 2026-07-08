@@ -16,7 +16,7 @@ use std::collections::HashMap;
 
 use crate::compile::LowerTable;
 use crate::dyad::DyadPtr;
-use crate::parse::{Construct, ParseError};
+use crate::parse::{Construct, CoreTypes, ParseError};
 use crate::run::Bcode;
 use crate::regex_trie::RegexTrie;
 use crate::store::Store;
@@ -115,6 +115,11 @@ impl Core {
             lower,
         }
     }
+
+    /// The core type handles the parser needs to type the nodes it opens.
+    pub fn types(&self) -> CoreTypes {
+        CoreTypes { scope: self.scope_, struct_: self.struct_ }
+    }
 }
 
 /// The shared context each identity registers itself into: the store and name
@@ -173,7 +178,7 @@ mod tests {
         scopes.declare(&mut trie, "a", a).unwrap();
 
         let root = {
-            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, core.scope_, scopes);
+            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
@@ -206,7 +211,7 @@ mod tests {
         scopes.declare(&mut trie, "a", a).unwrap();
 
         let root = {
-            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, core.scope_, scopes);
+            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
@@ -222,9 +227,9 @@ mod tests {
 
     #[test]
     fn runs_a_compound_function_by_walking_its_body() {
-        // A function with no bcode is interpreted by walking its body. Build
-        // `main`, a function whose body is `a = a + 1`, and run an application of
-        // it: run finds no bcode for `main` and walks the body.
+        // A function with no bcode is interpreted by walking its `body` field.
+        // Parse `main`, a nullary function whose body mutates the outer `a`, then
+        // run an application of it: run finds no bcode for `main` and walks body.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
@@ -235,17 +240,22 @@ mod tests {
         let a = store.alloc_raw(core.i32_, a_val);
         scopes.declare(&mut trie, "a", a).unwrap();
 
-        let body = {
-            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, core.scope_, scopes);
+        let main = {
+            let mut p = Parser::new(
+                "fn () -> i32 ( a = a + 1 )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                scopes,
+            );
             p.parse_expression().unwrap()
         };
-        // `main`: a function (type `fn`) whose value is its body; no bcode.
-        let main = store.alloc_raw(core.fn_type, body.cast());
         // A nullary application of `main`: its type is `main`.
         let call = store.alloc_raw(main, std::ptr::null_mut());
 
         let mut rt = Runtime::new(core.fn_type, &core.bcode);
-        // SAFETY: `call`/`main`/`body` are valid nodes in `store`.
+        // SAFETY: `call`/`main`/body are valid nodes in `store`.
         let result = unsafe { rt.run(call) }.unwrap();
         assert_eq!(result, 1);
         unsafe {
@@ -264,7 +274,7 @@ mod tests {
         scopes.push(core.root_scope);
 
         let node = {
-            let mut p = Parser::new("( return 40 + 2 )", &mut store, &mut trie, &core.metas, core.scope_, scopes);
+            let mut p = Parser::new("( return 40 + 2 )", &mut store, &mut trie, &core.metas, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
@@ -284,7 +294,7 @@ mod tests {
         let bare = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new("return 7", &mut store, &mut trie, &core.metas, core.scope_, s);
+            let mut p = Parser::new("return 7", &mut store, &mut trie, &core.metas, core.types(), s);
             p.parse_expression().unwrap()
         };
         let mut rt = Runtime::new(core.fn_type, &core.bcode);
@@ -294,7 +304,7 @@ mod tests {
         let nested = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new("( ( return 5 ) )", &mut store, &mut trie, &core.metas, core.scope_, s);
+            let mut p = Parser::new("( ( return 5 ) )", &mut store, &mut trie, &core.metas, core.types(), s);
             p.parse_expression().unwrap()
         };
         assert_eq!(unsafe { rt.run(nested) }.unwrap(), 5);
@@ -308,16 +318,14 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
 
-        let mut p = Parser::new("( return 1", &mut store, &mut trie, &core.metas, core.scope_, scopes);
+        let mut p = Parser::new("( return 1", &mut store, &mut trie, &core.metas, core.types(), scopes);
         assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::UnclosedBracket));
     }
 
     #[test]
     fn parses_and_runs_a_fn() {
-        // `fn`'s parse constructor. v1 `fn` has NO parameters: the prefix takes
-        // the rest of the expression as the body, so `fn 40 + 2` is a nullary
-        // function (a thunk) whose body is `40 + 2`. Applying and running it walks
-        // the body -> 42.
+        // The real fn surface `fn ( params ) -> ret ( body )`. A nullary function
+        // returning i32; applying and running it walks the body -> 42.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
@@ -326,13 +334,28 @@ mod tests {
         scopes.push(core.root_scope);
 
         let func = {
-            let mut p = Parser::new("fn 40 + 2", &mut store, &mut trie, &core.metas, core.scope_, scopes);
+            let mut p = Parser::new(
+                "fn () -> i32 ( return 40 + 2 )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                scopes,
+            );
             p.parse_expression().unwrap()
         };
 
-        // It parsed into a function (type `fn`).
+        // Node shape: `{ty: fn, value -> [input, output, body]}` with an empty
+        // input struct, an i32 return type, and a body (the `return`).
         unsafe {
             assert_eq!((*func).ty, core.fn_type);
+            let v = (*func).value as *const DyadPtr;
+            let (input, output, body) = (*v, *v.add(1), *v.add(2));
+            assert_eq!((*input).ty, core.struct_); // input is a struct
+            let iops = (*input).value as *const DyadPtr;
+            assert!((*iops.add(1)).is_null()); // no fields (scope then terminator)
+            assert_eq!(output, core.i32_); // return type i32
+            assert!(!body.is_null());
         }
 
         // Apply it and run: run finds no bcode for `func` and walks its body.
@@ -344,6 +367,65 @@ mod tests {
     }
 
     #[test]
+    fn parses_a_fn_with_a_param_visible_in_the_body() {
+        // A parameter is declared in the input struct's scope and resolves inside
+        // the body: `fn (x : i32) -> i32 ( return x )` parses to a body `return(x)`
+        // whose operand is the `x` parameter field. (Running it needs the calling
+        // convention — param frame slots — which is later; here we check parsing.)
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+
+        let func = {
+            let mut p = Parser::new(
+                "fn (x : i32) -> i32 ( return x )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                scopes,
+            );
+            p.parse_expression().unwrap()
+        };
+
+        unsafe {
+            assert_eq!((*func).ty, core.fn_type);
+            let v = (*func).value as *const DyadPtr;
+            let (input, output, body) = (*v, *v.add(1), *v.add(2));
+            assert_eq!(output, core.i32_);
+            // The single parameter `x`, an i32 field in the input struct.
+            let iops = (*input).value as *const DyadPtr;
+            let x_field = *iops.add(1); // [scope, x, null]
+            assert_eq!((*x_field).ty, core.i32_);
+            // The body `return x` resolved `x` to that parameter field.
+            let return_operand = (*body).value as DyadPtr;
+            assert_eq!(return_operand, x_field);
+        }
+    }
+
+    #[test]
+    fn fn_without_arrow_is_an_error() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+
+        let mut p = Parser::new(
+            "fn () ( return 1 )",
+            &mut store,
+            &mut trie,
+            &core.metas,
+            core.types(),
+            scopes,
+        );
+        assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::ExpectedArrow));
+    }
+
+    #[test]
     fn parses_an_empty_struct() {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
@@ -352,7 +434,7 @@ mod tests {
         scopes.push(core.root_scope);
 
         let node = {
-            let mut p = Parser::new("struct ()", &mut store, &mut trie, &core.metas, core.scope_, scopes);
+            let mut p = Parser::new("struct ()", &mut store, &mut trie, &core.metas, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
@@ -375,7 +457,7 @@ mod tests {
 
         let node = {
             let mut p =
-                Parser::new("struct (x : i32, y : i32)", &mut store, &mut trie, &core.metas, core.scope_, scopes);
+                Parser::new("struct (x : i32, y : i32)", &mut store, &mut trie, &core.metas, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
@@ -409,7 +491,7 @@ mod tests {
         scopes.push(core.root_scope);
 
         let node = {
-            let mut p = Parser::new("struct (t)", &mut store, &mut trie, &core.metas, core.scope_, scopes);
+            let mut p = Parser::new("struct (t)", &mut store, &mut trie, &core.metas, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
@@ -437,7 +519,7 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
 
-        let mut p = Parser::new("struct 40", &mut store, &mut trie, &core.metas, core.scope_, scopes);
+        let mut p = Parser::new("struct 40", &mut store, &mut trie, &core.metas, core.types(), scopes);
         assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::ExpectedOpen));
     }
 
@@ -458,7 +540,7 @@ mod tests {
         scopes.push(core.root_scope);
         let node = {
             let mut p =
-                Parser::new("struct (x : i32)", &mut store, &mut trie, &core.metas, core.scope_, scopes);
+                Parser::new("struct (x : i32)", &mut store, &mut trie, &core.metas, core.types(), scopes);
             p.parse_expression().unwrap()
         };
         unsafe {
@@ -480,7 +562,7 @@ mod tests {
         scopes.declare(&mut trie, "a", a).unwrap();
 
         let root = {
-            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, core.scope_, scopes);
+            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
