@@ -59,8 +59,6 @@ pub struct Core {
     pub plus: DyadPtr,
     /// `rational_number` (numeric literal carrier); a data type.
     pub rational: DyadPtr,
-    /// `return`; a function, and the identity a fn body must yield through.
-    pub return_: DyadPtr,
     /// `struct`, the type whose constructor derives a layout from a field list
     /// (and whose field list is a function's parameter list).
     pub struct_: DyadPtr,
@@ -98,7 +96,7 @@ impl Core {
         let plus = plus::register(&mut cx);
         fn_mod::register_syntax(&mut cx);
         paren::register(&mut cx);
-        let return_ = return_mod::register(&mut cx);
+        return_mod::register(&mut cx);
         let struct_ = struct_mod::register(&mut cx);
 
         let Cx { metas, bcode, lower, .. } = cx;
@@ -111,7 +109,6 @@ impl Core {
             assign,
             plus,
             rational,
-            return_,
             struct_,
             metas,
             bcode,
@@ -119,10 +116,9 @@ impl Core {
         }
     }
 
-    /// The core identity handles the parser references (types it opens, plus the
-    /// `return` a fn body must yield through).
+    /// The core type handles the parser needs to type the nodes it opens.
     pub fn types(&self) -> CoreTypes {
-        CoreTypes { scope: self.scope_, struct_: self.struct_, return_: self.return_ }
+        CoreTypes { scope: self.scope_, struct_: self.struct_ }
     }
 }
 
@@ -457,27 +453,31 @@ mod tests {
     }
 
     #[test]
-    fn fn_body_must_return() {
-        // A function body yields only through an explicit `return`; a body that is
-        // a bare statement (no return) is rejected, not silently valued.
+    fn fn_body_return_is_optional() {
+        // `return` is optional: a body is valued by what it evaluates to, so a bare
+        // `( 40 + 2 )` yields 42 just like `( return 40 + 2 )` does.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
-        let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
-        let a = store.alloc_raw(core.i32_, a_val);
-        scopes.declare(&mut trie, "a", a).unwrap();
 
-        let mut p = Parser::new(
-            "fn () -> i32 ( a = a + 1 )",
-            &mut store,
-            &mut trie,
-            &core.metas,
-            core.types(),
-            scopes,
-        );
-        assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::MissingReturn));
+        let func = {
+            let mut p = Parser::new(
+                "fn () -> i32 ( 40 + 2 )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                scopes,
+            );
+            p.parse_expression().unwrap()
+        };
+
+        let call = store.alloc_raw(func, std::ptr::null_mut());
+        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        // SAFETY: `call`/`func`/body are valid nodes just parsed.
+        assert_eq!(unsafe { rt.run(call) }.unwrap(), 42);
     }
 
     #[test]

@@ -304,18 +304,15 @@ pub enum Assoc {
     Right,
 }
 
-/// The core identity handles the parser references: a `scope` for each field list
-/// it opens, a `struct` for each parameter/field list, and `return`, the identity a
-/// function body must yield through. Bundled so adding a handle does not churn
-/// [`Parser::new`]'s signature.
+/// The core type handles the parser needs to type the nodes it opens: a `scope`
+/// for each field list, a `struct` for each parameter/field list. Bundled so that
+/// adding a handle does not churn [`Parser::new`]'s signature.
 #[derive(Debug, Clone, Copy)]
 pub struct CoreTypes {
     /// `scope`: the type of each scope the parser opens.
     pub scope: DyadPtr,
     /// `struct`: the type of a parameter-list / field-list node.
     pub struct_: DyadPtr,
-    /// `return`: a function body must be a `return` (see [`Parser::parse_fn`]).
-    pub return_: DyadPtr,
 }
 
 /// The fields of a function node's value struct, in order, as built by
@@ -410,9 +407,6 @@ pub enum ParseError {
     ExpectedArrow,
     /// A fn signature's `->` was not followed by a return type.
     ExpectedReturnType,
-    /// A function body did not yield through an explicit `return` (DESIGN
-    /// ›`return` is explicit‹). In v1 the body must be a `return`.
-    MissingReturn,
 }
 
 /// The one-pass elaborator: lexes on demand, resolves names against the scope
@@ -611,11 +605,10 @@ impl<'a> Parser<'a> {
     /// return type, the reflectable body, and the compiled `bcode` (null until
     /// [`crate::compile::compile_fn`] installs it).
     ///
-    /// The body must yield through an explicit `return` (DESIGN ›`return` is
-    /// explicit‹): a scope never takes its value from a trailing expression. In v1
-    /// the body is a single expression, so it must *be* a `return`; when control
-    /// flow lands this generalizes to "returns on all paths". A body of
-    /// `( a = a + 1 )` is therefore rejected ([`ParseError::MissingReturn`]).
+    /// A function's value is what its body evaluates to; an explicit `return` is
+    /// *optional* and, for v1's single-expression body, `return X` and `X` yield the
+    /// same value in tail position (early-return semantics, `return` unwinding out
+    /// of control flow, arrive with `if`/`while`).
     pub fn parse_fn(&mut self, fn_type: DyadPtr) -> Result<DyadPtr, ParseError> {
         // The parameter list is a struct; parse_struct opens and closes its scope.
         let input = self.parse_struct(self.types.struct_)?;
@@ -631,12 +624,6 @@ impl<'a> Parser<'a> {
         let body = self.parse_expression()?;
         self.expect_close()?;
         self.scopes.pop();
-
-        // A function body is a consumer scope: it yields only through `return`.
-        // SAFETY: `body` is the dyad just parsed.
-        if unsafe { (*body).ty } != self.types.return_ {
-            return Err(ParseError::MissingReturn);
-        }
 
         // `bcode` starts null; `compile_fn` installs the exec@ into this slot.
         let value = self.store.alloc_operands(&[input, output, body, std::ptr::null_mut()]);
