@@ -38,12 +38,16 @@ mod assign;
 mod paren;
 mod plus;
 mod rational;
+mod scope;
 
 /// The core identities and the per-phase tables that drive them.
 pub struct Core {
     /// The `Type : Type` self-loop, the one node whose type is itself.
     pub type_: DyadPtr,
-    /// The scope every core identity is declared in.
+    /// `scope`, the type of a scope node (the graph's spine). Each scope the parser
+    /// opens is typed with this.
+    pub scope_: DyadPtr,
+    /// The scope every core identity is declared in; itself a `scope`-typed node.
     pub root_scope: DyadPtr,
     /// `fn`, the type whose values are functions.
     pub fn_type: DyadPtr,
@@ -71,7 +75,8 @@ impl Core {
     pub fn build(store: &mut Store, trie: &mut RegexTrie) -> Core {
         // Foundational types first: others reference them.
         let type_ = type_mod::register_root(store);
-        let root_scope = store.alloc_raw(type_, std::ptr::null_mut());
+        let scope_ = scope::register(store, type_);
+        let root_scope = store.alloc_raw(scope_, std::ptr::null_mut());
         let fn_type = fn_mod::register(store, type_);
 
         // Then the behaviour-bearing identities, via a shared build context.
@@ -97,6 +102,7 @@ impl Core {
         let Cx { metas, bcode, lower, .. } = cx;
         Core {
             type_,
+            scope_,
             root_scope,
             fn_type,
             i32_,
@@ -167,7 +173,7 @@ mod tests {
         scopes.declare(&mut trie, "a", a).unwrap();
 
         let root = {
-            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, scopes);
+            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, core.scope_, scopes);
             p.parse_expression().unwrap()
         };
 
@@ -200,7 +206,7 @@ mod tests {
         scopes.declare(&mut trie, "a", a).unwrap();
 
         let root = {
-            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, scopes);
+            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, core.scope_, scopes);
             p.parse_expression().unwrap()
         };
 
@@ -230,7 +236,7 @@ mod tests {
         scopes.declare(&mut trie, "a", a).unwrap();
 
         let body = {
-            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, scopes);
+            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, core.scope_, scopes);
             p.parse_expression().unwrap()
         };
         // `main`: a function (type `fn`) whose value is its body; no bcode.
@@ -258,7 +264,7 @@ mod tests {
         scopes.push(core.root_scope);
 
         let node = {
-            let mut p = Parser::new("( return 40 + 2 )", &mut store, &mut trie, &core.metas, scopes);
+            let mut p = Parser::new("( return 40 + 2 )", &mut store, &mut trie, &core.metas, core.scope_, scopes);
             p.parse_expression().unwrap()
         };
 
@@ -278,7 +284,7 @@ mod tests {
         let bare = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new("return 7", &mut store, &mut trie, &core.metas, s);
+            let mut p = Parser::new("return 7", &mut store, &mut trie, &core.metas, core.scope_, s);
             p.parse_expression().unwrap()
         };
         let mut rt = Runtime::new(core.fn_type, &core.bcode);
@@ -288,7 +294,7 @@ mod tests {
         let nested = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new("( ( return 5 ) )", &mut store, &mut trie, &core.metas, s);
+            let mut p = Parser::new("( ( return 5 ) )", &mut store, &mut trie, &core.metas, core.scope_, s);
             p.parse_expression().unwrap()
         };
         assert_eq!(unsafe { rt.run(nested) }.unwrap(), 5);
@@ -302,7 +308,7 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
 
-        let mut p = Parser::new("( return 1", &mut store, &mut trie, &core.metas, scopes);
+        let mut p = Parser::new("( return 1", &mut store, &mut trie, &core.metas, core.scope_, scopes);
         assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::UnclosedBracket));
     }
 
@@ -320,7 +326,7 @@ mod tests {
         scopes.push(core.root_scope);
 
         let func = {
-            let mut p = Parser::new("fn 40 + 2", &mut store, &mut trie, &core.metas, scopes);
+            let mut p = Parser::new("fn 40 + 2", &mut store, &mut trie, &core.metas, core.scope_, scopes);
             p.parse_expression().unwrap()
         };
 
@@ -346,7 +352,7 @@ mod tests {
         scopes.push(core.root_scope);
 
         let node = {
-            let mut p = Parser::new("struct ()", &mut store, &mut trie, &core.metas, scopes);
+            let mut p = Parser::new("struct ()", &mut store, &mut trie, &core.metas, core.scope_, scopes);
             p.parse_expression().unwrap()
         };
 
@@ -369,7 +375,7 @@ mod tests {
 
         let node = {
             let mut p =
-                Parser::new("struct (x : i32, y : i32)", &mut store, &mut trie, &core.metas, scopes);
+                Parser::new("struct (x : i32, y : i32)", &mut store, &mut trie, &core.metas, core.scope_, scopes);
             p.parse_expression().unwrap()
         };
 
@@ -403,7 +409,7 @@ mod tests {
         scopes.push(core.root_scope);
 
         let node = {
-            let mut p = Parser::new("struct (t)", &mut store, &mut trie, &core.metas, scopes);
+            let mut p = Parser::new("struct (t)", &mut store, &mut trie, &core.metas, core.scope_, scopes);
             p.parse_expression().unwrap()
         };
 
@@ -431,8 +437,34 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
 
-        let mut p = Parser::new("struct 40", &mut store, &mut trie, &core.metas, scopes);
+        let mut p = Parser::new("struct 40", &mut store, &mut trie, &core.metas, core.scope_, scopes);
         assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::ExpectedOpen));
+    }
+
+    #[test]
+    fn scopes_are_typed_scope() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        // `scope` is a type (its own type is `type`), and the root scope is one.
+        unsafe {
+            assert_eq!((*core.scope_).ty, core.type_);
+            assert_eq!((*core.root_scope).ty, core.scope_);
+        }
+
+        // A struct opens its own `scope`-typed node (value[0]).
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let node = {
+            let mut p =
+                Parser::new("struct (x : i32)", &mut store, &mut trie, &core.metas, core.scope_, scopes);
+            p.parse_expression().unwrap()
+        };
+        unsafe {
+            let scope = *((*node).value as *const DyadPtr);
+            assert_eq!((*scope).ty, core.scope_);
+        }
     }
 
     #[test]
@@ -448,7 +480,7 @@ mod tests {
         scopes.declare(&mut trie, "a", a).unwrap();
 
         let root = {
-            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, scopes);
+            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, core.scope_, scopes);
             p.parse_expression().unwrap()
         };
 

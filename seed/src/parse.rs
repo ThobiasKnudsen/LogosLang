@@ -381,19 +381,25 @@ pub struct Parser<'a> {
     store: &'a mut Store,
     trie: &'a mut RegexTrie,
     metas: &'a std::collections::HashMap<DyadPtr, Construct>,
+    /// The `scope` core identity: the type given to each scope node the parser
+    /// opens (a struct/parameter-list scope). Held so the parser can build a typed
+    /// scope without reaching back into the core.
+    scope_type: DyadPtr,
 }
 
 impl<'a> Parser<'a> {
     /// A parser over `source`, resolving against `scopes` and `metas`, allocating
-    /// into `store`, and lexing via `trie`.
+    /// into `store`, and lexing via `trie`. `scope_type` is the `scope` identity
+    /// the parser types the scopes it opens with.
     pub fn new(
         source: &'a str,
         store: &'a mut Store,
         trie: &'a mut RegexTrie,
         metas: &'a std::collections::HashMap<DyadPtr, Construct>,
+        scope_type: DyadPtr,
         scopes: ScopeStack,
     ) -> Self {
-        Parser { source, pos: 0, scopes, store, trie, metas }
+        Parser { source, pos: 0, scopes, store, trie, metas, scope_type }
     }
 
     /// Advance past ASCII whitespace.
@@ -512,9 +518,9 @@ impl<'a> Parser<'a> {
     /// field list needs its own sub-parse rather than the generic driver.
     pub fn parse_struct(&mut self, struct_type: DyadPtr) -> Result<DyadPtr, ParseError> {
         self.expect_open()?;
-        // The struct's own scope: an address-only marker in v1 (the typed `scope`
-        // core identity is later). Field names are declared into it.
-        let scope = self.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut());
+        // The struct's own scope: a `scope`-typed node keyed by address for
+        // open-scope membership. Field names are declared into it.
+        let scope = self.store.alloc_raw(self.scope_type, std::ptr::null_mut());
         self.scopes.push(scope);
 
         let mut fields = Vec::new();
