@@ -336,9 +336,9 @@ pub enum Construct {
     /// A literal/atom: build a leaf node from the matched source span.
     Atom(fn(&mut Store, DyadPtr, &str) -> Result<DyadPtr, ParseError>),
     /// A prefix keyword that takes the rest of the expression as one operand
-    /// (e.g. `fn <body>`): build a node from the identity and that parsed operand.
-    /// v1 consumes to the end of the current expression; delimited forms come
-    /// with brackets.
+    /// (e.g. `return <expr>`): build a node from the identity and that parsed
+    /// operand. v1 consumes to the end of the current expression; delimited forms
+    /// come with brackets.
     Prefix(fn(&mut Store, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>),
     /// An infix binary operator with a precedence and associativity: build a node
     /// from its operator identity and two already-reduced operands.
@@ -347,8 +347,10 @@ pub enum Construct {
         assoc: Assoc,
         build: fn(&mut Store, DyadPtr, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>,
     },
-    /// An opening bracket `(`: parse the body up to the matching close, and the
-    /// scope's value is what that body yields (its `return`).
+    /// An opening bracket `(`: parse the body up to the matching close; the
+    /// scope's value is that body. (DESIGN ›`return` is explicit‹ requires a
+    /// value-producing scope to yield only through an explicit `return`; the seed
+    /// does not yet enforce that, see [`Parser::parse_fn`].)
     Open,
     /// A closing bracket `)`: ends the current scope's body.
     Close,
@@ -597,6 +599,12 @@ impl<'a> Parser<'a> {
     /// `{ty: fn, value -> [input, output, body]}` — the params struct, the return
     /// type, and the reflectable body — with no `bcode` until it is compiled (the
     /// run version's `bcode` table supplies that; see `crate::run`).
+    ///
+    /// The seed does *not* enforce that the body yields through an explicit
+    /// `return` (DESIGN ›`return` is explicit‹): a correct check is "every path
+    /// returns", which needs the control-flow analysis `if`/`while` bring, so it is
+    /// deferred rather than approximated. A body of `( a = a + 1 )` therefore parses
+    /// today though it returns nothing.
     pub fn parse_fn(&mut self, fn_type: DyadPtr) -> Result<DyadPtr, ParseError> {
         // The parameter list is a struct; parse_struct opens and closes its scope.
         let input = self.parse_struct(self.types.struct_)?;

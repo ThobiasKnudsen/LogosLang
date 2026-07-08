@@ -161,8 +161,8 @@ pub(crate) unsafe fn operands(node: DyadPtr) -> (DyadPtr, DyadPtr) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compile::{compile_fn, compile_nullary_i32};
-    use crate::parse::{Parser, ScopeStack};
+    use crate::compile::{compile_fn, compile_nullary_i32, CompileError};
+    use crate::parse::{Parser, ScopeStack, FN_BODY, FN_INPUT, FN_OUTPUT};
     use crate::run::Runtime;
 
     #[test]
@@ -350,7 +350,7 @@ mod tests {
         unsafe {
             assert_eq!((*func).ty, core.fn_type);
             let v = (*func).value as *const DyadPtr;
-            let (input, output, body) = (*v, *v.add(1), *v.add(2));
+            let (input, output, body) = (*v.add(FN_INPUT), *v.add(FN_OUTPUT), *v.add(FN_BODY));
             assert_eq!((*input).ty, core.struct_); // input is a struct
             let iops = (*input).value as *const DyadPtr;
             assert!((*iops.add(1)).is_null()); // no fields (scope then terminator)
@@ -394,7 +394,7 @@ mod tests {
         unsafe {
             assert_eq!((*func).ty, core.fn_type);
             let v = (*func).value as *const DyadPtr;
-            let (input, output, body) = (*v, *v.add(1), *v.add(2));
+            let (input, output, body) = (*v.add(FN_INPUT), *v.add(FN_OUTPUT), *v.add(FN_BODY));
             assert_eq!(output, core.i32_);
             // The single parameter `x`, an i32 field in the input struct.
             let iops = (*input).value as *const DyadPtr;
@@ -404,6 +404,33 @@ mod tests {
             let return_operand = (*body).value as DyadPtr;
             assert_eq!(return_operand, x_field);
         }
+    }
+
+    #[test]
+    fn compile_fn_rejects_parameters() {
+        // v1 compiles only nullary functions: `compile_fn` on a function with a
+        // parameter must error, not emit code that loads from an unbound slot.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+
+        let func = {
+            let mut p = Parser::new(
+                "fn (x : i32) -> i32 ( return x )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                scopes,
+            );
+            p.parse_expression().unwrap()
+        };
+
+        // SAFETY: `func` is the fn node just parsed.
+        let result = unsafe { compile_fn(&core.lower, func) };
+        assert_eq!(result.err(), Some(CompileError::NotNullary));
     }
 
     #[test]

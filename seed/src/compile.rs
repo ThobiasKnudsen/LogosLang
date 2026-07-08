@@ -21,7 +21,7 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{default_libcall_names, Linkage, Module};
 
 use crate::dyad::DyadPtr;
-use crate::parse::FN_BODY;
+use crate::parse::{FN_BODY, FN_INPUT};
 
 /// A lowering rule: emit the IR for a node and return the SSA value it computes,
 /// recursing on operands via [`Lowerer::lower`].
@@ -35,6 +35,10 @@ pub type LowerTable = HashMap<DyadPtr, LowerFn>;
 pub enum CompileError {
     /// No lowering rule is registered for this node's operation.
     NotLowerable(DyadPtr),
+    /// A function with parameters was handed to [`compile_fn`]. v1 compiles only
+    /// nullary functions; parameters need the calling convention (frame slots),
+    /// which is later work.
+    NotNullary,
     /// Cranelift rejected the setup, function, or finalization.
     Cranelift(String),
 }
@@ -122,6 +126,18 @@ impl Compiled {
 /// call to the returned [`Compiled`].
 pub unsafe fn compile_fn(lower: &LowerTable, fn_node: DyadPtr) -> Result<Compiled, CompileError> {
     let fields = (*fn_node).value as *const DyadPtr;
+    if fields.is_null() {
+        return Err(CompileError::NotLowerable(fn_node));
+    }
+    // v1 compiles only nullary functions: a parameter would lower to a load from a
+    // frame slot the (unbuilt) calling convention never fills, producing a load
+    // from a null address. The input struct's value is `[scope, field0 …, null]`
+    // (see `Parser::parse_struct`), so it has a parameter iff index 1 is not the
+    // null terminator.
+    let params = (*(*fields.add(FN_INPUT))).value as *const DyadPtr;
+    if !params.is_null() && !(*params.add(1)).is_null() {
+        return Err(CompileError::NotNullary);
+    }
     let body = *fields.add(FN_BODY);
     compile_nullary_i32(lower, body)
 }
