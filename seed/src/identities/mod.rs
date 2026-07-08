@@ -18,7 +18,7 @@ use crate::compile::LowerTable;
 use crate::dyad::DyadPtr;
 use crate::parse::{Construct, ParseError};
 use crate::run::Bcode;
-use crate::lex::RegexTrie;
+use crate::regex_trie::RegexTrie;
 use crate::store::Store;
 
 pub mod dyad;

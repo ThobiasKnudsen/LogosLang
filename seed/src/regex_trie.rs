@@ -3,7 +3,7 @@
 //! Each node holds a 256-entry `child_indices` table mapping a byte to a slot in
 //! `children`; byte 0 is reserved as the end-of-word (EOW) sentinel (its slot
 //! holds `None`). Patterns that are not pure literals are split (see
-//! [`super::regex_splitting`]) so their literal prefixes ride the fast byte-path
+//! [`crate::regex_splitting`]) so their literal prefixes ride the fast byte-path
 //! and only the residual regex chunks become `regexes` branches. Lookup is
 //! greedy longest-match, trying the literal child first and falling back to the
 //! node's combined regex.
@@ -37,7 +37,7 @@ use regex::bytes::Regex;
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 
-use super::regex_splitting::{is_pure_literal, regex_splitting, Segment};
+use crate::regex_splitting::{is_pure_literal, regex_splitting, Segment};
 
 /// `child_indices` sentinel: no child for this byte.
 const NONE: u32 = u32::MAX;

@@ -6,8 +6,9 @@
 
 pub mod compile;
 pub mod identities;
-pub mod lex;
 pub mod parse;
+pub mod regex_splitting;
+pub mod regex_trie;
 pub mod run;
 pub mod store;
 

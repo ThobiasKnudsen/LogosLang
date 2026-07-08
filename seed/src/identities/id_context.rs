@@ -1,7 +1,7 @@
 //! An `id_context`: an identity paired with the scope it was declared in.
 //!
 //! A single spelling can denote different identities in different scopes, so the
-//! name index stores a *list* of `id_context`s per spelling (see [`crate::lex::trie`]).
+//! name index stores a *list* of `id_context`s per spelling (see [`crate::regex_trie`]).
 //! Resolution keeps the candidate whose `scope` is currently open and, because
 //! shadowing is disallowed (a name may not be redeclared while another
 //! declaration of it is live), exactly one candidate survives, or none for a

@@ -10,7 +10,7 @@
 //!
 //! This module holds the parser's own state: the tape substrate (above), the
 //! scope stack, and name resolution over it. The parser owns resolution; the
-//! trie ([`crate::lex::trie`]) is only the name index. Still to come (V1PLAN
+//! trie ([`crate::regex_trie`]) is only the name index. Still to come (V1PLAN
 //! Phase 3): wiring the tape to lazily lex pending tokens from source, and the
 //! deferred-reduction driver that runs each identity's `constructor`.
 
@@ -18,7 +18,7 @@ use std::collections::HashSet;
 
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::lex::{RegexTrie, RegexTrieError};
+use crate::regex_trie::{RegexTrie, RegexTrieError};
 use crate::store::Store;
 
 /// A pending, not-yet-reduced token: the source span it was lexed from and the
