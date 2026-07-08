@@ -12,8 +12,10 @@
 //! rewrite of the graph. A node marks *that* it is a function (its type is `fn`);
 //! the table supplies *which* implementation this run version uses.
 //!
-//! v1 scalar values are `i32` widened to `i64`; compound user functions with a
-//! walkable `body` are a later increment.
+//! A function with a null `bcode` (no entry in this version's table) is
+//! interpreted by walking its `body` (the node its `value` points at). Primitives
+//! carry `bcode`, so only compound functions take that path. v1 scalar values are
+//! `i32` widened to `i64`.
 
 use std::collections::HashMap;
 
@@ -30,8 +32,7 @@ pub type Bcode = HashMap<DyadPtr, RunFn>;
 /// Why a run failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunError {
-    /// The operation is a function but this run version installed no `bcode` for
-    /// it.
+    /// The operation is a function with neither `bcode` nor a `body` to walk.
     NotRunnable(DyadPtr),
     /// A data node had no storage to read.
     BadValue,
@@ -53,20 +54,29 @@ impl<'a> Runtime<'a> {
     }
 
     /// Run `node`: read its operation (its `type`). If the operation is a
-    /// function (its own type is `fn`), run this version's `bcode` for it;
-    /// otherwise read the node's scalar value through its layout.
+    /// function (its own type is `fn`), run its `bcode` if this version has one,
+    /// else walk its `body`; if the operation is not a function, read the node's
+    /// scalar value through its layout.
     ///
     /// # Safety
     /// `node` must be a valid dyad from the store (address = id). `run`
-    /// dereferences it, its operation, and (for functions) the operands the
-    /// `bcode` reads.
+    /// dereferences it, its operation, and (for functions) the operands or body
+    /// they reach.
     pub unsafe fn run(&mut self, node: DyadPtr) -> Result<i64, RunError> {
         let op = (*node).ty;
         if (*op).ty == self.fn_type {
-            // `op` is a function: run this version's bcode for it.
+            // `op` is a function: run its bcode if present, else walk its body.
             match self.bcode.get(&op).copied() {
                 Some(bcode) => bcode(self, node),
-                None => Err(RunError::NotRunnable(op)),
+                None => {
+                    // Null bcode: interpretation is walking the body, the node the
+                    // function's `value` points at.
+                    let body = (*op).value as DyadPtr;
+                    if body.is_null() {
+                        return Err(RunError::NotRunnable(op));
+                    }
+                    self.run(body)
+                }
             }
         } else {
             // `node` is data: read its scalar (i32 in v1) through its layout.

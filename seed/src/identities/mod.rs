@@ -191,6 +191,39 @@ mod tests {
     }
 
     #[test]
+    fn runs_a_compound_function_by_walking_its_body() {
+        // A function with no bcode is interpreted by walking its body. Build
+        // `main`, a function whose body is `a = a + 1`, and run an application of
+        // it: run finds no bcode for `main` and walks the body.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
+        let a = store.alloc_raw(core.i32_, a_val);
+        scopes.declare(&mut trie, "a", a).unwrap();
+
+        let body = {
+            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, scopes);
+            p.parse_expression().unwrap()
+        };
+        // `main`: a function (type `fn`) whose value is its body; no bcode.
+        let main = store.alloc_raw(core.fn_type, body.cast());
+        // A nullary application of `main`: its type is `main`.
+        let call = store.alloc_raw(main, std::ptr::null_mut());
+
+        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        // SAFETY: `call`/`main`/`body` are valid nodes in `store`.
+        let result = unsafe { rt.run(call) }.unwrap();
+        assert_eq!(result, 1);
+        unsafe {
+            assert_eq!(std::ptr::read_unaligned(a_val as *const i32), 1);
+        }
+    }
+
+    #[test]
     fn jit_matches_the_interpreter() {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
