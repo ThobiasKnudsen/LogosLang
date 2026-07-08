@@ -22,7 +22,7 @@ use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::lex::RegexTrie;
 use crate::parse::{Assoc, Construct, ParseError};
-use crate::run::{Bcode, RunError, Runtime};
+use crate::run::{RunError, RunFn, Runtime};
 use crate::store::Store;
 
 /// The core identities and the metadata that drives them at parse time (`metas`)
@@ -32,21 +32,22 @@ pub struct Core {
     pub type_: DyadPtr,
     /// The scope every core identity is declared in.
     pub root_scope: DyadPtr,
+    /// `fn`, the type whose values are functions. `run` recognizes a function by
+    /// its type being this.
+    pub fn_type: DyadPtr,
     /// `i32`, the type of an integer variable/value.
     pub i32_: DyadPtr,
-    /// `=` (assignment).
+    /// `=` (assignment). A function: its `value` is its `bcode`.
     pub assign: DyadPtr,
-    /// `+` (addition).
+    /// `+` (addition). A function: its `value` is its `bcode`.
     pub plus: DyadPtr,
-    /// `rational_number` (numeric literal carrier).
+    /// `rational_number` (numeric literal carrier); a data type.
     pub rational: DyadPtr,
     /// Parse-time behaviour keyed by identity.
     pub metas: HashMap<DyadPtr, Construct>,
-    /// Run-time behaviour: each operation's compiled native (its `bcode`), keyed
-    /// by identity. Installing these is "compiling the leaves"; `run` jumps here.
-    pub bcode: Bcode,
     /// Compile-time behaviour: each operation's Cranelift lowering rule, keyed by
-    /// identity. `compile` walks these to emit IR.
+    /// identity. Unlike `bcode` (which lives on each function node), a lowering
+    /// rule is the compiler's own knowledge, so it lives in this table.
     pub lower: LowerTable,
 }
 
@@ -62,13 +63,16 @@ impl Core {
         // The root scope; every core identity is declared here.
         let root_scope = store.alloc_raw(type_, std::ptr::null_mut());
 
-        // `i32` is a type (its `ty` is `type`); its values carry 4 bytes.
+        // Data types (their `ty` is `type`). `fn` is the type whose values are
+        // functions; `i32` and `rational` carry scalar data.
+        let fn_type = store.alloc_raw(type_, std::ptr::null_mut());
         let i32_ = store.alloc_raw(type_, std::ptr::null_mut());
-
-        // Operator and literal identities. Each is a type (its `ty` is `type`).
-        let assign = store.alloc_raw(type_, std::ptr::null_mut());
-        let plus = store.alloc_raw(type_, std::ptr::null_mut());
         let rational = store.alloc_raw(type_, std::ptr::null_mut());
+
+        // `=` and `+` are *functions*: their type is `fn` and their `value` is
+        // their `bcode` (native code). `run` reads it straight off the node.
+        let assign = store.alloc_raw(fn_type, bcode_ptr(run_assign));
+        let plus = store.alloc_raw(fn_type, bcode_ptr(run_plus));
 
         // Register spellings in the name index under the root scope.
         trie.insert("=", IdContext::new(assign, root_scope));
@@ -88,23 +92,21 @@ impl Core {
         );
         metas.insert(rational, Construct::Atom(build_rational));
 
-        // Run time: compile the leaves by installing each primitive's native
-        // `bcode`. `run` bottoms out here.
-        let mut bcode: Bcode = HashMap::new();
-        bcode.insert(i32_, run_i32);
-        bcode.insert(rational, run_rational);
-        bcode.insert(plus, run_plus);
-        bcode.insert(assign, run_assign);
-
-        // Compile time: the Cranelift lowering rule for each primitive.
+        // Compile time: the compiler's own Cranelift lowering rule per primitive.
         let mut lower: LowerTable = HashMap::new();
         lower.insert(i32_, lower_i32);
         lower.insert(rational, lower_rational);
         lower.insert(plus, lower_plus);
         lower.insert(assign, lower_assign);
 
-        Core { type_, root_scope, i32_, assign, plus, rational, metas, bcode, lower }
+        Core { type_, root_scope, fn_type, i32_, assign, plus, rational, metas, lower }
     }
+}
+
+/// A native function's code, encoded as the `void@` a function node stores as its
+/// `value`. [`crate::run`] transmutes it back to a [`RunFn`] and jumps to it.
+fn bcode_ptr(f: RunFn) -> *mut u8 {
+    f as *const () as *mut u8
 }
 
 /// Build a binary application `{ty: op, value: {lhs, rhs}}`.
@@ -118,12 +120,11 @@ fn build_binary(
     Ok(store.alloc_raw(op, operands))
 }
 
-/// Build a rational literal `{ty: rational, value: <i64 bytes>}` from its span.
-/// v1 molds the literal to a concrete integer eagerly (the general coerce-to-the
-/// -sibling-operand's-type path is later); the value is stored as native-endian
-/// `i64` bytes.
+/// Build a rational literal `{ty: rational, value: <i32 bytes>}` from its span.
+/// v1 molds the literal to a concrete `i32` eagerly (the general coerce-to-the
+/// -sibling-operand's-type path is later); v1 scalars are `i32`.
 fn build_rational(store: &mut Store, rational: DyadPtr, span: &str) -> Result<DyadPtr, ParseError> {
-    let n: i64 = span.parse().map_err(|_| ParseError::BadLiteral)?;
+    let n: i32 = span.parse().map_err(|_| ParseError::BadLiteral)?;
     let value = store.alloc_bytes(&n.to_ne_bytes());
     Ok(store.alloc_raw(rational, value))
 }
@@ -138,17 +139,10 @@ unsafe fn operands(node: DyadPtr) -> (DyadPtr, DyadPtr) {
     (*p, *p.add(1))
 }
 
-// --- the compiled leaves (each core primitive's native `bcode`) --------------
-
-/// Read an `i32` variable/value's bytes as a scalar.
-fn run_i32(_rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    unsafe { Ok(std::ptr::read_unaligned((*node).value as *const i32) as i64) }
-}
-
-/// Read a molded rational literal's `i64` bytes.
-fn run_rational(_rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    unsafe { Ok(std::ptr::read_unaligned((*node).value as *const i64)) }
-}
+// --- function bcode (each core function's native code, stored on its node) ---
+//
+// Data leaves (an `i32` variable, a `rational` literal) are not functions; `run`
+// reads them through their layout, so they need no bcode here.
 
 /// Add: run both operands and sum them.
 fn run_plus(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
@@ -185,8 +179,8 @@ fn lower_i32(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
 
 /// Lower a molded rational literal to an `i32` immediate.
 fn lower_rational(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    let v = unsafe { std::ptr::read_unaligned((*node).value as *const i64) };
-    Ok(lw.const_i32(v as i32))
+    let v = unsafe { std::ptr::read_unaligned((*node).value as *const i32) };
+    Ok(lw.const_i32(v))
 }
 
 /// Lower addition to `iadd` over the lowered operands.
@@ -246,7 +240,7 @@ mod tests {
             assert_eq!(*sops, a); // +.lhs is a
             let one = *sops.add(1); // +.rhs is the literal
             assert_eq!((*one).ty, core.rational);
-            assert_eq!(std::ptr::read_unaligned((*one).value as *const i64), 1);
+            assert_eq!(std::ptr::read_unaligned((*one).value as *const i32), 1);
         }
     }
 
@@ -269,7 +263,7 @@ mod tests {
         };
 
         // run `a = a + 1`: yields 1 and leaves a holding 1.
-        let mut rt = Runtime::new(&core.bcode);
+        let mut rt = Runtime::new(core.fn_type);
         // SAFETY: `root` is the valid dyad tree just parsed into `store`.
         let result = unsafe { rt.run(root) }.unwrap();
         assert_eq!(result, 1);
@@ -298,7 +292,7 @@ mod tests {
         };
 
         // Oracle: the interpreter, from a = 0.
-        let mut rt = Runtime::new(&core.bcode);
+        let mut rt = Runtime::new(core.fn_type);
         // SAFETY: `root` is the valid tree just parsed.
         let interp = unsafe { rt.run(root) }.unwrap();
         let interp_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
