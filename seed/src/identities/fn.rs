@@ -3,9 +3,12 @@
 //! in the run/compile tables, and a body/input/output layout arrives with
 //! richer functions.
 //!
-//! Surface syntax: `fn <body>` parses to a function whose value is the parsed
-//! body. v1 has no parameter list or return type yet, and the prefix grabs the
-//! rest of the expression as the body (delimited forms come with brackets).
+//! Surface syntax (v1, minimal): `fn <body>` parses to a *nullary* function (a
+//! thunk) whose value is the parsed body; the prefix grabs the rest of the
+//! expression as the body. There is no parameter list or return type yet, so
+//! `fn a = a + 1` does NOT bind `a` as an argument: it is a thunk whose body is
+//! the assignment `a = a + 1` over an existing `a`. A real parameter list and a
+//! delimited body arrive with bracket parsing (scopes).
 
 use super::Cx;
 use crate::dyad::DyadPtr;

@@ -226,20 +226,19 @@ mod tests {
 
     #[test]
     fn parses_and_runs_a_fn() {
-        // `fn`'s parse constructor: `fn a = a + 1` parses to a function whose body
-        // is the assignment. Running an application of it walks the body -> 1.
+        // `fn`'s parse constructor. v1 `fn` has NO parameters: the prefix takes
+        // the rest of the expression as the body, so `fn 40 + 2` is a nullary
+        // function (a thunk) whose body is `40 + 2`. Applying and running it walks
+        // the body -> 42.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
 
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
-        let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
-        let a = store.alloc_raw(core.i32_, a_val);
-        scopes.declare(&mut trie, "a", a).unwrap();
 
         let func = {
-            let mut p = Parser::new("fn a = a + 1", &mut store, &mut trie, &core.metas, scopes);
+            let mut p = Parser::new("fn 40 + 2", &mut store, &mut trie, &core.metas, scopes);
             p.parse_expression().unwrap()
         };
 
@@ -253,10 +252,7 @@ mod tests {
         let mut rt = Runtime::new(core.fn_type, &core.bcode);
         // SAFETY: `call`/`func`/body are valid nodes in `store`.
         let result = unsafe { rt.run(call) }.unwrap();
-        assert_eq!(result, 1);
-        unsafe {
-            assert_eq!(std::ptr::read_unaligned(a_val as *const i32), 1);
-        }
+        assert_eq!(result, 42);
     }
 
     #[test]
