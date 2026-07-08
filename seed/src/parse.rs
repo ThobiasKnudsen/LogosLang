@@ -353,9 +353,8 @@ pub enum Construct {
         build: fn(&mut Store, DyadPtr, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>,
     },
     /// An opening bracket `(`: parse the body up to the matching close; the
-    /// scope's value is that body. (DESIGN ›`return` is explicit‹ requires a
-    /// value-producing scope to yield only through an explicit `return`; the seed
-    /// does not yet enforce that, see [`Parser::parse_fn`].)
+    /// scope's value is what that body evaluates to (DESIGN ›A scope's value is
+    /// what it evaluates to‹). An explicit `return` is optional.
     Open,
     /// A closing bracket `)`: ends the current scope's body.
     Close,

@@ -1,11 +1,12 @@
-//! `return`: yields a value to the enclosing scope. It is a function whose single
-//! operand is its `value`; run and compile evaluate that operand and yield it.
-//! Surface: prefix, `return <expr>`.
+//! `return`: an optional early exit from the enclosing function. It is a function
+//! whose single operand is its `value`; run and compile evaluate that operand and
+//! yield it. Surface: prefix, `return <expr>`.
 //!
-//! v1 has no transparent-scope nesting yet (no loops or `if`), so `return X` is
-//! simply the value of the `( )` it sits in. The unwind-to-nearest-consumer
-//! semantics (DESIGN ›`return` is explicit and yields to the nearest consuming
-//! scope‹) arrive with control flow.
+//! `return` is not needed to produce a value: a scope is valued by what it
+//! evaluates to (its trailing expression), so `return X` and `X` coincide in tail
+//! position. v1 has no control flow to exit past, so `return X` is simply the value
+//! of the `( )` it sits in; the early-exit-to-the-nearest-function semantics
+//! (DESIGN ›A scope's value is what it evaluates to‹) arrive with control flow.
 
 use cranelift_codegen::ir::Value;
 
