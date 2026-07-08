@@ -81,6 +81,7 @@ impl Core {
         let rational = rational::register(&mut cx);
         let assign = assign::register(&mut cx);
         let plus = plus::register(&mut cx);
+        fn_mod::register_syntax(&mut cx);
 
         let Cx { metas, bcode, lower, .. } = cx;
         Core { type_, root_scope, fn_type, i32_, assign, plus, rational, metas, bcode, lower }
@@ -216,6 +217,41 @@ mod tests {
 
         let mut rt = Runtime::new(core.fn_type, &core.bcode);
         // SAFETY: `call`/`main`/`body` are valid nodes in `store`.
+        let result = unsafe { rt.run(call) }.unwrap();
+        assert_eq!(result, 1);
+        unsafe {
+            assert_eq!(std::ptr::read_unaligned(a_val as *const i32), 1);
+        }
+    }
+
+    #[test]
+    fn parses_and_runs_a_fn() {
+        // `fn`'s parse constructor: `fn a = a + 1` parses to a function whose body
+        // is the assignment. Running an application of it walks the body -> 1.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
+        let a = store.alloc_raw(core.i32_, a_val);
+        scopes.declare(&mut trie, "a", a).unwrap();
+
+        let func = {
+            let mut p = Parser::new("fn a = a + 1", &mut store, &mut trie, &core.metas, scopes);
+            p.parse_expression().unwrap()
+        };
+
+        // It parsed into a function (type `fn`).
+        unsafe {
+            assert_eq!((*func).ty, core.fn_type);
+        }
+
+        // Apply it and run: run finds no bcode for `func` and walks its body.
+        let call = store.alloc_raw(func, std::ptr::null_mut());
+        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        // SAFETY: `call`/`func`/body are valid nodes in `store`.
         let result = unsafe { rt.run(call) }.unwrap();
         assert_eq!(result, 1);
         unsafe {
