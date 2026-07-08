@@ -4,6 +4,7 @@
 //! The first subsystem built here is the lexer's regex-trie (`lex`), a port of
 //! `regex_trie.zig` / `regex_splitting.zig` from the `zig_pivot` branch.
 
+pub mod compile;
 pub mod core;
 pub mod dyad;
 pub mod id_context;

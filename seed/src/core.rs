@@ -15,6 +15,9 @@
 
 use std::collections::HashMap;
 
+use cranelift_codegen::ir::Value;
+
+use crate::compile::{CompileError, LowerTable, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::lex::RegexTrie;
@@ -42,6 +45,9 @@ pub struct Core {
     /// Run-time behaviour: each operation's compiled native (its `bcode`), keyed
     /// by identity. Installing these is "compiling the leaves"; `run` jumps here.
     pub bcode: Bcode,
+    /// Compile-time behaviour: each operation's Cranelift lowering rule, keyed by
+    /// identity. `compile` walks these to emit IR.
+    pub lower: LowerTable,
 }
 
 impl Core {
@@ -90,7 +96,14 @@ impl Core {
         bcode.insert(plus, run_plus);
         bcode.insert(assign, run_assign);
 
-        Core { type_, root_scope, i32_, assign, plus, rational, metas, bcode }
+        // Compile time: the Cranelift lowering rule for each primitive.
+        let mut lower: LowerTable = HashMap::new();
+        lower.insert(i32_, lower_i32);
+        lower.insert(rational, lower_rational);
+        lower.insert(plus, lower_plus);
+        lower.insert(assign, lower_assign);
+
+        Core { type_, root_scope, i32_, assign, plus, rational, metas, bcode, lower }
     }
 }
 
@@ -162,6 +175,43 @@ fn run_assign(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
+// --- the lowering rules (each core primitive's Cranelift compile) -------------
+
+/// Lower an `i32` variable to a load from its baked storage address.
+fn lower_i32(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    let addr = unsafe { (*node).value };
+    Ok(lw.load_i32(addr))
+}
+
+/// Lower a molded rational literal to an `i32` immediate.
+fn lower_rational(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    let v = unsafe { std::ptr::read_unaligned((*node).value as *const i64) };
+    Ok(lw.const_i32(v as i32))
+}
+
+/// Lower addition to `iadd` over the lowered operands.
+fn lower_plus(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: `node` is a valid application dyad, so its operands are valid nodes.
+    unsafe {
+        let (lhs, rhs) = operands(node);
+        let l = lw.lower(lhs)?;
+        let r = lw.lower(rhs)?;
+        Ok(lw.add(l, r))
+    }
+}
+
+/// Lower assignment to a store into the left operand's baked storage, yielding
+/// the assigned value.
+fn lower_assign(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: `node` is a valid application dyad, so its operands are valid nodes.
+    unsafe {
+        let (lhs, rhs) = operands(node);
+        let v = lw.lower(rhs)?;
+        lw.store_i32((*lhs).value, v);
+        Ok(v)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,5 +276,43 @@ mod tests {
         unsafe {
             assert_eq!(std::ptr::read_unaligned(a_val as *const i32), 1);
         }
+    }
+
+    #[test]
+    fn jit_matches_the_interpreter() {
+        use crate::compile::compile_nullary_i32;
+
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
+        let a = store.alloc_raw(core.i32_, a_val);
+        scopes.declare(&mut trie, "a", a).unwrap();
+
+        let root = {
+            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, scopes);
+            p.parse_expression().unwrap()
+        };
+
+        // Oracle: the interpreter, from a = 0.
+        let mut rt = Runtime::new(&core.bcode);
+        // SAFETY: `root` is the valid tree just parsed.
+        let interp = unsafe { rt.run(root) }.unwrap();
+        let interp_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
+
+        // Reset a to 0, then JIT-compile and call, and diff against the oracle.
+        unsafe { std::ptr::write_unaligned(a_val as *mut i32, 0) };
+        // SAFETY: `root`/`a` live in `store`, which outlives the call.
+        let compiled = unsafe { compile_nullary_i32(&core.lower, root) }.unwrap();
+        let jit = unsafe { compiled.call_i32() };
+        let jit_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
+
+        assert_eq!(interp, 1);
+        assert_eq!(i64::from(jit), interp); // same result
+        assert_eq!(jit_a, interp_a); // same side effect on a
+        assert_eq!(jit_a, 1);
     }
 }
