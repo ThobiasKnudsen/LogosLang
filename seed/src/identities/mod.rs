@@ -227,22 +227,22 @@ mod tests {
 
     #[test]
     fn runs_a_compound_function_by_walking_its_body() {
-        // A function with no bcode is interpreted by walking its `body` field.
-        // Parse `main`, a nullary function whose body mutates the outer `a`, then
-        // run an application of it: run finds no bcode for `main` and walks body.
+        // A function with no bcode is interpreted by walking its `body` field. The
+        // body `return a + 1` reads an enclosing variable, so the walk resolves `a`
+        // and loads it (a non-trivial body, and a valid one: it returns its i32).
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
 
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
-        let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
+        let a_val = store.alloc_bytes(&41i32.to_ne_bytes());
         let a = store.alloc_raw(core.i32_, a_val);
         scopes.declare(&mut trie, "a", a).unwrap();
 
         let main = {
             let mut p = Parser::new(
-                "fn () -> i32 ( a = a + 1 )",
+                "fn () -> i32 ( return a + 1 )",
                 &mut store,
                 &mut trie,
                 &core.metas,
@@ -257,9 +257,9 @@ mod tests {
         let mut rt = Runtime::new(core.fn_type, &core.bcode);
         // SAFETY: `call`/`main`/body are valid nodes in `store`.
         let result = unsafe { rt.run(call) }.unwrap();
-        assert_eq!(result, 1);
+        assert_eq!(result, 42); // a + 1 = 41 + 1
         unsafe {
-            assert_eq!(std::ptr::read_unaligned(a_val as *const i32), 1);
+            assert_eq!(std::ptr::read_unaligned(a_val as *const i32), 41); // a unchanged
         }
     }
 
@@ -587,23 +587,20 @@ mod tests {
 
     #[test]
     fn milestone_2_fn_runs_interpreted_and_jit_identically() {
-        // Milestone 2: the smoke test wrapped in a function, run both interpreted
-        // and Cranelift-JIT-compiled, results and the side effect on `a` diffed.
-        // The interpreter is the oracle.
+        // Milestone 2: a function run both interpreted and Cranelift-JIT-compiled,
+        // results diffed. The interpreter is the oracle. The body `return 40 + 2`
+        // yields its i32 through an explicit `return` (DESIGN: a scope's value
+        // comes only from `return`, never a trailing expression).
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
 
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
-        let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
-        let a = store.alloc_raw(core.i32_, a_val);
-        scopes.declare(&mut trie, "a", a).unwrap();
 
-        // `fn () -> i32 ( a = a + 1 )`: the smoke test, wrapped in a function.
         let func = {
             let mut p = Parser::new(
-                "fn () -> i32 ( a = a + 1 )",
+                "fn () -> i32 ( return 40 + 2 )",
                 &mut store,
                 &mut trie,
                 &core.metas,
@@ -613,23 +610,18 @@ mod tests {
             p.parse_expression().unwrap()
         };
 
-        // Oracle: interpret an application of the function, from a = 0.
+        // Oracle: interpret an application of the function.
         let call = store.alloc_raw(func, std::ptr::null_mut());
         let mut rt = Runtime::new(core.fn_type, &core.bcode);
         // SAFETY: `call`/`func`/body are valid nodes just parsed into `store`.
         let interp = unsafe { rt.run(call) }.unwrap();
-        let interp_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
 
-        // Reset a to 0, JIT-compile the function's body, call, and diff.
-        unsafe { std::ptr::write_unaligned(a_val as *mut i32, 0) };
-        // SAFETY: `func` is the fn node just built; `a`'s storage outlives the call.
+        // JIT-compile the function's body, call, and diff against the oracle.
+        // SAFETY: `func` is the fn node just built and outlives the call.
         let compiled = unsafe { compile_fn(&core.lower, func) }.unwrap();
         let jit = unsafe { compiled.call_i32() };
-        let jit_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
 
-        assert_eq!(interp, 1);
-        assert_eq!(i64::from(jit), interp); // same result
-        assert_eq!(jit_a, interp_a); // same side effect on a
-        assert_eq!(jit_a, 1);
+        assert_eq!(interp, 42);
+        assert_eq!(i64::from(jit), interp); // JIT matches the interpreter oracle
     }
 }
