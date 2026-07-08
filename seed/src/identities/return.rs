@@ -18,12 +18,14 @@ use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
 /// Register `return`: spelling, prefix constructor, run bcode, and lowering.
-pub(super) fn register(cx: &mut Cx) {
+/// Returns the identity so the parser can require a fn body to yield through it.
+pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let id = cx.store.alloc_raw(cx.fn_type, std::ptr::null_mut());
     cx.trie.insert("return", IdContext::new(id, cx.root_scope));
     cx.metas.insert(id, Construct::Prefix(build));
     cx.bcode.insert(id, run);
     cx.lower.insert(id, lower);
+    id
 }
 
 /// Build `return <operand>` as `{ty: return, value: operand}`.

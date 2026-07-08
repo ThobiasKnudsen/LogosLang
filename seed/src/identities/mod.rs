@@ -59,6 +59,8 @@ pub struct Core {
     pub plus: DyadPtr,
     /// `rational_number` (numeric literal carrier); a data type.
     pub rational: DyadPtr,
+    /// `return`; a function, and the identity a fn body must yield through.
+    pub return_: DyadPtr,
     /// `struct`, the type whose constructor derives a layout from a field list
     /// (and whose field list is a function's parameter list).
     pub struct_: DyadPtr,
@@ -96,7 +98,7 @@ impl Core {
         let plus = plus::register(&mut cx);
         fn_mod::register_syntax(&mut cx);
         paren::register(&mut cx);
-        return_mod::register(&mut cx);
+        let return_ = return_mod::register(&mut cx);
         let struct_ = struct_mod::register(&mut cx);
 
         let Cx { metas, bcode, lower, .. } = cx;
@@ -109,6 +111,7 @@ impl Core {
             assign,
             plus,
             rational,
+            return_,
             struct_,
             metas,
             bcode,
@@ -116,9 +119,10 @@ impl Core {
         }
     }
 
-    /// The core type handles the parser needs to type the nodes it opens.
+    /// The core identity handles the parser references (types it opens, plus the
+    /// `return` a fn body must yield through).
     pub fn types(&self) -> CoreTypes {
-        CoreTypes { scope: self.scope_, struct_: self.struct_ }
+        CoreTypes { scope: self.scope_, struct_: self.struct_, return_: self.return_ }
     }
 }
 
@@ -162,7 +166,7 @@ pub(crate) unsafe fn operands(node: DyadPtr) -> (DyadPtr, DyadPtr) {
 mod tests {
     use super::*;
     use crate::compile::{compile_fn, compile_nullary_i32, CompileError};
-    use crate::parse::{Parser, ScopeStack, FN_BODY, FN_INPUT, FN_OUTPUT};
+    use crate::parse::{Parser, ScopeStack, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
     use crate::run::Runtime;
 
     #[test]
@@ -453,6 +457,30 @@ mod tests {
     }
 
     #[test]
+    fn fn_body_must_return() {
+        // A function body yields only through an explicit `return`; a body that is
+        // a bare statement (no return) is rejected, not silently valued.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
+        let a = store.alloc_raw(core.i32_, a_val);
+        scopes.declare(&mut trie, "a", a).unwrap();
+
+        let mut p = Parser::new(
+            "fn () -> i32 ( a = a + 1 )",
+            &mut store,
+            &mut trie,
+            &core.metas,
+            core.types(),
+            scopes,
+        );
+        assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::MissingReturn));
+    }
+
+    #[test]
     fn parses_an_empty_struct() {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
@@ -637,18 +665,30 @@ mod tests {
             p.parse_expression().unwrap()
         };
 
-        // Oracle: interpret an application of the function.
+        // The same `run`, two paths on one node: interpret first (no bcode yet),
+        // then compile and run again (jumps to the installed bcode). Both diffed.
         let call = store.alloc_raw(func, std::ptr::null_mut());
         let mut rt = Runtime::new(core.fn_type, &core.bcode);
-        // SAFETY: `call`/`func`/body are valid nodes just parsed into `store`.
-        let interp = unsafe { rt.run(call) }.unwrap();
 
-        // JIT-compile the function's body, call, and diff against the oracle.
+        // Interpreted: bcode is null, so `run` walks the body.
+        let interp = unsafe { rt.run(call) }.unwrap();
+        unsafe {
+            let bcode = *((*func).value as *const DyadPtr).add(FN_BCODE);
+            assert!(bcode.is_null());
+        }
+
+        // Compile installs the exec@ on `func`; keep the artifact alive for the run.
         // SAFETY: `func` is the fn node just built and outlives the call.
-        let compiled = unsafe { compile_fn(&core.lower, func) }.unwrap();
-        let jit = unsafe { compiled.call_i32() };
+        let _compiled = unsafe { compile_fn(&core.lower, func) }.unwrap();
+        unsafe {
+            let bcode = *((*func).value as *const DyadPtr).add(FN_BCODE);
+            assert!(!bcode.is_null()); // bcode installed on the node
+        }
+
+        // JIT: the same `run(call)` now jumps to the installed bcode.
+        let jit = unsafe { rt.run(call) }.unwrap();
 
         assert_eq!(interp, 42);
-        assert_eq!(i64::from(jit), interp); // JIT matches the interpreter oracle
+        assert_eq!(jit, interp); // the compiled path matches the interpreter oracle
     }
 }

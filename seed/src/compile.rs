@@ -21,7 +21,7 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{default_libcall_names, Linkage, Module};
 
 use crate::dyad::DyadPtr;
-use crate::parse::{FN_BODY, FN_INPUT};
+use crate::parse::{FN_BCODE, FN_BODY, FN_INPUT};
 
 /// A lowering rule: emit the IR for a node and return the SSA value it computes,
 /// recursing on operands via [`Lowerer::lower`].
@@ -114,16 +114,22 @@ impl Compiled {
     }
 }
 
-/// Compile a nullary `fn () -> i32` by lowering its body. Reads the function
-/// node's `body` field (see [`crate::parse::FN_BODY`]) and delegates to
-/// [`compile_nullary_i32`]. Parameters and non-`i32` returns need the calling
-/// convention and wider lowering, which are later; this handles the nullary-`i32`
-/// case (DESIGN Milestone 2).
+/// Compile a nullary `fn () -> i32` and install its machine code on the node.
+/// Lowers the function's `body` (see [`crate::parse::FN_BODY`]) to a callable, then
+/// writes the `exec@` into the node's `bcode` slot ([`crate::parse::FN_BCODE`]) so
+/// [`crate::run`] jumps to it instead of walking the body. Parameters and non-`i32`
+/// returns need the calling convention and wider lowering, which are later.
+///
+/// The returned [`Compiled`] *owns* the executable memory; the installed `bcode` is
+/// only valid while it is alive, so the caller must keep it alive for as long as the
+/// function may be run compiled (a use-after-free otherwise). This is the same
+/// lifetime contract as [`Compiled`] itself; graph-managed ownership arrives with
+/// deoptimization.
 ///
 /// # Safety
 /// `fn_node` must be a valid function node (`{ty: fn, value -> [input, output,
-/// body]}`) from the store, and any storage its body references must outlive every
-/// call to the returned [`Compiled`].
+/// body, bcode]}`) from the store, and any storage its body references must outlive
+/// every call to the returned [`Compiled`].
 pub unsafe fn compile_fn(lower: &LowerTable, fn_node: DyadPtr) -> Result<Compiled, CompileError> {
     let fields = (*fn_node).value as *const DyadPtr;
     if fields.is_null() {
@@ -139,7 +145,12 @@ pub unsafe fn compile_fn(lower: &LowerTable, fn_node: DyadPtr) -> Result<Compile
         return Err(CompileError::NotNullary);
     }
     let body = *fields.add(FN_BODY);
-    compile_nullary_i32(lower, body)
+    let compiled = compile_nullary_i32(lower, body)?;
+    // Install the exec@ (a machine-code address) into the node's bcode slot, punned
+    // into the pointer-sized cell. `run` reads it back and jumps.
+    let bcode_slot = ((*fn_node).value as *mut DyadPtr).add(FN_BCODE);
+    *bcode_slot = compiled.ptr as DyadPtr;
+    Ok(compiled)
 }
 
 /// Compile `root` as a nullary function returning `i32`.

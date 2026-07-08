@@ -304,26 +304,34 @@ pub enum Assoc {
     Right,
 }
 
-/// The core type handles the parser needs to type the nodes it opens: a `scope`
-/// for each field list, a `struct` for each parameter/field list. Bundled so that
-/// adding a handle does not churn [`Parser::new`]'s signature.
+/// The core identity handles the parser references: a `scope` for each field list
+/// it opens, a `struct` for each parameter/field list, and `return`, the identity a
+/// function body must yield through. Bundled so adding a handle does not churn
+/// [`Parser::new`]'s signature.
 #[derive(Debug, Clone, Copy)]
 pub struct CoreTypes {
     /// `scope`: the type of each scope the parser opens.
     pub scope: DyadPtr,
     /// `struct`: the type of a parameter-list / field-list node.
     pub struct_: DyadPtr,
+    /// `return`: a function body must be a `return` (see [`Parser::parse_fn`]).
+    pub return_: DyadPtr,
 }
 
 /// The fields of a function node's value struct, in order, as built by
-/// [`Parser::parse_fn`]: the input `struct`, the return type, and the reflectable
-/// body. `run` and `compile` read the body through [`FN_BODY`]; `bcode` is not a
-/// node field in this seed (compiled code lives in the run version's table).
+/// [`Parser::parse_fn`]: the input `struct`, the return type, the reflectable body,
+/// and the compiled `bcode`. The native *leaf* functions (`=`, `+`, `return`) keep
+/// their machine code in the run version's table instead (they have a null value
+/// slot); a user function carries its own compiled `bcode` here, null until
+/// compiled, and `run` jumps to it when present (DESIGN ›Execution is function
+/// application‹).
 pub const FN_INPUT: usize = 0;
 /// See [`FN_INPUT`].
 pub const FN_OUTPUT: usize = 1;
 /// See [`FN_INPUT`].
 pub const FN_BODY: usize = 2;
+/// See [`FN_INPUT`]. The compiled machine code (`exec@`), null until compiled.
+pub const FN_BCODE: usize = 3;
 
 /// A core identity's native parse-time behaviour: how the driver schedules the
 /// token and how its dyad is built. Core identities are hand-built natives (see
@@ -402,6 +410,9 @@ pub enum ParseError {
     ExpectedArrow,
     /// A fn signature's `->` was not followed by a return type.
     ExpectedReturnType,
+    /// A function body did not yield through an explicit `return` (DESIGN
+    /// ›`return` is explicit‹). In v1 the body must be a `return`.
+    MissingReturn,
 }
 
 /// The one-pass elaborator: lexes on demand, resolves names against the scope
@@ -596,15 +607,15 @@ impl<'a> Parser<'a> {
     /// parameter list is a `struct` (the step-2 field list); the return type after
     /// `->` is a single type identity; the body is a `( )` scope parsed with the
     /// parameter scope reopened, so parameters resolve inside it. The node is
-    /// `{ty: fn, value -> [input, output, body]}` — the params struct, the return
-    /// type, and the reflectable body — with no `bcode` until it is compiled (the
-    /// run version's `bcode` table supplies that; see `crate::run`).
+    /// `{ty: fn, value -> [input, output, body, bcode]}` — the params struct, the
+    /// return type, the reflectable body, and the compiled `bcode` (null until
+    /// [`crate::compile::compile_fn`] installs it).
     ///
-    /// The seed does *not* enforce that the body yields through an explicit
-    /// `return` (DESIGN ›`return` is explicit‹): a correct check is "every path
-    /// returns", which needs the control-flow analysis `if`/`while` bring, so it is
-    /// deferred rather than approximated. A body of `( a = a + 1 )` therefore parses
-    /// today though it returns nothing.
+    /// The body must yield through an explicit `return` (DESIGN ›`return` is
+    /// explicit‹): a scope never takes its value from a trailing expression. In v1
+    /// the body is a single expression, so it must *be* a `return`; when control
+    /// flow lands this generalizes to "returns on all paths". A body of
+    /// `( a = a + 1 )` is therefore rejected ([`ParseError::MissingReturn`]).
     pub fn parse_fn(&mut self, fn_type: DyadPtr) -> Result<DyadPtr, ParseError> {
         // The parameter list is a struct; parse_struct opens and closes its scope.
         let input = self.parse_struct(self.types.struct_)?;
@@ -621,7 +632,14 @@ impl<'a> Parser<'a> {
         self.expect_close()?;
         self.scopes.pop();
 
-        let value = self.store.alloc_operands(&[input, output, body]);
+        // A function body is a consumer scope: it yields only through `return`.
+        // SAFETY: `body` is the dyad just parsed.
+        if unsafe { (*body).ty } != self.types.return_ {
+            return Err(ParseError::MissingReturn);
+        }
+
+        // `bcode` starts null; `compile_fn` installs the exec@ into this slot.
+        let value = self.store.alloc_operands(&[input, output, body, std::ptr::null_mut()]);
         Ok(self.store.alloc_raw(fn_type, value))
     }
 
