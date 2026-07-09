@@ -38,6 +38,10 @@ pub enum RunError {
     NotRunnable(DyadPtr),
     /// A data node had no storage to read.
     BadValue,
+    /// A numeric literal has no exact `i32` value to compute — a non-integer
+    /// rational (e.g. `3.14`) or an integer outside `i32` range. Reported instead
+    /// of computing a wrong value or crashing.
+    UncomputableLiteral,
     /// A call's argument count did not match the callee's parameter count.
     ArityMismatch,
     /// A compiled call had more arguments than the seed's calling convention
@@ -75,6 +79,9 @@ unsafe fn call_compiled(bcode: DyadPtr, args: &[i64]) -> Result<i64, RunError> {
 /// explicit frame stack holds only per-call *parameter bindings*.
 pub struct Runtime<'a> {
     fn_type: DyadPtr,
+    /// `rational_number`: a data leaf of this type is molded to its `i32` value
+    /// when read, rather than read raw through the generic i32 layout.
+    rational: DyadPtr,
     bcode: &'a Bcode,
     /// One activation per in-flight call, each binding the callee's parameter
     /// nodes to their argument values. A parameter reference reads the top frame;
@@ -84,9 +91,9 @@ pub struct Runtime<'a> {
 
 impl<'a> Runtime<'a> {
     /// A runtime recognizing functions by `fn_type` and running them through
-    /// `bcode`, with an empty frame stack.
-    pub fn new(fn_type: DyadPtr, bcode: &'a Bcode) -> Self {
-        Runtime { fn_type, bcode, frames: Vec::new() }
+    /// `bcode`, molding `rational` leaves on read, with an empty frame stack.
+    pub fn new(fn_type: DyadPtr, rational: DyadPtr, bcode: &'a Bcode) -> Self {
+        Runtime { fn_type, rational, bcode, frames: Vec::new() }
     }
 
     /// Run `node`: read its operation (its `type`). If the operation is a function
@@ -135,7 +142,14 @@ impl<'a> Runtime<'a> {
             self.frames.pop();
             result
         } else {
-            // `node` is data: read its scalar (i32 in v1) through its layout.
+            // `node` is data. A rational literal is molded to its i32 value (a
+            // fraction like 3.14 has none: UncomputableLiteral, not a bad read);
+            // every other v1 scalar is read as i32 through its layout.
+            if (*node).ty == self.rational {
+                return crate::identities::rational::mold(node)
+                    .map(i64::from)
+                    .ok_or(RunError::UncomputableLiteral);
+            }
             let slot = (*node).value as *const i32;
             if slot.is_null() {
                 return Err(RunError::BadValue);

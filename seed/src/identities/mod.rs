@@ -37,7 +37,7 @@ mod struct_mod;
 mod assign;
 mod paren;
 mod plus;
-mod rational;
+pub(crate) mod rational;
 mod scope;
 
 /// The core identities and the per-phase tables that drive them.
@@ -193,7 +193,7 @@ mod tests {
             assert_eq!(*sops, a); // +.lhs is a
             let one = *sops.add(1); // +.rhs is the literal
             assert_eq!((*one).ty, core.rational);
-            assert_eq!(std::ptr::read_unaligned((*one).value as *const i32), 1);
+            assert_eq!(rational::mold(one), Some(1)); // the rational 1/1 molds to i32 1
         }
     }
 
@@ -216,7 +216,7 @@ mod tests {
         };
 
         // run `a = a + 1`: yields 1 and leaves a holding 1.
-        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
         // SAFETY: `root` is the valid dyad tree just parsed into `store`.
         let result = unsafe { rt.run(root) }.unwrap();
         assert_eq!(result, 1);
@@ -254,7 +254,7 @@ mod tests {
         // A nullary application of `main`: its type is `main`.
         let call = store.alloc_raw(main, std::ptr::null_mut());
 
-        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
         // SAFETY: `call`/`main`/body are valid nodes in `store`.
         let result = unsafe { rt.run(call) }.unwrap();
         assert_eq!(result, 42); // a + 1 = 41 + 1
@@ -278,7 +278,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
 
-        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
         // SAFETY: `node` is the valid dyad tree just parsed.
         let result = unsafe { rt.run(node) }.unwrap();
         assert_eq!(result, 42);
@@ -297,7 +297,7 @@ mod tests {
             let mut p = Parser::new("return 7", &mut store, &mut trie, &core.metas, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
         assert_eq!(unsafe { rt.run(bare) }.unwrap(), 7);
 
         // Nested brackets group correctly.
@@ -360,7 +360,7 @@ mod tests {
 
         // Apply it and run: run finds no bcode for `func` and walks its body.
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
         // SAFETY: `call`/`func`/body are valid nodes in `store`.
         let result = unsafe { rt.run(call) }.unwrap();
         assert_eq!(result, 42);
@@ -438,7 +438,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
 
-        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
         // Oracle: interpret the call.
         // SAFETY: `call`/`add`/args are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
@@ -511,7 +511,7 @@ mod tests {
             assert_eq!((*call).ty, add);
         }
 
-        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
         // SAFETY: `call`/`add`/args are valid nodes just parsed.
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 42);
     }
@@ -545,7 +545,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
 
-        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
         // SAFETY: `call`/`add` are valid nodes just parsed.
         assert_eq!(unsafe { rt.run(call) }, Err(crate::run::RunError::ArityMismatch));
     }
@@ -573,7 +573,7 @@ mod tests {
         };
 
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
         // SAFETY: `call`/`func`/body are valid nodes just parsed.
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 42);
     }
@@ -720,7 +720,7 @@ mod tests {
         };
 
         // Oracle: the interpreter, from a = 0.
-        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
         // SAFETY: `root` is the valid tree just parsed.
         let interp = unsafe { rt.run(root) }.unwrap();
         let interp_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
@@ -742,8 +742,9 @@ mod tests {
     fn milestone_2_fn_runs_interpreted_and_jit_identically() {
         // Milestone 2: a function run both interpreted and Cranelift-JIT-compiled,
         // results diffed. The interpreter is the oracle. The body `return 40 + 2`
-        // yields its i32 through an explicit `return` (DESIGN: a scope's value
-        // comes only from `return`, never a trailing expression).
+        // yields its i32; here through an explicit `return`, though `return` is
+        // optional and a bare trailing expression yields the same value (DESIGN ›A
+        // scope's value is what it evaluates to‹; see `fn_body_return_is_optional`).
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
@@ -766,7 +767,7 @@ mod tests {
         // The same `run`, two paths on one node: interpret first (no bcode yet),
         // then compile and run again (jumps to the installed bcode). Both diffed.
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
 
         // Interpreted: bcode is null, so `run` walks the body.
         let interp = unsafe { rt.run(call) }.unwrap();
@@ -788,5 +789,154 @@ mod tests {
 
         assert_eq!(interp, 42);
         assert_eq!(jit, interp); // the compiled path matches the interpreter oracle
+    }
+
+    #[test]
+    fn rational_decimal_parses_but_is_uncomputable_as_i32() {
+        // A decimal is a valid rational literal (it parses), but computing it as an
+        // i32 has no exact answer: run and compile both report UncomputableLiteral
+        // rather than crashing or silently truncating.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+
+        let node = {
+            let mut p = Parser::new("3.14", &mut store, &mut trie, &core.metas, core.types(), scopes);
+            p.parse_expression().unwrap() // parsing a decimal succeeds
+        };
+        unsafe {
+            assert_eq!((*node).ty, core.rational);
+            assert_eq!(rational::mold(node), None); // 157/50 has no exact i32
+        }
+
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+        // SAFETY: `node` is the rational literal just parsed.
+        assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::UncomputableLiteral));
+        // SAFETY: same node; compilation reports the same outcome as the oracle.
+        let compiled = unsafe { compile_nullary_i32(&core.lower, node) };
+        assert!(matches!(compiled, Err(crate::compile::CompileError::UncomputableLiteral)));
+    }
+
+    #[test]
+    fn whole_valued_rationals_still_compute() {
+        // `6.0` reduces to 6/1 and molds to 6 — integer literals are the den==1 case.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+
+        let node = {
+            let mut p = Parser::new("6.0", &mut store, &mut trie, &core.metas, core.types(), scopes);
+            p.parse_expression().unwrap()
+        };
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+        // SAFETY: `node` is the rational literal just parsed.
+        assert_eq!(unsafe { rt.run(node) }.unwrap(), 6);
+    }
+
+    #[test]
+    fn i32_overflow_matches_between_interpreter_and_jit() {
+        // 2_000_000_000 + 2_000_000_000 overflows i32; both paths must wrap to the
+        // same i32. The interpreter is the oracle, so it must not widen to i64.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let func = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "fn () -> i32 ( 2000000000 + 2000000000 )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap()
+        };
+        let call = store.alloc_raw(func, std::ptr::null_mut());
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+        // SAFETY: `call`/`func`/body are valid nodes just parsed.
+        let interp = unsafe { rt.run(call) }.unwrap();
+        // SAFETY: `func` is the fn node just built and outlives the call.
+        let _compiled = unsafe { compile_fn(&core.lower, func) }.unwrap();
+        let jit = unsafe { rt.run(call) }.unwrap();
+
+        let expected = i64::from(2_000_000_000i32.wrapping_add(2_000_000_000)); // -294967296
+        assert_eq!(interp, expected);
+        assert_eq!(jit, interp);
+    }
+
+    #[test]
+    fn four_param_fn_stays_interpreted_and_refuses_to_compile() {
+        // The compiled calling convention supports at most three i32 args, so a
+        // 4-param function fails compilation (UnsupportedArity) rather than
+        // installing bcode a call cannot invoke; interpreted, it runs fine.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let add4 = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "fn (a : i32, b : i32, c : i32, d : i32) -> i32 ( return a + b + c + d )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap()
+        };
+        // Compilation refuses the arity up front.
+        // SAFETY: `add4` is the fn node just built.
+        let result = unsafe { compile_fn(&core.lower, add4) };
+        assert!(matches!(result, Err(crate::compile::CompileError::UnsupportedArity(4))));
+
+        // Interpreted, the same function computes (bcode was never installed).
+        let call = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            s.declare(&mut trie, "add4", add4).unwrap();
+            let mut p =
+                Parser::new("add4(1, 2, 3, 4)", &mut store, &mut trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+        // SAFETY: `call`/`add4`/args are valid nodes just parsed.
+        assert_eq!(unsafe { rt.run(call) }.unwrap(), 10);
+    }
+
+    #[test]
+    fn compiling_an_uninitialized_read_errors_instead_of_crashing() {
+        // A declared-but-uninitialised i32 (null storage) compiled would bake a load
+        // from address 0 and SIGSEGV; instead compilation errors with BadValue, the
+        // same outcome the interpreter reaches.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        // `x`: an i32 variable with no storage yet.
+        let x = store.alloc_raw(core.i32_, std::ptr::null_mut());
+        scopes.declare(&mut trie, "x", x).unwrap();
+
+        let node = {
+            let mut p = Parser::new("x", &mut store, &mut trie, &core.metas, core.types(), scopes);
+            p.parse_expression().unwrap()
+        };
+        // Interpreter: clean BadValue.
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+        // SAFETY: `node` is the variable reference just parsed.
+        assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::BadValue));
+        // Compiler: BadValue, not a baked load from address 0.
+        // SAFETY: same node; the lowering guards the null storage.
+        let compiled = unsafe { compile_nullary_i32(&core.lower, node) };
+        assert!(matches!(compiled, Err(crate::compile::CompileError::BadValue)));
     }
 }

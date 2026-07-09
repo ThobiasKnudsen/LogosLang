@@ -294,13 +294,19 @@ fn parse_term(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
         return paths;
     }
 
-    // Small fixed repetition: expand by cartesian product (capped, like the Zig).
+    // Small fixed repetition: expand by cartesian product. Bounded by MAX_PATHS
+    // each round (as parse_concat's alternation is) so a pathological pattern like
+    // `(a|b|c|d|e){9}` cannot blow up to millions of paths before any cap applies;
+    // the expansion is truncated rather than allowed to explode.
     if max != usize::MAX && max == min && min > 0 && min < 10 {
         let mut repeated: Vec<Vec<Segment>> = vec![Vec::new()];
         for _ in 0..min {
             let mut new_rep: Vec<Vec<Segment>> = Vec::new();
-            for pre in &repeated {
+            'outer: for pre in &repeated {
                 for p in &paths {
+                    if new_rep.len() >= MAX_PATHS {
+                        break 'outer;
+                    }
                     let mut np = pre.clone();
                     np.extend(p.iter().cloned());
                     merge_adjacent(&mut np);
@@ -317,7 +323,16 @@ fn parse_term(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
     for p in &paths {
         let mut np = p.clone();
         if let Some(last) = np.last_mut() {
-            last.str.push_str(&full_quant);
+            // A multi-char *literal* segment is a capturing group's merged contents
+            // (e.g. `(ab)`); attaching the quantifier bare would misparse `(ab)+`
+            // as `ab+` (`a` then `b+`), so wrap it in a non-capturing group. A
+            // single char or an already-regex atom (`[0-9]`, `\d`, `(?:…)`) quantifies
+            // correctly as-is.
+            if last.is_lit && last.str.len() > 1 {
+                last.str = format!("(?:{}){}", last.str, full_quant);
+            } else {
+                last.str.push_str(&full_quant);
+            }
             last.is_lit = false;
         } else {
             np.push(Segment::rx(&full_quant));
@@ -463,5 +478,19 @@ mod tests {
     #[test]
     fn fixed_repetition_expands() {
         assert_eq!(regex_splitting("a{3}"), vec![vec![lit("aaa")]]);
+    }
+
+    #[test]
+    fn capturing_group_repetition_keeps_grouping() {
+        // `(ab)+` must not degrade to `ab+` (`a` then `b+`); the group's contents
+        // are wrapped so the quantifier applies to the whole unit.
+        assert_eq!(regex_splitting("(ab)+"), vec![vec![rx("(?:ab)+")]]);
+    }
+
+    #[test]
+    fn single_char_and_class_repetition_are_left_bare() {
+        // A single char or a char class is already one unit — no wrapping.
+        assert_eq!(regex_splitting("ab?"), vec![vec![lit("a"), rx("b?")], vec![lit("a")]]);
+        assert_eq!(regex_splitting("[0-9]+"), vec![vec![rx("[0-9]+")]]);
     }
 }

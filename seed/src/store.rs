@@ -52,19 +52,26 @@ impl Store {
 
     /// Store an operand struct (a run of `dyad@` fields, e.g. a binary op's
     /// `{lhs, rhs}`) and return a `void@` to it. Read back by casting to
-    /// `*const DyadPtr` and indexing. The returned pointer is 8-aligned.
+    /// `*const DyadPtr` and indexing. The returned pointer is 8-aligned, and is a
+    /// *write* pointer: callers patch it in place (e.g. `compile_fn` installs the
+    /// `bcode` into a fn value's trailing slot), so it must be derived from a
+    /// mutable borrow (`as_mut_ptr`) rather than `as_ptr`, which would carry
+    /// read-only provenance and make the later write UB under Stacked/Tree Borrows.
     pub fn alloc_operands(&mut self, fields: &[DyadPtr]) -> *mut u8 {
-        let boxed: Box<[DyadPtr]> = fields.into();
-        let ptr = boxed.as_ptr() as *mut u8;
+        let mut boxed: Box<[DyadPtr]> = fields.into();
+        let ptr = boxed.as_mut_ptr() as *mut u8;
         self.operands.push(boxed);
         ptr
     }
 
-    /// Store literal bytes (e.g. a numeric literal's digits) and return a `void@`
-    /// to them. Length is the caller's to track.
+    /// Store literal bytes (e.g. a numeric literal's digits, or a variable's
+    /// storage) and return a `void@` to them. Length is the caller's to track.
+    /// The pointer is a *write* pointer (an `=` assignment writes a variable's
+    /// storage through it), so it is minted from a mutable borrow — see
+    /// [`Self::alloc_operands`] for why `as_mut_ptr` and not `as_ptr`.
     pub fn alloc_bytes(&mut self, bytes: &[u8]) -> *mut u8 {
-        let boxed: Box<[u8]> = bytes.into();
-        let ptr = boxed.as_ptr() as *mut u8;
+        let mut boxed: Box<[u8]> = bytes.into();
+        let ptr = boxed.as_mut_ptr();
         self.blobs.push(boxed);
         ptr
     }

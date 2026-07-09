@@ -22,12 +22,17 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     id
 }
 
-/// Run: sum both operands.
+/// Run: sum both operands. v1 scalars are `i32`, and the JIT lowers `+` to a
+/// 32-bit `iadd` that wraps on overflow, so the interpreter must compute in `i32`
+/// with the same wrapping — otherwise a sum past `i32::MAX` would diverge from the
+/// compiled result and break the interpreter-is-the-oracle guarantee.
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid application dyad, so its operands are valid nodes.
     unsafe {
         let (lhs, rhs) = operands(node);
-        Ok(rt.run(lhs)? + rt.run(rhs)?)
+        let l = rt.run(lhs)? as i32;
+        let r = rt.run(rhs)? as i32;
+        Ok(i64::from(l.wrapping_add(r)))
     }
 }
 

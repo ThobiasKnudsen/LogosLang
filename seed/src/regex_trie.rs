@@ -4,9 +4,11 @@
 //! `children`; byte 0 is reserved as the end-of-word (EOW) sentinel (its slot
 //! holds `None`). Patterns that are not pure literals are split (see
 //! [`crate::regex_splitting`]) so their literal prefixes ride the fast byte-path
-//! and only the residual regex chunks become `regexes` branches. Lookup is
-//! greedy longest-match, trying the literal child first and falling back to the
-//! node's combined regex.
+//! and only the residual regex chunks become `regexes` branches. Lookup is true
+//! longest-match: [`get`](RegexTrie::get) explores both the literal child and
+//! every regex branch at each node and returns the longest reachable EOW, with a
+//! literal path winning ties over a regex path (a shorter literal never blocks a
+//! longer regex match).
 //!
 //! The stored value is a list of [`IdContext`]s: the identities the matched text
 //! can denote, each paired with the scope it was declared in. The trie does
@@ -25,12 +27,14 @@
 //! - Because a context is a `Copy` value the trie does not own, the Zig's
 //!   shared-value/`freed`-flag bookkeeping collapses to copying the context to
 //!   each alternation path; `remove` matches on the declaring scope.
-//! - The lazily-built matcher lives behind `RefCell`/`Cell`, so `get` is `&self`.
-//! - Alternatives are identified by named capture groups `(?P<gN>..)` rather than
-//!   ovector positions, which is immune to capture groups inside a pattern.
+//! - Each regex branch owns a lazily-compiled anchored matcher behind a `RefCell`
+//!   (so `get` stays `&self`) and is matched independently. Matching branches
+//!   separately, rather than as one combined `(?:a|b|…)` alternation, is what lets
+//!   longest-match compare branch lengths — a combined alternation returns the
+//!   `regex` crate's leftmost-*first* branch, not the longest.
 //! - `remove`'s upward prune is recursion rather than an explicit parent stack.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 
 use regex::bytes::Regex;
 
@@ -80,6 +84,34 @@ pub struct MatchResult<'a> {
 struct RegexEntry {
     node: Box<RegexTrie>,
     pattern: String,
+    /// This branch's anchored matcher (`^(?:pattern)`), compiled on first use.
+    /// Deferred so a bad pattern surfaces as [`RegexTrieError::BadPattern`] on
+    /// lookup rather than at insert.
+    matcher: RefCell<Option<Regex>>,
+}
+
+impl RegexEntry {
+    fn new(pattern: &str) -> Self {
+        RegexEntry {
+            node: Box::new(RegexTrie::new()),
+            pattern: pattern.to_string(),
+            matcher: RefCell::new(None),
+        }
+    }
+
+    /// Length of this branch's match at the start of `hay`, if it matches a
+    /// non-empty prefix. Compiles the anchored matcher on first call.
+    fn match_len(&self, hay: &[u8]) -> Result<Option<usize>, RegexTrieError> {
+        if self.matcher.borrow().is_none() {
+            let anchored = format!("^(?:{})", self.pattern);
+            let re = Regex::new(&anchored)
+                .map_err(|err| RegexTrieError::BadPattern(format!("{anchored}: {err}")))?;
+            *self.matcher.borrow_mut() = Some(re);
+        }
+        let borrow = self.matcher.borrow();
+        let re = borrow.as_ref().unwrap();
+        Ok(re.find(hay).and_then(|m| (m.start() == 0 && m.end() > 0).then_some(m.end())))
+    }
 }
 
 /// A node of the hybrid regex-trie.
@@ -88,8 +120,6 @@ pub struct RegexTrie {
     children: Vec<Option<Box<RegexTrie>>>,
     leaf_value: Option<Leaf>,
     regexes: Vec<RegexEntry>,
-    matcher: RefCell<Option<Regex>>,
-    matcher_dirty: Cell<bool>,
 }
 
 impl Default for RegexTrie {
@@ -106,9 +136,16 @@ impl RegexTrie {
             children: Vec::new(),
             leaf_value: None,
             regexes: Vec::new(),
-            matcher: RefCell::new(None),
-            matcher_dirty: Cell::new(false),
         }
+    }
+
+    /// The literal child for byte `c`, if one exists.
+    fn lit_child(&self, c: u8) -> Option<&RegexTrie> {
+        let idx = self.child_indices[c as usize];
+        if idx == NONE {
+            return None;
+        }
+        self.children[idx as usize].as_deref()
     }
 
     // --- structural helpers -------------------------------------------------
@@ -149,9 +186,7 @@ impl RegexTrie {
         if let Some(i) = self.regexes.iter().position(|e| e.pattern == pattern) {
             return &mut self.regexes[i].node;
         }
-        self.matcher_dirty.set(true);
-        self.regexes
-            .push(RegexEntry { node: Box::new(RegexTrie::new()), pattern: pattern.to_string() });
+        self.regexes.push(RegexEntry::new(pattern));
         let last = self.regexes.len() - 1;
         &mut self.regexes[last].node
     }
@@ -209,61 +244,6 @@ impl RegexTrie {
         Some(current)
     }
 
-    // --- matcher ------------------------------------------------------------
-
-    /// Recompile this node's combined regex from its `regexes` list if dirty.
-    fn ensure_matcher(&self) -> Result<(), RegexTrieError> {
-        if !self.matcher_dirty.get() {
-            return Ok(());
-        }
-        if self.regexes.is_empty() {
-            *self.matcher.borrow_mut() = None;
-        } else {
-            // `^(?:(?P<g0>p0)|(?P<g1>p1)|...)` — anchored at the start of the
-            // remaining input; the matching named group identifies which branch.
-            let mut pat = String::from("^(?:");
-            for (i, e) in self.regexes.iter().enumerate() {
-                if i > 0 {
-                    pat.push('|');
-                }
-                pat.push_str("(?P<g");
-                pat.push_str(&i.to_string());
-                pat.push('>');
-                pat.push_str(&e.pattern);
-                pat.push(')');
-            }
-            pat.push(')');
-            let re = Regex::new(&pat)
-                .map_err(|err| RegexTrieError::BadPattern(format!("{pat}: {err}")))?;
-            *self.matcher.borrow_mut() = Some(re);
-        }
-        self.matcher_dirty.set(false);
-        Ok(())
-    }
-
-    /// Match the combined regex against `hay`; return `(branch_index, match_len)`
-    /// for the first alternative that matched a non-empty prefix.
-    fn match_alt(&self, hay: &[u8]) -> Result<Option<(usize, usize)>, RegexTrieError> {
-        self.ensure_matcher()?;
-        let borrow = self.matcher.borrow();
-        let re = match borrow.as_ref() {
-            Some(r) => r,
-            None => return Ok(None),
-        };
-        if let Some(caps) = re.captures(hay) {
-            let whole = caps.get(0).unwrap();
-            if whole.start() == 0 && whole.end() > 0 {
-                for i in 0..self.regexes.len() {
-                    let name = format!("g{i}");
-                    if caps.name(&name).is_some() {
-                        return Ok(Some((i, whole.end())));
-                    }
-                }
-            }
-        }
-        Ok(None)
-    }
-
     // --- insert -------------------------------------------------------------
 
     /// Add `ctx` under `key` (a literal or regex pattern). A spelling may carry
@@ -298,80 +278,59 @@ impl RegexTrie {
 
     // --- get ----------------------------------------------------------------
 
-    /// Greedy longest-match lookup at the start of `string`. Literal children are
-    /// tried before the node's regex branches; the longest reachable EOW wins.
+    /// Longest-match lookup at the start of `string`: the longest reachable EOW
+    /// wins, and a literal path beats a regex path of equal length (so a shorter
+    /// literal keyword never blocks a longer regex match — the old greedy
+    /// commit-to-literal did).
     pub fn get(&self, string: &str) -> Result<MatchResult<'_>, RegexTrieError> {
         debug_assert!(!string.is_empty());
-        let bytes = string.as_bytes();
+        match self.longest(string.as_bytes(), 0)? {
+            Some((matched, leaf)) => Ok(MatchResult {
+                matched,
+                regex_key: &leaf.regex_key,
+                contexts: &leaf.contexts,
+            }),
+            None => Err(RegexTrieError::NodeNotFound),
+        }
+    }
 
-        let mut current: &RegexTrie = self;
-        let mut pos = 0usize;
-        let mut max_matched = 0usize;
-        let mut max_value: Option<&Leaf> = None;
-
-        while pos < bytes.len() {
-            let c = bytes[pos];
-            let mut advanced = false;
-            let mut advance_len = 0usize;
-
-            // Literal child first (O(1) via the index array).
+    /// The longest `(matched_len, leaf)` reachable from this node consuming `hay`
+    /// starting at `pos`. Explores the literal child first, then each regex branch
+    /// in insertion order; a candidate replaces the best only when strictly longer,
+    /// so the literal path (and earlier-declared regexes) win ties.
+    fn longest<'s>(
+        &'s self,
+        hay: &[u8],
+        pos: usize,
+    ) -> Result<Option<(usize, &'s Leaf)>, RegexTrieError> {
+        let mut best: Option<(usize, &'s Leaf)> = None;
+        if self.check_eow() {
+            if let Some(leaf) = self.leaf_value.as_ref() {
+                best = Some((pos, leaf));
+            }
+        }
+        if pos < hay.len() {
+            let c = hay[pos];
             if c != 0 {
-                let idx = current.child_indices[c as usize];
-                if idx != NONE {
-                    if let Some(child) = &current.children[idx as usize] {
-                        current = child;
-                        advance_len = 1;
-                        advanced = true;
+                if let Some(child) = self.lit_child(c) {
+                    if let Some(cand) = child.longest(hay, pos + 1)? {
+                        if best.is_none_or(|(n, _)| cand.0 > n) {
+                            best = Some(cand);
+                        }
                     }
                 }
             }
-
-            if !advanced {
-                if !current.regexes.is_empty() {
-                    if let Some((w, len)) = current.match_alt(&bytes[pos..])? {
-                        current = &current.regexes[w].node;
-                        advance_len = len;
-                        advanced = true;
-                    }
-                }
-                if !advanced {
-                    break;
-                }
-            }
-
-            pos += advance_len;
-
-            if current.check_eow() {
-                max_matched = pos;
-                max_value = current.leaf_value.as_ref();
-            }
-        }
-
-        // No literal-path match: try a regex straight from the root.
-        if max_matched == 0 && !self.regexes.is_empty() {
-            if let Some((w, len)) = self.match_alt(bytes)? {
-                let target = &self.regexes[w].node;
-                if target.check_eow() {
-                    if let Some(val) = &target.leaf_value {
-                        return Ok(MatchResult {
-                            matched: len,
-                            regex_key: &val.regex_key,
-                            contexts: &val.contexts,
-                        });
+            for entry in &self.regexes {
+                if let Some(len) = entry.match_len(&hay[pos..])? {
+                    if let Some(cand) = entry.node.longest(hay, pos + len)? {
+                        if best.is_none_or(|(n, _)| cand.0 > n) {
+                            best = Some(cand);
+                        }
                     }
                 }
             }
         }
-
-        if max_matched > 0 {
-            let val = max_value.expect("EOW reached implies a stored value");
-            return Ok(MatchResult {
-                matched: max_matched,
-                regex_key: &val.regex_key,
-                contexts: &val.contexts,
-            });
-        }
-        Err(RegexTrieError::NodeNotFound)
+        Ok(best)
     }
 
     /// Every match at the start of `string`, exploring all paths. Slower than
@@ -405,21 +364,9 @@ impl RegexTrie {
                 }
             }
 
-            if !current.regexes.is_empty() {
-                current.ensure_matcher()?;
-                let borrow = current.matcher.borrow();
-                if let Some(re) = borrow.as_ref() {
-                    if let Some(caps) = re.captures(&bytes[pos..]) {
-                        let whole = caps.get(0).unwrap();
-                        if whole.start() == 0 && whole.end() > 0 {
-                            for i in 0..current.regexes.len() {
-                                let name = format!("g{i}");
-                                if caps.name(&name).is_some() {
-                                    stack.push((&current.regexes[i].node, pos + whole.end()));
-                                }
-                            }
-                        }
-                    }
+            for entry in &current.regexes {
+                if let Some(len) = entry.match_len(&bytes[pos..])? {
+                    stack.push((&entry.node, pos + len));
                 }
             }
         }
@@ -509,7 +456,6 @@ impl RegexTrie {
                     let child_empty =
                         Self::prune_remove(&mut node.regexes[ri].node, steps, i + 1, scope);
                     if child_empty {
-                        node.matcher_dirty.set(true);
                         node.regexes.remove(ri);
                     }
                 }
@@ -831,6 +777,40 @@ mod tests {
         assert_eq!(ms[0].contexts[0].identity, lit_a);
         assert_eq!(ms[1].matched, 3);
         assert_eq!(ms[1].contexts[0].identity, ident);
+    }
+
+    #[test]
+    fn longest_match_regex_beats_shorter_literal() {
+        // A keyword that is a prefix of an identifier must not steal the match:
+        // "iffy" is the identifier, not the keyword "if" (plus a stray "fy").
+        let root = dummy(100);
+        let mut t = RegexTrie::new();
+        let (kw, ident) = (dummy(1), dummy(2));
+        t.insert("if", ic(kw, root));
+        t.insert("[a-z]+", ic(ident, root));
+
+        // Exact keyword: the literal wins the tie at equal length.
+        let m = t.get("if").unwrap();
+        assert_eq!(m.matched, 2);
+        assert_eq!(m.contexts[0].identity, kw);
+        // Longer identifier: the length-4 regex match beats the length-2 literal EOW.
+        let m = t.get("iffy").unwrap();
+        assert_eq!(m.matched, 4);
+        assert_eq!(m.contexts[0].identity, ident);
+    }
+
+    #[test]
+    fn longest_match_across_sibling_regexes() {
+        // Two regex branches at one node: the longer match wins regardless of
+        // insertion order (a combined alternation returns the leftmost-first branch).
+        let root = dummy(100);
+        let mut t = RegexTrie::new();
+        let (short, long) = (dummy(1), dummy(2));
+        t.insert("[a-z]", ic(short, root)); // matches 1
+        t.insert("[a-z]+", ic(long, root)); // matches 3 on "abc"
+        let m = t.get("abc").unwrap();
+        assert_eq!(m.matched, 3);
+        assert_eq!(m.contexts[0].identity, long);
     }
 
     #[test]

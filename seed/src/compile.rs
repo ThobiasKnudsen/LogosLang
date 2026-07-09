@@ -35,9 +35,27 @@ pub type LowerTable = HashMap<DyadPtr, LowerFn>;
 pub enum CompileError {
     /// No lowering rule is registered for this node's operation.
     NotLowerable(DyadPtr),
+    /// A node's storage address is null: a declared-but-uninitialised variable or
+    /// assignment target. The interpreter returns `RunError::BadValue` for the same
+    /// node; the compiler refuses rather than baking a load/store to address 0.
+    BadValue,
+    /// A numeric literal has no exact `i32` value to compute — a non-integer
+    /// rational (e.g. `3.14`) or an integer outside `i32` range. Mirrors
+    /// `RunError::UncomputableLiteral`.
+    UncomputableLiteral,
+    /// The function has more parameters than the seed's compiled calling convention
+    /// supports (at most three `i32` args; see [`crate::run`]). Rejected at compile
+    /// time so a 4+ parameter function stays interpreted rather than compiling to a
+    /// body that errors only when called.
+    UnsupportedArity(usize),
     /// Cranelift rejected the setup, function, or finalization.
     Cranelift(String),
 }
+
+/// The most parameters a compiled function may take, bounded by
+/// [`crate::run::call_compiled`]'s arity dispatch (0..=3 `i32` args). Kept here so
+/// compilation fails fast instead of installing bcode a later call cannot invoke.
+pub const MAX_COMPILED_PARAMS: usize = 3;
 
 /// The lowering context: a Cranelift function under construction plus the rule
 /// table `lower` dispatches through, and the host pointer type for baked
@@ -188,6 +206,12 @@ pub unsafe fn compile_body(
     root: DyadPtr,
     params: &[DyadPtr],
 ) -> Result<Compiled, CompileError> {
+    // Fail fast on arities the compiled calling convention cannot call, so the
+    // function stays interpreted (its bcode is never installed) instead of
+    // compiling into a body that errors only at the call site.
+    if params.len() > MAX_COMPILED_PARAMS {
+        return Err(CompileError::UnsupportedArity(params.len()));
+    }
     let mut flags = settings::builder();
     flags.set("use_colocated_libcalls", "false").map_err(cl)?;
     flags.set("is_pic", "false").map_err(cl)?;
