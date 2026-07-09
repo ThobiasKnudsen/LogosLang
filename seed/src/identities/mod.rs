@@ -453,6 +453,84 @@ mod tests {
     }
 
     #[test]
+    fn calls_a_function_with_arguments() {
+        // The calling convention (interpreted): define a two-parameter function,
+        // call it with arguments, and read the parameters in the body. `add(40, 2)`
+        // binds x=40, y=2 in a frame and the body `return x + y` reads them.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        // Define `add` (its params live in its own scope).
+        let add = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "fn (x : i32, y : i32) -> i32 ( return x + y )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap()
+        };
+
+        // Declare `add`, then parse and run the call `add(40, 2)`.
+        let call = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            s.declare(&mut trie, "add", add).unwrap();
+            let mut p =
+                Parser::new("add(40, 2)", &mut store, &mut trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+
+        // The call node applies `add` to its two arguments.
+        unsafe {
+            assert_eq!((*call).ty, add);
+        }
+
+        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        // SAFETY: `call`/`add`/args are valid nodes just parsed.
+        assert_eq!(unsafe { rt.run(call) }.unwrap(), 42);
+    }
+
+    #[test]
+    fn calling_with_the_wrong_arity_errors() {
+        // Too few arguments for the parameters is a run error, not a bad read.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let add = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "fn (x : i32, y : i32) -> i32 ( return x + y )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap()
+        };
+
+        let call = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            s.declare(&mut trie, "add", add).unwrap();
+            let mut p = Parser::new("add(40)", &mut store, &mut trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+
+        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        // SAFETY: `call`/`add` are valid nodes just parsed.
+        assert_eq!(unsafe { rt.run(call) }, Err(crate::run::RunError::ArityMismatch));
+    }
+
+    #[test]
     fn fn_body_return_is_optional() {
         // `return` is optional: a body is valued by what it evaluates to, so a bare
         // `( 40 + 2 )` yields 42 just like `( return 40 + 2 )` does.

@@ -174,6 +174,19 @@ impl ParsingTape {
         self.cells.get(i)
     }
 
+    /// The last cell on the tape, if any.
+    pub fn last(&self) -> Option<&Cell> {
+        self.cells.last()
+    }
+
+    /// Remove and return the last cell, if any. Used by application: the callee
+    /// preceding a `(` is popped and replaced by the call node.
+    pub fn pop(&mut self) -> Option<Cell> {
+        let cell = self.cells.pop();
+        self.cursor = self.cursor.min(self.cells.len().saturating_sub(1));
+        cell
+    }
+
     /// Reduce a binary operator: replace the three cells at `i - 1`, `i`, `i + 1`
     /// with a single reduced `dyad`. Returns false if `i` is not flanked by two
     /// cells. The cursor is clamped to the shortened tape.
@@ -406,6 +419,22 @@ pub enum ParseError {
     ExpectedArrow,
     /// A fn signature's `->` was not followed by a return type.
     ExpectedReturnType,
+}
+
+/// Build a call node `{ty: callee, value: [args…, null]}`, the application
+/// `callee(args)`. Like a binary operator's `{ty: op, value: [lhs, rhs]}`, a call's
+/// value is the operand array of its arguments (null-terminated so `run` can count
+/// them); a nullary call carries a null value. The callee's type decides how the
+/// call runs, exactly as an operator's does.
+fn build_call(store: &mut Store, callee: DyadPtr, args: &[DyadPtr]) -> DyadPtr {
+    let value = if args.is_empty() {
+        std::ptr::null_mut()
+    } else {
+        let mut ops = args.to_vec();
+        ops.push(std::ptr::null_mut());
+        store.alloc_operands(&ops)
+    };
+    store.alloc_raw(callee, value)
 }
 
 /// The one-pass elaborator: lexes on demand, resolves names against the scope
@@ -653,6 +682,24 @@ impl<'a> Parser<'a> {
         Ok(r.identity)
     }
 
+    /// Parse a call's argument list: comma-separated value expressions up to the
+    /// closing `)` (left unconsumed for the caller's [`Parser::expect_close`]). The
+    /// opening `(` has already been consumed. Unlike a field list, arguments are
+    /// ordinary expressions, not `name : type` declarations.
+    fn parse_arg_list(&mut self) -> Result<Vec<DyadPtr>, ParseError> {
+        let mut args = Vec::new();
+        loop {
+            if self.at_close() {
+                break;
+            }
+            args.push(self.parse_expression()?);
+            if !self.consume_separator() {
+                break;
+            }
+        }
+        Ok(args)
+    }
+
     /// Parse one expression to a single dyad, consuming source from the current
     /// position. Each call drives its own tape, so a prefix constructor can parse
     /// its operand by calling this again (the parser is a service the constructors
@@ -700,12 +747,21 @@ impl<'a> Parser<'a> {
                     let dyad = build(self.store, id, operand)?;
                     tape.push(Cell::Dyad(dyad));
                 }
-                // An opening bracket: parse the body up to the matching close,
-                // consume that close, and push the body as the scope's value.
+                // An opening bracket. If a reduced operand precedes it, this is a
+                // call: `callee( args )` (juxtaposition, binding tightest). Else it
+                // is a grouping scope whose value is its body.
                 Some(Construct::Open) => {
-                    let body = self.parse_expression()?;
-                    self.expect_close()?;
-                    tape.push(Cell::Dyad(body));
+                    if matches!(tape.last(), Some(Cell::Dyad(_))) {
+                        let callee = tape.pop().and_then(|c| c.as_dyad()).unwrap();
+                        let args = self.parse_arg_list()?;
+                        self.expect_close()?;
+                        let call = build_call(self.store, callee, &args);
+                        tape.push(Cell::Dyad(call));
+                    } else {
+                        let body = self.parse_expression()?;
+                        self.expect_close()?;
+                        tape.push(Cell::Dyad(body));
+                    }
                 }
                 // The `struct` keyword: parse its `( field-list )` into a struct
                 // node (a bespoke sub-parse; fresh field names can't be resolved).

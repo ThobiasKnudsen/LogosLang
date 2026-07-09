@@ -21,7 +21,7 @@
 use std::collections::HashMap;
 
 use crate::dyad::DyadPtr;
-use crate::parse::{FN_BCODE, FN_BODY};
+use crate::parse::{FN_BCODE, FN_BODY, FN_INPUT};
 
 /// A function's implementation for one run version. Takes the application node
 /// and returns its scalar result, recursing on operands via [`Runtime::run`].
@@ -38,21 +38,28 @@ pub enum RunError {
     NotRunnable(DyadPtr),
     /// A data node had no storage to read.
     BadValue,
+    /// A call's argument count did not match the callee's parameter count.
+    ArityMismatch,
 }
 
 /// A running evaluation. Holds the `fn` type (to tell a function application from
-/// a data read) and the `bcode` table for this run version. Operands ride the
-/// Rust call stack (each `run` is a frame); no explicit operand stack.
+/// a data read), the `bcode` table for this run version, and the frame stack.
+/// Operand computation rides the Rust call stack (each `run` is a frame); the
+/// explicit frame stack holds only per-call *parameter bindings*.
 pub struct Runtime<'a> {
     fn_type: DyadPtr,
     bcode: &'a Bcode,
+    /// One activation per in-flight call, each binding the callee's parameter
+    /// nodes to their argument values. A parameter reference reads the top frame;
+    /// each activation having its own frame is what makes recursion work.
+    frames: Vec<HashMap<DyadPtr, i64>>,
 }
 
 impl<'a> Runtime<'a> {
     /// A runtime recognizing functions by `fn_type` and running them through
-    /// `bcode`.
+    /// `bcode`, with an empty frame stack.
     pub fn new(fn_type: DyadPtr, bcode: &'a Bcode) -> Self {
-        Runtime { fn_type, bcode }
+        Runtime { fn_type, bcode, frames: Vec::new() }
     }
 
     /// Run `node`: read its operation (its `type`). If the operation is a function
@@ -67,6 +74,10 @@ impl<'a> Runtime<'a> {
     /// that owns that machine code must still be alive (see
     /// [`crate::compile::compile_fn`]).
     pub unsafe fn run(&mut self, node: DyadPtr) -> Result<i64, RunError> {
+        // A parameter reference resolves to its bound value in the current frame.
+        if let Some(&value) = self.frames.last().and_then(|f| f.get(&node)) {
+            return Ok(value);
+        }
         let op = (*node).ty;
         if (*op).ty == self.fn_type {
             // A leaf native (`=`, `+`, `return`) runs from the table directly.
@@ -79,18 +90,24 @@ impl<'a> Runtime<'a> {
                 return Err(RunError::NotRunnable(op));
             }
             // Compiled: jump to the installed bcode, a nullary `extern "C" fn() ->
-            // i32` (the exec@ punned into the pointer-sized slot).
+            // i32` (the exec@ punned into the pointer-sized slot). Passing arguments
+            // to compiled code arrives with the compiled calling convention.
             let bcode = *fields.add(FN_BCODE);
             if !bcode.is_null() {
                 let compiled: extern "C" fn() -> i32 = std::mem::transmute(bcode);
                 return Ok(i64::from(compiled()));
             }
-            // Interpreted: walk the body.
+            // Interpreted: bind the call's arguments to the callee's parameters in a
+            // fresh activation frame, walk the body, then drop the frame.
+            let frame = self.bind_frame(op, node)?;
             let body = *fields.add(FN_BODY);
             if body.is_null() {
                 return Err(RunError::NotRunnable(op));
             }
-            self.run(body)
+            self.frames.push(frame);
+            let result = self.run(body);
+            self.frames.pop();
+            result
         } else {
             // `node` is data: read its scalar (i32 in v1) through its layout.
             let slot = (*node).value as *const i32;
@@ -99,5 +116,42 @@ impl<'a> Runtime<'a> {
             }
             Ok(i64::from(std::ptr::read_unaligned(slot)))
         }
+    }
+
+    /// Bind a call's arguments to the callee's parameters, returning the new frame.
+    /// Each argument is evaluated in the *current* frame (the caller's) and bound to
+    /// the corresponding parameter node; the argument and parameter counts must
+    /// match. The parameter and argument arrays are both null-terminated (the input
+    /// struct is `[scope, param0 …, null]`, the call value `[arg0 …, null]` or null).
+    ///
+    /// # Safety
+    /// `fn_node` must be a valid function node and `call_node` a valid application
+    /// of it, both from the store.
+    unsafe fn bind_frame(
+        &mut self,
+        fn_node: DyadPtr,
+        call_node: DyadPtr,
+    ) -> Result<HashMap<DyadPtr, i64>, RunError> {
+        let input = *((*fn_node).value as *const DyadPtr).add(FN_INPUT);
+        let params = (*input).value as *const DyadPtr; // [scope, param0 …, null]
+        let args = (*call_node).value as *const DyadPtr; // [arg0 …, null] or null
+
+        let mut frame = HashMap::new();
+        let mut i = 0usize;
+        loop {
+            // Parameters start after the scope at index 0; arguments at index 0.
+            let param = if params.is_null() { std::ptr::null_mut() } else { *params.add(i + 1) };
+            let arg = if args.is_null() { std::ptr::null_mut() } else { *args.add(i) };
+            match (param.is_null(), arg.is_null()) {
+                (true, true) => break,           // both exhausted: counts matched
+                (false, false) => {
+                    let value = self.run(arg)?;
+                    frame.insert(param, value);
+                    i += 1;
+                }
+                _ => return Err(RunError::ArityMismatch),
+            }
+        }
+        Ok(frame)
     }
 }
