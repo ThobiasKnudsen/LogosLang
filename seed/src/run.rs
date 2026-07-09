@@ -7,7 +7,8 @@
 //! take.
 //!
 //! Two homes for machine code, split by leaf vs. compound. The native *leaf*
-//! functions (`=`, `+`, `return`) have a null value slot, so their Rust
+//! functions (`=`, `return`, the concrete `add_i32`, and the abstract `+` that
+//! resolves and delegates to it) have a null value slot, so their Rust
 //! implementations live in a table the runtime holds, keyed by identity; a new run
 //! *version* is a new table, not a graph rewrite. A *user* function instead carries
 //! its own compiled `bcode` per instance, on the node (the `FN_BCODE` field), null
@@ -94,6 +95,23 @@ impl<'a> Runtime<'a> {
     /// `bcode`, molding `rational` leaves on read, with an empty frame stack.
     pub fn new(fn_type: DyadPtr, rational: DyadPtr, bcode: &'a Bcode) -> Self {
         Runtime { fn_type, rational, bcode, frames: Vec::new() }
+    }
+
+    /// Run a specific operation's native over `node`, dispatching through the run
+    /// table. Used by an abstract operator (`+`) to delegate to the concrete op it
+    /// resolved to (`add_i32`); the concrete op reads the same node's operands.
+    ///
+    /// # Safety
+    /// As [`Runtime::run`]: `node` must be a valid dyad the operation `op` can read.
+    pub(crate) unsafe fn run_native(
+        &mut self,
+        op: DyadPtr,
+        node: DyadPtr,
+    ) -> Result<i64, RunError> {
+        match self.bcode.get(&op).copied() {
+            Some(native) => native(self, node),
+            None => Err(RunError::NotRunnable(op)),
+        }
     }
 
     /// Run `node`: read its operation (its `type`). If the operation is a function

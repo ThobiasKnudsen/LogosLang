@@ -34,6 +34,7 @@ mod i32_mod;
 mod return_mod;
 #[path = "struct.rs"]
 mod struct_mod;
+mod add;
 mod assign;
 mod paren;
 mod plus;
@@ -55,8 +56,10 @@ pub struct Core {
     pub i32_: DyadPtr,
     /// `=` (assignment); a function.
     pub assign: DyadPtr,
-    /// `+` (addition); a function.
+    /// `+` (abstract addition operator); resolves to a concrete op per operand type.
     pub plus: DyadPtr,
+    /// `add_i32` (concrete i32 addition); the machine op `+` resolves to.
+    pub add_i32: DyadPtr,
     /// `rational_number` (numeric literal carrier); a data type.
     pub rational: DyadPtr,
     /// `struct`, the type whose constructor derives a layout from a field list
@@ -93,6 +96,9 @@ impl Core {
         let i32_ = i32_mod::register(&mut cx);
         let rational = rational::register(&mut cx);
         let assign = assign::register(&mut cx);
+        // The concrete addition op `+` resolves to, registered before `+` so the
+        // abstract operator can point at it.
+        let add_i32 = add::register(&mut cx);
         let plus = plus::register(&mut cx);
         fn_mod::register_syntax(&mut cx);
         paren::register(&mut cx);
@@ -108,6 +114,7 @@ impl Core {
             i32_,
             assign,
             plus,
+            add_i32,
             rational,
             struct_,
             metas,
@@ -116,9 +123,16 @@ impl Core {
         }
     }
 
-    /// The core type handles the parser needs to type the nodes it opens.
+    /// The core type handles the parser needs to type the nodes it opens and to
+    /// resolve abstract operators.
     pub fn types(&self) -> CoreTypes {
-        CoreTypes { scope: self.scope_, struct_: self.struct_ }
+        CoreTypes {
+            scope: self.scope_,
+            struct_: self.struct_,
+            i32_: self.i32_,
+            rational: self.rational,
+            add_i32: self.add_i32,
+        }
     }
 }
 
@@ -136,10 +150,13 @@ pub(crate) struct Cx<'a> {
     lower: LowerTable,
 }
 
-/// Build a binary application `{ty: op, value: {lhs, rhs}}`. The shared `Infix`
-/// constructor: `=` and `+` differ only in precedence/associativity, not shape.
+/// Build a plain binary application `{ty: op, value: [lhs, rhs]}`, used by `=`
+/// (which is not type-resolved). `+` uses its own resolving builder instead (see
+/// [`plus`]); the shared `CoreTypes` parameter lets a builder resolve operand types
+/// but is unused here.
 pub(crate) fn build_binary(
     store: &mut Store,
+    _types: &CoreTypes,
     op: DyadPtr,
     lhs: DyadPtr,
     rhs: DyadPtr,
@@ -194,6 +211,9 @@ mod tests {
             let one = *sops.add(1); // +.rhs is the literal
             assert_eq!((*one).ty, core.rational);
             assert_eq!(rational::mold(one), Some(1)); // the rational 1/1 molds to i32 1
+            // `+` stayed reflectable (ty is still `+`) and recorded the concrete op
+            // it resolved to as its third operand.
+            assert_eq!(*sops.add(2), core.add_i32);
         }
     }
 
@@ -938,5 +958,61 @@ mod tests {
         // SAFETY: same node; the lowering guards the null storage.
         let compiled = unsafe { compile_nullary_i32(&core.lower, node) };
         assert!(matches!(compiled, Err(crate::compile::CompileError::BadValue)));
+    }
+
+    #[test]
+    fn plus_is_abstract_and_resolves_to_a_concrete_op() {
+        // `+` is not itself a machine addition: it stays reflectable (its node's
+        // type is still `+`) but resolves to a concrete op (add_i32) that it stores
+        // in its value, and both run and compile delegate to that op. Nested `+`
+        // resolves too, and interpreted matches JIT.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let func = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "fn () -> i32 ( 10 + 20 + 12 )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap()
+        };
+        // The body is a `+` node, reflectable as `+`, carrying its resolved op.
+        unsafe {
+            let body = *((*func).value as *const DyadPtr).add(FN_BODY);
+            assert_eq!((*body).ty, core.plus);
+            assert_eq!(*((*body).value as *const DyadPtr).add(2), core.add_i32);
+        }
+
+        let call = store.alloc_raw(func, std::ptr::null_mut());
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+        // SAFETY: `call`/`func`/body are valid nodes just parsed.
+        let interp = unsafe { rt.run(call) }.unwrap();
+        // SAFETY: `func` is the fn node just built and outlives the call.
+        let _compiled = unsafe { compile_fn(&core.lower, func) }.unwrap();
+        let jit = unsafe { rt.run(call) }.unwrap();
+        assert_eq!(interp, 42);
+        assert_eq!(jit, interp);
+    }
+
+    #[test]
+    fn plus_over_non_numeric_operands_is_unresolved() {
+        // `+` with a non-numeric operand (a struct value) has no concrete machine op
+        // to resolve to, so parsing reports UnsupportedOperands.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+
+        let mut p =
+            Parser::new("struct () + 1", &mut store, &mut trie, &core.metas, core.types(), scopes);
+        assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::UnsupportedOperands));
     }
 }

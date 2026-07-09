@@ -317,24 +317,32 @@ pub enum Assoc {
     Right,
 }
 
-/// The core type handles the parser needs to type the nodes it opens: a `scope`
-/// for each field list, a `struct` for each parameter/field list. Bundled so that
-/// adding a handle does not churn [`Parser::new`]'s signature.
+/// The core type handles the parser needs to type the nodes it opens and to
+/// resolve abstract operators. Bundled so that adding a handle does not churn
+/// [`Parser::new`]'s signature; an `Infix` `build` callback receives it so an
+/// operator like `+` can pick its concrete machine op from the operand types.
 #[derive(Debug, Clone, Copy)]
 pub struct CoreTypes {
     /// `scope`: the type of each scope the parser opens.
     pub scope: DyadPtr,
     /// `struct`: the type of a parameter-list / field-list node.
     pub struct_: DyadPtr,
+    /// `i32`: the seed's one concrete numeric type.
+    pub i32_: DyadPtr,
+    /// `rational_number`: a numeric literal, molds to a concrete numeric type.
+    pub rational: DyadPtr,
+    /// `add_i32`: the concrete i32 addition `+` resolves to (DESIGN ›which concrete
+    /// machine operation runs, which `+`, is resolved from the operand types‹).
+    pub add_i32: DyadPtr,
 }
 
 /// The fields of a function node's value struct, in order, as built by
 /// [`Parser::parse_fn`]: the input `struct`, the return type, the reflectable body,
-/// and the compiled `bcode`. The native *leaf* functions (`=`, `+`, `return`) keep
-/// their machine code in the run version's table instead (they have a null value
-/// slot); a user function carries its own compiled `bcode` here, null until
-/// compiled, and `run` jumps to it when present (DESIGN ›Execution is function
-/// application‹).
+/// and the compiled `bcode`. The native *leaf* functions (`=`, `return`, concrete
+/// ops like `add_i32`, and the abstract `+`) keep their machine code in the run
+/// version's table instead (they have a null value slot); a user function carries
+/// its own compiled `bcode` here, null until compiled, and `run` jumps to it when
+/// present (DESIGN ›Execution is function application‹).
 pub const FN_INPUT: usize = 0;
 /// See [`FN_INPUT`].
 pub const FN_OUTPUT: usize = 1;
@@ -359,11 +367,13 @@ pub enum Construct {
     /// come with brackets.
     Prefix(fn(&mut Store, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>),
     /// An infix binary operator with a precedence and associativity: build a node
-    /// from its operator identity and two already-reduced operands.
+    /// from its operator identity and two already-reduced operands. The `build`
+    /// callback receives the [`CoreTypes`] so an abstract operator (`+`) can resolve
+    /// its concrete machine op from the operand types.
     Infix {
         precedence: f64,
         assoc: Assoc,
-        build: fn(&mut Store, DyadPtr, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>,
+        build: fn(&mut Store, &CoreTypes, DyadPtr, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>,
     },
     /// An opening bracket `(`: parse the body up to the matching close; the
     /// scope's value is what that body evaluates to (DESIGN ›A scope's value is
@@ -419,6 +429,10 @@ pub enum ParseError {
     ExpectedArrow,
     /// A fn signature's `->` was not followed by a return type.
     ExpectedReturnType,
+    /// An abstract operator (e.g. `+`) could not resolve a concrete machine op for
+    /// its operand types (DESIGN ›a `+` over mismatched or sizeless types simply
+    /// does not lower until that is resolved‹).
+    UnsupportedOperands,
 }
 
 /// Build a call node `{ty: callee, value: [args…, null]}`, the application
@@ -830,7 +844,8 @@ impl<'a> Parser<'a> {
             if !(prev_prec > prec || (prev_prec == prec && assoc == Assoc::Left)) {
                 break;
             }
-            let dyad = build(self.store, op_id, lhs, rhs)?;
+            let types = self.types;
+            let dyad = build(self.store, &types, op_id, lhs, rhs)?;
             tape.reduce_binary(op_idx, dyad);
         }
         Ok(())
@@ -857,7 +872,8 @@ impl<'a> Parser<'a> {
                 Some(Construct::Infix { build, .. }) => build,
                 _ => return Err(ParseError::Trailing),
             };
-            let dyad = build(self.store, op_id, lhs, rhs)?;
+            let types = self.types;
+            let dyad = build(self.store, &types, op_id, lhs, rhs)?;
             tape.reduce_binary(op_idx, dyad);
         }
         Ok(())

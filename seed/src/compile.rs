@@ -93,6 +93,23 @@ impl Lowerer<'_, '_> {
         }
     }
 
+    /// Lower a specific operation over `node`, dispatching through the lower table.
+    /// Used by an abstract operator (`+`) to delegate to the concrete op it resolved
+    /// to (`add_i32`); the concrete op reads the same node's operands.
+    ///
+    /// # Safety
+    /// As [`Lowerer::lower`]: `node` must be a valid dyad the operation `op` can read.
+    pub(crate) unsafe fn lower_op(
+        &mut self,
+        op: DyadPtr,
+        node: DyadPtr,
+    ) -> Result<Value, CompileError> {
+        match self.lower.get(&op).copied() {
+            Some(f) => f(self, node),
+            None => Err(CompileError::NotLowerable(op)),
+        }
+    }
+
     /// An `i32` immediate.
     pub fn const_i32(&mut self, v: i32) -> Value {
         self.builder.ins().iconst(types::I32, i64::from(v))
