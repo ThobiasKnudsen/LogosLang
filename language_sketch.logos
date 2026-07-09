@@ -152,8 +152,8 @@ a {
     value --m-> {
         value -> 32
     }
-    type -> {
-        value --m-> {
+    type --m-> {
+        value -> {
             value -> copy i32.value
         }
         type -> type
@@ -176,8 +176,8 @@ type {
         precedence : f64
         associativity : u8
         constructor : fn (tape : parsing_tape) -> void!
-        destructor : ?
         fields : struct
+        destructor : ?
     }
 }
 
@@ -197,11 +197,11 @@ type {
               size -> {type -> u64, value -> ?}
               capacity -> {type -> u64, value -> ?}
               data -> [
-                {key -> "precedence", value = 0},
-                {key -> "associativity", value = 1},
-                {key -> "constructor", value = 2},
-                {key -> "fields", value = 3},
-                {key -> "destructor", value = 4}
+                {key -> «precedence», value -> 0},
+                {key -> «associativity», value -> 1},
+                {key -> «constructor», value -> 2},
+                {key -> «fields», value -> 3},
+                {key -> «destructor», value -> 4}
 
               ]
             }
@@ -260,7 +260,7 @@ a = a + 1
                 lhs:dyad@ -> a
                 rhs:dyad@ -> {
                     type:dyad@ -> rational_number
-                    value:void@ -> "1"
+                    value:void@ -> «1»
                 }
             }
         }
