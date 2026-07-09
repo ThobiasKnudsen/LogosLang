@@ -161,7 +161,7 @@ pub(crate) unsafe fn operands(node: DyadPtr) -> (DyadPtr, DyadPtr) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compile::{compile_fn, compile_nullary_i32, CompileError};
+    use crate::compile::{compile_fn, compile_nullary_i32};
     use crate::parse::{Parser, ScopeStack, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
     use crate::run::Runtime;
 
@@ -407,30 +407,50 @@ mod tests {
     }
 
     #[test]
-    fn compile_fn_rejects_parameters() {
-        // v1 compiles only nullary functions: `compile_fn` on a function with a
-        // parameter must error, not emit code that loads from an unbound slot.
+    fn compiles_and_runs_a_fn_with_arguments() {
+        // Step B: compile a two-parameter function and call it compiled, diffed
+        // against the interpreter. Parameters lower to the function's arguments, so
+        // the same `run(call)` that interpreted `add(40, 2)` now calls native code.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
-        let mut scopes = ScopeStack::new();
-        scopes.push(core.root_scope);
 
-        let func = {
+        let add = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn (x : i32) -> i32 ( return x )",
+                "fn (x : i32, y : i32) -> i32 ( return x + y )",
                 &mut store,
                 &mut trie,
                 &core.metas,
                 core.types(),
-                scopes,
+                s,
             );
             p.parse_expression().unwrap()
         };
 
-        // SAFETY: `func` is the fn node just parsed.
-        let result = unsafe { compile_fn(&core.lower, func) };
-        assert_eq!(result.err(), Some(CompileError::NotNullary));
+        let call = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            s.declare(&mut trie, "add", add).unwrap();
+            let mut p =
+                Parser::new("add(40, 2)", &mut store, &mut trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+
+        let mut rt = Runtime::new(core.fn_type, &core.bcode);
+        // Oracle: interpret the call.
+        // SAFETY: `call`/`add`/args are valid nodes just parsed.
+        let interp = unsafe { rt.run(call) }.unwrap();
+
+        // Compile `add` (installs parameterized bcode); keep the artifact alive.
+        // SAFETY: `add` is the fn node just built and outlives the call.
+        let _compiled = unsafe { compile_fn(&core.lower, add) }.unwrap();
+        // JIT: the same `run(call)` now evaluates the arguments and calls native code.
+        let jit = unsafe { rt.run(call) }.unwrap();
+
+        assert_eq!(interp, 42);
+        assert_eq!(jit, interp); // compiled parameterized call matches the oracle
     }
 
     #[test]

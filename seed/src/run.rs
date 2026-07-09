@@ -40,6 +40,33 @@ pub enum RunError {
     BadValue,
     /// A call's argument count did not match the callee's parameter count.
     ArityMismatch,
+    /// A compiled call had more arguments than the seed's calling convention
+    /// supports (v1 calls compiled code with at most three `i32` arguments).
+    CompiledArity,
+}
+
+/// Call compiled machine code (a `fn(i32…) -> i32`) with `args`, dispatching on
+/// arity, since a raw code pointer must be given a concrete function type to call.
+/// The seed passes at most three `i32` arguments; Cranelift's default calling
+/// convention matches `extern "C"` on the host.
+///
+/// # Safety
+/// `bcode` must point at live machine code of exactly `args.len()` `i32` parameters
+/// returning `i32` (as [`crate::compile::compile_fn`] produces).
+unsafe fn call_compiled(bcode: DyadPtr, args: &[i64]) -> Result<i64, RunError> {
+    let p = bcode as *const u8;
+    let r = match args {
+        [] => (std::mem::transmute::<*const u8, extern "C" fn() -> i32>(p))(),
+        [a] => (std::mem::transmute::<*const u8, extern "C" fn(i32) -> i32>(p))(*a as i32),
+        [a, b] => {
+            (std::mem::transmute::<*const u8, extern "C" fn(i32, i32) -> i32>(p))(*a as i32, *b as i32)
+        }
+        [a, b, c] => (std::mem::transmute::<*const u8, extern "C" fn(i32, i32, i32) -> i32>(p))(
+            *a as i32, *b as i32, *c as i32,
+        ),
+        _ => return Err(RunError::CompiledArity),
+    };
+    Ok(i64::from(r))
 }
 
 /// A running evaluation. Holds the `fn` type (to tell a function application from
@@ -89,13 +116,12 @@ impl<'a> Runtime<'a> {
             if fields.is_null() {
                 return Err(RunError::NotRunnable(op));
             }
-            // Compiled: jump to the installed bcode, a nullary `extern "C" fn() ->
-            // i32` (the exec@ punned into the pointer-sized slot). Passing arguments
-            // to compiled code arrives with the compiled calling convention.
+            // Compiled: evaluate the arguments (in the current frame) and call the
+            // installed bcode with them. The exec@ is punned into the slot.
             let bcode = *fields.add(FN_BCODE);
             if !bcode.is_null() {
-                let compiled: extern "C" fn() -> i32 = std::mem::transmute(bcode);
-                return Ok(i64::from(compiled()));
+                let args = self.eval_args(op, node)?;
+                return call_compiled(bcode, &args);
             }
             // Interpreted: bind the call's arguments to the callee's parameters in a
             // fresh activation frame, walk the body, then drop the frame.
@@ -118,25 +144,24 @@ impl<'a> Runtime<'a> {
         }
     }
 
-    /// Bind a call's arguments to the callee's parameters, returning the new frame.
-    /// Each argument is evaluated in the *current* frame (the caller's) and bound to
-    /// the corresponding parameter node; the argument and parameter counts must
-    /// match. The parameter and argument arrays are both null-terminated (the input
-    /// struct is `[scope, param0 …, null]`, the call value `[arg0 …, null]` or null).
+    /// Evaluate a call's arguments, in order, in the *current* frame (the caller's),
+    /// checking their count against the callee's parameters. The parameter and
+    /// argument arrays are both null-terminated (the input struct is
+    /// `[scope, param0 …, null]`, the call value `[arg0 …, null]` or null).
     ///
     /// # Safety
     /// `fn_node` must be a valid function node and `call_node` a valid application
     /// of it, both from the store.
-    unsafe fn bind_frame(
+    unsafe fn eval_args(
         &mut self,
         fn_node: DyadPtr,
         call_node: DyadPtr,
-    ) -> Result<HashMap<DyadPtr, i64>, RunError> {
+    ) -> Result<Vec<i64>, RunError> {
         let input = *((*fn_node).value as *const DyadPtr).add(FN_INPUT);
         let params = (*input).value as *const DyadPtr; // [scope, param0 …, null]
         let args = (*call_node).value as *const DyadPtr; // [arg0 …, null] or null
 
-        let mut frame = HashMap::new();
+        let mut values = Vec::new();
         let mut i = 0usize;
         loop {
             // Parameters start after the scope at index 0; arguments at index 0.
@@ -145,12 +170,31 @@ impl<'a> Runtime<'a> {
             match (param.is_null(), arg.is_null()) {
                 (true, true) => break,           // both exhausted: counts matched
                 (false, false) => {
-                    let value = self.run(arg)?;
-                    frame.insert(param, value);
+                    values.push(self.run(arg)?);
                     i += 1;
                 }
                 _ => return Err(RunError::ArityMismatch),
             }
+        }
+        Ok(values)
+    }
+
+    /// Bind a call's evaluated arguments to the callee's parameter nodes, returning
+    /// the new frame (an activation the interpreter reads parameters from).
+    ///
+    /// # Safety
+    /// As [`Runtime::eval_args`].
+    unsafe fn bind_frame(
+        &mut self,
+        fn_node: DyadPtr,
+        call_node: DyadPtr,
+    ) -> Result<HashMap<DyadPtr, i64>, RunError> {
+        let values = self.eval_args(fn_node, call_node)?;
+        let input = *((*fn_node).value as *const DyadPtr).add(FN_INPUT);
+        let params = (*input).value as *const DyadPtr; // [scope, param0 …, null]
+        let mut frame = HashMap::new();
+        for (i, &value) in values.iter().enumerate() {
+            frame.insert(*params.add(i + 1), value);
         }
         Ok(frame)
     }
