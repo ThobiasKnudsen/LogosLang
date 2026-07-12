@@ -1356,6 +1356,46 @@ mod tests {
     }
 
     #[test]
+    fn interpreted_recursive_factorial() {
+        // The payoff: a recursive function on the interpreter. `fact` names itself
+        // via `:=` (declared before its body is parsed), the body branches on `if`,
+        // and each call runs on its own parameter frame. `n * fact(n - 1)` resolves
+        // `*` while `fact` is still an unbound placeholder — the fn-typed placeholder
+        // is what lets the self-call read as numeric.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "fact := fn (n : i32) -> i32 ( if (n < 1) (1) else (n * fact(n - 1)) )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap();
+        }
+
+        for (arg, expect) in [(0i64, 1i64), (1, 1), (5, 120)] {
+            let call = {
+                let mut s = ScopeStack::new();
+                s.push(core.root_scope);
+                let src = format!("fact({arg})");
+                let mut p =
+                    Parser::new(&src, &mut store, &mut trie, &core.metas, core.types(), s);
+                p.parse_expression().unwrap()
+            };
+            let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+            // SAFETY: `call` applies the bound `fact` to a literal.
+            assert_eq!(unsafe { rt.run(call) }.unwrap(), expect, "fact({arg})");
+        }
+    }
+
+    #[test]
     fn plus_over_non_numeric_operands_is_unresolved() {
         // `+` with a non-numeric operand (a struct value) has no concrete machine op
         // to resolve to, so parsing reports UnsupportedOperands.

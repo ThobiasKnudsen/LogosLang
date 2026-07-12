@@ -53,9 +53,9 @@ pub enum CompileError {
     Cranelift(String),
 }
 
-/// The most parameters a compiled function may take, bounded by
-/// [`crate::run::call_compiled`]'s arity dispatch (0..=3 `i32` args). Kept here so
-/// compilation fails fast instead of installing bcode a later call cannot invoke.
+/// The most parameters a compiled function may take, bounded by `run`'s
+/// `call_compiled` arity dispatch (0..=3 `i32` args). Kept here so compilation
+/// fails fast instead of installing bcode a later call cannot invoke.
 pub const MAX_COMPILED_PARAMS: usize = 3;
 
 /// The lowering context: a Cranelift function under construction plus the rule

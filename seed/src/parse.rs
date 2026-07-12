@@ -328,7 +328,7 @@ pub struct CoreTypes {
     /// `struct`: the type of a parameter-list / field-list node.
     pub struct_: DyadPtr,
     /// `fn`: the type of a function; a call whose callee is `fn`-typed yields a
-    /// value (see [`crate::identities::is_numeric`]).
+    /// value (which the arithmetic operators' `is_numeric` check treats as numeric).
     pub fn_type: DyadPtr,
     /// `i32`: the seed's one concrete numeric type.
     pub i32_: DyadPtr,
