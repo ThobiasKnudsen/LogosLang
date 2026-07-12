@@ -329,6 +329,8 @@ pub struct CoreTypes {
     pub struct_: DyadPtr,
     /// `i32`: the seed's one concrete numeric type.
     pub i32_: DyadPtr,
+    /// `bool`: the type a comparison produces and an `if` condition must be.
+    pub bool_: DyadPtr,
     /// `rational_number`: a numeric literal, molds to a concrete numeric type.
     pub rational: DyadPtr,
     /// `add_i32`: the concrete i32 addition `+` resolves to (DESIGN ›which concrete

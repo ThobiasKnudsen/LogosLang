@@ -34,6 +34,8 @@ mod i32_mod;
 mod return_mod;
 #[path = "struct.rs"]
 mod struct_mod;
+#[path = "bool.rs"]
+mod bool_mod;
 mod add;
 mod assign;
 mod paren;
@@ -54,6 +56,8 @@ pub struct Core {
     pub fn_type: DyadPtr,
     /// `i32`, the type of an integer variable/value.
     pub i32_: DyadPtr,
+    /// `bool`, the type of a boolean value (a comparison result; an `if` condition).
+    pub bool_: DyadPtr,
     /// `=` (assignment); a function.
     pub assign: DyadPtr,
     /// `+` (abstract addition operator); resolves to a concrete op per operand type.
@@ -94,6 +98,7 @@ impl Core {
             lower: HashMap::new(),
         };
         let i32_ = i32_mod::register(&mut cx);
+        let bool_ = bool_mod::register(&mut cx);
         let rational = rational::register(&mut cx);
         let assign = assign::register(&mut cx);
         // The concrete addition op `+` resolves to, registered before `+` so the
@@ -112,6 +117,7 @@ impl Core {
             root_scope,
             fn_type,
             i32_,
+            bool_,
             assign,
             plus,
             add_i32,
@@ -130,6 +136,7 @@ impl Core {
             scope: self.scope_,
             struct_: self.struct_,
             i32_: self.i32_,
+            bool_: self.bool_,
             rational: self.rational,
             add_i32: self.add_i32,
         }
@@ -999,6 +1006,35 @@ mod tests {
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, 42);
         assert_eq!(jit, interp);
+    }
+
+    #[test]
+    fn parses_and_runs_bool_literals() {
+        // `true`/`false` are `bool`-typed literals: they parse to a `bool` node and
+        // both tiers read 1/0. The interpreter's generic data path reads the i32;
+        // the `bool` lowering bakes it as a constant.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        for (src, expect) in [("true", 1i64), ("false", 0i64)] {
+            let node = {
+                let mut s = ScopeStack::new();
+                s.push(core.root_scope);
+                let mut p = Parser::new(src, &mut store, &mut trie, &core.metas, core.types(), s);
+                p.parse_expression().unwrap()
+            };
+            // SAFETY: `node` is the literal just parsed.
+            unsafe {
+                assert_eq!((*node).ty, core.bool_);
+            }
+            let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+            // SAFETY: `node` is a valid `bool` literal.
+            assert_eq!(unsafe { rt.run(node) }.unwrap(), expect);
+            // SAFETY: same node; the `bool` lowering bakes its constant.
+            let compiled = unsafe { compile_nullary_i32(&core.lower, node) }.unwrap();
+            assert_eq!(i64::from(unsafe { compiled.call_i32() }), expect);
+        }
     }
 
     #[test]
