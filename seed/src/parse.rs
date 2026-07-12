@@ -429,6 +429,11 @@ pub enum Construct {
     /// The `else` keyword: separates an `if`'s two branches. Consumed by
     /// [`Parser::parse_if`]; a structural token elsewhere.
     Else,
+    /// The declaration operator `:=`. Detected by the driver *before* name
+    /// resolution (a fresh name followed by `:=` is a declaration); see
+    /// [`Parser::parse_expression`]. It never reaches the main dispatch as an
+    /// operand, so it is grouped with the structural delimiters there.
+    Declare,
 }
 
 /// Why elaboration failed.
@@ -812,6 +817,40 @@ impl<'a> Parser<'a> {
             }
             let source = self.source;
             let start = self.pos;
+
+            // A fresh name in declaration position: `name := value` binds `name` to
+            // the value. The name is declared *before* the value is parsed, so the
+            // value can refer to it (self-recursion). A name not followed by `:=`
+            // rewinds and resolves normally below.
+            if let Some((nstart, nlen)) = self.lex_identifier() {
+                if let Some((_, matched, Construct::Declare)) = self.peek_kind() {
+                    self.pos += matched; // consume `:=`
+                    // `source` is `&'a str` (Copy), independent of the `&mut self`
+                    // the declaration and value parse then need (as in `parse_struct`).
+                    let name = &source[nstart..nstart + nlen];
+                    // The placeholder is `fn`-typed so a recursive self-call sees a
+                    // function-typed callee while the value is still parsing; the
+                    // fixpoint below overwrites it with the value's real type.
+                    let placeholder =
+                        self.store.alloc_raw(self.types.fn_type, std::ptr::null_mut());
+                    self.scopes
+                        .declare(self.trie, name, placeholder)
+                        .map_err(ParseError::Resolve)?;
+                    let value = self.parse_expression()?;
+                    // Fixpoint: make the placeholder *be* the value, so references to
+                    // `name` captured while parsing the value resolve to it.
+                    // SAFETY: `placeholder`/`value` are valid dyads just built.
+                    unsafe {
+                        (*placeholder).ty = (*value).ty;
+                        (*placeholder).value = (*value).value;
+                    }
+                    tape.push(Cell::Dyad(placeholder));
+                    continue;
+                }
+                // Not a declaration: rewind and resolve the name normally.
+                self.pos = start;
+            }
+
             let r = self
                 .scopes
                 .resolve(self.trie, &source[start..])
@@ -830,6 +869,7 @@ impl<'a> Parser<'a> {
                         | Construct::Colon
                         | Construct::Arrow
                         | Construct::Else
+                        | Construct::Declare
                 )
             ) {
                 break;
@@ -896,7 +936,8 @@ impl<'a> Parser<'a> {
                     | Construct::Separator
                     | Construct::Colon
                     | Construct::Arrow
-                    | Construct::Else,
+                    | Construct::Else
+                    | Construct::Declare,
                 ) => {
                     unreachable!("structural delimiter ends the loop")
                 }

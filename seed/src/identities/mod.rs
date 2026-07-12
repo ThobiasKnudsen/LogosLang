@@ -41,6 +41,7 @@ mod if_mod;
 mod add;
 mod assign;
 mod cmp;
+mod declare;
 mod lt;
 mod minus;
 mod mul;
@@ -139,6 +140,8 @@ impl Core {
         fn_mod::register_syntax(&mut cx);
         paren::register(&mut cx);
         return_mod::register(&mut cx);
+        // `:=` is a parse-time-only token; the driver dispatches on its Construct.
+        declare::register(&mut cx);
         let struct_ = struct_mod::register(&mut cx);
 
         let Cx { metas, bcode, lower, .. } = cx;
@@ -1294,6 +1297,61 @@ mod tests {
         diff_nullary_fn(
             "fn () -> i32 ( if (true) ( if (false) (1) else (2) ) else (3) )",
             2,
+        );
+    }
+
+    #[test]
+    fn declaration_binds_a_name_to_a_value() {
+        // `x := 5` binds `x` (declared before its value is parsed); the expression's
+        // value is the bound node, and a later `x` resolves to that same node.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let decl = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p =
+                Parser::new("x := 5", &mut store, &mut trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+        // The placeholder became the value: a rational that molds to 5.
+        unsafe {
+            assert_eq!((*decl).ty, core.rational);
+            assert_eq!(rational::mold(decl), Some(5));
+        }
+
+        let x_ref = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new("x", &mut store, &mut trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+        assert_eq!(x_ref, decl); // the reference resolves to the bound node
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+        // SAFETY: `x_ref` is the bound rational node.
+        assert_eq!(unsafe { rt.run(x_ref) }.unwrap(), 5);
+    }
+
+    #[test]
+    fn redeclaration_in_the_same_scope_is_rejected() {
+        // `:=` reuses the no-shadowing check: redeclaring a live name is an error.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p =
+                Parser::new("y := 1", &mut store, &mut trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap();
+        }
+        let mut s = ScopeStack::new();
+        s.push(core.root_scope);
+        let mut p = Parser::new("y := 2", &mut store, &mut trie, &core.metas, core.types(), s);
+        assert_eq!(
+            p.parse_expression(),
+            Err(crate::parse::ParseError::Resolve(crate::parse::ResolveError::Shadowed))
         );
     }
 
