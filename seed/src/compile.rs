@@ -201,12 +201,49 @@ impl Lowerer<'_, '_> {
         self.icmp(IntCC::NotEqual, a, b)
     }
 
-    /// Lower an `if`: branch on `cond` (non-zero is true), lower each of `then`/`els`
-    /// in its own block, and merge to a block whose single `I32` parameter is the
-    /// `if`'s value. Leaves the builder positioned in the (sealed) merge block, so
-    /// the caller's next instruction — an enclosing lowering, or `compile_body`'s
-    /// trailing `return_` — lands there. Nesting composes: an inner `if` leaves the
-    /// builder in its own merge, from which this arm's `jump` fires.
+    /// Emit a two-way branch on `cond` (a non-zero i32 is true): run `then_arm` in the
+    /// taken block and `else_arm` in the other, each yielding an `i32`, merged into a
+    /// single value. Leaves the builder positioned in the (sealed) merge block, so the
+    /// caller's next instruction — an enclosing lowering, or `compile_body`'s trailing
+    /// `return_` — lands there. Nesting composes: an arm that itself branches leaves
+    /// the builder in its own merge, from which this arm's `jump` fires. The shared
+    /// spine of `if` and the short-circuiting `and`/`or`.
+    fn branch<T, E>(
+        &mut self,
+        cond: Value,
+        then_arm: T,
+        else_arm: E,
+    ) -> Result<Value, CompileError>
+    where
+        T: FnOnce(&mut Self) -> Result<Value, CompileError>,
+        E: FnOnce(&mut Self) -> Result<Value, CompileError>,
+    {
+        let then_b = self.builder.create_block();
+        let else_b = self.builder.create_block();
+        let merge_b = self.builder.create_block();
+        let result = self.builder.append_block_param(merge_b, types::I32);
+
+        // Branch to the two arms; both their predecessors (this block) are now known.
+        self.builder.ins().brif(cond, then_b, &[], else_b, &[]);
+        self.builder.seal_block(then_b);
+        self.builder.seal_block(else_b);
+
+        self.builder.switch_to_block(then_b);
+        let then_v = then_arm(self)?;
+        self.builder.ins().jump(merge_b, &[then_v.into()]);
+
+        self.builder.switch_to_block(else_b);
+        let else_v = else_arm(self)?;
+        self.builder.ins().jump(merge_b, &[else_v.into()]);
+
+        // Both arms have jumped; the merge block's predecessors are complete.
+        self.builder.seal_block(merge_b);
+        self.builder.switch_to_block(merge_b);
+        Ok(result)
+    }
+
+    /// Lower an `if`: branch on the condition, each arm lowering its branch to the
+    /// `if`'s value. See [`Lowerer::branch`].
     ///
     /// # Safety
     /// `cond`/`then`/`els` must be valid dyads from the store.
@@ -217,28 +254,27 @@ impl Lowerer<'_, '_> {
         els: DyadPtr,
     ) -> Result<Value, CompileError> {
         let c = self.lower(cond)?;
-        let then_b = self.builder.create_block();
-        let else_b = self.builder.create_block();
-        let merge_b = self.builder.create_block();
-        let result = self.builder.append_block_param(merge_b, types::I32);
+        self.branch(c, |s| unsafe { s.lower(then) }, |s| unsafe { s.lower(els) })
+    }
 
-        // Branch to the two arms; both their predecessors (this block) are now known.
-        self.builder.ins().brif(c, then_b, &[], else_b, &[]);
-        self.builder.seal_block(then_b);
-        self.builder.seal_block(else_b);
+    /// Lower `a and b` short-circuit: when `a` is false the result is `false` and `b`
+    /// is not evaluated; otherwise the result is `b`.
+    ///
+    /// # Safety
+    /// `a`/`b` must be valid dyads from the store.
+    pub unsafe fn lower_and(&mut self, a: DyadPtr, b: DyadPtr) -> Result<Value, CompileError> {
+        let va = self.lower(a)?;
+        self.branch(va, |s| unsafe { s.lower(b) }, |s| Ok(s.const_i32(0)))
+    }
 
-        self.builder.switch_to_block(then_b);
-        let then_v = self.lower(then)?;
-        self.builder.ins().jump(merge_b, &[then_v.into()]);
-
-        self.builder.switch_to_block(else_b);
-        let else_v = self.lower(els)?;
-        self.builder.ins().jump(merge_b, &[else_v.into()]);
-
-        // Both arms have jumped; the merge block's predecessors are complete.
-        self.builder.seal_block(merge_b);
-        self.builder.switch_to_block(merge_b);
-        Ok(result)
+    /// Lower `a or b` short-circuit: when `a` is true the result is `true` and `b` is
+    /// not evaluated; otherwise the result is `b`.
+    ///
+    /// # Safety
+    /// `a`/`b` must be valid dyads from the store.
+    pub unsafe fn lower_or(&mut self, a: DyadPtr, b: DyadPtr) -> Result<Value, CompileError> {
+        let va = self.lower(a)?;
+        self.branch(va, |s| Ok(s.const_i32(1)), |s| unsafe { s.lower(b) })
     }
 
     /// Lower a call's arguments — its value struct `[arg0 …, null]`, or null for a

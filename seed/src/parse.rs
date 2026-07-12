@@ -373,6 +373,12 @@ pub struct CoreTypes {
     pub ne: DyadPtr,
     /// `ne_i32`: the concrete i32 inequality `!=` resolves to.
     pub ne_i32: DyadPtr,
+    /// `and` (short-circuiting logical conjunction); its result is `bool`.
+    pub and_: DyadPtr,
+    /// `or` (short-circuiting logical disjunction); its result is `bool`.
+    pub or_: DyadPtr,
+    /// `not` (logical negation); its result is `bool`.
+    pub not_: DyadPtr,
 }
 
 /// The fields of a function node's value struct, in order, as built by
@@ -454,6 +460,10 @@ pub enum Construct {
     /// [`Parser::parse_expression`]. It never reaches the main dispatch as an
     /// operand, so it is grouped with the structural delimiters there.
     Declare,
+    /// The `not` keyword: parse a logical negation `not ( operand )` via
+    /// [`Parser::parse_not`]. The operand is parenthesized (like an `if` condition)
+    /// and must be a `bool`.
+    Not,
 }
 
 /// Why elaboration failed.
@@ -488,6 +498,8 @@ pub enum ParseError {
     NonBoolCondition,
     /// An `if`'s then-branch was not followed by the mandatory `else`.
     ExpectedElse,
+    /// A logical operator (`and`/`or`/`not`) was applied to a non-`bool` operand.
+    NonBoolOperands,
 }
 
 /// Build a call node `{ty: callee, value: [args…, null]}`, the application
@@ -495,13 +507,13 @@ pub enum ParseError {
 /// value is the operand array of its arguments (null-terminated so `run` can count
 /// them); a nullary call carries a null value. The callee's type decides how the
 /// call runs, exactly as an operator's does.
-/// Whether `node`'s result is a `bool`: a `bool` literal/value, or a comparison
-/// (`<`, and its future siblings) whose result type is `bool`. An `if` condition
-/// must be one; arithmetic and other values are not.
+/// Whether `node`'s result is a `bool`: a `bool` literal/value, a comparison
+/// (`<`/`>`/`==`/…), or a logical operator (`and`/`or`/`not`). An `if` condition and
+/// a logical operator's operands must be one; arithmetic and other values are not.
 ///
 /// # Safety
 /// `node` must be a valid dyad from the store.
-unsafe fn is_bool_result(types: &CoreTypes, node: DyadPtr) -> bool {
+pub(crate) unsafe fn is_bool_result(types: &CoreTypes, node: DyadPtr) -> bool {
     let ty = (*node).ty;
     ty == types.bool_
         || ty == types.lt
@@ -510,6 +522,9 @@ unsafe fn is_bool_result(types: &CoreTypes, node: DyadPtr) -> bool {
         || ty == types.le
         || ty == types.ge
         || ty == types.ne
+        || ty == types.and_
+        || ty == types.or_
+        || ty == types.not_
 }
 
 fn build_call(store: &mut Store, callee: DyadPtr, args: &[DyadPtr]) -> DyadPtr {
@@ -777,6 +792,22 @@ impl<'a> Parser<'a> {
         Ok(self.store.alloc_raw(if_type, value))
     }
 
+    /// Parse a logical negation `not ( operand )` (given the resolved `not`
+    /// identity). The operand is parenthesized (like an `if` condition), which keeps
+    /// the binding unambiguous, and must be a `bool` ([`ParseError::NonBoolOperands`]).
+    /// The node is `{ty: not, value: operand}`.
+    pub fn parse_not(&mut self, not_id: DyadPtr) -> Result<DyadPtr, ParseError> {
+        self.expect_open()?;
+        let operand = self.parse_expression()?;
+        self.expect_close()?;
+        let types = self.types;
+        // SAFETY: `operand` is the reduced dyad just parsed.
+        if !unsafe { is_bool_result(&types, operand) } {
+            return Err(ParseError::NonBoolOperands);
+        }
+        Ok(self.store.alloc_raw(not_id, operand.cast()))
+    }
+
     /// Consume the `else` keyword between an `if`'s branches.
     fn expect_else(&mut self) -> Result<(), ParseError> {
         match self.peek_kind() {
@@ -948,6 +979,11 @@ impl<'a> Parser<'a> {
                 // The `if` keyword: parse an `if ( cond ) ( then ) else ( else )`.
                 Some(Construct::If) => {
                     let node = self.parse_if(id)?;
+                    tape.push(Cell::Dyad(node));
+                }
+                // The `not` keyword: parse a logical negation `not ( operand )`.
+                Some(Construct::Not) => {
+                    let node = self.parse_not(id)?;
                     tape.push(Cell::Dyad(node));
                 }
                 // An operator: reduce anything binding tighter to its left, then

@@ -39,6 +39,7 @@ mod bool_mod;
 #[path = "if.rs"]
 mod if_mod;
 mod add;
+mod and;
 mod assign;
 mod cmp;
 mod declare;
@@ -50,6 +51,8 @@ mod lt;
 mod minus;
 mod mul;
 mod ne;
+mod not;
+mod or;
 mod paren;
 mod plus;
 pub(crate) mod rational;
@@ -110,6 +113,12 @@ pub struct Core {
     pub ne: DyadPtr,
     /// `ne_i32` (concrete i32 inequality); the machine op `!=` resolves to.
     pub ne_i32: DyadPtr,
+    /// `and` (short-circuiting logical conjunction); its result is `bool`.
+    pub and_: DyadPtr,
+    /// `or` (short-circuiting logical disjunction); its result is `bool`.
+    pub or_: DyadPtr,
+    /// `not` (logical negation); its result is `bool`.
+    pub not_: DyadPtr,
     /// `if` (the value-producing conditional); a function.
     pub if_: DyadPtr,
     /// `rational_number` (numeric literal carrier); a data type.
@@ -169,6 +178,10 @@ impl Core {
         let le = le::register(&mut cx);
         let ge = ge::register(&mut cx);
         let ne = ne::register(&mut cx);
+        // The logical operators, over `bool` (their operands are comparisons/bools).
+        let and_ = and::register(&mut cx);
+        let or_ = or::register(&mut cx);
+        let not_ = not::register(&mut cx);
         let if_ = if_mod::register(&mut cx);
         fn_mod::register_syntax(&mut cx);
         paren::register(&mut cx);
@@ -204,6 +217,9 @@ impl Core {
             ge_i32,
             ne,
             ne_i32,
+            and_,
+            or_,
+            not_,
             if_,
             rational,
             struct_,
@@ -241,6 +257,9 @@ impl Core {
             ge_i32: self.ge_i32,
             ne: self.ne,
             ne_i32: self.ne_i32,
+            and_: self.and_,
+            or_: self.or_,
+            not_: self.not_,
         }
     }
 }
@@ -1338,6 +1357,108 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn logical_operators_match_between_tiers() {
+        // `and`/`or` truth tables and `not`, diffed interpreter vs JIT.
+        diff_nullary_fn("fn () -> i32 ( true and true )", 1);
+        diff_nullary_fn("fn () -> i32 ( true and false )", 0);
+        diff_nullary_fn("fn () -> i32 ( false and true )", 0);
+        diff_nullary_fn("fn () -> i32 ( false and false )", 0);
+        diff_nullary_fn("fn () -> i32 ( true or true )", 1);
+        diff_nullary_fn("fn () -> i32 ( true or false )", 1);
+        diff_nullary_fn("fn () -> i32 ( false or true )", 1);
+        diff_nullary_fn("fn () -> i32 ( false or false )", 0);
+        diff_nullary_fn("fn () -> i32 ( not (true) )", 0);
+        diff_nullary_fn("fn () -> i32 ( not (false) )", 1);
+        // Over comparisons (their natural operands).
+        diff_nullary_fn("fn () -> i32 ( 1 < 2 and 3 < 4 )", 1);
+        diff_nullary_fn("fn () -> i32 ( 1 < 2 and 3 > 4 )", 0);
+        diff_nullary_fn("fn () -> i32 ( 1 > 2 or 3 < 4 )", 1);
+        diff_nullary_fn("fn () -> i32 ( not (1 < 2) )", 0);
+        // Precedence: comparisons tighter than `and` tighter than `or`, so
+        // `1<2 and 3>4 or 5<6` = `((1<2) and (3>4)) or (5<6)` = (T and F) or T = T.
+        diff_nullary_fn("fn () -> i32 ( 1 < 2 and 3 > 4 or 5 < 6 )", 1);
+        // Logical results are bool, so they nest and serve as `if` conditions.
+        diff_nullary_fn("fn () -> i32 ( not (1 < 2) or not (3 < 4) )", 0);
+        diff_nullary_fn("fn () -> i32 ( if (1 < 2 and 3 < 4) (100) else (200) )", 100);
+    }
+
+    #[test]
+    fn logical_operators_short_circuit_on_the_interpreter() {
+        // `and`/`or` short-circuit: the right operand is not evaluated when the left
+        // decides the result. Observed via a right operand that would error (an
+        // uninitialized read) but is skipped.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        // `y`: a declared-but-uninitialized i32; reading it is a BadValue.
+        {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let y = store.alloc_raw(core.i32_, std::ptr::null_mut());
+            s.declare(&mut trie, "y", y).unwrap();
+        }
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+
+        // The right operand alone errors — this is what short-circuiting must skip.
+        let bad = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new("y < 1", &mut store, &mut trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+        assert_eq!(unsafe { rt.run(bad) }, Err(crate::run::RunError::BadValue));
+
+        // `false and (y < 1)`: false left operand skips the erroring read → 0.
+        let and_sc = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p =
+                Parser::new("false and y < 1", &mut store, &mut trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+        assert_eq!(unsafe { rt.run(and_sc) }.unwrap(), 0);
+
+        // `true or (y < 1)`: true left operand skips the erroring read → 1.
+        let or_sc = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p =
+                Parser::new("true or y < 1", &mut store, &mut trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+        assert_eq!(unsafe { rt.run(or_sc) }.unwrap(), 1);
+    }
+
+    #[test]
+    fn logical_operators_reject_non_bool_operands() {
+        // `and`/`or`/`not` require `bool` operands; a number is not one.
+        for src in ["true and 1", "1 or false", "not (1)"] {
+            let mut store = Store::new();
+            let mut trie = RegexTrie::new();
+            let core = Core::build(&mut store, &mut trie);
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(src, &mut store, &mut trie, &core.metas, core.types(), s);
+            assert_eq!(
+                p.parse_expression(),
+                Err(crate::parse::ParseError::NonBoolOperands),
+                "`{src}` should be rejected",
+            );
+        }
+    }
+
+    #[test]
+    fn not_requires_a_parenthesized_operand() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut s = ScopeStack::new();
+        s.push(core.root_scope);
+        let mut p = Parser::new("not true", &mut store, &mut trie, &core.metas, core.types(), s);
+        assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::ExpectedOpen));
     }
 
     #[test]
