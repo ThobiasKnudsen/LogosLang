@@ -4,15 +4,18 @@
 
 use cranelift_codegen::ir::Value;
 
+use super::numtype::NumType;
 use super::Cx;
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 
-/// Register `i32`: its spelling (so it resolves as a field/type name) and its
-/// lowering rule.
+/// Register `i32`: its spelling (so it resolves as a field/type name), its `NumType`
+/// tag (stored in its value slot so run/compile can recover the type from the graph),
+/// and its lowering rule.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let id = cx.store.alloc_raw(cx.type_, std::ptr::null_mut());
+    let tag = cx.store.alloc_bytes(&NumType::I32.tag_bytes());
+    let id = cx.store.alloc_raw(cx.type_, tag);
     cx.trie.insert("i32", IdContext::new(id, cx.root_scope));
     cx.lower.insert(id, lower);
     id

@@ -336,43 +336,24 @@ pub struct CoreTypes {
     pub bool_: DyadPtr,
     /// `rational_number`: a numeric literal, molds to a concrete numeric type.
     pub rational: DyadPtr,
-    /// `add_i32`: the concrete i32 addition `+` resolves to (DESIGN ›which concrete
-    /// machine operation runs, which `+`, is resolved from the operand types‹).
-    pub add_i32: DyadPtr,
-    /// `+` (abstract addition); recognized as a numeric-producing operand.
+    /// `+` (addition); recognized as a numeric-producing operand.
     pub plus: DyadPtr,
-    /// `-` (abstract subtraction); recognized as a numeric-producing operand.
+    /// `-` (subtraction); recognized as a numeric-producing operand.
     pub minus: DyadPtr,
-    /// `*` (abstract multiplication); recognized as a numeric-producing operand.
+    /// `*` (multiplication); recognized as a numeric-producing operand.
     pub times: DyadPtr,
-    /// `sub_i32`: the concrete i32 subtraction `-` resolves to.
-    pub sub_i32: DyadPtr,
-    /// `mul_i32`: the concrete i32 multiplication `*` resolves to.
-    pub mul_i32: DyadPtr,
-    /// `<` (abstract less-than); its result is `bool` (an `if` condition).
+    /// `<` (less-than); its result is `bool` (an `if` condition).
     pub lt: DyadPtr,
-    /// `lt_i32`: the concrete i32 less-than `<` resolves to.
-    pub lt_i32: DyadPtr,
-    /// `>` (abstract greater-than); its result is `bool`.
+    /// `>` (greater-than); its result is `bool`.
     pub gt: DyadPtr,
-    /// `gt_i32`: the concrete i32 greater-than `>` resolves to.
-    pub gt_i32: DyadPtr,
-    /// `==` (abstract equality); its result is `bool`.
+    /// `==` (equality); its result is `bool`.
     pub eq: DyadPtr,
-    /// `eq_i32`: the concrete i32 equality `==` resolves to.
-    pub eq_i32: DyadPtr,
-    /// `<=` (abstract less-than-or-equal); its result is `bool`.
+    /// `<=` (less-than-or-equal); its result is `bool`.
     pub le: DyadPtr,
-    /// `le_i32`: the concrete i32 less-than-or-equal `<=` resolves to.
-    pub le_i32: DyadPtr,
-    /// `>=` (abstract greater-than-or-equal); its result is `bool`.
+    /// `>=` (greater-than-or-equal); its result is `bool`.
     pub ge: DyadPtr,
-    /// `ge_i32`: the concrete i32 greater-than-or-equal `>=` resolves to.
-    pub ge_i32: DyadPtr,
-    /// `!=` (abstract inequality); its result is `bool`.
+    /// `!=` (inequality); its result is `bool`.
     pub ne: DyadPtr,
-    /// `ne_i32`: the concrete i32 inequality `!=` resolves to.
-    pub ne_i32: DyadPtr,
     /// `and` (short-circuiting logical conjunction); its result is `bool`.
     pub and_: DyadPtr,
     /// `or` (short-circuiting logical disjunction); its result is `bool`.

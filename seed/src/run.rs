@@ -97,23 +97,6 @@ impl<'a> Runtime<'a> {
         Runtime { fn_type, rational, bcode, frames: Vec::new() }
     }
 
-    /// Run a specific operation's native over `node`, dispatching through the run
-    /// table. Used by an abstract operator (`+`) to delegate to the concrete op it
-    /// resolved to (`add_i32`); the concrete op reads the same node's operands.
-    ///
-    /// # Safety
-    /// As [`Runtime::run`]: `node` must be a valid dyad the operation `op` can read.
-    pub(crate) unsafe fn run_native(
-        &mut self,
-        op: DyadPtr,
-        node: DyadPtr,
-    ) -> Result<i64, RunError> {
-        match self.bcode.get(&op).copied() {
-            Some(native) => native(self, node),
-            None => Err(RunError::NotRunnable(op)),
-        }
-    }
-
     /// Run `node`: read its operation (its `type`). If the operation is a function
     /// (its own type is `fn`): a leaf native in the table runs directly; otherwise
     /// jump to the node's installed `bcode` if present, else walk its `body`. If the

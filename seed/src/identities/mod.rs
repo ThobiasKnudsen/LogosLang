@@ -38,10 +38,8 @@ mod struct_mod;
 mod bool_mod;
 #[path = "if.rs"]
 mod if_mod;
-mod add;
 mod and;
 mod assign;
-mod cmp;
 mod declare;
 mod eq;
 mod ge;
@@ -49,15 +47,14 @@ mod gt;
 mod le;
 mod lt;
 mod minus;
-mod mul;
 mod ne;
 mod not;
+pub(crate) mod numtype;
 mod or;
 mod paren;
 mod plus;
 pub(crate) mod rational;
 mod scope;
-mod sub;
 mod times;
 
 /// The core identities and the per-phase tables that drive them.
@@ -77,42 +74,24 @@ pub struct Core {
     pub bool_: DyadPtr,
     /// `=` (assignment); a function.
     pub assign: DyadPtr,
-    /// `+` (abstract addition operator); resolves to a concrete op per operand type.
+    /// `+` (addition); resolves and stores its operand type per node.
     pub plus: DyadPtr,
-    /// `add_i32` (concrete i32 addition); the machine op `+` resolves to.
-    pub add_i32: DyadPtr,
-    /// `-` (abstract subtraction operator).
+    /// `-` (subtraction).
     pub minus: DyadPtr,
-    /// `sub_i32` (concrete i32 subtraction); the machine op `-` resolves to.
-    pub sub_i32: DyadPtr,
-    /// `*` (abstract multiplication operator).
+    /// `*` (multiplication).
     pub times: DyadPtr,
-    /// `mul_i32` (concrete i32 multiplication); the machine op `*` resolves to.
-    pub mul_i32: DyadPtr,
-    /// `<` (abstract less-than comparison); its result is `bool`.
+    /// `<` (less-than comparison); its result is `bool`.
     pub lt: DyadPtr,
-    /// `lt_i32` (concrete i32 less-than); the machine op `<` resolves to.
-    pub lt_i32: DyadPtr,
-    /// `>` (abstract greater-than comparison); its result is `bool`.
+    /// `>` (greater-than comparison); its result is `bool`.
     pub gt: DyadPtr,
-    /// `gt_i32` (concrete i32 greater-than); the machine op `>` resolves to.
-    pub gt_i32: DyadPtr,
-    /// `==` (abstract equality comparison); its result is `bool`.
+    /// `==` (equality comparison); its result is `bool`.
     pub eq: DyadPtr,
-    /// `eq_i32` (concrete i32 equality); the machine op `==` resolves to.
-    pub eq_i32: DyadPtr,
-    /// `<=` (abstract less-than-or-equal comparison); its result is `bool`.
+    /// `<=` (less-than-or-equal comparison); its result is `bool`.
     pub le: DyadPtr,
-    /// `le_i32` (concrete i32 less-than-or-equal); the machine op `<=` resolves to.
-    pub le_i32: DyadPtr,
-    /// `>=` (abstract greater-than-or-equal comparison); its result is `bool`.
+    /// `>=` (greater-than-or-equal comparison); its result is `bool`.
     pub ge: DyadPtr,
-    /// `ge_i32` (concrete i32 greater-than-or-equal); the machine op `>=` resolves to.
-    pub ge_i32: DyadPtr,
-    /// `!=` (abstract inequality comparison); its result is `bool`.
+    /// `!=` (inequality comparison); its result is `bool`.
     pub ne: DyadPtr,
-    /// `ne_i32` (concrete i32 inequality); the machine op `!=` resolves to.
-    pub ne_i32: DyadPtr,
     /// `and` (short-circuiting logical conjunction); its result is `bool`.
     pub and_: DyadPtr,
     /// `or` (short-circuiting logical disjunction); its result is `bool`.
@@ -158,20 +137,12 @@ impl Core {
         let bool_ = bool_mod::register(&mut cx);
         let rational = rational::register(&mut cx);
         let assign = assign::register(&mut cx);
-        // The concrete addition op `+` resolves to, registered before `+` so the
-        // abstract operator can point at it.
-        let add_i32 = add::register(&mut cx);
+        // The numeric operators. Each resolves its operand type at parse time and
+        // stores it in the node's value slot; run/compile switch on it (see
+        // `numtype`), so one identity per operator serves every numeric type.
         let plus = plus::register(&mut cx);
-        // Each abstract arithmetic operator is registered after the concrete op it
-        // resolves to, matching `add_i32`/`+`.
-        let sub_i32 = sub::register(&mut cx);
         let minus = minus::register(&mut cx);
-        let mul_i32 = mul::register(&mut cx);
         let times = times::register(&mut cx);
-        // The concrete comparison ops, registered before the abstract operators
-        // that resolve to them (as `add_i32` before `+`).
-        let cmp::Concrete { lt_i32, gt_i32, eq_i32, le_i32, ge_i32, ne_i32 } =
-            cmp::register(&mut cx);
         let lt = lt::register(&mut cx);
         let gt = gt::register(&mut cx);
         let eq = eq::register(&mut cx);
@@ -200,23 +171,14 @@ impl Core {
             bool_,
             assign,
             plus,
-            add_i32,
             minus,
-            sub_i32,
             times,
-            mul_i32,
             lt,
-            lt_i32,
             gt,
-            gt_i32,
             eq,
-            eq_i32,
             le,
-            le_i32,
             ge,
-            ge_i32,
             ne,
-            ne_i32,
             and_,
             or_,
             not_,
@@ -239,24 +201,15 @@ impl Core {
             i32_: self.i32_,
             bool_: self.bool_,
             rational: self.rational,
-            add_i32: self.add_i32,
             plus: self.plus,
             minus: self.minus,
             times: self.times,
-            sub_i32: self.sub_i32,
-            mul_i32: self.mul_i32,
             lt: self.lt,
-            lt_i32: self.lt_i32,
             gt: self.gt,
-            gt_i32: self.gt_i32,
             eq: self.eq,
-            eq_i32: self.eq_i32,
             le: self.le,
-            le_i32: self.le_i32,
             ge: self.ge,
-            ge_i32: self.ge_i32,
             ne: self.ne,
-            ne_i32: self.ne_i32,
             and_: self.and_,
             or_: self.or_,
             not_: self.not_,
@@ -366,7 +319,7 @@ mod tests {
             assert_eq!(rational::mold(one), Some(1)); // the rational 1/1 molds to i32 1
             // `+` stayed reflectable (ty is still `+`) and recorded the concrete op
             // it resolved to as its third operand.
-            assert_eq!(*sops.add(2), core.add_i32);
+            assert_eq!(*sops.add(2), core.i32_);
         }
     }
 
@@ -1140,7 +1093,7 @@ mod tests {
         unsafe {
             let body = *((*func).value as *const DyadPtr).add(FN_BODY);
             assert_eq!((*body).ty, core.plus);
-            assert_eq!(*((*body).value as *const DyadPtr).add(2), core.add_i32);
+            assert_eq!(*((*body).value as *const DyadPtr).add(2), core.i32_);
         }
 
         let call = store.alloc_raw(func, std::ptr::null_mut());
@@ -1241,10 +1194,10 @@ mod tests {
             let body = *((*func).value as *const DyadPtr).add(FN_BODY);
             assert_eq!((*body).ty, core.minus);
             let bops = (*body).value as *const DyadPtr;
-            assert_eq!(*bops.add(2), core.sub_i32);
+            assert_eq!(*bops.add(2), core.i32_);
             let rhs = *bops.add(1);
             assert_eq!((*rhs).ty, core.times);
-            assert_eq!(*((*rhs).value as *const DyadPtr).add(2), core.mul_i32);
+            assert_eq!(*((*rhs).value as *const DyadPtr).add(2), core.i32_);
         }
     }
 
@@ -1287,7 +1240,7 @@ mod tests {
         unsafe {
             let body = *((*func).value as *const DyadPtr).add(FN_BODY);
             assert_eq!((*body).ty, core.lt);
-            assert_eq!(*((*body).value as *const DyadPtr).add(2), core.lt_i32);
+            assert_eq!(*((*body).value as *const DyadPtr).add(2), core.i32_);
         }
     }
 
@@ -1333,11 +1286,11 @@ mod tests {
         let core = Core::build(&mut store, &mut trie);
 
         let cases: [(&str, DyadPtr, DyadPtr); 5] = [
-            ("fn () -> i32 ( 1 > 2 )", core.gt, core.gt_i32),
-            ("fn () -> i32 ( 1 == 2 )", core.eq, core.eq_i32),
-            ("fn () -> i32 ( 1 <= 2 )", core.le, core.le_i32),
-            ("fn () -> i32 ( 1 >= 2 )", core.ge, core.ge_i32),
-            ("fn () -> i32 ( 1 != 2 )", core.ne, core.ne_i32),
+            ("fn () -> i32 ( 1 > 2 )", core.gt, core.i32_),
+            ("fn () -> i32 ( 1 == 2 )", core.eq, core.i32_),
+            ("fn () -> i32 ( 1 <= 2 )", core.le, core.i32_),
+            ("fn () -> i32 ( 1 >= 2 )", core.ge, core.i32_),
+            ("fn () -> i32 ( 1 != 2 )", core.ne, core.i32_),
         ];
         for (src, abstract_op, concrete) in cases {
             let func = {

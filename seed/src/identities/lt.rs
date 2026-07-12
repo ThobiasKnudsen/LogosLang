@@ -1,16 +1,11 @@
-//! `<`: the *abstract* less-than comparison, an abstraction over all machine
-//! comparisons (mirrors [`crate::identities::plus`]). At parse time it resolves
-//! from its operands' types to a concrete op (`lt_i32` today), which it stores as
-//! its third operand, so `<` stays reflectable while run and compile delegate to
-//! that concrete op ([`crate::identities::cmp`]).
-//!
-//! Its *result* is a `bool` (`if`'s condition must be one; see
-//! [`crate::parse::Parser`]'s `is_bool_result`), though the concrete op yields the
-//! `i32` 0/1 both tiers compute in. `<` binds looser than arithmetic but tighter
-//! than `=`, so `a = b < c` groups as `a = (b < c)` and `(n - 1) < 1` as expected.
+//! `<`: less-than. A comparison stores its resolved *operand* type in the value slot
+//! `{ty: <, value: [lhs, rhs, type]}` (its result is `bool`, an i32 0/1); run/compile
+//! read that type and switch on it — signed vs unsigned vs float (see
+//! [`crate::identities::numtype`]). `<` binds between `=` and arithmetic.
 
 use cranelift_codegen::ir::Value;
 
+use super::numtype::{eval_compare, CmpOp};
 use super::{is_numeric, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
@@ -19,11 +14,8 @@ use crate::parse::{Assoc, Construct, CoreTypes, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
-/// The index, in a `<` node's value struct, of the resolved concrete op.
-const LT_CONCRETE: usize = 2;
-
-/// Register `<`: spelling and parse precedence (between `=` and arithmetic,
-/// left-associative), plus its resolve-and-delegate run and lowering.
+/// Register `<`: spelling, precedence (relational, left-associative), and its
+/// type-switched run and lowering.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let id = cx.store.alloc_raw(cx.fn_type, std::ptr::null_mut());
     cx.trie.insert("<", IdContext::new(id, cx.root_scope));
@@ -34,8 +26,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     id
 }
 
-/// Build `lhs < rhs`: resolve the concrete comparison op from the operand types and
-/// store it as the node's third operand, giving `{ty: <, value: [lhs, rhs, op]}`.
+/// Build `lhs < rhs`: resolve the operand type and store it as the third operand.
 fn build(
     store: &mut Store,
     types: &CoreTypes,
@@ -44,31 +35,21 @@ fn build(
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store; reading their type is safe.
-    let resolvable = unsafe { is_numeric(types, lhs) && is_numeric(types, rhs) };
-    if !resolvable {
+    if !unsafe { is_numeric(types, lhs) && is_numeric(types, rhs) } {
         return Err(ParseError::UnsupportedOperands);
     }
-    let concrete = types.lt_i32;
-    let value = store.alloc_operands(&[lhs, rhs, concrete]);
+    let value = store.alloc_operands(&[lhs, rhs, types.i32_]);
     Ok(store.alloc_raw(lt, value))
 }
 
-/// The concrete op a `<` node resolved to (its third operand).
-///
-/// # Safety
-/// `node` must be a `<` node built by [`build`], with a `[lhs, rhs, concrete]` value.
-unsafe fn concrete_op(node: DyadPtr) -> DyadPtr {
-    *((*node).value as *const DyadPtr).add(LT_CONCRETE)
-}
-
-/// Run: delegate to the resolved concrete op, which reads this node's operands.
+/// Run: compare in the stored operand type.
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a valid `<` application carrying its resolved concrete op.
-    unsafe { rt.run_native(concrete_op(node), node) }
+    // SAFETY: `node` is a valid `<` application `[lhs, rhs, type]`.
+    unsafe { eval_compare(rt, node, CmpOp::Lt) }
 }
 
-/// Lower: delegate to the resolved concrete op's lowering.
+/// Lower: emit the machine comparison for the stored operand type.
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a valid `<` application carrying its resolved concrete op.
-    unsafe { lw.lower_op(concrete_op(node), node) }
+    // SAFETY: `node` is a valid `<` application `[lhs, rhs, type]`.
+    unsafe { lw.lower_compare(node, CmpOp::Lt) }
 }

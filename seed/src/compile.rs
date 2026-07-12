@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use cranelift_codegen::ir::condcodes::IntCC;
+use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{types, AbiParam, InstBuilder, MemFlagsData, Value};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
@@ -22,6 +22,8 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{default_libcall_names, FuncId, Linkage, Module};
 
 use crate::dyad::DyadPtr;
+use crate::identities::numtype::{of_type_node, stored_type, ArithOp, CmpOp};
+use crate::identities::operands;
 use crate::parse::{FN_BCODE, FN_BODY, FN_INPUT};
 
 /// A lowering rule: emit the IR for a node and return the SSA value it computes,
@@ -114,23 +116,6 @@ impl Lowerer<'_, '_> {
         Err(CompileError::NotLowerable(op))
     }
 
-    /// Lower a specific operation over `node`, dispatching through the lower table.
-    /// Used by an abstract operator (`+`) to delegate to the concrete op it resolved
-    /// to (`add_i32`); the concrete op reads the same node's operands.
-    ///
-    /// # Safety
-    /// As [`Lowerer::lower`]: `node` must be a valid dyad the operation `op` can read.
-    pub(crate) unsafe fn lower_op(
-        &mut self,
-        op: DyadPtr,
-        node: DyadPtr,
-    ) -> Result<Value, CompileError> {
-        match self.lower.get(&op).copied() {
-            Some(f) => f(self, node),
-            None => Err(CompileError::NotLowerable(op)),
-        }
-    }
-
     /// An `i32` immediate.
     pub fn const_i32(&mut self, v: i32) -> Value {
         self.builder.ins().iconst(types::I32, i64::from(v))
@@ -148,57 +133,92 @@ impl Lowerer<'_, '_> {
         self.builder.ins().store(self.flags, v, p, 0);
     }
 
-    /// Integer addition.
-    pub fn add(&mut self, a: Value, b: Value) -> Value {
-        self.builder.ins().iadd(a, b)
+    /// Equality of two same-typed integer values, as an `i32` 0/1. Kept for `not`
+    /// (which lowers `not x` as `x == 0`); the numeric comparison operators go through
+    /// [`Lowerer::lower_compare`].
+    pub fn icmp_eq(&mut self, a: Value, b: Value) -> Value {
+        self.icmp(IntCC::Equal, a, b)
     }
 
-    /// Integer subtraction.
-    pub fn sub(&mut self, a: Value, b: Value) -> Value {
-        self.builder.ins().isub(a, b)
-    }
-
-    /// Integer multiplication.
-    pub fn mul(&mut self, a: Value, b: Value) -> Value {
-        self.builder.ins().imul(a, b)
-    }
-
-    /// An integer comparison `a cc b`, as an `i32` 0/1. `icmp` yields a one-bit
-    /// (`I8`) boolean; zero-extend it to the `I32` the seed's values compute in. The
-    /// named wrappers below keep `IntCC` out of the comparison identity files.
+    /// An integer comparison `a cc b`, zero-extended to the `I32` bool (`icmp` yields a
+    /// one-bit `I8`).
     fn icmp(&mut self, cc: IntCC, a: Value, b: Value) -> Value {
         let c = self.builder.ins().icmp(cc, a, b);
         self.builder.ins().uextend(types::I32, c)
     }
 
-    /// Signed less-than, as an `i32` 0/1.
-    pub fn icmp_slt(&mut self, a: Value, b: Value) -> Value {
-        self.icmp(IntCC::SignedLessThan, a, b)
+    /// A float comparison `a cc b`, zero-extended to the `I32` bool.
+    fn fcmp(&mut self, cc: FloatCC, a: Value, b: Value) -> Value {
+        let c = self.builder.ins().fcmp(cc, a, b);
+        self.builder.ins().uextend(types::I32, c)
     }
 
-    /// Signed greater-than, as an `i32` 0/1.
-    pub fn icmp_sgt(&mut self, a: Value, b: Value) -> Value {
-        self.icmp(IntCC::SignedGreaterThan, a, b)
+    /// Lower a binary arithmetic operator (`+`/`-`/`*`): read the type stored in the
+    /// node's value slot and emit the matching machine op over the lowered operands
+    /// (`iadd`/`fadd`, …). The result type follows the operand `Value`s.
+    ///
+    /// # Safety
+    /// `node` must be a resolved binary numeric operator node `[lhs, rhs, type]`.
+    pub(crate) unsafe fn lower_arith(
+        &mut self,
+        node: DyadPtr,
+        op: ArithOp,
+    ) -> Result<Value, CompileError> {
+        let float = of_type_node(stored_type(node)).is_float();
+        let (lhs, rhs) = operands(node);
+        let l = self.lower(lhs)?;
+        let r = self.lower(rhs)?;
+        Ok(match (op, float) {
+            (ArithOp::Add, false) => self.builder.ins().iadd(l, r),
+            (ArithOp::Sub, false) => self.builder.ins().isub(l, r),
+            (ArithOp::Mul, false) => self.builder.ins().imul(l, r),
+            (ArithOp::Add, true) => self.builder.ins().fadd(l, r),
+            (ArithOp::Sub, true) => self.builder.ins().fsub(l, r),
+            (ArithOp::Mul, true) => self.builder.ins().fmul(l, r),
+        })
     }
 
-    /// Equality, as an `i32` 0/1.
-    pub fn icmp_eq(&mut self, a: Value, b: Value) -> Value {
-        self.icmp(IntCC::Equal, a, b)
-    }
-
-    /// Signed less-than-or-equal, as an `i32` 0/1.
-    pub fn icmp_sle(&mut self, a: Value, b: Value) -> Value {
-        self.icmp(IntCC::SignedLessThanOrEqual, a, b)
-    }
-
-    /// Signed greater-than-or-equal, as an `i32` 0/1.
-    pub fn icmp_sge(&mut self, a: Value, b: Value) -> Value {
-        self.icmp(IntCC::SignedGreaterThanOrEqual, a, b)
-    }
-
-    /// Inequality, as an `i32` 0/1.
-    pub fn icmp_ne(&mut self, a: Value, b: Value) -> Value {
-        self.icmp(IntCC::NotEqual, a, b)
+    /// Lower a binary comparison (`<`/`>`/`==`/…): read the stored operand type and emit
+    /// `icmp` (signed or unsigned per the type) or `fcmp`, zero-extended to the `I32`
+    /// bool.
+    ///
+    /// # Safety
+    /// `node` must be a resolved binary numeric operator node `[lhs, rhs, type]`.
+    pub(crate) unsafe fn lower_compare(
+        &mut self,
+        node: DyadPtr,
+        op: CmpOp,
+    ) -> Result<Value, CompileError> {
+        let ty = of_type_node(stored_type(node));
+        let (lhs, rhs) = operands(node);
+        let l = self.lower(lhs)?;
+        let r = self.lower(rhs)?;
+        if ty.is_float() {
+            let cc = match op {
+                CmpOp::Lt => FloatCC::LessThan,
+                CmpOp::Gt => FloatCC::GreaterThan,
+                CmpOp::Le => FloatCC::LessThanOrEqual,
+                CmpOp::Ge => FloatCC::GreaterThanOrEqual,
+                CmpOp::Eq => FloatCC::Equal,
+                CmpOp::Ne => FloatCC::NotEqual,
+            };
+            Ok(self.fcmp(cc, l, r))
+        } else {
+            let s = ty.is_signed_int();
+            let cc = match (op, s) {
+                (CmpOp::Lt, true) => IntCC::SignedLessThan,
+                (CmpOp::Lt, false) => IntCC::UnsignedLessThan,
+                (CmpOp::Gt, true) => IntCC::SignedGreaterThan,
+                (CmpOp::Gt, false) => IntCC::UnsignedGreaterThan,
+                (CmpOp::Le, true) => IntCC::SignedLessThanOrEqual,
+                (CmpOp::Le, false) => IntCC::UnsignedLessThanOrEqual,
+                (CmpOp::Ge, true) => IntCC::SignedGreaterThanOrEqual,
+                (CmpOp::Ge, false) => IntCC::UnsignedGreaterThanOrEqual,
+                (CmpOp::Eq, _) => IntCC::Equal,
+                (CmpOp::Ne, _) => IntCC::NotEqual,
+            };
+            Ok(self.icmp(cc, l, r))
+        }
     }
 
     /// Emit a two-way branch on `cond` (a non-zero i32 is true): run `then_arm` in the
