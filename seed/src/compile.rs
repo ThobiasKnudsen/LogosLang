@@ -19,7 +19,7 @@ use cranelift_codegen::ir::{types, AbiParam, InstBuilder, MemFlagsData, Value};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{default_libcall_names, Linkage, Module};
+use cranelift_module::{default_libcall_names, FuncId, Linkage, Module};
 
 use crate::dyad::DyadPtr;
 use crate::parse::{FN_BCODE, FN_BODY, FN_INPUT};
@@ -49,6 +49,10 @@ pub enum CompileError {
     /// time so a 4+ parameter function stays interpreted rather than compiling to a
     /// body that errors only when called.
     UnsupportedArity(usize),
+    /// A call targets a function that is neither the one being compiled nor already
+    /// compiled, so there is no machine address to call. The enclosing function stays
+    /// interpreted rather than baking a call to nothing.
+    UncompiledCallee(DyadPtr),
     /// Cranelift rejected the setup, function, or finalization.
     Cranelift(String),
 }
@@ -74,6 +78,17 @@ pub struct Lowerer<'a, 'f> {
     /// the interpreter reading its frame; every other node dispatches through
     /// `lower`.
     params: &'a HashMap<DyadPtr, Value>,
+    /// The module the function is compiled into, so a call can reference the function
+    /// being defined (self-recursion) or an already-compiled callee's machine code.
+    module: &'a mut dyn Module,
+    /// The id of the function under construction, so a self-call becomes a direct
+    /// `call` the JIT patches to this function's own address.
+    func_id: FuncId,
+    /// `fn`: a node whose operation is `fn`-typed but has no lowering rule is a call.
+    fn_type: DyadPtr,
+    /// The function node being compiled (null for a bare expression), so a call to it
+    /// is recognized as self-recursion rather than a call to other machine code.
+    self_fn: DyadPtr,
 }
 
 impl Lowerer<'_, '_> {
@@ -88,10 +103,15 @@ impl Lowerer<'_, '_> {
             return Ok(v);
         }
         let op = (*node).ty;
-        match self.lower.get(&op).copied() {
-            Some(f) => f(self, node),
-            None => Err(CompileError::NotLowerable(op)),
+        if let Some(f) = self.lower.get(&op).copied() {
+            return f(self, node);
         }
+        // A node whose operation is a user function is a call: `op` is the callee.
+        // Leaf natives are in the lower table (handled above); a user function is not.
+        if !op.is_null() && (*op).ty == self.fn_type {
+            return self.lower_call(node);
+        }
+        Err(CompileError::NotLowerable(op))
     }
 
     /// Lower a specific operation over `node`, dispatching through the lower table.
@@ -189,6 +209,68 @@ impl Lowerer<'_, '_> {
         self.builder.switch_to_block(merge_b);
         Ok(result)
     }
+
+    /// Lower a call's arguments — its value struct `[arg0 …, null]`, or null for a
+    /// nullary call — to their SSA values, in order.
+    ///
+    /// # Safety
+    /// `node` must be a call node from the store.
+    unsafe fn lower_args(&mut self, node: DyadPtr) -> Result<Vec<Value>, CompileError> {
+        let mut args = Vec::new();
+        let p = (*node).value as *const DyadPtr;
+        if !p.is_null() {
+            let mut i = 0;
+            while !(*p.add(i)).is_null() {
+                let v = self.lower(*p.add(i))?;
+                args.push(v);
+                i += 1;
+            }
+        }
+        Ok(args)
+    }
+
+    /// Lower a call `callee(args)`. A self-call (the function being compiled) becomes
+    /// a direct Cranelift `call` to this function — a relocation the JIT patches to
+    /// this function's own address, which is what makes compiled recursion work. A
+    /// call to another already-compiled function becomes a `call_indirect` through
+    /// its baked machine address. A call to a not-yet-compiled function has no
+    /// address, so it cannot be lowered ([`CompileError::UncompiledCallee`]) and the
+    /// enclosing function stays interpreted.
+    ///
+    /// # Safety
+    /// `node` must be a call node from the store whose `ty` is a user function.
+    unsafe fn lower_call(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
+        let callee = (*node).ty;
+        let args = self.lower_args(node)?;
+
+        if callee == self.self_fn {
+            // Self-recursion: reference the function under construction by its id, so
+            // the JIT resolves the call to this very function's address.
+            let fref = self.module.declare_func_in_func(self.func_id, &mut *self.builder.func);
+            let inst = self.builder.ins().call(fref, &args);
+            return Ok(self.builder.inst_results(inst)[0]);
+        }
+
+        // Otherwise the callee must already be compiled: call its machine code
+        // through the address baked in its `bcode` slot.
+        let fields = (*callee).value as *const DyadPtr;
+        if fields.is_null() {
+            return Err(CompileError::UncompiledCallee(callee));
+        }
+        let bcode = *fields.add(FN_BCODE);
+        if bcode.is_null() {
+            return Err(CompileError::UncompiledCallee(callee));
+        }
+        let mut sig = self.module.make_signature();
+        for _ in &args {
+            sig.params.push(AbiParam::new(types::I32));
+        }
+        sig.returns.push(AbiParam::new(types::I32));
+        let sigref = self.builder.import_signature(sig);
+        let addr = self.builder.ins().iconst(self.ptr_ty, bcode as usize as i64);
+        let inst = self.builder.ins().call_indirect(sigref, addr, &args);
+        Ok(self.builder.inst_results(inst)[0])
+    }
 }
 
 /// A JIT-compiled function and the module owning its executable memory.
@@ -230,7 +312,11 @@ impl Compiled {
 /// `fn_node` must be a valid function node (`{ty: fn, value -> [input, output,
 /// body, bcode]}`) from the store, and any storage its body references must outlive
 /// every call to the returned [`Compiled`].
-pub unsafe fn compile_fn(lower: &LowerTable, fn_node: DyadPtr) -> Result<Compiled, CompileError> {
+pub unsafe fn compile_fn(
+    lower: &LowerTable,
+    fn_type: DyadPtr,
+    fn_node: DyadPtr,
+) -> Result<Compiled, CompileError> {
     let fields = (*fn_node).value as *const DyadPtr;
     if fields.is_null() {
         return Err(CompileError::NotLowerable(fn_node));
@@ -247,7 +333,8 @@ pub unsafe fn compile_fn(lower: &LowerTable, fn_node: DyadPtr) -> Result<Compile
         }
     }
     let body = *fields.add(FN_BODY);
-    let compiled = compile_body(lower, body, &params)?;
+    // The fn node is its own self-reference: a call to it inside `body` is recursion.
+    let compiled = compile_body(lower, fn_type, fn_node, body, &params)?;
     // Install the exec@ (a machine-code address) into the node's bcode slot, punned
     // into the pointer-sized cell. `run` reads it back and calls it.
     let bcode_slot = ((*fn_node).value as *mut DyadPtr).add(FN_BCODE);
@@ -262,9 +349,11 @@ pub unsafe fn compile_fn(lower: &LowerTable, fn_node: DyadPtr) -> Result<Compile
 /// See [`compile_body`].
 pub unsafe fn compile_nullary_i32(
     lower: &LowerTable,
+    fn_type: DyadPtr,
     root: DyadPtr,
 ) -> Result<Compiled, CompileError> {
-    compile_body(lower, root, &[])
+    // A bare expression is not a function, so there is no self to recurse into.
+    compile_body(lower, fn_type, std::ptr::null_mut(), root, &[])
 }
 
 /// Compile `root` as a function returning `i32` with one `i32` argument per entry in
@@ -278,6 +367,8 @@ pub unsafe fn compile_nullary_i32(
 /// addresses are baked into the code).
 pub unsafe fn compile_body(
     lower: &LowerTable,
+    fn_type: DyadPtr,
+    self_fn: DyadPtr,
     root: DyadPtr,
     params: &[DyadPtr],
 ) -> Result<Compiled, CompileError> {
@@ -303,6 +394,12 @@ pub unsafe fn compile_body(
     }
     ctx.func.signature.returns.push(AbiParam::new(types::I32));
 
+    // Declare the function before lowering its body, so a self-call can reference its
+    // id; the JIT patches that call to this function's own address once it is defined.
+    let func_id = module
+        .declare_function("main", Linkage::Export, &ctx.func.signature)
+        .map_err(cl)?;
+
     let mut fctx = FunctionBuilderContext::new();
     {
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fctx);
@@ -325,6 +422,10 @@ pub unsafe fn compile_body(
                 ptr_ty,
                 flags: MemFlagsData::new(),
                 params: &param_map,
+                module: &mut module,
+                func_id,
+                fn_type,
+                self_fn,
             };
             lw.lower(root)?
         };
@@ -332,13 +433,10 @@ pub unsafe fn compile_body(
         builder.finalize();
     }
 
-    let id = module
-        .declare_function("main", Linkage::Export, &ctx.func.signature)
-        .map_err(cl)?;
-    module.define_function(id, &mut ctx).map_err(cl)?;
+    module.define_function(func_id, &mut ctx).map_err(cl)?;
     module.clear_context(&mut ctx);
     module.finalize_definitions().map_err(cl)?;
-    let ptr = module.get_finalized_function(id);
+    let ptr = module.get_finalized_function(func_id);
 
     Ok(Compiled { module, ptr })
 }
