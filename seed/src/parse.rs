@@ -349,6 +349,10 @@ pub struct CoreTypes {
     pub sub_i32: DyadPtr,
     /// `mul_i32`: the concrete i32 multiplication `*` resolves to.
     pub mul_i32: DyadPtr,
+    /// `<` (abstract less-than); its result is `bool` (an `if` condition).
+    pub lt: DyadPtr,
+    /// `lt_i32`: the concrete i32 less-than `<` resolves to.
+    pub lt_i32: DyadPtr,
 }
 
 /// The fields of a function node's value struct, in order, as built by

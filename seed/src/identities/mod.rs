@@ -38,6 +38,8 @@ mod struct_mod;
 mod bool_mod;
 mod add;
 mod assign;
+mod cmp;
+mod lt;
 mod minus;
 mod mul;
 mod paren;
@@ -76,6 +78,10 @@ pub struct Core {
     pub times: DyadPtr,
     /// `mul_i32` (concrete i32 multiplication); the machine op `*` resolves to.
     pub mul_i32: DyadPtr,
+    /// `<` (abstract less-than comparison); its result is `bool`.
+    pub lt: DyadPtr,
+    /// `lt_i32` (concrete i32 less-than); the machine op `<` resolves to.
+    pub lt_i32: DyadPtr,
     /// `rational_number` (numeric literal carrier); a data type.
     pub rational: DyadPtr,
     /// `struct`, the type whose constructor derives a layout from a field list
@@ -123,6 +129,8 @@ impl Core {
         let minus = minus::register(&mut cx);
         let mul_i32 = mul::register(&mut cx);
         let times = times::register(&mut cx);
+        let lt_i32 = cmp::register(&mut cx);
+        let lt = lt::register(&mut cx);
         fn_mod::register_syntax(&mut cx);
         paren::register(&mut cx);
         return_mod::register(&mut cx);
@@ -143,6 +151,8 @@ impl Core {
             sub_i32,
             times,
             mul_i32,
+            lt,
+            lt_i32,
             rational,
             struct_,
             metas,
@@ -167,6 +177,8 @@ impl Core {
             times: self.times,
             sub_i32: self.sub_i32,
             mul_i32: self.mul_i32,
+            lt: self.lt,
+            lt_i32: self.lt_i32,
         }
     }
 }
@@ -1160,6 +1172,42 @@ mod tests {
         // 100000 * 100000 overflows i32; both tiers must wrap to the same i32.
         let expected = i64::from(100_000i32.wrapping_mul(100_000));
         diff_nullary_fn("fn () -> i32 ( 100000 * 100000 )", expected);
+    }
+
+    #[test]
+    fn less_than_matches_between_tiers() {
+        diff_nullary_fn("fn () -> i32 ( 3 < 5 )", 1);
+        diff_nullary_fn("fn () -> i32 ( 5 < 3 )", 0);
+        diff_nullary_fn("fn () -> i32 ( 5 < 5 )", 0);
+        // `<` binds looser than arithmetic: (2 + 3) < (4 * 2) = 5 < 8 = 1.
+        diff_nullary_fn("fn () -> i32 ( 2 + 3 < 4 * 2 )", 1);
+    }
+
+    #[test]
+    fn less_than_is_abstract_and_resolves_to_lt_i32() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let func = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "fn () -> i32 ( 3 < 5 )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap()
+        };
+        // The body stays reflectable as `<` and records the concrete op it resolved to.
+        unsafe {
+            let body = *((*func).value as *const DyadPtr).add(FN_BODY);
+            assert_eq!((*body).ty, core.lt);
+            assert_eq!(*((*body).value as *const DyadPtr).add(2), core.lt_i32);
+        }
     }
 
     #[test]

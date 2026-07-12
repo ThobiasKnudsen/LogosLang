@@ -14,6 +14,7 @@
 
 use std::collections::HashMap;
 
+use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{types, AbiParam, InstBuilder, MemFlagsData, Value};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
@@ -140,6 +141,13 @@ impl Lowerer<'_, '_> {
     /// Integer multiplication.
     pub fn mul(&mut self, a: Value, b: Value) -> Value {
         self.builder.ins().imul(a, b)
+    }
+
+    /// Signed less-than, as an `i32` 0/1. `icmp` yields a one-bit (`I8`) boolean;
+    /// zero-extend it to the `I32` the seed's values compute in.
+    pub fn icmp_slt(&mut self, a: Value, b: Value) -> Value {
+        let c = self.builder.ins().icmp(IntCC::SignedLessThan, a, b);
+        self.builder.ins().uextend(types::I32, c)
     }
 }
 
