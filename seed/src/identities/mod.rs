@@ -42,9 +42,14 @@ mod add;
 mod assign;
 mod cmp;
 mod declare;
+mod eq;
+mod ge;
+mod gt;
+mod le;
 mod lt;
 mod minus;
 mod mul;
+mod ne;
 mod paren;
 mod plus;
 pub(crate) mod rational;
@@ -85,6 +90,26 @@ pub struct Core {
     pub lt: DyadPtr,
     /// `lt_i32` (concrete i32 less-than); the machine op `<` resolves to.
     pub lt_i32: DyadPtr,
+    /// `>` (abstract greater-than comparison); its result is `bool`.
+    pub gt: DyadPtr,
+    /// `gt_i32` (concrete i32 greater-than); the machine op `>` resolves to.
+    pub gt_i32: DyadPtr,
+    /// `==` (abstract equality comparison); its result is `bool`.
+    pub eq: DyadPtr,
+    /// `eq_i32` (concrete i32 equality); the machine op `==` resolves to.
+    pub eq_i32: DyadPtr,
+    /// `<=` (abstract less-than-or-equal comparison); its result is `bool`.
+    pub le: DyadPtr,
+    /// `le_i32` (concrete i32 less-than-or-equal); the machine op `<=` resolves to.
+    pub le_i32: DyadPtr,
+    /// `>=` (abstract greater-than-or-equal comparison); its result is `bool`.
+    pub ge: DyadPtr,
+    /// `ge_i32` (concrete i32 greater-than-or-equal); the machine op `>=` resolves to.
+    pub ge_i32: DyadPtr,
+    /// `!=` (abstract inequality comparison); its result is `bool`.
+    pub ne: DyadPtr,
+    /// `ne_i32` (concrete i32 inequality); the machine op `!=` resolves to.
+    pub ne_i32: DyadPtr,
     /// `if` (the value-producing conditional); a function.
     pub if_: DyadPtr,
     /// `rational_number` (numeric literal carrier); a data type.
@@ -134,8 +159,16 @@ impl Core {
         let minus = minus::register(&mut cx);
         let mul_i32 = mul::register(&mut cx);
         let times = times::register(&mut cx);
-        let lt_i32 = cmp::register(&mut cx);
+        // The concrete comparison ops, registered before the abstract operators
+        // that resolve to them (as `add_i32` before `+`).
+        let cmp::Concrete { lt_i32, gt_i32, eq_i32, le_i32, ge_i32, ne_i32 } =
+            cmp::register(&mut cx);
         let lt = lt::register(&mut cx);
+        let gt = gt::register(&mut cx);
+        let eq = eq::register(&mut cx);
+        let le = le::register(&mut cx);
+        let ge = ge::register(&mut cx);
+        let ne = ne::register(&mut cx);
         let if_ = if_mod::register(&mut cx);
         fn_mod::register_syntax(&mut cx);
         paren::register(&mut cx);
@@ -161,6 +194,16 @@ impl Core {
             mul_i32,
             lt,
             lt_i32,
+            gt,
+            gt_i32,
+            eq,
+            eq_i32,
+            le,
+            le_i32,
+            ge,
+            ge_i32,
+            ne,
+            ne_i32,
             if_,
             rational,
             struct_,
@@ -188,6 +231,16 @@ impl Core {
             mul_i32: self.mul_i32,
             lt: self.lt,
             lt_i32: self.lt_i32,
+            gt: self.gt,
+            gt_i32: self.gt_i32,
+            eq: self.eq,
+            eq_i32: self.eq_i32,
+            le: self.le,
+            le_i32: self.le_i32,
+            ge: self.ge,
+            ge_i32: self.ge_i32,
+            ne: self.ne,
+            ne_i32: self.ne_i32,
         }
     }
 }
@@ -1216,6 +1269,74 @@ mod tests {
             let body = *((*func).value as *const DyadPtr).add(FN_BODY);
             assert_eq!((*body).ty, core.lt);
             assert_eq!(*((*body).value as *const DyadPtr).add(2), core.lt_i32);
+        }
+    }
+
+    #[test]
+    fn comparison_siblings_match_between_tiers() {
+        // >, ==, <=, >=, != each yield the i32 0/1, diffed interpreter vs JIT.
+        diff_nullary_fn("fn () -> i32 ( 5 > 3 )", 1);
+        diff_nullary_fn("fn () -> i32 ( 3 > 5 )", 0);
+        diff_nullary_fn("fn () -> i32 ( 5 > 5 )", 0);
+        diff_nullary_fn("fn () -> i32 ( 4 == 4 )", 1);
+        diff_nullary_fn("fn () -> i32 ( 4 == 5 )", 0);
+        diff_nullary_fn("fn () -> i32 ( 3 <= 3 )", 1);
+        diff_nullary_fn("fn () -> i32 ( 4 <= 3 )", 0);
+        diff_nullary_fn("fn () -> i32 ( 2 <= 3 )", 1);
+        diff_nullary_fn("fn () -> i32 ( 3 >= 3 )", 1);
+        diff_nullary_fn("fn () -> i32 ( 2 >= 3 )", 0);
+        diff_nullary_fn("fn () -> i32 ( 4 >= 3 )", 1);
+        diff_nullary_fn("fn () -> i32 ( 4 != 5 )", 1);
+        diff_nullary_fn("fn () -> i32 ( 4 != 4 )", 0);
+        // Signed comparison, with a computed negative operand.
+        diff_nullary_fn("fn () -> i32 ( 0 - 1 < 0 )", 1);
+        // Comparisons bind looser than arithmetic: (2+3) == (10-5) = 5 == 5 = 1.
+        diff_nullary_fn("fn () -> i32 ( 2 + 3 == 10 - 5 )", 1);
+    }
+
+    #[test]
+    fn comparison_siblings_are_bool_conditions_for_if() {
+        // Each comparison's result is a `bool`, so it is a valid `if` condition.
+        diff_nullary_fn("fn () -> i32 ( if (5 > 3) (100) else (200) )", 100);
+        diff_nullary_fn("fn () -> i32 ( if (2 == 3) (100) else (200) )", 200);
+        diff_nullary_fn("fn () -> i32 ( if (3 <= 3) (100) else (200) )", 100);
+        diff_nullary_fn("fn () -> i32 ( if (3 >= 4) (100) else (200) )", 200);
+        diff_nullary_fn("fn () -> i32 ( if (7 != 7) (100) else (200) )", 200);
+    }
+
+    #[test]
+    fn comparison_siblings_resolve_to_their_concrete_ops() {
+        // Each abstract operator stays reflectable and records the concrete op it
+        // resolved to at operand index 2 (the trie longest-matches `<=`/`>=`/`==`
+        // over `<`/`>`/`=`).
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let cases: [(&str, DyadPtr, DyadPtr); 5] = [
+            ("fn () -> i32 ( 1 > 2 )", core.gt, core.gt_i32),
+            ("fn () -> i32 ( 1 == 2 )", core.eq, core.eq_i32),
+            ("fn () -> i32 ( 1 <= 2 )", core.le, core.le_i32),
+            ("fn () -> i32 ( 1 >= 2 )", core.ge, core.ge_i32),
+            ("fn () -> i32 ( 1 != 2 )", core.ne, core.ne_i32),
+        ];
+        for (src, abstract_op, concrete) in cases {
+            let func = {
+                let mut s = ScopeStack::new();
+                s.push(core.root_scope);
+                let mut p = Parser::new(src, &mut store, &mut trie, &core.metas, core.types(), s);
+                p.parse_expression().unwrap()
+            };
+            // SAFETY: `func` is the fn node just parsed.
+            unsafe {
+                let body = *((*func).value as *const DyadPtr).add(FN_BODY);
+                assert_eq!((*body).ty, abstract_op, "abstract op for `{src}`");
+                assert_eq!(
+                    *((*body).value as *const DyadPtr).add(2),
+                    concrete,
+                    "concrete op for `{src}`"
+                );
+            }
         }
     }
 

@@ -163,11 +163,42 @@ impl Lowerer<'_, '_> {
         self.builder.ins().imul(a, b)
     }
 
-    /// Signed less-than, as an `i32` 0/1. `icmp` yields a one-bit (`I8`) boolean;
-    /// zero-extend it to the `I32` the seed's values compute in.
-    pub fn icmp_slt(&mut self, a: Value, b: Value) -> Value {
-        let c = self.builder.ins().icmp(IntCC::SignedLessThan, a, b);
+    /// An integer comparison `a cc b`, as an `i32` 0/1. `icmp` yields a one-bit
+    /// (`I8`) boolean; zero-extend it to the `I32` the seed's values compute in. The
+    /// named wrappers below keep `IntCC` out of the comparison identity files.
+    fn icmp(&mut self, cc: IntCC, a: Value, b: Value) -> Value {
+        let c = self.builder.ins().icmp(cc, a, b);
         self.builder.ins().uextend(types::I32, c)
+    }
+
+    /// Signed less-than, as an `i32` 0/1.
+    pub fn icmp_slt(&mut self, a: Value, b: Value) -> Value {
+        self.icmp(IntCC::SignedLessThan, a, b)
+    }
+
+    /// Signed greater-than, as an `i32` 0/1.
+    pub fn icmp_sgt(&mut self, a: Value, b: Value) -> Value {
+        self.icmp(IntCC::SignedGreaterThan, a, b)
+    }
+
+    /// Equality, as an `i32` 0/1.
+    pub fn icmp_eq(&mut self, a: Value, b: Value) -> Value {
+        self.icmp(IntCC::Equal, a, b)
+    }
+
+    /// Signed less-than-or-equal, as an `i32` 0/1.
+    pub fn icmp_sle(&mut self, a: Value, b: Value) -> Value {
+        self.icmp(IntCC::SignedLessThanOrEqual, a, b)
+    }
+
+    /// Signed greater-than-or-equal, as an `i32` 0/1.
+    pub fn icmp_sge(&mut self, a: Value, b: Value) -> Value {
+        self.icmp(IntCC::SignedGreaterThanOrEqual, a, b)
+    }
+
+    /// Inequality, as an `i32` 0/1.
+    pub fn icmp_ne(&mut self, a: Value, b: Value) -> Value {
+        self.icmp(IntCC::NotEqual, a, b)
     }
 
     /// Lower an `if`: branch on `cond` (non-zero is true), lower each of `then`/`els`
