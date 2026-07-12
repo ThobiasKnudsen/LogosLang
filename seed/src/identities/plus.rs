@@ -12,7 +12,7 @@
 
 use cranelift_codegen::ir::Value;
 
-use super::Cx;
+use super::{is_numeric, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
@@ -48,24 +48,13 @@ fn build(
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store; reading their type is safe.
-    let resolvable = unsafe { numeric(types, plus, lhs) && numeric(types, plus, rhs) };
+    let resolvable = unsafe { is_numeric(types, lhs) && is_numeric(types, rhs) };
     if !resolvable {
         return Err(ParseError::UnsupportedOperands);
     }
     let concrete = types.add_i32;
     let value = store.alloc_operands(&[lhs, rhs, concrete]);
     Ok(store.alloc_raw(plus, value))
-}
-
-/// Whether `node` produces a number `+` can add: an `i32`, a `rational` literal
-/// (which molds to i32), or another `+` (whose result is numeric). One numeric
-/// machine type today; this widens as `f32`/`u64`/… arrive.
-///
-/// # Safety
-/// `node` must be a valid dyad from the store.
-unsafe fn numeric(types: &CoreTypes, plus: DyadPtr, node: DyadPtr) -> bool {
-    let ty = (*node).ty;
-    ty == types.i32_ || ty == types.rational || ty == plus
 }
 
 /// The concrete op a `+` node resolved to (its third operand).

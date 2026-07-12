@@ -131,6 +131,16 @@ impl Lowerer<'_, '_> {
     pub fn add(&mut self, a: Value, b: Value) -> Value {
         self.builder.ins().iadd(a, b)
     }
+
+    /// Integer subtraction.
+    pub fn sub(&mut self, a: Value, b: Value) -> Value {
+        self.builder.ins().isub(a, b)
+    }
+
+    /// Integer multiplication.
+    pub fn mul(&mut self, a: Value, b: Value) -> Value {
+        self.builder.ins().imul(a, b)
+    }
 }
 
 /// A JIT-compiled function and the module owning its executable memory.

@@ -38,10 +38,14 @@ mod struct_mod;
 mod bool_mod;
 mod add;
 mod assign;
+mod minus;
+mod mul;
 mod paren;
 mod plus;
 pub(crate) mod rational;
 mod scope;
+mod sub;
+mod times;
 
 /// The core identities and the per-phase tables that drive them.
 pub struct Core {
@@ -64,6 +68,14 @@ pub struct Core {
     pub plus: DyadPtr,
     /// `add_i32` (concrete i32 addition); the machine op `+` resolves to.
     pub add_i32: DyadPtr,
+    /// `-` (abstract subtraction operator).
+    pub minus: DyadPtr,
+    /// `sub_i32` (concrete i32 subtraction); the machine op `-` resolves to.
+    pub sub_i32: DyadPtr,
+    /// `*` (abstract multiplication operator).
+    pub times: DyadPtr,
+    /// `mul_i32` (concrete i32 multiplication); the machine op `*` resolves to.
+    pub mul_i32: DyadPtr,
     /// `rational_number` (numeric literal carrier); a data type.
     pub rational: DyadPtr,
     /// `struct`, the type whose constructor derives a layout from a field list
@@ -105,6 +117,12 @@ impl Core {
         // abstract operator can point at it.
         let add_i32 = add::register(&mut cx);
         let plus = plus::register(&mut cx);
+        // Each abstract arithmetic operator is registered after the concrete op it
+        // resolves to, matching `add_i32`/`+`.
+        let sub_i32 = sub::register(&mut cx);
+        let minus = minus::register(&mut cx);
+        let mul_i32 = mul::register(&mut cx);
+        let times = times::register(&mut cx);
         fn_mod::register_syntax(&mut cx);
         paren::register(&mut cx);
         return_mod::register(&mut cx);
@@ -121,6 +139,10 @@ impl Core {
             assign,
             plus,
             add_i32,
+            minus,
+            sub_i32,
+            times,
+            mul_i32,
             rational,
             struct_,
             metas,
@@ -135,10 +157,16 @@ impl Core {
         CoreTypes {
             scope: self.scope_,
             struct_: self.struct_,
+            fn_type: self.fn_type,
             i32_: self.i32_,
             bool_: self.bool_,
             rational: self.rational,
             add_i32: self.add_i32,
+            plus: self.plus,
+            minus: self.minus,
+            times: self.times,
+            sub_i32: self.sub_i32,
+            mul_i32: self.mul_i32,
         }
     }
 }
@@ -180,6 +208,31 @@ pub(crate) fn build_binary(
 pub(crate) unsafe fn operands(node: DyadPtr) -> (DyadPtr, DyadPtr) {
     let p = (*node).value as *const DyadPtr;
     (*p, *p.add(1))
+}
+
+/// Whether `node` produces a number an arithmetic operator can compute over: an
+/// `i32`, a `rational` literal (which molds to i32), the result of another
+/// arithmetic operator (`+`/`-`/`*`), or a *call* whose callee is a function. The
+/// seed has one numeric machine type, so any fn-typed callee is treated as numeric
+/// — a recursive self-call reaches its operator before the callee is bound, so its
+/// output type cannot be read yet. A non-numeric operand (a `struct`, …) leaves the
+/// operator unresolved ([`ParseError::UnsupportedOperands`]); this widens as
+/// `f32`/`u64`/… arrive.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn is_numeric(types: &CoreTypes, node: DyadPtr) -> bool {
+    let ty = (*node).ty;
+    if ty == types.i32_
+        || ty == types.rational
+        || ty == types.plus
+        || ty == types.minus
+        || ty == types.times
+    {
+        return true;
+    }
+    // A call node's `ty` is its callee; a call of a function yields a value.
+    !ty.is_null() && (*ty).ty == types.fn_type
 }
 
 #[cfg(test)]
@@ -1035,6 +1088,78 @@ mod tests {
             let compiled = unsafe { compile_nullary_i32(&core.lower, node) }.unwrap();
             assert_eq!(i64::from(unsafe { compiled.call_i32() }), expect);
         }
+    }
+
+    /// Parse `src` as a nullary i32 fn body, diff the interpreter against the JIT,
+    /// and assert both equal `expect`. The interpreter is the oracle.
+    fn diff_nullary_fn(src: &str, expect: i64) {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let func = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(src, &mut store, &mut trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+        let call = store.alloc_raw(func, std::ptr::null_mut());
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+        // SAFETY: `call`/`func`/body are valid nodes just parsed.
+        let interp = unsafe { rt.run(call) }.unwrap();
+        // SAFETY: `func` is the fn node just built and outlives the call.
+        let _compiled = unsafe { compile_fn(&core.lower, func) }.unwrap();
+        let jit = unsafe { rt.run(call) }.unwrap();
+        assert_eq!(interp, expect, "interpreter: {src}");
+        assert_eq!(jit, interp, "jit != interpreter: {src}");
+    }
+
+    #[test]
+    fn subtraction_and_multiplication_match_between_tiers() {
+        diff_nullary_fn("fn () -> i32 ( 10 - 3 )", 7);
+        diff_nullary_fn("fn () -> i32 ( 2 * 4 )", 8);
+        // `*` binds tighter than `+`: 2 + (3 * 4) = 14, not (2 + 3) * 4 = 20.
+        diff_nullary_fn("fn () -> i32 ( 2 + 3 * 4 )", 14);
+        // `-` shares `+`'s precedence and is left-associative: (10 - 3) - 2 = 5.
+        diff_nullary_fn("fn () -> i32 ( 10 - 3 - 2 )", 5);
+    }
+
+    #[test]
+    fn minus_and_times_resolve_to_concrete_ops() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let func = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "fn () -> i32 ( 6 - 2 * 3 )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap()
+        };
+        // Body is `-`(6, *(2, 3)): `-` resolved to sub_i32, its rhs `*` to mul_i32.
+        unsafe {
+            let body = *((*func).value as *const DyadPtr).add(FN_BODY);
+            assert_eq!((*body).ty, core.minus);
+            let bops = (*body).value as *const DyadPtr;
+            assert_eq!(*bops.add(2), core.sub_i32);
+            let rhs = *bops.add(1);
+            assert_eq!((*rhs).ty, core.times);
+            assert_eq!(*((*rhs).value as *const DyadPtr).add(2), core.mul_i32);
+        }
+    }
+
+    #[test]
+    fn multiplication_overflow_matches_between_interpreter_and_jit() {
+        // 100000 * 100000 overflows i32; both tiers must wrap to the same i32.
+        let expected = i64::from(100_000i32.wrapping_mul(100_000));
+        diff_nullary_fn("fn () -> i32 ( 100000 * 100000 )", expected);
     }
 
     #[test]

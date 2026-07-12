@@ -327,6 +327,9 @@ pub struct CoreTypes {
     pub scope: DyadPtr,
     /// `struct`: the type of a parameter-list / field-list node.
     pub struct_: DyadPtr,
+    /// `fn`: the type of a function; a call whose callee is `fn`-typed yields a
+    /// value (see [`crate::identities::is_numeric`]).
+    pub fn_type: DyadPtr,
     /// `i32`: the seed's one concrete numeric type.
     pub i32_: DyadPtr,
     /// `bool`: the type a comparison produces and an `if` condition must be.
@@ -336,6 +339,16 @@ pub struct CoreTypes {
     /// `add_i32`: the concrete i32 addition `+` resolves to (DESIGN ›which concrete
     /// machine operation runs, which `+`, is resolved from the operand types‹).
     pub add_i32: DyadPtr,
+    /// `+` (abstract addition); recognized as a numeric-producing operand.
+    pub plus: DyadPtr,
+    /// `-` (abstract subtraction); recognized as a numeric-producing operand.
+    pub minus: DyadPtr,
+    /// `*` (abstract multiplication); recognized as a numeric-producing operand.
+    pub times: DyadPtr,
+    /// `sub_i32`: the concrete i32 subtraction `-` resolves to.
+    pub sub_i32: DyadPtr,
+    /// `mul_i32`: the concrete i32 multiplication `*` resolves to.
+    pub mul_i32: DyadPtr,
 }
 
 /// The fields of a function node's value struct, in order, as built by
