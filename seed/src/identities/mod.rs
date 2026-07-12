@@ -902,11 +902,11 @@ mod tests {
         unsafe { std::ptr::write_unaligned(a_val as *mut i32, 0) };
         // SAFETY: `root`/`a` live in `store`, which outlives the call.
         let compiled = unsafe { compile_nullary_i32(&core.lower, core.fn_type,root) }.unwrap();
-        let jit = unsafe { compiled.call_i32() };
+        let jit = unsafe { compiled.call() };
         let jit_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
 
         assert_eq!(interp, 1);
-        assert_eq!(i64::from(jit), interp); // same result
+        assert_eq!(jit, interp); // same result
         assert_eq!(jit_a, interp_a); // same side effect on a
         assert_eq!(jit_a, 1);
     }
@@ -1179,7 +1179,7 @@ mod tests {
             assert_eq!(unsafe { rt.run(node) }.unwrap(), expect);
             // SAFETY: same node; the `bool` lowering bakes its constant.
             let compiled = unsafe { compile_nullary_i32(&core.lower, core.fn_type,node) }.unwrap();
-            assert_eq!(i64::from(unsafe { compiled.call_i32() }), expect);
+            assert_eq!(unsafe { compiled.call() }, expect);
         }
     }
 

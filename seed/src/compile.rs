@@ -309,13 +309,18 @@ impl Lowerer<'_, '_> {
     unsafe fn lower_call(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
         let callee = (*node).ty;
         let args = self.lower_args(node)?;
+        // The calling convention is uniform `(i64…) -> i64` (see `compile_body`): args
+        // and the result are the `i64` bit-container, converted at the boundary. (v1
+        // values are i32; sign-extend/reduce accordingly.)
+        let args64 = self.widen_args(&args);
 
         if callee == self.self_fn {
             // Self-recursion: reference the function under construction by its id, so
             // the JIT resolves the call to this very function's address.
             let fref = self.module.declare_func_in_func(self.func_id, &mut *self.builder.func);
-            let inst = self.builder.ins().call(fref, &args);
-            return Ok(self.builder.inst_results(inst)[0]);
+            let inst = self.builder.ins().call(fref, &args64);
+            let r = self.builder.inst_results(inst)[0];
+            return Ok(self.builder.ins().ireduce(types::I32, r));
         }
 
         // Otherwise the callee must already be compiled: call its machine code
@@ -329,14 +334,25 @@ impl Lowerer<'_, '_> {
             return Err(CompileError::UncompiledCallee(callee));
         }
         let mut sig = self.module.make_signature();
-        for _ in &args {
-            sig.params.push(AbiParam::new(types::I32));
+        for _ in &args64 {
+            sig.params.push(AbiParam::new(types::I64));
         }
-        sig.returns.push(AbiParam::new(types::I32));
+        sig.returns.push(AbiParam::new(types::I64));
         let sigref = self.builder.import_signature(sig);
         let addr = self.builder.ins().iconst(self.ptr_ty, bcode as usize as i64);
-        let inst = self.builder.ins().call_indirect(sigref, addr, &args);
-        Ok(self.builder.inst_results(inst)[0])
+        let inst = self.builder.ins().call_indirect(sigref, addr, &args64);
+        let r = self.builder.inst_results(inst)[0];
+        Ok(self.builder.ins().ireduce(types::I32, r))
+    }
+
+    /// Widen each `i32` argument to the `i64` bit-container the calling convention
+    /// passes (sign-extend, matching the interpreter's `i64::from(i32)`).
+    fn widen_args(&mut self, args: &[Value]) -> Vec<Value> {
+        let mut out = Vec::with_capacity(args.len());
+        for &a in args {
+            out.push(self.builder.ins().sextend(types::I64, a));
+        }
+        out
     }
 }
 
@@ -349,14 +365,15 @@ pub struct Compiled {
 }
 
 impl Compiled {
-    /// Call the compiled `fn() -> i32`.
+    /// Call the compiled `fn() -> i64` and return the raw `i64` bit-container it
+    /// yields (the interpreter's value representation; see [`compile_body`]'s uniform
+    /// ABI). The caller reinterprets the bits per the function's return type.
     ///
     /// # Safety
-    /// The compiled function must have signature `fn() -> i32` (it does, when
-    /// produced by [`compile_nullary_i32`]) and any host addresses it baked in
-    /// must still be valid.
-    pub unsafe fn call_i32(&self) -> i32 {
-        let f: extern "C" fn() -> i32 = std::mem::transmute(self.ptr);
+    /// The compiled function must be nullary (it is, when produced by
+    /// [`compile_nullary_i32`]) and any host addresses it baked in must still be valid.
+    pub unsafe fn call(&self) -> i64 {
+        let f: extern "C" fn() -> i64 = std::mem::transmute(self.ptr);
         f()
     }
 }
@@ -456,10 +473,14 @@ pub unsafe fn compile_body(
 
     let mut module = JITModule::new(JITBuilder::with_isa(isa, default_libcall_names()));
     let mut ctx = module.make_context();
+    // The calling convention is uniform `(i64…) -> i64`: every parameter and the
+    // result is passed as the interpreter's `i64` bit-container, reinterpreted to its
+    // real type at the boundary. This keeps `run::call_compiled` a fixed
+    // `fn(i64…) -> i64` regardless of the parameter/return types.
     for _ in params {
-        ctx.func.signature.params.push(AbiParam::new(types::I32));
+        ctx.func.signature.params.push(AbiParam::new(types::I64));
     }
-    ctx.func.signature.returns.push(AbiParam::new(types::I32));
+    ctx.func.signature.returns.push(AbiParam::new(types::I64));
 
     // Declare the function before lowering its body, so a self-call can reference its
     // id; the JIT patches that call to this function's own address once it is defined.
@@ -476,10 +497,13 @@ pub unsafe fn compile_body(
         builder.seal_block(entry);
 
         // Each parameter node maps to its block param (the matching function arg).
+        // The block param is the `i64` bit-container; reduce it to the value's real
+        // type (v1: i32) before the body uses it.
         let block_params = builder.block_params(entry).to_vec();
         let mut param_map = HashMap::new();
         for (&p, &v) in params.iter().zip(block_params.iter()) {
-            param_map.insert(p, v);
+            let v32 = builder.ins().ireduce(types::I32, v);
+            param_map.insert(p, v32);
         }
 
         let ret = {
@@ -496,7 +520,10 @@ pub unsafe fn compile_body(
             };
             lw.lower(root)?
         };
-        builder.ins().return_(&[ret]);
+        // Widen the i32 result back to the `i64` bit-container (sign-extend, matching
+        // the interpreter's `i64::from(i32)`) for the uniform return.
+        let ret64 = builder.ins().sextend(types::I64, ret);
+        builder.ins().return_(&[ret64]);
         builder.finalize();
     }
 

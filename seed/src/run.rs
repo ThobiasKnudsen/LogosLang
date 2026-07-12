@@ -50,28 +50,28 @@ pub enum RunError {
     CompiledArity,
 }
 
-/// Call compiled machine code (a `fn(i32…) -> i32`) with `args`, dispatching on
+/// Call compiled machine code (a `fn(i64…) -> i64`) with `args`, dispatching on
 /// arity, since a raw code pointer must be given a concrete function type to call.
-/// The seed passes at most three `i32` arguments; Cranelift's default calling
-/// convention matches `extern "C"` on the host.
+/// The calling convention is uniform: every argument and the result is the `i64`
+/// bit-container (the compiled body reinterprets them to their real types at the
+/// boundary), so this dispatch is independent of the parameter/return types. The seed
+/// passes at most three arguments; Cranelift's default convention matches `extern "C"`.
 ///
 /// # Safety
-/// `bcode` must point at live machine code of exactly `args.len()` `i32` parameters
-/// returning `i32` (as [`crate::compile::compile_fn`] produces).
+/// `bcode` must point at live machine code of exactly `args.len()` `i64` parameters
+/// returning `i64` (as [`crate::compile::compile_fn`] produces).
 unsafe fn call_compiled(bcode: DyadPtr, args: &[i64]) -> Result<i64, RunError> {
     let p = bcode as *const u8;
     let r = match args {
-        [] => (std::mem::transmute::<*const u8, extern "C" fn() -> i32>(p))(),
-        [a] => (std::mem::transmute::<*const u8, extern "C" fn(i32) -> i32>(p))(*a as i32),
-        [a, b] => {
-            (std::mem::transmute::<*const u8, extern "C" fn(i32, i32) -> i32>(p))(*a as i32, *b as i32)
+        [] => (std::mem::transmute::<*const u8, extern "C" fn() -> i64>(p))(),
+        [a] => (std::mem::transmute::<*const u8, extern "C" fn(i64) -> i64>(p))(*a),
+        [a, b] => (std::mem::transmute::<*const u8, extern "C" fn(i64, i64) -> i64>(p))(*a, *b),
+        [a, b, c] => {
+            (std::mem::transmute::<*const u8, extern "C" fn(i64, i64, i64) -> i64>(p))(*a, *b, *c)
         }
-        [a, b, c] => (std::mem::transmute::<*const u8, extern "C" fn(i32, i32, i32) -> i32>(p))(
-            *a as i32, *b as i32, *c as i32,
-        ),
         _ => return Err(RunError::CompiledArity),
     };
-    Ok(i64::from(r))
+    Ok(r)
 }
 
 /// A running evaluation. Holds the `fn` type (to tell a function application from
