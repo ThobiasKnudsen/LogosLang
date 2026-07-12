@@ -151,11 +151,12 @@ impl<'a> Runtime<'a> {
                     .map(i64::from)
                     .ok_or(RunError::UncomputableLiteral);
             }
-            let slot = (*node).value as *const i32;
+            let slot = (*node).value;
             if slot.is_null() {
                 return Err(RunError::BadValue);
             }
-            Ok(i64::from(std::ptr::read_unaligned(slot)))
+            // Read the scalar at its type's width into the i64 bit-container.
+            Ok(crate::identities::numtype::read_scalar((*node).ty, slot))
         }
     }
 

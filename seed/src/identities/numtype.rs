@@ -11,6 +11,9 @@
 //! own value slot (see [`tag_bytes`]/[`of_type_node`]), so neither the interpreter nor
 //! the compiler needs a separate type→NumType map — the tag rides the graph.
 
+use cranelift_codegen::ir::{types, Value};
+
+use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::run::{RunError, Runtime};
 
@@ -65,6 +68,68 @@ impl NumType {
     pub(crate) fn is_signed_int(self) -> bool {
         matches!(self, NumType::I8 | NumType::I16 | NumType::I32 | NumType::I64)
     }
+
+    /// The Cranelift type a value of this `NumType` computes in.
+    pub(crate) fn cranelift_type(self) -> types::Type {
+        use NumType::*;
+        match self {
+            I8 | U8 => types::I8,
+            I16 | U16 => types::I16,
+            I32 | U32 => types::I32,
+            I64 | U64 => types::I64,
+            F32 => types::F32,
+            F64 => types::F64,
+        }
+    }
+}
+
+/// The `NumType` of a type node, or `I32` for a fixed-width scalar type without a
+/// `NumType` tag (e.g. `bool`, physically an i32).
+///
+/// # Safety
+/// `type_node` must be a valid type node from the store.
+pub(crate) unsafe fn numtype_of_type(type_node: DyadPtr) -> NumType {
+    if (*type_node).value.is_null() {
+        NumType::I32
+    } else {
+        of_type_node(type_node)
+    }
+}
+
+/// Read the scalar stored at `slot`, typed by `type_node`, into the `i64`
+/// bit-container the interpreter computes in (sign/zero-extended for ints per
+/// signedness; the raw float bits for `f32`/`f64`).
+///
+/// # Safety
+/// `type_node` is a valid type node; `slot` points at a value of that type's width.
+pub(crate) unsafe fn read_scalar(type_node: DyadPtr, slot: *const u8) -> i64 {
+    use std::ptr::read_unaligned as rd;
+    use NumType::*;
+    match numtype_of_type(type_node) {
+        I8 => i64::from(rd(slot as *const i8)),
+        I16 => i64::from(rd(slot as *const i16)),
+        I32 => i64::from(rd(slot as *const i32)),
+        I64 => rd(slot as *const i64),
+        U8 => i64::from(rd(slot)),
+        U16 => i64::from(rd(slot as *const u16)),
+        U32 => i64::from(rd(slot as *const u32)),
+        U64 => rd(slot as *const u64) as i64,
+        F32 => i64::from(rd(slot as *const u32)),
+        F64 => rd(slot as *const u64) as i64,
+    }
+}
+
+/// Lower a numeric variable/value: load it from its baked storage at its type's width.
+/// The shared lowering rule (a [`crate::compile::LowerFn`]) for every numeric type
+/// node. Guards a null address, mirroring the interpreter's `BadValue`.
+pub(crate) fn lower_var(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: `node` is a numeric variable node from the store.
+    let addr = unsafe { (*node).value };
+    if addr.is_null() {
+        return Err(CompileError::BadValue);
+    }
+    let ct = unsafe { of_type_node((*node).ty) }.cranelift_type();
+    Ok(lw.load(ct, addr))
 }
 
 /// The `NumType` a numeric type node describes (read from its value-slot tag).

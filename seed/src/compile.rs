@@ -22,9 +22,11 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{default_libcall_names, FuncId, Linkage, Module};
 
 use crate::dyad::DyadPtr;
-use crate::identities::numtype::{of_type_node, stored_type, ArithOp, CmpOp};
+use crate::identities::numtype::{
+    numtype_of_type, of_type_node, stored_type, ArithOp, CmpOp, NumType,
+};
 use crate::identities::operands;
-use crate::parse::{FN_BCODE, FN_BODY, FN_INPUT};
+use crate::parse::{FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
 
 /// A lowering rule: emit the IR for a node and return the SSA value it computes,
 /// recursing on operands via [`Lowerer::lower`].
@@ -121,10 +123,10 @@ impl Lowerer<'_, '_> {
         self.builder.ins().iconst(types::I32, i64::from(v))
     }
 
-    /// Load an `i32` from a baked host address.
-    pub fn load_i32(&mut self, addr: *const u8) -> Value {
+    /// Load a value of Cranelift type `ct` from a baked host address.
+    pub(crate) fn load(&mut self, ct: types::Type, addr: *const u8) -> Value {
         let p = self.builder.ins().iconst(self.ptr_ty, addr as usize as i64);
-        self.builder.ins().load(types::I32, self.flags, p, 0)
+        self.builder.ins().load(ct, self.flags, p, 0)
     }
 
     /// Store an `i32` to a baked host address.
@@ -437,8 +439,9 @@ pub unsafe fn compile_fn(
         }
     }
     let body = *fields.add(FN_BODY);
+    let ret_ty = numtype_of_type(*fields.add(FN_OUTPUT));
     // The fn node is its own self-reference: a call to it inside `body` is recursion.
-    let compiled = compile_body(lower, fn_type, fn_node, body, &params)?;
+    let compiled = compile_body(lower, fn_type, fn_node, body, &params, ret_ty)?;
     // Install the exec@ (a machine-code address) into the node's bcode slot, punned
     // into the pointer-sized cell. `run` reads it back and calls it.
     let bcode_slot = ((*fn_node).value as *mut DyadPtr).add(FN_BCODE);
@@ -456,8 +459,9 @@ pub unsafe fn compile_nullary_i32(
     fn_type: DyadPtr,
     root: DyadPtr,
 ) -> Result<Compiled, CompileError> {
-    // A bare expression is not a function, so there is no self to recurse into.
-    compile_body(lower, fn_type, std::ptr::null_mut(), root, &[])
+    // A bare expression is not a function, so there is no self to recurse into; v1
+    // bare expressions are i32 (or bool, physically i32).
+    compile_body(lower, fn_type, std::ptr::null_mut(), root, &[], NumType::I32)
 }
 
 /// Compile `root` as a function returning `i32` with one `i32` argument per entry in
@@ -469,12 +473,13 @@ pub unsafe fn compile_nullary_i32(
 /// `root` must be a valid dyad tree from the store, and any variable storage its
 /// leaves reference must outlive every call to the returned [`Compiled`] (the
 /// addresses are baked into the code).
-pub unsafe fn compile_body(
+pub(crate) unsafe fn compile_body(
     lower: &LowerTable,
     fn_type: DyadPtr,
     self_fn: DyadPtr,
     root: DyadPtr,
     params: &[DyadPtr],
+    ret_ty: NumType,
 ) -> Result<Compiled, CompileError> {
     // Fail fast on arities the compiled calling convention cannot call, so the
     // function stays interpreted (its bcode is never installed) instead of
@@ -516,14 +521,15 @@ pub unsafe fn compile_body(
         builder.switch_to_block(entry);
         builder.seal_block(entry);
 
-        // Each parameter node maps to its block param (the matching function arg).
-        // The block param is the `i64` bit-container; reduce it to the value's real
-        // type (v1: i32) before the body uses it.
+        // Each parameter node maps to its block param (the matching function arg). The
+        // block param is the `i64` bit-container; narrow it to the parameter's real
+        // type before the body uses it.
         let block_params = builder.block_params(entry).to_vec();
         let mut param_map = HashMap::new();
         for (&p, &v) in params.iter().zip(block_params.iter()) {
-            let v32 = builder.ins().ireduce(types::I32, v);
-            param_map.insert(p, v32);
+            let nt = numtype_of_type((*p).ty);
+            let vn = narrow_from_i64(&mut builder, v, nt);
+            param_map.insert(p, vn);
         }
 
         let ret = {
@@ -540,9 +546,8 @@ pub unsafe fn compile_body(
             };
             lw.lower(root)?
         };
-        // Widen the i32 result back to the `i64` bit-container (sign-extend, matching
-        // the interpreter's `i64::from(i32)`) for the uniform return.
-        let ret64 = builder.ins().sextend(types::I64, ret);
+        // Widen the result back to the `i64` bit-container for the uniform return.
+        let ret64 = widen_to_i64(&mut builder, ret, ret_ty);
         builder.ins().return_(&[ret64]);
         builder.finalize();
     }
@@ -553,6 +558,30 @@ pub unsafe fn compile_body(
     let ptr = module.get_finalized_function(func_id);
 
     Ok(Compiled { module, ptr })
+}
+
+/// Narrow the `i64` bit-container `v` to `nt`'s native Cranelift value at the ABI
+/// boundary — integers reduce to their width (floats reinterpret their bits, added
+/// with `f32`/`f64`).
+fn narrow_from_i64(b: &mut FunctionBuilder, v: Value, nt: NumType) -> Value {
+    let ct = nt.cranelift_type();
+    if ct == types::I64 {
+        v
+    } else {
+        b.ins().ireduce(ct, v)
+    }
+}
+
+/// Widen `nt`'s native value `v` back to the `i64` bit-container: sign-extend signed
+/// integers, zero-extend unsigned (matching the interpreter's read).
+fn widen_to_i64(b: &mut FunctionBuilder, v: Value, nt: NumType) -> Value {
+    if nt.cranelift_type() == types::I64 {
+        v
+    } else if nt.is_signed_int() {
+        b.ins().sextend(types::I64, v)
+    } else {
+        b.ins().uextend(types::I64, v)
+    }
 }
 
 /// Map any `Display` Cranelift error into [`CompileError::Cranelift`].
