@@ -149,6 +149,46 @@ impl Lowerer<'_, '_> {
         let c = self.builder.ins().icmp(IntCC::SignedLessThan, a, b);
         self.builder.ins().uextend(types::I32, c)
     }
+
+    /// Lower an `if`: branch on `cond` (non-zero is true), lower each of `then`/`els`
+    /// in its own block, and merge to a block whose single `I32` parameter is the
+    /// `if`'s value. Leaves the builder positioned in the (sealed) merge block, so
+    /// the caller's next instruction — an enclosing lowering, or `compile_body`'s
+    /// trailing `return_` — lands there. Nesting composes: an inner `if` leaves the
+    /// builder in its own merge, from which this arm's `jump` fires.
+    ///
+    /// # Safety
+    /// `cond`/`then`/`els` must be valid dyads from the store.
+    pub unsafe fn lower_if(
+        &mut self,
+        cond: DyadPtr,
+        then: DyadPtr,
+        els: DyadPtr,
+    ) -> Result<Value, CompileError> {
+        let c = self.lower(cond)?;
+        let then_b = self.builder.create_block();
+        let else_b = self.builder.create_block();
+        let merge_b = self.builder.create_block();
+        let result = self.builder.append_block_param(merge_b, types::I32);
+
+        // Branch to the two arms; both their predecessors (this block) are now known.
+        self.builder.ins().brif(c, then_b, &[], else_b, &[]);
+        self.builder.seal_block(then_b);
+        self.builder.seal_block(else_b);
+
+        self.builder.switch_to_block(then_b);
+        let then_v = self.lower(then)?;
+        self.builder.ins().jump(merge_b, &[then_v.into()]);
+
+        self.builder.switch_to_block(else_b);
+        let else_v = self.lower(els)?;
+        self.builder.ins().jump(merge_b, &[else_v.into()]);
+
+        // Both arms have jumped; the merge block's predecessors are complete.
+        self.builder.seal_block(merge_b);
+        self.builder.switch_to_block(merge_b);
+        Ok(result)
+    }
 }
 
 /// A JIT-compiled function and the module owning its executable memory.

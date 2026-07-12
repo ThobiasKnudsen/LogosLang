@@ -36,6 +36,8 @@ mod return_mod;
 mod struct_mod;
 #[path = "bool.rs"]
 mod bool_mod;
+#[path = "if.rs"]
+mod if_mod;
 mod add;
 mod assign;
 mod cmp;
@@ -82,6 +84,8 @@ pub struct Core {
     pub lt: DyadPtr,
     /// `lt_i32` (concrete i32 less-than); the machine op `<` resolves to.
     pub lt_i32: DyadPtr,
+    /// `if` (the value-producing conditional); a function.
+    pub if_: DyadPtr,
     /// `rational_number` (numeric literal carrier); a data type.
     pub rational: DyadPtr,
     /// `struct`, the type whose constructor derives a layout from a field list
@@ -131,6 +135,7 @@ impl Core {
         let times = times::register(&mut cx);
         let lt_i32 = cmp::register(&mut cx);
         let lt = lt::register(&mut cx);
+        let if_ = if_mod::register(&mut cx);
         fn_mod::register_syntax(&mut cx);
         paren::register(&mut cx);
         return_mod::register(&mut cx);
@@ -153,6 +158,7 @@ impl Core {
             mul_i32,
             lt,
             lt_i32,
+            if_,
             rational,
             struct_,
             metas,
@@ -1208,6 +1214,87 @@ mod tests {
             assert_eq!((*body).ty, core.lt);
             assert_eq!(*((*body).value as *const DyadPtr).add(2), core.lt_i32);
         }
+    }
+
+    #[test]
+    fn if_with_bool_literal_conditions_match_between_tiers() {
+        // A `bool`-literal condition selects a branch; both tiers agree.
+        diff_nullary_fn("fn () -> i32 ( if (true) (100) else (200) )", 100);
+        diff_nullary_fn("fn () -> i32 ( if (false) (100) else (200) )", 200);
+        // A comparison condition, nullary so both operands are constants.
+        diff_nullary_fn("fn () -> i32 ( if (0 < 1) (100) else (200) )", 100);
+        diff_nullary_fn("fn () -> i32 ( if (1 < 0) (100) else (200) )", 200);
+    }
+
+    #[test]
+    fn if_over_a_parameter_matches_between_tiers() {
+        // The non-recursive control-flow shape: a parameterized `if` fn, each branch
+        // diffed interpreted vs JIT. n=0 takes the then-branch, n=5 the else.
+        for (arg, expect) in [(0i64, 100i64), (5, 200)] {
+            let mut store = Store::new();
+            let mut trie = RegexTrie::new();
+            let core = Core::build(&mut store, &mut trie);
+
+            let func = {
+                let mut s = ScopeStack::new();
+                s.push(core.root_scope);
+                let mut p = Parser::new(
+                    "fn (n : i32) -> i32 ( if (n < 1) (100) else (200) )",
+                    &mut store,
+                    &mut trie,
+                    &core.metas,
+                    core.types(),
+                    s,
+                );
+                p.parse_expression().unwrap()
+            };
+            let call = {
+                let mut s = ScopeStack::new();
+                s.push(core.root_scope);
+                s.declare(&mut trie, "f", func).unwrap();
+                let src = format!("f({arg})");
+                let mut p =
+                    Parser::new(&src, &mut store, &mut trie, &core.metas, core.types(), s);
+                p.parse_expression().unwrap()
+            };
+            let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+            // SAFETY: `call`/`func`/body are valid nodes just parsed.
+            let interp = unsafe { rt.run(call) }.unwrap();
+            // SAFETY: `func` is the fn node just built and outlives the call.
+            let _compiled = unsafe { compile_fn(&core.lower, func) }.unwrap();
+            let jit = unsafe { rt.run(call) }.unwrap();
+            assert_eq!(interp, expect, "interpreter n={arg}");
+            assert_eq!(jit, interp, "jit != interpreter n={arg}");
+        }
+    }
+
+    #[test]
+    fn if_with_a_non_bool_condition_is_rejected() {
+        // The condition must be a `bool`; a bare number is not one.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut s = ScopeStack::new();
+        s.push(core.root_scope);
+
+        let mut p = Parser::new(
+            "fn () -> i32 ( if (1) (100) else (200) )",
+            &mut store,
+            &mut trie,
+            &core.metas,
+            core.types(),
+            s,
+        );
+        assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::NonBoolCondition));
+    }
+
+    #[test]
+    fn nested_if_matches_between_tiers() {
+        // A then-branch that is itself an `if`, exercising nested merge blocks.
+        diff_nullary_fn(
+            "fn () -> i32 ( if (true) ( if (false) (1) else (2) ) else (3) )",
+            2,
+        );
     }
 
     #[test]

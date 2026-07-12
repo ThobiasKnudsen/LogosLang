@@ -422,6 +422,13 @@ pub enum Construct {
     /// The return arrow `->` in a fn signature: separates the parameter list from
     /// the return type. Consumed by [`Parser::parse_fn`].
     Arrow,
+    /// The `if` keyword: parse a conditional `if ( cond ) ( then ) else ( else )`
+    /// via [`Parser::parse_if`]. Each part is a parenthesized expression; the
+    /// condition must be a `bool`.
+    If,
+    /// The `else` keyword: separates an `if`'s two branches. Consumed by
+    /// [`Parser::parse_if`]; a structural token elsewhere.
+    Else,
 }
 
 /// Why elaboration failed.
@@ -452,6 +459,10 @@ pub enum ParseError {
     /// its operand types (DESIGN ›a `+` over mismatched or sizeless types simply
     /// does not lower until that is resolved‹).
     UnsupportedOperands,
+    /// An `if` condition was not a `bool` (a comparison result or `bool` value).
+    NonBoolCondition,
+    /// An `if`'s then-branch was not followed by the mandatory `else`.
+    ExpectedElse,
 }
 
 /// Build a call node `{ty: callee, value: [args…, null]}`, the application
@@ -459,6 +470,17 @@ pub enum ParseError {
 /// value is the operand array of its arguments (null-terminated so `run` can count
 /// them); a nullary call carries a null value. The callee's type decides how the
 /// call runs, exactly as an operator's does.
+/// Whether `node`'s result is a `bool`: a `bool` literal/value, or a comparison
+/// (`<`, and its future siblings) whose result type is `bool`. An `if` condition
+/// must be one; arithmetic and other values are not.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+unsafe fn is_bool_result(types: &CoreTypes, node: DyadPtr) -> bool {
+    let ty = (*node).ty;
+    ty == types.bool_ || ty == types.lt
+}
+
 fn build_call(store: &mut Store, callee: DyadPtr, args: &[DyadPtr]) -> DyadPtr {
     let value = if args.is_empty() {
         std::ptr::null_mut()
@@ -691,6 +713,50 @@ impl<'a> Parser<'a> {
         Ok(self.store.alloc_raw(fn_type, value))
     }
 
+    /// Parse a conditional `if ( cond ) ( then ) else ( else )` (given the resolved
+    /// `if` identity). Each of the condition and the two branches is a parenthesized
+    /// expression; the mandatory `else` separates the branches. The condition must be
+    /// a `bool` ([`ParseError::NonBoolCondition`]). The node is
+    /// `{ty: if, value: [cond, then, else]}`: run takes the branch the condition
+    /// selects, compile emits a two-way branch. Unlike `fn`, `if` opens no new scope
+    /// — its parts resolve in the enclosing one.
+    pub fn parse_if(&mut self, if_type: DyadPtr) -> Result<DyadPtr, ParseError> {
+        // Condition: a parenthesized expression, required to be a bool.
+        self.expect_open()?;
+        let cond = self.parse_expression()?;
+        self.expect_close()?;
+        let types = self.types;
+        // SAFETY: `cond` is the reduced dyad just parsed.
+        if !unsafe { is_bool_result(&types, cond) } {
+            return Err(ParseError::NonBoolCondition);
+        }
+
+        // Then-branch.
+        self.expect_open()?;
+        let then = self.parse_expression()?;
+        self.expect_close()?;
+
+        // The mandatory `else`, then the else-branch.
+        self.expect_else()?;
+        self.expect_open()?;
+        let els = self.parse_expression()?;
+        self.expect_close()?;
+
+        let value = self.store.alloc_operands(&[cond, then, els]);
+        Ok(self.store.alloc_raw(if_type, value))
+    }
+
+    /// Consume the `else` keyword between an `if`'s branches.
+    fn expect_else(&mut self) -> Result<(), ParseError> {
+        match self.peek_kind() {
+            Some((_, matched, Construct::Else)) => {
+                self.pos += matched;
+                Ok(())
+            }
+            _ => Err(ParseError::ExpectedElse),
+        }
+    }
+
     /// Consume the `->` that separates a fn's parameter list from its return type.
     fn expect_arrow(&mut self) -> Result<(), ParseError> {
         match self.peek_kind() {
@@ -758,7 +824,13 @@ impl<'a> Parser<'a> {
             // (the opener that started the scope, the field-list or fn parser).
             if matches!(
                 c,
-                Some(Construct::Close | Construct::Separator | Construct::Colon | Construct::Arrow)
+                Some(
+                    Construct::Close
+                        | Construct::Separator
+                        | Construct::Colon
+                        | Construct::Arrow
+                        | Construct::Else
+                )
             ) {
                 break;
             }
@@ -807,6 +879,11 @@ impl<'a> Parser<'a> {
                     let f = self.parse_fn(id)?;
                     tape.push(Cell::Dyad(f));
                 }
+                // The `if` keyword: parse an `if ( cond ) ( then ) else ( else )`.
+                Some(Construct::If) => {
+                    let node = self.parse_if(id)?;
+                    tape.push(Cell::Dyad(node));
+                }
                 // An operator: reduce anything binding tighter to its left, then
                 // shift it onto the tape as a pending token.
                 Some(Construct::Infix { precedence, assoc, .. }) => {
@@ -815,7 +892,11 @@ impl<'a> Parser<'a> {
                 }
                 // Handled by the structural-break peek above.
                 Some(
-                    Construct::Close | Construct::Separator | Construct::Colon | Construct::Arrow,
+                    Construct::Close
+                    | Construct::Separator
+                    | Construct::Colon
+                    | Construct::Arrow
+                    | Construct::Else,
                 ) => {
                     unreachable!("structural delimiter ends the loop")
                 }
