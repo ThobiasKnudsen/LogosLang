@@ -7,10 +7,12 @@
 //! the `den == 1` case.
 //!
 //! A rational only becomes a machine number when it is *molded* to a concrete type
-//! at use (DESIGN ›Numeric literals are uncommitted until context types them‹). v1
-//! has a single concrete numeric type, `i32`, so molding means: if the fraction is
-//! an exact integer in `i32` range, that integer; otherwise there is no way to
-//! compute the literal, reported as [`RunError::UncomputableLiteral`] /
+//! at use (DESIGN ›Numeric literals are uncommitted until context types them‹):
+//! [`mold_to`] commits it exactly to any numeric width (an integer target requires
+//! an exact in-range integer; a float target takes `num/den`), and a literal that
+//! never lands in a typed slot defaults to `i32` when read ([`mold`]). A literal
+//! with no exact value in its target is reported as
+//! [`crate::run::RunError::UncomputableLiteral`] /
 //! [`CompileError::UncomputableLiteral`] rather than a crash. Parsing a decimal
 //! therefore always succeeds (it is a valid rational); only *computing* `3.14` as
 //! an integer fails, cleanly.

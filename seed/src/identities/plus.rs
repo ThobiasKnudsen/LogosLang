@@ -32,9 +32,10 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 }
 
 /// Build `lhs + rhs`: resolve the operand type and store it as the node's third
-/// operand, giving `{ty: +, value: [lhs, rhs, type]}`. The seed has one machine
-/// numeric type today, so numeric operands resolve to `i32`; non-numeric operands
-/// leave `+` unresolved ([`ParseError::UnsupportedOperands`]).
+/// operand, giving `{ty: +, value: [lhs, rhs, type]}`. Resolution follows
+/// [`resolve_binary`]: matching concrete types keep theirs, a literal molds to its
+/// partner, two literals fold exactly; non-numeric operands leave `+` unresolved
+/// ([`ParseError::UnsupportedOperands`]).
 fn build(
     store: &mut Store,
     types: &CoreTypes,

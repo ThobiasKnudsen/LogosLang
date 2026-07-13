@@ -11,11 +11,12 @@
 //! [`crate::parse::Parser::parse_fn`]; here we only register the identity, its
 //! `Fn` construct, and the `->` arrow it consumes.
 //!
-//! A `fn` instance's value is its `[input, output, body]` struct (the params, the
-//! return type, and the reflectable body). `bcode` is null until compiled, and in
-//! this seed compiled code lives in the run version's table rather than on the
-//! node (see `crate::run`), so a compound function is interpreted by walking the
-//! `body` field.
+//! A `fn` instance's value is its `[input, output, body, bcode]` struct (the
+//! params, the return type, the reflectable body, and the compiled machine code,
+//! null until [`crate::compile::compile_fn`] installs it). `run` jumps to an
+//! installed `bcode` and walks `body` otherwise; only the leaf natives (`=`, `+`,
+//! `if`, …) keep their machine code in the run version's table instead (see
+//! `crate::run`).
 
 use super::Cx;
 use crate::dyad::DyadPtr;

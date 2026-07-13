@@ -1,19 +1,23 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `compile` (V1PLAN Phase 5): lower a dyad tree to native code with Cranelift.
+//! `compile`: lower a dyad tree to native code with Cranelift.
 //!
 //! `compile` is `run`'s sibling: where `run` walks the graph and computes,
 //! `compile` walks it and *emits* machine code, one IR node per graph node, then
 //! finalizes to a callable function (the `bcode`). The result is meant to be
-//! observably identical to `run` (the interpreter is the compiler's oracle; see
-//! V1PLAN Milestone 2).
+//! observably identical to `run` (the interpreter is the compiler's oracle).
 //!
 //! Each core primitive carries a lowering rule (its [`LowerFn`]) exactly as it
-//! carries a run native, kept in `crate::core`'s `lower` table. This seed lowers
-//! a single nullary expression returning `i32`, with operand addresses and
-//! literals baked as immediates (DESIGN ›operand access is baked into the machine
-//! code‹). Whole-`fn` bodies, control flow, and SSA locals are later work.
+//! carries a run native, kept in [`crate::identities::Core`]'s `lower` table. The
+//! seed compiles whole `fn` bodies: parameters map to block params, `if` and the
+//! short-circuiting `and`/`or` lower to branch-and-merge blocks, and a call
+//! lowers to a direct self-call (compiled recursion) or a `call_indirect` to an
+//! already-compiled callee, with operand addresses and literals baked as
+//! immediates (DESIGN ›operand access is baked into the machine code‹). The
+//! calling convention is uniform — every parameter and result is the
+//! interpreter's `i64` bit-container, reinterpreted at the boundary — capped at
+//! [`MAX_COMPILED_PARAMS`] parameters.
 
 use std::collections::HashMap;
 
@@ -72,7 +76,7 @@ pub const MAX_COMPILED_PARAMS: usize = 3;
 /// The lowering context: a Cranelift function under construction plus the rule
 /// table `lower` dispatches through, and the host pointer type for baked
 /// addresses. The `builder` is not exposed; lowering rules use the small typed
-/// helpers below, so `crate::core` needs only Cranelift's `Value`.
+/// helpers below, so `crate::identities` needs only Cranelift's `Value`.
 pub struct Lowerer<'a, 'f> {
     builder: &'a mut FunctionBuilder<'f>,
     lower: &'a LowerTable,
@@ -289,7 +293,8 @@ impl Lowerer<'_, '_> {
     }
 
     /// Emit a two-way branch on `cond` (a non-zero i32 is true): run `then_arm` in the
-    /// taken block and `else_arm` in the other, each yielding an `i32`, merged into a
+    /// taken block and `else_arm` in the other, each yielding a value of one agreed
+    /// type (the merge takes the arms' width, not a fixed `i32`), merged into a
     /// single value. Leaves the builder positioned in the (sealed) merge block, so the
     /// caller's next instruction — an enclosing lowering, or `compile_body`'s trailing
     /// `return_` — lands there. Nesting composes: an arm that itself branches leaves
@@ -467,13 +472,14 @@ impl Compiled {
     }
 }
 
-/// Compile a `fn (params) -> i32` and install its machine code on the node. Reads
-/// the parameter nodes from the input struct and the `body` (see
-/// [`crate::parse::FN_BODY`]), compiles the body against an `i32`-per-parameter
-/// signature (parameter references lower to the function's arguments), then writes
-/// the `exec@` into the node's `bcode` slot ([`crate::parse::FN_BCODE`]) so
-/// [`crate::run`] calls it with the arguments instead of walking the body. Non-`i32`
-/// parameters/returns are later work.
+/// Compile a function literal and install its machine code on the node. Reads the
+/// parameter nodes from the input struct and the `body` (see
+/// [`crate::parse::FN_BODY`]), compiles the body with each parameter reference
+/// lowering to its matching argument (narrowed from the `i64` bit-container to the
+/// parameter's declared type) and the return following the declared output
+/// (`-> void` yields unit), then writes the `exec@` into the node's `bcode` slot
+/// ([`crate::parse::FN_BCODE`]) so [`crate::run`] calls it with the arguments
+/// instead of walking the body.
 ///
 /// The returned [`Compiled`] *owns* the executable memory; the installed `bcode` is
 /// only valid while it is alive, so the caller must keep it alive for as long as the
@@ -534,8 +540,9 @@ pub unsafe fn compile_nullary_i32(
     compile_body(lower, fn_type, std::ptr::null_mut(), root, &[], Some(NumType::I32))
 }
 
-/// Compile `root` as a function returning `i32` with one `i32` argument per entry in
-/// `params`, mapping each parameter node to its argument. `root` references those
+/// Compile `root` as a function of `params`, mapping each parameter node to its
+/// argument (an `i64` bit-container narrowed to the parameter's declared type) and
+/// returning `ret` (`None` for `-> void`, which yields unit). `root` references those
 /// parameter nodes where it uses them (they resolve to the block params), and its
 /// other leaves bake addresses/immediates as usual.
 ///
