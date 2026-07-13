@@ -18,8 +18,9 @@
 //! Deferred surface the sketch declares that the seed does not yet register —
 //! tracked here so each gap is deliberate, not drift: the operators `^` and
 //! `xor`; ranges as first-class values, and `for`'s multi-variable, `in`-less,
-//! and `gpu` forms (the old prototype has them); struct-typed (nested)
-//! fields and struct parameters/returns; the `string` *name* and operations over
+//! and `gpu` forms (the old prototype has them); pointer arithmetic, heap
+//! allocation, and checked `&mut` references (see `pointer`); struct-typed
+//! (nested) fields and struct parameters/returns; the `string` *name* and operations over
 //! strings (the `«…»` literal exists as an inert value, above all as the comment
 //! substance); `mut` at every level (DESIGN ›Mutability and construction‹); the
 //! `hashtable` and `array` types; and the declaration forms `key : type = value`
@@ -63,6 +64,7 @@ mod convert;
 mod declare;
 mod divide;
 pub(crate) mod instance;
+pub(crate) mod pointer;
 mod eq;
 mod ge;
 mod gt;
@@ -154,6 +156,10 @@ pub struct Core {
     pub struct_: DyadPtr,
     /// `construct`, the struct-construction statement a struct-typed call builds.
     pub construct_: DyadPtr,
+    /// `deref`, the dereference node postfix `@` builds.
+    pub deref_: DyadPtr,
+    /// `storeptr`, the store-through node `=` builds over a deref lhs.
+    pub storeptr_: DyadPtr,
     /// The parser's table: parse-time behaviour keyed by identity.
     pub metas: HashMap<DyadPtr, Construct>,
     /// One run version: each function identity's `bcode`.
@@ -242,6 +248,8 @@ impl Core {
         let struct_ = struct_mod::register(&mut cx);
         // Struct instances: the construction statement and the `.` field access.
         let construct_ = instance::register(&mut cx);
+        // Pointers: the `@`/`&` tokens and the deref/storeptr identities.
+        let (deref_, storeptr_) = pointer::register(&mut cx);
         // A multi-expression block is a `scope`-typed sequence node; its run and
         // lowering are registered once the tables exist.
         scope::register_exec(&mut cx, scope_);
@@ -281,6 +289,8 @@ impl Core {
             comment_,
             struct_,
             construct_,
+            deref_,
+            storeptr_,
             metas,
             bcode,
             lower,
@@ -302,6 +312,9 @@ impl Core {
             if_: self.if_,
             while_: self.while_,
             for_: self.for_,
+            type_: self.type_,
+            deref_: self.deref_,
+            storeptr_: self.storeptr_,
             construct_: self.construct_,
             string_: self.string_,
             comment_: self.comment_,
@@ -369,6 +382,9 @@ pub(crate) enum Operand {
     Concrete(NumType),
     /// An uncommitted number literal (a `rational`), which molds to context.
     Literal,
+    /// A pointer value, carrying its pointee type node. Pointer types compare by
+    /// pointee, never by node identity — they are created fresh per use.
+    Pointer(DyadPtr),
     /// Not a number an operator can compute over (e.g. a `struct`).
     NonNumeric,
 }
@@ -406,6 +422,25 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
     if ty == types.while_ || ty == types.for_ || ty == types.construct_ {
         return Operand::NonNumeric;
     }
+    // A pointer-typed value (an `&x` literal, a pointer variable, or a pointer
+    // field place): carries its pointee. Never arithmetic; passed and stored whole.
+    if !ty.is_null() && numtype::is_pointer_type(ty) {
+        return Operand::Pointer(numtype::pointee_of(ty));
+    }
+    // A dereference yields its pointee's value; a store-through yields the stored
+    // value, like `=`. Both must precede the generic fn-typed fallback below,
+    // which would misread them as i32-returning calls.
+    if ty == types.deref_ || ty == types.storeptr_ {
+        let p = (*node).value as *const DyadPtr;
+        let pointee = if ty == types.deref_ { *p.add(1) } else { *p.add(2) };
+        if numtype::is_pointer_type(pointee) {
+            return Operand::Pointer(numtype::pointee_of(pointee));
+        }
+        if is_numtype_node(types, pointee) {
+            return Operand::Concrete(numtype::of_type_node(pointee));
+        }
+        return Operand::NonNumeric; // a struct pointee reads only through `.field`
+    }
     // A sequence's value is its trailing expression's. A literal tail takes the
     // bare-literal i32 default here rather than classifying as `Literal`: the
     // molding machinery commits a literal *node*, and this node is the sequence.
@@ -429,6 +464,9 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
             let out = *fields.add(FN_OUTPUT);
             if !out.is_null() && numtype::is_void_type(out) {
                 return Operand::NonNumeric;
+            }
+            if !out.is_null() && numtype::is_pointer_type(out) {
+                return Operand::Pointer(numtype::pointee_of(out));
             }
         }
         return Operand::Concrete(call_return_numtype(ty));
@@ -469,6 +507,11 @@ pub(crate) unsafe fn resolve_binary(
     let a = numtype_of(types, lhs);
     let b = numtype_of(types, rhs);
     let nt = match (&a, &b) {
+        // No pointer arithmetic: crossing addresses and numbers is deferred with
+        // the rest of the pointer math (see `pointer`).
+        (Operand::Pointer(_), _) | (_, Operand::Pointer(_)) => {
+            return Err(ParseError::UnsupportedOperands)
+        }
         (Operand::NonNumeric, _) | (_, Operand::NonNumeric) => {
             return Err(ParseError::UnsupportedOperands)
         }
@@ -533,7 +576,9 @@ pub(crate) unsafe fn resolve_loop_parts(
                 _ => nt = Some(c),
             },
             Operand::Literal => {}
-            Operand::NonNumeric => return Err(ParseError::UnsupportedOperands),
+            Operand::Pointer(_) | Operand::NonNumeric => {
+                return Err(ParseError::UnsupportedOperands)
+            }
         }
     }
     let nt = nt.unwrap_or(NumType::I32);
@@ -595,6 +640,15 @@ pub(crate) unsafe fn commit_call_args(
             break;
         }
         let pty = (*param).ty;
+        if !pty.is_null() && numtype::is_pointer_type(pty) {
+            // A pointer parameter takes only a pointer to the same pointee — a
+            // committed literal here would be dereferenced as a wild address.
+            match numtype_of(types, *arg) {
+                Operand::Pointer(pointee) if pointee == numtype::pointee_of(pty) => {}
+                _ => return Err(ParseError::TypeMismatch),
+            }
+            continue;
+        }
         if (**arg).ty == types.rational && is_numtype_node(types, pty) {
             let nt = numtype::of_type_node(pty);
             *arg = commit_if_literal(store, *arg, &Operand::Literal, pty, nt)?;
@@ -695,6 +749,11 @@ unsafe fn commit_tail(
         }
         return Ok(node);
     }
+    // A pointer cannot be a numeric function's value (commit_tail runs only for
+    // numeric outputs); rejecting here beats an invalid widen at the ABI.
+    if let Operand::Pointer(_) = numtype_of(types, node) {
+        return Err(ParseError::TypeMismatch);
+    }
     Ok(node)
 }
 
@@ -734,7 +793,8 @@ pub(crate) unsafe fn build_cast(
             let value = store.alloc_bytes(&bits.to_ne_bytes()[..to.bytes()]);
             Ok(store.alloc_raw(target, value))
         }
-        Operand::NonNumeric => Err(ParseError::BadCast),
+        // Pointer-to-integer casts are deferred with the rest of pointer math.
+        Operand::Pointer(_) | Operand::NonNumeric => Err(ParseError::BadCast),
     }
 }
 
@@ -2630,6 +2690,189 @@ mod tests {
     #[test]
     fn a_scope_of_only_prose_has_no_value() {
         assert_eq!(parse_err("( # just a note )"), ParseError::Empty);
+    }
+
+    #[test]
+    fn pointers_mutate_caller_state_through_calls_both_tiers() {
+        // The headline: a pointer parameter (@i32), the address of a caller
+        // variable, and a store-through — the callee mutates the caller's x,
+        // interpreted and fully compiled.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "incr := fn (p : @i32) -> void ( p@ = p@ + 1 )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap();
+        }
+        let incr = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new("incr", &mut store, &mut trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+        let func = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "fn () -> i32 ( x := i32 41  x = 41  incr(&x)  x )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap()
+        };
+        let call = store.alloc_raw(func, std::ptr::null_mut());
+        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_, &core.bcode);
+        // SAFETY: `call`/`func`/`incr` are valid nodes just parsed.
+        let interp = unsafe { rt.run(call) }.unwrap();
+        // Compile the callee first (the caller's call bakes its address).
+        // SAFETY: both fn nodes outlive the calls; the artifacts stay alive.
+        let _c_incr = unsafe { compile_fn(&core.lower, core.types(), incr) }.unwrap();
+        let _c_func = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
+        let jit = unsafe { rt.run(call) }.unwrap();
+        assert_eq!(interp, 42);
+        assert_eq!(jit, interp);
+    }
+
+    #[test]
+    fn pointer_variables_rewire_both_tiers() {
+        // p := &x aliases x; p = &y rewires; p@ reads through the current target.
+        // The explicit `p = &x` makes the body idempotent (declarations
+        // initialize at parse, and the interpreted run leaves p on y).
+        diff_nullary_fn(
+            "fn () -> i32 ( x := i32 10  y := i32 20  x = 10  y = 20  p := &x  p = &x  s := i32 0  s = p@  p = &y  s + p@ )",
+            30,
+        );
+    }
+
+    #[test]
+    fn pointer_chains_and_field_pointers_work_both_tiers() {
+        // A struct pointer with q@.x (the postfix-deref ergonomics the syntax was
+        // chosen for), a field pointer &pt.y, and double indirection pp@@.x.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        declare_point(&mut store, &mut trie, &core);
+
+        let func = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "fn () -> i32 ( pt := point(3, 4)  q := &pt  q@.x = q@.x + 10  fp := &pt.y  fp@ = fp@ + 1  pp := &q  pp@@.x + pt.y )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap()
+        };
+        let call = store.alloc_raw(func, std::ptr::null_mut());
+        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_, &core.bcode);
+        // x: 3 + 10 = 13 (via q@.x); y: 4 + 1 = 5 (via fp@); 13 + 5 = 18.
+        // SAFETY: `call`/`func` are valid nodes just parsed.
+        let interp = unsafe { rt.run(call) }.unwrap();
+        // SAFETY: `func` outlives the call; the artifact stays alive.
+        let _c = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
+        let jit = unsafe { rt.run(call) }.unwrap();
+        assert_eq!(interp, 18);
+        assert_eq!(jit, interp);
+    }
+
+    #[test]
+    fn struct_pointer_fields_hold_addresses_both_tiers() {
+        // A pointer-typed field (@i32): constructed from &x, read through h.r@.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "holder := struct (r : @i32)",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap();
+        }
+        let func = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "fn () -> i32 ( x := i32 7  x = 7  h := holder(&x)  h.r@ + 1 )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap()
+        };
+        let call = store.alloc_raw(func, std::ptr::null_mut());
+        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_, &core.bcode);
+        // SAFETY: `call`/`func` are valid nodes just parsed.
+        let interp = unsafe { rt.run(call) }.unwrap();
+        // SAFETY: `func` outlives the call; the artifact stays alive.
+        let _c = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
+        let jit = unsafe { rt.run(call) }.unwrap();
+        assert_eq!(interp, 8);
+        assert_eq!(jit, interp);
+    }
+
+    #[test]
+    fn pointer_misuse_is_rejected() {
+        // Deref of a non-pointer; pointer arithmetic; a literal into a pointer
+        // variable; & of a comptime binding; & of a parameter (no storage); a
+        // pointer as a numeric function's tail.
+        assert_eq!(parse_err("( x := i32 1  x@ )"), ParseError::UnsupportedOperands);
+        assert_eq!(
+            parse_err("( x := i32 1  p := &x  p + 1 )"),
+            ParseError::UnsupportedOperands
+        );
+        assert_eq!(parse_err("( x := i32 1  p := &x  p = 5 )"), ParseError::TypeMismatch);
+        assert_eq!(parse_err("( y := 5  &y )"), ParseError::BadAddressOf);
+        assert_eq!(parse_err("fn (a : i32) -> void ( q := &a  q@ )"), ParseError::BadAddressOf);
+        assert_eq!(parse_err("fn () -> i32 ( x := i32 1  x = 1  &x )"), ParseError::TypeMismatch);
+    }
+
+    #[test]
+    fn a_literal_into_a_pointer_parameter_is_rejected() {
+        // f(0) against p : @i32 would dereference address 0; the call site
+        // rejects it instead.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "f := fn (p : @i32) -> void ( p@ = 1 )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap();
+        }
+        let mut s = ScopeStack::new();
+        s.push(core.root_scope);
+        let mut p = Parser::new("f(0)", &mut store, &mut trie, &core.metas, core.types(), s);
+        assert_eq!(p.parse_expression(), Err(ParseError::TypeMismatch));
     }
 
     /// Declare `point := struct (x : i32, y : i32)` in the root scope.

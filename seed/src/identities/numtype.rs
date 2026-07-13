@@ -176,15 +176,43 @@ pub(crate) unsafe fn is_comment_type(type_node: DyadPtr) -> bool {
     !v.is_null() && *(v as *const u8) == COMMENT_TAG
 }
 
+/// The value-slot tag for pointer types (`@T`), past [`COMMENT_TAG`]. A pointer
+/// type node is `{ty: type, value -> [ADDR_TAG, pointee-node-ptr bytes]}` — the
+/// pointee rides the blob after the tag, so the graph carries what is pointed
+/// at (see [`crate::identities::pointer`]).
+pub(crate) const ADDR_TAG: u8 = 13;
+
+/// Whether `type_node` is a pointer type (`@T`).
+///
+/// # Safety
+/// `type_node` must be a valid type node from the store.
+pub(crate) unsafe fn is_pointer_type(type_node: DyadPtr) -> bool {
+    let v = (*type_node).value;
+    !v.is_null() && *(v as *const u8) == ADDR_TAG
+}
+
+/// The pointee type node of a pointer type (`@T` → `T`).
+///
+/// # Safety
+/// `type_node` must be a pointer type node ([`is_pointer_type`]).
+pub(crate) unsafe fn pointee_of(type_node: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned((*type_node).value.add(1) as *const DyadPtr)
+}
+
 /// Whether a data node typed `type_node` holds a scalar the interpreter can read
-/// at a width: a numeric type, or `bool` (whose type node carries no tag). The
-/// unit `void` and the text substance (`string`, `comment`) are not scalars.
+/// at a width: a numeric type, `bool` (whose type node carries no tag), or a
+/// pointer (an 8-byte address). The unit `void` and the text substance
+/// (`string`, `comment`) are not scalars.
 ///
 /// # Safety
 /// `type_node` must be a valid type node from the store.
 pub(crate) unsafe fn is_scalar_type(type_node: DyadPtr) -> bool {
     let v = (*type_node).value;
-    v.is_null() || *(v as *const u8) < VOID_TAG
+    if v.is_null() {
+        return true;
+    }
+    let tag = *(v as *const u8);
+    tag < VOID_TAG || tag == ADDR_TAG
 }
 
 /// The `NumType` of a type node, or `I32` for a fixed-width scalar type without a
@@ -259,12 +287,19 @@ pub(crate) fn lower_var(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, Compil
 }
 
 /// The `NumType` a numeric type node describes (read from its value-slot tag).
+/// A pointer type reads and writes as its 8-byte address (`U64`) — the one
+/// central case that gives every width-driven path (reads, writes, leaf loads,
+/// the ABI boundary, struct layout) pointer behaviour with no further edits.
 ///
 /// # Safety
-/// `type_node` must be a numeric type node registered with a [`NumType::tag_bytes`]
-/// value (see `identities::i32` and its siblings).
+/// `type_node` must be a numeric or pointer type node with a tagged value slot
+/// (see `identities::i32` and its siblings, and `identities::pointer`).
 pub(crate) unsafe fn of_type_node(type_node: DyadPtr) -> NumType {
-    NumType::from_tag(*((*type_node).value as *const u8))
+    let tag = *((*type_node).value as *const u8);
+    if tag == ADDR_TAG {
+        return NumType::U64;
+    }
+    NumType::from_tag(tag)
 }
 
 /// The type stored in a binary operator node's value slot (its third operand).

@@ -48,8 +48,9 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 /// The layout a struct type derives from its field declarations (DESIGN ›a type
 /// whose constructor derives the layout automatically‹): each field with its
 /// numeric type and byte offset, in declaration order, plus the total size.
-/// Fields must be numeric in v1 ([`ParseError::UnsupportedOperands`] otherwise —
-/// there is no nested layout yet).
+/// Fields must be numeric or pointer-typed (8 bytes) in v1
+/// ([`ParseError::UnsupportedOperands`] otherwise — there is no nested layout
+/// yet).
 ///
 /// # Safety
 /// `struct_type` must be a struct type node from the store
@@ -100,11 +101,23 @@ pub(crate) unsafe fn build_ctor(
     let instance = store.alloc_raw(struct_type, blob);
     ops.push(instance);
     for (&arg, &(field, nt, _)) in args.iter().zip(&fields) {
+        let fty = (*field).ty;
+        let field_ptr = numtype::is_pointer_type(fty);
         let arg = match numtype_of(types, arg) {
             Operand::Literal => {
-                commit_if_literal(store, arg, &Operand::Literal, (*field).ty, nt)?
+                if field_ptr {
+                    // A literal into a pointer field would be a wild address.
+                    return Err(ParseError::TypeMismatch);
+                }
+                commit_if_literal(store, arg, &Operand::Literal, fty, nt)?
             }
-            Operand::Concrete(a_nt) if a_nt == nt => arg,
+            Operand::Pointer(pointee) => {
+                if !field_ptr || numtype::pointee_of(fty) != pointee {
+                    return Err(ParseError::TypeMismatch);
+                }
+                arg
+            }
+            Operand::Concrete(a_nt) if !field_ptr && a_nt == nt => arg,
             Operand::Concrete(_) => return Err(ParseError::TypeMismatch),
             Operand::NonNumeric => return Err(ParseError::UnsupportedOperands),
         };

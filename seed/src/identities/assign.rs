@@ -7,7 +7,7 @@
 
 use cranelift_codegen::ir::Value;
 
-use super::numtype::{numtype_of_type, of_type_node, write_scalar};
+use super::numtype::{is_pointer_type, numtype_of_type, of_type_node, write_scalar};
 use super::{build_binary, commit_if_literal, is_numtype_node, operands, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
@@ -40,12 +40,26 @@ fn build(
     lhs: DyadPtr,
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    // The assignable places in v1 are typed numeric variables. A comptime
-    // (`:=`-bound rational) binding has no machine storage — writing its value
-    // slot would corrupt the fraction — and nothing else has storage yet.
+    // A store through a pointer — `p@ = v`, `p@.x = v` — rebuilds as a storeptr
+    // node with its own run/lower, resolved here at parse time.
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
-    if !unsafe { is_numtype_node(types, (*lhs).ty) } {
+    if unsafe { (*lhs).ty } == types.deref_ {
+        return unsafe { super::pointer::build_storeptr(store, types, lhs, rhs) };
+    }
+    // The assignable places in v1 are typed numeric and pointer variables. A
+    // comptime (`:=`-bound rational) binding has no machine storage — writing
+    // its value slot would corrupt the fraction — and nothing else has storage.
+    // SAFETY: as above.
+    let (lhs_numeric, lhs_pointer) = unsafe {
+        (is_numtype_node(types, (*lhs).ty), is_pointer_type((*lhs).ty))
+    };
+    if !lhs_numeric && !lhs_pointer {
         return Err(ParseError::BadAssignTarget);
+    }
+    // A literal into a pointer would become a wild address.
+    // SAFETY: as above.
+    if lhs_pointer && unsafe { (*rhs).ty } == types.rational {
+        return Err(ParseError::TypeMismatch);
     }
     // SAFETY: as above.
     let rhs = unsafe {

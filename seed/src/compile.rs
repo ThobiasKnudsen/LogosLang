@@ -128,6 +128,12 @@ impl Lowerer<'_, '_> {
         if !op.is_null() && (*op).ty == self.types.fn_type {
             return self.lower_call(node);
         }
+        // A pointer-typed leaf (an `&x` literal or a pointer variable): pointer
+        // type nodes are created per use, so they are not in the identity-keyed
+        // table; load the 8-byte address blob like any numeric variable.
+        if !op.is_null() && crate::identities::numtype::is_pointer_type(op) {
+            return crate::identities::numtype::lower_var(self, node);
+        }
         Err(CompileError::NotLowerable(op))
     }
 
@@ -156,6 +162,24 @@ impl Lowerer<'_, '_> {
         );
         let p = self.builder.ins().iconst(self.ptr_ty, addr as usize as i64);
         self.builder.ins().store(self.flags, v, p, 0);
+    }
+
+    /// Load a `ct`-typed value through a *runtime* address (an SSA i64 pointer)
+    /// at a byte offset — the dereference's load, where [`Self::load`] takes a
+    /// baked parse-time address.
+    pub(crate) fn load_at(&mut self, ct: types::Type, addr: Value, offset: i64) -> Value {
+        self.builder.ins().load(ct, self.flags, addr, offset as i32)
+    }
+
+    /// Store `v` through a runtime address at a byte offset — the dual of
+    /// [`Self::load_at`].
+    pub(crate) fn store_at(&mut self, ct: types::Type, addr: Value, offset: i64, v: Value) {
+        debug_assert_eq!(
+            self.builder.func.dfg.value_type(v),
+            ct,
+            "store-through's value must lower to the pointee's type"
+        );
+        self.builder.ins().store(self.flags, v, addr, offset as i32);
     }
 
     /// Equality of two same-typed integer values, as an `i32` 0/1. Kept for `not`
@@ -636,6 +660,8 @@ impl Lowerer<'_, '_> {
                 let v = self.lower(arg)?;
                 let nt = match numtype_of(&self.types, arg) {
                     Operand::Concrete(nt) => nt,
+                    // A pointer rides the container as its 8-byte address.
+                    Operand::Pointer(_) => NumType::U64,
                     // An uncommitted literal lowers as the bare-literal i32 default;
                     // a non-numeric value (a void call's unit) rides as the i32 unit.
                     Operand::Literal | Operand::NonNumeric => NumType::I32,

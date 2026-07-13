@@ -283,6 +283,19 @@ impl ScopeStack {
             Err(RegexTrieError::NodeNotFound) => return Err(ResolveError::Unknown),
             Err(e) => return Err(ResolveError::Index(e)),
         };
+        // Word characters bind maximally: a match that ends mid-identifier is not
+        // a token — `incr` must never lex as `in` + `cr`, nor `i32abc` as `i32` +
+        // `abc`. (Symbol tokens like `:=` are unaffected: they do not end in a
+        // word character.)
+        let bytes = name.as_bytes();
+        let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+        if m.matched > 0
+            && m.matched < bytes.len()
+            && word(bytes[m.matched - 1])
+            && word(bytes[m.matched])
+        {
+            return Err(ResolveError::Unknown);
+        }
         let mut live = m.contexts.iter().filter(|c| self.is_open(c.scope));
         match (live.next(), live.next()) {
             (None, _) => Err(ResolveError::OutOfScope),
@@ -354,6 +367,12 @@ pub struct CoreTypes {
     pub while_: DyadPtr,
     /// `for`: the counted-loop statement; unit-valued like `while`.
     pub for_: DyadPtr,
+    /// The `Type : Type` root; pointer type nodes are typed by it.
+    pub type_: DyadPtr,
+    /// `deref`: the dereference node postfix `@` builds.
+    pub deref_: DyadPtr,
+    /// `storeptr`: the store-through node `=` builds over a deref lhs.
+    pub storeptr_: DyadPtr,
     /// `construct`: the struct-construction statement a struct-typed call builds.
     pub construct_: DyadPtr,
     /// `string`: the text-literal type (`«…»`); inert in the seed, above all the
@@ -495,6 +514,14 @@ pub enum Construct {
     /// The range dots `..` between a `for`'s endpoints (and before its optional
     /// step). Consumed by [`Parser::parse_for`]; a structural token elsewhere.
     DotDot,
+    /// The `@`: after a completed dyad, a postfix dereference (`p@`, chaining as
+    /// `p@.x` and `p@@`); elsewhere, the pointer-type prefix (`@i32`, `@point`,
+    /// `@@i32`). A dereference can never start an expression, so the two
+    /// positions never collide.
+    At,
+    /// The `&`: address-of a storage-backed place (`&x`, `&p.x`), yielding a
+    /// pointer value typed `@T`. Handled by the driver, like prefix minus.
+    Amp,
 }
 
 /// Why elaboration failed.
@@ -564,6 +591,9 @@ pub enum ParseError {
     /// A `for`'s literal step was not positive: with the end-exclusive `var < end`
     /// condition, a non-positive step could never terminate as stated.
     BadStep,
+    /// An `&` of something without storage to point at: a parameter (frame-bound,
+    /// no memory slot), a comptime binding, or a non-place expression.
+    BadAddressOf,
     /// A numeric conversion `type(value)` was malformed: not exactly one operand, or a
     /// non-numeric operand (there is nothing to convert).
     BadCast,
@@ -1180,7 +1210,26 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `lhs` must be a valid dyad from the store.
     unsafe fn parse_field_access(&mut self, lhs: DyadPtr) -> Result<DyadPtr, ParseError> {
-        // The lhs must be an instance of a struct type, with storage.
+        // Through a struct pointer, `p@.x` folds the field offset into the deref
+        // (the address is runtime; the offset and the field's type are not).
+        if (*lhs).ty == self.types.deref_ {
+            let (ptr_expr, pointee, base_off) =
+                crate::identities::pointer::deref_parts(lhs);
+            if pointee.is_null() || (*pointee).ty != self.types.struct_ {
+                return Err(ParseError::UnsupportedOperands);
+            }
+            let (field, offset) = self.resolve_field(pointee)?;
+            let types = self.types;
+            return Ok(crate::identities::pointer::build_deref(
+                self.store,
+                &types,
+                ptr_expr,
+                (*field).ty,
+                base_off as usize + offset,
+            ));
+        }
+        // The direct case: an instance of a struct type, with storage — the
+        // access is a *place*, resolved to an address now.
         let struct_type = (*lhs).ty;
         if struct_type.is_null()
             || (*struct_type).ty != self.types.struct_
@@ -1188,11 +1237,24 @@ impl<'a> Parser<'a> {
         {
             return Err(ParseError::UnsupportedOperands);
         }
+        let (field, offset) = self.resolve_field(struct_type)?;
+        let addr = (*lhs).value.add(offset);
+        Ok(self.store.alloc_raw((*field).ty, addr))
+    }
+
+    /// Resolve the field name at the cursor against `struct_type`'s own scope
+    /// alone (its value[0] — an enclosing binding of the same spelling can never
+    /// shadow or double a field), returning the field node and its byte offset.
+    ///
+    /// # Safety
+    /// `struct_type` must be a struct type node from the store.
+    unsafe fn resolve_field(
+        &mut self,
+        struct_type: DyadPtr,
+    ) -> Result<(DyadPtr, usize), ParseError> {
         let (nstart, nlen) = self.lex_identifier().ok_or(ParseError::ExpectedField)?;
         let source = self.source;
         let name = &source[nstart..nstart + nlen];
-        // Resolve in the struct's own scope only (its value[0]), so an enclosing
-        // binding of the same spelling can never shadow or double a field.
         let mut field_scope = ScopeStack::new();
         field_scope.push(*((*struct_type).value as *const DyadPtr));
         let field =
@@ -1203,8 +1265,104 @@ impl<'a> Parser<'a> {
             .copied()
             .find(|&(f, _, _)| f == field)
             .ok_or(ParseError::ExpectedField)?;
-        let addr = (*lhs).value.add(offset);
-        Ok(self.store.alloc_raw((*field).ty, addr))
+        Ok((field, offset))
+    }
+
+    /// Build a postfix dereference `lhs@`: the lhs's static type must be a
+    /// pointer type — a pointer variable or `&x` literal (its `ty`), a pointer
+    /// field place, or another deref whose pointee is a pointer (`p@@`).
+    ///
+    /// # Safety
+    /// `lhs` must be a reduced dyad from the store.
+    unsafe fn build_deref(&mut self, lhs: DyadPtr) -> Result<DyadPtr, ParseError> {
+        let ptr_ty = if (*lhs).ty == self.types.deref_ {
+            crate::identities::pointer::deref_parts(lhs).1
+        } else {
+            (*lhs).ty
+        };
+        if ptr_ty.is_null() || !crate::identities::numtype::is_pointer_type(ptr_ty) {
+            return Err(ParseError::UnsupportedOperands);
+        }
+        let pointee = crate::identities::numtype::pointee_of(ptr_ty);
+        let types = self.types;
+        Ok(crate::identities::pointer::build_deref(self.store, &types, lhs, pointee, 0))
+    }
+
+    /// Parse a pointer type after its opening `@` (already consumed): any
+    /// further `@`s deepen it (`@@i32`), then a resolved type name — a numeric
+    /// type or a struct type — closes it. Fresh nodes per use; pointees carry
+    /// the identity.
+    fn parse_pointer_type(&mut self) -> Result<DyadPtr, ParseError> {
+        let mut depth = 1usize;
+        while let Some((_, matched, Construct::At)) = self.peek_kind() {
+            self.pos += matched;
+            depth += 1;
+        }
+        self.skip_trivia();
+        let source = self.source;
+        if self.pos >= source.len() {
+            return Err(ParseError::UnsupportedOperands);
+        }
+        let r = self
+            .scopes
+            .resolve(self.trie, &source[self.pos..])
+            .map_err(ParseError::Resolve)?;
+        let base = r.identity;
+        // SAFETY: `base` is a resolved dyad from the store.
+        let is_type = crate::identities::is_numtype_node(&self.types, base)
+            || unsafe { !(*base).ty.is_null() && (*base).ty == self.types.struct_ };
+        if !is_type {
+            return Err(ParseError::UnsupportedOperands);
+        }
+        self.pos += r.matched;
+        let mut ty = base;
+        for _ in 0..depth {
+            ty = crate::identities::pointer::make_pointer_type(self.store, self.types.type_, ty);
+        }
+        Ok(ty)
+    }
+
+    /// Parse an address-of after its `&` (already consumed): a resolved name
+    /// with an optional `.field` chain, ending at a storage-backed place — a
+    /// numeric, pointer, or struct-typed node with a real value blob. Yields a
+    /// pointer literal `{ty: @T, value -> 8-byte address}`; the address is
+    /// parse-known, exactly like the baked addresses compiled code uses.
+    fn parse_address_of(&mut self) -> Result<DyadPtr, ParseError> {
+        self.skip_trivia();
+        let source = self.source;
+        if self.pos >= source.len() {
+            return Err(ParseError::BadAddressOf);
+        }
+        let r = self
+            .scopes
+            .resolve(self.trie, &source[self.pos..])
+            .map_err(ParseError::Resolve)?;
+        if self.metas.get(&r.identity).is_some() {
+            // Keywords, operators, literals: not places.
+            return Err(ParseError::BadAddressOf);
+        }
+        self.pos += r.matched;
+        let mut node = r.identity;
+        while let Some((_, matched, Construct::Dot)) = self.peek_kind() {
+            self.pos += matched;
+            // SAFETY: `node` is a resolved dyad from the store.
+            node = unsafe { self.parse_field_access(node)? };
+        }
+        // SAFETY: `node` is a resolved dyad from the store.
+        unsafe {
+            let ty = (*node).ty;
+            let is_place = crate::identities::is_numtype_node(&self.types, ty)
+                || crate::identities::numtype::is_pointer_type(ty)
+                || (!ty.is_null() && (*ty).ty == self.types.struct_);
+            if !is_place || (*node).value.is_null() {
+                // Parameters (frame-bound) and comptime bindings have no storage.
+                return Err(ParseError::BadAddressOf);
+            }
+            let ptr_ty =
+                crate::identities::pointer::make_pointer_type(self.store, self.types.type_, ty);
+            let blob = self.store.alloc_bytes(&((*node).value as usize).to_ne_bytes());
+            Ok(self.store.alloc_raw(ptr_ty, blob))
+        }
     }
 
     /// Consume an `else` if the next token is one, reporting whether it was.
@@ -1229,9 +1387,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse a fn's return type: a single resolved type identity (`i32`, …). v1
-    /// return types are one identity; compound type expressions arrive later.
+    /// Parse a fn's return type: a single resolved type identity (`i32`, …) or a
+    /// pointer type (`@i32`). Compound type expressions arrive later.
     fn parse_return_type(&mut self) -> Result<DyadPtr, ParseError> {
+        if let Some((_, matched, Construct::At)) = self.peek_kind() {
+            self.pos += matched;
+            return self.parse_pointer_type();
+        }
         self.skip_trivia();
         let source = self.source;
         if self.pos >= source.len() {
@@ -1505,6 +1667,7 @@ impl<'a> Parser<'a> {
                         | Construct::Not
                         | Construct::While
                         | Construct::For
+                        | Construct::Amp
                 )
             );
             // `type literal` juxtaposition is not a boundary: a numeric type dyad
@@ -1648,6 +1811,24 @@ impl<'a> Parser<'a> {
                     // SAFETY: `lhs` is a reduced dyad; instance checks inside.
                     let node = unsafe { self.parse_field_access(lhs)? };
                     tape.pop();
+                    tape.push(Cell::Dyad(node));
+                }
+                // The `@`: postfix deref after a completed dyad, the pointer-type
+                // prefix otherwise. Deref binds tightest, like `.`.
+                Some(Construct::At) => {
+                    if let Some(lhs) = tape.last().and_then(Cell::as_dyad) {
+                        // SAFETY: `lhs` is a reduced dyad; pointer checks inside.
+                        let node = unsafe { self.build_deref(lhs)? };
+                        tape.pop();
+                        tape.push(Cell::Dyad(node));
+                    } else {
+                        let node = self.parse_pointer_type()?;
+                        tape.push(Cell::Dyad(node));
+                    }
+                }
+                // The `&`: address-of a storage-backed place.
+                Some(Construct::Amp) => {
+                    let node = self.parse_address_of()?;
                     tape.push(Cell::Dyad(node));
                 }
                 // An operator: reduce anything binding tighter to its left, then
