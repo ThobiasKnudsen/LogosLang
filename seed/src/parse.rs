@@ -629,6 +629,11 @@ pub struct Parser<'a> {
     metas: &'a std::collections::HashMap<DyadPtr, Construct>,
     /// The core type handles the parser types opened nodes with (see [`CoreTypes`]).
     types: CoreTypes,
+    /// The placeholder of the declaration currently awaiting its value, or null.
+    /// When the value opens with a `fn` literal, [`Parser::parse_fn`] publishes the
+    /// signature onto it before the body parses, so a recursive self-call resolves
+    /// its parameter and return types instead of the unbound-placeholder defaults.
+    pending_fn: DyadPtr,
 }
 
 impl<'a> Parser<'a> {
@@ -643,21 +648,31 @@ impl<'a> Parser<'a> {
         types: CoreTypes,
         scopes: ScopeStack,
     ) -> Self {
-        Parser { source, pos: 0, scopes, store, trie, metas, types }
+        Parser { source, pos: 0, scopes, store, trie, metas, types, pending_fn: std::ptr::null_mut() }
     }
 
-    /// Advance past ASCII whitespace.
-    fn skip_ws(&mut self) {
+    /// Advance past trivia: ASCII whitespace and `#` line comments (a `#` runs to
+    /// the end of its line, as in the sketch's own files).
+    fn skip_trivia(&mut self) {
         let bytes = self.source.as_bytes();
-        while self.pos < bytes.len() && bytes[self.pos].is_ascii_whitespace() {
-            self.pos += 1;
+        loop {
+            while self.pos < bytes.len() && bytes[self.pos].is_ascii_whitespace() {
+                self.pos += 1;
+            }
+            if self.pos < bytes.len() && bytes[self.pos] == b'#' {
+                while self.pos < bytes.len() && bytes[self.pos] != b'\n' {
+                    self.pos += 1;
+                }
+                continue;
+            }
+            break;
         }
     }
 
     /// Consume the closing `)` that matches an opening `(`, or fail if the body
     /// ended at something else (or the end of input).
     fn expect_close(&mut self) -> Result<(), ParseError> {
-        self.skip_ws();
+        self.skip_trivia();
         let source = self.source;
         if self.pos >= source.len() {
             return Err(ParseError::UnclosedBracket);
@@ -680,7 +695,7 @@ impl<'a> Parser<'a> {
     /// input or when the token is not a known structural identity: a fresh name
     /// resolves to nothing here and is read raw by the field-list parser instead.
     fn peek_kind(&mut self) -> Option<(DyadPtr, usize, Construct)> {
-        self.skip_ws();
+        self.skip_trivia();
         let source = self.source;
         if self.pos >= source.len() {
             return None;
@@ -733,7 +748,7 @@ impl<'a> Parser<'a> {
     /// begin an identifier. Declaration position reads fresh names raw, since they
     /// are not yet in the name index to resolve (the sketch's `declare(name:string)`).
     fn lex_identifier(&mut self) -> Option<(usize, usize)> {
-        self.skip_ws();
+        self.skip_trivia();
         let bytes = self.source.as_bytes();
         let start = self.pos;
         match bytes.get(start) {
@@ -815,11 +830,28 @@ impl<'a> Parser<'a> {
     /// *optional* and, for v1's single-expression body, `return X` and `X` yield the
     /// same value in tail position (early-return semantics, `return` unwinding out
     /// of control flow, arrive with `if`/`while`).
-    pub fn parse_fn(&mut self, fn_type: DyadPtr) -> Result<DyadPtr, ParseError> {
+    ///
+    /// `declared` (null when the literal does not open a declaration's value) is
+    /// the declaration's placeholder: the signature publishes onto it — body and
+    /// bcode still null — before the body parses, so a recursive self-call inside
+    /// the body reads real parameter and return types.
+    pub fn parse_fn(&mut self, fn_type: DyadPtr, declared: DyadPtr) -> Result<DyadPtr, ParseError> {
         // The parameter list is a struct; parse_struct opens and closes its scope.
         let input = self.parse_struct(self.types.struct_)?;
         self.expect_arrow()?;
         let output = self.parse_return_type()?;
+
+        if !declared.is_null() {
+            let early = self
+                .store
+                .alloc_operands(&[input, output, std::ptr::null_mut(), std::ptr::null_mut()]);
+            // SAFETY: `declared` is the just-declared placeholder; nothing has read
+            // a value from it yet, and the fixpoint overwrites it when the value
+            // completes.
+            unsafe {
+                (*declared).value = early;
+            }
+        }
 
         // Reopen the parameter scope (the input struct's `value[0]`) so the body
         // resolves parameters, then parse the `( body )`.
@@ -924,7 +956,7 @@ impl<'a> Parser<'a> {
     /// Parse a fn's return type: a single resolved type identity (`i32`, …). v1
     /// return types are one identity; compound type expressions arrive later.
     fn parse_return_type(&mut self) -> Result<DyadPtr, ParseError> {
-        self.skip_ws();
+        self.skip_trivia();
         let source = self.source;
         if self.pos >= source.len() {
             return Err(ParseError::ExpectedReturnType);
@@ -970,7 +1002,7 @@ impl<'a> Parser<'a> {
         self.scopes.push(scope);
         let mut exprs = Vec::new();
         loop {
-            self.skip_ws();
+            self.skip_trivia();
             if self.pos >= self.source.len() || self.at_close() {
                 break;
             }
@@ -1015,7 +1047,7 @@ impl<'a> Parser<'a> {
     pub fn parse_expression(&mut self) -> Result<DyadPtr, ParseError> {
         let mut tape = ParsingTape::new();
         loop {
-            self.skip_ws();
+            self.skip_trivia();
             if self.pos >= self.source.len() {
                 break;
             }
@@ -1046,7 +1078,11 @@ impl<'a> Parser<'a> {
                     self.scopes
                         .declare(self.trie, name, placeholder)
                         .map_err(ParseError::Resolve)?;
+                    // If the value opens with a `fn` literal, parse_fn publishes its
+                    // signature onto the placeholder before the body parses.
+                    self.pending_fn = placeholder;
                     let value = self.parse_expression()?;
+                    self.pending_fn = std::ptr::null_mut();
                     // Fixpoint: make the placeholder *be* the value, so references to
                     // `name` captured while parsing the value resolve to it.
                     // SAFETY: `placeholder`/`value` are valid dyads just built.
@@ -1136,6 +1172,15 @@ impl<'a> Parser<'a> {
                             // SAFETY: `callee` is a numtype node; `args` are reduced dyads.
                             unsafe { crate::identities::build_cast(self.store, &self.types, callee, &args)? }
                         } else {
+                            // Each uncommitted literal argument commits to its
+                            // parameter's declared type (the typed slot); an unbound
+                            // callee has no signature yet and commits nothing.
+                            let types = self.types;
+                            let mut args = args;
+                            // SAFETY: `callee` and `args` are reduced dyads from the store.
+                            unsafe {
+                                crate::identities::commit_call_args(self.store, &types, callee, &mut args)?;
+                            }
                             build_call(self.store, callee, &args)
                         };
                         tape.push(Cell::Dyad(node));
@@ -1152,8 +1197,15 @@ impl<'a> Parser<'a> {
                     tape.push(Cell::Dyad(s));
                 }
                 // The `fn` keyword: parse a `fn ( params ) -> ret ( body )` literal.
+                // When it opens a declaration's value, the declared placeholder
+                // rides along so the signature publishes before the body parses.
                 Some(Construct::Fn) => {
-                    let f = self.parse_fn(id)?;
+                    let declared = if tape.is_empty() {
+                        std::mem::replace(&mut self.pending_fn, std::ptr::null_mut())
+                    } else {
+                        std::ptr::null_mut()
+                    };
+                    let f = self.parse_fn(id, declared)?;
                     tape.push(Cell::Dyad(f));
                 }
                 // The `if` keyword: parse an `if ( cond ) ( then ) else ( else )`.

@@ -14,6 +14,15 @@
 //! lowering). [`Core::build`] wires them into the graph and the per-phase tables.
 //! The tables are held per phase (parser/run/compile) rather than on the nodes,
 //! so a new run or compile *version* is a new table, not a graph rewrite.
+//!
+//! Deferred surface the sketch declares that the seed does not yet register —
+//! tracked here so each gap is deliberate, not drift: the operators `/`, `%`,
+//! `^`, `.` (field access; DESIGN ›Resolution is one rule‹), `&` (references),
+//! `@` (address-of), and `xor`; `while` and `for`; `string` and the `«…»`
+//! quotes; `mut` at every level (DESIGN ›Mutability and construction‹); the
+//! `hashtable` and `array` types; and the declaration forms `key : type = value`
+//! and bare `key :` outside field lists. Each arrives with the machinery it
+//! needs (layout, places, the borrow rule), not before.
 
 use std::collections::HashMap;
 
@@ -354,9 +363,11 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
             None => Operand::NonNumeric,
         };
     }
-    // A call: its result is the callee's return type; a recursive self-call reaches
-    // here before its callee is bound, so it defaults to i32 (the factorial shape). A
-    // void-returning callee yields no numeric value (and its output has no NumType).
+    // A call: its result is the callee's return type. A self-call resolves through
+    // the signature the declaration published onto its placeholder; only a
+    // placeholder with no published signature (the value did not open with `fn`)
+    // falls back to the i32 default. A void-returning callee yields no numeric
+    // value (and its output has no NumType).
     if !ty.is_null() && (*ty).ty == types.fn_type {
         let fields = (*ty).value as *const DyadPtr;
         if !fields.is_null() {
@@ -370,8 +381,8 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
     Operand::NonNumeric
 }
 
-/// The numeric return type of a fn node (its `FN_OUTPUT`), or `I32` when the callee is
-/// unbound (a recursive placeholder) or returns a non-numeric.
+/// The numeric return type of a fn node (its `FN_OUTPUT`), or `I32` when the callee
+/// is an unbound placeholder with no published signature, or returns a non-numeric.
 unsafe fn call_return_numtype(fn_node: DyadPtr) -> NumType {
     let fields = (*fn_node).value as *const DyadPtr;
     if fields.is_null() {
@@ -444,6 +455,48 @@ unsafe fn commit_if_literal(
 /// parser uses this to recognize a `type(value)` conversion at a call site.
 pub(crate) fn is_numtype_node(types: &CoreTypes, node: DyadPtr) -> bool {
     types.numtypes.iter().any(|&t| !t.is_null() && t == node)
+}
+
+/// Commit a call's uncommitted literal arguments to their parameters' declared
+/// numeric types — the typed slot (DESIGN ›committing to a concrete type only when
+/// it finally lands in a typed slot‹), so `f(3000000000)` is exact for an i64
+/// parameter and `g(2.5)` reaches a float one. A non-fn callee, an unbound callee
+/// (no published signature yet), an untyped parameter, or a non-literal argument
+/// each pass through unchanged; extra arguments beyond the parameters are left for
+/// the run/compile arity check. A literal with no exact value in its parameter's
+/// type is [`ParseError::UncomputableLiteral`].
+///
+/// # Safety
+/// `callee` and `args` must be valid dyads from the store.
+pub(crate) unsafe fn commit_call_args(
+    store: &mut Store,
+    types: &CoreTypes,
+    callee: DyadPtr,
+    args: &mut [DyadPtr],
+) -> Result<(), ParseError> {
+    if (*callee).ty != types.fn_type {
+        return Ok(());
+    }
+    let fields = (*callee).value as *const DyadPtr;
+    if fields.is_null() {
+        return Ok(());
+    }
+    let params = (*(*fields.add(crate::parse::FN_INPUT))).value as *const DyadPtr;
+    if params.is_null() {
+        return Ok(());
+    }
+    for (i, arg) in args.iter_mut().enumerate() {
+        let param = *params.add(i + 1); // [scope, p0 …, null]
+        if param.is_null() {
+            break;
+        }
+        let pty = (*param).ty;
+        if (**arg).ty == types.rational && is_numtype_node(types, pty) {
+            let nt = numtype::of_type_node(pty);
+            *arg = commit_if_literal(store, *arg, &Operand::Literal, pty, nt)?;
+        }
+    }
+    Ok(())
 }
 
 /// Commit a comptime-rational function body to its declared return type — the typed-slot
@@ -2122,6 +2175,88 @@ mod tests {
     }
 
     #[test]
+    fn call_arguments_commit_to_parameter_types() {
+        // An argument literal lands in the parameter's typed slot: an i64 parameter
+        // takes a value past i32 exactly, and a float parameter takes a decimal —
+        // neither squeezes through an i32 default.
+        diff_typed_call("fn (x : i64) -> i64 ( x )", "f(3000000000)", 3_000_000_000);
+        diff_typed_call("fn (x : f64) -> f64 ( x + 0.5 )", "f(2.5)", 3.0f64.to_bits() as i64);
+    }
+
+    #[test]
+    fn an_argument_that_does_not_fit_its_parameter_is_rejected() {
+        // A decimal into an integer parameter has no exact value: a parse error at
+        // the call site, not a runtime surprise.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let func = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "fn (x : i32) -> i32 ( x )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap()
+        };
+        let mut s = ScopeStack::new();
+        s.push(core.root_scope);
+        s.declare(&mut trie, "f", func).unwrap();
+        let mut p = Parser::new("f(2.5)", &mut store, &mut trie, &core.metas, core.types(), s);
+        assert_eq!(p.parse_expression(), Err(ParseError::UncomputableLiteral));
+    }
+
+    #[test]
+    fn recursive_i64_factorial_matches_between_tiers() {
+        // The published-signature hint: inside `n * fact(n - 1)` the self-call must
+        // read i64 from the declaration's signature (an unbound placeholder would
+        // default to i32 and mismatch `n`). 20! = 2.4e18 needs the width.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let fact = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "fact := fn (n : i64) -> i64 ( if (n < 1) (1) else (n * fact(n - 1)) )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap()
+        };
+        let call = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p =
+                Parser::new("fact(20)", &mut store, &mut trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+        // SAFETY: `call` applies the bound `fact` to a literal.
+        let interp = unsafe { rt.run(call) }.unwrap();
+        // SAFETY: `fact` outlives every call; the artifact stays alive for the run.
+        let _c = unsafe { compile_fn(&core.lower, core.types(), fact) }.unwrap();
+        let jit = unsafe { rt.run(call) }.unwrap();
+        assert_eq!(interp, 2_432_902_008_176_640_000, "interpreter 20!");
+        assert_eq!(jit, interp, "compiled 20! != interpreter");
+    }
+
+    #[test]
+    fn hash_comments_are_trivia() {
+        // `#` runs to the end of its line, as in the sketch's own files; comments
+        // weave through a sequence without separating anything themselves.
+        diff_nullary_fn("fn () -> i32 ( # the answer\n a := 40 # forty\n a + 2 )", 42);
+    }
+
+    #[test]
     fn sequences_run_in_order_and_yield_the_trailing_expression() {
         // A scope's body is a sequence of self-delimiting expressions with no
         // separator; its value is the trailing one. The body assigns first, so the
@@ -2464,8 +2599,9 @@ mod tests {
 
     #[test]
     fn signed_vs_unsigned_comparison_matches_between_tiers() {
-        // The same byte 0xFF compares differently as i8 (-1) and u8 (255).
-        diff_typed_call("fn (x : i8) -> i32 ( if (x < 1) (100) else (200) )", "f(255)", 100);
+        // The same byte 0xFF compares differently as i8 (-1) and u8 (255). 255 has
+        // no exact i8, so the i8 side takes it through the explicit wrapping cast.
+        diff_typed_call("fn (x : i8) -> i32 ( if (x < 1) (100) else (200) )", "f(i8(255))", 100);
         diff_typed_call("fn (x : u8) -> i32 ( if (x < 1) (100) else (200) )", "f(255)", 200);
     }
 
@@ -2535,12 +2671,14 @@ mod tests {
 
     #[test]
     fn casts_between_integer_widths_match_between_tiers() {
-        // Widen sign-extends (i8 255 = -1, kept as i32 -1); narrow drops high bits
+        // Widen sign-extends (i8 -1 kept as i32 -1); narrow drops high bits
         // (i32 300 -> i8 44); a same-width reinterpret keeps the bits (u32 3e9 -> i32
-        // is the negative reading); a same-type cast is the operand unchanged.
-        diff_typed_call("fn (x : i8) -> i32 ( i32(x) )", "f(255)", -1);
+        // is the negative reading); a same-type cast is the operand unchanged. 255
+        // has no exact i8, so reaching an i8 parameter takes an explicit `i8(255)`
+        // (the wrapping cast), never a bare literal.
+        diff_typed_call("fn (x : i8) -> i32 ( i32(x) )", "f(i8(255))", -1);
         diff_typed_call("fn (x : i32) -> i8 ( i8(x) )", "f(300)", 44);
-        diff_typed_call("fn (x : i8) -> u8 ( u8(x) )", "f(255)", 255);
+        diff_typed_call("fn (x : i8) -> u8 ( u8(x) )", "f(i8(255))", 255);
         diff_typed_call("fn (x : i32) -> i32 ( i32(x) )", "f(42)", 42);
         // u32 3e9 reinterpreted as i32: 3_000_000_000 - 2^32.
         diff_var_fn(NumType::U32, 3_000_000_000, "fn () -> i32 ( i32(a) )", 3_000_000_000i64 - 4_294_967_296);
