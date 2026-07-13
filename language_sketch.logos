@@ -134,6 +134,7 @@ i32 : type
 i64 : type
 f32 : type
 f64 : type
+bool : type          # a comparison's result type; an if condition must be one
 void@ : type
 exec@ : type
 
