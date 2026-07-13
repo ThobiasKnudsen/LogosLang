@@ -652,7 +652,11 @@ impl<'a> Parser<'a> {
     }
 
     /// Advance past trivia: ASCII whitespace and `#` line comments (a `#` runs to
-    /// the end of its line, as in the sketch's own files).
+    /// the end of its line, as in the sketch's own files). Discarding is the seed
+    /// approximation: in the settled design `#` is a constructor over the string
+    /// substance, building a reflectable comment node that yields void and is
+    /// invisible to value flow (DESIGN ›Text literals are plain values; `#` is the
+    /// one comment constructor‹) — it arrives with the `string` type.
     fn skip_trivia(&mut self) {
         let bytes = self.source.as_bytes();
         loop {

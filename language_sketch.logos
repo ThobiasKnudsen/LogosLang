@@ -100,6 +100,7 @@ fn := type (
 \\ : ?
 \« : ?
 \» : ?
+\# : ?   # the one comment constructor: takes a «…» string or raw text to end of line; builds a reflectable, void-valued comment node
 
 \: : ?
 \= : ?
