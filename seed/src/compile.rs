@@ -305,7 +305,6 @@ impl Lowerer<'_, '_> {
         let then_b = self.builder.create_block();
         let else_b = self.builder.create_block();
         let merge_b = self.builder.create_block();
-        let result = self.builder.append_block_param(merge_b, types::I32);
 
         // Branch to the two arms; both their predecessors (this block) are now known.
         self.builder.ins().brif(cond, then_b, &[], else_b, &[]);
@@ -314,6 +313,9 @@ impl Lowerer<'_, '_> {
 
         self.builder.switch_to_block(then_b);
         let then_v = then_arm(self)?;
+        // The merged value takes the branches' type (they must agree) from the then arm,
+        // so `if` yields whatever width its branches do rather than a fixed i32.
+        let result = self.builder.append_block_param(merge_b, self.builder.func.dfg.value_type(then_v));
         self.builder.ins().jump(merge_b, &[then_v.into()]);
 
         self.builder.switch_to_block(else_b);

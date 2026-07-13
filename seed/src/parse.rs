@@ -342,6 +342,9 @@ pub struct CoreTypes {
     /// `return`: the optional early yield; used to commit a `return`-wrapped rational
     /// tail to the function's declared return type.
     pub return_: DyadPtr,
+    /// `if`: the value-producing conditional; used to commit a rational in either branch
+    /// (a tail position) to the function's declared return type.
+    pub if_: DyadPtr,
     /// `convert`: the shared scalar numeric conversion; a conversion node's result type
     /// is its target (recognized as a numeric-producing operand).
     pub convert: DyadPtr,

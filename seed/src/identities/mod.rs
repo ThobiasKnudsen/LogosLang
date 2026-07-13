@@ -241,6 +241,7 @@ impl Core {
             bool_: self.bool_,
             rational: self.rational,
             return_: self.return_,
+            if_: self.if_,
             convert: self.convert,
             plus: self.plus,
             minus: self.minus,
@@ -422,11 +423,9 @@ pub(crate) fn is_numtype_node(types: &CoreTypes, node: DyadPtr) -> bool {
 }
 
 /// Commit a comptime-rational function body to its declared return type — the typed-slot
-/// context (DESIGN ›a rational commits when it lands in a typed slot‹). The body's value
-/// node is the body itself, or the operand of a `return` when the tail is `return X`;
-/// either way, a rational there molds to a concrete numeric return type (exact, else
-/// [`ParseError::UncomputableLiteral`]). A `void` return, a non-concrete output, and a
-/// non-rational tail all pass through unchanged.
+/// context (DESIGN ›a rational commits when it lands in a typed slot‹). A `void` return,
+/// or any non-concrete output, passes the body through; otherwise the body's tail value
+/// positions are committed (see [`commit_tail`]).
 ///
 /// # Safety
 /// `body`/`output` are valid dyads from the store.
@@ -436,28 +435,53 @@ pub(crate) unsafe fn commit_fn_body(
     body: DyadPtr,
     output: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    // Only a concrete numeric return type commits a rational (a `void` return discards).
     if !is_numtype_node(types, output) {
         return Ok(body);
     }
-    // The tail value node: `return X` yields X (its `value` is that operand), otherwise
-    // the body itself.
-    let is_return = (*body).ty == types.return_;
-    let tail: DyadPtr = if is_return { (*body).value.cast() } else { body };
-    if (*tail).ty != types.rational {
-        return Ok(body);
+    commit_tail(store, types, body, output)
+}
+
+/// Commit a comptime rational in tail (value-producing) position to `output`, a numeric
+/// type node. The tail positions are the leaves a function's value can come from: the
+/// node itself, the operand of a `return`, and *both* branches of an `if` — recursively,
+/// so `return (if …)`, nested `if`s, and the like all reach their leaves. A rational
+/// leaf molds to `output` (exact, else [`ParseError::UncomputableLiteral`]); everything
+/// else passes through. The value-producing constructs are enumerated here because the
+/// seed has no graph-driven value-slot machinery yet (that arrives with self-hosting);
+/// the branch node is mutated in place, which is safe since it was just parsed and is not
+/// yet aliased.
+///
+/// # Safety
+/// `node`/`output` are valid dyads from the store; `output` is a numeric type node.
+unsafe fn commit_tail(
+    store: &mut Store,
+    types: &CoreTypes,
+    node: DyadPtr,
+    output: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
+    if (*node).ty == types.rational {
+        let nt = numtype::of_type_node(output);
+        let bits = rational::mold_to(node, nt).ok_or(ParseError::UncomputableLiteral)?;
+        let value = store.alloc_bytes(&bits.to_ne_bytes()[..nt.bytes()]);
+        return Ok(store.alloc_raw(output, value));
     }
-    let nt = numtype::of_type_node(output);
-    let bits = rational::mold_to(tail, nt).ok_or(ParseError::UncomputableLiteral)?;
-    let value = store.alloc_bytes(&bits.to_ne_bytes()[..nt.bytes()]);
-    let committed = store.alloc_raw(output, value);
-    if is_return {
-        // Point the freshly-parsed (not yet aliased) `return` at the committed literal.
-        (*body).value = committed.cast();
-        Ok(body)
-    } else {
-        Ok(committed)
+    // `return X`: X is the tail (the node's `value` *is* that operand).
+    if (*node).ty == types.return_ {
+        let operand: DyadPtr = (*node).value.cast();
+        let committed = commit_tail(store, types, operand, output)?;
+        (*node).value = committed.cast();
+        return Ok(node);
     }
+    // `if (c) (then) else (else)`: both branches are tails (value `[cond, then, else]`).
+    if (*node).ty == types.if_ {
+        let ops = (*node).value as *mut DyadPtr;
+        let then_c = commit_tail(store, types, *ops.add(1), output)?;
+        let else_c = commit_tail(store, types, *ops.add(2), output)?;
+        *ops.add(1) = then_c;
+        *ops.add(2) = else_c;
+        return Ok(node);
+    }
+    Ok(node)
 }
 
 /// Build a scalar numeric conversion `target(operand)` — the `type(value)` constructor
@@ -2220,6 +2244,19 @@ mod tests {
         // The seed's rationals are i64 fractions; an exact product past i64 has no
         // representation, a clean error rather than a wrong wrapped value.
         assert_eq!(parse_err("i64(10000000000 * 10000000000)"), ParseError::UncomputableLiteral);
+    }
+
+    #[test]
+    fn comptime_rational_commits_through_if_branches() {
+        // An `if` in tail position is a value slot too: a large comptime rational in
+        // either branch commits to the i64 return type (it would otherwise fail the i32
+        // mold shim). This also exercises the width-general `if` lowering (i64 branches).
+        let fn_src = "fn (c : i32) -> i64 ( if (c < 1) (2000000000 + 2000000000) else (0) )";
+        diff_typed_call(fn_src, "f(0)", 4_000_000_000); // then-branch taken
+        diff_typed_call(fn_src, "f(5)", 0); // else-branch taken
+        // The else-branch commits too.
+        let fn_src = "fn (c : i32) -> i64 ( if (c < 1) (0) else (2000000000 + 2000000000) )";
+        diff_typed_call(fn_src, "f(5)", 4_000_000_000);
     }
 
     #[test]
