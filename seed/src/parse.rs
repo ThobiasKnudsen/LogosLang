@@ -330,8 +330,11 @@ pub struct CoreTypes {
     /// `fn`: the type of a function; a call whose callee is `fn`-typed yields a
     /// value (which the arithmetic operators' `is_numeric` check treats as numeric).
     pub fn_type: DyadPtr,
-    /// `i32`: the seed's one concrete numeric type.
+    /// `i32`: an alias for `numtypes[I32]`, the seed's default numeric type.
     pub i32_: DyadPtr,
+    /// The numeric primitive type nodes, indexed by `NumType` (null if unregistered).
+    /// A resolved operator stores the relevant one in its value slot.
+    pub numtypes: [DyadPtr; 10],
     /// `bool`: the type a comparison produces and an `if` condition must be.
     pub bool_: DyadPtr,
     /// `rational_number`: a numeric literal, molds to a concrete numeric type.
@@ -481,6 +484,13 @@ pub enum ParseError {
     ExpectedElse,
     /// A logical operator (`and`/`or`/`not`) was applied to a non-`bool` operand.
     NonBoolOperands,
+    /// A binary operator's operands were two *different* concrete numeric types (e.g.
+    /// `i32` and `f64`). Cross-type arithmetic needs an explicit cast; there is no
+    /// implicit coercion.
+    TypeMismatch,
+    /// A number literal had no exact value in the type it was committed to (a decimal
+    /// molded to an integer, or an out-of-range integer).
+    UncomputableLiteral,
 }
 
 /// Build a call node `{ty: callee, value: [args…, null]}`, the application

@@ -4,7 +4,7 @@
 use cranelift_codegen::ir::Value;
 
 use super::numtype::{eval_compare, CmpOp};
-use super::{is_numeric, Cx};
+use super::{resolve_binary, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
@@ -32,11 +32,9 @@ fn build(
     lhs: DyadPtr,
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    // SAFETY: `lhs`/`rhs` are reduced dyads from the store; reading their type is safe.
-    if !unsafe { is_numeric(types, lhs) && is_numeric(types, rhs) } {
-        return Err(ParseError::UnsupportedOperands);
-    }
-    let value = store.alloc_operands(&[lhs, rhs, types.i32_]);
+    // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
+    let ops = unsafe { resolve_binary(store, types, lhs, rhs) }?;
+    let value = store.alloc_operands(&ops);
     Ok(store.alloc_raw(gt, value))
 }
 

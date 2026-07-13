@@ -16,10 +16,12 @@ use std::collections::HashMap;
 
 use crate::compile::LowerTable;
 use crate::dyad::DyadPtr;
-use crate::parse::{Construct, CoreTypes, ParseError};
+use crate::parse::{Construct, CoreTypes, ParseError, FN_OUTPUT};
 use crate::run::Bcode;
 use crate::regex_trie::RegexTrie;
 use crate::store::Store;
+
+use numtype::NumType;
 
 pub mod dyad;
 pub mod id_context;
@@ -28,8 +30,6 @@ pub mod id_context;
 mod type_mod;
 #[path = "fn.rs"]
 mod fn_mod;
-#[path = "i32.rs"]
-mod i32_mod;
 #[path = "return.rs"]
 mod return_mod;
 #[path = "struct.rs"]
@@ -68,8 +68,11 @@ pub struct Core {
     pub root_scope: DyadPtr,
     /// `fn`, the type whose values are functions.
     pub fn_type: DyadPtr,
-    /// `i32`, the type of an integer variable/value.
+    /// `i32`, the type of an integer variable/value (an alias for `numtypes[I32]`).
     pub i32_: DyadPtr,
+    /// The numeric primitive type nodes, indexed by `NumType`. Unregistered types
+    /// (e.g. `f32`/`f64` before their phase) are null.
+    pub numtypes: [DyadPtr; 10],
     /// `bool`, the type of a boolean value (a comparison result; an `if` condition).
     pub bool_: DyadPtr,
     /// `=` (assignment); a function.
@@ -133,7 +136,22 @@ impl Core {
             bcode: HashMap::new(),
             lower: HashMap::new(),
         };
-        let i32_ = i32_mod::register(&mut cx);
+        // The numeric primitive types. Each self-describes its `NumType` (a tag in its
+        // value slot); the shared lowering and interpreter read dispatch on the width.
+        let mut numtypes: [DyadPtr; 10] = [std::ptr::null_mut(); 10];
+        for &(spelling, nt) in &[
+            ("i8", NumType::I8),
+            ("i16", NumType::I16),
+            ("i32", NumType::I32),
+            ("i64", NumType::I64),
+            ("u8", NumType::U8),
+            ("u16", NumType::U16),
+            ("u32", NumType::U32),
+            ("u64", NumType::U64),
+        ] {
+            numtypes[nt as usize] = numtype::register_type(&mut cx, spelling, nt);
+        }
+        let i32_ = numtypes[NumType::I32 as usize];
         let bool_ = bool_mod::register(&mut cx);
         let rational = rational::register(&mut cx);
         let assign = assign::register(&mut cx);
@@ -168,6 +186,7 @@ impl Core {
             root_scope,
             fn_type,
             i32_,
+            numtypes,
             bool_,
             assign,
             plus,
@@ -199,6 +218,7 @@ impl Core {
             struct_: self.struct_,
             fn_type: self.fn_type,
             i32_: self.i32_,
+            numtypes: self.numtypes,
             bool_: self.bool_,
             rational: self.rational,
             plus: self.plus,
@@ -256,29 +276,110 @@ pub(crate) unsafe fn operands(node: DyadPtr) -> (DyadPtr, DyadPtr) {
     (*p, *p.add(1))
 }
 
-/// Whether `node` produces a number an arithmetic operator can compute over: an
-/// `i32`, a `rational` literal (which molds to i32), the result of another
-/// arithmetic operator (`+`/`-`/`*`), or a *call* whose callee is a function. The
-/// seed has one numeric machine type, so any fn-typed callee is treated as numeric
-/// — a recursive self-call reaches its operator before the callee is bound, so its
-/// output type cannot be read yet. A non-numeric operand (a `struct`, …) leaves the
-/// operator unresolved ([`ParseError::UnsupportedOperands`]); this widens as
-/// `f32`/`u64`/… arrive.
+/// A binary numeric operator operand's character, for type resolution.
+pub(crate) enum Operand {
+    /// A value with a committed numeric type.
+    Concrete(NumType),
+    /// An uncommitted number literal (a `rational`), which molds to context.
+    Literal,
+    /// Not a number an operator can compute over (e.g. a `struct`).
+    NonNumeric,
+}
+
+/// Classify `node` as an operand of a numeric operator: its committed type, an
+/// uncommitted literal, or non-numeric.
 ///
 /// # Safety
 /// `node` must be a valid dyad from the store.
-pub(crate) unsafe fn is_numeric(types: &CoreTypes, node: DyadPtr) -> bool {
+pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
     let ty = (*node).ty;
-    if ty == types.i32_
-        || ty == types.rational
-        || ty == types.plus
-        || ty == types.minus
-        || ty == types.times
-    {
-        return true;
+    if ty == types.rational {
+        return Operand::Literal;
     }
-    // A call node's `ty` is its callee; a call of a function yields a value.
-    !ty.is_null() && (*ty).ty == types.fn_type
+    // An arithmetic operator's result carries the type it stored at operand[2].
+    if ty == types.plus || ty == types.minus || ty == types.times {
+        return Operand::Concrete(numtype::of_type_node(numtype::stored_type(node)));
+    }
+    // A numeric variable/value: its type is one of the numeric type nodes.
+    if types.numtypes.iter().any(|&t| !t.is_null() && t == ty) {
+        return Operand::Concrete(numtype::of_type_node(ty));
+    }
+    // A call: its result is the callee's return type; a recursive self-call reaches
+    // here before its callee is bound, so it defaults to i32 (the factorial shape).
+    if !ty.is_null() && (*ty).ty == types.fn_type {
+        return Operand::Concrete(call_return_numtype(ty));
+    }
+    Operand::NonNumeric
+}
+
+/// The numeric return type of a fn node (its `FN_OUTPUT`), or `I32` when the callee is
+/// unbound (a recursive placeholder) or returns a non-numeric.
+unsafe fn call_return_numtype(fn_node: DyadPtr) -> NumType {
+    let fields = (*fn_node).value as *const DyadPtr;
+    if fields.is_null() {
+        return NumType::I32;
+    }
+    let out = *fields.add(FN_OUTPUT);
+    if out.is_null() {
+        NumType::I32
+    } else {
+        numtype::numtype_of_type(out)
+    }
+}
+
+/// Resolve a binary numeric operator's operand type and produce its
+/// `[lhs, rhs, type]` value, committing any uncommitted literal operand to the
+/// resolved type. Two different concrete types are a [`ParseError::TypeMismatch`]
+/// (cross-type needs an explicit cast); a non-numeric operand is
+/// [`ParseError::UnsupportedOperands`]; a literal that has no exact value in the
+/// resolved type is [`ParseError::UncomputableLiteral`].
+///
+/// # Safety
+/// `lhs`/`rhs` are valid dyads from the store.
+pub(crate) unsafe fn resolve_binary(
+    store: &mut Store,
+    types: &CoreTypes,
+    lhs: DyadPtr,
+    rhs: DyadPtr,
+) -> Result<[DyadPtr; 3], ParseError> {
+    let a = numtype_of(types, lhs);
+    let b = numtype_of(types, rhs);
+    let nt = match (&a, &b) {
+        (Operand::NonNumeric, _) | (_, Operand::NonNumeric) => {
+            return Err(ParseError::UnsupportedOperands)
+        }
+        (Operand::Concrete(x), Operand::Concrete(y)) => {
+            if x != y {
+                return Err(ParseError::TypeMismatch);
+            }
+            *x
+        }
+        (Operand::Concrete(x), Operand::Literal) | (Operand::Literal, Operand::Concrete(x)) => *x,
+        // Both uncommitted: default to i32 (arbitrary-precision rational is later work).
+        (Operand::Literal, Operand::Literal) => NumType::I32,
+    };
+    let type_node = types.numtypes[nt as usize];
+    let lhs = commit_if_literal(store, lhs, &a, type_node, nt)?;
+    let rhs = commit_if_literal(store, rhs, &b, type_node, nt)?;
+    Ok([lhs, rhs, type_node])
+}
+
+/// Commit an uncommitted literal operand to `nt` (a typed literal node holding the
+/// molded bytes); non-literal operands pass through unchanged.
+unsafe fn commit_if_literal(
+    store: &mut Store,
+    node: DyadPtr,
+    op: &Operand,
+    type_node: DyadPtr,
+    nt: NumType,
+) -> Result<DyadPtr, ParseError> {
+    if let Operand::Literal = op {
+        let bits = rational::mold_to(node, nt).ok_or(ParseError::UncomputableLiteral)?;
+        let value = store.alloc_bytes(&bits.to_ne_bytes()[..nt.bytes()]);
+        Ok(store.alloc_raw(type_node, value))
+    } else {
+        Ok(node)
+    }
 }
 
 #[cfg(test)]
@@ -314,11 +415,12 @@ mod tests {
             assert_eq!((*sum).ty, core.plus);
             let sops = (*sum).value as *const DyadPtr;
             assert_eq!(*sops, a); // +.lhs is a
-            let one = *sops.add(1); // +.rhs is the literal
-            assert_eq!((*one).ty, core.rational);
-            assert_eq!(rational::mold(one), Some(1)); // the rational 1/1 molds to i32 1
-            // `+` stayed reflectable (ty is still `+`) and recorded the concrete op
-            // it resolved to as its third operand.
+            // +.rhs is the literal `1`, committed to i32 (the type resolved from `a`).
+            let one = *sops.add(1);
+            assert_eq!((*one).ty, core.i32_);
+            assert_eq!(std::ptr::read_unaligned((*one).value as *const i32), 1);
+            // `+` stayed reflectable (ty is still `+`) and stored the resolved operand
+            // type as its third operand.
             assert_eq!(*sops.add(2), core.i32_);
         }
     }
@@ -1709,6 +1811,97 @@ mod tests {
 
         assert_eq!(interp, 42);
         assert_eq!(jit, interp);
+    }
+
+    /// Parse a typed function `fn_src`, declare it `f`, parse a call `call_src`, and
+    /// diff the interpreter against the JIT, asserting both equal `expect`.
+    fn diff_typed_call(fn_src: &str, call_src: &str, expect: i64) {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let func = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(fn_src, &mut store, &mut trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+        let call = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            s.declare(&mut trie, "f", func).unwrap();
+            let mut p = Parser::new(call_src, &mut store, &mut trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+        // SAFETY: `call`/`func` are valid nodes just parsed.
+        let interp = unsafe { rt.run(call) }.unwrap();
+        // SAFETY: `func` is the fn node just built; the artifact outlives the call.
+        let _c = unsafe { compile_fn(&core.lower, core.fn_type, func) }.unwrap();
+        let jit = unsafe { rt.run(call) }.unwrap();
+        assert_eq!(interp, expect, "interpreter: {fn_src} / {call_src}");
+        assert_eq!(jit, interp, "jit != interpreter: {fn_src} / {call_src}");
+    }
+
+    #[test]
+    fn integer_width_arithmetic_matches_between_tiers() {
+        // i64 multiplication that overflows i32 (10^10) but fits i64 — proves the width.
+        diff_typed_call("fn (x : i64, y : i64) -> i64 ( x * y )", "f(100000, 100000)", 10_000_000_000);
+        diff_typed_call("fn (x : i64, y : i64) -> i64 ( x + y )", "f(1000000, 2000000)", 3_000_000);
+        // u8 addition wraps at 256: 200 + 100 = 44.
+        diff_typed_call("fn (x : u8, y : u8) -> u8 ( x + y )", "f(200, 100)", 44);
+        // i16 subtraction, signed negative result.
+        diff_typed_call("fn (x : i16, y : i16) -> i16 ( x - y )", "f(3, 10)", -7);
+        // u32 sum above i32's range (3e9) stays positive (zero-extended), unlike i32.
+        diff_typed_call(
+            "fn (x : u32, y : u32) -> u32 ( x + y )",
+            "f(1000000000, 2000000000)",
+            3_000_000_000,
+        );
+    }
+
+    #[test]
+    fn signed_vs_unsigned_comparison_matches_between_tiers() {
+        // The same byte 0xFF compares differently as i8 (-1) and u8 (255).
+        diff_typed_call("fn (x : i8) -> i32 ( if (x < 1) (100) else (200) )", "f(255)", 100);
+        diff_typed_call("fn (x : u8) -> i32 ( if (x < 1) (100) else (200) )", "f(255)", 200);
+    }
+
+    #[test]
+    fn different_concrete_types_are_a_mismatch() {
+        // Cross-type arithmetic needs an explicit cast; there is no implicit coercion.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut s = ScopeStack::new();
+        s.push(core.root_scope);
+        let mut p = Parser::new(
+            "fn (x : i32, y : i64) -> i64 ( x + y )",
+            &mut store,
+            &mut trie,
+            &core.metas,
+            core.types(),
+            s,
+        );
+        assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::TypeMismatch));
+    }
+
+    #[test]
+    fn a_literal_that_does_not_fit_its_committed_type_is_rejected() {
+        // `1.5` beside an i32 has no exact i32, so committing it fails at parse time.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut s = ScopeStack::new();
+        s.push(core.root_scope);
+        let mut p = Parser::new(
+            "fn (x : i32) -> i32 ( x + 1.5 )",
+            &mut store,
+            &mut trie,
+            &core.metas,
+            core.types(),
+            s,
+        );
+        assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::UncomputableLiteral));
     }
 
     #[test]

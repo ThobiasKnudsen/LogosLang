@@ -15,9 +15,10 @@ use cranelift_codegen::ir::{types, Value};
 
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
+use crate::id_context::IdContext;
 use crate::run::{RunError, Runtime};
 
-use super::operands;
+use super::{operands, Cx};
 
 /// A numeric machine type. `#[repr(u8)]` so the discriminant is the type node's tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,6 +70,17 @@ impl NumType {
         matches!(self, NumType::I8 | NumType::I16 | NumType::I32 | NumType::I64)
     }
 
+    /// The storage width of this `NumType` in bytes.
+    pub(crate) fn bytes(self) -> usize {
+        use NumType::*;
+        match self {
+            I8 | U8 => 1,
+            I16 | U16 => 2,
+            I32 | U32 | F32 => 4,
+            I64 | U64 | F64 => 8,
+        }
+    }
+
     /// The Cranelift type a value of this `NumType` computes in.
     pub(crate) fn cranelift_type(self) -> types::Type {
         use NumType::*;
@@ -81,6 +93,18 @@ impl NumType {
             F64 => types::F64,
         }
     }
+}
+
+/// Register a numeric type node: its spelling (so it resolves as a type name), its
+/// `NumType` tag stored in the value slot (self-describing, so run/compile recover the
+/// type from the graph), and the shared numeric-variable lowering [`lower_var`]. The
+/// interpreter reads its values through the type's width (see [`read_scalar`]).
+pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr {
+    let tag = cx.store.alloc_bytes(&nt.tag_bytes());
+    let id = cx.store.alloc_raw(cx.type_, tag);
+    cx.trie.insert(spelling, IdContext::new(id, cx.root_scope));
+    cx.lower.insert(id, lower_var);
+    id
 }
 
 /// The `NumType` of a type node, or `I32` for a fixed-width scalar type without a

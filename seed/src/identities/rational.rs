@@ -16,6 +16,7 @@
 
 use cranelift_codegen::ir::Value;
 
+use super::numtype::NumType;
 use super::Cx;
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
@@ -114,23 +115,52 @@ unsafe fn read_fraction(node: DyadPtr) -> (i64, i64) {
     (num, den)
 }
 
-/// Mold a rational literal to a concrete `i32`, if it has an exact one: the
-/// fraction must be an integer (`den` divides `num`) that fits `i32`. Returns
-/// `None` otherwise (a decimal like `3.14`, or an out-of-range integer), which the
-/// run and compile paths turn into their `UncomputableLiteral` errors. A null or
-/// malformed value slot also yields `None` rather than a bad read.
-pub(crate) fn mold(node: DyadPtr) -> Option<i32> {
-    // SAFETY: called only on rational-typed nodes, whose value is the [num, den]
-    // blob; the null check guards a never-defined node defensively.
+/// Mold a rational literal to a concrete numeric type `nt`, returning the value's
+/// `i64` bit-container. Integer types require an exact integer (`den` divides `num`)
+/// in range; float types take `num/den` as the float's bits. Returns `None` if there
+/// is no exact value (a decimal to an int, or an out-of-range integer) — which the
+/// run/compile paths turn into `UncomputableLiteral`, and which parse-time committing
+/// turns into a literal-does-not-fit error. A null value slot also yields `None`.
+pub(crate) fn mold_to(node: DyadPtr, nt: NumType) -> Option<i64> {
+    // SAFETY: called only on rational-typed nodes, whose value is the [num, den] blob.
     let p = unsafe { (*node).value };
     if p.is_null() {
         return None;
     }
     let (num, den) = unsafe { read_fraction(node) };
-    if den == 0 || num % den != 0 {
+    if den == 0 {
         return None;
     }
-    i32::try_from(num / den).ok()
+    use NumType::*;
+    if nt.is_float() {
+        let v = num as f64 / den as f64;
+        return match nt {
+            F32 => Some(i64::from((v as f32).to_bits())),
+            F64 => Some(v.to_bits() as i64),
+            _ => None,
+        };
+    }
+    if num % den != 0 {
+        return None;
+    }
+    let q = num / den;
+    match nt {
+        I8 => i8::try_from(q).ok().map(i64::from),
+        I16 => i16::try_from(q).ok().map(i64::from),
+        I32 => i32::try_from(q).ok().map(i64::from),
+        I64 => Some(q),
+        U8 => u8::try_from(q).ok().map(i64::from),
+        U16 => u16::try_from(q).ok().map(i64::from),
+        U32 => u32::try_from(q).ok().map(i64::from),
+        U64 => u64::try_from(q).ok().map(|v| v as i64),
+        F32 | F64 => None,
+    }
+}
+
+/// Mold a rational literal to a concrete `i32`, if it has one. The `i32`-typed shim
+/// over [`mold_to`], kept for the bare-literal run/compile paths.
+pub(crate) fn mold(node: DyadPtr) -> Option<i32> {
+    mold_to(node, NumType::I32).map(|b| b as i32)
 }
 
 #[cfg(test)]
