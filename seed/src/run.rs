@@ -88,6 +88,9 @@ pub struct Runtime<'a> {
     /// `rational_number`: a data leaf of this type is molded to its `i32` value
     /// when read, rather than read raw through the generic i32 layout.
     rational: DyadPtr,
+    /// `struct`: an instance of a struct type is not a scalar — its fields are
+    /// read through `.` places, never the whole value.
+    struct_: DyadPtr,
     bcode: &'a Bcode,
     /// One activation per in-flight call, each binding the callee's parameter
     /// nodes to their argument values. A parameter reference reads the top frame;
@@ -96,10 +99,11 @@ pub struct Runtime<'a> {
 }
 
 impl<'a> Runtime<'a> {
-    /// A runtime recognizing functions by `fn_type` and running them through
-    /// `bcode`, molding `rational` leaves on read, with an empty frame stack.
-    pub fn new(fn_type: DyadPtr, rational: DyadPtr, bcode: &'a Bcode) -> Self {
-        Runtime { fn_type, rational, bcode, frames: Vec::new() }
+    /// A runtime recognizing functions by `fn_type` and struct instances by
+    /// `struct_`, running through `bcode`, molding `rational` leaves on read,
+    /// with an empty frame stack.
+    pub fn new(fn_type: DyadPtr, rational: DyadPtr, struct_: DyadPtr, bcode: &'a Bcode) -> Self {
+        Runtime { fn_type, rational, struct_, bcode, frames: Vec::new() }
     }
 
     /// Run `node`: read its operation (its `type`). If the operation is a function
@@ -162,6 +166,11 @@ impl<'a> Runtime<'a> {
                 return crate::identities::rational::mold(node)
                     .map(i64::from)
                     .ok_or(RunError::UncomputableLiteral);
+            }
+            // A struct instance is not a scalar (its type's tag guard below would
+            // read a pointer byte); its fields are read through `.` places.
+            if (*op).ty == self.struct_ {
+                return Err(RunError::BadValue);
             }
             // The text substance (a string or comment node) and unit have no
             // scalar to read; refuse rather than reinterpret their bytes.

@@ -352,6 +352,8 @@ pub struct CoreTypes {
     pub if_: DyadPtr,
     /// `while`: the loop statement; unit-valued, so value positions reject it.
     pub while_: DyadPtr,
+    /// `construct`: the struct-construction statement a struct-typed call builds.
+    pub construct_: DyadPtr,
     /// `string`: the text-literal type (`«…»`); inert in the seed, above all the
     /// comment substance.
     pub string_: DyadPtr,
@@ -478,6 +480,10 @@ pub enum Construct {
     /// [`Parser::parse_while`]. A statement: the body reruns for effect while the
     /// `bool` condition holds, and the loop yields unit.
     While,
+    /// The field-access dot `lhs.name`: resolved by the driver at parse time to a
+    /// *place* inside the instance's storage (DESIGN ›Resolution is one rule‹),
+    /// binding tightest.
+    Dot,
 }
 
 /// Why elaboration failed.
@@ -534,6 +540,8 @@ pub enum ParseError {
     /// (`:=`-bound rational) binding has no machine storage to write — writing its
     /// value slot would corrupt the fraction — and nothing else has storage yet.
     BadAssignTarget,
+    /// A struct construction's argument count did not match its field count.
+    CtorArity,
     /// A numeric conversion `type(value)` was malformed: not exactly one operand, or a
     /// non-numeric operand (there is nothing to convert).
     BadCast,
@@ -1001,6 +1009,43 @@ impl<'a> Parser<'a> {
         Ok(self.store.alloc_raw(while_id, value))
     }
 
+    /// Resolve a field access `lhs.name` to a *place*: an ordinary numeric node
+    /// over the instance's storage at the field's byte offset (DESIGN ›Resolution
+    /// is one rule‹ — the declaration found decides, and a field declaration is
+    /// the offset inside the value area). The field name resolves in the struct
+    /// type's own scope, alone (never against the enclosing scopes). The `.` has
+    /// already been consumed.
+    ///
+    /// # Safety
+    /// `lhs` must be a valid dyad from the store.
+    unsafe fn parse_field_access(&mut self, lhs: DyadPtr) -> Result<DyadPtr, ParseError> {
+        // The lhs must be an instance of a struct type, with storage.
+        let struct_type = (*lhs).ty;
+        if struct_type.is_null()
+            || (*struct_type).ty != self.types.struct_
+            || (*lhs).value.is_null()
+        {
+            return Err(ParseError::UnsupportedOperands);
+        }
+        let (nstart, nlen) = self.lex_identifier().ok_or(ParseError::ExpectedField)?;
+        let source = self.source;
+        let name = &source[nstart..nstart + nlen];
+        // Resolve in the struct's own scope only (its value[0]), so an enclosing
+        // binding of the same spelling can never shadow or double a field.
+        let mut field_scope = ScopeStack::new();
+        field_scope.push(*((*struct_type).value as *const DyadPtr));
+        let field =
+            field_scope.resolve(self.trie, name).map_err(ParseError::Resolve)?.identity;
+        let (fields, _) = crate::identities::instance::layout(struct_type)?;
+        let (_, _, offset) = fields
+            .iter()
+            .copied()
+            .find(|&(f, _, _)| f == field)
+            .ok_or(ParseError::ExpectedField)?;
+        let addr = (*lhs).value.add(offset);
+        Ok(self.store.alloc_raw((*field).ty, addr))
+    }
+
     /// Consume an `else` if the next token is one, reporting whether it was.
     fn consume_else(&mut self) -> bool {
         match self.peek_kind() {
@@ -1233,9 +1278,21 @@ impl<'a> Parser<'a> {
                     let value = self.parse_expression()?;
                     self.pending_fn = std::ptr::null_mut();
                     // Fixpoint: make the placeholder *be* the value, so references to
-                    // `name` captured while parsing the value resolve to it.
+                    // `name` captured while parsing the value resolve to it. A
+                    // construction binds the name to the *instance* (the storage)
+                    // and leaves the initializer as the expression: the name is the
+                    // place, the construct statement fills it each run.
                     // SAFETY: `placeholder`/`value` are valid dyads just built.
                     unsafe {
+                        if (*value).ty == self.types.construct_ {
+                            let ops = (*value).value as *mut DyadPtr;
+                            let instance = *ops;
+                            (*placeholder).ty = (*instance).ty;
+                            (*placeholder).value = (*instance).value;
+                            *ops = placeholder;
+                            tape.push(Cell::Dyad(value));
+                            continue;
+                        }
                         (*placeholder).ty = (*value).ty;
                         (*placeholder).value = (*value).value;
                     }
@@ -1343,6 +1400,23 @@ impl<'a> Parser<'a> {
                         let node = if crate::identities::is_numtype_node(&self.types, callee) {
                             // SAFETY: `callee` is a numtype node; `args` are reduced dyads.
                             unsafe { crate::identities::build_cast(self.store, &self.types, callee, &args)? }
+                        } else if unsafe {
+                            !(*callee).ty.is_null() && (*callee).ty == self.types.struct_
+                        } {
+                            // A struct type applied to its field values constructs an
+                            // instance — the type-constructor doctrine, like `i32(a)`.
+                            let types = self.types;
+                            // SAFETY: `callee` is a struct type node; `args` are
+                            // reduced dyads from the store.
+                            unsafe {
+                                crate::identities::instance::build_ctor(
+                                    self.store,
+                                    &types,
+                                    types.construct_,
+                                    callee,
+                                    &args,
+                                )?
+                            }
                         } else {
                             // Each uncommitted literal argument commits to its
                             // parameter's declared type (the typed slot); an unbound
@@ -1393,6 +1467,18 @@ impl<'a> Parser<'a> {
                 // The `while` keyword: parse a loop `while ( cond ) ( body )`.
                 Some(Construct::While) => {
                     let node = self.parse_while(id)?;
+                    tape.push(Cell::Dyad(node));
+                }
+                // Field access `lhs.name`: resolved now, to a place inside the
+                // instance's storage; the access binds tightest, like a call.
+                Some(Construct::Dot) => {
+                    let lhs = tape
+                        .last()
+                        .and_then(Cell::as_dyad)
+                        .ok_or(ParseError::MissingOperand)?;
+                    // SAFETY: `lhs` is a reduced dyad; instance checks inside.
+                    let node = unsafe { self.parse_field_access(lhs)? };
+                    tape.pop();
                     tape.push(Cell::Dyad(node));
                 }
                 // An operator: reduce anything binding tighter to its left, then
