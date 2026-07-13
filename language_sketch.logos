@@ -6,14 +6,14 @@ language := type ?
 logos := language ?
 
 declare := fn (lang:&mut language, name:string) -> &mut dyad ( ? )
-assign := fn (node:&mut dyad, type:dyad@, value:void@) -> void! ( ? )
+assign := fn (node:&mut dyad, type:@dyad, value:@void) -> void! ( ? )
 assign(declare(&mut logos, «:»), ?, ?)
 assign(declare(&mut logos, «=»), ?, ?)
 assign(declare(&mut logos, «:=»), ?, ?)
 assign(declare(&mut logos, «rational_number»), type, ?)
 assign(declare(&mut logos, «[0-9]+(?:\.[0-9]+)?»), rational_number, ?)   # unanchored: the lexer longest-matches a prefix of the remaining input, so no ^…$. unsigned: - is always the operator (a-1 must be subtraction); a negative literal is the prefix - folding at parse
 
-dyad := struct (type := dyad@ ?, value := void@ ?)
+dyad := struct (type := @dyad ?, value := @void ?)
 
 type := type (
     shared precedence := f64 2.0
@@ -40,8 +40,8 @@ hashtable := struct (
 )
 
 id_context := struct (
-    identity := dyad@ ?      # the declared identity this spelling denotes
-    scope    := dyad@ ?      # the enclosing scope it was declared in; O(1) open-scope membership picks the live one
+    identity := @dyad ?      # the declared identity this spelling denotes
+    scope    := @dyad ?      # the enclosing scope it was declared in; O(1) open-scope membership picks the live one
 )
 
 token := struct (
@@ -62,14 +62,14 @@ array := type (
             error «offset 0 is not a token»
         if tape[0].value != array
             error «token does not denote array»
-        if (@tape[1].value).type != type
+        if tape[1].value@.type != type
             error «token after array is not a type»
         # specialize this array type to the element type at offset 1 — TBD
     )
     element := type ?
     size := u64 0
     capacity := u64 0
-    content := void@ ?
+    content := @void ?
 )
 
 mut := type (
@@ -78,7 +78,7 @@ mut := type (
             error «offset 0 is not a token»
         if tape[0].value != mut
             error «token does not denote mut»
-        if (@tape[1].value).type != type
+        if tape[1].value@.type != type
             error «token after mut is not a type»
         # set the mutability bit on this level's value pointer — TBD
     )
@@ -91,7 +91,7 @@ fn := type (
     input  : struct
     output : ?
     body   : ?                                       # the reflectable LG body
-    bcode  : exec@                                   # the opaque compiled machine code (NULL until compiled)
+    bcode  : @exec                                   # the opaque compiled machine code (NULL until compiled)
 )
 
 @ : ?
@@ -139,8 +139,8 @@ i64 : type
 f32 : type
 f64 : type
 bool : type          # a comparison's result type; an if condition must be one
-void@ : type
-exec@ : type
+@void : type
+@exec : type
 
 if : ?
 else : ?
@@ -256,16 +256,16 @@ type {
 
 a = a + 1
 {
-    type:dyad@ -> =
-    value:void@ -> {
-        lhs:dyad@ -> a
-        rhs:dyad@ -> {
-            type:dyad@ -> +
-            value:void@ -> {
-                lhs:dyad@ -> a
-                rhs:dyad@ -> {
-                    type:dyad@ -> rational_number
-                    value:void@ -> «1»
+    type:@dyad -> =
+    value:@void -> {
+        lhs:@dyad -> a
+        rhs:@dyad -> {
+            type:@dyad -> +
+            value:@void -> {
+                lhs:@dyad -> a
+                rhs:@dyad -> {
+                    type:@dyad -> rational_number
+                    value:@void -> «1»
                 }
             }
         }
