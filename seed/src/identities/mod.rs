@@ -18,7 +18,7 @@
 //! Deferred surface the sketch declares that the seed does not yet register —
 //! tracked here so each gap is deliberate, not drift: the operators `/`, `%`,
 //! `^`, `.` (field access; DESIGN ›Resolution is one rule‹), `&` (references),
-//! `@` (address-of), and `xor`; `while` and `for`; `string` and the `«…»`
+//! `@` (address-of), and `xor`; `for`; `string` and the `«…»`
 //! quotes; `mut` at every level (DESIGN ›Mutability and construction‹); the
 //! `hashtable` and `array` types; and the declaration forms `key : type = value`
 //! and bare `key :` outside field lists. Each arrives with the machinery it
@@ -50,6 +50,8 @@ mod struct_mod;
 mod bool_mod;
 #[path = "if.rs"]
 mod if_mod;
+#[path = "while.rs"]
+mod while_mod;
 mod and;
 mod assign;
 mod convert;
@@ -121,6 +123,8 @@ pub struct Core {
     pub not_: DyadPtr,
     /// `if` (the value-producing conditional); a function.
     pub if_: DyadPtr,
+    /// `while` (the loop statement); a function yielding unit.
+    pub while_: DyadPtr,
     /// `return` (the optional early yield); a function whose value is its operand.
     pub return_: DyadPtr,
     /// `rational_number` (numeric literal carrier); a data type.
@@ -200,6 +204,7 @@ impl Core {
         let or_ = or::register(&mut cx);
         let not_ = not::register(&mut cx);
         let if_ = if_mod::register(&mut cx);
+        let while_ = while_mod::register(&mut cx);
         fn_mod::register_syntax(&mut cx);
         paren::register(&mut cx);
         let return_ = return_mod::register(&mut cx);
@@ -235,6 +240,7 @@ impl Core {
             or_,
             not_,
             if_,
+            while_,
             return_,
             rational,
             struct_,
@@ -257,6 +263,7 @@ impl Core {
             rational: self.rational,
             return_: self.return_,
             if_: self.if_,
+            while_: self.while_,
             convert: self.convert,
             plus: self.plus,
             minus: self.minus,
@@ -349,6 +356,10 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
     // one); with both branches it resolves through the fn-typed default below (the
     // `if` identity is itself fn-typed).
     if ty == types.if_ && (*((*node).value as *const DyadPtr).add(2)).is_null() {
+        return Operand::NonNumeric;
+    }
+    // A `while` loop is a statement yielding unit, never a value.
+    if ty == types.while_ {
         return Operand::NonNumeric;
     }
     // A sequence's value is its trailing expression's. A literal tail takes the
@@ -457,6 +468,21 @@ pub(crate) fn is_numtype_node(types: &CoreTypes, node: DyadPtr) -> bool {
     types.numtypes.iter().any(|&t| !t.is_null() && t == node)
 }
 
+/// Commit a rational literal node exactly to the numeric type `ty_node` — the
+/// `type literal` juxtaposition (`i32 32`, DESIGN ›an anonymous typed value is
+/// written by juxtaposition‹). The result is a typed value with real storage.
+///
+/// # Safety
+/// `lit` must be a rational literal from the store; `ty_node` a numeric type node.
+pub(crate) unsafe fn commit_literal_to(
+    store: &mut Store,
+    lit: DyadPtr,
+    ty_node: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
+    let nt = numtype::of_type_node(ty_node);
+    commit_if_literal(store, lit, &Operand::Literal, ty_node, nt)
+}
+
 /// Commit a call's uncommitted literal arguments to their parameters' declared
 /// numeric types — the typed slot (DESIGN ›committing to a concrete type only when
 /// it finally lands in a typed slot‹), so `f(3000000000)` is exact for an i64
@@ -561,6 +587,10 @@ unsafe fn commit_tail(
         *ops.add(1) = then_c;
         *ops.add(2) = else_c;
         return Ok(node);
+    }
+    // A `while` loop yields unit, so it cannot be a numeric function's tail.
+    if (*node).ty == types.while_ {
+        return Err(ParseError::StatementAsValue);
     }
     // A sequence: its trailing expression is the tail.
     if (*node).ty == types.scope {
@@ -2254,6 +2284,64 @@ mod tests {
         // `#` runs to the end of its line, as in the sketch's own files; comments
         // weave through a sequence without separating anything themselves.
         diff_nullary_fn("fn () -> i32 ( # the answer\n a := 40 # forty\n a + 2 )", 42);
+    }
+
+    #[test]
+    fn while_loop_sums_both_tiers() {
+        // The loop shape: block-local typed variables (the sketch's `sum := i32 0`
+        // juxtaposition, with real storage), a while statement mutating them, the
+        // trailing read. The explicit re-zeroing after the declarations makes the
+        // body idempotent (`:=` initializes at parse, not per run), so the
+        // interpreted run and the compiled rerun agree from any prior state.
+        diff_nullary_fn(
+            "fn () -> i32 ( a := i32 0  i := i32 0  a = 0  i = 0  while (i < 5) ( a = a + i  i = i + 1 )  a )",
+            10,
+        );
+    }
+
+    #[test]
+    fn while_false_never_runs_its_body() {
+        diff_nullary_fn("fn () -> i32 ( a := i32 7  a = 7  while (a < 0) (a = 0)  a )", 7);
+    }
+
+    #[test]
+    fn while_condition_must_be_bool() {
+        assert_eq!(parse_err("while (1) (2)"), ParseError::NonBoolCondition);
+    }
+
+    #[test]
+    fn a_while_loop_is_not_a_value() {
+        assert_eq!(parse_err("fn () -> i32 ( while (1 < 2) (3) )"), ParseError::StatementAsValue);
+        assert_eq!(parse_err("( while (1 < 2) (3) ) + 1"), ParseError::UnsupportedOperands);
+    }
+
+    #[test]
+    fn a_return_inside_a_while_body_is_rejected() {
+        // v1 has no unwinding to exit a loop with; running the return without
+        // exiting would be silently wrong.
+        assert_eq!(
+            parse_err("fn () -> void ( while (1 < 2) (return 1) )"),
+            ParseError::EarlyReturn
+        );
+    }
+
+    #[test]
+    fn juxtaposition_types_a_literal() {
+        // `i64 5000000000` is the anonymous typed value (DESIGN ›written by
+        // juxtaposition‹): the literal commits exactly to the type before it.
+        diff_typed_call("fn () -> i64 ( x := i64 5000000000  x )", "f()", 5_000_000_000);
+        // An exact commit, not a wrapping cast: a decimal into i32 is an error.
+        assert_eq!(parse_err("i32 3.5"), ParseError::UncomputableLiteral);
+        // The settled separator doctrine: `f(i32 3)` is ONE argument (the typed
+        // value), where `f(i32, 3)` would be two.
+        diff_typed_call("fn (x : i32) -> i32 ( x + 1 )", "f(i32 3)", 4);
+    }
+
+    #[test]
+    fn assigning_into_a_comptime_binding_is_rejected() {
+        // `x := 5` binds a comptime rational (no machine storage); writing its
+        // value slot would corrupt the fraction, so `=` demands a typed variable.
+        assert_eq!(parse_err("( x := 5  x = 7 )"), ParseError::BadAssignTarget);
     }
 
     #[test]

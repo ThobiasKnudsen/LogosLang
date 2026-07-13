@@ -357,6 +357,38 @@ impl Lowerer<'_, '_> {
         self.branch(c, |s| unsafe { s.lower(then) }, |s| unsafe { s.lower(els) })
     }
 
+    /// Lower a `while` loop: jump into a header block that re-evaluates the
+    /// condition (variables live in memory, so each iteration reloads them), a
+    /// body block that runs for effect and jumps back, and an exit block. The
+    /// header seals only after the body's back-edge exists. Yields unit (0).
+    ///
+    /// # Safety
+    /// `cond`/`body` must be valid dyads from the store.
+    pub unsafe fn lower_while(
+        &mut self,
+        cond: DyadPtr,
+        body: DyadPtr,
+    ) -> Result<Value, CompileError> {
+        let header = self.builder.create_block();
+        let body_b = self.builder.create_block();
+        let exit = self.builder.create_block();
+
+        self.builder.ins().jump(header, &[]);
+        self.builder.switch_to_block(header);
+        let c = self.lower(cond)?;
+        self.builder.ins().brif(c, body_b, &[], exit, &[]);
+        self.builder.switch_to_block(body_b);
+        self.builder.seal_block(body_b);
+        self.lower(body)?;
+        self.builder.ins().jump(header, &[]);
+        // Both of the header's predecessors (the entry jump and the back-edge)
+        // now exist.
+        self.builder.seal_block(header);
+        self.builder.switch_to_block(exit);
+        self.builder.seal_block(exit);
+        Ok(self.const_i32(0))
+    }
+
     /// Lower an else-less `if`: a statement, not a value — the then-branch runs for
     /// its effect when the condition holds, and both arms yield unit (0), so the
     /// merge always agrees. See [`Lowerer::branch`].

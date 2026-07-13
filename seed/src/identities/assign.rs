@@ -40,9 +40,16 @@ fn build(
     lhs: DyadPtr,
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
+    // The assignable places in v1 are typed numeric variables. A comptime
+    // (`:=`-bound rational) binding has no machine storage — writing its value
+    // slot would corrupt the fraction — and nothing else has storage yet.
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
+    if !unsafe { is_numtype_node(types, (*lhs).ty) } {
+        return Err(ParseError::BadAssignTarget);
+    }
+    // SAFETY: as above.
     let rhs = unsafe {
-        if (*rhs).ty == types.rational && is_numtype_node(types, (*lhs).ty) {
+        if (*rhs).ty == types.rational {
             let nt = of_type_node((*lhs).ty);
             commit_if_literal(store, rhs, &Operand::Literal, (*lhs).ty, nt)?
         } else {

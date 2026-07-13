@@ -350,6 +350,8 @@ pub struct CoreTypes {
     /// `if`: the value-producing conditional; used to commit a rational in either branch
     /// (a tail position) to the function's declared return type.
     pub if_: DyadPtr,
+    /// `while`: the loop statement; unit-valued, so value positions reject it.
+    pub while_: DyadPtr,
     /// `convert`: the shared scalar numeric conversion; a conversion node's result type
     /// is its target (recognized as a numeric-producing operand).
     pub convert: DyadPtr,
@@ -462,6 +464,10 @@ pub enum Construct {
     /// [`Parser::parse_not`]. The operand is parenthesized (like an `if` condition)
     /// and must be a `bool`.
     Not,
+    /// The `while` keyword: parse a loop `while ( cond ) ( body )` via
+    /// [`Parser::parse_while`]. A statement: the body reruns for effect while the
+    /// `bool` condition holds, and the loop yields unit.
+    While,
 }
 
 /// Why elaboration failed.
@@ -511,6 +517,13 @@ pub enum ParseError {
     /// tail yield, and an early return would silently not exit (no unwinding yet),
     /// so it is rejected rather than mis-run. Early exit arrives with control flow.
     EarlyReturn,
+    /// A unit-valued statement (a `while` loop) stood where a value is required (a
+    /// numeric function's tail).
+    StatementAsValue,
+    /// An assignment target that is not a typed numeric variable. A comptime
+    /// (`:=`-bound rational) binding has no machine storage to write — writing its
+    /// value slot would corrupt the fraction — and nothing else has storage yet.
+    BadAssignTarget,
     /// A numeric conversion `type(value)` was malformed: not exactly one operand, or a
     /// non-numeric operand (there is nothing to convert).
     BadCast,
@@ -935,6 +948,34 @@ impl<'a> Parser<'a> {
         Ok(self.store.alloc_raw(not_id, operand.cast()))
     }
 
+    /// Parse a loop `while ( cond ) ( body )` (given the resolved `while` identity).
+    /// Both parts are parenthesized; the condition must be a `bool`
+    /// ([`ParseError::NonBoolCondition`]) and is re-evaluated before each iteration;
+    /// the body runs for effect, its value discarded (DESIGN ›a loop body's is
+    /// thrown away‹). The node is `{ty: while, value: [cond, body]}`, a statement
+    /// yielding unit: value positions reject it ([`ParseError::StatementAsValue`]),
+    /// and a `return` in the body is rejected ([`ParseError::EarlyReturn`]) since v1
+    /// has no unwinding to exit the loop with.
+    pub fn parse_while(&mut self, while_id: DyadPtr) -> Result<DyadPtr, ParseError> {
+        self.expect_open()?;
+        let cond = self.parse_sequence()?;
+        self.expect_close()?;
+        let types = self.types;
+        // SAFETY: `cond` is the reduced dyad just parsed.
+        if !unsafe { is_bool_result(&types, cond) } {
+            return Err(ParseError::NonBoolCondition);
+        }
+        self.expect_open()?;
+        let body = self.parse_sequence()?;
+        self.expect_close()?;
+        // SAFETY: `body` is the reduced dyad just parsed.
+        if unsafe { contains_return(&types, body) } {
+            return Err(ParseError::EarlyReturn);
+        }
+        let value = self.store.alloc_operands(&[cond, body]);
+        Ok(self.store.alloc_raw(while_id, value))
+    }
+
     /// Consume an `else` if the next token is one, reporting whether it was.
     fn consume_else(&mut self) -> bool {
         match self.peek_kind() {
@@ -1138,9 +1179,19 @@ impl<'a> Parser<'a> {
                         | Construct::Fn
                         | Construct::If
                         | Construct::Not
+                        | Construct::While
                 )
             );
-            if starts_operand && matches!(tape.last(), Some(Cell::Dyad(_))) {
+            // `type literal` juxtaposition is not a boundary: a numeric type dyad
+            // directly before a literal consumes it into an anonymous typed value
+            // (DESIGN ›an anonymous typed value is written by juxtaposition‹).
+            let juxtaposition = id == self.types.rational
+                && matches!(c, Some(Construct::Atom(_)))
+                && tape
+                    .last()
+                    .and_then(Cell::as_dyad)
+                    .is_some_and(|d| crate::identities::is_numtype_node(&self.types, d));
+            if starts_operand && !juxtaposition && matches!(tape.last(), Some(Cell::Dyad(_))) {
                 break;
             }
             self.pos = start + r.matched;
@@ -1148,11 +1199,24 @@ impl<'a> Parser<'a> {
             match c {
                 // A plain operand: a reference to the resolved identity.
                 None => tape.push(Cell::Dyad(id)),
-                // A literal: build its leaf now from the matched span.
+                // A literal: build its leaf now from the matched span. A numeric
+                // type dyad directly before it consumes it (juxtaposition): the
+                // literal commits exactly to that type, giving a typed value with
+                // real storage (`sum := i32 0`, the sketch's own spelling).
                 Some(Construct::Atom(build)) => {
                     let span = &source[start..start + r.matched];
                     let dyad = build(self.store, id, span)?;
-                    tape.push(Cell::Dyad(dyad));
+                    if juxtaposition {
+                        let ty_node = tape.pop().and_then(|c| c.as_dyad()).unwrap();
+                        // SAFETY: `dyad` is the literal just built; `ty_node` is a
+                        // numtype node (the `juxtaposition` check above).
+                        let committed = unsafe {
+                            crate::identities::commit_literal_to(self.store, dyad, ty_node)?
+                        };
+                        tape.push(Cell::Dyad(committed));
+                    } else {
+                        tape.push(Cell::Dyad(dyad));
+                    }
                 }
                 // A prefix keyword: parse the rest of the expression as its
                 // operand, then build. (v1 grabs to the end of the expression.)
@@ -1220,6 +1284,11 @@ impl<'a> Parser<'a> {
                 // The `not` keyword: parse a logical negation `not ( operand )`.
                 Some(Construct::Not) => {
                     let node = self.parse_not(id)?;
+                    tape.push(Cell::Dyad(node));
+                }
+                // The `while` keyword: parse a loop `while ( cond ) ( body )`.
+                Some(Construct::While) => {
+                    let node = self.parse_while(id)?;
                     tape.push(Cell::Dyad(node));
                 }
                 // An operator: reduce anything binding tighter to its left, then
