@@ -148,6 +148,8 @@ impl Core {
             ("u16", NumType::U16),
             ("u32", NumType::U32),
             ("u64", NumType::U64),
+            ("f32", NumType::F32),
+            ("f64", NumType::F64),
         ] {
             numtypes[nt as usize] = numtype::register_type(&mut cx, spelling, nt);
         }
@@ -1916,6 +1918,59 @@ mod tests {
         // The same byte 0xFF compares differently as i8 (-1) and u8 (255).
         diff_typed_call("fn (x : i8) -> i32 ( if (x < 1) (100) else (200) )", "f(255)", 100);
         diff_typed_call("fn (x : u8) -> i32 ( if (x < 1) (100) else (200) )", "f(255)", 200);
+    }
+
+    /// Diff a nullary `fn () -> ... ( body )` between the interpreter and the JIT, where
+    /// `body` reads an enclosing variable `a` of numeric type `nt` initialised to the
+    /// low `nt.bytes()` of `init` (its bit-container). Floats can't ride the i32-mold
+    /// argument path, so a float operand has to be a real stored variable, not a call
+    /// argument; the body only reads `a`, so no reset between runs is needed.
+    fn diff_var_fn(nt: NumType, init: i64, fn_src: &str, expect: i64) {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let a_val = store.alloc_bytes(&init.to_ne_bytes()[..nt.bytes()]);
+        let a = store.alloc_raw(core.numtypes[nt as usize], a_val);
+        scopes.declare(&mut trie, "a", a).unwrap();
+        let func = {
+            let mut p = Parser::new(fn_src, &mut store, &mut trie, &core.metas, core.types(), scopes);
+            p.parse_expression().unwrap()
+        };
+        let call = store.alloc_raw(func, std::ptr::null_mut());
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+        // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
+        let interp = unsafe { rt.run(call) }.unwrap();
+        // SAFETY: `func`/`a` live in `store`, which outlives the call.
+        let _c = unsafe { compile_fn(&core.lower, core.fn_type, func) }.unwrap();
+        let jit = unsafe { rt.run(call) }.unwrap();
+        assert_eq!(interp, expect, "interpreter: {fn_src}");
+        assert_eq!(jit, interp, "jit != interpreter: {fn_src}");
+    }
+
+    #[test]
+    fn f64_arithmetic_matches_between_tiers() {
+        // f64 add with a molded `1.5` beside a typed f64 variable (2.5): 2.5 + 1.5 = 4.0.
+        // Result is the f64 bit-container, so both tiers must reinterpret bits the same
+        // way across the ABI (interpreter read/mold vs JIT bitcast).
+        diff_var_fn(NumType::F64, 2.5f64.to_bits() as i64, "fn () -> f64 ( a + 1.5 )", 4.0f64.to_bits() as i64);
+        diff_var_fn(NumType::F64, 2.5f64.to_bits() as i64, "fn () -> f64 ( a - 0.5 )", 2.0f64.to_bits() as i64);
+    }
+
+    #[test]
+    fn f32_arithmetic_matches_between_tiers() {
+        // f32 add: the f32 bits ride the low 32 of the container (zero-extended), a
+        // different ABI path than f64, so it is worth its own diff.
+        diff_var_fn(NumType::F32, i64::from(2.5f32.to_bits()), "fn () -> f32 ( a + 1.5 )", i64::from(4.0f32.to_bits()));
+    }
+
+    #[test]
+    fn f64_comparison_matches_between_tiers() {
+        // f64 `<` (an fcmp), true and false, gated through `if` so the result is the
+        // i32 bool the comparison yields. a = 2.5.
+        diff_var_fn(NumType::F64, 2.5f64.to_bits() as i64, "fn () -> i32 ( if (a < 3.0) (100) else (200) )", 100);
+        diff_var_fn(NumType::F64, 2.5f64.to_bits() as i64, "fn () -> i32 ( if (a < 2.0) (100) else (200) )", 200);
     }
 
     #[test]

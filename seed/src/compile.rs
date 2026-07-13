@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
-use cranelift_codegen::ir::{types, AbiParam, InstBuilder, MemFlagsData, Value};
+use cranelift_codegen::ir::{types, AbiParam, Endianness, InstBuilder, MemFlagsData, Value};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
@@ -571,27 +571,49 @@ pub(crate) unsafe fn compile_body(
 }
 
 /// Narrow the `i64` bit-container `v` to `nt`'s native Cranelift value at the ABI
-/// boundary — integers reduce to their width (floats reinterpret their bits, added
-/// with `f32`/`f64`).
+/// boundary. Integers reduce to their width; floats reinterpret the container's bits
+/// (`f64` is the whole 64 bits, `f32` the low 32), the inverse of [`widen_to_i64`].
 fn narrow_from_i64(b: &mut FunctionBuilder, v: Value, nt: NumType) -> Value {
-    let ct = nt.cranelift_type();
-    if ct == types::I64 {
-        v
-    } else {
-        b.ins().ireduce(ct, v)
+    match nt {
+        // `f64`: the container *is* the raw f64 bits (see `read_scalar`), reinterpret.
+        NumType::F64 => b.ins().bitcast(types::F64, bitcast_flags(), v),
+        // `f32`: the f32 bits are the container's low 32; take them, then reinterpret.
+        NumType::F32 => {
+            let bits = b.ins().ireduce(types::I32, v);
+            b.ins().bitcast(types::F32, bitcast_flags(), bits)
+        }
+        _ => {
+            let ct = nt.cranelift_type();
+            if ct == types::I64 {
+                v
+            } else {
+                b.ins().ireduce(ct, v)
+            }
+        }
     }
 }
 
 /// Widen `nt`'s native value `v` back to the `i64` bit-container: sign-extend signed
-/// integers, zero-extend unsigned (matching the interpreter's read).
+/// integers, zero-extend unsigned, reinterpret float bits (matching `read_scalar`,
+/// which zero-extends an `f32`'s 32 bits and takes an `f64`'s 64 bits raw).
 fn widen_to_i64(b: &mut FunctionBuilder, v: Value, nt: NumType) -> Value {
-    if nt.cranelift_type() == types::I64 {
-        v
-    } else if nt.is_signed_int() {
-        b.ins().sextend(types::I64, v)
-    } else {
-        b.ins().uextend(types::I64, v)
+    match nt {
+        NumType::F64 => b.ins().bitcast(types::I64, bitcast_flags(), v),
+        NumType::F32 => {
+            let bits = b.ins().bitcast(types::I32, bitcast_flags(), v);
+            b.ins().uextend(types::I64, bits)
+        }
+        _ if nt.cranelift_type() == types::I64 => v,
+        _ if nt.is_signed_int() => b.ins().sextend(types::I64, v),
+        _ => b.ins().uextend(types::I64, v),
     }
+}
+
+/// Memory flags for a scalar `bitcast`: an explicit endianness is required, but for a
+/// same-size scalar reinterpret the byte order does not affect the result (it only
+/// matters when lane count/size differ), so a fixed `Little` is correct on any host.
+fn bitcast_flags() -> MemFlagsData {
+    MemFlagsData::new().with_endianness(Endianness::Little)
 }
 
 /// Map any `Display` Cranelift error into [`CompileError::Cranelift`].
