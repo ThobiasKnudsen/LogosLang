@@ -6,7 +6,7 @@
 use cranelift_codegen::ir::Value;
 
 use super::numtype::{eval_compare, CmpOp};
-use super::{resolve_binary, Cx};
+use super::{bool_mod, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
@@ -34,6 +34,10 @@ fn build(
     lhs: DyadPtr,
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
+    // Two comptime rationals fold now to a `bool` literal; otherwise resolve and build.
+    if let Some(v) = rational::compare_literals(types.rational, CmpOp::Eq, lhs, rhs) {
+        return Ok(bool_mod::literal_node(store, types.bool_, v));
+    }
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let ops = unsafe { resolve_binary(store, types, lhs, rhs) }?;
     let value = store.alloc_operands(&ops);

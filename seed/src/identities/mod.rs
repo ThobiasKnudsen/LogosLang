@@ -417,6 +417,30 @@ pub(crate) fn is_numtype_node(types: &CoreTypes, node: DyadPtr) -> bool {
     types.numtypes.iter().any(|&t| !t.is_null() && t == node)
 }
 
+/// Commit a comptime-rational function body to its declared return type — the typed-slot
+/// context (DESIGN ›a rational commits when it lands in a typed slot‹). A bare rational
+/// tail expression molds to a concrete numeric return type (exact, else
+/// [`ParseError::UncomputableLiteral`]); every other body, and a `void` return, pass
+/// through unchanged. (A `return`-wrapped rational tail still molds via the default i32
+/// path; committing through `return` is later work.)
+///
+/// # Safety
+/// `body`/`output` are valid dyads from the store.
+pub(crate) unsafe fn commit_fn_body(
+    store: &mut Store,
+    types: &CoreTypes,
+    body: DyadPtr,
+    output: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
+    if (*body).ty == types.rational && is_numtype_node(types, output) {
+        let nt = numtype::of_type_node(output);
+        let bits = rational::mold_to(body, nt).ok_or(ParseError::UncomputableLiteral)?;
+        let value = store.alloc_bytes(&bits.to_ne_bytes()[..nt.bytes()]);
+        return Ok(store.alloc_raw(output, value));
+    }
+    Ok(body)
+}
+
 /// Build a scalar numeric conversion `target(operand)` — the `type(value)` constructor
 /// and the only cross-type path (DESIGN ›numeric conversion is the type constructor
 /// consuming a value‹). A literal operand folds now, with `as` semantics, into a
@@ -1194,36 +1218,11 @@ mod tests {
 
     #[test]
     fn i32_overflow_matches_between_interpreter_and_jit() {
-        // 2_000_000_000 + 2_000_000_000 overflows i32; both paths must wrap to the
-        // same i32. The interpreter is the oracle, so it must not widen to i64.
-        let mut store = Store::new();
-        let mut trie = RegexTrie::new();
-        let core = Core::build(&mut store, &mut trie);
-
-        let func = {
-            let mut s = ScopeStack::new();
-            s.push(core.root_scope);
-            let mut p = Parser::new(
-                "fn () -> i32 ( 2000000000 + 2000000000 )",
-                &mut store,
-                &mut trie,
-                &core.metas,
-                core.types(),
-                s,
-            );
-            p.parse_expression().unwrap()
-        };
-        let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
-        // SAFETY: `call`/`func`/body are valid nodes just parsed.
-        let interp = unsafe { rt.run(call) }.unwrap();
-        // SAFETY: `func` is the fn node just built and outlives the call.
-        let _compiled = unsafe { compile_fn(&core.lower, core.fn_type,func) }.unwrap();
-        let jit = unsafe { rt.run(call) }.unwrap();
-
+        // `a + a` on an i32 variable = 2_000_000_000 overflows i32; both tiers must wrap
+        // to the same i32 (the interpreter must not widen to i64). A concrete operand is
+        // required: two comptime literals would fold to an exact rational, not wrap.
         let expected = i64::from(2_000_000_000i32.wrapping_add(2_000_000_000)); // -294967296
-        assert_eq!(interp, expected);
-        assert_eq!(jit, interp);
+        diff_var_fn(NumType::I32, 2_000_000_000, "fn () -> i32 ( a + a )", expected);
     }
 
     #[test]
@@ -1297,24 +1296,28 @@ mod tests {
 
     #[test]
     fn plus_is_abstract_and_resolves_to_a_concrete_op() {
-        // `+` is not itself a machine addition: it stays reflectable (its node's
-        // type is still `+`) but resolves to a concrete op (add_i32) that it stores
-        // in its value, and both run and compile delegate to that op. Nested `+`
-        // resolves too, and interpreted matches JIT.
+        // `+` is not itself a machine addition: it stays reflectable (its node's type
+        // is still `+`) but resolves to a concrete op it stores in its value, and both
+        // run and compile delegate to it. A concrete operand (`a`) keeps it a `+` node —
+        // two comptime literals would fold instead. Nested `+` resolves too.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
 
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let a_val = store.alloc_bytes(&10i32.to_ne_bytes());
+        let a = store.alloc_raw(core.i32_, a_val);
+        scopes.declare(&mut trie, "a", a).unwrap();
+
         let func = {
-            let mut s = ScopeStack::new();
-            s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn () -> i32 ( 10 + 20 + 12 )",
+                "fn () -> i32 ( a + 20 + 12 )",
                 &mut store,
                 &mut trie,
                 &core.metas,
                 core.types(),
-                s,
+                scopes,
             );
             p.parse_expression().unwrap()
         };
@@ -1330,7 +1333,7 @@ mod tests {
         // SAFETY: `call`/`func`/body are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` is the fn node just built and outlives the call.
-        let _compiled = unsafe { compile_fn(&core.lower, core.fn_type,func) }.unwrap();
+        let _compiled = unsafe { compile_fn(&core.lower, core.fn_type, func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, 42);
         assert_eq!(jit, interp);
@@ -1409,7 +1412,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn () -> i32 ( 6 - 2 * 3 )",
+                "fn (a : i32) -> i32 ( a - a * 3 )",
                 &mut store,
                 &mut trie,
                 &core.metas,
@@ -1418,7 +1421,8 @@ mod tests {
             );
             p.parse_expression().unwrap()
         };
-        // Body is `-`(6, *(2, 3)): `-` resolved to sub_i32, its rhs `*` to mul_i32.
+        // Body is `-`(a, *(a, 3)): `-` resolved to sub_i32, its rhs `*` to mul_i32. A
+        // concrete operand keeps each a node — two literals would fold.
         unsafe {
             let body = *((*func).value as *const DyadPtr).add(FN_BODY);
             assert_eq!((*body).ty, core.minus);
@@ -1432,9 +1436,11 @@ mod tests {
 
     #[test]
     fn multiplication_overflow_matches_between_interpreter_and_jit() {
-        // 100000 * 100000 overflows i32; both tiers must wrap to the same i32.
+        // `a * a` on an i32 variable = 100000 overflows i32; both tiers wrap to the same
+        // i32. A concrete operand is required: `100000 * 100000` folds to an exact
+        // rational (10^10) that has no i32 and so would not model the wrap.
         let expected = i64::from(100_000i32.wrapping_mul(100_000));
-        diff_nullary_fn("fn () -> i32 ( 100000 * 100000 )", expected);
+        diff_var_fn(NumType::I32, 100_000, "fn () -> i32 ( a * a )", expected);
     }
 
     #[test]
@@ -1456,7 +1462,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn () -> i32 ( 3 < 5 )",
+                "fn (a : i32) -> i32 ( a < 5 )",
                 &mut store,
                 &mut trie,
                 &core.metas,
@@ -1465,7 +1471,8 @@ mod tests {
             );
             p.parse_expression().unwrap()
         };
-        // The body stays reflectable as `<` and records the concrete op it resolved to.
+        // The body stays reflectable as `<` and records the concrete op it resolved to
+        // (a concrete operand keeps it a node; two literals would fold to a bool).
         unsafe {
             let body = *((*func).value as *const DyadPtr).add(FN_BODY);
             assert_eq!((*body).ty, core.lt);
@@ -1514,12 +1521,13 @@ mod tests {
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
 
+        // A concrete operand (`a`) keeps each a node; two literals would fold to a bool.
         let cases: [(&str, DyadPtr, DyadPtr); 5] = [
-            ("fn () -> i32 ( 1 > 2 )", core.gt, core.i32_),
-            ("fn () -> i32 ( 1 == 2 )", core.eq, core.i32_),
-            ("fn () -> i32 ( 1 <= 2 )", core.le, core.i32_),
-            ("fn () -> i32 ( 1 >= 2 )", core.ge, core.i32_),
-            ("fn () -> i32 ( 1 != 2 )", core.ne, core.i32_),
+            ("fn (a : i32) -> i32 ( a > 2 )", core.gt, core.i32_),
+            ("fn (a : i32) -> i32 ( a == 2 )", core.eq, core.i32_),
+            ("fn (a : i32) -> i32 ( a <= 2 )", core.le, core.i32_),
+            ("fn (a : i32) -> i32 ( a >= 2 )", core.ge, core.i32_),
+            ("fn (a : i32) -> i32 ( a != 2 )", core.ne, core.i32_),
         ];
         for (src, abstract_op, concrete) in cases {
             let func = {
@@ -2147,6 +2155,50 @@ mod tests {
         assert_eq!(jit, 0, "void yields unit (compiled)");
         assert_eq!(interp_a, 42, "body ran (interpreted)");
         assert_eq!(jit_a, 42, "body ran (compiled)");
+    }
+
+    #[test]
+    fn both_literal_arithmetic_stays_rational() {
+        // `1 + 2` is not committed to i32 at parse time; it folds to a rational literal
+        // (exact), committing only when context types it.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut s = ScopeStack::new();
+        s.push(core.root_scope);
+        let node = {
+            let mut p = Parser::new("1 + 2", &mut store, &mut trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+        // SAFETY: `node` is the folded literal just parsed.
+        unsafe { assert_eq!((*node).ty, core.rational, "1 + 2 stays a rational literal") };
+    }
+
+    #[test]
+    fn comptime_rational_arithmetic_folds_exactly_and_commits_on_context() {
+        // Two comptime literals stay rational and fold exactly: `1000000 * 1000000` is
+        // 10^12 (not an i32 overflow), committing to i64 through the cast; `2e9 + 2e9`
+        // commits to the i64 return type; a decimal fold reduces the fraction exactly.
+        diff_typed_call("fn () -> i64 ( i64(1000000 * 1000000) )", "f()", 1_000_000_000_000);
+        diff_typed_call("fn () -> i64 ( 2000000000 + 2000000000 )", "f()", 4_000_000_000);
+        diff_typed_call("fn () -> i64 ( 2000000000 * 2 )", "f()", 4_000_000_000);
+        // 0.5 + 0.25 = 3/4 exactly, then to f64 bits.
+        diff_typed_call("fn () -> f64 ( f64(0.5 + 0.25) )", "f()", 0.75f64.to_bits() as i64);
+    }
+
+    #[test]
+    fn comptime_rational_comparison_folds() {
+        // Comparing two comptime literals folds to a `bool`, so it works even for values
+        // with no i32 — an i32 compare could not commit `3000000000`.
+        diff_typed_call("fn () -> i32 ( if (3000000000 < 4000000000) (1) else (0) )", "f()", 1);
+        diff_typed_call("fn () -> i32 ( if (5 > 3) (1) else (0) )", "f()", 1);
+    }
+
+    #[test]
+    fn a_comptime_rational_that_overflows_i64_is_rejected() {
+        // The seed's rationals are i64 fractions; an exact product past i64 has no
+        // representation, a clean error rather than a wrong wrapped value.
+        assert_eq!(parse_err("i64(10000000000 * 10000000000)"), ParseError::UncomputableLiteral);
     }
 
     #[test]

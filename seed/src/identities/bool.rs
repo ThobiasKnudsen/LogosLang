@@ -38,6 +38,13 @@ fn literal(cx: &mut Cx, bool_: DyadPtr, v: i32) -> DyadPtr {
     cx.store.alloc_raw(bool_, value)
 }
 
+/// Build a `bool` value node for `v`, physically the `i32` 0/1. Used to fold a
+/// comparison of two comptime rationals into a literal at parse time.
+pub(crate) fn literal_node(store: &mut crate::store::Store, bool_: DyadPtr, v: bool) -> DyadPtr {
+    let value = store.alloc_bytes(&i32::from(v).to_ne_bytes());
+    store.alloc_raw(bool_, value)
+}
+
 /// Lower a `bool` value to its `i32` 0/1 constant, read from its storage. Guards a
 /// null address, mirroring the interpreter's `BadValue`.
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {

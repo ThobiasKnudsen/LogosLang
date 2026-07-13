@@ -751,6 +751,12 @@ impl<'a> Parser<'a> {
         self.expect_close()?;
         self.scopes.pop();
 
+        // A comptime-rational tail expression commits to the declared return type here
+        // (the typed slot), so `fn () -> i64 ( 2000000000 + 2000000000 )` returns i64
+        // rather than molding to the i32 default.
+        // SAFETY: `body`/`output` are valid dyads just built.
+        let body = unsafe { crate::identities::commit_fn_body(self.store, &self.types, body, output)? };
+
         // `bcode` starts null; `compile_fn` installs the exec@ into this slot.
         let value = self.store.alloc_operands(&[input, output, body, std::ptr::null_mut()]);
         Ok(self.store.alloc_raw(fn_type, value))

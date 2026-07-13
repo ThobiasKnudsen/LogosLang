@@ -16,7 +16,7 @@
 
 use cranelift_codegen::ir::Value;
 
-use super::numtype::NumType;
+use super::numtype::{ArithOp, CmpOp, NumType};
 use super::Cx;
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
@@ -42,11 +42,108 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 /// (whether it can later be computed as an `i32` is a use-site question).
 fn build(store: &mut Store, rational: DyadPtr, span: &str) -> Result<DyadPtr, ParseError> {
     let (num, den) = parse_fraction(span).ok_or(ParseError::BadLiteral)?;
+    Ok(build_literal(store, rational, num, den))
+}
+
+/// Build a rational literal node `{ty: rational, value: [num, den]}` from an already
+/// reduced fraction (`den > 0`).
+fn build_literal(store: &mut Store, rational: DyadPtr, num: i64, den: i64) -> DyadPtr {
     let mut bytes = [0u8; 16];
     bytes[..8].copy_from_slice(&num.to_ne_bytes());
     bytes[8..].copy_from_slice(&den.to_ne_bytes());
     let value = store.alloc_bytes(&bytes);
-    Ok(store.alloc_raw(rational, value))
+    store.alloc_raw(rational, value)
+}
+
+/// Fold `op` over two rational **literals** into a new rational literal by exact
+/// fraction arithmetic (DESIGN ›both-uncommitted operands stay `rational`, committing
+/// only when context types them‹). Returns `Ok(None)` if either operand is not a
+/// rational literal (so the operator builds a normal node instead), or
+/// [`ParseError::UncomputableLiteral`] if the exact result overflows the seed's `i64`
+/// num/den (its rationals are `i64` fractions; arbitrary precision is later work).
+pub(crate) fn fold_arith(
+    store: &mut Store,
+    rational: DyadPtr,
+    op: ArithOp,
+    lhs: DyadPtr,
+    rhs: DyadPtr,
+) -> Result<Option<DyadPtr>, ParseError> {
+    // SAFETY: `lhs`/`rhs` are valid dyads; a rational-typed one holds a `[num, den]` blob.
+    unsafe {
+        if (*lhs).ty != rational || (*rhs).ty != rational {
+            return Ok(None);
+        }
+        let (n1, d1) = read_fraction(lhs);
+        let (n2, d2) = read_fraction(rhs);
+        let (n1, d1, n2, d2) =
+            (i128::from(n1), i128::from(d1), i128::from(n2), i128::from(d2));
+        // `d1`,`d2` come from `i64` denominators, so each product fits `i128`; only the
+        // add/sub of the two cross-products can overflow, which `checked_*` catches.
+        let den = d1 * d2;
+        let num = match op {
+            ArithOp::Add => (n1 * d2).checked_add(n2 * d1),
+            ArithOp::Sub => (n1 * d2).checked_sub(n2 * d1),
+            ArithOp::Mul => Some(n1 * n2),
+        }
+        .ok_or(ParseError::UncomputableLiteral)?;
+        let (num, den) = reduce(num, den);
+        match (i64::try_from(num), i64::try_from(den)) {
+            (Ok(num), Ok(den)) => Ok(Some(build_literal(store, rational, num, den))),
+            _ => Err(ParseError::UncomputableLiteral),
+        }
+    }
+}
+
+/// Compare two rational **literals** exactly, returning the boolean or `None` if either
+/// operand is not a rational literal. Cross-multiplies (`den > 0` keeps the direction);
+/// the products fit `i128`, so this never overflows.
+pub(crate) fn compare_literals(
+    rational: DyadPtr,
+    op: CmpOp,
+    lhs: DyadPtr,
+    rhs: DyadPtr,
+) -> Option<bool> {
+    // SAFETY: `lhs`/`rhs` are valid dyads; a rational-typed one holds a `[num, den]` blob.
+    unsafe {
+        if (*lhs).ty != rational || (*rhs).ty != rational {
+            return None;
+        }
+        let (n1, d1) = read_fraction(lhs);
+        let (n2, d2) = read_fraction(rhs);
+        let l = i128::from(n1) * i128::from(d2);
+        let r = i128::from(n2) * i128::from(d1);
+        Some(match op {
+            CmpOp::Lt => l < r,
+            CmpOp::Gt => l > r,
+            CmpOp::Le => l <= r,
+            CmpOp::Ge => l >= r,
+            CmpOp::Eq => l == r,
+            CmpOp::Ne => l != r,
+        })
+    }
+}
+
+/// Reduce an `i128` fraction to lowest terms with a positive denominator.
+fn reduce(mut num: i128, mut den: i128) -> (i128, i128) {
+    if den < 0 {
+        num = -num;
+        den = -den;
+    }
+    if num == 0 {
+        return (0, 1);
+    }
+    let g = gcd128(num.unsigned_abs(), den as u128);
+    (num / g as i128, den / g as i128)
+}
+
+/// Greatest common divisor over `u128` (Euclid); `gcd128(0, d) == d`.
+fn gcd128(mut a: u128, mut b: u128) -> u128 {
+    while b != 0 {
+        let t = a % b;
+        a = b;
+        b = t;
+    }
+    a
 }
 
 /// Lower a rational literal to an `i32` immediate, or fail if it has no exact `i32`
