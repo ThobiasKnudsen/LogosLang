@@ -32,8 +32,8 @@ use crate::dyad::DyadPtr;
 use crate::identities::numtype::{
     is_void_type, numtype_of_type, of_type_node, stored_type, ArithOp, CmpOp, NumType,
 };
-use crate::identities::operands;
-use crate::parse::{FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
+use crate::identities::{numtype_of, operands, Operand};
+use crate::parse::{CoreTypes, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
 
 /// A lowering rule: emit the IR for a node and return the SSA value it computes,
 /// recursing on operands via [`Lowerer::lower`].
@@ -64,6 +64,10 @@ pub enum CompileError {
     /// compiled, so there is no machine address to call. The enclosing function stays
     /// interpreted rather than baking a call to nothing.
     UncompiledCallee(DyadPtr),
+    /// A call's argument count did not match the callee's parameter count — the
+    /// compile-time mirror of `RunError::ArityMismatch`, refused instead of baking a
+    /// call with the wrong signature.
+    ArityMismatch,
     /// Cranelift rejected the setup, function, or finalization.
     Cranelift(String),
 }
@@ -95,8 +99,10 @@ pub struct Lowerer<'a, 'f> {
     /// The id of the function under construction, so a self-call becomes a direct
     /// `call` the JIT patches to this function's own address.
     func_id: FuncId,
-    /// `fn`: a node whose operation is `fn`-typed but has no lowering rule is a call.
-    fn_type: DyadPtr,
+    /// The core type handles: `types.fn_type` tells a call from data (a node whose
+    /// operation is `fn`-typed with no lowering rule is a call), and the rest let a
+    /// call's arguments resolve their numeric types at the ABI boundary.
+    types: CoreTypes,
     /// The function node being compiled (null for a bare expression), so a call to it
     /// is recognized as self-recursion rather than a call to other machine code.
     self_fn: DyadPtr,
@@ -119,7 +125,7 @@ impl Lowerer<'_, '_> {
         }
         // A node whose operation is a user function is a call: `op` is the callee.
         // Leaf natives are in the lower table (handled above); a user function is not.
-        if !op.is_null() && (*op).ty == self.fn_type {
+        if !op.is_null() && (*op).ty == self.types.fn_type {
             return self.lower_call(node);
         }
         Err(CompileError::NotLowerable(op))
@@ -393,25 +399,6 @@ impl Lowerer<'_, '_> {
         self.branch(va, |s| Ok(s.const_i32(1)), |s| unsafe { s.lower(b) })
     }
 
-    /// Lower a call's arguments — its value struct `[arg0 …, null]`, or null for a
-    /// nullary call — to their SSA values, in order.
-    ///
-    /// # Safety
-    /// `node` must be a call node from the store.
-    unsafe fn lower_args(&mut self, node: DyadPtr) -> Result<Vec<Value>, CompileError> {
-        let mut args = Vec::new();
-        let p = (*node).value as *const DyadPtr;
-        if !p.is_null() {
-            let mut i = 0;
-            while !(*p.add(i)).is_null() {
-                let v = self.lower(*p.add(i))?;
-                args.push(v);
-                i += 1;
-            }
-        }
-        Ok(args)
-    }
-
     /// Lower a call `callee(args)`. A self-call (the function being compiled) becomes
     /// a direct Cranelift `call` to this function — a relocation the JIT patches to
     /// this function's own address, which is what makes compiled recursion work. A
@@ -420,55 +407,81 @@ impl Lowerer<'_, '_> {
     /// address, so it cannot be lowered ([`CompileError::UncompiledCallee`]) and the
     /// enclosing function stays interpreted.
     ///
+    /// The boundary follows the uniform convention (see `compile_body`): each
+    /// argument widens into the `i64` bit-container per its *own* resolved type —
+    /// the compiled analogue of `eval_args` reading each argument at its width —
+    /// and the result narrows per the callee's declared return type, a void callee
+    /// yielding unit. The argument count is checked against the callee's parameters
+    /// ([`CompileError::ArityMismatch`], mirroring the interpreter).
+    ///
     /// # Safety
     /// `node` must be a call node from the store whose `ty` is a user function.
     unsafe fn lower_call(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
         let callee = (*node).ty;
-        let args = self.lower_args(node)?;
-        // The calling convention is uniform `(i64…) -> i64` (see `compile_body`): args
-        // and the result are the `i64` bit-container, converted at the boundary. (v1
-        // values are i32; sign-extend/reduce accordingly.)
-        let args64 = self.widen_args(&args);
-
-        if callee == self.self_fn {
-            // Self-recursion: reference the function under construction by its id, so
-            // the JIT resolves the call to this very function's address.
-            let fref = self.module.declare_func_in_func(self.func_id, &mut *self.builder.func);
-            let inst = self.builder.ins().call(fref, &args64);
-            let r = self.builder.inst_results(inst)[0];
-            return Ok(self.builder.ins().ireduce(types::I32, r));
-        }
-
-        // Otherwise the callee must already be compiled: call its machine code
-        // through the address baked in its `bcode` slot.
         let fields = (*callee).value as *const DyadPtr;
         if fields.is_null() {
             return Err(CompileError::UncompiledCallee(callee));
         }
-        let bcode = *fields.add(FN_BCODE);
-        if bcode.is_null() {
-            return Err(CompileError::UncompiledCallee(callee));
+        // The callee's parameter count (input value is `[scope, p0 …, null]`) and
+        // numeric return type (`None` for void).
+        let params = (*(*fields.add(FN_INPUT))).value as *const DyadPtr;
+        let mut param_count = 0;
+        if !params.is_null() {
+            while !(*params.add(param_count + 1)).is_null() {
+                param_count += 1;
+            }
         }
-        let mut sig = self.module.make_signature();
-        for _ in &args64 {
-            sig.params.push(AbiParam::new(types::I64));
-        }
-        sig.returns.push(AbiParam::new(types::I64));
-        let sigref = self.builder.import_signature(sig);
-        let addr = self.builder.ins().iconst(self.ptr_ty, bcode as usize as i64);
-        let inst = self.builder.ins().call_indirect(sigref, addr, &args64);
-        let r = self.builder.inst_results(inst)[0];
-        Ok(self.builder.ins().ireduce(types::I32, r))
-    }
+        let out = *fields.add(FN_OUTPUT);
+        let ret = if is_void_type(out) { None } else { Some(numtype_of_type(out)) };
 
-    /// Widen each `i32` argument to the `i64` bit-container the calling convention
-    /// passes (sign-extend, matching the interpreter's `i64::from(i32)`).
-    fn widen_args(&mut self, args: &[Value]) -> Vec<Value> {
-        let mut out = Vec::with_capacity(args.len());
-        for &a in args {
-            out.push(self.builder.ins().sextend(types::I64, a));
+        // Lower each argument and widen it into its i64 bit-container.
+        let args = (*node).value as *const DyadPtr; // [arg0 …, null] or null
+        let mut args64 = Vec::new();
+        if !args.is_null() {
+            let mut i = 0;
+            while !(*args.add(i)).is_null() {
+                let arg = *args.add(i);
+                let v = self.lower(arg)?;
+                let nt = match numtype_of(&self.types, arg) {
+                    Operand::Concrete(nt) => nt,
+                    // An uncommitted literal lowers as the bare-literal i32 default;
+                    // a non-numeric value (a void call's unit) rides as the i32 unit.
+                    Operand::Literal | Operand::NonNumeric => NumType::I32,
+                };
+                args64.push(widen_to_i64(self.builder, v, nt));
+                i += 1;
+            }
         }
-        out
+        if args64.len() != param_count {
+            return Err(CompileError::ArityMismatch);
+        }
+
+        let inst = if callee == self.self_fn {
+            // Self-recursion: reference the function under construction by its id, so
+            // the JIT resolves the call to this very function's address.
+            let fref = self.module.declare_func_in_func(self.func_id, &mut *self.builder.func);
+            self.builder.ins().call(fref, &args64)
+        } else {
+            // Otherwise the callee must already be compiled: call its machine code
+            // through the address baked in its `bcode` slot.
+            let bcode = *fields.add(FN_BCODE);
+            if bcode.is_null() {
+                return Err(CompileError::UncompiledCallee(callee));
+            }
+            let mut sig = self.module.make_signature();
+            for _ in 0..param_count {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            let sigref = self.builder.import_signature(sig);
+            let addr = self.builder.ins().iconst(self.ptr_ty, bcode as usize as i64);
+            self.builder.ins().call_indirect(sigref, addr, &args64)
+        };
+        let r = self.builder.inst_results(inst)[0];
+        Ok(match ret {
+            Some(nt) => narrow_from_i64(self.builder, r, nt),
+            None => self.const_i32(0),
+        })
     }
 }
 
@@ -515,7 +528,7 @@ impl Compiled {
 /// every call to the returned [`Compiled`].
 pub unsafe fn compile_fn(
     lower: &LowerTable,
-    fn_type: DyadPtr,
+    types: CoreTypes,
     fn_node: DyadPtr,
 ) -> Result<Compiled, CompileError> {
     let fields = (*fn_node).value as *const DyadPtr;
@@ -539,7 +552,7 @@ pub unsafe fn compile_fn(
     let out = *fields.add(FN_OUTPUT);
     let ret = if is_void_type(out) { None } else { Some(numtype_of_type(out)) };
     // The fn node is its own self-reference: a call to it inside `body` is recursion.
-    let compiled = compile_body(lower, fn_type, fn_node, body, &params, ret)?;
+    let compiled = compile_body(lower, types, fn_node, body, &params, ret)?;
     // Install the exec@ (a machine-code address) into the node's bcode slot, punned
     // into the pointer-sized cell. `run` reads it back and calls it.
     let bcode_slot = ((*fn_node).value as *mut DyadPtr).add(FN_BCODE);
@@ -554,12 +567,12 @@ pub unsafe fn compile_fn(
 /// See [`compile_body`].
 pub unsafe fn compile_nullary_i32(
     lower: &LowerTable,
-    fn_type: DyadPtr,
+    types: CoreTypes,
     root: DyadPtr,
 ) -> Result<Compiled, CompileError> {
     // A bare expression is not a function, so there is no self to recurse into; v1
     // bare expressions are i32 (or bool, physically i32).
-    compile_body(lower, fn_type, std::ptr::null_mut(), root, &[], Some(NumType::I32))
+    compile_body(lower, types, std::ptr::null_mut(), root, &[], Some(NumType::I32))
 }
 
 /// Compile `root` as a function of `params`, mapping each parameter node to its
@@ -574,7 +587,7 @@ pub unsafe fn compile_nullary_i32(
 /// addresses are baked into the code).
 pub(crate) unsafe fn compile_body(
     lower: &LowerTable,
-    fn_type: DyadPtr,
+    types: CoreTypes,
     self_fn: DyadPtr,
     root: DyadPtr,
     params: &[DyadPtr],
@@ -640,7 +653,7 @@ pub(crate) unsafe fn compile_body(
                 params: &param_map,
                 module: &mut module,
                 func_id,
-                fn_type,
+                types,
                 self_fn,
             };
             lw.lower(root)?

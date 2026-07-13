@@ -858,7 +858,7 @@ mod tests {
 
         // Compile `add` (installs parameterized bcode); keep the artifact alive.
         // SAFETY: `add` is the fn node just built and outlives the call.
-        let _compiled = unsafe { compile_fn(&core.lower, core.fn_type,add) }.unwrap();
+        let _compiled = unsafe { compile_fn(&core.lower, core.types(),add) }.unwrap();
         // JIT: the same `run(call)` now evaluates the arguments and calls native code.
         let jit = unsafe { rt.run(call) }.unwrap();
 
@@ -1141,7 +1141,7 @@ mod tests {
         // Reset a to 0, then JIT-compile and call, and diff against the oracle.
         unsafe { std::ptr::write_unaligned(a_val as *mut i32, 0) };
         // SAFETY: `root`/`a` live in `store`, which outlives the call.
-        let compiled = unsafe { compile_nullary_i32(&core.lower, core.fn_type,root) }.unwrap();
+        let compiled = unsafe { compile_nullary_i32(&core.lower, core.types(),root) }.unwrap();
         let jit = unsafe { compiled.call() };
         let jit_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
 
@@ -1193,7 +1193,7 @@ mod tests {
         // to the compiled body — and diff the result and the side effect on `a`.
         unsafe { std::ptr::write_unaligned(a_val as *mut i64, 0) };
         // SAFETY: `func`/`a` live in `store`, which outlives the call.
-        let _c = unsafe { compile_fn(&core.lower, core.fn_type, func) }.unwrap();
+        let _c = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         let jit_a = unsafe { std::ptr::read_unaligned(a_val as *const i64) };
 
@@ -1243,7 +1243,7 @@ mod tests {
 
         // Compile installs the exec@ on `func`; keep the artifact alive for the run.
         // SAFETY: `func` is the fn node just built and outlives the call.
-        let _compiled = unsafe { compile_fn(&core.lower, core.fn_type,func) }.unwrap();
+        let _compiled = unsafe { compile_fn(&core.lower, core.types(),func) }.unwrap();
         unsafe {
             let bcode = *((*func).value as *const DyadPtr).add(FN_BCODE);
             assert!(!bcode.is_null()); // bcode installed on the node
@@ -1280,7 +1280,7 @@ mod tests {
         // SAFETY: `node` is the rational literal just parsed.
         assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::UncomputableLiteral));
         // SAFETY: same node; compilation reports the same outcome as the oracle.
-        let compiled = unsafe { compile_nullary_i32(&core.lower, core.fn_type,node) };
+        let compiled = unsafe { compile_nullary_i32(&core.lower, core.types(),node) };
         assert!(matches!(compiled, Err(crate::compile::CompileError::UncomputableLiteral)));
     }
 
@@ -1335,7 +1335,7 @@ mod tests {
         };
         // Compilation refuses the arity up front.
         // SAFETY: `add4` is the fn node just built.
-        let result = unsafe { compile_fn(&core.lower, core.fn_type,add4) };
+        let result = unsafe { compile_fn(&core.lower, core.types(),add4) };
         assert!(matches!(result, Err(crate::compile::CompileError::UnsupportedArity(4))));
 
         // Interpreted, the same function computes (bcode was never installed).
@@ -1376,7 +1376,7 @@ mod tests {
         assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::BadValue));
         // Compiler: BadValue, not a baked load from address 0.
         // SAFETY: same node; the lowering guards the null storage.
-        let compiled = unsafe { compile_nullary_i32(&core.lower, core.fn_type,node) };
+        let compiled = unsafe { compile_nullary_i32(&core.lower, core.types(),node) };
         assert!(matches!(compiled, Err(crate::compile::CompileError::BadValue)));
     }
 
@@ -1419,7 +1419,7 @@ mod tests {
         // SAFETY: `call`/`func`/body are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` is the fn node just built and outlives the call.
-        let _compiled = unsafe { compile_fn(&core.lower, core.fn_type, func) }.unwrap();
+        let _compiled = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, 42);
         assert_eq!(jit, interp);
@@ -1449,7 +1449,7 @@ mod tests {
             // SAFETY: `node` is a valid `bool` literal.
             assert_eq!(unsafe { rt.run(node) }.unwrap(), expect);
             // SAFETY: same node; the `bool` lowering bakes its constant.
-            let compiled = unsafe { compile_nullary_i32(&core.lower, core.fn_type,node) }.unwrap();
+            let compiled = unsafe { compile_nullary_i32(&core.lower, core.types(),node) }.unwrap();
             assert_eq!(unsafe { compiled.call() }, expect);
         }
     }
@@ -1472,7 +1472,7 @@ mod tests {
         // SAFETY: `call`/`func`/body are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` is the fn node just built and outlives the call.
-        let _compiled = unsafe { compile_fn(&core.lower, core.fn_type,func) }.unwrap();
+        let _compiled = unsafe { compile_fn(&core.lower, core.types(),func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, expect, "interpreter: {src}");
         assert_eq!(jit, interp, "jit != interpreter: {src}");
@@ -1782,7 +1782,7 @@ mod tests {
             // SAFETY: `call`/`func`/body are valid nodes just parsed.
             let interp = unsafe { rt.run(call) }.unwrap();
             // SAFETY: `func` is the fn node just built and outlives the call.
-            let _compiled = unsafe { compile_fn(&core.lower, core.fn_type,func) }.unwrap();
+            let _compiled = unsafe { compile_fn(&core.lower, core.types(),func) }.unwrap();
             let jit = unsafe { rt.run(call) }.unwrap();
             assert_eq!(interp, expect, "interpreter n={arg}");
             assert_eq!(jit, interp, "jit != interpreter n={arg}");
@@ -1855,7 +1855,7 @@ mod tests {
         // Compiled: the same effect and unit on both paths.
         unsafe { std::ptr::write_unaligned(a_val as *mut i32, 41) };
         // SAFETY: `func`/`a` live in `store`, which outlives the call.
-        let _c = unsafe { compile_fn(&core.lower, core.fn_type, func) }.unwrap();
+        let _c = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 0, "unit (compiled)");
         assert_eq!(unsafe { std::ptr::read_unaligned(a_val as *const i32) }, 42);
         unsafe { std::ptr::write_unaligned(a_val as *mut i32, 100) };
@@ -1913,9 +1913,212 @@ mod tests {
         // Compiled: reset and diff the same effect.
         unsafe { std::ptr::write_unaligned(a_val as *mut i32, 5) };
         // SAFETY: `func`/`a` live in `store`, which outlives the call.
-        let _c = unsafe { compile_fn(&core.lower, core.fn_type, func) }.unwrap();
+        let _c = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 0);
         assert_eq!(unsafe { std::ptr::read_unaligned(a_val as *const i32) }, 7);
+    }
+
+    #[test]
+    fn assignment_commits_a_literal_to_the_targets_type() {
+        // The rhs literal commits to the variable's declared type at parse time, so
+        // an i64 target takes a value past i32 exactly, in both tiers.
+        diff_var_fn(NumType::I64, 0, "fn () -> i64 ( a = 5000000000  a )", 5_000_000_000);
+        // And a literal with no exact value in the target is a parse error.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut s = ScopeStack::new();
+        s.push(core.root_scope);
+        let a = store.alloc_raw(core.i32_, std::ptr::null_mut());
+        s.declare(&mut trie, "a", a).unwrap();
+        let mut p = Parser::new("a = 3.5", &mut store, &mut trie, &core.metas, core.types(), s);
+        assert_eq!(p.parse_expression(), Err(ParseError::UncomputableLiteral));
+    }
+
+    #[test]
+    fn compiled_calls_between_compiled_functions_are_width_general() {
+        // The outer's compiled call passes i64 containers and reads back an i64
+        // result: 2e9 * 3 = 6e9 crosses i32, so an i32-assuming boundary would
+        // truncate. Oracle: outer interpreted over the compiled callee.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let mul = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "fn (x : i64, y : i64) -> i64 ( x * y )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap()
+        };
+        let outer = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            s.declare(&mut trie, "mul", mul).unwrap();
+            let mut p = Parser::new(
+                "fn () -> i64 ( mul(2000000000, 3) )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap()
+        };
+        let call = store.alloc_raw(outer, std::ptr::null_mut());
+
+        // SAFETY: `mul` is the fn node just built and outlives every call.
+        let _c_mul = unsafe { compile_fn(&core.lower, core.types(), mul) }.unwrap();
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+        // SAFETY: `call`/`outer` are valid nodes; the callee's artifact is alive.
+        let interp = unsafe { rt.run(call) }.unwrap();
+        // SAFETY: `outer` is the fn node just built; both artifacts stay alive.
+        let _c_outer = unsafe { compile_fn(&core.lower, core.types(), outer) }.unwrap();
+        let jit = unsafe { rt.run(call) }.unwrap();
+
+        assert_eq!(interp, 6_000_000_000, "interpreter over compiled callee");
+        assert_eq!(jit, interp, "fully compiled chain != oracle");
+    }
+
+    #[test]
+    fn compiled_calls_pass_floats_across_the_boundary() {
+        // An f64 argument rides the container as raw bits (a bitcast, not an
+        // extend), so a float callee is the other ABI shape worth its own diff.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let a_val = store.alloc_bytes(&2.5f64.to_bits().to_ne_bytes());
+        let a = store.alloc_raw(core.numtypes[NumType::F64 as usize], a_val);
+        scopes.declare(&mut trie, "a", a).unwrap();
+
+        let g = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "fn (x : f64) -> f64 ( x + 0.5 )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap()
+        };
+        scopes.declare(&mut trie, "g", g).unwrap();
+        let outer = {
+            let mut p = Parser::new(
+                "fn () -> f64 ( g(a) )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                scopes,
+            );
+            p.parse_expression().unwrap()
+        };
+        let call = store.alloc_raw(outer, std::ptr::null_mut());
+
+        // SAFETY: `g` is the fn node just built and outlives every call.
+        let _c_g = unsafe { compile_fn(&core.lower, core.types(), g) }.unwrap();
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+        // SAFETY: `call`/`outer`/`a` are valid nodes; the callee's artifact is alive.
+        let interp = unsafe { rt.run(call) }.unwrap();
+        // SAFETY: `outer` is the fn node just built; both artifacts stay alive.
+        let _c_outer = unsafe { compile_fn(&core.lower, core.types(), outer) }.unwrap();
+        let jit = unsafe { rt.run(call) }.unwrap();
+
+        assert_eq!(interp, 3.0f64.to_bits() as i64, "interpreter over compiled callee");
+        assert_eq!(jit, interp, "fully compiled chain != oracle");
+    }
+
+    #[test]
+    fn compiled_self_recursion_is_width_general() {
+        // A recursive i64 fn compiled whole: the self-call passes and returns i64
+        // containers, and the base case alone exceeds i32.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let s_fn = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "s := fn (n : i64) -> i64 ( if (n < 1) (2000000000 + 2000000000) else (s(n - 1)) )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap()
+        };
+
+        let call = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new("s(3)", &mut store, &mut trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+        // Oracle: interpret the recursion (bcode not installed yet).
+        // SAFETY: `call` applies the bound `s` to a literal.
+        let interp = unsafe { rt.run(call) }.unwrap();
+        // Compile (installs bcode; the artifact must outlive the compiled call).
+        // SAFETY: `s_fn` is the fn node just built and outlives every call.
+        let _c = unsafe { compile_fn(&core.lower, core.types(), s_fn) }.unwrap();
+        let jit = unsafe { rt.run(call) }.unwrap();
+        assert_eq!(interp, 4_000_000_000, "interpreter");
+        assert_eq!(jit, interp, "compiled recursion != interpreter");
+    }
+
+    #[test]
+    fn compiled_call_with_wrong_arity_refuses_to_compile() {
+        // `add(40)` for a two-parameter callee: the interpreter errors at run time;
+        // compiling the caller refuses up front instead of baking a bad call.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let add = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "fn (x : i32, y : i32) -> i32 ( x + y )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap()
+        };
+        // SAFETY: `add` is the fn node just built.
+        let _c_add = unsafe { compile_fn(&core.lower, core.types(), add) }.unwrap();
+        let outer = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            s.declare(&mut trie, "add", add).unwrap();
+            let mut p = Parser::new(
+                "fn () -> i32 ( add(40) )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap()
+        };
+        // SAFETY: `outer` is the fn node just built.
+        let result = unsafe { compile_fn(&core.lower, core.types(), outer) };
+        assert!(matches!(result, Err(crate::compile::CompileError::ArityMismatch)));
     }
 
     #[test]
@@ -1953,7 +2156,7 @@ mod tests {
         // SAFETY: `node` is the sequence just parsed.
         assert_eq!(unsafe { rt.run(node) }.unwrap(), 6);
         // SAFETY: same node; the sequence lowering yields its trailing value.
-        let compiled = unsafe { compile_nullary_i32(&core.lower, core.fn_type, node) }.unwrap();
+        let compiled = unsafe { compile_nullary_i32(&core.lower, core.types(), node) }.unwrap();
         assert_eq!(unsafe { compiled.call() }, 6);
 
         let mut s = ScopeStack::new();
@@ -2135,7 +2338,7 @@ mod tests {
 
         // Compile `fact` once; the self-call is installed as a machine call.
         // SAFETY: `fact` is the fn node just built and outlives every call.
-        let _compiled = unsafe { compile_fn(&core.lower, core.fn_type, fact) }.unwrap();
+        let _compiled = unsafe { compile_fn(&core.lower, core.types(), fact) }.unwrap();
         // SAFETY: reading the installed bcode slot of the fn node.
         unsafe {
             let bcode = *((*fact).value as *const DyadPtr).add(FN_BCODE);
@@ -2197,7 +2400,7 @@ mod tests {
 
         // Compile `add` first so `outer`'s call has a machine address to bake.
         // SAFETY: `add` is the fn node just built and outlives every call.
-        let _compiled_add = unsafe { compile_fn(&core.lower, core.fn_type, add) }.unwrap();
+        let _compiled_add = unsafe { compile_fn(&core.lower, core.types(), add) }.unwrap();
 
         let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
         // Oracle: interpret `outer` (its body calls the already-compiled `add`).
@@ -2206,7 +2409,7 @@ mod tests {
 
         // Compile `outer`: `add(40, 2)` becomes a call_indirect to `add`'s address.
         // SAFETY: `outer` is the fn node just built; both compiled artifacts are alive.
-        let _compiled_outer = unsafe { compile_fn(&core.lower, core.fn_type, outer) }.unwrap();
+        let _compiled_outer = unsafe { compile_fn(&core.lower, core.types(), outer) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
 
         assert_eq!(interp, 42);
@@ -2236,7 +2439,7 @@ mod tests {
         // SAFETY: `call`/`func` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` is the fn node just built; the artifact outlives the call.
-        let _c = unsafe { compile_fn(&core.lower, core.fn_type, func) }.unwrap();
+        let _c = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, expect, "interpreter: {fn_src} / {call_src}");
         assert_eq!(jit, interp, "jit != interpreter: {fn_src} / {call_src}");
@@ -2289,7 +2492,7 @@ mod tests {
         // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func`/`a` live in `store`, which outlives the call.
-        let _c = unsafe { compile_fn(&core.lower, core.fn_type, func) }.unwrap();
+        let _c = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, expect, "interpreter: {fn_src}");
         assert_eq!(jit, interp, "jit != interpreter: {fn_src}");
@@ -2413,7 +2616,7 @@ mod tests {
         // Reset a, compile (installs bcode), run again — jumps to the compiled body.
         unsafe { std::ptr::write_unaligned(a_val as *mut i32, 41) };
         // SAFETY: `func`/`a` live in `store`, which outlives the call.
-        let _c = unsafe { compile_fn(&core.lower, core.fn_type, func) }.unwrap();
+        let _c = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         let jit_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
         assert_eq!(interp, 0, "void yields unit (interpreted)");

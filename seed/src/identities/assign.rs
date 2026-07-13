@@ -7,23 +7,49 @@
 
 use cranelift_codegen::ir::Value;
 
-use super::numtype::{numtype_of_type, write_scalar};
-use super::{build_binary, operands, Cx};
+use super::numtype::{numtype_of_type, of_type_node, write_scalar};
+use super::{build_binary, commit_if_literal, is_numtype_node, operands, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, Construct};
+use crate::parse::{Assoc, Construct, CoreTypes, ParseError};
 use crate::run::{RunError, Runtime};
+use crate::store::Store;
 
 /// Register `=`: spelling, parse precedence, run bcode, and lowering.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let id = cx.store.alloc_raw(cx.fn_type, std::ptr::null_mut());
     cx.trie.insert("=", IdContext::new(id, cx.root_scope));
     cx.metas
-        .insert(id, Construct::Infix { precedence: 1.0, assoc: Assoc::Right, build: build_binary });
+        .insert(id, Construct::Infix { precedence: 1.0, assoc: Assoc::Right, build });
     cx.bcode.insert(id, run);
     cx.lower.insert(id, lower);
     id
+}
+
+/// Build `lhs = rhs`, committing an uncommitted literal right side to the target
+/// variable's declared numeric type — the typed slot (DESIGN ›committing to a
+/// concrete type only when it finally lands in a typed slot‹) — so `a = 10` writes
+/// at `a`'s width in both tiers and `a = 5000000000` into an i64 is exact. A
+/// literal with no exact value in the target is [`ParseError::UncomputableLiteral`]
+/// at parse time; a non-literal right side passes through unchanged.
+fn build(
+    store: &mut Store,
+    types: &CoreTypes,
+    op: DyadPtr,
+    lhs: DyadPtr,
+    rhs: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
+    // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
+    let rhs = unsafe {
+        if (*rhs).ty == types.rational && is_numtype_node(types, (*lhs).ty) {
+            let nt = of_type_node((*lhs).ty);
+            commit_if_literal(store, rhs, &Operand::Literal, (*lhs).ty, nt)?
+        } else {
+            rhs
+        }
+    };
+    build_binary(store, types, op, lhs, rhs)
 }
 
 /// Run: evaluate the right operand, write it into the left operand's storage at that
