@@ -163,6 +163,34 @@ pub(crate) fn mold(node: DyadPtr) -> Option<i32> {
     mold_to(node, NumType::I32).map(|b| b as i32)
 }
 
+/// Cast a rational literal to `nt` with truncating/wrapping `as` semantics — the
+/// explicit-conversion counterpart to [`mold_to`]'s exact commit, for a `type(literal)`
+/// constructor. An integer target takes the fraction's truncated-toward-zero integer
+/// part, then wraps to width; a float target takes `num/den`. Returns the value's `i64`
+/// bit-container, or `None` for a malformed rational (null or zero denominator).
+pub(crate) fn cast_to(node: DyadPtr, nt: NumType) -> Option<i64> {
+    // SAFETY: called only on rational-typed nodes, whose value is the [num, den] blob.
+    let p = unsafe { (*node).value };
+    if p.is_null() {
+        return None;
+    }
+    let (num, den) = unsafe { read_fraction(node) };
+    if den == 0 {
+        return None;
+    }
+    if nt.is_float() {
+        let v = num as f64 / den as f64;
+        return Some(match nt {
+            NumType::F32 => i64::from((v as f32).to_bits()),
+            NumType::F64 => v.to_bits() as i64,
+            _ => unreachable!("nt is a float here"),
+        });
+    }
+    // Integer target: the truncated-toward-zero integer part (`den > 0`), cast to the
+    // target width through the shared cast so it matches a runtime `i64`→`nt` convert.
+    Some(super::numtype::apply_cast(NumType::I64, nt, num / den))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

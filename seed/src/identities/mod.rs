@@ -40,6 +40,7 @@ mod bool_mod;
 mod if_mod;
 mod and;
 mod assign;
+mod convert;
 mod declare;
 mod eq;
 mod ge;
@@ -77,6 +78,9 @@ pub struct Core {
     pub bool_: DyadPtr,
     /// `=` (assignment); a function.
     pub assign: DyadPtr,
+    /// `convert`: the shared scalar numeric conversion, built from a `type(value)`
+    /// constructor and carrying its source/target types per node.
+    pub convert: DyadPtr,
     /// `+` (addition); resolves and stores its operand type per node.
     pub plus: DyadPtr,
     /// `-` (subtraction).
@@ -157,6 +161,9 @@ impl Core {
         let bool_ = bool_mod::register(&mut cx);
         let rational = rational::register(&mut cx);
         let assign = assign::register(&mut cx);
+        // The shared scalar numeric conversion (`i32(a)`, `f64(x)`, …). No spelling; the
+        // parser builds conversion nodes from the `type(value)` constructor surface.
+        let convert = convert::register(&mut cx);
         // The numeric operators. Each resolves its operand type at parse time and
         // stores it in the node's value slot; run/compile switch on it (see
         // `numtype`), so one identity per operator serves every numeric type.
@@ -191,6 +198,7 @@ impl Core {
             numtypes,
             bool_,
             assign,
+            convert,
             plus,
             minus,
             times,
@@ -223,6 +231,7 @@ impl Core {
             numtypes: self.numtypes,
             bool_: self.bool_,
             rational: self.rational,
+            convert: self.convert,
             plus: self.plus,
             minus: self.minus,
             times: self.times,
@@ -300,6 +309,10 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
     }
     // An arithmetic operator's result carries the type it stored at operand[2].
     if ty == types.plus || ty == types.minus || ty == types.times {
+        return Operand::Concrete(numtype::of_type_node(numtype::stored_type(node)));
+    }
+    // A conversion's result is its target type (stored at operand[2]).
+    if ty == types.convert {
         return Operand::Concrete(numtype::of_type_node(numtype::stored_type(node)));
     }
     // A numeric variable/value: its type is one of the numeric type nodes.
@@ -381,6 +394,52 @@ unsafe fn commit_if_literal(
         Ok(store.alloc_raw(type_node, value))
     } else {
         Ok(node)
+    }
+}
+
+/// Whether `node` is one of the registered numeric type nodes (`i32`, `f64`, …). The
+/// parser uses this to recognize a `type(value)` conversion at a call site.
+pub(crate) fn is_numtype_node(types: &CoreTypes, node: DyadPtr) -> bool {
+    types.numtypes.iter().any(|&t| !t.is_null() && t == node)
+}
+
+/// Build a scalar numeric conversion `target(operand)` — the `type(value)` constructor
+/// and the only cross-type path (DESIGN ›numeric conversion is the type constructor
+/// consuming a value‹). A literal operand folds now, with `as` semantics, into a
+/// `target`-typed value; a runtime operand of a *different* concrete type becomes a
+/// [`convert`] node; the same concrete type passes through unchanged. Exactly one
+/// numeric operand is required, else [`ParseError::BadCast`].
+///
+/// # Safety
+/// `target` is a numeric type node; `args` are valid dyads from the store.
+pub(crate) unsafe fn build_cast(
+    store: &mut Store,
+    types: &CoreTypes,
+    target: DyadPtr,
+    args: &[DyadPtr],
+) -> Result<DyadPtr, ParseError> {
+    let [operand] = args else {
+        return Err(ParseError::BadCast);
+    };
+    let operand = *operand;
+    let to = numtype::of_type_node(target);
+    match numtype_of(types, operand) {
+        // A runtime value: a same-type cast is a no-op, a different type converts.
+        Operand::Concrete(from) => {
+            if from == to {
+                Ok(operand)
+            } else {
+                let from_node = types.numtypes[from as usize];
+                Ok(convert::build_convert(store, types.convert, operand, from_node, target))
+            }
+        }
+        // A literal: fold it into a `target`-typed value now, with `as` semantics.
+        Operand::Literal => {
+            let bits = rational::cast_to(operand, to).ok_or(ParseError::UncomputableLiteral)?;
+            let value = store.alloc_bytes(&bits.to_ne_bytes()[..to.bytes()]);
+            Ok(store.alloc_raw(target, value))
+        }
+        Operand::NonNumeric => Err(ParseError::BadCast),
     }
 }
 
@@ -1971,6 +2030,62 @@ mod tests {
         // i32 bool the comparison yields. a = 2.5.
         diff_var_fn(NumType::F64, 2.5f64.to_bits() as i64, "fn () -> i32 ( if (a < 3.0) (100) else (200) )", 100);
         diff_var_fn(NumType::F64, 2.5f64.to_bits() as i64, "fn () -> i32 ( if (a < 2.0) (100) else (200) )", 200);
+    }
+
+    /// Parse `src` at expression scope and return the error it fails with.
+    fn parse_err(src: &str) -> ParseError {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut s = ScopeStack::new();
+        s.push(core.root_scope);
+        let mut p = Parser::new(src, &mut store, &mut trie, &core.metas, core.types(), s);
+        p.parse_expression().unwrap_err()
+    }
+
+    #[test]
+    fn casts_between_integer_widths_match_between_tiers() {
+        // Widen sign-extends (i8 255 = -1, kept as i32 -1); narrow drops high bits
+        // (i32 300 -> i8 44); a same-width reinterpret keeps the bits (u32 3e9 -> i32
+        // is the negative reading); a same-type cast is the operand unchanged.
+        diff_typed_call("fn (x : i8) -> i32 ( i32(x) )", "f(255)", -1);
+        diff_typed_call("fn (x : i32) -> i8 ( i8(x) )", "f(300)", 44);
+        diff_typed_call("fn (x : i8) -> u8 ( u8(x) )", "f(255)", 255);
+        diff_typed_call("fn (x : i32) -> i32 ( i32(x) )", "f(42)", 42);
+        // u32 3e9 reinterpreted as i32: 3_000_000_000 - 2^32.
+        diff_var_fn(NumType::U32, 3_000_000_000, "fn () -> i32 ( i32(a) )", 3_000_000_000i64 - 4_294_967_296);
+        // u64 300 -> u8 wraps to 44.
+        diff_var_fn(NumType::U64, 300, "fn () -> u8 ( u8(a) )", 44);
+    }
+
+    #[test]
+    fn casts_between_int_and_float_match_between_tiers() {
+        // int -> float is exact for small values; float -> int truncates toward zero and
+        // *saturates* out of range (matching Rust `as`, so both tiers agree).
+        diff_typed_call("fn (x : i32) -> f64 ( f64(x) )", "f(3)", 3.0f64.to_bits() as i64);
+        diff_var_fn(NumType::F64, 3.7f64.to_bits() as i64, "fn () -> i32 ( i32(a) )", 3);
+        diff_var_fn(NumType::F64, (-3.7f64).to_bits() as i64, "fn () -> i32 ( i32(a) )", -3);
+        diff_var_fn(NumType::F64, 1e20f64.to_bits() as i64, "fn () -> i32 ( i32(a) )", i64::from(i32::MAX));
+        diff_var_fn(NumType::F64, (-1e20f64).to_bits() as i64, "fn () -> i32 ( i32(a) )", i64::from(i32::MIN));
+        // f64 -> f32 demote.
+        diff_var_fn(NumType::F64, 1.5f64.to_bits() as i64, "fn () -> f32 ( f32(a) )", i64::from(1.5f32.to_bits()));
+    }
+
+    #[test]
+    fn casts_fold_literal_operands() {
+        // A literal operand converts at parse time with `as` semantics: an integer stays
+        // exact, a decimal truncates toward zero, a float target takes the value.
+        diff_typed_call("fn () -> i32 ( i32(3) )", "f()", 3);
+        diff_typed_call("fn () -> i32 ( i32(3.5) )", "f()", 3);
+        diff_typed_call("fn () -> u8 ( u8(300) )", "f()", 44);
+        diff_typed_call("fn () -> f64 ( f64(2) )", "f()", 2.0f64.to_bits() as i64);
+    }
+
+    #[test]
+    fn malformed_casts_are_rejected() {
+        assert_eq!(parse_err("i32()"), ParseError::BadCast); // no operand
+        assert_eq!(parse_err("i32(1, 2)"), ParseError::BadCast); // too many operands
+        assert_eq!(parse_err("i32(struct ())"), ParseError::BadCast); // non-numeric operand
     }
 
     #[test]

@@ -294,6 +294,73 @@ fn apply_compare(op: CmpOp, ty: NumType, l: i64, r: i64) -> i64 {
     }
 }
 
+/// Cast the `i64` bit-container `v`, holding a `from`-typed value, to `to`, applying
+/// Rust `as` semantics: int↔int wrap/extend, int→float round-to-nearest, float→int
+/// saturate (NaN→0), float↔float round. Returns the result's bit-container. This is the
+/// interpreter's cast; the compiler's [`crate::compile::Lowerer::emit_cast`] must stay
+/// bit-for-bit identical, since the interpreter is the compiler's oracle.
+pub(crate) fn apply_cast(from: NumType, to: NumType, v: i64) -> i64 {
+    use NumType::*;
+    if from.is_float() {
+        let f = match from {
+            F32 => f64::from(f32::from_bits(v as u32)),
+            F64 => f64::from_bits(v as u64),
+            _ => unreachable!("from is a float here"),
+        };
+        return encode_from_f64(to, f);
+    }
+    // Decode the source integer to an exact `i128` (every int width fits), reading the
+    // container at the source's width and signedness.
+    let i: i128 = match from {
+        I8 => i128::from(v as i8),
+        I16 => i128::from(v as i16),
+        I32 => i128::from(v as i32),
+        I64 => i128::from(v),
+        U8 => i128::from(v as u8),
+        U16 => i128::from(v as u16),
+        U32 => i128::from(v as u32),
+        U64 => i128::from(v as u64),
+        _ => unreachable!("from is an int here"),
+    };
+    encode_from_i128(to, i)
+}
+
+/// Encode an exact integer into `to`'s bit-container (Rust `as` from `i128`: an int
+/// target wraps to its width, a float target rounds to nearest).
+fn encode_from_i128(to: NumType, i: i128) -> i64 {
+    use NumType::*;
+    match to {
+        I8 => i64::from(i as i8),
+        I16 => i64::from(i as i16),
+        I32 => i64::from(i as i32),
+        I64 => i as i64,
+        U8 => i64::from(i as u8),
+        U16 => i64::from(i as u16),
+        U32 => i64::from(i as u32),
+        U64 => (i as u64) as i64,
+        F32 => i64::from((i as f32).to_bits()),
+        F64 => (i as f64).to_bits() as i64,
+    }
+}
+
+/// Encode a float into `to`'s bit-container (Rust `as` from `f64`: an int target
+/// saturates with NaN→0, an `f32` target rounds to nearest).
+fn encode_from_f64(to: NumType, f: f64) -> i64 {
+    use NumType::*;
+    match to {
+        I8 => i64::from(f as i8),
+        I16 => i64::from(f as i16),
+        I32 => i64::from(f as i32),
+        I64 => f as i64,
+        U8 => i64::from(f as u8),
+        U16 => i64::from(f as u16),
+        U32 => i64::from(f as u32),
+        U64 => (f as u64) as i64,
+        F32 => i64::from((f as f32).to_bits()),
+        F64 => f.to_bits() as i64,
+    }
+}
+
 /// Run a binary arithmetic operator: read its stored type, evaluate both operands to
 /// their bit-containers, and apply the arithmetic in that type. The shared `run` for
 /// `+`/`-`/`*`.

@@ -339,6 +339,9 @@ pub struct CoreTypes {
     pub bool_: DyadPtr,
     /// `rational_number`: a numeric literal, molds to a concrete numeric type.
     pub rational: DyadPtr,
+    /// `convert`: the shared scalar numeric conversion; a conversion node's result type
+    /// is its target (recognized as a numeric-producing operand).
+    pub convert: DyadPtr,
     /// `+` (addition); recognized as a numeric-producing operand.
     pub plus: DyadPtr,
     /// `-` (subtraction); recognized as a numeric-producing operand.
@@ -491,6 +494,9 @@ pub enum ParseError {
     /// A number literal had no exact value in the type it was committed to (a decimal
     /// molded to an integer, or an out-of-range integer).
     UncomputableLiteral,
+    /// A numeric conversion `type(value)` was malformed: not exactly one operand, or a
+    /// non-numeric operand (there is nothing to convert).
+    BadCast,
 }
 
 /// Build a call node `{ty: callee, value: [args…, null]}`, the application
@@ -948,8 +954,16 @@ impl<'a> Parser<'a> {
                         let callee = tape.pop().and_then(|c| c.as_dyad()).unwrap();
                         let args = self.parse_arg_list()?;
                         self.expect_close()?;
-                        let call = build_call(self.store, callee, &args);
-                        tape.push(Cell::Dyad(call));
+                        // A numeric type node applied to a value is a conversion
+                        // (`i32(a)`), the type constructor consuming its operand; any
+                        // other callee is an ordinary call.
+                        let node = if crate::identities::is_numtype_node(&self.types, callee) {
+                            // SAFETY: `callee` is a numtype node; `args` are reduced dyads.
+                            unsafe { crate::identities::build_cast(self.store, &self.types, callee, &args)? }
+                        } else {
+                            build_call(self.store, callee, &args)
+                        };
+                        tape.push(Cell::Dyad(node));
                     } else {
                         let body = self.parse_expression()?;
                         self.expect_close()?;

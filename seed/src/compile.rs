@@ -233,6 +233,58 @@ impl Lowerer<'_, '_> {
         }
     }
 
+    /// Emit the machine code casting `v` (a native `from` value) to `to`, matching
+    /// [`crate::identities::numtype::apply_cast`] (Rust `as`): integer widen/narrow,
+    /// int↔float conversion (float→int **saturating**, so it agrees with Rust rather
+    /// than trapping), and float↔float promote/demote. The result is the native `to`
+    /// value; the ABI boundary re-encodes it into the `i64` container.
+    pub(crate) fn emit_cast(&mut self, from: NumType, to: NumType, v: Value) -> Value {
+        let tct = to.cranelift_type();
+        match (from.is_float(), to.is_float()) {
+            // int -> int: same width is a no-op (the bits are unchanged; signedness is
+            // the consumer's concern), else extend or reduce to the target width.
+            (false, false) => {
+                if to.bytes() == from.bytes() {
+                    v
+                } else if to.bytes() > from.bytes() {
+                    if from.is_signed_int() {
+                        self.builder.ins().sextend(tct, v)
+                    } else {
+                        self.builder.ins().uextend(tct, v)
+                    }
+                } else {
+                    self.builder.ins().ireduce(tct, v)
+                }
+            }
+            // int -> float.
+            (false, true) => {
+                if from.is_signed_int() {
+                    self.builder.ins().fcvt_from_sint(tct, v)
+                } else {
+                    self.builder.ins().fcvt_from_uint(tct, v)
+                }
+            }
+            // float -> int, saturating (NaN -> 0) to match Rust `as` on the interpreter.
+            (true, false) => {
+                if to.is_signed_int() {
+                    self.builder.ins().fcvt_to_sint_sat(tct, v)
+                } else {
+                    self.builder.ins().fcvt_to_uint_sat(tct, v)
+                }
+            }
+            // float -> float: promote to a wider format, demote to a narrower one.
+            (true, true) => {
+                if to.bytes() > from.bytes() {
+                    self.builder.ins().fpromote(tct, v)
+                } else if to.bytes() < from.bytes() {
+                    self.builder.ins().fdemote(tct, v)
+                } else {
+                    v
+                }
+            }
+        }
+    }
+
     /// Emit a two-way branch on `cond` (a non-zero i32 is true): run `then_arm` in the
     /// taken block and `else_arm` in the other, each yielding an `i32`, merged into a
     /// single value. Leaves the builder positioned in the (sealed) merge block, so the
