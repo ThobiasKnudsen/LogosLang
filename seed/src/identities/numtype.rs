@@ -84,6 +84,33 @@ impl NumType {
         }
     }
 
+    /// The `iconst` immediate encoding this integer type's MAX in its own width
+    /// (an unsigned maximum is all-ones, which is -1 sign-narrowed) — the
+    /// saturation sentinel division by zero yields.
+    pub(crate) fn max_imm(self) -> i64 {
+        use NumType::*;
+        match self {
+            I8 => i64::from(i8::MAX),
+            I16 => i64::from(i16::MAX),
+            I32 => i64::from(i32::MAX),
+            I64 => i64::MAX,
+            U8 | U16 | U32 | U64 => -1,
+            F32 | F64 => unreachable!("integer saturation only"),
+        }
+    }
+
+    /// The `iconst` immediate for this signed integer type's MIN.
+    pub(crate) fn min_imm(self) -> i64 {
+        use NumType::*;
+        match self {
+            I8 => i64::from(i8::MIN),
+            I16 => i64::from(i16::MIN),
+            I32 => i64::from(i32::MIN),
+            I64 => i64::MIN,
+            _ => unreachable!("signed integers only"),
+        }
+    }
+
     /// The Cranelift type a value of this `NumType` computes in.
     pub(crate) fn cranelift_type(self) -> types::Type {
         use NumType::*;
@@ -230,12 +257,18 @@ unsafe fn stored_numtype(node: DyadPtr) -> NumType {
     of_type_node(stored_type(node))
 }
 
-/// The three machine arithmetic operations.
+/// The five machine arithmetic operations. Integer `Div`/`Rem` are TOTAL
+/// (settled): a zero divisor yields the type's MAX — a loud sentinel, easier to
+/// discover than 0 — the signed MIN/-1 overflow saturates to MAX, and MIN % -1 is
+/// the well-defined 0. Float `Div` is IEEE; float `Rem` is rejected at parse
+/// (Cranelift has no float remainder instruction).
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ArithOp {
     Add,
     Sub,
     Mul,
+    Div,
+    Rem,
 }
 
 /// The six machine comparisons (their result is `bool`, an i32 0/1).
@@ -259,6 +292,24 @@ fn apply_arith(op: ArithOp, ty: NumType, l: i64, r: i64) -> i64 {
                 ArithOp::Add => a.wrapping_add(b),
                 ArithOp::Sub => a.wrapping_sub(b),
                 ArithOp::Mul => a.wrapping_mul(b),
+                // Total division: a zero divisor yields the type's MAX, and the
+                // signed MIN/-1 overflow saturates to MAX (see [`ArithOp`]).
+                ArithOp::Div => {
+                    if b == 0 {
+                        <$t>::MAX
+                    } else {
+                        a.checked_div(b).unwrap_or(<$t>::MAX)
+                    }
+                }
+                // x % 0 is MAX (the same loud sentinel); MIN % -1 is the
+                // well-defined 0 (`checked_rem`'s only other None).
+                ArithOp::Rem => {
+                    if b == 0 {
+                        <$t>::MAX
+                    } else {
+                        a.checked_rem(b).unwrap_or(0)
+                    }
+                }
             };
             v as i64
         }};
@@ -270,6 +321,8 @@ fn apply_arith(op: ArithOp, ty: NumType, l: i64, r: i64) -> i64 {
                 ArithOp::Add => a + b,
                 ArithOp::Sub => a - b,
                 ArithOp::Mul => a * b,
+                ArithOp::Div => a / b,
+                ArithOp::Rem => unreachable!("float % is rejected at parse"),
             };
             v.to_bits() as i64
         }};

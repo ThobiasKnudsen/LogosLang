@@ -189,18 +189,87 @@ impl Lowerer<'_, '_> {
         node: DyadPtr,
         op: ArithOp,
     ) -> Result<Value, CompileError> {
-        let float = of_type_node(stored_type(node)).is_float();
+        let nt = of_type_node(stored_type(node));
         let (lhs, rhs) = operands(node);
         let l = self.lower(lhs)?;
         let r = self.lower(rhs)?;
-        Ok(match (op, float) {
-            (ArithOp::Add, false) => self.builder.ins().iadd(l, r),
-            (ArithOp::Sub, false) => self.builder.ins().isub(l, r),
-            (ArithOp::Mul, false) => self.builder.ins().imul(l, r),
-            (ArithOp::Add, true) => self.builder.ins().fadd(l, r),
-            (ArithOp::Sub, true) => self.builder.ins().fsub(l, r),
-            (ArithOp::Mul, true) => self.builder.ins().fmul(l, r),
+        if nt.is_float() {
+            return Ok(match op {
+                ArithOp::Add => self.builder.ins().fadd(l, r),
+                ArithOp::Sub => self.builder.ins().fsub(l, r),
+                ArithOp::Mul => self.builder.ins().fmul(l, r),
+                ArithOp::Div => self.builder.ins().fdiv(l, r),
+                ArithOp::Rem => unreachable!("float % is rejected at parse"),
+            });
+        }
+        Ok(match op {
+            ArithOp::Add => self.builder.ins().iadd(l, r),
+            ArithOp::Sub => self.builder.ins().isub(l, r),
+            ArithOp::Mul => self.builder.ins().imul(l, r),
+            ArithOp::Div => self.lower_int_div(nt, l, r)?,
+            ArithOp::Rem => self.lower_int_rem(nt, l, r)?,
         })
+    }
+
+    /// An integer constant of `nt`'s Cranelift type.
+    fn const_int(&mut self, nt: NumType, imm: i64) -> Value {
+        self.builder.ins().iconst(nt.cranelift_type(), imm)
+    }
+
+    /// Lower an integer division with the total, saturating semantics (see
+    /// [`ArithOp`]): a zero divisor yields the type's MAX, the signed MIN/-1
+    /// overflow saturates to MAX, quotients truncate toward zero. Matches the
+    /// interpreter's `apply_arith` — a raw `sdiv`/`udiv` would trap on the two
+    /// impossible cases instead.
+    fn lower_int_div(&mut self, nt: NumType, l: Value, r: Value) -> Result<Value, CompileError> {
+        let zero = self.const_int(nt, 0);
+        let is_zero = self.icmp(IntCC::Equal, r, zero);
+        self.branch(
+            is_zero,
+            |s| Ok(s.const_int(nt, nt.max_imm())),
+            |s| {
+                if nt.is_signed_int() {
+                    let m1 = s.const_int(nt, -1);
+                    let r_is_m1 = s.icmp(IntCC::Equal, r, m1);
+                    let min = s.const_int(nt, nt.min_imm());
+                    let l_is_min = s.icmp(IntCC::Equal, l, min);
+                    let overflow = s.builder.ins().band(r_is_m1, l_is_min);
+                    s.branch(
+                        overflow,
+                        |s2| Ok(s2.const_int(nt, nt.max_imm())),
+                        |s2| Ok(s2.builder.ins().sdiv(l, r)),
+                    )
+                } else {
+                    Ok(s.builder.ins().udiv(l, r))
+                }
+            },
+        )
+    }
+
+    /// Lower an integer remainder with the total semantics (see [`ArithOp`]):
+    /// `x % 0` is the type's MAX, and a signed `x % -1` is the well-defined 0
+    /// (which also covers the MIN/-1 trap). Matches the interpreter's
+    /// `apply_arith`.
+    fn lower_int_rem(&mut self, nt: NumType, l: Value, r: Value) -> Result<Value, CompileError> {
+        let zero = self.const_int(nt, 0);
+        let is_zero = self.icmp(IntCC::Equal, r, zero);
+        self.branch(
+            is_zero,
+            |s| Ok(s.const_int(nt, nt.max_imm())),
+            |s| {
+                if nt.is_signed_int() {
+                    let m1 = s.const_int(nt, -1);
+                    let r_is_m1 = s.icmp(IntCC::Equal, r, m1);
+                    s.branch(
+                        r_is_m1,
+                        |s2| Ok(s2.const_int(nt, 0)),
+                        |s2| Ok(s2.builder.ins().srem(l, r)),
+                    )
+                } else {
+                    Ok(s.builder.ins().urem(l, r))
+                }
+            },
+        )
     }
 
     /// Lower a binary comparison (`<`/`>`/`==`/…): read the stored operand type and emit

@@ -16,9 +16,9 @@
 //! so a new run or compile *version* is a new table, not a graph rewrite.
 //!
 //! Deferred surface the sketch declares that the seed does not yet register —
-//! tracked here so each gap is deliberate, not drift: the operators `/`, `%`,
-//! `^`, `.` (field access; DESIGN ›Resolution is one rule‹), `&` (references),
-//! `@` (address-of), and `xor`; `for`; `string` and the `«…»`
+//! tracked here so each gap is deliberate, not drift: the operators `^`, `.`
+//! (field access; DESIGN ›Resolution is one rule‹), `&` (references), `@`
+//! (address-of), and `xor`; `for`; `string` and the `«…»`
 //! quotes; `mut` at every level (DESIGN ›Mutability and construction‹); the
 //! `hashtable` and `array` types; and the declaration forms `key : type = value`
 //! and bare `key :` outside field lists. Each arrives with the machinery it
@@ -56,12 +56,14 @@ mod and;
 mod assign;
 mod convert;
 mod declare;
+mod divide;
 mod eq;
 mod ge;
 mod gt;
 mod le;
 mod lt;
 mod minus;
+mod modulo;
 mod ne;
 mod not;
 pub(crate) mod numtype;
@@ -103,6 +105,10 @@ pub struct Core {
     pub minus: DyadPtr,
     /// `*` (multiplication).
     pub times: DyadPtr,
+    /// `/` (division; total, saturating to MAX on a zero divisor).
+    pub div_: DyadPtr,
+    /// `%` (remainder; total, saturating to MAX on a zero divisor).
+    pub rem_: DyadPtr,
     /// `<` (less-than comparison); its result is `bool`.
     pub lt: DyadPtr,
     /// `>` (greater-than comparison); its result is `bool`.
@@ -193,6 +199,8 @@ impl Core {
         let plus = plus::register(&mut cx);
         let minus = minus::register(&mut cx);
         let times = times::register(&mut cx);
+        let div_ = divide::register(&mut cx);
+        let rem_ = modulo::register(&mut cx);
         let lt = lt::register(&mut cx);
         let gt = gt::register(&mut cx);
         let eq = eq::register(&mut cx);
@@ -230,6 +238,8 @@ impl Core {
             plus,
             minus,
             times,
+            div_,
+            rem_,
             lt,
             gt,
             eq,
@@ -268,6 +278,8 @@ impl Core {
             plus: self.plus,
             minus: self.minus,
             times: self.times,
+            div_: self.div_,
+            rem_: self.rem_,
             lt: self.lt,
             gt: self.gt,
             eq: self.eq,
@@ -341,7 +353,7 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
         return Operand::Literal;
     }
     // An arithmetic operator's result carries the type it stored at operand[2].
-    if ty == types.plus || ty == types.minus || ty == types.times {
+    if ty == types.plus || ty == types.minus || ty == types.times || ty == types.div_ || ty == types.rem_ {
         return Operand::Concrete(numtype::of_type_node(numtype::stored_type(node)));
     }
     // A conversion's result is its target type (stored at operand[2]).
@@ -2335,6 +2347,62 @@ mod tests {
         // The settled separator doctrine: `f(i32 3)` is ONE argument (the typed
         // value), where `f(i32, 3)` would be two.
         diff_typed_call("fn (x : i32) -> i32 ( x + 1 )", "f(i32 3)", 4);
+    }
+
+    #[test]
+    fn division_and_remainder_match_between_tiers() {
+        diff_typed_call("fn (x : i32, y : i32) -> i32 ( x / y )", "f(10, 3)", 3);
+        // Truncates toward zero, matching the interpreter and Rust.
+        diff_typed_call("fn (x : i32, y : i32) -> i32 ( x / y )", "f(-10, 3)", -3);
+        diff_typed_call("fn (x : i32, y : i32) -> i32 ( x % y )", "f(10, 3)", 1);
+        diff_typed_call("fn (x : i32, y : i32) -> i32 ( x % y )", "f(-10, 3)", -1);
+        // `/` binds like `*`: 10 - 4/2 = 8 (the literal quotient folds exactly).
+        diff_typed_call("fn (x : i32) -> i32 ( x - 4 / 2 )", "f(10)", 8);
+    }
+
+    #[test]
+    fn division_by_zero_saturates_to_max_both_tiers() {
+        // Settled: a zero divisor yields the type's MAX — a loud sentinel, easier
+        // to discover than 0 — and signed MIN/-1, the other impossible quotient,
+        // saturates to MAX too. MIN % -1 is the well-defined 0.
+        diff_typed_call("fn (x : i32, y : i32) -> i32 ( x / y )", "f(10, 0)", i64::from(i32::MAX));
+        diff_typed_call("fn (x : i32, y : i32) -> i32 ( x % y )", "f(10, 0)", i64::from(i32::MAX));
+        diff_typed_call("fn (x : u8, y : u8) -> u8 ( x / y )", "f(7, 0)", 255);
+        diff_typed_call(
+            "fn (x : i32, y : i32) -> i32 ( x / y )",
+            "f(-2147483648, -1)",
+            i64::from(i32::MAX),
+        );
+        diff_typed_call("fn (x : i32, y : i32) -> i32 ( x % y )", "f(-2147483648, -1)", 0);
+    }
+
+    #[test]
+    fn float_division_is_ieee_and_float_remainder_is_rejected() {
+        diff_typed_call(
+            "fn (x : f64, y : f64) -> f64 ( x / y )",
+            "f(1.0, 2.0)",
+            0.5f64.to_bits() as i64,
+        );
+        // IEEE: x / 0.0 is inf, in both tiers, no sentinel needed.
+        diff_typed_call(
+            "fn (x : f64, y : f64) -> f64 ( x / y )",
+            "f(1.0, 0.0)",
+            f64::INFINITY.to_bits() as i64,
+        );
+        // No Cranelift float remainder; `%` over floats is rejected at parse.
+        assert_eq!(parse_err("fn (x : f64) -> f64 ( x % 2.0 )"), ParseError::UnsupportedOperands);
+    }
+
+    #[test]
+    fn comptime_division_is_exact_fractions() {
+        // 1/3 is an exact fraction at comptime, so (1/3)*3 is exactly 1 — no
+        // float could say that — and explicit truncation is the cast.
+        diff_typed_call("fn () -> f64 ( f64(1 / 3 * 3) )", "f()", 1.0f64.to_bits() as i64);
+        diff_typed_call("fn () -> i32 ( i32(10 / 3) )", "f()", 3);
+        diff_typed_call("fn () -> i32 ( 10 % 3 )", "f()", 1);
+        // A literal zero divisor has no comptime value.
+        assert_eq!(parse_err("i32(1 / 0)"), ParseError::UncomputableLiteral);
+        assert_eq!(parse_err("i32(1 % 0)"), ParseError::UncomputableLiteral);
     }
 
     #[test]

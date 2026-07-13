@@ -361,6 +361,10 @@ pub struct CoreTypes {
     pub minus: DyadPtr,
     /// `*` (multiplication); recognized as a numeric-producing operand.
     pub times: DyadPtr,
+    /// `/` (division); recognized as a numeric-producing operand.
+    pub div_: DyadPtr,
+    /// `%` (remainder); recognized as a numeric-producing operand.
+    pub rem_: DyadPtr,
     /// `<` (less-than); its result is `bool` (an `if` condition).
     pub lt: DyadPtr,
     /// `>` (greater-than); its result is `bool`.

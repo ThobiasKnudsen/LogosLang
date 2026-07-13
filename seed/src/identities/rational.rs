@@ -86,13 +86,37 @@ pub(crate) fn fold_arith(
             (i128::from(n1), i128::from(d1), i128::from(n2), i128::from(d2));
         // `d1`,`d2` come from `i64` denominators, so each product fits `i128`; only the
         // add/sub of the two cross-products can overflow, which `checked_*` catches.
-        let den = d1 * d2;
-        let num = match op {
-            ArithOp::Add => (n1 * d2).checked_add(n2 * d1),
-            ArithOp::Sub => (n1 * d2).checked_sub(n2 * d1),
-            ArithOp::Mul => Some(n1 * n2),
-        }
-        .ok_or(ParseError::UncomputableLiteral)?;
+        let (num, den) = match op {
+            ArithOp::Add => (
+                (n1 * d2).checked_add(n2 * d1).ok_or(ParseError::UncomputableLiteral)?,
+                d1 * d2,
+            ),
+            ArithOp::Sub => (
+                (n1 * d2).checked_sub(n2 * d1).ok_or(ParseError::UncomputableLiteral)?,
+                d1 * d2,
+            ),
+            ArithOp::Mul => (n1 * n2, d1 * d2),
+            // Exact fraction division (`1 / 3` IS one third); a zero divisor has
+            // no comptime value.
+            ArithOp::Div => {
+                if n2 == 0 {
+                    return Err(ParseError::UncomputableLiteral);
+                }
+                (n1 * d2, d1 * n2)
+            }
+            // Comptime `%` is defined over integers (den == 1); a fraction falls
+            // through to the committed runtime path. A zero divisor has no
+            // comptime value.
+            ArithOp::Rem => {
+                if d1 != 1 || d2 != 1 {
+                    return Ok(None);
+                }
+                if n2 == 0 {
+                    return Err(ParseError::UncomputableLiteral);
+                }
+                (n1 % n2, 1)
+            }
+        };
         let (num, den) = reduce(num, den);
         match (i64::try_from(num), i64::try_from(den)) {
             (Ok(num), Ok(den)) => Ok(Some(build_literal(store, rational, num, den))),
