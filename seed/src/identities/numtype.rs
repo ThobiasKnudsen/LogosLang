@@ -310,7 +310,7 @@ pub(crate) enum CmpOp {
 
 /// Interpret the `i64` bit-containers `l`/`r` as `ty`, apply the arithmetic `op` with
 /// wrapping semantics (matching the JIT), and return the result's bit-container.
-fn apply_arith(op: ArithOp, ty: NumType, l: i64, r: i64) -> i64 {
+pub(crate) fn apply_arith(op: ArithOp, ty: NumType, l: i64, r: i64) -> i64 {
     macro_rules! int {
         ($t:ty) => {{
             let (a, b) = (l as $t, r as $t);
@@ -370,7 +370,7 @@ fn apply_arith(op: ArithOp, ty: NumType, l: i64, r: i64) -> i64 {
 
 /// Interpret `l`/`r` as `ty` and apply the comparison `op`, returning the i32 0/1
 /// bool in an `i64`.
-fn apply_compare(op: CmpOp, ty: NumType, l: i64, r: i64) -> i64 {
+pub(crate) fn apply_compare(op: CmpOp, ty: NumType, l: i64, r: i64) -> i64 {
     macro_rules! cmp {
         ($a:expr, $b:expr) => {{
             let (a, b) = ($a, $b);

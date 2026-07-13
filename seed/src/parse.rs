@@ -352,6 +352,8 @@ pub struct CoreTypes {
     pub if_: DyadPtr,
     /// `while`: the loop statement; unit-valued, so value positions reject it.
     pub while_: DyadPtr,
+    /// `for`: the counted-loop statement; unit-valued like `while`.
+    pub for_: DyadPtr,
     /// `construct`: the struct-construction statement a struct-typed call builds.
     pub construct_: DyadPtr,
     /// `string`: the text-literal type (`«…»`); inert in the seed, above all the
@@ -484,6 +486,15 @@ pub enum Construct {
     /// *place* inside the instance's storage (DESIGN ›Resolution is one rule‹),
     /// binding tightest.
     Dot,
+    /// The `for` keyword: parse a counted loop `for i in a..b[..d] ( body )` via
+    /// [`Parser::parse_for`]. A statement yielding unit, like `while`.
+    For,
+    /// The `in` keyword between a `for`'s variable and its range. Consumed by
+    /// [`Parser::parse_for`]; a structural token elsewhere.
+    In,
+    /// The range dots `..` between a `for`'s endpoints (and before its optional
+    /// step). Consumed by [`Parser::parse_for`]; a structural token elsewhere.
+    DotDot,
 }
 
 /// Why elaboration failed.
@@ -542,6 +553,17 @@ pub enum ParseError {
     BadAssignTarget,
     /// A struct construction's argument count did not match its field count.
     CtorArity,
+    /// A `for` was not followed by a loop-variable name.
+    ExpectedLoopVar,
+    /// A `for`'s loop variable was not followed by `in`.
+    ExpectedIn,
+    /// A `for`'s range was malformed: a missing `..`, or a range part that is not
+    /// a primary (a literal, a resolved name with `.field`s, or a `( … )` scope —
+    /// a bare full expression would consume the body's `(` as a call).
+    ExpectedRange,
+    /// A `for`'s literal step was not positive: with the end-exclusive `var < end`
+    /// condition, a non-positive step could never terminate as stated.
+    BadStep,
     /// A numeric conversion `type(value)` was malformed: not exactly one operand, or a
     /// non-numeric operand (there is nothing to convert).
     BadCast,
@@ -1009,6 +1031,145 @@ impl<'a> Parser<'a> {
         Ok(self.store.alloc_raw(while_id, value))
     }
 
+    /// Parse a counted loop `for i in a..b ( body )` / `for i in a..b..d ( body )`
+    /// (given the resolved `for` identity). The range is end-exclusive and its
+    /// parts are *primaries* ([`Parser::parse_range_operand`]) — a full expression
+    /// parse would consume the body's `(` as a call on the endpoint. The loop
+    /// variable is a fresh block-local of the range's resolved numeric type; a
+    /// literal step must be positive ([`ParseError::BadStep`]); the loop is a
+    /// statement yielding unit, and a `return` in the body is rejected
+    /// ([`ParseError::EarlyReturn`], no unwinding to exit with).
+    pub fn parse_for(&mut self, for_id: DyadPtr) -> Result<DyadPtr, ParseError> {
+        let (nstart, nlen) = self.lex_identifier().ok_or(ParseError::ExpectedLoopVar)?;
+        let source = self.source;
+        let name = &source[nstart..nstart + nlen];
+        match self.peek_kind() {
+            Some((_, matched, Construct::In)) => self.pos += matched,
+            _ => return Err(ParseError::ExpectedIn),
+        }
+        let start = self.parse_range_operand()?;
+        match self.peek_kind() {
+            Some((_, matched, Construct::DotDot)) => self.pos += matched,
+            _ => return Err(ParseError::ExpectedRange),
+        }
+        let end = self.parse_range_operand()?;
+        let step = match self.peek_kind() {
+            Some((_, matched, Construct::DotDot)) => {
+                self.pos += matched;
+                Some(self.parse_range_operand()?)
+            }
+            _ => None,
+        };
+
+        // Resolve the loop type across the range parts (concrete types must
+        // match, literals commit, all-literals default to i32).
+        let types = self.types;
+        // SAFETY: `step` is the reduced dyad just parsed.
+        let step_was_literal =
+            step.is_some_and(|s| unsafe { (*s).ty } == types.rational);
+        let mut parts = vec![start, end];
+        if let Some(s) = step {
+            parts.push(s);
+        }
+        // SAFETY: `parts` are reduced dyads just parsed.
+        let ty = unsafe { crate::identities::resolve_loop_parts(self.store, &types, &mut parts)? };
+        let (start, end) = (parts[0], parts[1]);
+        let step = parts.get(2).copied().unwrap_or(std::ptr::null_mut());
+        if step_was_literal {
+            use crate::identities::numtype;
+            // SAFETY: `step` is the committed literal just built; `ty` a numtype node.
+            let (bits, nt) = unsafe {
+                (numtype::read_scalar((*step).ty, (*step).value), numtype::of_type_node(ty))
+            };
+            if numtype::apply_compare(numtype::CmpOp::Gt, nt, bits, 0) == 0 {
+                return Err(ParseError::BadStep);
+            }
+        }
+
+        // The loop variable: a fresh block-local of the loop type.
+        // SAFETY: `ty` is a numtype node from resolve_loop_parts.
+        let width = unsafe { crate::identities::numtype::of_type_node(ty) }.bytes();
+        let storage = self.store.alloc_bytes(&vec![0u8; width]);
+        let var = self.store.alloc_raw(ty, storage);
+        let scope = self.store.alloc_raw(types.scope, std::ptr::null_mut());
+        self.scopes.push(scope);
+        self.scopes.declare(self.trie, name, var).map_err(ParseError::Resolve)?;
+        self.expect_open()?;
+        let body = self.parse_sequence()?;
+        self.expect_close()?;
+        self.scopes.pop();
+        // SAFETY: `body` is the reduced dyad just parsed.
+        if unsafe { contains_return(&types, body) } {
+            return Err(ParseError::EarlyReturn);
+        }
+
+        let value = self.store.alloc_operands(&[var, start, end, step, body]);
+        Ok(self.store.alloc_raw(for_id, value))
+    }
+
+    /// Parse one bounded range part for `for` — a *primary*, never a full
+    /// expression: a literal (optionally negated), a resolved name with an
+    /// optional `.field` chain, or an explicit `( … )` scope. Bounded because
+    /// the range is followed by the body's `( … )`, which a full expression
+    /// parse would consume as a call on the endpoint.
+    fn parse_range_operand(&mut self) -> Result<DyadPtr, ParseError> {
+        self.skip_trivia();
+        let source = self.source;
+        if self.pos >= source.len() {
+            return Err(ParseError::ExpectedRange);
+        }
+        let r = self
+            .scopes
+            .resolve(self.trie, &source[self.pos..])
+            .map_err(ParseError::Resolve)?;
+        let id = r.identity;
+        match self.metas.get(&id).copied() {
+            // An explicit parenthesized expression.
+            Some(Construct::Open) => {
+                self.pos += r.matched;
+                let e = self.parse_sequence()?;
+                self.expect_close()?;
+                Ok(e)
+            }
+            // A literal.
+            Some(Construct::Atom(build)) => {
+                let start = self.pos;
+                self.pos += r.matched;
+                let span = &source[start..start + r.matched];
+                build(self.store, id, span)
+            }
+            // A negated literal (`-` then a rational), as in the driver.
+            Some(Construct::Infix { .. }) if id == self.types.minus => {
+                self.pos += r.matched;
+                if let Some((lit, matched, Construct::Atom(build))) = self.peek_kind() {
+                    if lit == self.types.rational {
+                        let lstart = self.pos;
+                        self.pos += matched;
+                        let span = &source[lstart..lstart + matched];
+                        let dyad = build(self.store, lit, span)?;
+                        // SAFETY: `dyad` is the rational literal just built.
+                        return Ok(unsafe {
+                            crate::identities::rational::negate(self.store, lit, dyad)
+                        });
+                    }
+                }
+                Err(ParseError::ExpectedRange)
+            }
+            // A plain resolved name, with an optional `.field` chain.
+            None => {
+                self.pos += r.matched;
+                let mut node = id;
+                while let Some((_, matched, Construct::Dot)) = self.peek_kind() {
+                    self.pos += matched;
+                    // SAFETY: `node` is a resolved dyad from the store.
+                    node = unsafe { self.parse_field_access(node)? };
+                }
+                Ok(node)
+            }
+            _ => Err(ParseError::ExpectedRange),
+        }
+    }
+
     /// Resolve a field access `lhs.name` to a *place*: an ordinary numeric node
     /// over the instance's storage at the field's byte offset (DESIGN ›Resolution
     /// is one rule‹ — the declaration found decides, and a field declaration is
@@ -1322,6 +1483,8 @@ impl<'a> Parser<'a> {
                         | Construct::Arrow
                         | Construct::Else
                         | Construct::Declare
+                        | Construct::In
+                        | Construct::DotDot
                 )
             ) {
                 break;
@@ -1341,6 +1504,7 @@ impl<'a> Parser<'a> {
                         | Construct::If
                         | Construct::Not
                         | Construct::While
+                        | Construct::For
                 )
             );
             // `type literal` juxtaposition is not a boundary: a numeric type dyad
@@ -1469,6 +1633,11 @@ impl<'a> Parser<'a> {
                     let node = self.parse_while(id)?;
                     tape.push(Cell::Dyad(node));
                 }
+                // The `for` keyword: parse a counted loop `for i in a..b[..d] ( body )`.
+                Some(Construct::For) => {
+                    let node = self.parse_for(id)?;
+                    tape.push(Cell::Dyad(node));
+                }
                 // Field access `lhs.name`: resolved now, to a place inside the
                 // instance's storage; the access binds tightest, like a call.
                 Some(Construct::Dot) => {
@@ -1514,7 +1683,9 @@ impl<'a> Parser<'a> {
                     | Construct::Colon
                     | Construct::Arrow
                     | Construct::Else
-                    | Construct::Declare,
+                    | Construct::Declare
+                    | Construct::In
+                    | Construct::DotDot,
                 ) => {
                     unreachable!("structural delimiter ends the loop")
                 }

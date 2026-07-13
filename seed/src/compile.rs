@@ -458,6 +458,97 @@ impl Lowerer<'_, '_> {
         Ok(self.const_i32(0))
     }
 
+    /// Lower a `for` loop: store the start into the variable's baked address,
+    /// hoist the end and step (default 1) as SSA in the pre-header, guard
+    /// `step > 0` (a non-positive step runs zero iterations, as interpreted),
+    /// then loop — load the variable, compare `< end` (signed/unsigned/float per
+    /// the loop type), run the body for effect, increment through the address.
+    /// Yields unit. Block discipline as [`Lowerer::lower_while`].
+    ///
+    /// # Safety
+    /// The parts must be valid dyads from the store, as `Parser::parse_for`
+    /// builds them (`step` may be null for the default).
+    pub unsafe fn lower_for(
+        &mut self,
+        var: DyadPtr,
+        start: DyadPtr,
+        end: DyadPtr,
+        step: DyadPtr,
+        body: DyadPtr,
+    ) -> Result<Value, CompileError> {
+        let nt = of_type_node((*var).ty);
+        let ct = nt.cranelift_type();
+        let addr = (*var).value;
+
+        let s = self.lower(start)?;
+        self.store(ct, addr, s);
+        let e = self.lower(end)?;
+        let d = if !step.is_null() {
+            self.lower(step)?
+        } else if ct == types::F32 {
+            self.builder.ins().f32const(1.0)
+        } else if ct == types::F64 {
+            self.builder.ins().f64const(1.0)
+        } else {
+            self.builder.ins().iconst(ct, 1)
+        };
+
+        let header = self.builder.create_block();
+        let body_b = self.builder.create_block();
+        let exit = self.builder.create_block();
+
+        // Guard: a non-positive step runs zero iterations.
+        let pos = if nt.is_float() {
+            let zero = if ct == types::F32 {
+                self.builder.ins().f32const(0.0)
+            } else {
+                self.builder.ins().f64const(0.0)
+            };
+            self.fcmp(FloatCC::GreaterThan, d, zero)
+        } else {
+            let zero = self.builder.ins().iconst(ct, 0);
+            let cc = if nt.is_signed_int() {
+                IntCC::SignedGreaterThan
+            } else {
+                IntCC::UnsignedGreaterThan
+            };
+            self.icmp(cc, d, zero)
+        };
+        self.builder.ins().brif(pos, header, &[], exit, &[]);
+
+        self.builder.switch_to_block(header);
+        let v = self.load(ct, addr as *const u8);
+        let cond = if nt.is_float() {
+            self.fcmp(FloatCC::LessThan, v, e)
+        } else {
+            let cc = if nt.is_signed_int() {
+                IntCC::SignedLessThan
+            } else {
+                IntCC::UnsignedLessThan
+            };
+            self.icmp(cc, v, e)
+        };
+        self.builder.ins().brif(cond, body_b, &[], exit, &[]);
+
+        self.builder.switch_to_block(body_b);
+        self.builder.seal_block(body_b);
+        self.lower(body)?;
+        let v2 = self.load(ct, addr as *const u8);
+        let inc = if nt.is_float() {
+            self.builder.ins().fadd(v2, d)
+        } else {
+            self.builder.ins().iadd(v2, d)
+        };
+        self.store(ct, addr, inc);
+        self.builder.ins().jump(header, &[]);
+        // Both of the header's predecessors (the entry brif and the back-edge)
+        // now exist.
+        self.builder.seal_block(header);
+        self.builder.switch_to_block(exit);
+        self.builder.seal_block(exit);
+        Ok(self.const_i32(0))
+    }
+
     /// Lower an else-less `if`: a statement, not a value — the then-branch runs for
     /// its effect when the condition holds, and both arms yield unit (0), so the
     /// merge always agrees. See [`Lowerer::branch`].

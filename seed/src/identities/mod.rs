@@ -16,8 +16,9 @@
 //! so a new run or compile *version* is a new table, not a graph rewrite.
 //!
 //! Deferred surface the sketch declares that the seed does not yet register —
-//! tracked here so each gap is deliberate, not drift: the operators `^`, `&`
-//! (references), `@` (address-of), and `xor`; `for`; struct-typed (nested)
+//! tracked here so each gap is deliberate, not drift: the operators `^` and
+//! `xor`; ranges as first-class values, and `for`'s multi-variable, `in`-less,
+//! and `gpu` forms (the old prototype has them); struct-typed (nested)
 //! fields and struct parameters/returns; the `string` *name* and operations over
 //! strings (the `«…»` literal exists as an inert value, above all as the comment
 //! substance); `mut` at every level (DESIGN ›Mutability and construction‹); the
@@ -53,6 +54,8 @@ mod bool_mod;
 mod if_mod;
 #[path = "while.rs"]
 mod while_mod;
+#[path = "for.rs"]
+mod for_mod;
 mod and;
 mod assign;
 mod comment;
@@ -135,6 +138,8 @@ pub struct Core {
     pub if_: DyadPtr,
     /// `while` (the loop statement); a function yielding unit.
     pub while_: DyadPtr,
+    /// `for` (the counted-loop statement); a function yielding unit.
+    pub for_: DyadPtr,
     /// `return` (the optional early yield); a function whose value is its operand.
     pub return_: DyadPtr,
     /// `rational_number` (numeric literal carrier); a data type.
@@ -228,6 +233,7 @@ impl Core {
         let not_ = not::register(&mut cx);
         let if_ = if_mod::register(&mut cx);
         let while_ = while_mod::register(&mut cx);
+        let for_ = for_mod::register(&mut cx);
         fn_mod::register_syntax(&mut cx);
         paren::register(&mut cx);
         let return_ = return_mod::register(&mut cx);
@@ -268,6 +274,7 @@ impl Core {
             not_,
             if_,
             while_,
+            for_,
             return_,
             rational,
             string_,
@@ -294,6 +301,7 @@ impl Core {
             return_: self.return_,
             if_: self.if_,
             while_: self.while_,
+            for_: self.for_,
             construct_: self.construct_,
             string_: self.string_,
             comment_: self.comment_,
@@ -393,9 +401,9 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
     if ty == types.if_ && (*((*node).value as *const DyadPtr).add(2)).is_null() {
         return Operand::NonNumeric;
     }
-    // A `while` loop and a struct construction are statements yielding unit,
-    // never values.
-    if ty == types.while_ || ty == types.construct_ {
+    // A `while`/`for` loop and a struct construction are statements yielding
+    // unit, never values.
+    if ty == types.while_ || ty == types.for_ || ty == types.construct_ {
         return Operand::NonNumeric;
     }
     // A sequence's value is its trailing expression's. A literal tail takes the
@@ -502,6 +510,40 @@ unsafe fn commit_if_literal(
 /// parser uses this to recognize a `type(value)` conversion at a call site.
 pub(crate) fn is_numtype_node(types: &CoreTypes, node: DyadPtr) -> bool {
     types.numtypes.iter().any(|&t| !t.is_null() && t == node)
+}
+
+/// Resolve a `for` range's operand type across its parts (start, end, optional
+/// step), like [`resolve_binary`] over more operands: concrete types must all
+/// match ([`ParseError::TypeMismatch`]), literals commit in place to the
+/// resolved type, all-literals default to i32, and a non-numeric part is
+/// rejected. Returns the resolved numeric type node.
+///
+/// # Safety
+/// `parts` must be reduced dyads from the store.
+pub(crate) unsafe fn resolve_loop_parts(
+    store: &mut Store,
+    types: &CoreTypes,
+    parts: &mut [DyadPtr],
+) -> Result<DyadPtr, ParseError> {
+    let mut nt: Option<NumType> = None;
+    for &p in parts.iter() {
+        match numtype_of(types, p) {
+            Operand::Concrete(c) => match nt {
+                Some(n) if n != c => return Err(ParseError::TypeMismatch),
+                _ => nt = Some(c),
+            },
+            Operand::Literal => {}
+            Operand::NonNumeric => return Err(ParseError::UnsupportedOperands),
+        }
+    }
+    let nt = nt.unwrap_or(NumType::I32);
+    let ty = types.numtypes[nt as usize];
+    for p in parts.iter_mut() {
+        if let Operand::Literal = numtype_of(types, *p) {
+            *p = commit_if_literal(store, *p, &Operand::Literal, ty, nt)?;
+        }
+    }
+    Ok(ty)
 }
 
 /// Commit a rational literal node exactly to the numeric type `ty_node` — the
@@ -624,9 +666,12 @@ unsafe fn commit_tail(
         *ops.add(2) = else_c;
         return Ok(node);
     }
-    // A `while` loop or a construction yields unit, so neither can be a numeric
-    // function's tail.
-    if (*node).ty == types.while_ || (*node).ty == types.construct_ {
+    // A `while`/`for` loop or a construction yields unit, so none of them can be
+    // a numeric function's tail.
+    if (*node).ty == types.while_
+        || (*node).ty == types.for_
+        || (*node).ty == types.construct_
+    {
         return Err(ParseError::StatementAsValue);
     }
     // A sequence: its trailing non-comment expression is the tail (trailing prose
@@ -2345,6 +2390,82 @@ mod tests {
     #[test]
     fn while_false_never_runs_its_body() {
         diff_nullary_fn("fn () -> i32 ( a := i32 7  a = 7  while (a < 0) (a = 0)  a )", 7);
+    }
+
+    #[test]
+    fn for_loop_sums_a_range_both_tiers() {
+        // `for i in 0..10` is end-exclusive (0 through 9, per the old prototype's
+        // ((end-start)/delta).ceil() count): sum = 45. The explicit re-zeroing
+        // keeps the body idempotent across the interpreted and compiled runs.
+        diff_nullary_fn(
+            "fn () -> i32 ( s := i32 0  s = 0  for i in 0..10 ( s = s + i )  s )",
+            45,
+        );
+        // With a step: 0, 2, 4, 6, 8 sum to 20.
+        diff_nullary_fn(
+            "fn () -> i32 ( s := i32 0  s = 0  for i in 0..10..2 ( s = s + i )  s )",
+            20,
+        );
+        // An empty range runs zero iterations.
+        diff_nullary_fn(
+            "fn () -> i32 ( s := i32 7  s = 7  for i in 5..5 ( s = 0 )  s )",
+            7,
+        );
+    }
+
+    #[test]
+    fn for_loop_endpoints_resolve_a_common_type() {
+        // i64 endpoints past i32's range: the loop variable is i64 and the sum
+        // crosses i32. 5e9..5e9+3 sums to 15e9 + 3.
+        diff_typed_call(
+            "fn (n : i64) -> i64 ( s := i64 0  s = 0  for i in n..(n + 3) ( s = s + i )  s )",
+            "f(5000000000)",
+            15_000_000_003,
+        );
+        // Mismatched concrete endpoint types are rejected.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut s = ScopeStack::new();
+        s.push(core.root_scope);
+        let mut p = Parser::new(
+            "fn (a : i32, b : i64) -> void ( for i in a..b ( a = 0 ) )",
+            &mut store,
+            &mut trie,
+            &core.metas,
+            core.types(),
+            s,
+        );
+        assert_eq!(p.parse_expression(), Err(ParseError::TypeMismatch));
+    }
+
+    #[test]
+    fn for_loop_with_a_runtime_non_positive_step_runs_zero_iterations() {
+        // The step guard both tiers emit: a runtime step of 0 (or negative) skips
+        // the loop instead of wrapping forever.
+        diff_typed_call(
+            "fn (d : i32) -> i32 ( s := i32 3  s = 3  for i in 0..10..d ( s = 0 )  s )",
+            "f(0)",
+            3,
+        );
+    }
+
+    #[test]
+    fn for_loop_shapes_are_checked() {
+        // A literal non-positive step; a for as a value; a return in the body;
+        // missing `in`; a non-primary endpoint.
+        assert_eq!(parse_err("for i in 0..10..0 ( 1 )"), ParseError::BadStep);
+        assert_eq!(parse_err("for i in 10..0..-1 ( 1 )"), ParseError::BadStep);
+        assert_eq!(
+            parse_err("fn () -> i32 ( for i in 0..3 ( 1 ) )"),
+            ParseError::StatementAsValue
+        );
+        assert_eq!(
+            parse_err("fn () -> void ( for i in 0..3 ( return 1 ) )"),
+            ParseError::EarlyReturn
+        );
+        assert_eq!(parse_err("for i 0..3 ( 1 )"), ParseError::ExpectedIn);
+        assert_eq!(parse_err("for i in 0 ( 1 )"), ParseError::ExpectedRange);
     }
 
     #[test]
