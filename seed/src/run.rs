@@ -119,11 +119,12 @@ impl<'a> Runtime<'a> {
             return Ok(value);
         }
         let op = (*node).ty;
+        // A leaf native (`=`, `+`, `return`, a `scope` sequence) runs from the
+        // table directly, whatever its identity's own type.
+        if let Some(native) = self.bcode.get(&op).copied() {
+            return native(self, node);
+        }
         if (*op).ty == self.fn_type {
-            // A leaf native (`=`, `+`, `return`) runs from the table directly.
-            if let Some(native) = self.bcode.get(&op).copied() {
-                return native(self, node);
-            }
             // A user function's value is `[input, output, body, bcode]`.
             let fields = (*op).value as *const DyadPtr;
             if fields.is_null() {

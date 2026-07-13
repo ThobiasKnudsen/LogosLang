@@ -197,6 +197,9 @@ impl Core {
         // `:=` is a parse-time-only token; the driver dispatches on its Construct.
         declare::register(&mut cx);
         let struct_ = struct_mod::register(&mut cx);
+        // A multi-expression block is a `scope`-typed sequence node; its run and
+        // lowering are registered once the tables exist.
+        scope::register_exec(&mut cx, scope_);
 
         let Cx { metas, bcode, lower, .. } = cx;
         Core {
@@ -338,6 +341,18 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
     // `if` identity is itself fn-typed).
     if ty == types.if_ && (*((*node).value as *const DyadPtr).add(2)).is_null() {
         return Operand::NonNumeric;
+    }
+    // A sequence's value is its trailing expression's. A literal tail takes the
+    // bare-literal i32 default here rather than classifying as `Literal`: the
+    // molding machinery commits a literal *node*, and this node is the sequence.
+    if ty == types.scope {
+        return match crate::parse::last_sequence_expr(node) {
+            Some(last) => match numtype_of(types, last) {
+                Operand::Literal => Operand::Concrete(NumType::I32),
+                other => other,
+            },
+            None => Operand::NonNumeric,
+        };
     }
     // A call: its result is the callee's return type; a recursive self-call reaches
     // here before its callee is bound, so it defaults to i32 (the factorial shape). A
@@ -492,6 +507,21 @@ unsafe fn commit_tail(
         let else_c = commit_tail(store, types, *ops.add(2), output)?;
         *ops.add(1) = then_c;
         *ops.add(2) = else_c;
+        return Ok(node);
+    }
+    // A sequence: its trailing expression is the tail.
+    if (*node).ty == types.scope {
+        let ops = (*node).value as *mut DyadPtr;
+        if !ops.is_null() {
+            let mut i = 0;
+            while !(*ops.add(i)).is_null() {
+                i += 1;
+            }
+            if i > 0 {
+                let committed = commit_tail(store, types, *ops.add(i - 1), output)?;
+                *ops.add(i - 1) = committed;
+            }
+        }
         return Ok(node);
     }
     Ok(node)
@@ -1886,6 +1916,85 @@ mod tests {
         let _c = unsafe { compile_fn(&core.lower, core.fn_type, func) }.unwrap();
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 0);
         assert_eq!(unsafe { std::ptr::read_unaligned(a_val as *const i32) }, 7);
+    }
+
+    #[test]
+    fn sequences_run_in_order_and_yield_the_trailing_expression() {
+        // A scope's body is a sequence of self-delimiting expressions with no
+        // separator; its value is the trailing one. The body assigns first, so the
+        // interpreted and compiled runs are both deterministic from any start.
+        diff_var_fn(NumType::I32, 0, "fn () -> i32 ( a = 10  a = a + 1  a + 1 )", 12);
+    }
+
+    #[test]
+    fn the_comma_is_an_optional_readability_separator() {
+        // The same sequence with `,` written between the expressions: the comma
+        // marks a boundary the expressions already imply.
+        diff_var_fn(NumType::I32, 0, "fn () -> i32 ( a = 10, a = a + 1, a + 1 )", 12);
+    }
+
+    #[test]
+    fn block_local_declarations_do_not_leak() {
+        // `( x := 5, x + 1 )` declares `x` in the block's own scope: the block
+        // computes with it (both literals fold to 6), and after the block closes
+        // the name is a genuine out-of-scope use, not an unknown one.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let node = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p =
+                Parser::new("( x := 5, x + 1 )", &mut store, &mut trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+        // SAFETY: `node` is the sequence just parsed.
+        assert_eq!(unsafe { rt.run(node) }.unwrap(), 6);
+        // SAFETY: same node; the sequence lowering yields its trailing value.
+        let compiled = unsafe { compile_nullary_i32(&core.lower, core.fn_type, node) }.unwrap();
+        assert_eq!(unsafe { compiled.call() }, 6);
+
+        let mut s = ScopeStack::new();
+        s.push(core.root_scope);
+        let mut p = Parser::new("x", &mut store, &mut trie, &core.metas, core.types(), s);
+        assert_eq!(
+            p.parse_expression(),
+            Err(crate::parse::ParseError::Resolve(crate::parse::ResolveError::OutOfScope))
+        );
+    }
+
+    #[test]
+    fn an_early_return_in_a_sequence_is_rejected() {
+        // v1 `return` is the tail yield; running one mid-sequence without exiting
+        // would be silently wrong, so it is rejected — directly or inside an `if`.
+        assert_eq!(parse_err("( return 1, 2 )"), ParseError::EarlyReturn);
+        assert_eq!(
+            parse_err("fn () -> i32 ( if (true) (return 1) else (0), 2 )"),
+            ParseError::EarlyReturn
+        );
+    }
+
+    #[test]
+    fn a_tail_return_in_a_sequence_still_yields() {
+        diff_nullary_fn("fn () -> i32 ( 1 + 1, return 40 + 2 )", 42);
+    }
+
+    #[test]
+    fn adjacent_minus_is_subtraction() {
+        // The literal regex is unsigned, so `a-1` lexes as `a`, `-`, `1` —
+        // subtraction — never as the statement `a` followed by the literal `-1`.
+        diff_var_fn(NumType::I32, 43, "fn () -> i32 ( a-1 )", 42);
+    }
+
+    #[test]
+    fn negative_literals_via_prefix_minus() {
+        // A `-` with no left operand negates the following numeric literal at
+        // parse time: as an argument, under a cast, and doubled (0 - -3 = 3).
+        diff_typed_call("fn (x : i32) -> i32 ( x )", "f(-1)", -1);
+        diff_nullary_fn("fn () -> i32 ( i32(-5) )", -5);
+        diff_nullary_fn("fn () -> i32 ( 0 - -3 )", 3);
     }
 
     #[test]

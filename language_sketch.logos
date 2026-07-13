@@ -11,7 +11,7 @@ assign(declare(&mut logos, «:»), ?, ?)
 assign(declare(&mut logos, «=»), ?, ?)
 assign(declare(&mut logos, «:=»), ?, ?)
 assign(declare(&mut logos, «rational_number»), type, ?)
-assign(declare(&mut logos, «-?[0-9]+(?:\.[0-9]+)?»), rational_number, ?)   # unanchored: the lexer longest-matches a prefix of the remaining input, so no ^…$
+assign(declare(&mut logos, «[0-9]+(?:\.[0-9]+)?»), rational_number, ?)   # unanchored: the lexer longest-matches a prefix of the remaining input, so no ^…$. unsigned: - is always the operator (a-1 must be subtraction); a negative literal is the prefix - folding at parse
 
 dyad := struct (type := dyad@ ?, value := void@ ?)
 

@@ -33,9 +33,11 @@ use crate::store::Store;
 /// constructor, and lowering.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let id = cx.store.alloc_raw(cx.type_, std::ptr::null_mut());
-    // An optional sign, digits, and an optional fractional part. Unanchored: the
-    // lexer longest-matches a prefix of the remaining input.
-    cx.trie.insert(r"-?[0-9]+(?:\.[0-9]+)?", IdContext::new(id, cx.root_scope));
+    // Digits and an optional fractional part. Unanchored: the lexer longest-matches
+    // a prefix of the remaining input. The span is unsigned — `-` is always the
+    // operator (else `a-1` would lex as `a` then the literal `-1`); a negative
+    // literal is the prefix `-` negating the literal at parse time ([`negate`]).
+    cx.trie.insert(r"[0-9]+(?:\.[0-9]+)?", IdContext::new(id, cx.root_scope));
     cx.metas.insert(id, Construct::Atom(build));
     cx.lower.insert(id, lower);
     id
@@ -161,15 +163,14 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     }
 }
 
-/// Parse `-?[0-9]+(?:\.[0-9]+)?` into a reduced fraction `(num, den)` with
-/// `den > 0`. Returns `None` on overflow of `i64` (a huge literal) or malformed
-/// input, so the caller reports a clean error instead of panicking.
+/// Parse `[0-9]+(?:\.[0-9]+)?` into a reduced fraction `(num, den)` with
+/// `den > 0`. The span is unsigned (`-` is always the operator; a negative literal
+/// is built by [`negate`]). Returns `None` on overflow of `i64` (a huge literal) or
+/// malformed input, so the caller reports a clean error instead of panicking.
 fn parse_fraction(span: &str) -> Option<(i64, i64)> {
-    let neg = span.starts_with('-');
-    let body = span.strip_prefix('-').unwrap_or(span);
-    let (int_part, frac_part) = match body.split_once('.') {
+    let (int_part, frac_part) = match span.split_once('.') {
         Some((i, f)) => (i, f),
-        None => (body, ""),
+        None => (span, ""),
     };
     if int_part.is_empty() || int_part.bytes().any(|b| !b.is_ascii_digit()) {
         return None;
@@ -184,15 +185,24 @@ fn parse_fraction(span: &str) -> Option<(i64, i64)> {
         num = num.checked_mul(10)?.checked_add(d)?;
         den = den.checked_mul(10)?;
     }
-    if neg {
-        num = num.checked_neg()?;
-    }
     let g = gcd(num.unsigned_abs(), den as u64);
     if g > 1 {
         num /= g as i64;
         den /= g as i64;
     }
     Some((num, den))
+}
+
+/// Build the negation of a rational literal as a new literal node — the prefix `-`
+/// (always an operator; the literal regex is unsigned) applied to a numeric
+/// literal at parse time.
+///
+/// # Safety
+/// `node` must be a rational literal from the store (its value the `[num, den]`
+/// blob).
+pub(crate) unsafe fn negate(store: &mut Store, rational: DyadPtr, node: DyadPtr) -> DyadPtr {
+    let (num, den) = read_fraction(node);
+    build_literal(store, rational, -num, den)
 }
 
 /// Greatest common divisor (Euclid); `gcd(0, d) == d`.
@@ -300,12 +310,13 @@ mod tests {
     #[test]
     fn parses_integers_decimals_and_reduces() {
         assert_eq!(parse_fraction("42"), Some((42, 1)));
-        assert_eq!(parse_fraction("-42"), Some((-42, 1)));
         assert_eq!(parse_fraction("3.14"), Some((157, 50))); // 314/100 reduced
-        assert_eq!(parse_fraction("-2.5"), Some((-5, 2))); // -25/10 reduced
+        assert_eq!(parse_fraction("2.5"), Some((5, 2))); // 25/10 reduced
         assert_eq!(parse_fraction("6.0"), Some((6, 1))); // trailing zero reduces to whole
         assert_eq!(parse_fraction("0"), Some((0, 1)));
         assert_eq!(parse_fraction("0.0"), Some((0, 1)));
+        // The span is unsigned: a leading `-` is the operator, never the literal.
+        assert_eq!(parse_fraction("-42"), None);
     }
 
     #[test]

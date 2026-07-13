@@ -507,6 +507,10 @@ pub enum ParseError {
     /// A number literal had no exact value in the type it was committed to (a decimal
     /// molded to an integer, or an out-of-range integer).
     UncomputableLiteral,
+    /// A `return` in a non-tail position of a scope's sequence: v1 `return` is the
+    /// tail yield, and an early return would silently not exit (no unwinding yet),
+    /// so it is rejected rather than mis-run. Early exit arrives with control flow.
+    EarlyReturn,
     /// A numeric conversion `type(value)` was malformed: not exactly one operand, or a
     /// non-numeric operand (there is nothing to convert).
     BadCast,
@@ -525,6 +529,13 @@ pub enum ParseError {
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn is_bool_result(types: &CoreTypes, node: DyadPtr) -> bool {
     let ty = (*node).ty;
+    // A sequence's value is its trailing expression's.
+    if ty == types.scope {
+        return match last_sequence_expr(node) {
+            Some(last) => is_bool_result(types, last),
+            None => false,
+        };
+    }
     ty == types.bool_
         || ty == types.lt
         || ty == types.gt
@@ -535,6 +546,62 @@ pub(crate) unsafe fn is_bool_result(types: &CoreTypes, node: DyadPtr) -> bool {
         || ty == types.and_
         || ty == types.or_
         || ty == types.not_
+}
+
+/// The trailing expression of a sequence node `{ty: scope, value: [expr0 …, null]}`,
+/// or `None` for a scope with no expression list (a struct/parameter-list scope).
+///
+/// # Safety
+/// `node` must be a valid dyad from the store; a non-null value must be a
+/// null-terminated `dyad@` array as built by [`Parser::parse_sequence`].
+pub(crate) unsafe fn last_sequence_expr(node: DyadPtr) -> Option<DyadPtr> {
+    let p = (*node).value as *const DyadPtr;
+    if p.is_null() {
+        return None;
+    }
+    let mut i = 0;
+    while !(*p.add(i)).is_null() {
+        i += 1;
+    }
+    if i == 0 {
+        None
+    } else {
+        Some(*p.add(i - 1))
+    }
+}
+
+/// Whether `node` is or contains a `return` in the positions v1 recognizes as
+/// value-producing (the same enumeration as `commit_tail`: a `return` itself, an
+/// `if`'s branches, a sequence's expressions). Used to reject a `return` in a
+/// non-tail sequence position, where it would run without exiting.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store, with the value shapes its type
+/// implies (as the parser builds them).
+unsafe fn contains_return(types: &CoreTypes, node: DyadPtr) -> bool {
+    let ty = (*node).ty;
+    if ty == types.return_ {
+        return true;
+    }
+    if ty == types.if_ {
+        let p = (*node).value as *const DyadPtr;
+        let (then, els) = (*p.add(1), *p.add(2));
+        return contains_return(types, then) || (!els.is_null() && contains_return(types, els));
+    }
+    if ty == types.scope {
+        let p = (*node).value as *const DyadPtr;
+        if p.is_null() {
+            return false;
+        }
+        let mut i = 0;
+        while !(*p.add(i)).is_null() {
+            if contains_return(types, *p.add(i)) {
+                return true;
+            }
+            i += 1;
+        }
+    }
+    false
 }
 
 fn build_call(store: &mut Store, callee: DyadPtr, args: &[DyadPtr]) -> DyadPtr {
@@ -760,7 +827,7 @@ impl<'a> Parser<'a> {
         let scope = unsafe { *((*input).value as *const DyadPtr) };
         self.scopes.push(scope);
         self.expect_open()?;
-        let body = self.parse_expression()?;
+        let body = self.parse_sequence()?;
         self.expect_close()?;
         self.scopes.pop();
 
@@ -788,7 +855,7 @@ impl<'a> Parser<'a> {
     pub fn parse_if(&mut self, if_type: DyadPtr) -> Result<DyadPtr, ParseError> {
         // Condition: a parenthesized expression, required to be a bool.
         self.expect_open()?;
-        let cond = self.parse_expression()?;
+        let cond = self.parse_sequence()?;
         self.expect_close()?;
         let types = self.types;
         // SAFETY: `cond` is the reduced dyad just parsed.
@@ -798,14 +865,14 @@ impl<'a> Parser<'a> {
 
         // Then-branch.
         self.expect_open()?;
-        let then = self.parse_expression()?;
+        let then = self.parse_sequence()?;
         self.expect_close()?;
 
         // The optional `else`, then the else-branch; absent, the slot stays null
         // and the `if` is a unit-valued statement.
         let els = if self.consume_else() {
             self.expect_open()?;
-            let els = self.parse_expression()?;
+            let els = self.parse_sequence()?;
             self.expect_close()?;
             els
         } else {
@@ -822,7 +889,7 @@ impl<'a> Parser<'a> {
     /// The node is `{ty: not, value: operand}`.
     pub fn parse_not(&mut self, not_id: DyadPtr) -> Result<DyadPtr, ParseError> {
         self.expect_open()?;
-        let operand = self.parse_expression()?;
+        let operand = self.parse_sequence()?;
         self.expect_close()?;
         let types = self.types;
         // SAFETY: `operand` is the reduced dyad just parsed.
@@ -885,10 +952,66 @@ impl<'a> Parser<'a> {
         Ok(args)
     }
 
+    /// Parse a sequence of expressions up to the enclosing scope's end (a `)`, or
+    /// the end of input), consuming an optional `,` between them (DESIGN
+    /// ›Expressions are self-delimiting; `,` is the one explicit separator‹). A
+    /// single expression is returned as itself; several become a sequence node
+    /// `{ty: scope, value: [expr0 … exprN, null]}` that runs its expressions in
+    /// order and yields the trailing one (DESIGN ›A scope's value is what it
+    /// evaluates to‹). Declarations inside are block-local: the sequence node is
+    /// itself the scope they are declared in, pushed while the body parses. A
+    /// `return` in a non-tail position is rejected ([`ParseError::EarlyReturn`]):
+    /// v1 `return` is the tail yield, and running one without exiting would be
+    /// silently wrong.
+    pub fn parse_sequence(&mut self) -> Result<DyadPtr, ParseError> {
+        // The block's scope node: the membership key while parsing and, when the
+        // sequence is real, the sequence node itself.
+        let scope = self.store.alloc_raw(self.types.scope, std::ptr::null_mut());
+        self.scopes.push(scope);
+        let mut exprs = Vec::new();
+        loop {
+            self.skip_ws();
+            if self.pos >= self.source.len() || self.at_close() {
+                break;
+            }
+            exprs.push(self.parse_expression()?);
+            // The optional `,`: a boundary the expressions already imply, consumed
+            // where written (also purely for readability).
+            self.consume_separator();
+        }
+        self.scopes.pop();
+        match exprs.len() {
+            0 => Err(ParseError::Empty),
+            1 => Ok(exprs[0]),
+            _ => {
+                // Every non-tail expression runs for effect only; a `return` there
+                // would run without exiting (no unwinding yet), so reject it.
+                let types = self.types;
+                for &e in &exprs[..exprs.len() - 1] {
+                    // SAFETY: `e` is a reduced dyad just parsed.
+                    if unsafe { contains_return(&types, e) } {
+                        return Err(ParseError::EarlyReturn);
+                    }
+                }
+                let mut ops = Vec::with_capacity(exprs.len() + 1);
+                ops.extend_from_slice(&exprs);
+                ops.push(std::ptr::null_mut());
+                let value = self.store.alloc_operands(&ops);
+                // SAFETY: `scope` was just allocated and is unaliased.
+                unsafe {
+                    (*scope).value = value;
+                }
+                Ok(scope)
+            }
+        }
+    }
+
     /// Parse one expression to a single dyad, consuming source from the current
     /// position. Each call drives its own tape, so a prefix constructor can parse
     /// its operand by calling this again (the parser is a service the constructors
-    /// re-enter, per the sealed "constructors drive" model).
+    /// re-enter, per the sealed "constructors drive" model). An expression is
+    /// self-delimiting: a token that would start a new operand after a completed
+    /// dyad ends it (left unconsumed for [`Parser::parse_sequence`]).
     pub fn parse_expression(&mut self) -> Result<DyadPtr, ParseError> {
         let mut tape = ParsingTape::new();
         loop {
@@ -905,6 +1028,12 @@ impl<'a> Parser<'a> {
             // rewinds and resolves normally below.
             if let Some((nstart, nlen)) = self.lex_identifier() {
                 if let Some((_, matched, Construct::Declare)) = self.peek_kind() {
+                    // A declaration after a completed dyad starts the NEXT
+                    // expression (expressions are self-delimiting): stop before it.
+                    if matches!(tape.last(), Some(Cell::Dyad(_))) {
+                        self.pos = start;
+                        break;
+                    }
                     self.pos += matched; // consume `:=`
                     // `source` is `&'a str` (Copy), independent of the `&mut self`
                     // the declaration and value parse then need (as in `parse_struct`).
@@ -955,6 +1084,25 @@ impl<'a> Parser<'a> {
             ) {
                 break;
             }
+            // A token that starts a new operand while a completed dyad sits at the
+            // tape's tail begins the NEXT expression (DESIGN ›Expressions are
+            // self-delimiting‹): stop without consuming it. An `(` after a dyad
+            // stays a call (juxtaposition binds tightest), and an infix operator
+            // continues the expression, so neither is a boundary.
+            let starts_operand = matches!(
+                c,
+                None | Some(
+                    Construct::Atom(_)
+                        | Construct::Prefix(_)
+                        | Construct::Struct
+                        | Construct::Fn
+                        | Construct::If
+                        | Construct::Not
+                )
+            );
+            if starts_operand && matches!(tape.last(), Some(Cell::Dyad(_))) {
+                break;
+            }
             self.pos = start + r.matched;
 
             match c {
@@ -992,7 +1140,7 @@ impl<'a> Parser<'a> {
                         };
                         tape.push(Cell::Dyad(node));
                     } else {
-                        let body = self.parse_expression()?;
+                        let body = self.parse_sequence()?;
                         self.expect_close()?;
                         tape.push(Cell::Dyad(body));
                     }
@@ -1021,6 +1169,26 @@ impl<'a> Parser<'a> {
                 // An operator: reduce anything binding tighter to its left, then
                 // shift it onto the tape as a pending token.
                 Some(Construct::Infix { precedence, assoc, .. }) => {
+                    // A `-` with no left operand prefixes a numeric literal (`-` is
+                    // always an operator; the literal regex is unsigned): `f(-1)`,
+                    // `x := -5`. General unary minus over non-literals is later
+                    // work — it still parses as a dangling operator today.
+                    if id == self.types.minus && !matches!(tape.last(), Some(Cell::Dyad(_))) {
+                        if let Some((lit, matched, Construct::Atom(build))) = self.peek_kind() {
+                            if lit == self.types.rational {
+                                let lstart = self.pos;
+                                self.pos += matched;
+                                let span = &source[lstart..lstart + matched];
+                                let dyad = build(self.store, lit, span)?;
+                                // SAFETY: `dyad` is the rational literal just built.
+                                let neg = unsafe {
+                                    crate::identities::rational::negate(self.store, lit, dyad)
+                                };
+                                tape.push(Cell::Dyad(neg));
+                                continue;
+                            }
+                        }
+                    }
                     self.reduce_pending(&mut tape, precedence, assoc)?;
                     tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
                 }
