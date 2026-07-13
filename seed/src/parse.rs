@@ -446,12 +446,12 @@ pub enum Construct {
     /// The return arrow `->` in a fn signature: separates the parameter list from
     /// the return type. Consumed by [`Parser::parse_fn`].
     Arrow,
-    /// The `if` keyword: parse a conditional `if ( cond ) ( then ) else ( else )`
-    /// via [`Parser::parse_if`]. Each part is a parenthesized expression; the
-    /// condition must be a `bool`.
+    /// The `if` keyword: parse a conditional `if ( cond ) ( then )` with an
+    /// optional `else ( else )` via [`Parser::parse_if`]. Each part is a
+    /// parenthesized expression; the condition must be a `bool`.
     If,
-    /// The `else` keyword: separates an `if`'s two branches. Consumed by
-    /// [`Parser::parse_if`]; a structural token elsewhere.
+    /// The `else` keyword: separates an `if`'s two branches when present. Consumed
+    /// by [`Parser::parse_if`]; a structural token elsewhere.
     Else,
     /// The declaration operator `:=`. Detected by the driver *before* name
     /// resolution (a fresh name followed by `:=` is a declaration); see
@@ -494,8 +494,10 @@ pub enum ParseError {
     UnsupportedOperands,
     /// An `if` condition was not a `bool` (a comparison result or `bool` value).
     NonBoolCondition,
-    /// An `if`'s then-branch was not followed by the mandatory `else`.
-    ExpectedElse,
+    /// An `if` without an `else` was used where a value is required (a numeric
+    /// operand or a numeric function's tail): with no false branch it yields unit,
+    /// not a value.
+    MissingElse,
     /// A logical operator (`and`/`or`/`not`) was applied to a non-`bool` operand.
     NonBoolOperands,
     /// A binary operator's operands were two *different* concrete numeric types (e.g.
@@ -773,13 +775,16 @@ impl<'a> Parser<'a> {
         Ok(self.store.alloc_raw(fn_type, value))
     }
 
-    /// Parse a conditional `if ( cond ) ( then ) else ( else )` (given the resolved
-    /// `if` identity). Each of the condition and the two branches is a parenthesized
-    /// expression; the mandatory `else` separates the branches. The condition must be
-    /// a `bool` ([`ParseError::NonBoolCondition`]). The node is
-    /// `{ty: if, value: [cond, then, else]}`: run takes the branch the condition
-    /// selects, compile emits a two-way branch. Unlike `fn`, `if` opens no new scope
-    /// — its parts resolve in the enclosing one.
+    /// Parse a conditional `if ( cond ) ( then )` with an optional `else ( else )`
+    /// (given the resolved `if` identity). Each part is a parenthesized expression,
+    /// and the condition must be a `bool` ([`ParseError::NonBoolCondition`]). The
+    /// node is `{ty: if, value: [cond, then, else]}`, the else slot null when the
+    /// `else` is absent: run takes the branch the condition selects, compile emits a
+    /// two-way branch. An else-less `if` is a statement — it yields unit — so value
+    /// positions reject it ([`ParseError::MissingElse`]); and because branches are
+    /// always parenthesized, a nested `if` cannot capture an outer `else` (no
+    /// dangling else). Unlike `fn`, `if` opens no new scope — its parts resolve in
+    /// the enclosing one.
     pub fn parse_if(&mut self, if_type: DyadPtr) -> Result<DyadPtr, ParseError> {
         // Condition: a parenthesized expression, required to be a bool.
         self.expect_open()?;
@@ -796,11 +801,16 @@ impl<'a> Parser<'a> {
         let then = self.parse_expression()?;
         self.expect_close()?;
 
-        // The mandatory `else`, then the else-branch.
-        self.expect_else()?;
-        self.expect_open()?;
-        let els = self.parse_expression()?;
-        self.expect_close()?;
+        // The optional `else`, then the else-branch; absent, the slot stays null
+        // and the `if` is a unit-valued statement.
+        let els = if self.consume_else() {
+            self.expect_open()?;
+            let els = self.parse_expression()?;
+            self.expect_close()?;
+            els
+        } else {
+            std::ptr::null_mut()
+        };
 
         let value = self.store.alloc_operands(&[cond, then, els]);
         Ok(self.store.alloc_raw(if_type, value))
@@ -822,14 +832,14 @@ impl<'a> Parser<'a> {
         Ok(self.store.alloc_raw(not_id, operand.cast()))
     }
 
-    /// Consume the `else` keyword between an `if`'s branches.
-    fn expect_else(&mut self) -> Result<(), ParseError> {
+    /// Consume an `else` if the next token is one, reporting whether it was.
+    fn consume_else(&mut self) -> bool {
         match self.peek_kind() {
             Some((_, matched, Construct::Else)) => {
                 self.pos += matched;
-                Ok(())
+                true
             }
-            _ => Err(ParseError::ExpectedElse),
+            _ => false,
         }
     }
 

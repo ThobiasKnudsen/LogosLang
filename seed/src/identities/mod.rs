@@ -333,6 +333,12 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
     if types.numtypes.iter().any(|&t| !t.is_null() && t == ty) {
         return Operand::Concrete(numtype::of_type_node(ty));
     }
+    // An else-less `if` yields unit, not a value (it has no false branch to produce
+    // one); with both branches it resolves through the fn-typed default below (the
+    // `if` identity is itself fn-typed).
+    if ty == types.if_ && (*((*node).value as *const DyadPtr).add(2)).is_null() {
+        return Operand::NonNumeric;
+    }
     // A call: its result is the callee's return type; a recursive self-call reaches
     // here before its callee is bound, so it defaults to i32 (the factorial shape). A
     // void-returning callee yields no numeric value (and its output has no NumType).
@@ -476,8 +482,12 @@ unsafe fn commit_tail(
         return Ok(node);
     }
     // `if (c) (then) else (else)`: both branches are tails (value `[cond, then, else]`).
+    // An else-less `if` yields unit, so it cannot be a numeric function's tail.
     if (*node).ty == types.if_ {
         let ops = (*node).value as *mut DyadPtr;
+        if (*ops.add(2)).is_null() {
+            return Err(ParseError::MissingElse);
+        }
         let then_c = commit_tail(store, types, *ops.add(1), output)?;
         let else_c = commit_tail(store, types, *ops.add(2), output)?;
         *ops.add(1) = then_c;
@@ -1776,6 +1786,106 @@ mod tests {
             "fn () -> i32 ( if (true) ( if (false) (1) else (2) ) else (3) )",
             2,
         );
+    }
+
+    #[test]
+    fn else_less_if_is_a_unit_statement_both_tiers() {
+        // An else-less `if` runs its then-branch for its effect when taken and
+        // yields unit either way. From a = 41 the branch is taken (41 < 100) and
+        // bumps a to 42; from a = 100 it is not, and a stays. Both tiers diffed on
+        // the unit result and the effect.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let a_val = store.alloc_bytes(&41i32.to_ne_bytes());
+        let a = store.alloc_raw(core.i32_, a_val);
+        scopes.declare(&mut trie, "a", a).unwrap();
+        let func = {
+            let mut p = Parser::new(
+                "fn () -> void ( if (a < 100) (a = a + 1) )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                scopes,
+            );
+            p.parse_expression().unwrap()
+        };
+        let call = store.alloc_raw(func, std::ptr::null_mut());
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+        // Interpreted: taken bumps a to 42; from 100, not taken, a stays.
+        // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
+        assert_eq!(unsafe { rt.run(call) }.unwrap(), 0, "unit (interpreted)");
+        assert_eq!(unsafe { std::ptr::read_unaligned(a_val as *const i32) }, 42);
+        unsafe { std::ptr::write_unaligned(a_val as *mut i32, 100) };
+        assert_eq!(unsafe { rt.run(call) }.unwrap(), 0);
+        assert_eq!(unsafe { std::ptr::read_unaligned(a_val as *const i32) }, 100);
+        // Compiled: the same effect and unit on both paths.
+        unsafe { std::ptr::write_unaligned(a_val as *mut i32, 41) };
+        // SAFETY: `func`/`a` live in `store`, which outlives the call.
+        let _c = unsafe { compile_fn(&core.lower, core.fn_type, func) }.unwrap();
+        assert_eq!(unsafe { rt.run(call) }.unwrap(), 0, "unit (compiled)");
+        assert_eq!(unsafe { std::ptr::read_unaligned(a_val as *const i32) }, 42);
+        unsafe { std::ptr::write_unaligned(a_val as *mut i32, 100) };
+        assert_eq!(unsafe { rt.run(call) }.unwrap(), 0);
+        assert_eq!(unsafe { std::ptr::read_unaligned(a_val as *const i32) }, 100);
+    }
+
+    #[test]
+    fn else_less_if_in_a_void_fn_yields_unit_both_tiers() {
+        // Taken or not, an else-less `if` yields unit through a `-> void` fn.
+        diff_typed_call("fn (c : i32) -> void ( if (c < 1) (42) )", "f(0)", 0);
+        diff_typed_call("fn (c : i32) -> void ( if (c < 1) (42) )", "f(5)", 0);
+    }
+
+    #[test]
+    fn an_else_less_if_is_rejected_in_value_positions() {
+        // A numeric fn tail needs a value on both paths, so an else-less `if`
+        // cannot be one; nor can it feed an operator.
+        assert_eq!(parse_err("fn () -> i32 ( if (1 < 2) (1) )"), ParseError::MissingElse);
+        assert_eq!(parse_err("( if (1 < 2) (1) ) + 1"), ParseError::UnsupportedOperands);
+    }
+
+    #[test]
+    fn the_else_binds_to_the_outer_if_across_a_bracketed_branch() {
+        // The dangling-else question: the inner `if` is else-less inside its
+        // bracketed branch, so the bracket ends its reach and the `else` belongs to
+        // the outer `if`. With a = 5 the outer condition is false and the
+        // else-branch must run (a becomes 7); were the `else` the inner if's,
+        // nothing would run.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let a_val = store.alloc_bytes(&5i32.to_ne_bytes());
+        let a = store.alloc_raw(core.i32_, a_val);
+        scopes.declare(&mut trie, "a", a).unwrap();
+        let func = {
+            let mut p = Parser::new(
+                "fn () -> void ( if (a < 1) ( if (a < 1) (a = a + 1) ) else (a = a + 2) )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                scopes,
+            );
+            p.parse_expression().unwrap()
+        };
+        let call = store.alloc_raw(func, std::ptr::null_mut());
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+        // Interpreted: outer condition false -> else-branch -> a = 7.
+        // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
+        assert_eq!(unsafe { rt.run(call) }.unwrap(), 0);
+        assert_eq!(unsafe { std::ptr::read_unaligned(a_val as *const i32) }, 7);
+        // Compiled: reset and diff the same effect.
+        unsafe { std::ptr::write_unaligned(a_val as *mut i32, 5) };
+        // SAFETY: `func`/`a` live in `store`, which outlives the call.
+        let _c = unsafe { compile_fn(&core.lower, core.fn_type, func) }.unwrap();
+        assert_eq!(unsafe { rt.run(call) }.unwrap(), 0);
+        assert_eq!(unsafe { std::ptr::read_unaligned(a_val as *const i32) }, 7);
     }
 
     #[test]

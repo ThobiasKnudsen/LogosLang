@@ -351,6 +351,28 @@ impl Lowerer<'_, '_> {
         self.branch(c, |s| unsafe { s.lower(then) }, |s| unsafe { s.lower(els) })
     }
 
+    /// Lower an else-less `if`: a statement, not a value — the then-branch runs for
+    /// its effect when the condition holds, and both arms yield unit (0), so the
+    /// merge always agrees. See [`Lowerer::branch`].
+    ///
+    /// # Safety
+    /// `cond`/`then` must be valid dyads from the store.
+    pub unsafe fn lower_if_stmt(
+        &mut self,
+        cond: DyadPtr,
+        then: DyadPtr,
+    ) -> Result<Value, CompileError> {
+        let c = self.lower(cond)?;
+        self.branch(
+            c,
+            |s| {
+                unsafe { s.lower(then) }?;
+                Ok(s.const_i32(0))
+            },
+            |s| Ok(s.const_i32(0)),
+        )
+    }
+
     /// Lower `a and b` short-circuit: when `a` is false the result is `false` and `b`
     /// is not evaluated; otherwise the result is `b`.
     ///
