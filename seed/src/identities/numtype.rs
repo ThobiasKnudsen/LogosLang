@@ -143,6 +143,28 @@ pub(crate) unsafe fn read_scalar(type_node: DyadPtr, slot: *const u8) -> i64 {
     }
 }
 
+/// Write the `i64` bit-container `bits` to `slot` at `type_node`'s width — the storage
+/// dual of [`read_scalar`], so a write then a read round-trips.
+///
+/// # Safety
+/// `type_node` is a valid type node; `slot` points at storage of that type's width.
+pub(crate) unsafe fn write_scalar(type_node: DyadPtr, slot: *mut u8, bits: i64) {
+    use std::ptr::write_unaligned as wr;
+    use NumType::*;
+    match numtype_of_type(type_node) {
+        I8 => wr(slot as *mut i8, bits as i8),
+        I16 => wr(slot as *mut i16, bits as i16),
+        I32 => wr(slot as *mut i32, bits as i32),
+        I64 => wr(slot as *mut i64, bits),
+        U8 => wr(slot, bits as u8),
+        U16 => wr(slot as *mut u16, bits as u16),
+        U32 => wr(slot as *mut u32, bits as u32),
+        U64 => wr(slot as *mut u64, bits as u64),
+        F32 => wr(slot as *mut u32, bits as u32),
+        F64 => wr(slot as *mut u64, bits as u64),
+    }
+}
+
 /// Lower a numeric variable/value: load it from its baked storage at its type's width.
 /// The shared lowering rule (a [`crate::compile::LowerFn`]) for every numeric type
 /// node. Guards a null address, mirroring the interpreter's `BadValue`.

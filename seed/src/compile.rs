@@ -129,8 +129,18 @@ impl Lowerer<'_, '_> {
         self.builder.ins().load(ct, self.flags, p, 0)
     }
 
-    /// Store an `i32` to a baked host address.
-    pub fn store_i32(&mut self, addr: *mut u8, v: Value) {
+    /// Store `v` into the baked host address `addr` at Cranelift type `ct`'s width —
+    /// the storage dual of [`load`], and the compiler's analogue of the interpreter's
+    /// `write_scalar`. `v` must already have type `ct`: a resolved assignment lowers its
+    /// right side to the target variable's type, so the store width and the value width
+    /// agree. The `debug_assert` guards that invariant (a mismatch would silently store
+    /// the wrong number of bytes, since Cranelift's `store` writes `v`'s own width).
+    pub(crate) fn store(&mut self, ct: types::Type, addr: *mut u8, v: Value) {
+        debug_assert_eq!(
+            self.builder.func.dfg.value_type(v),
+            ct,
+            "assignment's right side must lower to the target variable's type"
+        );
         let p = self.builder.ins().iconst(self.ptr_ty, addr as usize as i64);
         self.builder.ins().store(self.flags, v, p, 0);
     }

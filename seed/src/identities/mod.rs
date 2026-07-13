@@ -967,6 +967,58 @@ mod tests {
     }
 
     #[test]
+    fn assign_to_a_wide_variable_stores_at_full_width_both_tiers() {
+        // A STORED variable wider than i32 must be written at its full width, not
+        // truncated to i32. `a : i64` starts at 0; `a = a + 5_000_000_000` must leave
+        // the full 5e9 (0x1_2A05F200) — a 4-byte store would drop the high word and
+        // leave 705_032_704. This is the case params (frame-bound i64) never exercised:
+        // real backing storage assigned through.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let a_val = store.alloc_bytes(&0i64.to_ne_bytes());
+        let a = store.alloc_raw(core.numtypes[NumType::I64 as usize], a_val);
+        scopes.declare(&mut trie, "a", a).unwrap();
+
+        // A nullary `-> i64` fn so the compiled return type is the declared i64
+        // (`compile_fn` reads `FN_OUTPUT`); its body assigns into the enclosing `a`.
+        let func = {
+            let mut p = Parser::new(
+                "fn () -> i64 ( a = a + 5000000000 )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                scopes,
+            );
+            p.parse_expression().unwrap()
+        };
+        let call = store.alloc_raw(func, std::ptr::null_mut());
+
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+        // Interpreted oracle: 0 + 5e9, and `a` now holds it.
+        // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
+        let interp = unsafe { rt.run(call) }.unwrap();
+        let interp_a = unsafe { std::ptr::read_unaligned(a_val as *const i64) };
+
+        // Reset `a`, compile the fn (installs bcode), run the same call — now it jumps
+        // to the compiled body — and diff the result and the side effect on `a`.
+        unsafe { std::ptr::write_unaligned(a_val as *mut i64, 0) };
+        // SAFETY: `func`/`a` live in `store`, which outlives the call.
+        let _c = unsafe { compile_fn(&core.lower, core.fn_type, func) }.unwrap();
+        let jit = unsafe { rt.run(call) }.unwrap();
+        let jit_a = unsafe { std::ptr::read_unaligned(a_val as *const i64) };
+
+        assert_eq!(interp, 5_000_000_000, "interpreter result");
+        assert_eq!(interp_a, 5_000_000_000, "interpreter side effect on a");
+        assert_eq!(jit, interp, "jit result != interpreter");
+        assert_eq!(jit_a, interp_a, "jit side effect on a != interpreter");
+    }
+
+    #[test]
     fn milestone_2_fn_runs_interpreted_and_jit_identically() {
         // Milestone 2: a function run both interpreted and Cranelift-JIT-compiled,
         // results diffed. The interpreter is the oracle. The body `return 40 + 2`

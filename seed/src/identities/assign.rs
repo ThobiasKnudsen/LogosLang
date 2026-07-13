@@ -4,6 +4,7 @@
 
 use cranelift_codegen::ir::Value;
 
+use super::numtype::{numtype_of_type, write_scalar};
 use super::{build_binary, operands, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
@@ -22,22 +23,20 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     id
 }
 
-/// Run: evaluate the right operand, write it into the left operand's i32 storage,
-/// and yield the assigned value. The stored `i32` is what the expression yields —
-/// returning the untruncated i64 would make `(a = X)` evaluate to a different
-/// number than `a` now holds when `X` is outside i32 range.
+/// Run: evaluate the right operand, write it into the left operand's storage at that
+/// variable's type width (the store truncates to the width; the reader reads it back
+/// the same way), and yield the assigned value.
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid application dyad, so its operands are valid nodes.
     unsafe {
         let (lhs, rhs) = operands(node);
-        let value = rt.run(rhs)?;
-        let slot = (*lhs).value as *mut i32;
+        let bits = rt.run(rhs)?;
+        let slot = (*lhs).value;
         if slot.is_null() {
             return Err(RunError::BadValue);
         }
-        let stored = value as i32;
-        std::ptr::write_unaligned(slot, stored);
-        Ok(i64::from(stored))
+        write_scalar((*lhs).ty, slot, bits);
+        Ok(bits)
     }
 }
 
@@ -53,7 +52,8 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
             return Err(CompileError::BadValue);
         }
         let v = lw.lower(rhs)?;
-        lw.store_i32((*lhs).value, v);
+        let ct = numtype_of_type((*lhs).ty).cranelift_type();
+        lw.store(ct, (*lhs).value, v);
         Ok(v)
     }
 }
