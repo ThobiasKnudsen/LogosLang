@@ -161,6 +161,32 @@ pub(crate) unsafe fn is_void_type(type_node: DyadPtr) -> bool {
     !v.is_null() && *(v as *const u8) == VOID_TAG
 }
 
+/// The value-slot tag for the `string` type, past [`VOID_TAG`].
+pub(crate) const STRING_TAG: u8 = 11;
+
+/// The value-slot tag for the `comment` type (prose nodes), past [`STRING_TAG`].
+pub(crate) const COMMENT_TAG: u8 = 12;
+
+/// Whether `type_node` is the `comment` type — prose, invisible to value flow.
+///
+/// # Safety
+/// `type_node` must be a valid type node from the store.
+pub(crate) unsafe fn is_comment_type(type_node: DyadPtr) -> bool {
+    let v = (*type_node).value;
+    !v.is_null() && *(v as *const u8) == COMMENT_TAG
+}
+
+/// Whether a data node typed `type_node` holds a scalar the interpreter can read
+/// at a width: a numeric type, or `bool` (whose type node carries no tag). The
+/// unit `void` and the text substance (`string`, `comment`) are not scalars.
+///
+/// # Safety
+/// `type_node` must be a valid type node from the store.
+pub(crate) unsafe fn is_scalar_type(type_node: DyadPtr) -> bool {
+    let v = (*type_node).value;
+    v.is_null() || *(v as *const u8) < VOID_TAG
+}
+
 /// The `NumType` of a type node, or `I32` for a fixed-width scalar type without a
 /// `NumType` tag (e.g. `bool`, physically an i32).
 ///

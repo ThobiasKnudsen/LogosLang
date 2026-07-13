@@ -352,6 +352,12 @@ pub struct CoreTypes {
     pub if_: DyadPtr,
     /// `while`: the loop statement; unit-valued, so value positions reject it.
     pub while_: DyadPtr,
+    /// `string`: the text-literal type (`«…»`); inert in the seed, above all the
+    /// comment substance.
+    pub string_: DyadPtr,
+    /// `comment`: the prose-node type a statement-level `#` builds; reflectable
+    /// graph structure, invisible to value flow.
+    pub comment_: DyadPtr,
     /// `convert`: the shared scalar numeric conversion; a conversion node's result type
     /// is its target (recognized as a numeric-producing operand).
     pub convert: DyadPtr,
@@ -565,8 +571,10 @@ pub(crate) unsafe fn is_bool_result(types: &CoreTypes, node: DyadPtr) -> bool {
         || ty == types.not_
 }
 
-/// The trailing expression of a sequence node `{ty: scope, value: [expr0 …, null]}`,
-/// or `None` for a scope with no expression list (a struct/parameter-list scope).
+/// The trailing *value* expression of a sequence node
+/// `{ty: scope, value: [expr0 …, null]}` — trailing comment nodes are prose, not
+/// the tail — or `None` for a scope with no expression list (a
+/// struct/parameter-list scope).
 ///
 /// # Safety
 /// `node` must be a valid dyad from the store; a non-null value must be a
@@ -580,11 +588,14 @@ pub(crate) unsafe fn last_sequence_expr(node: DyadPtr) -> Option<DyadPtr> {
     while !(*p.add(i)).is_null() {
         i += 1;
     }
-    if i == 0 {
-        None
-    } else {
-        Some(*p.add(i - 1))
+    while i > 0 {
+        let cand = *p.add(i - 1);
+        if !crate::identities::numtype::is_comment_type((*cand).ty) {
+            return Some(cand);
+        }
+        i -= 1;
     }
+    None
 }
 
 /// Whether `node` is or contains a `return` in the positions v1 recognizes as
@@ -668,12 +679,22 @@ impl<'a> Parser<'a> {
         Parser { source, pos: 0, scopes, store, trie, metas, types, pending_fn: std::ptr::null_mut() }
     }
 
+    /// Advance past whitespace only (never a `#`): the sequence parser peeks at a
+    /// statement-level `#` itself, to build the reflectable comment node.
+    fn skip_whitespace(&mut self) {
+        let bytes = self.source.as_bytes();
+        while self.pos < bytes.len() && bytes[self.pos].is_ascii_whitespace() {
+            self.pos += 1;
+        }
+    }
+
     /// Advance past trivia: ASCII whitespace and `#` line comments (a `#` runs to
-    /// the end of its line, as in the sketch's own files). Discarding is the seed
-    /// approximation: in the settled design `#` is a constructor over the string
-    /// substance, building a reflectable comment node that yields void and is
-    /// invisible to value flow (DESIGN ›Text literals are plain values; `#` is the
-    /// one comment constructor‹) — it arrives with the `string` type.
+    /// the end of its line). Statement-level `#`s never reach this — the sequence
+    /// parser builds them into reflectable comment nodes first
+    /// ([`Parser::parse_comment`]) — so discarding here covers only
+    /// *mid-expression* `#`s, the seed's remaining approximation of the settled
+    /// design (DESIGN ›Text literals are plain values; `#` is the one comment
+    /// constructor‹); the full constructor form arrives at self-hosting.
     fn skip_trivia(&mut self) {
         let bytes = self.source.as_bytes();
         loop {
@@ -1051,26 +1072,57 @@ impl<'a> Parser<'a> {
         self.scopes.push(scope);
         let mut exprs = Vec::new();
         loop {
-            self.skip_trivia();
-            if self.pos >= self.source.len() || self.at_close() {
+            self.skip_whitespace();
+            if self.pos >= self.source.len() {
+                break;
+            }
+            // A statement-level `#` builds a reflectable comment node — prose is
+            // part of the body's structure (DESIGN ›`#` is the one comment
+            // constructor‹). Mid-expression `#`s remain trivia ([`skip_trivia`]).
+            if self.source.as_bytes()[self.pos] == b'#' {
+                let comment = self.parse_comment()?;
+                exprs.push(comment);
+                continue;
+            }
+            if self.at_close() {
                 break;
             }
             exprs.push(self.parse_expression()?);
+            // A `#` directly after the expression is the next statement-level
+            // comment — the separator peek must not read through it as trivia.
+            self.skip_whitespace();
+            if self.pos < self.source.len() && self.source.as_bytes()[self.pos] == b'#' {
+                continue;
+            }
             // The optional `,`: a boundary the expressions already imply, consumed
             // where written (also purely for readability).
             self.consume_separator();
         }
         self.scopes.pop();
-        match exprs.len() {
-            0 => Err(ParseError::Empty),
-            1 => Ok(exprs[0]),
+        // Prose is invisible to value flow: the expression count and the tail are
+        // taken over the non-comment expressions.
+        // SAFETY: `exprs` are reduced dyads just parsed/built.
+        let values = exprs
+            .iter()
+            .filter(|&&e| unsafe { !crate::identities::numtype::is_comment_type((*e).ty) })
+            .count();
+        match (values, exprs.len()) {
+            (0, _) => Err(ParseError::Empty),
+            (_, 1) => Ok(exprs[0]),
             _ => {
-                // Every non-tail expression runs for effect only; a `return` there
-                // would run without exiting (no unwinding yet), so reject it.
+                // Every non-tail value runs for effect only; the tail is the last
+                // non-comment expression. A `return` anywhere else would run
+                // without exiting (no unwinding yet), so reject it.
                 let types = self.types;
-                for &e in &exprs[..exprs.len() - 1] {
+                let tail = exprs
+                    .iter()
+                    .rposition(|&e| unsafe {
+                        !crate::identities::numtype::is_comment_type((*e).ty)
+                    })
+                    .expect("values >= 1");
+                for (i, &e) in exprs.iter().enumerate() {
                     // SAFETY: `e` is a reduced dyad just parsed.
-                    if unsafe { contains_return(&types, e) } {
+                    if i != tail && unsafe { contains_return(&types, e) } {
                         return Err(ParseError::EarlyReturn);
                     }
                 }
@@ -1087,6 +1139,43 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse a statement-level comment: `#` followed by a `«…»` string or raw
+    /// text to the end of the line (the line form is sugar for the string form).
+    /// Builds the reflectable comment node `{ty: comment, value -> string node}`
+    /// the settled design specifies (DESIGN ›Text literals are plain values; `#`
+    /// is the one comment constructor‹).
+    fn parse_comment(&mut self) -> Result<DyadPtr, ParseError> {
+        self.pos += 1; // the `#`
+        let bytes = self.source.as_bytes();
+        // Spaces (not the newline) may separate `#` from its text.
+        while self.pos < bytes.len() && matches!(bytes[self.pos], b' ' | b'\t') {
+            self.pos += 1;
+        }
+        let source = self.source;
+        let text_node = if source[self.pos..].starts_with('«') {
+            // `# «…»`: the string form ends at the `»`, not the line.
+            let r = self
+                .scopes
+                .resolve(self.trie, &source[self.pos..])
+                .map_err(ParseError::Resolve)?;
+            let span = &source[self.pos..self.pos + r.matched];
+            self.pos += r.matched;
+            match self.metas.get(&r.identity).copied() {
+                Some(Construct::Atom(build)) => build(self.store, r.identity, span)?,
+                _ => return Err(ParseError::BadLiteral),
+            }
+        } else {
+            // Raw text to the end of the line, trimmed.
+            let start = self.pos;
+            while self.pos < bytes.len() && bytes[self.pos] != b'\n' {
+                self.pos += 1;
+            }
+            let text = source[start..self.pos].trim_end();
+            crate::identities::string::build_text(self.store, self.types.string_, text.as_bytes())
+        };
+        Ok(self.store.alloc_raw(self.types.comment_, text_node.cast()))
+    }
+
     /// Parse one expression to a single dyad, consuming source from the current
     /// position. Each call drives its own tape, so a prefix constructor can parse
     /// its operand by calling this again (the parser is a service the constructors
@@ -1096,6 +1185,17 @@ impl<'a> Parser<'a> {
     pub fn parse_expression(&mut self) -> Result<DyadPtr, ParseError> {
         let mut tape = ParsingTape::new();
         loop {
+            // A `#` after a completed dyad ends the expression: it is the next
+            // statement-level comment, the sequence parser's to build into a node
+            // ([`Parser::parse_comment`]). Only a genuinely mid-expression `#`
+            // (after a pending operator) is trivia here.
+            self.skip_whitespace();
+            if self.pos < self.source.len()
+                && self.source.as_bytes()[self.pos] == b'#'
+                && matches!(tape.last(), Some(Cell::Dyad(_)))
+            {
+                break;
+            }
             self.skip_trivia();
             if self.pos >= self.source.len() {
                 break;

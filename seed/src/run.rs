@@ -163,6 +163,11 @@ impl<'a> Runtime<'a> {
                     .map(i64::from)
                     .ok_or(RunError::UncomputableLiteral);
             }
+            // The text substance (a string or comment node) and unit have no
+            // scalar to read; refuse rather than reinterpret their bytes.
+            if !crate::identities::numtype::is_scalar_type((*node).ty) {
+                return Err(RunError::BadValue);
+            }
             let slot = (*node).value;
             if slot.is_null() {
                 return Err(RunError::BadValue);

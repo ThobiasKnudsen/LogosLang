@@ -52,7 +52,12 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let mut last = 0i64;
         let mut i = 0;
         while !(*p.add(i)).is_null() {
-            last = rt.run(*p.add(i))?;
+            let expr = *p.add(i);
+            // A comment node is prose — reflectable structure invisible to value
+            // flow: never run, never the tail.
+            if !super::numtype::is_comment_type((*expr).ty) {
+                last = rt.run(expr)?;
+            }
             i += 1;
         }
         Ok(last)
@@ -71,7 +76,11 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         let mut last = None;
         let mut i = 0;
         while !(*p.add(i)).is_null() {
-            last = Some(lw.lower(*p.add(i))?);
+            let expr = *p.add(i);
+            // Prose is not lowered; see [`run`].
+            if !super::numtype::is_comment_type((*expr).ty) {
+                last = Some(lw.lower(expr)?);
+            }
             i += 1;
         }
         last.ok_or(CompileError::BadValue)

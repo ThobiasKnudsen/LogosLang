@@ -18,8 +18,9 @@
 //! Deferred surface the sketch declares that the seed does not yet register —
 //! tracked here so each gap is deliberate, not drift: the operators `^`, `.`
 //! (field access; DESIGN ›Resolution is one rule‹), `&` (references), `@`
-//! (address-of), and `xor`; `for`; `string` and the `«…»`
-//! quotes; `mut` at every level (DESIGN ›Mutability and construction‹); the
+//! (address-of), and `xor`; `for`; the `string` *name* and operations over
+//! strings (the `«…»` literal exists as an inert value, above all as the comment
+//! substance); `mut` at every level (DESIGN ›Mutability and construction‹); the
 //! `hashtable` and `array` types; and the declaration forms `key : type = value`
 //! and bare `key :` outside field lists. Each arrives with the machinery it
 //! needs (layout, places, the borrow rule), not before.
@@ -54,6 +55,7 @@ mod if_mod;
 mod while_mod;
 mod and;
 mod assign;
+mod comment;
 mod convert;
 mod declare;
 mod divide;
@@ -72,6 +74,7 @@ mod paren;
 mod plus;
 pub(crate) mod rational;
 mod scope;
+pub(crate) mod string;
 mod times;
 
 /// The core identities and the per-phase tables that drive them.
@@ -135,6 +138,11 @@ pub struct Core {
     pub return_: DyadPtr,
     /// `rational_number` (numeric literal carrier); a data type.
     pub rational: DyadPtr,
+    /// `string` (the `«…»` text literal); inert in the seed, the comment substance.
+    pub string_: DyadPtr,
+    /// `comment` (the prose node a statement-level `#` builds); invisible to
+    /// value flow.
+    pub comment_: DyadPtr,
     /// `struct`, the type whose constructor derives a layout from a field list
     /// (and whose field list is a function's parameter list).
     pub struct_: DyadPtr,
@@ -189,6 +197,10 @@ impl Core {
         let void = numtype::register_void(&mut cx);
         let bool_ = bool_mod::register(&mut cx);
         let rational = rational::register(&mut cx);
+        // The text substance: `«…»` string literals and the comment nodes a
+        // statement-level `#` builds over them.
+        let string_ = string::register(&mut cx);
+        let comment_ = comment::register(&mut cx);
         let assign = assign::register(&mut cx);
         // The shared scalar numeric conversion (`i32(a)`, `f64(x)`, …). No spelling; the
         // parser builds conversion nodes from the `type(value)` constructor surface.
@@ -253,6 +265,8 @@ impl Core {
             while_,
             return_,
             rational,
+            string_,
+            comment_,
             struct_,
             metas,
             bcode,
@@ -274,6 +288,8 @@ impl Core {
             return_: self.return_,
             if_: self.if_,
             while_: self.while_,
+            string_: self.string_,
+            comment_: self.comment_,
             convert: self.convert,
             plus: self.plus,
             minus: self.minus,
@@ -604,7 +620,8 @@ unsafe fn commit_tail(
     if (*node).ty == types.while_ {
         return Err(ParseError::StatementAsValue);
     }
-    // A sequence: its trailing expression is the tail.
+    // A sequence: its trailing non-comment expression is the tail (trailing prose
+    // is invisible to value flow).
     if (*node).ty == types.scope {
         let ops = (*node).value as *mut DyadPtr;
         if !ops.is_null() {
@@ -612,9 +629,14 @@ unsafe fn commit_tail(
             while !(*ops.add(i)).is_null() {
                 i += 1;
             }
-            if i > 0 {
-                let committed = commit_tail(store, types, *ops.add(i - 1), output)?;
-                *ops.add(i - 1) = committed;
+            while i > 0 {
+                let cand = *ops.add(i - 1);
+                if !numtype::is_comment_type((*cand).ty) {
+                    let committed = commit_tail(store, types, cand, output)?;
+                    *ops.add(i - 1) = committed;
+                    break;
+                }
+                i -= 1;
             }
         }
         return Ok(node);
@@ -2403,6 +2425,81 @@ mod tests {
         // A literal zero divisor has no comptime value.
         assert_eq!(parse_err("i32(1 / 0)"), ParseError::UncomputableLiteral);
         assert_eq!(parse_err("i32(1 % 0)"), ParseError::UncomputableLiteral);
+    }
+
+    #[test]
+    fn string_literals_parse_and_are_inert() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let node = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p =
+                Parser::new("«hello world»", &mut store, &mut trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+        // SAFETY: `node` is the string literal just parsed.
+        unsafe {
+            assert_eq!((*node).ty, core.string_);
+            assert_eq!(crate::identities::string::text(node), b"hello world");
+        }
+        // Inert: no scalar to read, and no operator accepts it.
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+        // SAFETY: `node` is the string literal just parsed.
+        assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::BadValue));
+        assert_eq!(parse_err("«a» + 1"), ParseError::UnsupportedOperands);
+    }
+
+    #[test]
+    fn comments_are_reflectable_nodes_invisible_to_value_flow() {
+        // A statement-level `#` builds a comment node: real graph structure whose
+        // substance is a string node (both the raw-line and `«…»` forms), never
+        // run, never a scope's tail — the 40 + 2 stays the value in both tiers.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let func = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "fn () -> i32 ( # the answer\n 40 + 2\n # «checked twice» )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap()
+        };
+        // The body is the sequence [comment, 42, comment]; the tail for typing
+        // and value is the 42, committed through the trailing prose.
+        unsafe {
+            let body = *((*func).value as *const DyadPtr).add(FN_BODY);
+            assert_eq!((*body).ty, core.scope_);
+            let ops = (*body).value as *const DyadPtr;
+            let (c1, mid, c2) = (*ops, *ops.add(1), *ops.add(2));
+            assert!((*ops.add(3)).is_null());
+            assert_eq!((*c1).ty, core.comment_);
+            assert_eq!(crate::identities::string::text((*c1).value.cast()), b"the answer");
+            assert_eq!((*mid).ty, core.i32_);
+            assert_eq!((*c2).ty, core.comment_);
+            assert_eq!(crate::identities::string::text((*c2).value.cast()), b"checked twice");
+        }
+        let call = store.alloc_raw(func, std::ptr::null_mut());
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+        // SAFETY: `call`/`func`/body are valid nodes just parsed.
+        let interp = unsafe { rt.run(call) }.unwrap();
+        // SAFETY: `func` outlives the call; the artifact stays alive.
+        let _c = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
+        let jit = unsafe { rt.run(call) }.unwrap();
+        assert_eq!(interp, 42);
+        assert_eq!(jit, interp);
+    }
+
+    #[test]
+    fn a_scope_of_only_prose_has_no_value() {
+        assert_eq!(parse_err("( # just a note )"), ParseError::Empty);
     }
 
     #[test]

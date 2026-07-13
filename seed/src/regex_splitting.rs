@@ -33,6 +33,19 @@ fn bytes_to_string(b: &[u8]) -> String {
     String::from_utf8_lossy(b).into_owned()
 }
 
+/// The byte length of the UTF-8 sequence `lead` begins. Literal arms must consume
+/// whole sequences and copy their raw bytes: `lead as char` would re-read a
+/// non-ASCII byte as its own codepoint and re-encode it as *different* bytes
+/// (0xC2 would become 0xC3 0x82), corrupting any multibyte literal such as `«`.
+fn utf8_len(lead: u8) -> usize {
+    match lead {
+        b if b < 0x80 => 1,
+        b if b >= 0xF0 => 4,
+        b if b >= 0xE0 => 3,
+        _ => 2,
+    }
+}
+
 /// A literal has no regex metacharacters; such patterns bypass splitting and
 /// go straight into the trie's literal byte-path.
 pub fn is_pure_literal(s: &str) -> bool {
@@ -144,7 +157,12 @@ fn parse_atom(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
                 }
             }
             _ => {
-                result.push(vec![Segment::lit(&(esc as char).to_string())]);
+                // An escaped literal char: byte-preserving and multibyte-aware
+                // (the sketch's `\«` escape reaches here); see [`utf8_len`].
+                let start = *pos - 1;
+                let end = (start + utf8_len(esc)).min(s.len());
+                *pos = end;
+                result.push(vec![Segment::lit(&bytes_to_string(&s[start..end]))]);
             }
         }
         result
@@ -234,8 +252,12 @@ fn parse_atom(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
         result.push(vec![Segment::rx(&(c as char).to_string())]);
         result
     } else {
-        *pos += 1;
-        result.push(vec![Segment::lit(&(c as char).to_string())]);
+        // A plain literal char: consume the whole UTF-8 sequence, byte-preserving
+        // (see [`utf8_len`]).
+        let end = (*pos + utf8_len(c)).min(s.len());
+        let lit = bytes_to_string(&s[*pos..end]);
+        *pos = end;
+        result.push(vec![Segment::lit(&lit)]);
         result
     }
 }
