@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! `scope`: the type of a scope node, the graph's own spine (DESIGN
 //! ›Meta-navigation walks the graph; the scope stack is the graph's own spine‹).
 //! A scope is a node whose type is `scope`; entering one is descending into its

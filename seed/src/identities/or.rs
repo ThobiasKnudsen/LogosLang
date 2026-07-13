@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! `or`: short-circuiting logical disjunction over `bool`s. Both operands must be
 //! `bool` (comparisons, `bool` values, or nested logical results); the result is a
 //! `bool`. It short-circuits: when the left operand is true the right is not

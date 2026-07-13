@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! `compile` (V1PLAN Phase 5): lower a dyad tree to native code with Cranelift.
 //!
 //! `compile` is `run`'s sibling: where `run` walks the graph and computes,

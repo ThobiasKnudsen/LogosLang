@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! `rational_number`: the numeric-literal carrier. A data type whose value is an
 //! actual rational — a reduced fraction `num / den` (`den > 0`) — so `3.14` is a
 //! first-class literal (`157 / 50`), not just whole numbers. Integer literals are

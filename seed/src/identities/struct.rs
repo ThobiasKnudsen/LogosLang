@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! `struct`: the type whose constructor derives a layout from a `( field-list )`.
 //! Written `struct ( name : type, … | bare name )`; the field list *is* a
 //! function's parameter list (DESIGN ›A function's surface‹), so the same parse

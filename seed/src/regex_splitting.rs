@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! Splitting a regex pattern into literal-prefix paths and residual regex
 //! segments — a port of `regex_splitting.zig`.
 //!

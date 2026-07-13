@@ -1,4 +1,7 @@
-//! `run` (V1PLAN Phase 4): execute a node.
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
+//! `run`: execute a node.
 //!
 //! `run` is one primitive with two paths (DESIGN ›Execution is function
 //! application‹): read a node's operation (its `type`); if that operation is a
@@ -17,7 +20,8 @@
 //! So `run` resolves a function in three steps: a leaf native in the table runs
 //! directly; otherwise, if the node has installed `bcode`, jump to it; otherwise
 //! interpret by walking the `body`. Interpretation is just the null-`bcode` path.
-//! v1 scalar values are `i32` widened to `i64`.
+//! v1 scalar values ride an `i64` bit-container, read and written at their type's
+//! width (see `crate::identities::numtype`).
 
 use std::collections::HashMap;
 
@@ -46,7 +50,8 @@ pub enum RunError {
     /// A call's argument count did not match the callee's parameter count.
     ArityMismatch,
     /// A compiled call had more arguments than the seed's calling convention
-    /// supports (v1 calls compiled code with at most three `i32` arguments).
+    /// supports (v1 calls compiled code with at most three `i64` bit-container
+    /// arguments).
     CompiledArity,
 }
 

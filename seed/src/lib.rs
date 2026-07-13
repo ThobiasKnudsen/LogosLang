@@ -1,8 +1,12 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! The Logos bootstrap seed.
 //!
-//! See `V1PLAN.md` for the build order and `DESIGN.md` for the rationale. The
-//! seed's hand-built core identities live in `identities` (one file each); the
-//! phase engines are `lex`, `parse`, `run`, and `compile`, over the `store`.
+//! See `DESIGN.md` and `language_sketch.logos` for what the seed builds toward.
+//! The seed's hand-built core identities live in `identities` (one file each);
+//! the phase engines are the lexing name index (`regex_trie`), `parse`, `run`,
+//! and `compile`, over the `store`.
 
 pub mod compile;
 pub mod identities;

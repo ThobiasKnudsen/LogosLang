@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! `if ( cond ) ( then ) else ( else )`: the value-producing conditional. `if` is a
 //! function (its own type is `fn`), like the operators; its node is
 //! `{ty: if, value: [cond, then, else]}`. The condition must be a `bool` (checked at

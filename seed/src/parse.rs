@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! The parsing tape: the working frontier the constructors drive.
 //!
 //! The tape holds both the dyads reduced so far but not yet final and the tokens
@@ -10,9 +13,11 @@
 //!
 //! This module holds the parser's own state: the tape substrate (above), the
 //! scope stack, and name resolution over it. The parser owns resolution; the
-//! trie ([`crate::regex_trie`]) is only the name index. Still to come (V1PLAN
-//! Phase 3): wiring the tape to lazily lex pending tokens from source, and the
-//! deferred-reduction driver that runs each identity's `constructor`.
+//! trie ([`crate::regex_trie`]) is only the name index. Still to come: pending
+//! tokens lexed lazily onto the tape itself (v1 lexes on demand but resolves
+//! each name eagerly at scan), and the general deferred-reduction driver that
+//! runs each identity's `constructor` (v1's driver owns the scheduling; see
+//! [`Construct`]).
 
 use std::collections::HashSet;
 

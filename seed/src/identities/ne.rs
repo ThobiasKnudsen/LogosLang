@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! `!=`: inequality. Like `<` (see [`crate::identities::lt`]), it stores its resolved
 //! operand type in the value slot and run/compile switch on it; result is `bool`. It
 //! binds at equality precedence (looser than the relational operators).

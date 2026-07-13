@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! `<`: less-than. A comparison stores its resolved *operand* type in the value slot
 //! `{ty: <, value: [lhs, rhs, type]}` (its result is `bool`, an i32 0/1); run/compile
 //! read that type and switch on it — signed vs unsigned vs float (see

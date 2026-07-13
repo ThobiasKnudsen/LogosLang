@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! `+`: addition. `+` is a *higher-level identity* describing how to read its
 //! operands (DESIGN ›which concrete machine operation runs is resolved from the
 //! operand types‹): its node is `{ty: +, value: [lhs, rhs, type]}`, where the

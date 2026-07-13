@@ -1,4 +1,7 @@
-//! The seed's hand-built core identities (V1PLAN Phase 1), one file each.
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
+//! The seed's hand-built core identities, one file each.
 //!
 //! Everything in Logos is an identity, but only the seed's *native* identities
 //! are authored in Rust; identities created while a program runs are graph data,
@@ -715,7 +718,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
 
-        // Node shape: `{ty: fn, value -> [input, output, body]}` with an empty
+        // Node shape: `{ty: fn, value -> [input, output, body, bcode]}` with an empty
         // input struct, an i32 return type, and a body (the `return`).
         unsafe {
             assert_eq!((*func).ty, core.fn_type);

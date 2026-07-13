@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! The node cell.
 //!
 //! A node ("dyad") is a `type` pointer and a `value` pointer — sixteen bytes —

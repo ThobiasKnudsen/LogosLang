@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! Numeric conversion (`i32(a)`, `f64(x)`, …): a numeric type node acting as a
 //! constructor over a value (DESIGN ›numeric conversion is the type constructor
 //! consuming a value‹). One shared `convert` identity carries every scalar cast; a

@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! `-`: subtraction. Like `+` (see [`crate::identities::plus`]), it stores its
 //! resolved operand type in the value slot `{ty: -, value: [lhs, rhs, type]}` and
 //! run/compile switch on it. Same precedence as `+`, left-associative.

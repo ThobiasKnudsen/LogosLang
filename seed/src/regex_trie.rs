@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! The hybrid regex-trie — a port of `regex_trie.zig`.
 //!
 //! Each node holds a 256-entry `child_indices` table mapping a byte to a slot in
@@ -694,7 +697,8 @@ mod tests {
 
     #[test]
     fn insert_then_use_in_same_pass() {
-        // V1PLAN Phase 3: declare a token, then immediately lex a use of it.
+        // Declare a token, then immediately lex a use of it: declarations extend
+        // the lexer mid-parse (the non-context-free property).
         let root = dummy(100);
         let mut t = RegexTrie::new();
         t.insert("=", ic(dummy(1), root));

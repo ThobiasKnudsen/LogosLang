@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! `not (x)`: logical negation of a `bool`. Its operand must be a `bool`; the result
 //! is a `bool`. It takes a parenthesized operand (like `if`'s condition), which keeps
 //! its binding unambiguous without a unary-precedence rule: `not (a) and b` is

@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! `type`: the `Type : Type` self-loop, the one node whose type is itself, the
 //! fixed point whose layout is the seed's only a-priori knowledge.
 

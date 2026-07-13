@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! `=`: assignment. A function (its type is `fn`), right-associative, binding
 //! loosest. Run evaluates the right operand and writes it into the left operand's
 //! storage, yielding the value; compile lowers it to a store.

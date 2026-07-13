@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! `(` and `)`: the matched-paren scope delimiters. `( )` groups a sub-expression
 //! and (per DESIGN ›A function's surface‹) opens a scope whose value is what its
 //! body returns. These are parse-only markers: they never appear as a node's type

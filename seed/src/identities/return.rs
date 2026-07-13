@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! `return`: an optional early exit from the enclosing function. It is a function
 //! whose single operand is its `value`; run and compile evaluate that operand and
 //! yield it. Surface: prefix, `return <expr>`.

@@ -1,10 +1,13 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! The node store: an append-only arena that hands out stable addresses for
 //! dyads. A node's address is its id (DESIGN ›The store is keyed by address‹),
 //! so an allocated dyad must never move. The arena is a list of fixed-capacity
 //! chunks: allocation bumps within the newest chunk and starts a fresh chunk
 //! when it fills, so every address stays valid for the store's lifetime. v1 does
 //! not free individual nodes (structural deletion tombstones in the graph, not
-//! the store; see V1PLAN §Mutability & deopt).
+//! the store).
 
 use crate::dyad::{Dyad, DyadPtr};
 

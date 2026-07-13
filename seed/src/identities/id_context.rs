@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! An `id_context`: an identity paired with the scope it was declared in.
 //!
 //! A single spelling can denote different identities in different scopes, so the

@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! `NumType`: the seed's numeric machine types, and the type-switched arithmetic and
 //! comparison the operators dispatch through.
 //!

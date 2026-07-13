@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! `:=`: the declaration operator. `name := value` binds a *fresh* name to a value
 //! in the current scope, declaring the name *before* the value is elaborated so the
 //! value can refer to it — a function can name itself and recurse.

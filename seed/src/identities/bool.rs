@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! `bool`: the type of a boolean value. A data type (its own type is `type`), like
 //! [`crate::identities::i32`], but its values are just 0/1. Comparisons (`<`, …)
 //! produce `bool`, and `if` requires a `bool` condition (checked at parse time).

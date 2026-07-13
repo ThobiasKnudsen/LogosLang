@@ -1,3 +1,6 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! `fn`: the type whose values are functions. `run` recognizes a function by its
 //! type being this.
 //!
