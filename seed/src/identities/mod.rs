@@ -76,6 +76,8 @@ pub struct Core {
     pub numtypes: [DyadPtr; 10],
     /// `bool`, the type of a boolean value (a comparison result; an `if` condition).
     pub bool_: DyadPtr,
+    /// `void`, the zero-sized unit type: a `-> void` function yields unit (0 bits).
+    pub void: DyadPtr,
     /// `=` (assignment); a function.
     pub assign: DyadPtr,
     /// `convert`: the shared scalar numeric conversion, built from a `type(value)`
@@ -158,6 +160,9 @@ impl Core {
             numtypes[nt as usize] = numtype::register_type(&mut cx, spelling, nt);
         }
         let i32_ = numtypes[NumType::I32 as usize];
+        // `void`: the zero-sized unit type (a `-> void` return). Self-describing via a
+        // tag past the numeric range, so run/compile recognize it without a handle.
+        let void = numtype::register_void(&mut cx);
         let bool_ = bool_mod::register(&mut cx);
         let rational = rational::register(&mut cx);
         let assign = assign::register(&mut cx);
@@ -197,6 +202,7 @@ impl Core {
             i32_,
             numtypes,
             bool_,
+            void,
             assign,
             convert,
             plus,
@@ -320,8 +326,16 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
         return Operand::Concrete(numtype::of_type_node(ty));
     }
     // A call: its result is the callee's return type; a recursive self-call reaches
-    // here before its callee is bound, so it defaults to i32 (the factorial shape).
+    // here before its callee is bound, so it defaults to i32 (the factorial shape). A
+    // void-returning callee yields no numeric value (and its output has no NumType).
     if !ty.is_null() && (*ty).ty == types.fn_type {
+        let fields = (*ty).value as *const DyadPtr;
+        if !fields.is_null() {
+            let out = *fields.add(FN_OUTPUT);
+            if !out.is_null() && numtype::is_void_type(out) {
+                return Operand::NonNumeric;
+            }
+        }
         return Operand::Concrete(call_return_numtype(ty));
     }
     Operand::NonNumeric
@@ -2086,6 +2100,53 @@ mod tests {
         assert_eq!(parse_err("i32()"), ParseError::BadCast); // no operand
         assert_eq!(parse_err("i32(1, 2)"), ParseError::BadCast); // too many operands
         assert_eq!(parse_err("i32(struct ())"), ParseError::BadCast); // non-numeric operand
+    }
+
+    #[test]
+    fn void_function_yields_unit_both_tiers() {
+        // A `-> void` fn discards its body value and returns unit (0 bits) in both tiers.
+        diff_typed_call("fn () -> void ( 42 )", "f()", 0);
+    }
+
+    #[test]
+    fn void_function_runs_its_body_for_effect() {
+        // The void body still executes: `a = a + 1` bumps the enclosing variable, and
+        // the fn returns unit. Diffed between tiers on both the return and the effect.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let a_val = store.alloc_bytes(&41i32.to_ne_bytes());
+        let a = store.alloc_raw(core.i32_, a_val);
+        scopes.declare(&mut trie, "a", a).unwrap();
+        let func = {
+            let mut p = Parser::new(
+                "fn () -> void ( a = a + 1 )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                scopes,
+            );
+            p.parse_expression().unwrap()
+        };
+        let call = store.alloc_raw(func, std::ptr::null_mut());
+        let mut rt = Runtime::new(core.fn_type, core.rational, &core.bcode);
+        // Interpreted: yields unit 0, leaves a = 42.
+        // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
+        let interp = unsafe { rt.run(call) }.unwrap();
+        let interp_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
+        // Reset a, compile (installs bcode), run again — jumps to the compiled body.
+        unsafe { std::ptr::write_unaligned(a_val as *mut i32, 41) };
+        // SAFETY: `func`/`a` live in `store`, which outlives the call.
+        let _c = unsafe { compile_fn(&core.lower, core.fn_type, func) }.unwrap();
+        let jit = unsafe { rt.run(call) }.unwrap();
+        let jit_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
+        assert_eq!(interp, 0, "void yields unit (interpreted)");
+        assert_eq!(jit, 0, "void yields unit (compiled)");
+        assert_eq!(interp_a, 42, "body ran (interpreted)");
+        assert_eq!(jit_a, 42, "body ran (compiled)");
     }
 
     #[test]

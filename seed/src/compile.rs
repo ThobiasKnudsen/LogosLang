@@ -23,7 +23,7 @@ use cranelift_module::{default_libcall_names, FuncId, Linkage, Module};
 
 use crate::dyad::DyadPtr;
 use crate::identities::numtype::{
-    numtype_of_type, of_type_node, stored_type, ArithOp, CmpOp, NumType,
+    is_void_type, numtype_of_type, of_type_node, stored_type, ArithOp, CmpOp, NumType,
 };
 use crate::identities::operands;
 use crate::parse::{FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
@@ -501,9 +501,12 @@ pub unsafe fn compile_fn(
         }
     }
     let body = *fields.add(FN_BODY);
-    let ret_ty = numtype_of_type(*fields.add(FN_OUTPUT));
+    // A `-> void` function yields unit (compiled to `return 0`); every other output is
+    // a numeric type the body's value widens to.
+    let out = *fields.add(FN_OUTPUT);
+    let ret = if is_void_type(out) { None } else { Some(numtype_of_type(out)) };
     // The fn node is its own self-reference: a call to it inside `body` is recursion.
-    let compiled = compile_body(lower, fn_type, fn_node, body, &params, ret_ty)?;
+    let compiled = compile_body(lower, fn_type, fn_node, body, &params, ret)?;
     // Install the exec@ (a machine-code address) into the node's bcode slot, punned
     // into the pointer-sized cell. `run` reads it back and calls it.
     let bcode_slot = ((*fn_node).value as *mut DyadPtr).add(FN_BCODE);
@@ -523,7 +526,7 @@ pub unsafe fn compile_nullary_i32(
 ) -> Result<Compiled, CompileError> {
     // A bare expression is not a function, so there is no self to recurse into; v1
     // bare expressions are i32 (or bool, physically i32).
-    compile_body(lower, fn_type, std::ptr::null_mut(), root, &[], NumType::I32)
+    compile_body(lower, fn_type, std::ptr::null_mut(), root, &[], Some(NumType::I32))
 }
 
 /// Compile `root` as a function returning `i32` with one `i32` argument per entry in
@@ -541,7 +544,7 @@ pub(crate) unsafe fn compile_body(
     self_fn: DyadPtr,
     root: DyadPtr,
     params: &[DyadPtr],
-    ret_ty: NumType,
+    ret: Option<NumType>,
 ) -> Result<Compiled, CompileError> {
     // Fail fast on arities the compiled calling convention cannot call, so the
     // function stays interpreted (its bcode is never installed) instead of
@@ -594,7 +597,7 @@ pub(crate) unsafe fn compile_body(
             param_map.insert(p, vn);
         }
 
-        let ret = {
+        let value = {
             let mut lw = Lowerer {
                 builder: &mut builder,
                 lower,
@@ -608,8 +611,12 @@ pub(crate) unsafe fn compile_body(
             };
             lw.lower(root)?
         };
-        // Widen the result back to the `i64` bit-container for the uniform return.
-        let ret64 = widen_to_i64(&mut builder, ret, ret_ty);
+        // Widen the body's value back to the `i64` bit-container for the uniform return;
+        // a `-> void` function discards it (the body ran for effect) and returns unit 0.
+        let ret64 = match ret {
+            Some(nt) => widen_to_i64(&mut builder, value, nt),
+            None => builder.ins().iconst(types::I64, 0),
+        };
         builder.ins().return_(&[ret64]);
         builder.finalize();
     }

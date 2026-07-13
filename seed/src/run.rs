@@ -22,7 +22,7 @@
 use std::collections::HashMap;
 
 use crate::dyad::DyadPtr;
-use crate::parse::{FN_BCODE, FN_BODY, FN_INPUT};
+use crate::parse::{FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
 
 /// A function's implementation for one run version. Takes the application node
 /// and returns its scalar result, recursing on operands via [`Runtime::run`].
@@ -141,7 +141,13 @@ impl<'a> Runtime<'a> {
             self.frames.push(frame);
             let result = self.run(body);
             self.frames.pop();
-            result
+            // A `-> void` function runs its body for effect and yields unit (0 bits),
+            // matching the compiled void fn's `return 0`, so both tiers agree.
+            if crate::identities::numtype::is_void_type(*fields.add(FN_OUTPUT)) {
+                result.map(|_| 0)
+            } else {
+                result
+            }
         } else {
             // `node` is data. A rational literal is molded to its i32 value (a
             // fraction like 3.14 has none: UncomputableLiteral, not a bad read);

@@ -107,6 +107,30 @@ pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr
     id
 }
 
+/// The value-slot tag for the `void` unit type, one past every [`NumType`] discriminant
+/// (0..=9) so a void type node is told apart from a numeric one by its tag alone,
+/// without threading a separate handle through run and compile.
+pub(crate) const VOID_TAG: u8 = 10;
+
+/// Register the `void` unit type: its spelling and its [`VOID_TAG`] value tag. Unlike a
+/// numeric type it carries no lowering — in the seed `void` appears only as a `->`
+/// return type, marking a function that runs its body for effect and yields unit.
+pub(crate) fn register_void(cx: &mut Cx) -> DyadPtr {
+    let tag = cx.store.alloc_bytes(&[VOID_TAG]);
+    let id = cx.store.alloc_raw(cx.type_, tag);
+    cx.trie.insert("void", IdContext::new(id, cx.root_scope));
+    id
+}
+
+/// Whether `type_node` is the `void` unit type (its value slot holds [`VOID_TAG`]).
+///
+/// # Safety
+/// `type_node` must be a valid type node from the store.
+pub(crate) unsafe fn is_void_type(type_node: DyadPtr) -> bool {
+    let v = (*type_node).value;
+    !v.is_null() && *(v as *const u8) == VOID_TAG
+}
+
 /// The `NumType` of a type node, or `I32` for a fixed-width scalar type without a
 /// `NumType` tag (e.g. `bool`, physically an i32).
 ///
