@@ -109,6 +109,8 @@ pub struct Core {
     pub not_: DyadPtr,
     /// `if` (the value-producing conditional); a function.
     pub if_: DyadPtr,
+    /// `return` (the optional early yield); a function whose value is its operand.
+    pub return_: DyadPtr,
     /// `rational_number` (numeric literal carrier); a data type.
     pub rational: DyadPtr,
     /// `struct`, the type whose constructor derives a layout from a field list
@@ -188,7 +190,7 @@ impl Core {
         let if_ = if_mod::register(&mut cx);
         fn_mod::register_syntax(&mut cx);
         paren::register(&mut cx);
-        return_mod::register(&mut cx);
+        let return_ = return_mod::register(&mut cx);
         // `:=` is a parse-time-only token; the driver dispatches on its Construct.
         declare::register(&mut cx);
         let struct_ = struct_mod::register(&mut cx);
@@ -218,6 +220,7 @@ impl Core {
             or_,
             not_,
             if_,
+            return_,
             rational,
             struct_,
             metas,
@@ -237,6 +240,7 @@ impl Core {
             numtypes: self.numtypes,
             bool_: self.bool_,
             rational: self.rational,
+            return_: self.return_,
             convert: self.convert,
             plus: self.plus,
             minus: self.minus,
@@ -418,11 +422,11 @@ pub(crate) fn is_numtype_node(types: &CoreTypes, node: DyadPtr) -> bool {
 }
 
 /// Commit a comptime-rational function body to its declared return type — the typed-slot
-/// context (DESIGN ›a rational commits when it lands in a typed slot‹). A bare rational
-/// tail expression molds to a concrete numeric return type (exact, else
-/// [`ParseError::UncomputableLiteral`]); every other body, and a `void` return, pass
-/// through unchanged. (A `return`-wrapped rational tail still molds via the default i32
-/// path; committing through `return` is later work.)
+/// context (DESIGN ›a rational commits when it lands in a typed slot‹). The body's value
+/// node is the body itself, or the operand of a `return` when the tail is `return X`;
+/// either way, a rational there molds to a concrete numeric return type (exact, else
+/// [`ParseError::UncomputableLiteral`]). A `void` return, a non-concrete output, and a
+/// non-rational tail all pass through unchanged.
 ///
 /// # Safety
 /// `body`/`output` are valid dyads from the store.
@@ -432,13 +436,28 @@ pub(crate) unsafe fn commit_fn_body(
     body: DyadPtr,
     output: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    if (*body).ty == types.rational && is_numtype_node(types, output) {
-        let nt = numtype::of_type_node(output);
-        let bits = rational::mold_to(body, nt).ok_or(ParseError::UncomputableLiteral)?;
-        let value = store.alloc_bytes(&bits.to_ne_bytes()[..nt.bytes()]);
-        return Ok(store.alloc_raw(output, value));
+    // Only a concrete numeric return type commits a rational (a `void` return discards).
+    if !is_numtype_node(types, output) {
+        return Ok(body);
     }
-    Ok(body)
+    // The tail value node: `return X` yields X (its `value` is that operand), otherwise
+    // the body itself.
+    let is_return = (*body).ty == types.return_;
+    let tail: DyadPtr = if is_return { (*body).value.cast() } else { body };
+    if (*tail).ty != types.rational {
+        return Ok(body);
+    }
+    let nt = numtype::of_type_node(output);
+    let bits = rational::mold_to(tail, nt).ok_or(ParseError::UncomputableLiteral)?;
+    let value = store.alloc_bytes(&bits.to_ne_bytes()[..nt.bytes()]);
+    let committed = store.alloc_raw(output, value);
+    if is_return {
+        // Point the freshly-parsed (not yet aliased) `return` at the committed literal.
+        (*body).value = committed.cast();
+        Ok(body)
+    } else {
+        Ok(committed)
+    }
 }
 
 /// Build a scalar numeric conversion `target(operand)` — the `type(value)` constructor
@@ -2182,6 +2201,8 @@ mod tests {
         diff_typed_call("fn () -> i64 ( i64(1000000 * 1000000) )", "f()", 1_000_000_000_000);
         diff_typed_call("fn () -> i64 ( 2000000000 + 2000000000 )", "f()", 4_000_000_000);
         diff_typed_call("fn () -> i64 ( 2000000000 * 2 )", "f()", 4_000_000_000);
+        // The commit reaches through an explicit `return` too (not just a bare tail).
+        diff_typed_call("fn () -> i64 ( return 2000000000 + 2000000000 )", "f()", 4_000_000_000);
         // 0.5 + 0.25 = 3/4 exactly, then to f64 bits.
         diff_typed_call("fn () -> f64 ( f64(0.5 + 0.25) )", "f()", 0.75f64.to_bits() as i64);
     }
