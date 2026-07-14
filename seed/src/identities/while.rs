@@ -13,16 +13,18 @@
 
 use cranelift_codegen::ir::Value;
 
-use super::Cx;
+use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::Construct;
+use crate::parse::{Assoc, Construct};
 use crate::run::{RunError, Runtime};
 
 /// Register `while`: spelling, its `While` construct, run native, and lowering.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let while_ = cx.store.alloc_raw(cx.fn_type, std::ptr::null_mut());
+    let record =
+        meta::operand_record(cx, meta::TUPLE_TAG, 0.0, Assoc::Left, &["condition", "body"]);
+    let while_ = cx.store.alloc_raw(cx.fn_type, record);
     cx.trie.insert("while", IdContext::new(while_, cx.root_scope));
     cx.metas.insert(while_, Construct::While);
     cx.bcode.insert(while_, run);

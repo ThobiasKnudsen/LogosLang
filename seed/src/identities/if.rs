@@ -16,11 +16,11 @@
 
 use cranelift_codegen::ir::Value;
 
-use super::Cx;
+use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::Construct;
+use crate::parse::{Assoc, Construct};
 use crate::run::{RunError, Runtime};
 
 /// The index of the condition in an `if` node's value struct.
@@ -33,13 +33,22 @@ const IF_ELSE: usize = 2;
 /// Register `if` (the conditional keyword, its run native, and its lowering) and the
 /// `else` token the parser consumes between the branches. Returns the `if` identity.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let if_ = cx.store.alloc_raw(cx.fn_type, std::ptr::null_mut());
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        0.0,
+        Assoc::Left,
+        &["condition", "then", "else"],
+    );
+    let if_ = cx.store.alloc_raw(cx.fn_type, record);
     cx.trie.insert("if", IdContext::new(if_, cx.root_scope));
     cx.metas.insert(if_, Construct::If);
     cx.bcode.insert(if_, run);
     cx.lower.insert(if_, lower);
 
-    let else_ = cx.store.alloc_raw(cx.fn_type, std::ptr::null_mut());
+    // `else` is a parse-only token between the branches, not a function.
+    let record = meta::record(cx.store, meta::TOKEN_TAG);
+    let else_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("else", IdContext::new(else_, cx.root_scope));
     cx.metas.insert(else_, Construct::Else);
 

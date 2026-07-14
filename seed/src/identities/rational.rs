@@ -22,7 +22,7 @@
 use cranelift_codegen::ir::Value;
 
 use super::numtype::{ArithOp, CmpOp, NumType};
-use super::Cx;
+use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
@@ -32,7 +32,8 @@ use crate::store::Store;
 /// Register `rational_number`: its spelling (integers or decimals), literal
 /// constructor, and lowering.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let id = cx.store.alloc_raw(cx.type_, std::ptr::null_mut());
+    let record = meta::record(cx.store, meta::FRACTION_TAG);
+    let id = cx.store.alloc_raw(cx.type_, record);
     // Digits and an optional fractional part. Unanchored: the lexer longest-matches
     // a prefix of the remaining input. The span is unsigned — `-` is always the
     // operator (else `a-1` would lex as `a` then the literal `-1`); a negative

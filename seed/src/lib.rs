@@ -11,6 +11,7 @@
 pub mod compile;
 pub mod identities;
 pub mod parse;
+pub mod reflect;
 pub mod regex_splitting;
 pub mod regex_trie;
 pub mod run;

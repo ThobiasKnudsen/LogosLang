@@ -18,10 +18,10 @@
 //! `if`, …) keep their machine code in the run version's table instead (see
 //! `crate::run`).
 
-use super::Cx;
+use super::{meta, Cx};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::Construct;
+use crate::parse::{Assoc, Construct};
 use crate::store::Store;
 
 /// Create the `fn` type (its own type is `type`) and return it. Called before the
@@ -37,8 +37,24 @@ pub(super) fn register_syntax(cx: &mut Cx) {
     cx.trie.insert("fn", IdContext::new(cx.fn_type, cx.root_scope));
     cx.metas.insert(cx.fn_type, Construct::Fn);
 
+    // `fn`'s own record, installed now that the string type exists for the role
+    // names: an fn value is the four fixed slots `[input, output, body, bcode]`.
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        0.0,
+        Assoc::Left,
+        &["input", "output", "body", "bcode"],
+    );
+    // SAFETY: `fn_type` was allocated by [`register`] and nothing has read its
+    // (previously null) value slot.
+    unsafe {
+        (*cx.fn_type).value = record;
+    }
+
     // `->` separates a fn's parameter list from its return type.
-    let arrow = cx.store.alloc_raw(cx.type_, std::ptr::null_mut());
+    let record = meta::record(cx.store, meta::TOKEN_TAG);
+    let arrow = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("->", IdContext::new(arrow, cx.root_scope));
     cx.metas.insert(arrow, Construct::Arrow);
 }

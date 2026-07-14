@@ -13,9 +13,10 @@
 //! v1 pointers are raw, unchecked addresses (DESIGN's `@`-family); checked
 //! `&T`/`&mut T` references layer on when the borrow checker arrives.
 //!
-//! Representation: a pointer *type* is `{ty: type, value -> [ADDR_TAG,
-//! pointee-node-ptr]}` — created fresh per use, never interned (DESIGN:
-//! ordinary source nodes are not deduped); equality anywhere compares
+//! Representation: a pointer *type* is `{ty: type, value -> record}`, its
+//! shared-member record [`ADDR_TAG`]-kinded with the pointee node as payload
+//! (see [`crate::identities::meta`]) — created fresh per use, never interned
+//! (DESIGN: ordinary source nodes are not deduped); equality anywhere compares
 //! *pointees*. A pointer *value* is an ordinary 8-byte scalar (the address in
 //! the i64 bit-container), so variables, parameters, struct fields, and the
 //! compiled ABI all carry pointers through the existing width machinery. A
@@ -28,12 +29,12 @@
 
 use cranelift_codegen::ir::Value;
 
-use super::numtype::{self, ADDR_TAG, NumType};
-use super::{commit_if_literal, Cx, Operand};
+use super::numtype::{self, NumType};
+use super::{commit_if_literal, meta, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Construct, CoreTypes, ParseError};
+use crate::parse::{Assoc, Construct, CoreTypes, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -42,32 +43,46 @@ use crate::store::Store;
 /// natives — those two have no spelling; the parser builds deref nodes from
 /// postfix `@` and storeptr nodes from `=` over a deref.
 pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
-    let at = cx.store.alloc_raw(cx.type_, std::ptr::null_mut());
+    let record = meta::record(cx.store, meta::TOKEN_TAG);
+    let at = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("@", IdContext::new(at, cx.root_scope));
     cx.metas.insert(at, Construct::At);
 
-    let amp = cx.store.alloc_raw(cx.type_, std::ptr::null_mut());
+    let record = meta::record(cx.store, meta::TOKEN_TAG);
+    let amp = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("&", IdContext::new(amp, cx.root_scope));
     cx.metas.insert(amp, Construct::Amp);
 
-    let deref = cx.store.alloc_raw(cx.fn_type, std::ptr::null_mut());
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        0.0,
+        Assoc::Left,
+        &["pointer", "pointee", "offset"],
+    );
+    let deref = cx.store.alloc_raw(cx.fn_type, record);
     cx.bcode.insert(deref, run_deref);
     cx.lower.insert(deref, lower_deref);
 
-    let storeptr = cx.store.alloc_raw(cx.fn_type, std::ptr::null_mut());
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        0.0,
+        Assoc::Left,
+        &["pointer", "value", "pointee", "offset"],
+    );
+    let storeptr = cx.store.alloc_raw(cx.fn_type, record);
     cx.bcode.insert(storeptr, run_storeptr);
     cx.lower.insert(storeptr, lower_storeptr);
 
     (deref, storeptr)
 }
 
-/// Build a pointer type node `@pointee`: `{ty: type, value -> [ADDR_TAG,
-/// pointee]}`. Fresh per use; compare pointees, not nodes.
+/// Build a pointer type node `@pointee`: `{ty: type, value -> record}`, the
+/// record [`ADDR_TAG`]-kinded with the pointee as its payload. Fresh per use;
+/// compare pointees, not nodes.
 pub(crate) fn make_pointer_type(store: &mut Store, type_: DyadPtr, pointee: DyadPtr) -> DyadPtr {
-    let mut blob = [0u8; 1 + std::mem::size_of::<DyadPtr>()];
-    blob[0] = ADDR_TAG;
-    blob[1..].copy_from_slice(&(pointee as usize).to_ne_bytes());
-    let value = store.alloc_bytes(&blob);
+    let value = super::meta::pointer_record(store, pointee);
     store.alloc_raw(type_, value)
 }
 

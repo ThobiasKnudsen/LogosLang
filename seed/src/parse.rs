@@ -431,10 +431,13 @@ pub const FN_BCODE: usize = 3;
 
 /// A core identity's native parse-time behaviour: how the driver schedules the
 /// token and how its dyad is built. Core identities are hand-built natives (see
-/// `crate::identities`); a self-hosted Logos would carry this as graph metadata
-/// on the type instead. In this seed the driver owns tape scheduling and the
-/// `build` functions only construct the node; general tape-driving constructors
-/// (needed for macros and token-rewriting operators) come later.
+/// `crate::identities`). The *data* half of parsing — an operator's precedence
+/// and associativity, and its operand layout — already rides the graph as each
+/// identity's shared-member record ([`crate::identities::meta`]); what remains
+/// here is behaviour, ported to graph-resident constructors at self-hosting. In
+/// this seed the driver owns tape scheduling and the `build` functions only
+/// construct the node; general tape-driving constructors (needed for macros and
+/// token-rewriting operators) come later.
 #[derive(Clone, Copy)]
 pub enum Construct {
     /// A literal/atom: build a leaf node from the matched source span.
@@ -444,13 +447,13 @@ pub enum Construct {
     /// operand. v1 consumes to the end of the current expression; delimited forms
     /// come with brackets.
     Prefix(fn(&mut Store, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>),
-    /// An infix binary operator with a precedence and associativity: build a node
-    /// from its operator identity and two already-reduced operands. The `build`
-    /// callback receives the [`CoreTypes`] so an abstract operator (`+`) can resolve
-    /// its concrete machine op from the operand types.
+    /// An infix binary operator: build a node from its operator identity and two
+    /// already-reduced operands. The `build` callback receives the [`CoreTypes`] so
+    /// an abstract operator (`+`) can resolve its concrete machine op from the
+    /// operand types. Its precedence and associativity are not here: they are graph
+    /// data, shared members of the identity's own record (DESIGN ›A type's metadata
+    /// is shared by its values‹), read at dispatch via [`crate::identities::meta`].
     Infix {
-        precedence: f64,
-        assoc: Assoc,
         build: fn(&mut Store, &CoreTypes, DyadPtr, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>,
     },
     /// An opening bracket `(`: parse the body up to the matching close; the
@@ -1833,7 +1836,7 @@ impl<'a> Parser<'a> {
                 }
                 // An operator: reduce anything binding tighter to its left, then
                 // shift it onto the tape as a pending token.
-                Some(Construct::Infix { precedence, assoc, .. }) => {
+                Some(Construct::Infix { .. }) => {
                     // A `-` with no left operand prefixes a numeric literal (`-` is
                     // always an operator; the literal regex is unsigned): `f(-1)`,
                     // `x := -5`. General unary minus over non-literals is later
@@ -1854,6 +1857,17 @@ impl<'a> Parser<'a> {
                             }
                         }
                     }
+                    // Precedence and associativity are the operator's own shared
+                    // members, read from its record — the graph, not the parser's
+                    // table, is their source of truth.
+                    // SAFETY: `id` is a resolved operator identity from the store,
+                    // carrying the record its registration built.
+                    let (precedence, assoc) = unsafe {
+                        (
+                            crate::identities::meta::precedence_of(id),
+                            crate::identities::meta::assoc_of(id),
+                        )
+                    };
                     self.reduce_pending(&mut tape, precedence, assoc)?;
                     tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
                 }
@@ -1907,10 +1921,13 @@ impl<'a> Parser<'a> {
                 Some(d) => d,
                 None => break,
             };
-            let (prev_prec, build) = match self.metas.get(&op_id).copied() {
-                Some(Construct::Infix { precedence, build, .. }) => (precedence, build),
+            let build = match self.metas.get(&op_id).copied() {
+                Some(Construct::Infix { build }) => build,
                 _ => break,
             };
+            // SAFETY: `op_id` is an operator identity from the store (it matched
+            // `Infix` above), carrying its registration-built record.
+            let prev_prec = unsafe { crate::identities::meta::precedence_of(op_id) };
             if !(prev_prec > prec || (prev_prec == prec && assoc == Assoc::Left)) {
                 break;
             }
@@ -1939,7 +1956,7 @@ impl<'a> Parser<'a> {
             let rhs =
                 tape.cell(op_idx + 1).and_then(Cell::as_dyad).ok_or(ParseError::MissingOperand)?;
             let build = match self.metas.get(&op_id).copied() {
-                Some(Construct::Infix { build, .. }) => build,
+                Some(Construct::Infix { build }) => build,
                 _ => return Err(ParseError::Trailing),
             };
             let types = self.types;

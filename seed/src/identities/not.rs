@@ -13,17 +13,18 @@
 
 use cranelift_codegen::ir::Value;
 
-use super::Cx;
+use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::{Dyad, DyadPtr};
 use crate::id_context::IdContext;
-use crate::parse::Construct;
+use crate::parse::{Assoc, Construct};
 use crate::run::{RunError, Runtime};
 
 /// Register `not`: spelling, the parenthesized-operand construct, run native, and
 /// lowering. Returns the identity.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let id = cx.store.alloc_raw(cx.fn_type, std::ptr::null_mut());
+    let record = meta::operand_record(cx, meta::PUNNED_TAG, 0.0, Assoc::Left, &["operand"]);
+    let id = cx.store.alloc_raw(cx.fn_type, record);
     cx.trie.insert("not", IdContext::new(id, cx.root_scope));
     cx.metas.insert(id, Construct::Not);
     cx.bcode.insert(id, run);

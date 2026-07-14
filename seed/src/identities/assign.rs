@@ -8,7 +8,7 @@
 use cranelift_codegen::ir::Value;
 
 use super::numtype::{is_pointer_type, numtype_of_type, of_type_node, write_scalar};
-use super::{build_binary, commit_if_literal, is_numtype_node, operands, Cx, Operand};
+use super::{build_binary, commit_if_literal, is_numtype_node, meta, operands, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
@@ -18,10 +18,10 @@ use crate::store::Store;
 
 /// Register `=`: spelling, parse precedence, run bcode, and lowering.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let id = cx.store.alloc_raw(cx.fn_type, std::ptr::null_mut());
+    let record = meta::operand_record(cx, meta::TUPLE_TAG, 1.0, Assoc::Right, &["lhs", "rhs"]);
+    let id = cx.store.alloc_raw(cx.fn_type, record);
     cx.trie.insert("=", IdContext::new(id, cx.root_scope));
-    cx.metas
-        .insert(id, Construct::Infix { precedence: 1.0, assoc: Assoc::Right, build });
+    cx.metas.insert(id, Construct::Infix { build });
     cx.bcode.insert(id, run);
     cx.lower.insert(id, lower);
     id

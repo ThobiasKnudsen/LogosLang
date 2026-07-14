@@ -15,7 +15,7 @@
 use cranelift_codegen::ir::Value;
 
 use super::numtype::COMMENT_TAG;
-use super::Cx;
+use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::run::{RunError, Runtime};
@@ -24,8 +24,8 @@ use crate::run::{RunError, Runtime};
 /// parser builds comment nodes from `#` — plus unit-valued run and lowering as a
 /// backstop should one ever be forced directly.
 pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
-    let tag = cx.store.alloc_bytes(&[COMMENT_TAG]);
-    let id = cx.store.alloc_raw(cx.type_, tag);
+    let record = meta::record(cx.store, COMMENT_TAG);
+    let id = cx.store.alloc_raw(cx.type_, record);
     cx.bcode.insert(id, run);
     cx.lower.insert(id, lower);
     id

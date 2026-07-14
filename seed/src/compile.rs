@@ -124,8 +124,13 @@ impl Lowerer<'_, '_> {
             return f(self, node);
         }
         // A node whose operation is a user function is a call: `op` is the callee.
-        // Leaf natives are in the lower table (handled above); a user function is not.
+        // Leaf natives are in the lower table (handled above); a user function is
+        // not. A core identity's operand record is not an fn record — every such
+        // identity has a lowering rule above, so this guards the invariant.
         if !op.is_null() && (*op).ty == self.types.fn_type {
+            if crate::identities::meta::is_operand_record(op) {
+                return Err(CompileError::NotLowerable(op));
+            }
             return self.lower_call(node);
         }
         // A pointer-typed leaf (an `&x` literal or a pointer variable): pointer

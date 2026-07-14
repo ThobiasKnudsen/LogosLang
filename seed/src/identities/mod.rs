@@ -12,8 +12,13 @@
 //! Each primitive file defines exactly one identity: its node, its spelling, and
 //! its behaviour across the phases (parse `Construct`, run `bcode`, compile
 //! lowering). [`Core::build`] wires them into the graph and the per-phase tables.
-//! The tables are held per phase (parser/run/compile) rather than on the nodes,
-//! so a new run or compile *version* is a new table, not a graph rewrite.
+//! The split is structure vs. behaviour: every identity's *structure* — its
+//! parse precedence and associativity, and the layout its values are read
+//! through (a scalar width, operand arity and role names) — rides the graph as
+//! its shared-member record ([`meta`]; DESIGN ›A type's metadata is shared by
+//! its values‹), while the native *behaviour* stays in the per-phase tables
+//! (parser/run/compile) rather than on the nodes, so a new run or compile
+//! *version* is a new table, not a graph rewrite.
 //!
 //! Deferred surface the sketch declares that the seed does not yet register —
 //! tracked here so each gap is deliberate, not drift: the operators `^` and
@@ -31,12 +36,12 @@ use std::collections::HashMap;
 
 use crate::compile::LowerTable;
 use crate::dyad::DyadPtr;
-use crate::parse::{Construct, CoreTypes, ParseError, FN_OUTPUT};
+use crate::parse::{Assoc, Construct, CoreTypes, ParseError, FN_OUTPUT};
 use crate::run::Bcode;
 use crate::regex_trie::RegexTrie;
 use crate::store::Store;
 
-use numtype::NumType;
+pub use numtype::NumType;
 
 pub mod dyad;
 pub mod id_context;
@@ -70,6 +75,7 @@ mod ge;
 mod gt;
 mod le;
 mod lt;
+pub(crate) mod meta;
 mod minus;
 mod modulo;
 mod ne;
@@ -184,6 +190,7 @@ impl Core {
             type_,
             fn_type,
             root_scope,
+            string_: std::ptr::null_mut(),
             metas: HashMap::new(),
             bcode: HashMap::new(),
             lower: HashMap::new(),
@@ -212,9 +219,24 @@ impl Core {
         let bool_ = bool_mod::register(&mut cx);
         let rational = rational::register(&mut cx);
         // The text substance: `«…»` string literals and the comment nodes a
-        // statement-level `#` builds over them.
+        // statement-level `#` builds over them. Registered before the operators,
+        // whose records name their operands with string nodes.
         let string_ = string::register(&mut cx);
+        cx.string_ = string_;
         let comment_ = comment::register(&mut cx);
+        // The foundations allocated before the build context get their records
+        // now: `type`'s values are types carrying records like its own (the
+        // fixed point), a `scope`'s value is the null-terminated expression list.
+        let record = meta::record(cx.store, meta::TYPEREC_TAG);
+        // SAFETY: `type_`/`scope_` were allocated above with null value slots
+        // nothing has read yet.
+        unsafe {
+            (*type_).value = record;
+        }
+        let record = meta::operand_record(&mut cx, meta::LIST_TAG, 0.0, Assoc::Left, &[]);
+        unsafe {
+            (*scope_).value = record;
+        }
         let assign = assign::register(&mut cx);
         // The shared scalar numeric conversion (`i32(a)`, `f64(x)`, …). No spelling; the
         // parser builds conversion nodes from the `type(value)` constructor surface.
@@ -346,6 +368,10 @@ pub(crate) struct Cx<'a> {
     type_: DyadPtr,
     fn_type: DyadPtr,
     root_scope: DyadPtr,
+    /// The `string` type, once registered (null before): an operand record's role
+    /// names are string nodes, so the identities registered after it can name
+    /// their operands as graph data.
+    string_: DyadPtr,
     metas: HashMap<DyadPtr, Construct>,
     bcode: Bcode,
     lower: LowerTable,
@@ -459,6 +485,13 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
     // falls back to the i32 default. A void-returning callee yields no numeric
     // value (and its output has no NumType).
     if !ty.is_null() && (*ty).ty == types.fn_type {
+        // A core operator identity (`=`, a comparison, `return`, `not`, `and`,
+        // `or`) carries its operand record, not an fn record; its applications
+        // keep the bare i32 default they always had (a comparison's bool is
+        // physically an i32).
+        if meta::is_operand_record(ty) {
+            return Operand::Concrete(NumType::I32);
+        }
         let fields = (*ty).value as *const DyadPtr;
         if !fields.is_null() {
             let out = *fields.add(FN_OUTPUT);

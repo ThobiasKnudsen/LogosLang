@@ -11,11 +11,13 @@
 //!
 //! Two homes for machine code, split by leaf vs. compound. The native *leaf*
 //! functions (`=`, `return`, the concrete `add_i32`, and the abstract `+` that
-//! resolves and delegates to it) have a null value slot, so their Rust
-//! implementations live in a table the runtime holds, keyed by identity; a new run
-//! *version* is a new table, not a graph rewrite. A *user* function instead carries
-//! its own compiled `bcode` per instance, on the node (the `FN_BCODE` field), null
-//! until [`crate::compile::compile_fn`] installs the `exec@`.
+//! resolves and delegates to it) keep their Rust implementations in a table the
+//! runtime holds, keyed by identity; a new run *version* is a new table, not a
+//! graph rewrite. (Their value slots hold their shared-member *records* — the
+//! reflectable precedence/layout data, see [`crate::identities::meta`] — never
+//! runnable code.) A *user* function instead carries its own compiled `bcode`
+//! per instance, on the node (the `FN_BCODE` field), null until
+//! [`crate::compile::compile_fn`] installs the `exec@`.
 //!
 //! So `run` resolves a function in three steps: a leaf native in the table runs
 //! directly; otherwise, if the node has installed `bcode`, jump to it; otherwise
@@ -129,6 +131,12 @@ impl<'a> Runtime<'a> {
             return native(self, node);
         }
         if (*op).ty == self.fn_type {
+            // A core identity's value is its operand record, not a runnable fn
+            // record; every such identity runs from the table above, so this
+            // guards the invariant rather than a reachable path.
+            if crate::identities::meta::is_operand_record(op) {
+                return Err(RunError::NotRunnable(op));
+            }
             // A user function's value is `[input, output, body, bcode]`.
             let fields = (*op).value as *const DyadPtr;
             if fields.is_null() {

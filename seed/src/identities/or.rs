@@ -10,7 +10,7 @@
 
 use cranelift_codegen::ir::Value;
 
-use super::{operands, Cx};
+use super::{meta, operands, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
@@ -21,10 +21,10 @@ use crate::store::Store;
 /// Register `or`: spelling and parse precedence (logical, left-associative, looser
 /// than `and`), plus its short-circuiting run and lowering.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let id = cx.store.alloc_raw(cx.fn_type, std::ptr::null_mut());
+    let record = meta::operand_record(cx, meta::TUPLE_TAG, 1.1, Assoc::Left, &["lhs", "rhs"]);
+    let id = cx.store.alloc_raw(cx.fn_type, record);
     cx.trie.insert("or", IdContext::new(id, cx.root_scope));
-    cx.metas
-        .insert(id, Construct::Infix { precedence: 1.1, assoc: Assoc::Left, build });
+    cx.metas.insert(id, Construct::Infix { build });
     cx.bcode.insert(id, run);
     cx.lower.insert(id, lower);
     id

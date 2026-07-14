@@ -8,18 +8,20 @@
 //! delimit and group; pushing/popping the scope stack for declarations inside
 //! comes with `struct`/`fn`.
 
-use super::Cx;
+use super::{meta, Cx};
 use crate::id_context::IdContext;
 use crate::parse::Construct;
 
 /// Register `(` and `)`. The spellings are escaped (`\(`, `\)`) because `(`/`)`
 /// are regex metacharacters; escaped, they lex as literal single bytes.
 pub(super) fn register(cx: &mut Cx) {
-    let open = cx.store.alloc_raw(cx.type_, std::ptr::null_mut());
+    let record = meta::record(cx.store, meta::TOKEN_TAG);
+    let open = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(r"\(", IdContext::new(open, cx.root_scope));
     cx.metas.insert(open, Construct::Open);
 
-    let close = cx.store.alloc_raw(cx.type_, std::ptr::null_mut());
+    let record = meta::record(cx.store, meta::TOKEN_TAG);
+    let close = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(r"\)", IdContext::new(close, cx.root_scope));
     cx.metas.insert(close, Construct::Close);
 }

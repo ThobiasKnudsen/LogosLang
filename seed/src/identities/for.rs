@@ -20,11 +20,11 @@
 use cranelift_codegen::ir::Value;
 
 use super::numtype::{self, ArithOp, CmpOp};
-use super::Cx;
+use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::Construct;
+use crate::parse::{Assoc, Construct};
 use crate::run::{RunError, Runtime};
 
 /// Register `for` (the loop keyword, its run native, and its lowering) plus the
@@ -32,17 +32,26 @@ use crate::run::{RunError, Runtime};
 /// (`.` is a regex metacharacter); the trie's longest-match keeps it distinct
 /// from the field-access `.` and from a rational's fractional part.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let for_ = cx.store.alloc_raw(cx.fn_type, std::ptr::null_mut());
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        0.0,
+        Assoc::Left,
+        &["variable", "start", "end", "step", "body"],
+    );
+    let for_ = cx.store.alloc_raw(cx.fn_type, record);
     cx.trie.insert("for", IdContext::new(for_, cx.root_scope));
     cx.metas.insert(for_, Construct::For);
     cx.bcode.insert(for_, run);
     cx.lower.insert(for_, lower);
 
-    let in_ = cx.store.alloc_raw(cx.type_, std::ptr::null_mut());
+    let record = meta::record(cx.store, meta::TOKEN_TAG);
+    let in_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("in", IdContext::new(in_, cx.root_scope));
     cx.metas.insert(in_, Construct::In);
 
-    let range = cx.store.alloc_raw(cx.type_, std::ptr::null_mut());
+    let record = meta::record(cx.store, meta::TOKEN_TAG);
+    let range = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(r"\.\.", IdContext::new(range, cx.root_scope));
     cx.metas.insert(range, Construct::DotDot);
 

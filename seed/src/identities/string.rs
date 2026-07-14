@@ -16,7 +16,7 @@
 //! so run and compile recognize string-typed data without a handle.
 
 use super::numtype::STRING_TAG;
-use super::Cx;
+use super::{meta, Cx};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::parse::{Construct, ParseError};
@@ -26,8 +26,8 @@ use crate::store::Store;
 /// (no escapes yet, so a `»` cannot occur inside the text; unanchored, like the
 /// rational pattern, so the lexer longest-matches a prefix).
 pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
-    let tag = cx.store.alloc_bytes(&[STRING_TAG]);
-    let id = cx.store.alloc_raw(cx.type_, tag);
+    let record = meta::record(cx.store, STRING_TAG);
+    let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("«[^»]*»", IdContext::new(id, cx.root_scope));
     cx.metas.insert(id, Construct::Atom(build));
     id
@@ -49,13 +49,12 @@ pub(crate) fn build_text(store: &mut Store, string_ty: DyadPtr, text: &[u8]) -> 
     store.alloc_raw(string_ty, value)
 }
 
-/// The text of a string node — the reflection accessor (a comment's substance is
-/// read through this). Exercised by tests until the stdlib reads strings.
+/// The text of a string node — the reflection accessor (a comment's substance
+/// and a record's role names are read through this; see [`crate::reflect`]).
 ///
 /// # Safety
 /// `node` must be a string node built by [`build_text`] (its value the
 /// `[len, bytes]` blob), and the slice must not outlive the store.
-#[allow(dead_code)]
 pub(crate) unsafe fn text<'a>(node: DyadPtr) -> &'a [u8] {
     let p = (*node).value;
     let len = std::ptr::read_unaligned(p as *const u64) as usize;

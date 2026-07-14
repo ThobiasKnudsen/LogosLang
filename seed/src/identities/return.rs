@@ -13,11 +13,11 @@
 
 use cranelift_codegen::ir::Value;
 
-use super::Cx;
+use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Construct, ParseError};
+use crate::parse::{Assoc, Construct, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -25,7 +25,8 @@ use crate::store::Store;
 /// `return` is optional (a body is valued by what it evaluates to); it is kept as
 /// an explicit yield and becomes early-return once control flow lands.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let id = cx.store.alloc_raw(cx.fn_type, std::ptr::null_mut());
+    let record = meta::operand_record(cx, meta::PUNNED_TAG, 0.0, Assoc::Left, &["value"]);
+    let id = cx.store.alloc_raw(cx.fn_type, record);
     cx.trie.insert("return", IdContext::new(id, cx.root_scope));
     cx.metas.insert(id, Construct::Prefix(build));
     cx.bcode.insert(id, run);

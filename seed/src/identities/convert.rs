@@ -15,7 +15,8 @@
 use cranelift_codegen::ir::Value;
 
 use super::numtype::{apply_cast, of_type_node, NumType};
-use super::Cx;
+use super::{meta, Cx};
+use crate::parse::Assoc;
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::run::{RunError, Runtime};
@@ -25,7 +26,9 @@ use crate::store::Store;
 /// an operation (like `+`), with its run native and lowering. It has no spelling — a
 /// conversion is built from the `type(value)` surface, not resolved from a token.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let id = cx.store.alloc_raw(cx.fn_type, std::ptr::null_mut());
+    let record =
+        meta::operand_record(cx, meta::TUPLE_TAG, 0.0, Assoc::Left, &["operand", "from", "to"]);
+    let id = cx.store.alloc_raw(cx.fn_type, record);
     cx.bcode.insert(id, run);
     cx.lower.insert(id, lower);
     id

@@ -21,7 +21,7 @@
 use cranelift_codegen::ir::Value;
 
 use super::numtype::{self, NumType};
-use super::{commit_if_literal, numtype_of, Cx, Operand};
+use super::{commit_if_literal, meta, numtype_of, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
@@ -33,12 +33,20 @@ use crate::store::Store;
 /// parser builds these from a struct-typed callee) with its run and lowering,
 /// and the `.` field-access token (parse-only; access nodes are plain data).
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let construct = cx.store.alloc_raw(cx.fn_type, std::ptr::null_mut());
+    let record = meta::operand_record(
+        cx,
+        meta::LIST_TAG,
+        0.0,
+        crate::parse::Assoc::Left,
+        &["instance"],
+    );
+    let construct = cx.store.alloc_raw(cx.fn_type, record);
     cx.bcode.insert(construct, run);
     cx.lower.insert(construct, lower);
 
     // Escaped, because `.` is a regex metacharacter (as `\(` and `\)` are).
-    let dot = cx.store.alloc_raw(cx.type_, std::ptr::null_mut());
+    let record = meta::record(cx.store, meta::TOKEN_TAG);
+    let dot = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(r"\.", IdContext::new(dot, cx.root_scope));
     cx.metas.insert(dot, Construct::Dot);
 
@@ -59,13 +67,18 @@ pub(crate) unsafe fn layout(
     struct_type: DyadPtr,
 ) -> Result<(Vec<(DyadPtr, NumType, usize)>, usize), ParseError> {
     let ops = (*struct_type).value as *const DyadPtr;
+    // A field's type must be a *type node* (its own type is `type`, reachable as
+    // the struct type's type's type — the fixed point): that excludes a nested
+    // struct definition and a value node standing in type position, whose value
+    // bytes would otherwise be misread as a width tag.
+    let type_root = (*(*struct_type).ty).ty;
     let mut fields = Vec::new();
     let mut offset = 0usize;
     let mut i = 1; // value[0] is the struct's scope
     while !(*ops.add(i)).is_null() {
         let field = *ops.add(i);
         let fty = (*field).ty;
-        if fty.is_null() || !numtype::is_scalar_type(fty) || (*fty).value.is_null() {
+        if fty.is_null() || (*fty).ty != type_root || !numtype::is_scalar_type(fty) {
             return Err(ParseError::UnsupportedOperands);
         }
         let nt = numtype::of_type_node(fty);

@@ -79,6 +79,13 @@ impl Store {
         ptr
     }
 
+    /// Iterate every stored dyad's address, in allocation order. Read-oriented:
+    /// the pointers derive from a shared borrow, so callers read through them
+    /// (the reflect walker, a renderer) rather than write.
+    pub fn iter(&self) -> impl Iterator<Item = DyadPtr> + '_ {
+        self.chunks.iter().flat_map(|c| c.iter().map(|d| d as *const Dyad as DyadPtr))
+    }
+
     /// Total number of dyads stored.
     pub fn len(&self) -> usize {
         self.chunks.iter().map(Vec::len).sum()

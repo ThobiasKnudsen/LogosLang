@@ -10,9 +10,10 @@
 //! stored type and switch on it, so one `+`/`<`/… identity serves every numeric type
 //! and the ~70 machine ops are a table, not ~70 files.
 //!
-//! Each numeric **type node** self-describes its `NumType` by a one-byte tag in its
-//! own value slot (see [`tag_bytes`]/[`of_type_node`]), so neither the interpreter nor
-//! the compiler needs a separate type→NumType map — the tag rides the graph.
+//! Each numeric **type node** self-describes its `NumType` by the kind byte of the
+//! shared-member record in its value slot (see [`crate::identities::meta`] and
+//! [`of_type_node`]), so neither the interpreter nor the compiler needs a separate
+//! type→NumType map — the tag rides the graph.
 
 use cranelift_codegen::ir::{types, Value};
 
@@ -24,9 +25,11 @@ use crate::run::{RunError, Runtime};
 use super::{operands, Cx};
 
 /// A numeric machine type. `#[repr(u8)]` so the discriminant is the type node's tag.
+/// Public through [`crate::identities::NumType`]: the reflect walker's scalar
+/// shapes carry it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub(crate) enum NumType {
+pub enum NumType {
     I8,
     I16,
     I32,
@@ -40,11 +43,6 @@ pub(crate) enum NumType {
 }
 
 impl NumType {
-    /// The tag byte a numeric type node stores in its value slot.
-    pub(crate) fn tag_bytes(self) -> [u8; 1] {
-        [self as u8]
-    }
-
     /// Recover a `NumType` from a tag byte.
     fn from_tag(t: u8) -> NumType {
         use NumType::*;
@@ -126,12 +124,13 @@ impl NumType {
 }
 
 /// Register a numeric type node: its spelling (so it resolves as a type name), its
-/// `NumType` tag stored in the value slot (self-describing, so run/compile recover the
-/// type from the graph), and the shared numeric-variable lowering [`lower_var`]. The
-/// interpreter reads its values through the type's width (see [`read_scalar`]).
+/// shared-member record with the `NumType` tag as its kind (self-describing, so
+/// run/compile recover the type from the graph), and the shared numeric-variable
+/// lowering [`lower_var`]. The interpreter reads its values through the type's
+/// width (see [`read_scalar`]).
 pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr {
-    let tag = cx.store.alloc_bytes(&nt.tag_bytes());
-    let id = cx.store.alloc_raw(cx.type_, tag);
+    let record = super::meta::record(cx.store, nt as u8);
+    let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(spelling, IdContext::new(id, cx.root_scope));
     cx.lower.insert(id, lower_var);
     id
@@ -142,12 +141,13 @@ pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr
 /// without threading a separate handle through run and compile.
 pub(crate) const VOID_TAG: u8 = 10;
 
-/// Register the `void` unit type: its spelling and its [`VOID_TAG`] value tag. Unlike a
-/// numeric type it carries no lowering — in the seed `void` appears only as a `->`
-/// return type, marking a function that runs its body for effect and yields unit.
+/// Register the `void` unit type: its spelling and its [`VOID_TAG`]-kinded record.
+/// Unlike a numeric type it carries no lowering — in the seed `void` appears only as
+/// a `->` return type, marking a function that runs its body for effect and yields
+/// unit.
 pub(crate) fn register_void(cx: &mut Cx) -> DyadPtr {
-    let tag = cx.store.alloc_bytes(&[VOID_TAG]);
-    let id = cx.store.alloc_raw(cx.type_, tag);
+    let record = super::meta::record(cx.store, VOID_TAG);
+    let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("void", IdContext::new(id, cx.root_scope));
     id
 }
@@ -177,9 +177,9 @@ pub(crate) unsafe fn is_comment_type(type_node: DyadPtr) -> bool {
 }
 
 /// The value-slot tag for pointer types (`@T`), past [`COMMENT_TAG`]. A pointer
-/// type node is `{ty: type, value -> [ADDR_TAG, pointee-node-ptr bytes]}` — the
-/// pointee rides the blob after the tag, so the graph carries what is pointed
-/// at (see [`crate::identities::pointer`]).
+/// type node's record carries its pointee as the payload, so the graph carries
+/// what is pointed at (see [`crate::identities::pointer`] and
+/// [`crate::identities::meta`]).
 pub(crate) const ADDR_TAG: u8 = 13;
 
 /// Whether `type_node` is a pointer type (`@T`).
@@ -191,12 +191,13 @@ pub(crate) unsafe fn is_pointer_type(type_node: DyadPtr) -> bool {
     !v.is_null() && *(v as *const u8) == ADDR_TAG
 }
 
-/// The pointee type node of a pointer type (`@T` → `T`).
+/// The pointee type node of a pointer type (`@T` → `T`), the record's payload.
 ///
 /// # Safety
 /// `type_node` must be a pointer type node ([`is_pointer_type`]).
 pub(crate) unsafe fn pointee_of(type_node: DyadPtr) -> DyadPtr {
-    std::ptr::read_unaligned((*type_node).value.add(1) as *const DyadPtr)
+    let p = (*type_node).value.add(super::meta::PAYLOAD_OFF);
+    std::ptr::read_unaligned(p as *const DyadPtr)
 }
 
 /// Whether a data node typed `type_node` holds a scalar the interpreter can read

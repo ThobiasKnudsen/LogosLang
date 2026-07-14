@@ -13,7 +13,8 @@
 
 use cranelift_codegen::ir::Value;
 
-use super::Cx;
+use super::numtype::NumType;
+use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
@@ -23,7 +24,10 @@ use crate::id_context::IdContext;
 /// parser can hold it in `CoreTypes` (a comparison result is `bool`; `if`'s
 /// condition must be one).
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let bool_ = cx.store.alloc_raw(cx.type_, std::ptr::null_mut());
+    // A bool is physically an i32 0/1, so its record carries the I32 width kind;
+    // its bool-ness lives in the identity itself (comparisons point here).
+    let record = meta::record(cx.store, NumType::I32 as u8);
+    let bool_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("bool", IdContext::new(bool_, cx.root_scope));
     cx.lower.insert(bool_, lower);
 
