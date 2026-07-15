@@ -1,35 +1,35 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `-`: subtraction. Like `+` (see [`crate::identities::plus`]), it stores its
-//! resolved operand type in the value slot `{ty: -, value: [lhs, rhs, type]}` and
-//! run/compile switch on it. Same precedence as `+`, left-associative.
+//! `-`: subtraction. Like `+` (see [`crate::identities::plus`]), a parse-time
+//! constructor owning no code: it resolves each application to a concrete
+//! subtraction and stores the leaf in the op slot
+//! `{ty: -, value: [lhs, rhs, sub_<type>]}`. Same precedence as `+`,
+//! left-associative.
 
 use cranelift_codegen::ir::Value;
 
-use super::numtype::{eval_arith, ArithOp};
+use super::numtype::ArithOp;
 use super::{meta, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::parse::{Assoc, Construct, CoreTypes, ParseError};
-use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
 /// Register `-`: spelling, precedence (same as `+`, left-associative), and its
-/// type-switched run and lowering.
+/// lowering.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let record =
-        meta::operand_record(cx, meta::TUPLE_TAG, 2.0, Assoc::Left, &["lhs", "rhs", "type"]);
-    let id = cx.store.alloc_raw(cx.fn_type, record);
+    let record = meta::operand_record(cx, meta::TUPLE_TAG, 2.0, Assoc::Left, &["lhs", "rhs", "op"]);
+    let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("-", IdContext::new(id, cx.root_scope));
     cx.metas.insert(id, Construct::Infix { build });
-    cx.bcode.insert(id, run);
     cx.lower.insert(id, lower);
     id
 }
 
-/// Build `lhs - rhs`: resolve the operand type and store it as the third operand.
+/// Build `lhs - rhs`: resolve the operand type and store the concrete
+/// subtraction in the op slot.
 fn build(
     store: &mut Store,
     types: &CoreTypes,
@@ -42,19 +42,13 @@ fn build(
         return Ok(folded);
     }
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
-    let ops = unsafe { resolve_binary(store, types, lhs, rhs) }?;
-    let value = store.alloc_operands(&ops);
+    let ([lhs, rhs], nt) = unsafe { resolve_binary(store, types, lhs, rhs) }?;
+    let value = store.alloc_operands(&[lhs, rhs, types.ops.arith_leaf(ArithOp::Sub, nt)]);
     Ok(store.alloc_raw(minus, value))
 }
 
-/// Run: subtract in the stored operand type.
-fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a valid `-` application `[lhs, rhs, type]`.
-    unsafe { eval_arith(rt, node, ArithOp::Sub) }
-}
-
-/// Lower: emit the machine subtraction for the stored operand type.
+/// Lower: emit the machine subtraction for the resolved operand type.
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a valid `-` application `[lhs, rhs, type]`.
+    // SAFETY: `node` is a valid `-` application `[lhs, rhs, op]`.
     unsafe { lw.lower_arith(node, ArithOp::Sub) }
 }

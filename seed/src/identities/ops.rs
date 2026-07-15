@@ -31,7 +31,7 @@ use super::{operands, Cx};
 /// so the `Construct` builders can resolve; the interpreter never consults it
 /// (each shim's type is baked in), and it retires into versioned scopes with the
 /// rest of the Rust-side parse tables at self-hosting.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct OpLeaves {
     /// `[ArithOp][NumType]` → leaf; null only for the unmintable float remainders.
     pub(crate) arith: [[DyadPtr; 10]; 5],

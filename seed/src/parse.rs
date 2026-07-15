@@ -412,6 +412,11 @@ pub struct CoreTypes {
     pub or_: DyadPtr,
     /// `not` (logical negation); its result is `bool`.
     pub not_: DyadPtr,
+    /// The concrete-op leaves (`add_i32`, `lt_f64`, `store_u8`, …): the
+    /// parse-time resolver's `(family, operand type) → leaf` table. A builder
+    /// resolves an application to one leaf and stores it in the node's op slot;
+    /// run jumps through the node, never a table (issue #44).
+    pub ops: crate::identities::ops::OpLeaves,
 }
 
 /// The fields of a function node's value struct, in order, as built by

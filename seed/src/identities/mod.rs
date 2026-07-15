@@ -381,6 +381,7 @@ impl Core {
             and_: self.and_,
             or_: self.or_,
             not_: self.not_,
+            ops: self.ops,
         }
     }
 }
@@ -451,9 +452,22 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
     if ty == types.rational {
         return Operand::Literal;
     }
-    // An arithmetic operator's result carries the type it stored at operand[2].
+    // An arithmetic operator's result type is its left operand's: resolution
+    // committed both operands to one type and stored the concrete op — not a
+    // type — in the op slot, so the type is read where it lives.
     if ty == types.plus || ty == types.minus || ty == types.times || ty == types.div_ || ty == types.rem_ {
-        return Operand::Concrete(numtype::of_type_node(numtype::stored_type(node)));
+        let lhs = *((*node).value as *const DyadPtr);
+        return numtype_of(types, lhs);
+    }
+    // A comparison's result is `bool`, physically an i32.
+    if ty == types.lt
+        || ty == types.gt
+        || ty == types.le
+        || ty == types.ge
+        || ty == types.eq
+        || ty == types.ne
+    {
+        return Operand::Concrete(NumType::I32);
     }
     // A conversion's result is its target type (stored at operand[2]).
     if ty == types.convert {
@@ -548,12 +562,14 @@ unsafe fn call_return_numtype(fn_node: DyadPtr) -> NumType {
     }
 }
 
-/// Resolve a binary numeric operator's operand type and produce its
-/// `[lhs, rhs, type]` value, committing any uncommitted literal operand to the
-/// resolved type. Two different concrete types are a [`ParseError::TypeMismatch`]
-/// (cross-type needs an explicit cast); a non-numeric operand is
-/// [`ParseError::UnsupportedOperands`]; a literal that has no exact value in the
-/// resolved type is [`ParseError::UncomputableLiteral`].
+/// Resolve a binary numeric operator's operand type: commit any uncommitted
+/// literal operand to it and return the committed operands with the resolved
+/// [`NumType`], from which the family's builder picks its concrete-op leaf
+/// (`add_i32`, `lt_f64`, …). Two different concrete types are a
+/// [`ParseError::TypeMismatch`] (cross-type needs an explicit cast); a
+/// non-numeric operand is [`ParseError::UnsupportedOperands`]; a literal that
+/// has no exact value in the resolved type is
+/// [`ParseError::UncomputableLiteral`].
 ///
 /// # Safety
 /// `lhs`/`rhs` are valid dyads from the store.
@@ -562,7 +578,7 @@ pub(crate) unsafe fn resolve_binary(
     types: &CoreTypes,
     lhs: DyadPtr,
     rhs: DyadPtr,
-) -> Result<[DyadPtr; 3], ParseError> {
+) -> Result<([DyadPtr; 2], NumType), ParseError> {
     let a = numtype_of(types, lhs);
     let b = numtype_of(types, rhs);
     let nt = match (&a, &b) {
@@ -587,7 +603,7 @@ pub(crate) unsafe fn resolve_binary(
     let type_node = types.numtypes[nt as usize];
     let lhs = commit_if_literal(store, lhs, &a, type_node, nt)?;
     let rhs = commit_if_literal(store, rhs, &b, type_node, nt)?;
-    Ok([lhs, rhs, type_node])
+    Ok(([lhs, rhs], nt))
 }
 
 /// Commit an uncommitted literal operand to `nt` (a typed literal node holding the
@@ -894,9 +910,9 @@ mod tests {
             let one = *sops.add(1);
             assert_eq!((*one).ty, core.i32_);
             assert_eq!(std::ptr::read_unaligned((*one).value as *const i32), 1);
-            // `+` stayed reflectable (ty is still `+`) and stored the resolved operand
-            // type as its third operand.
-            assert_eq!(*sops.add(2), core.i32_);
+            // `+` stayed reflectable (ty is still `+`) and stored the resolved
+            // concrete op in its op slot.
+            assert_eq!(*sops.add(2), core.ops.arith_leaf(numtype::ArithOp::Add, NumType::I32));
         }
     }
 
@@ -1701,7 +1717,10 @@ mod tests {
         unsafe {
             let body = *((*func).value as *const DyadPtr).add(FN_BODY);
             assert_eq!((*body).ty, core.plus);
-            assert_eq!(*((*body).value as *const DyadPtr).add(2), core.i32_);
+            assert_eq!(
+                *((*body).value as *const DyadPtr).add(2),
+                core.ops.arith_leaf(numtype::ArithOp::Add, NumType::I32)
+            );
         }
 
         let call = store.alloc_raw(func, std::ptr::null_mut());
@@ -1803,10 +1822,13 @@ mod tests {
             let body = *((*func).value as *const DyadPtr).add(FN_BODY);
             assert_eq!((*body).ty, core.minus);
             let bops = (*body).value as *const DyadPtr;
-            assert_eq!(*bops.add(2), core.i32_);
+            assert_eq!(*bops.add(2), core.ops.arith_leaf(numtype::ArithOp::Sub, NumType::I32));
             let rhs = *bops.add(1);
             assert_eq!((*rhs).ty, core.times);
-            assert_eq!(*((*rhs).value as *const DyadPtr).add(2), core.i32_);
+            assert_eq!(
+                *((*rhs).value as *const DyadPtr).add(2),
+                core.ops.arith_leaf(numtype::ArithOp::Mul, NumType::I32)
+            );
         }
     }
 
@@ -1852,7 +1874,10 @@ mod tests {
         unsafe {
             let body = *((*func).value as *const DyadPtr).add(FN_BODY);
             assert_eq!((*body).ty, core.lt);
-            assert_eq!(*((*body).value as *const DyadPtr).add(2), core.i32_);
+            assert_eq!(
+                *((*body).value as *const DyadPtr).add(2),
+                core.ops.cmp_leaf(numtype::CmpOp::Lt, NumType::I32)
+            );
         }
     }
 
@@ -1898,12 +1923,13 @@ mod tests {
         let core = Core::build(&mut store, &mut trie);
 
         // A concrete operand (`a`) keeps each a node; two literals would fold to a bool.
+        use numtype::CmpOp;
         let cases: [(&str, DyadPtr, DyadPtr); 5] = [
-            ("fn (a : i32) -> i32 ( a > 2 )", core.gt, core.i32_),
-            ("fn (a : i32) -> i32 ( a == 2 )", core.eq, core.i32_),
-            ("fn (a : i32) -> i32 ( a <= 2 )", core.le, core.i32_),
-            ("fn (a : i32) -> i32 ( a >= 2 )", core.ge, core.i32_),
-            ("fn (a : i32) -> i32 ( a != 2 )", core.ne, core.i32_),
+            ("fn (a : i32) -> i32 ( a > 2 )", core.gt, core.ops.cmp_leaf(CmpOp::Gt, NumType::I32)),
+            ("fn (a : i32) -> i32 ( a == 2 )", core.eq, core.ops.cmp_leaf(CmpOp::Eq, NumType::I32)),
+            ("fn (a : i32) -> i32 ( a <= 2 )", core.le, core.ops.cmp_leaf(CmpOp::Le, NumType::I32)),
+            ("fn (a : i32) -> i32 ( a >= 2 )", core.ge, core.ops.cmp_leaf(CmpOp::Ge, NumType::I32)),
+            ("fn (a : i32) -> i32 ( a != 2 )", core.ne, core.ops.cmp_leaf(CmpOp::Ne, NumType::I32)),
         ];
         for (src, abstract_op, concrete) in cases {
             let func = {

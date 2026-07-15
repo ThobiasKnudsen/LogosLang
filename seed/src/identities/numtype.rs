@@ -20,9 +20,8 @@ use cranelift_codegen::ir::{types, Value};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::run::{RunError, Runtime};
 
-use super::{operands, Cx};
+use super::Cx;
 
 /// A numeric machine type. `#[repr(u8)]` so the discriminant is the type node's tag.
 /// Public through [`crate::identities::NumType`]: the reflect walker's scalar
@@ -321,13 +320,6 @@ pub(crate) unsafe fn stored_type(node: DyadPtr) -> DyadPtr {
     *((*node).value as *const DyadPtr).add(2)
 }
 
-/// The `NumType` a binary numeric operator resolved to (its stored operand type).
-///
-/// # Safety
-/// As [`stored_type`] + [`of_type_node`].
-unsafe fn stored_numtype(node: DyadPtr) -> NumType {
-    of_type_node(stored_type(node))
-}
 
 /// The five machine arithmetic operations. Integer `Div`/`Rem` are TOTAL
 /// (settled): a zero divisor yields the type's MAX — a loud sentinel, easier to
@@ -547,38 +539,3 @@ fn encode_from_f64(to: NumType, f: f64) -> i64 {
     }
 }
 
-/// Run a binary arithmetic operator: read its stored type, evaluate both operands to
-/// their bit-containers, and apply the arithmetic in that type. The shared `run` for
-/// `+`/`-`/`*`.
-///
-/// # Safety
-/// `node` must be a resolved binary numeric operator node `[lhs, rhs, type]`.
-pub(crate) unsafe fn eval_arith(
-    rt: &mut Runtime,
-    node: DyadPtr,
-    op: ArithOp,
-) -> Result<i64, RunError> {
-    let ty = stored_numtype(node);
-    let (lhs, rhs) = operands(node);
-    let l = rt.run(lhs)?;
-    let r = rt.run(rhs)?;
-    Ok(apply_arith(op, ty, l, r))
-}
-
-/// Run a binary comparison operator: read its stored operand type, evaluate both
-/// operands, and compare in that type (result is the i32 0/1 bool). The shared `run`
-/// for `<`/`>`/`==`/`<=`/`>=`/`!=`.
-///
-/// # Safety
-/// As [`eval_arith`].
-pub(crate) unsafe fn eval_compare(
-    rt: &mut Runtime,
-    node: DyadPtr,
-    op: CmpOp,
-) -> Result<i64, RunError> {
-    let ty = stored_numtype(node);
-    let (lhs, rhs) = operands(node);
-    let l = rt.run(lhs)?;
-    let r = rt.run(rhs)?;
-    Ok(apply_compare(op, ty, l, r))
-}

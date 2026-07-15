@@ -30,7 +30,7 @@ use cranelift_module::{default_libcall_names, FuncId, Linkage, Module};
 
 use crate::dyad::DyadPtr;
 use crate::identities::numtype::{
-    is_void_type, numtype_of_type, of_type_node, stored_type, ArithOp, CmpOp, NumType,
+    is_void_type, numtype_of_type, of_type_node, ArithOp, CmpOp, NumType,
 };
 use crate::identities::{numtype_of, operands, Operand};
 use crate::parse::{CoreTypes, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
@@ -207,19 +207,24 @@ impl Lowerer<'_, '_> {
         self.builder.ins().uextend(types::I32, c)
     }
 
-    /// Lower a binary arithmetic operator (`+`/`-`/`*`): read the type stored in the
-    /// node's value slot and emit the matching machine op over the lowered operands
+    /// Lower a binary arithmetic operator (`+`/`-`/`*`): the operand type is the
+    /// (committed) left operand's — the op slot holds the concrete op, not a
+    /// type — and the matching machine op is emitted over the lowered operands
     /// (`iadd`/`fadd`, …). The result type follows the operand `Value`s.
     ///
     /// # Safety
-    /// `node` must be a resolved binary numeric operator node `[lhs, rhs, type]`.
+    /// `node` must be a resolved binary numeric operator node `[lhs, rhs, op]`.
     pub(crate) unsafe fn lower_arith(
         &mut self,
         node: DyadPtr,
         op: ArithOp,
     ) -> Result<Value, CompileError> {
-        let nt = of_type_node(stored_type(node));
         let (lhs, rhs) = operands(node);
+        let nt = match numtype_of(&self.types, lhs) {
+            Operand::Concrete(nt) => nt,
+            // Resolution committed both operands; anything else cannot exist here.
+            _ => return Err(CompileError::BadValue),
+        };
         let l = self.lower(lhs)?;
         let r = self.lower(rhs)?;
         if nt.is_float() {
@@ -301,19 +306,23 @@ impl Lowerer<'_, '_> {
         )
     }
 
-    /// Lower a binary comparison (`<`/`>`/`==`/…): read the stored operand type and emit
-    /// `icmp` (signed or unsigned per the type) or `fcmp`, zero-extended to the `I32`
-    /// bool.
+    /// Lower a binary comparison (`<`/`>`/`==`/…): the operand type is the
+    /// (committed) left operand's, and the matching `icmp` (signed or unsigned
+    /// per the type) or `fcmp` is emitted, zero-extended to the `I32` bool.
     ///
     /// # Safety
-    /// `node` must be a resolved binary numeric operator node `[lhs, rhs, type]`.
+    /// `node` must be a resolved binary numeric operator node `[lhs, rhs, op]`.
     pub(crate) unsafe fn lower_compare(
         &mut self,
         node: DyadPtr,
         op: CmpOp,
     ) -> Result<Value, CompileError> {
-        let ty = of_type_node(stored_type(node));
         let (lhs, rhs) = operands(node);
+        let ty = match numtype_of(&self.types, lhs) {
+            Operand::Concrete(nt) => nt,
+            // Resolution committed both operands; anything else cannot exist here.
+            _ => return Err(CompileError::BadValue),
+        };
         let l = self.lower(lhs)?;
         let r = self.lower(rhs)?;
         if ty.is_float() {

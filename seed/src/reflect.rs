@@ -400,8 +400,11 @@ mod tests {
             let Shape::Tuple { slots: sum } = describe(&types, slots[1].node) else {
                 panic!("the sum should be a tuple");
             };
-            assert_eq!(text_of(sum[2].role), b"type");
-            assert_eq!(sum[2].node, core.i32_);
+            assert_eq!(text_of(sum[2].role), b"op");
+            let Shape::Callable { convention } = describe(&types, sum[2].node) else {
+                panic!("the op slot should hold a callable leaf");
+            };
+            assert_eq!(convention, core.conv_seed_native);
 
             // The if: [condition, then, else], all present here.
             let Shape::Tuple { slots } = describe(&types, roots[4]) else {
