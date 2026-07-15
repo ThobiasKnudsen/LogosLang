@@ -174,6 +174,17 @@ fn a_typed_declaration_names_the_gap() {
 }
 
 #[test]
+fn a_typed_declaration_names_the_gap_after_other_code() {
+    // The same gap must be named when the typed declaration is not the first
+    // expression — a fresh name beginning an expression, tape non-empty. Before,
+    // this fell through to a misleading "unknown name".
+    let out = logos().arg("tests/fixtures/typed_decl_after_code.logos").output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("3:1: error: typed declarations"), "stderr: {err}");
+}
+
+#[test]
 fn a_declaration_snapshots_its_value_and_reads_are_stable() {
     // `:=` evaluates its value once, into the name's own storage; reading the
     // name is a plain load, never a re-evaluation. A block that sums 0..10 to 45

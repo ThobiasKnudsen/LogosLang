@@ -1695,9 +1695,13 @@ impl<'a> Parser<'a> {
             if let Some((nstart, nlen)) = self.lex_identifier() {
                 // A fresh name followed by `:` is the typed declaration
                 // `name : type` — not in the seed yet (`:` lives in field lists).
-                // Name the gap; reporting the name as unknown misleads.
+                // Name the gap; reporting the name as unknown misleads. The name
+                // must begin an expression — the tape is empty or the previous
+                // expression already reduced to a dyad — so a `:` mid-expression
+                // (a field list) is not mistaken for one, while a typed declaration
+                // that *follows* other code is still named rather than called unknown.
                 if matches!(self.peek_kind(), Some((_, _, Construct::Colon)))
-                    && tape.is_empty()
+                    && matches!(tape.last(), None | Some(Cell::Dyad(_)))
                     && self.scopes.resolve(self.trie, &source[nstart..]).is_err()
                 {
                     self.pos = nstart;

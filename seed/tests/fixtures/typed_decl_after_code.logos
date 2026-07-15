@@ -1,0 +1,3 @@
+# a typed declaration that follows other code still names the gap (not "unknown name")
+x := i32 1
+a : i32
