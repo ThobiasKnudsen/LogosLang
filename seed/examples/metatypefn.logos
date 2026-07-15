@@ -1,0 +1,23 @@
+# Copyright 2026 Thobias Melfjord Knudsen
+# SPDX-License-Identifier: Apache-2.0
+
+# Roadmap #30 (Type) north-star — does NOT run on the current seed. It reaches the
+# deep end of the station:
+#   - a function returning a type (`-> type`) with type-valued branches   [#30 Phase 2]
+#   - a dependent typed declaration `a : metatype(0)`: the type is the     [#30 Phase 3]
+#     result of running a function, which needs comptime-eval-to-a-type
+# Phase 1 (type spelled, `.type`, `==` over types, `else if`) already lands — lines
+# 1-6 below parse and bind `metatype`; the first hard blocker is the `a : metatype(0)`
+# typed declaration. Kept as the target to grow toward, not a passing example.
+
+metatype := fn (i:i32) -> type(
+    if (i==0) (i32)
+    else if (i==1) (f32)
+    else if (i==2) (f64)
+    else (type)
+)
+a:metatype(0)
+if a.type == i32 (a=9)
+else if a.type == f32 or a.type == f64 (a=9.9)
+else if a.type == type (a=i32)
+a
