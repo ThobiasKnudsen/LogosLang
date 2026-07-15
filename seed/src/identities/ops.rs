@@ -68,6 +68,8 @@ pub struct OpLeaves {
     pub(crate) storeptr_: DyadPtr,
     /// `scope`'s sequence native (run the array in order, yield the tail).
     pub(crate) scope_: DyadPtr,
+    /// `declare`'s native (run the initializer for effect, yield unit).
+    pub(crate) declare_: DyadPtr,
 }
 
 impl OpLeaves {
@@ -227,6 +229,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
         deref_: std::ptr::null_mut(),
         storeptr_: std::ptr::null_mut(),
         scope_: std::ptr::null_mut(),
+        declare_: std::ptr::null_mut(),
     }
 }
 

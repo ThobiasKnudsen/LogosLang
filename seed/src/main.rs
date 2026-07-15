@@ -188,17 +188,15 @@ fn repl() -> ExitCode {
             continue;
         }
 
-        // Echo policy (settled): declarations and assignments are silent —
-        // only value expressions echo, like Python. A `:=` line is a
-        // declaration (the driver consumes the `:=` before the node exists,
-        // so the node alone cannot tell `x := i32 5` from `x`); an `=` line
-        // builds an assign/storeptr node; a bare fn or struct literal is a
-        // declaration statement.
-        let is_declaration = line.contains(":=");
+        // Echo policy (settled): statements are silent — only value
+        // expressions echo, like Python. The graph says which is which: a
+        // declaration is a declare node, an assignment an assign/storeptr
+        // node, a bare fn or struct literal a declaration statement.
         // SAFETY: `node` is the valid dyad just parsed.
         let is_statement = unsafe {
             let ty = (*node).ty;
-            ty == engine.core.assign
+            ty == engine.core.declare_
+                || ty == engine.core.assign
                 || ty == engine.core.storeptr_
                 || ty == engine.core.fn_type
                 || ty == engine.core.struct_
@@ -210,7 +208,7 @@ fn repl() -> ExitCode {
         // which outlives the loop. Statements still run — for their effect —
         // they just do not echo.
         match unsafe { rt.run(node) } {
-            Ok(bits) if !is_declaration && !is_statement => println!("{bits}"),
+            Ok(bits) if !is_statement => println!("{bits}"),
             Ok(_) => {}
             Err(e) => eprintln!("run error: {}", report::run_message(&e)),
         }

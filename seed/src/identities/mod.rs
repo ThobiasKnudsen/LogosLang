@@ -70,7 +70,7 @@ mod assign;
 pub(crate) mod callable;
 mod comment;
 mod convert;
-mod declare;
+pub(crate) mod declare;
 mod divide;
 pub(crate) mod instance;
 pub(crate) mod pointer;
@@ -155,6 +155,9 @@ pub struct Core {
     pub for_: DyadPtr,
     /// `return` (the optional early yield); a function whose value is its operand.
     pub return_: DyadPtr,
+    /// `declare`, the type of the declaration node `name := value` builds
+    /// (`[name, declared, op]`); a statement yielding unit.
+    pub declare_: DyadPtr,
     /// `rational_number` (numeric literal carrier); a data type.
     pub rational: DyadPtr,
     /// `string` (the `«…»` text literal); inert in the seed, the comment substance.
@@ -306,8 +309,10 @@ impl Core {
         paren::register(&mut cx);
         let (return_, return_leaf) = return_mod::register(&mut cx, &callables);
         op_leaves.return_ = return_leaf;
-        // `:=` is a parse-time-only token; the driver dispatches on its Construct.
-        declare::register(&mut cx);
+        // `:=`: the driver dispatches on the token's Construct and builds a
+        // declare node — the declaration is graph structure, not parse vapor.
+        let (declare_, declare_leaf) = declare::register(&mut cx, &callables);
+        op_leaves.declare_ = declare_leaf;
         let struct_ = struct_mod::register(&mut cx);
         // Struct instances: the construction statement and the `.` field access.
         let (construct_, construct_leaf) = instance::register(&mut cx, &callables);
@@ -352,6 +357,7 @@ impl Core {
             while_,
             for_,
             return_,
+            declare_,
             rational,
             string_,
             comment_,
@@ -407,6 +413,7 @@ impl Core {
             or_: self.or_,
             not_: self.not_,
             assign: self.assign,
+            declare_: self.declare_,
             callable_: self.callable_,
             conv_container: self.conv_container_i64,
             ops: self.ops,
@@ -505,9 +512,9 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
         }
         return Operand::Concrete(NumType::I32);
     }
-    // A `while`/`for` loop and a struct construction are statements yielding
-    // unit, never values.
-    if ty == types.while_ || ty == types.for_ || ty == types.construct_ {
+    // A `while`/`for` loop, a struct construction, and a declaration are
+    // statements yielding unit, never values.
+    if ty == types.while_ || ty == types.for_ || ty == types.construct_ || ty == types.declare_ {
         return Operand::NonNumeric;
     }
     // A pointer-typed value (an `&x` literal, a pointer variable, or a pointer
@@ -810,11 +817,12 @@ unsafe fn commit_tail(
         *ops.add(2) = else_c;
         return Ok(node);
     }
-    // A `while`/`for` loop or a construction yields unit, so none of them can be
-    // a numeric function's tail.
+    // A `while`/`for` loop, a construction, or a declaration yields unit, so
+    // none of them can be a numeric function's tail.
     if (*node).ty == types.while_
         || (*node).ty == types.for_
         || (*node).ty == types.construct_
+        || (*node).ty == types.declare_
     {
         return Err(ParseError::StatementAsValue);
     }
@@ -1780,10 +1788,11 @@ mod tests {
 
         // The compiled tier agrees: declarations lower to unit, and the whole
         // file compiles once its fn is compiled.
-        // SAFETY: the sequence's first expression is the declared fn node.
+        // SAFETY: the sequence's first expression is the fn declaration; the
+        // bound fn is its declared slot.
         let func = unsafe {
             let arr = *((*root).value as *const DyadPtr);
-            crate::identities::array::items(arr)[0]
+            declare::declared_of(crate::identities::array::items(arr)[0])
         };
         // SAFETY: `func` is the fn node just parsed and outlives the calls.
         let _fc = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
@@ -2435,6 +2444,9 @@ mod tests {
             );
             p.parse_expression().unwrap()
         };
+        // The expression is the declaration; the bound fn is its declared slot.
+        // SAFETY: `s_fn` is the declare node just parsed.
+        let s_fn = unsafe { declare::declared_of(s_fn) };
 
         let call = {
             let mut s = ScopeStack::new();
@@ -2554,6 +2566,9 @@ mod tests {
             );
             p.parse_expression().unwrap()
         };
+        // The expression is the declaration; the bound fn is its declared slot.
+        // SAFETY: `fact` is the declare node just parsed.
+        let fact = unsafe { declare::declared_of(fact) };
         let call = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
@@ -3245,8 +3260,10 @@ mod tests {
 
     #[test]
     fn declaration_binds_a_name_to_a_value() {
-        // `x := 5` binds `x` (declared before its value is parsed); the expression's
-        // value is the bound node, and a later `x` resolves to that same node.
+        // `x := 5` binds `x` (declared before its value is parsed). The
+        // expression is a *declare node* — real graph structure carrying the
+        // spelling, the binding, and its native — a statement yielding unit;
+        // a later `x` resolves to the bound node itself.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
@@ -3258,10 +3275,15 @@ mod tests {
                 Parser::new("x := 5", &mut store, &mut trie, &core.metas, core.types(), s);
             p.parse_expression().unwrap()
         };
-        // The placeholder became the value: a rational that molds to 5.
+        // The declare node carries the name and the bound value: a rational
+        // that molds to 5, held by the fixpointed placeholder.
+        let bound = unsafe { declare::declared_of(decl) };
         unsafe {
-            assert_eq!((*decl).ty, core.rational);
-            assert_eq!(rational::mold(decl), Some(5));
+            assert_eq!((*decl).ty, core.declare_);
+            let name_node = *((*decl).value as *const DyadPtr);
+            assert_eq!(crate::identities::string::text(name_node), b"x");
+            assert_eq!((*bound).ty, core.rational);
+            assert_eq!(rational::mold(bound), Some(5));
         }
 
         let x_ref = {
@@ -3270,10 +3292,14 @@ mod tests {
             let mut p = Parser::new("x", &mut store, &mut trie, &core.metas, core.types(), s);
             p.parse_expression().unwrap()
         };
-        assert_eq!(x_ref, decl); // the reference resolves to the bound node
+        assert_eq!(x_ref, bound); // the reference resolves to the bound node
         let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
-        // SAFETY: `x_ref` is the bound rational node.
-        assert_eq!(unsafe { rt.run(x_ref) }.unwrap(), 5);
+        // SAFETY: `x_ref`/`decl` are valid nodes just parsed.
+        unsafe {
+            assert_eq!(rt.run(x_ref).unwrap(), 5);
+            // The declaration itself is a statement: it yields unit.
+            assert_eq!(rt.run(decl).unwrap(), 0);
+        }
     }
 
     #[test]
@@ -3361,6 +3387,9 @@ mod tests {
             );
             p.parse_expression().unwrap()
         };
+        // The expression is the declaration; the bound fn is its declared slot.
+        // SAFETY: `fact` is the declare node just parsed.
+        let fact = unsafe { declare::declared_of(fact) };
 
         let cases = [(0i64, 1i64), (1, 1), (5, 120), (7, 5040)];
 

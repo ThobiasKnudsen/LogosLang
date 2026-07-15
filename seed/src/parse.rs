@@ -416,6 +416,9 @@ pub struct CoreTypes {
     pub not_: DyadPtr,
     /// `=` (assignment); its applications yield the stored value.
     pub assign: DyadPtr,
+    /// `declare`: the type of the declaration node `name := value` builds; a
+    /// statement yielding unit.
+    pub declare_: DyadPtr,
     /// `callable`: the type of every exec leaf and of a compiled fn's code
     /// (`[entry: @exec, convention]`).
     pub callable_: DyadPtr,
@@ -1631,23 +1634,39 @@ impl<'a> Parser<'a> {
                     // Fixpoint: make the placeholder *be* the value, so references to
                     // `name` captured while parsing the value resolve to it. A
                     // construction binds the name to the *instance* (the storage)
-                    // and leaves the initializer as the expression: the name is the
-                    // place, the construct statement fills it each run.
+                    // and keeps the construct statement as the initializer: the name
+                    // is the place, the statement fills it each run.
                     // SAFETY: `placeholder`/`value` are valid dyads just built.
-                    unsafe {
+                    let declared = unsafe {
                         if (*value).ty == self.types.construct_ {
                             let ops = (*value).value as *mut DyadPtr;
                             let instance = *ops;
                             (*placeholder).ty = (*instance).ty;
                             (*placeholder).value = (*instance).value;
                             *ops = placeholder;
-                            tape.push(Cell::Dyad(value));
-                            continue;
+                            value
+                        } else {
+                            (*placeholder).ty = (*value).ty;
+                            (*placeholder).value = (*value).value;
+                            placeholder
                         }
-                        (*placeholder).ty = (*value).ty;
-                        (*placeholder).value = (*value).value;
-                    }
-                    tape.push(Cell::Dyad(placeholder));
+                    };
+                    // The declaration is graph structure, not parse vapor: the
+                    // expression is a declare node carrying the spelling (the
+                    // nominal identity's human half), the binding, and its native.
+                    let name_node = crate::identities::string::build_text(
+                        self.store,
+                        self.types.string_,
+                        name.as_bytes(),
+                    );
+                    let node = crate::identities::declare::build(
+                        self.store,
+                        self.types.declare_,
+                        self.types.ops.declare_,
+                        name_node,
+                        declared,
+                    );
+                    tape.push(Cell::Dyad(node));
                     continue;
                 }
                 // Not a declaration: rewind and resolve the name normally.

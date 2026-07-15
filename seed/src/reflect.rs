@@ -353,19 +353,33 @@ mod tests {
 
         // SAFETY: all nodes were just parsed into the store.
         unsafe {
-            // `x` is a committed i32 variable.
-            assert_eq!(describe(&types, roots[0]), Shape::Scalar(NumType::I32));
+            // `x := i32 41` is a declare node: the spelling, the bound i32
+            // variable, and its native — the declaration is graph structure.
+            let Shape::Tuple { slots } = describe(&types, roots[0]) else {
+                panic!("a declaration should be a tuple");
+            };
+            assert_eq!(text_of(slots[0].role), b"name");
+            assert_eq!(text_of(slots[0].node), b"x");
+            assert_eq!(describe(&types, slots[1].node), Shape::Scalar(NumType::I32));
 
-            // The struct definition: [scope, a, b] — one named head, two fields.
-            let Shape::List { head, tail } = describe(&types, roots[1]) else {
+            // The struct definition, behind its declaration: [scope, a, b] —
+            // one named head, two fields.
+            let Shape::Tuple { slots } = describe(&types, roots[1]) else {
+                panic!("a declaration should be a tuple");
+            };
+            let Shape::List { head, tail } = describe(&types, slots[1].node) else {
                 panic!("struct definition should be a list");
             };
             assert_eq!(head.len(), 1);
             assert_eq!(text_of(head[0].role), b"scope");
             assert_eq!(tail.len(), 2);
 
-            // The construction: [instance | args…]; the instance lays out a:0, b:4.
-            let Shape::List { head, tail } = describe(&types, roots[2]) else {
+            // The construction, behind its declaration: [instance, op | args…];
+            // the instance lays out a:0, b:4.
+            let Shape::Tuple { slots } = describe(&types, roots[2]) else {
+                panic!("a declaration should be a tuple");
+            };
+            let Shape::List { head, tail } = describe(&types, slots[1].node) else {
                 panic!("construction should be a list");
             };
             assert_eq!(text_of(head[0].role), b"instance");
@@ -422,10 +436,12 @@ mod tests {
             };
             assert_eq!(text_of(text), b"prose");
 
-            // The fn value: [input, output, body, bcode]; its store-through body
-            // tail is a [pointer, value, pointee, offset] tuple; `p : @i32`
-            // describes as a pointer to i32.
-            let Shape::Tuple { slots } = describe(&types, roots[7]) else {
+            // The fn value, behind its declaration: [input, output, body, bcode];
+            // `p : @i32` describes as a pointer to i32.
+            let Shape::Tuple { slots: decl } = describe(&types, roots[7]) else {
+                panic!("a declaration should be a tuple");
+            };
+            let Shape::Tuple { slots } = describe(&types, decl[1].node) else {
                 panic!("an fn value should be a tuple");
             };
             assert_eq!(text_of(slots[0].role), b"input");
