@@ -1,0 +1,6 @@
+# the answer, computed the long way
+double := fn (x : i32) -> i32 ( x + x )
+sum := i32 0
+sum = 0
+for i in 0..7 ( sum = sum + i )
+double(sum)
