@@ -125,6 +125,37 @@ fn a_typed_declaration_names_the_gap() {
 }
 
 #[test]
+fn a_declaration_snapshots_its_value_and_reads_are_stable() {
+    // `:=` evaluates its value once, into the name's own storage; reading the
+    // name is a plain load, never a re-evaluation. A block that sums 0..10 to 45
+    // stays 45 across reads (it was re-running the loop and growing before), and
+    // a later mutation of an input does not change the snapshot.
+    let (echoes, stderr) = repl(
+        b"c := (sum := i32 0, for i in 0..10 (sum = sum + i) sum)\nc\nc\n\
+          a := i32 1\nx := a + a\na = 5\nx\n",
+    );
+    assert_eq!(echoes, ["45", "45", "2"], "stderr: {stderr}");
+}
+
+#[test]
+fn a_declaration_copies_rather_than_aliases() {
+    // `z := y` snapshots y's value into fresh storage; writing z must not write y.
+    let (echoes, stderr) = repl(b"y := i32 1\nz := y\nz = 5\ny\nz\n");
+    assert_eq!(echoes, ["1", "5"], "stderr: {stderr}");
+}
+
+#[test]
+fn values_render_through_their_type() {
+    // The CLI shows a value through its static type, not the raw i64 container:
+    // floats with a decimal point, unsigned at width, bool as true/false, and a
+    // negative literal juxtaposed onto a type (`i64 -1`).
+    let (echoes, stderr) = repl(
+        b"f32 5.5\nq := f64 2.5\nq + q\ni64 -1\nu8 200\n1 < 2\nnot (1 < 2)\n",
+    );
+    assert_eq!(echoes, ["5.5", "5.0", "-1", "200", "true", "false"], "stderr: {stderr}");
+}
+
+#[test]
 fn help_prints_usage_and_version() {
     let out = logos().arg("--help").output().unwrap();
     assert!(out.status.success());

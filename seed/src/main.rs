@@ -119,7 +119,8 @@ fn run_file(path: &str) -> ExitCode {
     // which lives for the rest of this function.
     match unsafe { rt.run(root) } {
         Ok(bits) => {
-            println!("{bits}");
+            // SAFETY: `root` is the parsed dyad whose value `bits` is.
+            println!("{}", unsafe { seed::identities::display_value(&types, root, bits) });
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -220,7 +221,10 @@ fn repl() -> ExitCode {
         // which outlives the loop. Statements still run — for their effect —
         // they just do not echo.
         match unsafe { rt.run(node) } {
-            Ok(bits) if !is_statement => println!("{bits}"),
+            // SAFETY: `node` is the valid dyad just parsed, whose value `bits` is.
+            Ok(bits) if !is_statement => {
+                println!("{}", unsafe { seed::identities::display_value(&types, node, bits) })
+            }
             Ok(_) => {}
             Err(e) => {
                 eprintln!("run error: {}", report::run_message(&e));

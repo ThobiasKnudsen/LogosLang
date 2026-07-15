@@ -36,7 +36,10 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 /// at parse time; a non-literal right side passes through unchanged. The op slot
 /// gets the store leaf for the target's width (a pointer target stores as its
 /// 8-byte address).
-fn build(
+///
+/// Exposed to siblings so a declaration's snapshot initializer
+/// ([`super::build_scalar_binding`]) can reuse the `place = value` store for `:=`.
+pub(super) fn build(
     store: &mut Store,
     types: &CoreTypes,
     op: DyadPtr,

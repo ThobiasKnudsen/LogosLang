@@ -353,14 +353,20 @@ mod tests {
 
         // SAFETY: all nodes were just parsed into the store.
         unsafe {
-            // `x := i32 41` is a declare node: the spelling, the bound i32
-            // variable, and its native — the declaration is graph structure.
+            // `x := i32 41` is a declare node: the spelling and the snapshot
+            // initializer (`place = 41`) that fills `x`'s storage — the binding
+            // is graph structure, like the construction below. The initializer's
+            // target (its `lhs`) is the i32 variable the name resolves to.
             let Shape::Tuple { slots } = describe(&types, roots[0]) else {
                 panic!("a declaration should be a tuple");
             };
             assert_eq!(text_of(slots[0].role), b"name");
             assert_eq!(text_of(slots[0].node), b"x");
-            assert_eq!(describe(&types, slots[1].node), Shape::Scalar(NumType::I32));
+            let Shape::Tuple { slots: init } = describe(&types, slots[1].node) else {
+                panic!("a scalar binding's initializer should be a tuple");
+            };
+            assert_eq!(text_of(init[0].role), b"lhs");
+            assert_eq!(describe(&types, init[0].node), Shape::Scalar(NumType::I32));
 
             // The struct definition, behind its declaration: [scope, a, b] —
             // one named head, two fields.

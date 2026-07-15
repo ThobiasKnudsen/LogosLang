@@ -1721,6 +1721,27 @@ impl<'a> Parser<'a> {
                         {
                             self.scopes.rebind(self.trie, name, value);
                             value
+                        } else if (*value).ty != self.types.rational
+                            && matches!(
+                                crate::identities::numtype_of(&self.types, value),
+                                crate::identities::Operand::Concrete(_)
+                            )
+                        {
+                            // A runtime numeric value is *snapshotted*: fresh
+                            // storage, the name bound to that place, and the value
+                            // kept as a re-runnable initializer — so a read is a
+                            // plain load (never a re-evaluation of the initializer)
+                            // and a loop-body local re-initializes each iteration.
+                            // A bare rational stays comptime (the guard above); a
+                            // pointer/fn/type/unit value keeps its own binding
+                            // below.
+                            let (place, init) = crate::identities::build_scalar_binding(
+                                self.store,
+                                &self.types,
+                                value,
+                            )?;
+                            self.scopes.rebind(self.trie, name, place);
+                            init
                         } else {
                             (*placeholder).ty = (*value).ty;
                             (*placeholder).value = (*value).value;
@@ -1958,11 +1979,22 @@ impl<'a> Parser<'a> {
                 // An operator: reduce anything binding tighter to its left, then
                 // shift it onto the tape as a pending token.
                 Some(Construct::Infix { .. }) => {
-                    // A `-` with no left operand prefixes a numeric literal (`-` is
-                    // always an operator; the literal regex is unsigned): `f(-1)`,
-                    // `x := -5`. General unary minus over non-literals is later
-                    // work — it still parses as a dangling operator today.
-                    if id == self.types.minus && !matches!(tape.last(), Some(Cell::Dyad(_))) {
+                    // A `-` prefixes a numeric literal (`-` is always an operator;
+                    // the literal regex is unsigned) when it has no left operand
+                    // (`f(-1)`, `x := -5`) or directly follows a numeric *type*
+                    // node, where it is the juxtaposition of a negative literal
+                    // (`i64 -1`, the anonymous typed value). A numeric type node
+                    // never subtracts; a numeric *variable* (`x - 1`) is not a
+                    // numtype node, so that stays subtraction. General unary minus
+                    // over non-literals is later work — it still parses as a
+                    // dangling operator today.
+                    let after_type = tape
+                        .last()
+                        .and_then(Cell::as_dyad)
+                        .is_some_and(|d| crate::identities::is_numtype_node(&self.types, d));
+                    if id == self.types.minus
+                        && (after_type || !matches!(tape.last(), Some(Cell::Dyad(_))))
+                    {
                         if let Some((lit, matched, Construct::Atom(build))) = self.peek_kind() {
                             if lit == self.types.rational {
                                 let lstart = self.pos;
@@ -1973,7 +2005,21 @@ impl<'a> Parser<'a> {
                                 let neg = unsafe {
                                     crate::identities::rational::negate(self.store, lit, dyad)
                                 };
-                                tape.push(Cell::Dyad(neg));
+                                if after_type {
+                                    // Juxtaposition: commit the negative literal to
+                                    // the preceding type, an anonymous typed value.
+                                    let ty_node = tape.pop().and_then(|c| c.as_dyad()).unwrap();
+                                    // SAFETY: `neg` is the negated rational just
+                                    // built; `ty_node` is a numtype node.
+                                    let committed = unsafe {
+                                        crate::identities::commit_literal_to(
+                                            self.store, neg, ty_node,
+                                        )?
+                                    };
+                                    tape.push(Cell::Dyad(committed));
+                                } else {
+                                    tape.push(Cell::Dyad(neg));
+                                }
                                 continue;
                             }
                         }

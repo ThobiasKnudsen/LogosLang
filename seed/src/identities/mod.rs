@@ -652,6 +652,85 @@ pub(crate) fn is_numtype_node(types: &CoreTypes, node: DyadPtr) -> bool {
     types.numtypes.iter().any(|&t| !t.is_null() && t == node)
 }
 
+/// Build a declaration's runtime-scalar binding: fresh zeroed storage sized to
+/// `value`'s static numeric type, a place node over it, and an `=` initializer
+/// (`place = value`) that evaluates `value` into the place. Returns
+/// `(place, init)`: the declaration binds the name to `place` — an ordinary
+/// numeric variable, so reads are plain loads and `= …` reassigns — and keeps
+/// `init` as the declared-slot initializer.
+///
+/// This is what makes `name := <expression>` an *eager snapshot* (DESIGN
+/// ›declarations are immutable by default‹): the value is evaluated when the
+/// declaration runs, not re-evaluated on every read, and a declaration inside a
+/// loop body re-initializes its local each iteration (the initializer re-runs).
+/// It mirrors the construction case (`p := point(1, 2)`), which already binds the
+/// name to the instance and keeps the `construct` node as a re-run initializer.
+/// A bare rational (`x := 5`) stays a comptime binding, and a pointer, `fn`,
+/// type, or unit value keeps its own binding — this is only for `Concrete`
+/// numeric and `bool` values.
+///
+/// # Safety
+/// `value` must be a reduced dyad from the store whose [`numtype_of`] is
+/// [`Operand::Concrete`].
+pub(crate) unsafe fn build_scalar_binding(
+    store: &mut Store,
+    types: &CoreTypes,
+    value: DyadPtr,
+) -> Result<(DyadPtr, DyadPtr), ParseError> {
+    let nt = match numtype_of(types, value) {
+        Operand::Concrete(nt) => nt,
+        _ => unreachable!("build_scalar_binding needs a concrete numeric value"),
+    };
+    let ty_node = types.numtypes[nt as usize];
+    let blob = store.alloc_bytes(&vec![0u8; nt.bytes()]);
+    let place = store.alloc_raw(ty_node, blob);
+    let init = assign::build(store, types, types.assign, place, value)?;
+    Ok((place, init))
+}
+
+/// Render a run result for display: `bits` (the i64 the interpreter computes in)
+/// interpreted through `node`'s static type — a float via its bit pattern, an
+/// unsigned integer at its own width, a `bool` as `true`/`false` — so the CLI
+/// prints `5.5` and `true`, not the raw bit container. Non-scalar and comptime
+/// results fall back to the signed-decimal container, the plain default.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store (the parsed expression whose value
+/// `bits` is).
+pub unsafe fn display_value(types: &CoreTypes, node: DyadPtr, bits: i64) -> String {
+    // A comparison / logical result is physically an i32; show its truth. A bool
+    // stored into a variable reads back as its i32 0/1 (the seed has no distinct
+    // bool storage), so only a direct bool-valued expression renders this way.
+    if crate::parse::is_bool_result(types, node) {
+        return if bits != 0 { "true" } else { "false" }.to_string();
+    }
+    match numtype_of(types, node) {
+        Operand::Concrete(nt) => format_scalar(nt, bits),
+        _ => bits.to_string(),
+    }
+}
+
+/// Format an `i64` bit container as its `NumType`: floats decoded from their
+/// bits, unsigned integers read at their width, signed integers as-is (the
+/// container is already sign-extended by [`numtype::read_scalar`]).
+fn format_scalar(nt: NumType, bits: i64) -> String {
+    use NumType::*;
+    match nt {
+        I8 => (bits as i8).to_string(),
+        I16 => (bits as i16).to_string(),
+        I32 => (bits as i32).to_string(),
+        I64 => bits.to_string(),
+        U8 => (bits as u8).to_string(),
+        U16 => (bits as u16).to_string(),
+        U32 => (bits as u32).to_string(),
+        U64 => (bits as u64).to_string(),
+        // `{:?}` always shows a decimal point (`5.0`, not `5`), so a float never
+        // reads as an integer.
+        F32 => format!("{:?}", f32::from_bits(bits as u32)),
+        F64 => format!("{:?}", f64::from_bits(bits as u64)),
+    }
+}
+
 /// Resolve a `for` range's operand type across its parts (start, end, optional
 /// step), like [`resolve_binary`] over more operands: concrete types must all
 /// match ([`ParseError::TypeMismatch`]), literals commit in place to the
@@ -2597,11 +2676,11 @@ mod tests {
     fn while_loop_sums_both_tiers() {
         // The loop shape: block-local typed variables (the sketch's `sum := i32 0`
         // juxtaposition, with real storage), a while statement mutating them, the
-        // trailing read. The explicit re-zeroing after the declarations makes the
-        // body idempotent (`:=` initializes at parse, not per run), so the
-        // interpreted run and the compiled rerun agree from any prior state.
+        // trailing read. `:=` re-initializes on each run (its snapshot
+        // initializer), so the interpreted run and the compiled rerun agree from
+        // any prior state — no manual re-zeroing needed.
         diff_nullary_fn(
-            "fn () -> i32 ( a := i32 0  i := i32 0  a = 0  i = 0  while (i < 5) ( a = a + i  i = i + 1 )  a )",
+            "fn () -> i32 ( a := i32 0  i := i32 0  while (i < 5) ( a = a + i  i = i + 1 )  a )",
             10,
         );
     }
@@ -2614,20 +2693,21 @@ mod tests {
     #[test]
     fn for_loop_sums_a_range_both_tiers() {
         // `for i in 0..10` is end-exclusive (0 through 9, per the old prototype's
-        // ((end-start)/delta).ceil() count): sum = 45. The explicit re-zeroing
-        // keeps the body idempotent across the interpreted and compiled runs.
+        // ((end-start)/delta).ceil() count): sum = 45. `s := i32 0` re-initializes
+        // on each run, so the interpreted and compiled runs agree without a manual
+        // reset.
         diff_nullary_fn(
-            "fn () -> i32 ( s := i32 0  s = 0  for i in 0..10 ( s = s + i )  s )",
+            "fn () -> i32 ( s := i32 0  for i in 0..10 ( s = s + i )  s )",
             45,
         );
         // With a step: 0, 2, 4, 6, 8 sum to 20.
         diff_nullary_fn(
-            "fn () -> i32 ( s := i32 0  s = 0  for i in 0..10..2 ( s = s + i )  s )",
+            "fn () -> i32 ( s := i32 0  for i in 0..10..2 ( s = s + i )  s )",
             20,
         );
         // An empty range runs zero iterations.
         diff_nullary_fn(
-            "fn () -> i32 ( s := i32 7  s = 7  for i in 5..5 ( s = 0 )  s )",
+            "fn () -> i32 ( s := i32 7  for i in 5..5 ( s = 0 )  s )",
             7,
         );
     }
