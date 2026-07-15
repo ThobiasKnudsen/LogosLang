@@ -85,6 +85,18 @@ pub enum Shape {
         /// The operand itself.
         operand: DyadPtr,
     },
+    /// A callable leaf: the complete jump information — an opaque `@exec` entry
+    /// (machine code is the reflection boundary; one invokes it, never reads
+    /// into it) under a declared convention.
+    Callable {
+        /// The convention identity the jump follows.
+        convention: DyadPtr,
+    },
+    /// A calling-convention identity, named by its string node.
+    Convention {
+        /// The convention's name string node.
+        name: DyadPtr,
+    },
     /// A call: the callee is the node's type, the arguments its value.
     Call {
         /// The user function being applied.
@@ -151,6 +163,10 @@ pub unsafe fn describe(types: &CoreTypes, node: DyadPtr) -> Shape {
         STRING_TAG => Shape::Text,
         COMMENT_TAG => Shape::Prose { text: (*node).value.cast() },
         ADDR_TAG => Shape::Pointer { pointee: numtype::pointee_of(ty) },
+        meta::CALLABLE_TAG => Shape::Callable {
+            convention: crate::identities::callable::convention_of(node),
+        },
+        meta::CONVENTION_TAG => Shape::Convention { name: (*node).value.cast() },
         meta::FRACTION_TAG => Shape::Fraction,
         meta::TYPEREC_TAG => Shape::TypeNode {
             kind: meta::kind_of(node).unwrap_or(meta::TOKEN_TAG),
@@ -475,6 +491,8 @@ mod tests {
                 Shape::Tuple { .. } => "tuple",
                 Shape::List { .. } => "list",
                 Shape::Punned { .. } => "punned",
+                Shape::Callable { .. } => "callable",
+                Shape::Convention { .. } => "convention",
                 Shape::Call { .. } => "call",
                 Shape::Instance { .. } => "instance",
                 Shape::TypeNode { .. } => "type",

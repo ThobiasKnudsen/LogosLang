@@ -64,6 +64,7 @@ mod while_mod;
 mod for_mod;
 mod and;
 mod assign;
+pub(crate) mod callable;
 mod comment;
 mod convert;
 mod declare;
@@ -166,6 +167,15 @@ pub struct Core {
     pub deref_: DyadPtr,
     /// `storeptr`, the store-through node `=` builds over a deref lhs.
     pub storeptr_: DyadPtr,
+    /// `callable`, the type whose values are the complete jump information
+    /// (`[entry: @exec, convention]`); every exec leaf's type (issue #44).
+    pub callable_: DyadPtr,
+    /// `convention`, the type whose values are calling-convention identities.
+    pub convention_: DyadPtr,
+    /// `seed-native`: the Rust-shim convention (`fn(&mut Runtime, node)`).
+    pub conv_seed_native: DyadPtr,
+    /// `container-i64`: the compiled-artifact convention (uniform `i64` containers).
+    pub conv_container_i64: DyadPtr,
     /// The parser's table: parse-time behaviour keyed by identity.
     pub metas: HashMap<DyadPtr, Construct>,
     /// One run version: each function identity's `bcode`.
@@ -224,6 +234,10 @@ impl Core {
         let string_ = string::register(&mut cx);
         cx.string_ = string_;
         let comment_ = comment::register(&mut cx);
+        // The callable machinery: the `callable`/`convention` types and the two
+        // seed conventions. After `string` (convention names are string nodes),
+        // before everything executable (exec leaves are callable values).
+        let callables = callable::register(&mut cx);
         // The foundations allocated before the build context get their records
         // now: `type`'s values are types carrying records like its own (the
         // fixed point), a `scope`'s value is the null-terminated expression list.
@@ -313,6 +327,10 @@ impl Core {
             construct_,
             deref_,
             storeptr_,
+            callable_: callables.callable,
+            convention_: callables.convention,
+            conv_seed_native: callables.seed_native,
+            conv_container_i64: callables.container_i64,
             metas,
             bcode,
             lower,

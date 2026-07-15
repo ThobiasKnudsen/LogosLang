@@ -64,6 +64,15 @@ pub(crate) const PUNNED_TAG: u8 = 17;
 pub(crate) const TYPEREC_TAG: u8 = 18;
 /// Kind: a parse-only token (`,`, `(`, `->`, `else`, …); no values exist.
 pub(crate) const TOKEN_TAG: u8 = 19;
+/// Kind: values are the complete jump information — `[entry: @exec, convention]`,
+/// 16 bytes. The `callable` type's kind (DESIGN ›The callable ground is `@exec`‹,
+/// issue #44): every exec leaf (`add_i32`, `if_native`, a compiled fn's code) is a
+/// value of it, and jumping consumes exactly this record.
+pub(crate) const CALLABLE_TAG: u8 = 20;
+/// Kind: values are calling-convention identities (declared metadata a backend
+/// renders per target; decisive at the FFI boundary). A convention value's slot
+/// holds its name string node.
+pub(crate) const CONVENTION_TAG: u8 = 21;
 
 /// Byte offset of the associativity in a record.
 const ASSOC_OFF: usize = 1;
