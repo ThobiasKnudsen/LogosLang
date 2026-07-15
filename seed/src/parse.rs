@@ -430,17 +430,17 @@ pub struct CoreTypes {
 
 /// The fields of a function node's value struct, in order, as built by
 /// [`Parser::parse_fn`]: the input `struct`, the return type, the reflectable body,
-/// and the compiled `bcode`. The native *leaf* functions (`=`, `return`, concrete
-/// ops like `add_i32`, and the abstract `+`) keep their machine code in the run
-/// version's table instead (they have a null value slot); a user function carries
-/// its own compiled `bcode` here, null until compiled, and `run` jumps to it when
-/// present (DESIGN ›Execution is function application‹).
+/// and the compiled code. The concrete ops (`add_i32`, `if_native`, …) are
+/// `callable` leaves the nodes reference from their op slots instead; a user
+/// function carries its own compiled callable here, null until compiled, and
+/// `run` jumps to it when present (DESIGN ›Execution is function application‹).
 pub const FN_INPUT: usize = 0;
 /// See [`FN_INPUT`].
 pub const FN_OUTPUT: usize = 1;
 /// See [`FN_INPUT`].
 pub const FN_BODY: usize = 2;
-/// See [`FN_INPUT`]. The compiled machine code (`exec@`), null until compiled.
+/// See [`FN_INPUT`]. The compiled code — a `callable` node (`[entry: @exec,
+/// convention]`), null until compiled.
 pub const FN_BCODE: usize = 3;
 
 /// A core identity's native parse-time behaviour: how the driver schedules the

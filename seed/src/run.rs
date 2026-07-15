@@ -3,40 +3,31 @@
 
 //! `run`: execute a node.
 //!
-//! `run` is one primitive with two paths (DESIGN ›Execution is function
-//! application‹): read a node's operation (its `type`); if that operation is a
-//! *function*, run its `bcode`; otherwise the node is data, read through its
-//! type's layout. Interpretation is the body-walk a null-`bcode` function would
-//! take.
-//!
-//! Two homes for machine code, split by leaf vs. compound. The native *leaf*
-//! functions (`=`, `return`, the concrete `add_i32`, and the abstract `+` that
-//! resolves and delegates to it) keep their Rust implementations in a table the
-//! runtime holds, keyed by identity; a new run *version* is a new table, not a
-//! graph rewrite. (Their value slots hold their shared-member *records* — the
-//! reflectable precedence/layout data, see [`crate::identities::meta`] — never
-//! runnable code.) A *user* function instead carries its own compiled `bcode`
-//! per instance, on the node (the `FN_BCODE` field), null until
-//! [`crate::compile::compile_fn`] installs the `exec@`.
-//!
-//! So `run` resolves a function in three steps: a leaf native in the table runs
-//! directly; otherwise, if the node has installed `bcode`, jump to it; otherwise
-//! interpret by walking the `body`. Interpretation is just the null-`bcode` path.
-//! v1 scalar values ride an `i64` bit-container, read and written at their type's
-//! width (see `crate::identities::numtype`).
+//! `run` is one primitive with no tables (DESIGN ›The callable ground is
+//! `@exec`‹; issue #44): read a node's operation (its `type`). A *user*
+//! function applies — jump to its installed code or walk its `body`
+//! (interpretation is just the null-code path). Everything else consults the
+//! node's own *op slot*: the last fixed slot of its type's record holds the
+//! [`callable`](crate::identities::callable) leaf its constructor resolved at
+//! parse time (`add_i32` for a `+` node, `if_native` for an `if`), and run
+//! jumps to that leaf's entry with the node. No HashMap is consulted anywhere;
+//! dispatch flows through the graph, and alternative run versions live where
+//! versions live — versioned scopes — not in swapped tables. Identities carry
+//! only their shared-member *records* (the reflectable precedence/layout data,
+//! see [`crate::identities::meta`]), never code; a node with no code to reach
+//! is data, read through its type's layout. v1 scalar values ride an `i64`
+//! bit-container, read and written at their type's width (see
+//! `crate::identities::numtype`).
 
 use std::collections::HashMap;
 
 use crate::dyad::DyadPtr;
 use crate::parse::{FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
 
-/// A function's implementation for one run version. Takes the application node
-/// and returns its scalar result, recursing on operands via [`Runtime::run`].
+/// The signature of a seed-native shim — what a `seed-native` callable's entry
+/// points at. Takes the application node and returns its scalar result,
+/// recursing on operands via [`Runtime::run`].
 pub type RunFn = fn(&mut Runtime, DyadPtr) -> Result<i64, RunError>;
-
-/// A run version: the implementation of each function identity, keyed by
-/// identity. Swapping this table swaps the interpreter.
-pub type Bcode = HashMap<DyadPtr, RunFn>;
 
 /// Why a run failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,10 +72,10 @@ unsafe fn call_compiled(p: *const u8, args: &[i64]) -> Result<i64, RunError> {
 }
 
 /// A running evaluation. Holds the `fn` type (to tell a function application from
-/// a data read), the `bcode` table for this run version, and the frame stack.
-/// Operand computation rides the Rust call stack (each `run` is a frame); the
-/// explicit frame stack holds only per-call *parameter bindings*.
-pub struct Runtime<'a> {
+/// a data read) and the frame stack. Operand computation rides the Rust call
+/// stack (each `run` is a frame); the explicit frame stack holds only per-call
+/// *parameter bindings*.
+pub struct Runtime {
     fn_type: DyadPtr,
     /// `rational_number`: a data leaf of this type is molded to its `i32` value
     /// when read, rather than read raw through the generic i32 layout.
@@ -92,30 +83,30 @@ pub struct Runtime<'a> {
     /// `struct`: an instance of a struct type is not a scalar — its fields are
     /// read through `.` places, never the whole value.
     struct_: DyadPtr,
-    bcode: &'a Bcode,
     /// One activation per in-flight call, each binding the callee's parameter
     /// nodes to their argument values. A parameter reference reads the top frame;
     /// each activation having its own frame is what makes recursion work.
     frames: Vec<HashMap<DyadPtr, i64>>,
 }
 
-impl<'a> Runtime<'a> {
+impl Runtime {
     /// A runtime recognizing functions by `fn_type` and struct instances by
-    /// `struct_`, running through `bcode`, molding `rational` leaves on read,
-    /// with an empty frame stack.
-    pub fn new(fn_type: DyadPtr, rational: DyadPtr, struct_: DyadPtr, bcode: &'a Bcode) -> Self {
-        Runtime { fn_type, rational, struct_, bcode, frames: Vec::new() }
+    /// `struct_`, molding `rational` leaves on read, with an empty frame stack.
+    /// Everything executable is reached through the graph.
+    pub fn new(fn_type: DyadPtr, rational: DyadPtr, struct_: DyadPtr) -> Self {
+        Runtime { fn_type, rational, struct_, frames: Vec::new() }
     }
 
-    /// Run `node`: read its operation (its `type`). If the operation is a function
-    /// (its own type is `fn`): a leaf native in the table runs directly; otherwise
-    /// jump to the node's installed `bcode` if present, else walk its `body`. If the
-    /// operation is not a function, read the node's scalar value through its layout.
+    /// Run `node`: read its operation (its `type`). If the operation is a
+    /// function (its own type is `fn`), apply it — jump to its installed code
+    /// or walk its `body`. Otherwise consult the node's op slot: a resolved
+    /// application jumps to the callable leaf its constructor stored there;
+    /// anything without one is data, read through its type's layout.
     ///
     /// # Safety
     /// `node` must be a valid dyad from the store (address = id). `run`
     /// dereferences it, its operation, and (for functions) the operands or body
-    /// they reach. If the operation has installed `bcode`, the compiled artifact
+    /// they reach. If the operation has installed code, the compiled artifact
     /// that owns that machine code must still be alive (see
     /// [`crate::compile::compile_fn`]).
     pub unsafe fn run(&mut self, node: DyadPtr) -> Result<i64, RunError> {
@@ -124,18 +115,7 @@ impl<'a> Runtime<'a> {
             return Ok(value);
         }
         let op = (*node).ty;
-        // A leaf native (`=`, `+`, `return`, a `scope` sequence) runs from the
-        // table directly, whatever its identity's own type.
-        if let Some(native) = self.bcode.get(&op).copied() {
-            return native(self, node);
-        }
         if (*op).ty == self.fn_type {
-            // A core identity's value is its operand record, not a runnable fn
-            // record; every such identity runs from the table above, so this
-            // guards the invariant rather than a reachable path.
-            if crate::identities::meta::is_operand_record(op) {
-                return Err(RunError::NotRunnable(op));
-            }
             // A user function's value is `[input, output, body, bcode]`.
             let fields = (*op).value as *const DyadPtr;
             if fields.is_null() {

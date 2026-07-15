@@ -26,17 +26,16 @@
 //! [18..26]   u64  destructor  (reserved 0)
 //! [26..]     payload, per kind:
 //!              ADDR              pointee type node (`dyad@`)
-//!              TUPLE/LIST/PUNNED u8 arity, then arity × `dyad@` role-name strings
+//!              TUPLE/LIST         u8 arity, then arity × `dyad@` role-name strings
 //! ```
 //!
 //! The kind byte continues [`numtype`](super::numtype)'s tag space (`NumType`
 //! 0–9, `VOID_TAG` 10, `STRING_TAG` 11, `COMMENT_TAG` 12, `ADDR_TAG` 13), so
-//! every existing first-byte tag read keeps working unchanged. One invariant is
-//! load-bearing: the kinds that may appear on an *fn-typed* identity —
-//! [`TUPLE_TAG`], [`LIST_TAG`], [`PUNNED_TAG`] — are chosen ≢ 0 (mod 8), while a
-//! real fn value's slot starts with its 8-aligned `input` pointer (first byte
-//! ≡ 0 mod 8). The two sets are disjoint, so [`is_operand_record`] tells an
-//! operator identity from a user function *exactly*, not heuristically.
+//! every existing first-byte tag read keeps working unchanged. Since #44 the
+//! only fn-typed nodes are real functions (operators are plain types), so no
+//! discriminant is needed to tell them apart — the record *is* the identity's
+//! whole value, and the code its applications run lives on the callable
+//! leaves their op slots reference.
 
 use crate::dyad::DyadPtr;
 use crate::parse::Assoc;
@@ -56,9 +55,6 @@ pub(crate) const TUPLE_TAG: u8 = 14;
 pub(crate) const LIST_TAG: u8 = 15;
 /// Kind: values are `[num: i64, den: i64]` comptime fractions (`rational`).
 pub(crate) const FRACTION_TAG: u8 = 16;
-/// Kind: the value slot *is* the single operand's `dyad@`, punned (`return`,
-/// `not`), named by one role.
-pub(crate) const PUNNED_TAG: u8 = 17;
 /// Kind: values are themselves types — each carries a record like this one. The
 /// `Type : Type` root's kind, where the recursion grounds.
 pub(crate) const TYPEREC_TAG: u8 = 18;
@@ -99,7 +95,7 @@ pub(crate) fn record(store: &mut Store, kind: u8) -> *mut u8 {
 }
 
 /// Build an operand record for an operator/statement identity: its layout
-/// `kind` ([`TUPLE_TAG`], [`LIST_TAG`], or [`PUNNED_TAG`]), its parse
+/// `kind` ([`TUPLE_TAG`] or [`LIST_TAG`]), its parse
 /// `precedence`/`assoc`, and one role-name string node per operand slot.
 pub(crate) fn operand_record(
     cx: &mut Cx,
@@ -108,10 +104,7 @@ pub(crate) fn operand_record(
     assoc: Assoc,
     roles: &[&str],
 ) -> *mut u8 {
-    debug_assert!(
-        matches!(kind, TUPLE_TAG | LIST_TAG | PUNNED_TAG),
-        "operand records carry operand kinds"
-    );
+    debug_assert!(matches!(kind, TUPLE_TAG | LIST_TAG), "operand records carry operand kinds");
     debug_assert!(!cx.string_.is_null(), "role names need the string type registered");
     let mut blob = header(kind, assoc, precedence).to_vec();
     blob.push(roles.len() as u8);
@@ -159,23 +152,10 @@ pub(crate) unsafe fn kind_of(id: DyadPtr) -> Option<u8> {
     }
 }
 
-/// Whether an *fn-typed* node's value slot holds an operand record — i.e. the
-/// node is a core operator/statement identity, not a user function. Exact, per
-/// the module invariant: operand kinds are ≢ 0 (mod 8), an fn record's first
-/// byte (its 8-aligned `input` pointer's low byte) always is.
-///
-/// # Safety
-/// `id` must be a valid dyad from the store.
-pub(crate) unsafe fn is_operand_record(id: DyadPtr) -> bool {
-    let v = (*id).value;
-    !v.is_null() && matches!(*(v as *const u8), TUPLE_TAG | LIST_TAG | PUNNED_TAG)
-}
-
 /// The index of a runnable node's *op slot* — the last fixed slot of its
-/// type's operand record, where a migrated node stores its resolved callable
-/// leaf (issue #44: dispatch flows through the node, not the identity). `None`
-/// for kinds without fixed slots (a punned or headless-list identity, or any
-/// data type).
+/// type's operand record, where a resolved node stores its callable leaf
+/// (issue #44: dispatch flows through the node, not the identity). `None` for
+/// kinds without fixed slots (any data type).
 ///
 /// # Safety
 /// `id` must be a valid dyad from the store whose non-null value is a record.
@@ -213,7 +193,7 @@ pub(crate) unsafe fn assoc_of(id: DyadPtr) -> Assoc {
 /// The operand arity stored in `id`'s operand record.
 ///
 /// # Safety
-/// `id` must carry an operand record ([`is_operand_record`]).
+/// `id` must carry an operand record (a [`TUPLE_TAG`] or [`LIST_TAG`] kind).
 pub(crate) unsafe fn arity_of(id: DyadPtr) -> usize {
     *(*id).value.add(PAYLOAD_OFF) as usize
 }

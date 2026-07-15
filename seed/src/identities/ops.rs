@@ -271,10 +271,9 @@ mod tests {
     }
 
     #[test]
-    fn the_op_slot_dispatches_without_the_table() {
-        // The migration rehearsal: retype `+` to a plain type, evict it from
-        // the run table, and store the resolved leaf in the node's op slot —
-        // run() must reach the result through the graph alone.
+    fn the_op_slot_dispatches_through_the_graph_alone() {
+        // No table exists anywhere: a resolved node reaches its result through
+        // its op slot and nothing else.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
@@ -287,15 +286,7 @@ mod tests {
         let value = store.alloc_operands(&[lhs, rhs, leaf]);
         let node = store.alloc_raw(core.plus, value);
 
-        // SAFETY: `plus` is a live identity; retyping it to `type_` is the
-        // move #44 makes permanent (`else`/`scope` already live there).
-        unsafe {
-            (*core.plus).ty = core.type_;
-        }
-        let mut bcode = core.bcode.clone();
-        bcode.remove(&core.plus);
-
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_, &bcode);
+        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
         // SAFETY: the node and its operands were just built; the leaf is a
         // minted seed-native callable.
         assert_eq!(unsafe { rt.run(node) }.unwrap(), 42);
@@ -317,7 +308,7 @@ mod tests {
         let value = store.alloc_operands(&[lhs, rhs, leaf]);
         let node = store.alloc_raw(core.plus, value);
 
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_, &core.bcode);
+        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
         // SAFETY: the leaf was minted from a seed-native RunFn shim; the node's
         // operands are valid committed scalars.
         let got = unsafe {

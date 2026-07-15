@@ -15,8 +15,9 @@
 //! fixed points the interpreter holds (`type`, `fn`, `struct`); everything else
 //! comes from records.
 //!
-//! What stays native is behaviour, not structure: `run`/`lower`/`Construct`
-//! remain table-keyed Rust (the #42 boundary), so [`Shape`] tells you how a
+//! What stays opaque is machine code, not structure: a callable's entry is the
+//! reflection boundary (invoked, never read into), and the parse `Construct`s
+//! and Cranelift lowering remain table-keyed Rust, so [`Shape`] tells you how a
 //! node is *built*, never what it computes.
 
 use crate::dyad::DyadPtr;
@@ -77,13 +78,6 @@ pub enum Shape {
         head: Vec<Slot>,
         /// The variadic tail.
         tail: Vec<DyadPtr>,
-    },
-    /// A single operand punned into the value slot (`return`, `not`).
-    Punned {
-        /// The role naming the operand.
-        role: DyadPtr,
-        /// The operand itself.
-        operand: DyadPtr,
     },
     /// An array of `dyad@`: the elements live behind the node's `[len, data]`
     /// value (a sequence's expression list rides in one of these).
@@ -151,12 +145,9 @@ pub unsafe fn describe(types: &CoreTypes, node: DyadPtr) -> Shape {
             Err(_) => Shape::Undefined,
         };
     }
-    // A value of a function is an application: a core operator/statement reads
-    // its operands per its record; a user function's application is a call.
+    // A value of a function is an application — a call (the operators are
+    // plain types since #44; their applications read below, per their records).
     if (*ty).ty == types.fn_type {
-        if meta::is_operand_record(ty) {
-            return operands_of(ty, node);
-        }
         return Shape::Call { callee: ty, args: scan_null_terminated((*node).value) };
     }
     // Data: read the node through its type's record, grounding at Type : Type.
@@ -181,37 +172,22 @@ pub unsafe fn describe(types: &CoreTypes, node: DyadPtr) -> Shape {
             kind: meta::kind_of(node).unwrap_or(meta::TOKEN_TAG),
             precedence: meta::precedence_of(node),
         },
-        meta::TUPLE_TAG | meta::LIST_TAG | meta::PUNNED_TAG => {
-            // The type is `fn` or another record-shaped foundation. The node
-            // could still be a core operator *identity* (an fn-typed node whose
-            // value is its own record, not an fn record): it is a type in the
-            // sealed-model sense, so it self-describes.
-            if meta::is_operand_record(node) {
-                return Shape::TypeNode {
-                    kind: meta::kind_of(node).unwrap_or(meta::TOKEN_TAG),
-                    precedence: meta::precedence_of(node),
-                };
-            }
-            operands_of(ty, node)
-        }
+        meta::TUPLE_TAG | meta::LIST_TAG => operands_of(ty, node),
         _ => Shape::Undefined, // a TOKEN-kinded type has no values
     }
 }
 
-/// Read `node`'s operands per `ty`'s operand record: a tuple's fixed slots, a
-/// list's fixed head plus null-terminated tail, or the punned single operand.
+/// Read `node`'s operands per `ty`'s operand record: a tuple's fixed slots, or
+/// a list's fixed head plus null-terminated tail.
 ///
 /// # Safety
 /// `ty` carries an operand record; `node.value` has the shape it declares.
 unsafe fn operands_of(ty: DyadPtr, node: DyadPtr) -> Shape {
     let value = (*node).value as *const DyadPtr;
-    let kind = meta::kind_of(ty).expect("operand records have a kind");
-    if kind == meta::PUNNED_TAG {
-        return Shape::Punned { role: meta::role_of(ty, 0), operand: (*node).value.cast() };
-    }
     if value.is_null() {
         return Shape::Undefined; // declared, no operands yet
     }
+    let kind = meta::kind_of(ty).expect("operand records have a kind");
     let arity = meta::arity_of(ty);
     let slots = (0..arity)
         .map(|i| Slot { role: meta::role_of(ty, i), node: *value.add(i) })
@@ -222,7 +198,7 @@ unsafe fn operands_of(ty: DyadPtr, node: DyadPtr) -> Shape {
             head: slots,
             tail: scan_null_terminated((*node).value.add(arity * std::mem::size_of::<DyadPtr>())),
         },
-        _ => unreachable!("operand records are tuple, list, or punned"),
+        _ => unreachable!("operand records are tuple or list"),
     }
 }
 
@@ -507,7 +483,6 @@ mod tests {
                 Shape::Pointer { .. } => "pointer",
                 Shape::Tuple { .. } => "tuple",
                 Shape::List { .. } => "list",
-                Shape::Punned { .. } => "punned",
                 Shape::Array { .. } => "array",
                 Shape::Callable { .. } => "callable",
                 Shape::Convention { .. } => "convention",

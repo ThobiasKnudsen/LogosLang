@@ -2,13 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `NumType`: the seed's numeric machine types, and the type-switched arithmetic and
-//! comparison the operators dispatch through.
+//! comparison helpers the concrete ops' shims share.
 //!
-//! A binary numeric operator node is `{ty: op, value: [lhs, rhs, type]}` — the
-//! resolved operand type is stored in the value slot (DESIGN ›which concrete machine
-//! operation runs is resolved from the operand types‹). Run and compile read that
-//! stored type and switch on it, so one `+`/`<`/… identity serves every numeric type
-//! and the ~70 machine ops are a table, not ~70 files.
+//! A binary numeric operator node is `{ty: op, value: [lhs, rhs, op-leaf]}` —
+//! the concrete machine operation resolved from the operand types rides the op
+//! slot (DESIGN ›which concrete machine operation runs is resolved from the
+//! operand types‹), each leaf's shim a monomorphic wrapper over the helpers
+//! here with its (operation, type) pair baked in ([`super::ops`]). One
+//! `+`/`<`/… identity serves every numeric type; the ~120 machine ops are graph
+//! leaves, not ~120 files.
 //!
 //! Each numeric **type node** self-describes its `NumType` by the kind byte of the
 //! shared-member record in its value slot (see [`crate::identities::meta`] and
@@ -312,10 +314,11 @@ pub(crate) unsafe fn of_type_node(type_node: DyadPtr) -> NumType {
     NumType::from_tag(tag)
 }
 
-/// The type stored in a binary operator node's value slot (its third operand).
+/// The type node stored at a conversion's third slot (its target,
+/// `[operand, from, to, op]`).
 ///
 /// # Safety
-/// `node` must be a resolved binary numeric operator node `[lhs, rhs, type]`.
+/// `node` must be a conversion node as `convert::build_convert` lays it out.
 pub(crate) unsafe fn stored_type(node: DyadPtr) -> DyadPtr {
     *((*node).value as *const DyadPtr).add(2)
 }
