@@ -243,8 +243,10 @@ impl Core {
         // before everything executable (exec leaves are callable values).
         let callables = callable::register(&mut cx);
         // The concrete machine operations: every (operation, machine type) pair
-        // as a callable leaf, from one table-driven loop.
-        let op_leaves = ops::register(&mut cx, &callables);
+        // as a callable leaf, from one table-driven loop. The single-native
+        // leaves (`and`, `or`, `convert`, …) are patched in by their files'
+        // registrations below.
+        let mut op_leaves = ops::register(&mut cx, &callables);
         // The foundations allocated before the build context get their records
         // now: `type`'s values are types carrying records like its own (the
         // fixed point), a `scope`'s value is the null-terminated expression list.
@@ -261,7 +263,8 @@ impl Core {
         let assign = assign::register(&mut cx);
         // The shared scalar numeric conversion (`i32(a)`, `f64(x)`, …). No spelling; the
         // parser builds conversion nodes from the `type(value)` constructor surface.
-        let convert = convert::register(&mut cx);
+        let (convert, convert_leaf) = convert::register(&mut cx, &callables);
+        op_leaves.convert_ = convert_leaf;
         // The numeric operators. Each resolves its operand type at parse time and
         // stores it in the node's value slot; run/compile switch on it (see
         // `numtype`), so one identity per operator serves every numeric type.
@@ -277,8 +280,10 @@ impl Core {
         let ge = ge::register(&mut cx);
         let ne = ne::register(&mut cx);
         // The logical operators, over `bool` (their operands are comparisons/bools).
-        let and_ = and::register(&mut cx);
-        let or_ = or::register(&mut cx);
+        let (and_, and_leaf) = and::register(&mut cx, &callables);
+        op_leaves.and_ = and_leaf;
+        let (or_, or_leaf) = or::register(&mut cx, &callables);
+        op_leaves.or_ = or_leaf;
         let not_ = not::register(&mut cx);
         let if_ = if_mod::register(&mut cx);
         let while_ = while_mod::register(&mut cx);
@@ -381,6 +386,7 @@ impl Core {
             and_: self.and_,
             or_: self.or_,
             not_: self.not_,
+            assign: self.assign,
             ops: self.ops,
         }
     }
@@ -402,21 +408,6 @@ pub(crate) struct Cx<'a> {
     metas: HashMap<DyadPtr, Construct>,
     bcode: Bcode,
     lower: LowerTable,
-}
-
-/// Build a plain binary application `{ty: op, value: [lhs, rhs]}`, used by `=`
-/// (which is not type-resolved). `+` uses its own resolving builder instead (see
-/// [`plus`]); the shared `CoreTypes` parameter lets a builder resolve operand types
-/// but is unused here.
-pub(crate) fn build_binary(
-    store: &mut Store,
-    _types: &CoreTypes,
-    op: DyadPtr,
-    lhs: DyadPtr,
-    rhs: DyadPtr,
-) -> Result<DyadPtr, ParseError> {
-    let operands = store.alloc_operands(&[lhs, rhs]);
-    Ok(store.alloc_raw(op, operands))
 }
 
 /// The two `dyad@` operands of a binary application node.
@@ -459,13 +450,18 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
         let lhs = *((*node).value as *const DyadPtr);
         return numtype_of(types, lhs);
     }
-    // A comparison's result is `bool`, physically an i32.
+    // A comparison's or logical operator's result is `bool`, physically an i32;
+    // an assignment yields the stored value, read at the bare i32 default (the
+    // behaviour these applications always had).
     if ty == types.lt
         || ty == types.gt
         || ty == types.le
         || ty == types.ge
         || ty == types.eq
         || ty == types.ne
+        || ty == types.and_
+        || ty == types.or_
+        || ty == types.assign
     {
         return Operand::Concrete(NumType::I32);
     }
@@ -859,7 +855,7 @@ pub(crate) unsafe fn build_cast(
                 Ok(operand)
             } else {
                 let from_node = types.numtypes[from as usize];
-                Ok(convert::build_convert(store, types.convert, operand, from_node, target))
+                Ok(convert::build_convert(store, types, operand, from_node, target))
             }
         }
         // A literal: fold it into a `target`-typed value now, with `as` semantics.

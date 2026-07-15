@@ -40,6 +40,14 @@ pub struct OpLeaves {
     /// `[NumType]` → the `=` store leaf writing at that width (a pointer target
     /// stores as its 8-byte address, `U64`, per `numtype::of_type_node`).
     pub(crate) store: [DyadPtr; 10],
+    /// `and`'s short-circuiting native — a single leaf (bool has one width),
+    /// minted by [`super::and::register`].
+    pub(crate) and_: DyadPtr,
+    /// `or`'s short-circuiting native, minted by [`super::or::register`].
+    pub(crate) or_: DyadPtr,
+    /// `convert`'s native — a single leaf; its from/to pair rides the node as
+    /// graph data. Minted by [`super::convert::register`].
+    pub(crate) convert_: DyadPtr,
 }
 
 impl OpLeaves {
@@ -181,7 +189,16 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
     for (n, &shim) in STORE_SHIMS.iter().enumerate() {
         store[n] = callable::mint(cx.store, cs.callable, shim as usize, cs.seed_native);
     }
-    OpLeaves { arith, cmp, store }
+    // The single-native leaves are minted where their shims live (`and`, `or`,
+    // `convert`, the statement natives); their registrations fill these in.
+    OpLeaves {
+        arith,
+        cmp,
+        store,
+        and_: std::ptr::null_mut(),
+        or_: std::ptr::null_mut(),
+        convert_: std::ptr::null_mut(),
+    }
 }
 
 #[cfg(test)]

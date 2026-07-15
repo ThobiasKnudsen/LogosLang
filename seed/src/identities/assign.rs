@@ -1,28 +1,29 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `=`: assignment. A function (its type is `fn`), right-associative, binding
-//! loosest. Run evaluates the right operand and writes it into the left operand's
-//! storage, yielding the value; compile lowers it to a store.
+//! `=`: assignment. A parse-time constructor, right-associative, binding
+//! loosest. Its builder resolves the target's width to a concrete store op —
+//! `{ty: =, value: [lhs, rhs, store_<type>]}` — so run jumps through the op
+//! slot and writes at the baked width (issue #44); compile lowers it to a
+//! store. The stored value is yielded.
 
 use cranelift_codegen::ir::Value;
 
-use super::numtype::{is_pointer_type, numtype_of_type, of_type_node, write_scalar};
-use super::{build_binary, commit_if_literal, is_numtype_node, meta, operands, Cx, Operand};
+use super::numtype::{is_pointer_type, numtype_of_type, of_type_node};
+use super::{commit_if_literal, is_numtype_node, meta, operands, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::parse::{Assoc, Construct, CoreTypes, ParseError};
-use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
-/// Register `=`: spelling, parse precedence, run bcode, and lowering.
+/// Register `=`: spelling, parse precedence, and lowering. The run natives are
+/// the per-width store leaves ([`crate::identities::ops`]).
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let record = meta::operand_record(cx, meta::TUPLE_TAG, 1.0, Assoc::Right, &["lhs", "rhs"]);
-    let id = cx.store.alloc_raw(cx.fn_type, record);
+    let record = meta::operand_record(cx, meta::TUPLE_TAG, 1.0, Assoc::Right, &["lhs", "rhs", "op"]);
+    let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("=", IdContext::new(id, cx.root_scope));
     cx.metas.insert(id, Construct::Infix { build });
-    cx.bcode.insert(id, run);
     cx.lower.insert(id, lower);
     id
 }
@@ -32,7 +33,9 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 /// concrete type only when it finally lands in a typed slot‹) — so `a = 10` writes
 /// at `a`'s width in both tiers and `a = 5000000000` into an i64 is exact. A
 /// literal with no exact value in the target is [`ParseError::UncomputableLiteral`]
-/// at parse time; a non-literal right side passes through unchanged.
+/// at parse time; a non-literal right side passes through unchanged. The op slot
+/// gets the store leaf for the target's width (a pointer target stores as its
+/// 8-byte address).
 fn build(
     store: &mut Store,
     types: &CoreTypes,
@@ -70,24 +73,10 @@ fn build(
             rhs
         }
     };
-    build_binary(store, types, op, lhs, rhs)
-}
-
-/// Run: evaluate the right operand, write it into the left operand's storage at that
-/// variable's type width (the store truncates to the width; the reader reads it back
-/// the same way), and yield the assigned value.
-fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a valid application dyad, so its operands are valid nodes.
-    unsafe {
-        let (lhs, rhs) = operands(node);
-        let bits = rt.run(rhs)?;
-        let slot = (*lhs).value;
-        if slot.is_null() {
-            return Err(RunError::BadValue);
-        }
-        write_scalar((*lhs).ty, slot, bits);
-        Ok(bits)
-    }
+    // SAFETY: `lhs` is a typed variable checked assignable above.
+    let nt = unsafe { of_type_node((*lhs).ty) };
+    let value = store.alloc_operands(&[lhs, rhs, types.ops.store_leaf(nt)]);
+    Ok(store.alloc_raw(op, value))
 }
 
 /// Lower: store the right operand into the left operand's baked storage. Guards a
