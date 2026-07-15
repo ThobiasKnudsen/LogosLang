@@ -39,7 +39,7 @@ fn an_unreadable_path_fails_cleanly() {
 }
 
 #[test]
-fn the_repl_holds_declarations_across_lines_and_survives_errors() {
+fn the_repl_echoes_values_but_not_declarations_or_assignments() {
     let mut child = logos()
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -50,15 +50,21 @@ fn the_repl_holds_declarations_across_lines_and_survives_errors() {
         .stdin
         .as_mut()
         .unwrap()
-        .write_all(b"x := i32 5\nx = 40\nzz\nx + 2\n")
+        .write_all(b"x := i32 5\nx = 40\ndouble := fn (a : i32) -> i32 ( a + a )\nzz\ndouble(x) + 2\n")
         .unwrap();
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    // The banner line, then the echoes: 5, 40, (error on stderr), 42.
-    assert!(stdout.contains("5\n"), "stdout: {stdout}");
-    assert!(stdout.contains("40\n"), "stdout: {stdout}");
-    assert!(stdout.contains("42\n"), "stdout: {stdout}");
+    // Declarations and the assignment are silent (they still ran: the call
+    // reads x = 40 through the declared double); only the tail expression
+    // echoes. Strip the banner and prompts, keep the echoes.
+    let echoes: Vec<&str> = stdout
+        .lines()
+        .skip(1) // the banner
+        .map(|l| l.trim_start_matches("» "))
+        .filter(|l| !l.is_empty())
+        .collect();
+    assert_eq!(echoes, ["82"], "stdout: {stdout}");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("<repl>:1:1: error: unknown name"), "stderr: {stderr}");
 }
