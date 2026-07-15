@@ -1751,6 +1751,49 @@ mod tests {
     }
 
     #[test]
+    fn a_whole_file_runs_top_to_bottom_like_a_script() {
+        // The CLI model (settled, July 2026): `logos file.logos` evaluates the
+        // file's top-level scope in order, Python-style — no main function. A
+        // declaration statement (a fn literal or a struct type standing as an
+        // expression) is inert at run time — its work happened at parse — and
+        // yields unit; the file's value is its tail expression's.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let root = {
+            let mut p = Parser::new(
+                "double := fn (x : i32) -> i32 ( x + x )\npoint := struct (a : i32)\ndouble(21)",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                scopes,
+            );
+            p.parse_sequence().unwrap()
+        };
+        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        // SAFETY: `root` is the sequence just parsed; its exprs are valid.
+        let interp = unsafe { rt.run(root) }.unwrap();
+        assert_eq!(interp, 42);
+
+        // The compiled tier agrees: declarations lower to unit, and the whole
+        // file compiles once its fn is compiled.
+        // SAFETY: the sequence's first expression is the declared fn node.
+        let func = unsafe {
+            let arr = *((*root).value as *const DyadPtr);
+            crate::identities::array::items(arr)[0]
+        };
+        // SAFETY: `func` is the fn node just parsed and outlives the calls.
+        let _fc = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
+        let compiled =
+            unsafe { compile_nullary_i32(&core.lower, core.types(), root) }.unwrap();
+        // SAFETY: the artifacts are alive; the baked storage outlives the call.
+        assert_eq!(unsafe { compiled.call() }, 42);
+    }
+
+    #[test]
     fn parses_and_runs_bool_literals() {
         // `true`/`false` are `bool`-typed literals: they parse to a `bool` node and
         // both tiers read 1/0. The interpreter's generic data path reads the i32;

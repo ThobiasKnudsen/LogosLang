@@ -123,6 +123,11 @@ impl Lowerer<'_, '_> {
         if let Some(f) = self.lower.get(&op).copied() {
             return f(self, node);
         }
+        // A declaration statement — a fn literal or a struct type standing as
+        // an expression — lowers to unit, exactly as it runs to unit.
+        if op == self.types.fn_type || op == self.types.struct_ {
+            return Ok(self.const_i32(0));
+        }
         // A node whose operation is a user function is a call: `op` is the
         // callee. The operator identities are plain types with lowering rules
         // above; only real functions are fn-typed.

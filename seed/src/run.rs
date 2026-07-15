@@ -148,6 +148,15 @@ impl Runtime {
                 result
             }
         } else {
+            // A declaration statement — a fn literal or a struct type standing
+            // as an expression — is inert at run time (its work happened at
+            // parse) and yields unit, the same precedent as `-> void`. Checked
+            // before the op-slot read below: a *compiled* fn literal's fourth
+            // slot holds its callable, and evaluating the declaration must not
+            // jump to it.
+            if op == self.fn_type || op == self.struct_ {
+                return Ok(0);
+            }
             // `node` is data or a migrated application. A rational literal is
             // molded to its i32 value (a fraction like 3.14 has none:
             // UncomputableLiteral, not a bad read).
