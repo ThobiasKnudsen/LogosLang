@@ -166,6 +166,24 @@ pub(crate) unsafe fn is_operand_record(id: DyadPtr) -> bool {
     !v.is_null() && matches!(*(v as *const u8), TUPLE_TAG | LIST_TAG | PUNNED_TAG)
 }
 
+/// The index of a runnable node's *op slot* — the last fixed slot of its
+/// type's operand record, where a migrated node stores its resolved callable
+/// leaf (issue #44: dispatch flows through the node, not the identity). `None`
+/// for kinds without fixed slots (a punned or headless-list identity, or any
+/// data type).
+///
+/// # Safety
+/// `id` must be a valid dyad from the store whose non-null value is a record.
+pub(crate) unsafe fn op_slot_of(id: DyadPtr) -> Option<usize> {
+    match kind_of(id) {
+        Some(TUPLE_TAG | LIST_TAG) => {
+            let arity = arity_of(id);
+            arity.checked_sub(1)
+        }
+        _ => None,
+    }
+}
+
 /// The parse precedence stored in `id`'s record.
 ///
 /// # Safety

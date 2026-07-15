@@ -167,18 +167,37 @@ impl<'a> Runtime<'a> {
                 result
             }
         } else {
-            // `node` is data. A rational literal is molded to its i32 value (a
-            // fraction like 3.14 has none: UncomputableLiteral, not a bad read);
-            // every other v1 scalar is read as i32 through its layout.
+            // `node` is data or a migrated application. A rational literal is
+            // molded to its i32 value (a fraction like 3.14 has none:
+            // UncomputableLiteral, not a bad read).
             if (*node).ty == self.rational {
                 return crate::identities::rational::mold(node)
                     .map(i64::from)
                     .ok_or(RunError::UncomputableLiteral);
             }
-            // A struct instance is not a scalar (its type's tag guard below would
-            // read a pointer byte); its fields are read through `.` places.
+            // A struct instance is not a scalar (its type's value is a field
+            // list, not a record — it must not reach the op-slot read below);
+            // its fields are read through `.` places.
             if (*op).ty == self.struct_ {
                 return Err(RunError::BadValue);
+            }
+            // The op slot (issue #44): a migrated node's last fixed slot holds
+            // its resolved callable leaf — read the leaf, jump to its entry
+            // with the node. Dispatch flows through the node, not a table; the
+            // identity carries only its record.
+            if let Some(idx) = crate::identities::meta::op_slot_of(op) {
+                let slots = (*node).value as *const DyadPtr;
+                if !slots.is_null() {
+                    let leaf = *slots.add(idx);
+                    if !leaf.is_null() && crate::identities::callable::is_callable(leaf) {
+                        // SAFETY: a seed-native callable's entry is a `RunFn`
+                        // shim address, minted only by the registration loops.
+                        let entry = std::mem::transmute::<usize, RunFn>(
+                            crate::identities::callable::entry_of(leaf),
+                        );
+                        return entry(self, node);
+                    }
+                }
             }
             // The text substance (a string or comment node) and unit have no
             // scalar to read; refuse rather than reinterpret their bytes.

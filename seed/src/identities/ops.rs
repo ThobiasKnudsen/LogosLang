@@ -225,6 +225,37 @@ mod tests {
     }
 
     #[test]
+    fn the_op_slot_dispatches_without_the_table() {
+        // The migration rehearsal: retype `+` to a plain type, evict it from
+        // the run table, and store the resolved leaf in the node's op slot —
+        // run() must reach the result through the graph alone.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let l = store.alloc_bytes(&20i32.to_ne_bytes());
+        let lhs = store.alloc_raw(core.i32_, l);
+        let r = store.alloc_bytes(&22i32.to_ne_bytes());
+        let rhs = store.alloc_raw(core.i32_, r);
+        let leaf = core.ops.arith_leaf(ArithOp::Add, NumType::I32);
+        let value = store.alloc_operands(&[lhs, rhs, leaf]);
+        let node = store.alloc_raw(core.plus, value);
+
+        // SAFETY: `plus` is a live identity; retyping it to `type_` is the
+        // move #44 makes permanent (`else`/`scope` already live there).
+        unsafe {
+            (*core.plus).ty = core.type_;
+        }
+        let mut bcode = core.bcode.clone();
+        bcode.remove(&core.plus);
+
+        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_, &bcode);
+        // SAFETY: the node and its operands were just built; the leaf is a
+        // minted seed-native callable.
+        assert_eq!(unsafe { rt.run(node) }.unwrap(), 42);
+    }
+
+    #[test]
     fn a_leaf_entry_jumps_and_computes() {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
