@@ -755,6 +755,24 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// The current byte offset into the source. After a parse error this is the
+    /// *stuck point* — the position [`crate::report`] renders as
+    /// `file:line:col` — which for the common errors (an unknown name, a bad
+    /// literal) sits exactly at the offending token; an error raised after its
+    /// operands were consumed points just past its construct. After a
+    /// successful parse it is where consumption stopped, so a caller can check
+    /// for trailing input (a stray `)` breaks the sequence loop unconsumed).
+    pub fn offset(&self) -> usize {
+        self.pos
+    }
+
+    /// Recover the scope stack, consuming the parser. The REPL parses each line
+    /// with a fresh `Parser` over one persistent store/trie/scope-stack, so
+    /// declarations made on earlier lines stay resolvable.
+    pub fn into_scopes(self) -> ScopeStack {
+        self.scopes
+    }
+
     /// Advance past trivia: ASCII whitespace and `#` line comments (a `#` runs to
     /// the end of its line). Statement-level `#`s never reach this — the sequence
     /// parser builds them into reflectable comment nodes first

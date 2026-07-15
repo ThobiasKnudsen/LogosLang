@@ -14,6 +14,7 @@ pub mod parse;
 pub mod reflect;
 pub mod regex_splitting;
 pub mod regex_trie;
+pub mod report;
 pub mod run;
 pub mod store;
 
