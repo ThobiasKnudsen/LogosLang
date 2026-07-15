@@ -21,7 +21,7 @@
 
 use std::collections::HashMap;
 
-use crate::dyad::{frame_offset, DyadPtr};
+use crate::dyad::{frame_ref, DyadPtr};
 use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
 
 /// The signature of a seed-native shim — what a `seed-native` callable's entry
@@ -117,8 +117,10 @@ impl Runtime {
     /// built inside a function body, so an activation record is on the stack
     /// whenever one is read.
     pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> *mut u8 {
-        match frame_offset((*node).value) {
-            Some(off) => {
+        match frame_ref((*node).value) {
+            // Only the offset matters at run time — the local is in the call in
+            // progress (the top record); the depth is a parse-time capture guard.
+            Some((_, off)) => {
                 let base = self
                     .activations
                     .last_mut()

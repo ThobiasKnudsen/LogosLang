@@ -44,7 +44,10 @@ use crate::store::Store;
 /// lowerings — those two have no spelling; the parser builds deref nodes from
 /// postfix `@` and storeptr nodes from `=` over a deref. Returns the two
 /// identities and their leaves.
-pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
+pub(super) fn register(
+    cx: &mut Cx,
+    cs: &Callables,
+) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::record(cx.store, meta::TOKEN_TAG);
     let at = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("@", IdContext::new(at, cx.root_scope));
@@ -78,7 +81,51 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     let storeptr_leaf =
         callable::mint_native(cx.store, cs.callable, run_storeptr, cs.seed_native);
 
-    (deref, storeptr, deref_leaf, storeptr_leaf)
+    // `addr` (prefix `&`): no spelling of its own beyond the `&` token; the
+    // parser builds these from `parse_address_of`. `[place, pointee, op]`.
+    let record =
+        meta::operand_record(cx, meta::TUPLE_TAG, 0.0, Assoc::Left, &["place", "pointee", "op"]);
+    let addr = cx.store.alloc_raw(cx.type_, record);
+    cx.lower.insert(addr, lower_addr);
+    let addr_leaf = callable::mint_native(cx.store, cs.callable, run_addr, cs.seed_native);
+
+    (deref, storeptr, addr, deref_leaf, storeptr_leaf, addr_leaf)
+}
+
+/// Build an address-of node `{ty: addr, value: [place, pointee, op]}` over a
+/// storage-backed `place` (a variable, a struct field, a pointer variable). The
+/// pointee is the place's type. Unlike a baked pointer *literal*, this node
+/// resolves the address at run/lower time through `place_addr`, so a
+/// frame-relative local yields a *per-activation* address — `&x` inside a
+/// recursive function is a different address on each call, exactly like C.
+///
+/// # Safety
+/// `place` must be a storage-backed place node from the store.
+pub(crate) unsafe fn build_addr(store: &mut Store, types: &CoreTypes, place: DyadPtr) -> DyadPtr {
+    let pointee = (*place).ty;
+    let value = store.alloc_operands(&[place, pointee, types.ops.addr_]);
+    store.alloc_raw(types.addr_, value)
+}
+
+/// Run an address-of: the current machine address of its place — an absolute
+/// pointer for a global, `activation_base + offset` for a frame-relative local
+/// of the call in progress.
+fn run_addr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an addr node; its first operand is a place.
+    unsafe {
+        let place = *((*node).value as *const DyadPtr);
+        Ok(rt.place_addr(place) as i64)
+    }
+}
+
+/// Lower an address-of: the place's address as an SSA value — a baked `iconst`
+/// for a global, a frame `stack_addr` for a local.
+fn lower_addr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: `node` is an addr node; its first operand is a place.
+    unsafe {
+        let place = *((*node).value as *const DyadPtr);
+        Ok(lw.place_addr(place))
+    }
 }
 
 /// Build a pointer type node `@pointee`: `{ty: type, value -> record}`, the

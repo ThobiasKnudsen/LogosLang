@@ -66,6 +66,8 @@ pub struct OpLeaves {
     pub(crate) deref_: DyadPtr,
     /// `storeptr`'s native (`=` through a deref).
     pub(crate) storeptr_: DyadPtr,
+    /// `addr`'s native (prefix `&`): resolves a place's address at run time.
+    pub(crate) addr_: DyadPtr,
     /// `scope`'s sequence native (run the array in order, yield the tail).
     pub(crate) scope_: DyadPtr,
     /// `declare`'s native (run the initializer for effect, yield unit).
@@ -228,6 +230,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
         construct_: std::ptr::null_mut(),
         deref_: std::ptr::null_mut(),
         storeptr_: std::ptr::null_mut(),
+        addr_: std::ptr::null_mut(),
         scope_: std::ptr::null_mut(),
         declare_: std::ptr::null_mut(),
     }

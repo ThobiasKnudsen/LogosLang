@@ -38,7 +38,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 /// 8-byte address).
 ///
 /// Exposed to siblings so a declaration's snapshot initializer
-/// ([`super::build_scalar_binding`]) can reuse the `place = value` store for `:=`.
+/// ([`super::build_scalar_init`]) can reuse the `place = value` store for `:=`.
 pub(super) fn build(
     store: &mut Store,
     types: &CoreTypes,

@@ -174,6 +174,9 @@ pub struct Core {
     pub deref_: DyadPtr,
     /// `storeptr`, the store-through node `=` builds over a deref lhs.
     pub storeptr_: DyadPtr,
+    /// `addr`, the address-of node prefix `&` builds — resolves its place's
+    /// address at run/lower time (per-activation for a frame local).
+    pub addr_: DyadPtr,
     /// `array` (of `dyad@`), the seed's first array form: a sequence's
     /// expression list lives behind one of these, never inline in the node.
     pub array_: DyadPtr,
@@ -318,10 +321,11 @@ impl Core {
         let (construct_, construct_leaf) = instance::register(&mut cx, &callables);
         op_leaves.construct_ = construct_leaf;
         // Pointers: the `@`/`&` tokens and the deref/storeptr identities.
-        let (deref_, storeptr_, deref_leaf, storeptr_leaf) =
+        let (deref_, storeptr_, addr_, deref_leaf, storeptr_leaf, addr_leaf) =
             pointer::register(&mut cx, &callables);
         op_leaves.deref_ = deref_leaf;
         op_leaves.storeptr_ = storeptr_leaf;
+        op_leaves.addr_ = addr_leaf;
         // A multi-expression block is a `scope`-typed sequence node; its native
         // leaf and lowering are registered once the callable machinery exists.
         op_leaves.scope_ = scope::register_exec(&mut cx, scope_, &callables);
@@ -365,6 +369,7 @@ impl Core {
             construct_,
             deref_,
             storeptr_,
+            addr_,
             callable_: callables.callable,
             convention_: callables.convention,
             conv_seed_native: callables.seed_native,
@@ -394,6 +399,7 @@ impl Core {
             type_: self.type_,
             deref_: self.deref_,
             storeptr_: self.storeptr_,
+            addr_: self.addr_,
             construct_: self.construct_,
             string_: self.string_,
             comment_: self.comment_,
@@ -521,6 +527,12 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
     // field place): carries its pointee. Never arithmetic; passed and stored whole.
     if !ty.is_null() && numtype::is_pointer_type(ty) {
         return Operand::Pointer(numtype::pointee_of(ty));
+    }
+    // An address-of yields a pointer to its place's type (the pointee it stores
+    // at operand 1). Like deref/storeptr, its node type is its own identity, not
+    // a pointer type, so numtype_of is the single classifier.
+    if ty == types.addr_ {
+        return Operand::Pointer(*((*node).value as *const DyadPtr).add(1));
     }
     // A dereference yields its pointee's value; a store-through yields the stored
     // value, like `=`. Both must precede the generic fn-typed fallback below,
@@ -652,40 +664,54 @@ pub(crate) fn is_numtype_node(types: &CoreTypes, node: DyadPtr) -> bool {
     types.numtypes.iter().any(|&t| !t.is_null() && t == node)
 }
 
-/// Build a declaration's runtime-scalar binding: fresh zeroed storage sized to
-/// `value`'s static numeric type, a place node over it, and an `=` initializer
-/// (`place = value`) that evaluates `value` into the place. Returns
-/// `(place, init)`: the declaration binds the name to `place` — an ordinary
-/// numeric variable, so reads are plain loads and `= …` reassigns — and keeps
-/// `init` as the declared-slot initializer.
-///
-/// This is what makes `name := <expression>` an *eager snapshot* (DESIGN
-/// ›declarations are immutable by default‹): the value is evaluated when the
-/// declaration runs, not re-evaluated on every read, and a declaration inside a
-/// loop body re-initializes its local each iteration (the initializer re-runs).
-/// It mirrors the construction case (`p := point(1, 2)`), which already binds the
-/// name to the instance and keeps the `construct` node as a re-run initializer.
-/// A bare rational (`x := 5`) stays a comptime binding, and a pointer, `fn`,
-/// type, or unit value keeps its own binding — this is only for `Concrete`
-/// numeric and `bool` values.
+/// The place type and byte width a declaration's snapshot binding needs for a
+/// runtime scalar `value`: a `Concrete` numeric (or `bool`) commits to its type
+/// node at its width; a `Pointer` value (an `&x`, a pointer variable) becomes a
+/// fresh `@pointee` place, 8 bytes wide, so `p := &x` gets real storage that
+/// `p = &y` can rewire. The caller mints the place with this — frame-relative
+/// inside a function, absolute at top level — and pairs it with
+/// [`build_scalar_init`]. A bare rational (`x := 5`) stays a comptime binding
+/// and never reaches here; a `fn`, type, or unit value keeps its own binding.
 ///
 /// # Safety
 /// `value` must be a reduced dyad from the store whose [`numtype_of`] is
-/// [`Operand::Concrete`].
-pub(crate) unsafe fn build_scalar_binding(
+/// [`Operand::Concrete`] or [`Operand::Pointer`].
+pub(crate) unsafe fn scalar_binding_type(
     store: &mut Store,
     types: &CoreTypes,
     value: DyadPtr,
-) -> Result<(DyadPtr, DyadPtr), ParseError> {
-    let nt = match numtype_of(types, value) {
-        Operand::Concrete(nt) => nt,
-        _ => unreachable!("build_scalar_binding needs a concrete numeric value"),
-    };
-    let ty_node = types.numtypes[nt as usize];
-    let blob = store.alloc_bytes(&vec![0u8; nt.bytes()]);
-    let place = store.alloc_raw(ty_node, blob);
-    let init = assign::build(store, types, types.assign, place, value)?;
-    Ok((place, init))
+) -> (DyadPtr, usize) {
+    match numtype_of(types, value) {
+        Operand::Concrete(nt) => (types.numtypes[nt as usize], nt.bytes()),
+        Operand::Pointer(pointee) => {
+            (pointer::make_pointer_type(store, types.type_, pointee), NumType::U64.bytes())
+        }
+        _ => unreachable!("scalar_binding_type needs a concrete or pointer value"),
+    }
+}
+
+/// Build a declaration's snapshot *initializer*: an `=` writing `value` into the
+/// pre-minted `place` (`place = value`), kept as the declaration's declared slot
+/// and re-run each time the declaration evaluates. The caller mints `place` (see
+/// [`scalar_binding_type`]) frame-relative inside a function or absolute at top
+/// level, then binds the name to it. Together they make `name := <expression>`
+/// an eager, per-entry snapshot (DESIGN ›declarations are immutable by
+/// default‹): the value is evaluated when the declaration runs, not re-evaluated
+/// on every read, and a local inside a loop body or a recursive call
+/// re-initializes on each entry (into its own per-call storage). It mirrors the
+/// construction case (`p := point(1, 2)`), which likewise binds the name to the
+/// place and keeps its `construct` node as a re-run initializer.
+///
+/// # Safety
+/// `place`/`value` must be reduced dyads from the store, `place` a scalar or
+/// pointer place whose type matches `value`.
+pub(crate) unsafe fn build_scalar_init(
+    store: &mut Store,
+    types: &CoreTypes,
+    place: DyadPtr,
+    value: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
+    assign::build(store, types, types.assign, place, value)
 }
 
 /// Render a run result for display: `bits` (the i64 the interpreter computes in)
@@ -3510,6 +3536,168 @@ mod tests {
             // SAFETY: `_compiled` is alive; `call` applies the compiled `fact`.
             assert_eq!(unsafe { rt.run(call) }.unwrap(), expect, "jit fact({arg})");
         }
+    }
+
+    /// Parse `defs` in order (declarations into the shared root scope), take the
+    /// last as the recursive function `name`, and assert every `(arg, expect)`
+    /// holds *interpreted* and then *compiled* — the oracle pattern. A local that
+    /// shared one storage across activations (the pre-activation-record bug) makes
+    /// a write→recurse→read case disagree, so these lock the fix on both tiers.
+    ///
+    /// # Safety
+    /// `defs` must be valid definitions and `name` the last one's function.
+    unsafe fn assert_recursion_both_tiers(defs: &[&str], name: &str, cases: &[(i64, i64)]) {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let mut last = std::ptr::null_mut();
+        for def in defs {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(def, &mut store, &mut trie, &core.metas, core.types(), s);
+            last = p.parse_expression().unwrap();
+        }
+        let f = declare::declared_of(last);
+
+        let parse_call = |store: &mut Store, trie: &mut RegexTrie, arg: i64| {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let src = format!("{name}({arg})");
+            let mut p = Parser::new(&src, store, trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+
+        // Oracle: interpret every case (no bcode yet → body walk).
+        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        for &(arg, expect) in cases {
+            let call = parse_call(&mut store, &mut trie, arg);
+            assert_eq!(rt.run(call).unwrap(), expect, "interpreter {name}({arg})");
+        }
+
+        // Compile the function, then rerun every case: the self-call becomes a
+        // machine call and the locals live in the compiled stack frame.
+        let _compiled = compile_fn(&mut store, &core.lower, core.types(), f).unwrap();
+        for &(arg, expect) in cases {
+            let call = parse_call(&mut store, &mut trie, arg);
+            assert_eq!(rt.run(call).unwrap(), expect, "jit {name}({arg})");
+        }
+    }
+
+    #[test]
+    fn recursion_with_a_local_is_per_activation_both_tiers() {
+        // The activation-record payoff. `f` writes its local `x := n`, recurses
+        // (each call re-initializing *its own* `x`), and returns `x` afterward. If
+        // `x` shared one blob across activations, the inner calls would leave it 0
+        // and `f(n)` would return 0; with per-call frames it is the caller's `n`.
+        // SAFETY: a self-contained recursive definition and literal calls.
+        unsafe {
+            assert_recursion_both_tiers(
+                &["f := fn (n : i32) -> i32 ( x := n  if (n < 1) (0) else (f(n - 1)  x) )"],
+                "f",
+                &[(0, 0), (1, 1), (3, 3), (5, 5)],
+            );
+        }
+    }
+
+    #[test]
+    fn recursion_takes_the_address_of_a_per_activation_local_both_tiers() {
+        // `&x` must yield *this activation's* `x`, not a parse-time constant: `p`
+        // points at the local, the call recurses, and `p@` reads back the caller's
+        // value. A baked (shared) address would read the innermost frame → 0.
+        // SAFETY: as above; `&x`/`p@` over a per-call local.
+        unsafe {
+            assert_recursion_both_tiers(
+                &["g := fn (n : i32) -> i32 ( x := n  p := &x  if (n < 1) (0) else (g(n - 1)  p@) )"],
+                "g",
+                &[(0, 0), (1, 1), (4, 4)],
+            );
+        }
+    }
+
+    #[test]
+    fn recursion_with_a_struct_local_is_per_activation_both_tiers() {
+        // A struct instance is a per-call local too: `pt := point(n, 0)`, recurse,
+        // then read `pt.x`. Shared storage would clobber it to the innermost value.
+        // SAFETY: `point` is defined first, then the recursive `h` uses it.
+        unsafe {
+            assert_recursion_both_tiers(
+                &[
+                    "point := struct ( x : i32, y : i32 )",
+                    "h := fn (n : i32) -> i32 ( pt := point(n, 0)  if (n < 1) (0) else (h(n - 1)  pt.x) )",
+                ],
+                "h",
+                &[(0, 0), (2, 2), (5, 5)],
+            );
+        }
+    }
+
+    #[test]
+    fn recursion_with_a_local_accumulator_both_tiers() {
+        // Coverage of the accumulator shape (`acc` written from the recursive
+        // result, then read) on both tiers: a recursive factorial that carries its
+        // product in a per-call local.
+        // SAFETY: a self-contained recursive definition and literal calls.
+        unsafe {
+            assert_recursion_both_tiers(
+                &["fact := fn (n : i32) -> i32 ( acc := i32 1  if (n < 1) (acc) else (acc = n * fact(n - 1)  acc) )"],
+                "fact",
+                &[(0, 1), (1, 1), (5, 120), (7, 5040)],
+            );
+        }
+    }
+
+    #[test]
+    fn a_nested_function_cannot_capture_an_outer_local() {
+        // v1 has no closures: a nested fn that reads (or takes the address of) an
+        // enclosing fn's local is a clean CapturedLocal parse error, not a wrong
+        // read of some other frame at run time.
+        assert_eq!(
+            parse_err(
+                "outer := fn (a : i32) -> i32 ( x := a  inner := fn () -> i32 ( x )  inner() )"
+            ),
+            ParseError::CapturedLocal,
+        );
+        assert_eq!(
+            parse_err(
+                "outer := fn (a : i32) -> i32 ( x := a  in2 := fn () -> i32 ( p := &x  p@ )  in2() )"
+            ),
+            ParseError::CapturedLocal,
+        );
+    }
+
+    #[test]
+    fn a_nested_function_with_its_own_locals_runs() {
+        // The capture guard must not over-reject: a nested fn using only its own
+        // parameter and locals is fine — those are its own frame. `inner(a)`
+        // passes the outer parameter by value (read in the outer body), not a
+        // capture. outer(5) = inner(5) + 1 = (5 + 5) + 1 = 11.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "outer := fn (a : i32) -> i32 ( inner := fn (b : i32) -> i32 ( y := b  y + b )  inner(a) + 1 )",
+                &mut store,
+                &mut trie,
+                &core.metas,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap();
+        }
+        let call = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p =
+                Parser::new("outer(5)", &mut store, &mut trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        // SAFETY: `call` applies the bound `outer` to a literal.
+        assert_eq!(unsafe { rt.run(call) }.unwrap(), 11, "outer(5)");
     }
 
     #[test]

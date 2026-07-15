@@ -94,26 +94,28 @@ pub(crate) unsafe fn layout(
 /// Build a construction `point(args)`: derive the layout, check the argument
 /// count ([`ParseError::CtorArity`]) and each argument's type against its field
 /// (a literal commits to the field's type; a concrete mismatch is
-/// [`ParseError::TypeMismatch`]), allocate the instance's zeroed storage, and
-/// return the construct node. The instance rides at operand 0.
+/// [`ParseError::TypeMismatch`]), and return the construct node over the
+/// pre-minted `instance` place. The caller mints `instance` (via
+/// [`layout`] for its size), frame-relative inside a function so each call fills
+/// its own copy, or an absolute blob at top level. The instance rides at operand
+/// 0; the construct is a re-run initializer.
 ///
 /// # Safety
-/// `struct_type` must be a struct type node and `args` reduced dyads, all from
-/// the store.
+/// `struct_type` must be a struct type node, `instance` a place of that type
+/// sized to [`layout`], and `args` reduced dyads, all from the store.
 pub(crate) unsafe fn build_ctor(
     store: &mut Store,
     types: &CoreTypes,
     construct: DyadPtr,
     struct_type: DyadPtr,
+    instance: DyadPtr,
     args: &[DyadPtr],
 ) -> Result<DyadPtr, ParseError> {
-    let (fields, size) = layout(struct_type)?;
+    let (fields, _) = layout(struct_type)?;
     if args.len() != fields.len() {
         return Err(ParseError::CtorArity);
     }
     let mut ops = Vec::with_capacity(args.len() + 3);
-    let blob = store.alloc_bytes(&vec![0u8; size.max(1)]);
-    let instance = store.alloc_raw(struct_type, blob);
     ops.push(instance);
     ops.push(types.ops.construct_);
     for (&arg, &(field, nt, _)) in args.iter().zip(&fields) {

@@ -95,6 +95,11 @@ pub fn parse_message(e: &ParseError) -> String {
              declare with a value: `name := i32 0`"
                 .into()
         }
+        ParseError::CapturedLocal => {
+            "a nested function cannot use an outer function's local \
+             (no closures yet); pass it as a parameter"
+                .into()
+        }
     }
 }
 

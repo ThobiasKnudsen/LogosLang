@@ -31,7 +31,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{default_libcall_names, FuncId, Linkage, Module};
 
-use crate::dyad::{frame_offset, DyadPtr};
+use crate::dyad::{frame_ref, DyadPtr};
 use crate::identities::numtype::{
     is_void_type, numtype_of_type, of_type_node, ArithOp, CmpOp, NumType,
 };
@@ -169,8 +169,10 @@ impl Lowerer<'_, '_> {
     /// `node` must be a valid place node; a frame-relative one only appears in a
     /// function whose [`compile_body`] created a `frame_slot`.
     pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> Value {
-        match frame_offset((*node).value) {
-            Some(off) => {
+        match frame_ref((*node).value) {
+            // The depth is a parse-time capture guard; here only the offset into
+            // this call's stack slot matters.
+            Some((_, off)) => {
                 let slot = self.frame_slot.expect("a frame-relative place needs a frame slot");
                 self.builder.ins().stack_addr(self.ptr_ty, slot, off as i32)
             }

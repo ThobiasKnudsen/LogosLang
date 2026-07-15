@@ -425,6 +425,9 @@ pub struct CoreTypes {
     pub deref_: DyadPtr,
     /// `storeptr`: the store-through node `=` builds over a deref lhs.
     pub storeptr_: DyadPtr,
+    /// `addr`: the address-of node prefix `&` builds (resolves its place's
+    /// address at run/lower time, per-activation for a frame local).
+    pub addr_: DyadPtr,
     /// `construct`: the struct-construction statement a struct-typed call builds.
     pub construct_: DyadPtr,
     /// `string`: the text-literal type (`«…»`); inert in the seed, above all the
@@ -697,6 +700,11 @@ pub enum ParseError {
     /// only inside field lists; the general form is later work, and this names
     /// the gap instead of reporting the fresh name as unknown.
     TypedDeclaration,
+    /// A nested function referenced (or took the address of) a local of an
+    /// enclosing function — a closure capture, which v1 does not support. Each
+    /// function's locals live in its own per-call activation record; reaching an
+    /// outer one would read the wrong frame at run time.
+    CapturedLocal,
 }
 
 /// Build a call node `{ty: callee, value: [args…, null]}`, the application
@@ -811,6 +819,14 @@ pub struct Parser<'a> {
     /// signature onto it before the body parses, so a recursive self-call resolves
     /// its parameter and return types instead of the unbound-placeholder defaults.
     pending_fn: DyadPtr,
+    /// A stack of frame-size accumulators, one per enclosing function body being
+    /// parsed. Empty at top level, where declarations get absolute global storage
+    /// that persists across REPL lines; non-empty inside a function, where each
+    /// local declaration claims the next byte offset in the current frame (via
+    /// [`Parser::alloc_local`]) and bumps the top accumulator. [`Parser::parse_fn`]
+    /// pushes it around the body and writes the final size into the fn's
+    /// [`FN_FRAME`] slot.
+    frames: Vec<usize>,
 }
 
 impl<'a> Parser<'a> {
@@ -825,7 +841,54 @@ impl<'a> Parser<'a> {
         types: CoreTypes,
         scopes: ScopeStack,
     ) -> Self {
-        Parser { source, pos: 0, scopes, store, trie, metas, types, pending_fn: std::ptr::null_mut() }
+        Parser {
+            source,
+            pos: 0,
+            scopes,
+            store,
+            trie,
+            metas,
+            types,
+            pending_fn: std::ptr::null_mut(),
+            frames: Vec::new(),
+        }
+    }
+
+    /// Allocate storage for a function-local place of `width` bytes, typed
+    /// `ty_node`. Inside a function (the frame stack is non-empty) the place is
+    /// *frame-relative*: it claims the next offset in the current frame and its
+    /// storage is per-call — the interpreter's activation buffer, the JIT's stack
+    /// slot. At top level it is an absolute global blob, exactly as before. The
+    /// node is `{ty: ty_node, value: <place>}`, its value an [`crate::dyad::FRAME_TAG`]
+    /// offset or a real address respectively.
+    fn alloc_local(&mut self, ty_node: DyadPtr, width: usize) -> DyadPtr {
+        let place = if self.frames.is_empty() {
+            self.store.alloc_bytes(&vec![0u8; width])
+        } else {
+            let depth = self.frames.len();
+            let size = self.frames.last_mut().unwrap();
+            let offset = *size;
+            *size += width;
+            crate::dyad::frame_place(depth, offset)
+        };
+        self.store.alloc_raw(ty_node, place)
+    }
+
+    /// Reject a *capture*: a reference to a frame-relative local that belongs to
+    /// an enclosing function's frame (its depth is not the current one). v1 has no
+    /// closures, so a nested function cannot read an outer function's local — and
+    /// doing so would resolve against the wrong activation record at run time. A
+    /// local of the current frame, and every absolute (global) place, pass.
+    ///
+    /// # Safety
+    /// `node` must be a resolved dyad from the store.
+    unsafe fn check_capture(&self, node: DyadPtr) -> Result<(), ParseError> {
+        if let Some((depth, _)) = crate::dyad::frame_ref((*node).value) {
+            if depth != self.frames.len() {
+                return Err(ParseError::CapturedLocal);
+            }
+        }
+        Ok(())
     }
 
     /// Advance past whitespace only (never a `#`): the sequence parser peeks at a
@@ -1070,11 +1133,16 @@ impl<'a> Parser<'a> {
         // resolves parameters, then parse the `( body )`.
         // SAFETY: `input` is the struct just built; its `value[0]` is its scope.
         let scope = unsafe { *((*input).value as *const DyadPtr) };
+        // Open this function's frame: the body's local declarations claim per-call
+        // byte offsets in it. A nested `fn` literal pushes its own, so its locals
+        // never land in this frame.
+        self.frames.push(0);
         self.scopes.push(scope);
         self.expect_open()?;
         let body = self.parse_sequence()?;
         self.expect_close()?;
         self.scopes.pop();
+        let frame_size = self.frames.pop().expect("parse_fn pushed a frame");
 
         // A comptime-rational tail expression commits to the declared return type here
         // (the typed slot), so `fn () -> i64 ( 2000000000 + 2000000000 )` returns i64
@@ -1082,16 +1150,17 @@ impl<'a> Parser<'a> {
         // SAFETY: `body`/`output` are valid dyads just built.
         let body = unsafe { crate::identities::commit_fn_body(self.store, &self.types, body, output)? };
 
-        // `bcode` starts null; `compile_fn` installs the exec@ into this slot.
-        // `frame` (FN_FRAME) is null here — Commit 1 wires the slot inert; the
-        // frame layout that fills it lands with frame-relative locals.
-        let value = self.store.alloc_operands(&[
-            input,
-            output,
-            body,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        ]);
+        // `bcode` starts null; `compile_fn` installs the exec@ into that slot.
+        // FN_FRAME holds the activation-record byte size — a `u64` leaf both tiers
+        // read on entry, or null when the function declares no locals.
+        let frame = if frame_size == 0 {
+            std::ptr::null_mut()
+        } else {
+            let bytes = self.store.alloc_bytes(&(frame_size as u64).to_ne_bytes());
+            let u64_ty = self.types.numtypes[crate::identities::NumType::U64 as usize];
+            self.store.alloc_raw(u64_ty, bytes)
+        };
+        let value = self.store.alloc_operands(&[input, output, body, std::ptr::null_mut(), frame]);
         Ok(self.store.alloc_raw(fn_type, value))
     }
 
@@ -1236,11 +1305,11 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // The loop variable: a fresh block-local of the loop type.
+        // The loop variable: a fresh per-call local of the loop type (a frame slot
+        // inside a function, an absolute blob at top level).
         // SAFETY: `ty` is a numtype node from resolve_loop_parts.
         let width = unsafe { crate::identities::numtype::of_type_node(ty) }.bytes();
-        let storage = self.store.alloc_bytes(&vec![0u8; width]);
-        let var = self.store.alloc_raw(ty, storage);
+        let var = self.alloc_local(ty, width);
         let scope = self.store.alloc_raw(types.scope, std::ptr::null_mut());
         self.scopes.push(scope);
         self.scopes.declare(self.trie, name, var).map_err(ParseError::Resolve)?;
@@ -1349,7 +1418,10 @@ impl<'a> Parser<'a> {
             ));
         }
         // The direct case: an instance of a struct type, with storage — the
-        // access is a *place*, resolved to an address now.
+        // access is a *place*, its offset folded into the instance's own place
+        // now. `wrapping_add` keeps a frame-tagged instance value a valid tagged
+        // offset (`FRAME_TAG | (base + field)`); for an absolute instance it is
+        // ordinary pointer arithmetic. `place_addr` resolves it at run/lower time.
         let struct_type = (*lhs).ty;
         if struct_type.is_null()
             || (*struct_type).ty != self.types.struct_
@@ -1358,7 +1430,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::UnsupportedOperands);
         }
         let (field, offset) = self.resolve_field(struct_type)?;
-        let addr = (*lhs).value.add(offset);
+        let addr = (*lhs).value.wrapping_add(offset);
         Ok(self.store.alloc_raw((*field).ty, addr))
     }
 
@@ -1444,9 +1516,11 @@ impl<'a> Parser<'a> {
 
     /// Parse an address-of after its `&` (already consumed): a resolved name
     /// with an optional `.field` chain, ending at a storage-backed place — a
-    /// numeric, pointer, or struct-typed node with a real value blob. Yields a
-    /// pointer literal `{ty: @T, value -> 8-byte address}`; the address is
-    /// parse-known, exactly like the baked addresses compiled code uses.
+    /// numeric, pointer, or struct-typed node with a value slot. Yields an
+    /// `addr` node (see [`crate::identities::pointer::build_addr`]) that resolves
+    /// the place's address at run/lower time, so a frame-relative local yields a
+    /// per-activation address. A parameter or comptime binding has no storage and
+    /// is [`ParseError::BadAddressOf`].
     fn parse_address_of(&mut self) -> Result<DyadPtr, ParseError> {
         self.skip_trivia();
         let source = self.source;
@@ -1478,10 +1552,13 @@ impl<'a> Parser<'a> {
                 // Parameters (frame-bound) and comptime bindings have no storage.
                 return Err(ParseError::BadAddressOf);
             }
-            let ptr_ty =
-                crate::identities::pointer::make_pointer_type(self.store, self.types.type_, ty);
-            let blob = self.store.alloc_bytes(&((*node).value as usize).to_ne_bytes());
-            Ok(self.store.alloc_raw(ptr_ty, blob))
+            // No taking the address of an enclosing function's local (a capture).
+            self.check_capture(node)?;
+            // `&` is a runtime address-of node (like `@` deref), not a baked
+            // literal: it resolves the place's address through `place_addr` at
+            // run/lower time, so a frame-relative local yields a per-activation
+            // address — a different one on each recursive call, exactly like C.
+            Ok(crate::identities::pointer::build_addr(self.store, &self.types, node))
         }
     }
 
@@ -1761,19 +1838,29 @@ impl<'a> Parser<'a> {
                             && matches!(
                                 crate::identities::numtype_of(&self.types, value),
                                 crate::identities::Operand::Concrete(_)
+                                    | crate::identities::Operand::Pointer(_)
                             )
                         {
-                            // A runtime numeric value is *snapshotted*: fresh
-                            // storage, the name bound to that place, and the value
-                            // kept as a re-runnable initializer — so a read is a
-                            // plain load (never a re-evaluation of the initializer)
-                            // and a loop-body local re-initializes each iteration.
-                            // A bare rational stays comptime (the guard above); a
-                            // pointer/fn/type/unit value keeps its own binding
-                            // below.
-                            let (place, init) = crate::identities::build_scalar_binding(
+                            // A runtime numeric or pointer value is *snapshotted*:
+                            // fresh per-call storage (a frame slot inside a
+                            // function, an absolute blob at top level), the name
+                            // bound to that place, and the value kept as a
+                            // re-runnable initializer — so a read is a plain load
+                            // (never a re-evaluation of the initializer), `= …`
+                            // reassigns, and a loop-body or recursive local
+                            // re-initializes on each entry into its own storage. A
+                            // bare rational stays comptime (the guard above); a
+                            // fn/type/unit value keeps its own binding below.
+                            let (ty_node, width) = crate::identities::scalar_binding_type(
                                 self.store,
                                 &self.types,
+                                value,
+                            );
+                            let place = self.alloc_local(ty_node, width);
+                            let init = crate::identities::build_scalar_init(
+                                self.store,
+                                &self.types,
+                                place,
                                 value,
                             )?;
                             self.scopes.rebind(self.trie, name, place);
@@ -1865,8 +1952,14 @@ impl<'a> Parser<'a> {
             self.pos = start + r.matched;
 
             match c {
-                // A plain operand: a reference to the resolved identity.
-                None => tape.push(Cell::Dyad(id)),
+                // A plain operand: a reference to the resolved identity. A
+                // frame-local of an enclosing function (a capture) is rejected —
+                // v1 has no closures.
+                None => {
+                    // SAFETY: `id` is a resolved dyad from the store.
+                    unsafe { self.check_capture(id)? };
+                    tape.push(Cell::Dyad(id));
+                }
                 // A literal: build its leaf now from the matched span. A numeric
                 // type dyad directly before it consumes it (juxtaposition): the
                 // literal commits exactly to that type, giving a typed value with
@@ -1917,11 +2010,18 @@ impl<'a> Parser<'a> {
                             // SAFETY: `callee` is a struct type node; `args` are
                             // reduced dyads from the store.
                             unsafe {
+                                // The instance is a per-call local (a frame slot
+                                // inside a function), sized from the struct layout,
+                                // so a recursive call fills its own copy.
+                                let (_, size) =
+                                    crate::identities::instance::layout(callee)?;
+                                let instance = self.alloc_local(callee, size.max(1));
                                 crate::identities::instance::build_ctor(
                                     self.store,
                                     &types,
                                     types.construct_,
                                     callee,
+                                    instance,
                                     &args,
                                 )?
                             }
