@@ -406,6 +406,8 @@ impl Core {
             or_: self.or_,
             not_: self.not_,
             assign: self.assign,
+            callable_: self.callable_,
+            conv_container: self.conv_container_i64,
             ops: self.ops,
         }
     }
@@ -1185,7 +1187,7 @@ mod tests {
 
         // Compile `add` (installs parameterized bcode); keep the artifact alive.
         // SAFETY: `add` is the fn node just built and outlives the call.
-        let _compiled = unsafe { compile_fn(&core.lower, core.types(),add) }.unwrap();
+        let _compiled = unsafe { compile_fn(&mut store, &core.lower, core.types(),add) }.unwrap();
         // JIT: the same `run(call)` now evaluates the arguments and calls native code.
         let jit = unsafe { rt.run(call) }.unwrap();
 
@@ -1520,7 +1522,7 @@ mod tests {
         // to the compiled body — and diff the result and the side effect on `a`.
         unsafe { std::ptr::write_unaligned(a_val as *mut i64, 0) };
         // SAFETY: `func`/`a` live in `store`, which outlives the call.
-        let _c = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         let jit_a = unsafe { std::ptr::read_unaligned(a_val as *const i64) };
 
@@ -1570,7 +1572,7 @@ mod tests {
 
         // Compile installs the exec@ on `func`; keep the artifact alive for the run.
         // SAFETY: `func` is the fn node just built and outlives the call.
-        let _compiled = unsafe { compile_fn(&core.lower, core.types(),func) }.unwrap();
+        let _compiled = unsafe { compile_fn(&mut store, &core.lower, core.types(),func) }.unwrap();
         unsafe {
             let bcode = *((*func).value as *const DyadPtr).add(FN_BCODE);
             assert!(!bcode.is_null()); // bcode installed on the node
@@ -1662,7 +1664,7 @@ mod tests {
         };
         // Compilation refuses the arity up front.
         // SAFETY: `add4` is the fn node just built.
-        let result = unsafe { compile_fn(&core.lower, core.types(),add4) };
+        let result = unsafe { compile_fn(&mut store, &core.lower, core.types(),add4) };
         assert!(matches!(result, Err(crate::compile::CompileError::UnsupportedArity(4))));
 
         // Interpreted, the same function computes (bcode was never installed).
@@ -1749,7 +1751,7 @@ mod tests {
         // SAFETY: `call`/`func`/body are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` is the fn node just built and outlives the call.
-        let _compiled = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
+        let _compiled = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, 42);
         assert_eq!(jit, interp);
@@ -1802,7 +1804,7 @@ mod tests {
         // SAFETY: `call`/`func`/body are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` is the fn node just built and outlives the call.
-        let _compiled = unsafe { compile_fn(&core.lower, core.types(),func) }.unwrap();
+        let _compiled = unsafe { compile_fn(&mut store, &core.lower, core.types(),func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, expect, "interpreter: {src}");
         assert_eq!(jit, interp, "jit != interpreter: {src}");
@@ -2119,7 +2121,7 @@ mod tests {
             // SAFETY: `call`/`func`/body are valid nodes just parsed.
             let interp = unsafe { rt.run(call) }.unwrap();
             // SAFETY: `func` is the fn node just built and outlives the call.
-            let _compiled = unsafe { compile_fn(&core.lower, core.types(),func) }.unwrap();
+            let _compiled = unsafe { compile_fn(&mut store, &core.lower, core.types(),func) }.unwrap();
             let jit = unsafe { rt.run(call) }.unwrap();
             assert_eq!(interp, expect, "interpreter n={arg}");
             assert_eq!(jit, interp, "jit != interpreter n={arg}");
@@ -2192,7 +2194,7 @@ mod tests {
         // Compiled: the same effect and unit on both paths.
         unsafe { std::ptr::write_unaligned(a_val as *mut i32, 41) };
         // SAFETY: `func`/`a` live in `store`, which outlives the call.
-        let _c = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 0, "unit (compiled)");
         assert_eq!(unsafe { std::ptr::read_unaligned(a_val as *const i32) }, 42);
         unsafe { std::ptr::write_unaligned(a_val as *mut i32, 100) };
@@ -2250,7 +2252,7 @@ mod tests {
         // Compiled: reset and diff the same effect.
         unsafe { std::ptr::write_unaligned(a_val as *mut i32, 5) };
         // SAFETY: `func`/`a` live in `store`, which outlives the call.
-        let _c = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 0);
         assert_eq!(unsafe { std::ptr::read_unaligned(a_val as *const i32) }, 7);
     }
@@ -2311,12 +2313,12 @@ mod tests {
         let call = store.alloc_raw(outer, std::ptr::null_mut());
 
         // SAFETY: `mul` is the fn node just built and outlives every call.
-        let _c_mul = unsafe { compile_fn(&core.lower, core.types(), mul) }.unwrap();
+        let _c_mul = unsafe { compile_fn(&mut store, &core.lower, core.types(), mul) }.unwrap();
         let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_, &core.bcode);
         // SAFETY: `call`/`outer` are valid nodes; the callee's artifact is alive.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `outer` is the fn node just built; both artifacts stay alive.
-        let _c_outer = unsafe { compile_fn(&core.lower, core.types(), outer) }.unwrap();
+        let _c_outer = unsafe { compile_fn(&mut store, &core.lower, core.types(), outer) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
 
         assert_eq!(interp, 6_000_000_000, "interpreter over compiled callee");
@@ -2364,12 +2366,12 @@ mod tests {
         let call = store.alloc_raw(outer, std::ptr::null_mut());
 
         // SAFETY: `g` is the fn node just built and outlives every call.
-        let _c_g = unsafe { compile_fn(&core.lower, core.types(), g) }.unwrap();
+        let _c_g = unsafe { compile_fn(&mut store, &core.lower, core.types(), g) }.unwrap();
         let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_, &core.bcode);
         // SAFETY: `call`/`outer`/`a` are valid nodes; the callee's artifact is alive.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `outer` is the fn node just built; both artifacts stay alive.
-        let _c_outer = unsafe { compile_fn(&core.lower, core.types(), outer) }.unwrap();
+        let _c_outer = unsafe { compile_fn(&mut store, &core.lower, core.types(), outer) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
 
         assert_eq!(interp, 3.0f64.to_bits() as i64, "interpreter over compiled callee");
@@ -2410,7 +2412,7 @@ mod tests {
         let interp = unsafe { rt.run(call) }.unwrap();
         // Compile (installs bcode; the artifact must outlive the compiled call).
         // SAFETY: `s_fn` is the fn node just built and outlives every call.
-        let _c = unsafe { compile_fn(&core.lower, core.types(), s_fn) }.unwrap();
+        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), s_fn) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, 4_000_000_000, "interpreter");
         assert_eq!(jit, interp, "compiled recursion != interpreter");
@@ -2438,7 +2440,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         // SAFETY: `add` is the fn node just built.
-        let _c_add = unsafe { compile_fn(&core.lower, core.types(), add) }.unwrap();
+        let _c_add = unsafe { compile_fn(&mut store, &core.lower, core.types(), add) }.unwrap();
         let outer = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
@@ -2454,7 +2456,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         // SAFETY: `outer` is the fn node just built.
-        let result = unsafe { compile_fn(&core.lower, core.types(), outer) };
+        let result = unsafe { compile_fn(&mut store, &core.lower, core.types(), outer) };
         assert!(matches!(result, Err(crate::compile::CompileError::ArityMismatch)));
     }
 
@@ -2527,7 +2529,7 @@ mod tests {
         // SAFETY: `call` applies the bound `fact` to a literal.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `fact` outlives every call; the artifact stays alive for the run.
-        let _c = unsafe { compile_fn(&core.lower, core.types(), fact) }.unwrap();
+        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), fact) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, 2_432_902_008_176_640_000, "interpreter 20!");
         assert_eq!(jit, interp, "compiled 20! != interpreter");
@@ -2792,7 +2794,7 @@ mod tests {
         // SAFETY: `call`/`func`/body are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` outlives the call; the artifact stays alive.
-        let _c = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, 42);
         assert_eq!(jit, interp);
@@ -2849,8 +2851,8 @@ mod tests {
         let interp = unsafe { rt.run(call) }.unwrap();
         // Compile the callee first (the caller's call bakes its address).
         // SAFETY: both fn nodes outlive the calls; the artifacts stay alive.
-        let _c_incr = unsafe { compile_fn(&core.lower, core.types(), incr) }.unwrap();
-        let _c_func = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
+        let _c_incr = unsafe { compile_fn(&mut store, &core.lower, core.types(), incr) }.unwrap();
+        let _c_func = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, 42);
         assert_eq!(jit, interp);
@@ -2895,7 +2897,7 @@ mod tests {
         // SAFETY: `call`/`func` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` outlives the call; the artifact stays alive.
-        let _c = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, 18);
         assert_eq!(jit, interp);
@@ -2938,7 +2940,7 @@ mod tests {
         // SAFETY: `call`/`func` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` outlives the call; the artifact stays alive.
-        let _c = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, 8);
         assert_eq!(jit, interp);
@@ -3031,7 +3033,7 @@ mod tests {
         // SAFETY: `call`/`func` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` outlives the call; the artifact stays alive.
-        let _c = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, 45);
         assert_eq!(jit, interp);
@@ -3088,7 +3090,7 @@ mod tests {
         // SAFETY: `call`/`func` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` outlives the call; the artifact stays alive.
-        let _c = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, 5_000_000_207);
         assert_eq!(jit, interp);
@@ -3343,7 +3345,7 @@ mod tests {
 
         // Compile `fact` once; the self-call is installed as a machine call.
         // SAFETY: `fact` is the fn node just built and outlives every call.
-        let _compiled = unsafe { compile_fn(&core.lower, core.types(), fact) }.unwrap();
+        let _compiled = unsafe { compile_fn(&mut store, &core.lower, core.types(), fact) }.unwrap();
         // SAFETY: reading the installed bcode slot of the fn node.
         unsafe {
             let bcode = *((*fact).value as *const DyadPtr).add(FN_BCODE);
@@ -3405,7 +3407,7 @@ mod tests {
 
         // Compile `add` first so `outer`'s call has a machine address to bake.
         // SAFETY: `add` is the fn node just built and outlives every call.
-        let _compiled_add = unsafe { compile_fn(&core.lower, core.types(), add) }.unwrap();
+        let _compiled_add = unsafe { compile_fn(&mut store, &core.lower, core.types(), add) }.unwrap();
 
         let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_, &core.bcode);
         // Oracle: interpret `outer` (its body calls the already-compiled `add`).
@@ -3414,7 +3416,7 @@ mod tests {
 
         // Compile `outer`: `add(40, 2)` becomes a call_indirect to `add`'s address.
         // SAFETY: `outer` is the fn node just built; both compiled artifacts are alive.
-        let _compiled_outer = unsafe { compile_fn(&core.lower, core.types(), outer) }.unwrap();
+        let _compiled_outer = unsafe { compile_fn(&mut store, &core.lower, core.types(), outer) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
 
         assert_eq!(interp, 42);
@@ -3444,7 +3446,7 @@ mod tests {
         // SAFETY: `call`/`func` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` is the fn node just built; the artifact outlives the call.
-        let _c = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, expect, "interpreter: {fn_src} / {call_src}");
         assert_eq!(jit, interp, "jit != interpreter: {fn_src} / {call_src}");
@@ -3498,7 +3500,7 @@ mod tests {
         // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func`/`a` live in `store`, which outlives the call.
-        let _c = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, expect, "interpreter: {fn_src}");
         assert_eq!(jit, interp, "jit != interpreter: {fn_src}");
@@ -3624,7 +3626,7 @@ mod tests {
         // Reset a, compile (installs bcode), run again — jumps to the compiled body.
         unsafe { std::ptr::write_unaligned(a_val as *mut i32, 41) };
         // SAFETY: `func`/`a` live in `store`, which outlives the call.
-        let _c = unsafe { compile_fn(&core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         let jit_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
         assert_eq!(interp, 0, "void yields unit (interpreted)");

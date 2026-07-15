@@ -416,6 +416,11 @@ pub struct CoreTypes {
     pub not_: DyadPtr,
     /// `=` (assignment); its applications yield the stored value.
     pub assign: DyadPtr,
+    /// `callable`: the type of every exec leaf and of a compiled fn's code
+    /// (`[entry: @exec, convention]`).
+    pub callable_: DyadPtr,
+    /// `container-i64`: the convention compiled artifacts are minted under.
+    pub conv_container: DyadPtr,
     /// The concrete-op leaves (`add_i32`, `lt_f64`, `store_u8`, …): the
     /// parse-time resolver's `(family, operand type) → leaf` table. A builder
     /// resolves an application to one leaf and stores it in the node's op slot;

@@ -695,18 +695,19 @@ impl Lowerer<'_, '_> {
             self.builder.ins().call(fref, &args64)
         } else {
             // Otherwise the callee must already be compiled: call its machine code
-            // through the address baked in its `bcode` slot.
+            // through the entry of the callable node in its `bcode` slot.
             let bcode = *fields.add(FN_BCODE);
             if bcode.is_null() {
                 return Err(CompileError::UncompiledCallee(callee));
             }
+            let entry = crate::identities::callable::entry_of(bcode);
             let mut sig = self.module.make_signature();
             for _ in 0..param_count {
                 sig.params.push(AbiParam::new(types::I64));
             }
             sig.returns.push(AbiParam::new(types::I64));
             let sigref = self.builder.import_signature(sig);
-            let addr = self.builder.ins().iconst(self.ptr_ty, bcode as usize as i64);
+            let addr = self.builder.ins().iconst(self.ptr_ty, entry as i64);
             self.builder.ins().call_indirect(sigref, addr, &args64)
         };
         let r = self.builder.inst_results(inst)[0];
@@ -744,21 +745,25 @@ impl Compiled {
 /// [`crate::parse::FN_BODY`]), compiles the body with each parameter reference
 /// lowering to its matching argument (narrowed from the `i64` bit-container to the
 /// parameter's declared type) and the return following the declared output
-/// (`-> void` yields unit), then writes the `exec@` into the node's `bcode` slot
+/// (`-> void` yields unit), then mints a `callable` node — the finalized entry
+/// under the `container-i64` convention, the backend's licensed mint (DESIGN ›The
+/// callable ground is `@exec`‹) — into the node's `bcode` slot
 /// ([`crate::parse::FN_BCODE`]) so [`crate::run`] calls it with the arguments
-/// instead of walking the body.
+/// instead of walking the body. One representation of jumpable code in the whole
+/// graph: a compiled fn's code is the same kind of value `add_i32` carries.
 ///
-/// The returned [`Compiled`] *owns* the executable memory; the installed `bcode` is
-/// only valid while it is alive, so the caller must keep it alive for as long as the
-/// function may be run compiled (a use-after-free otherwise). This is the same
-/// lifetime contract as [`Compiled`] itself; graph-managed ownership arrives with
-/// deoptimization.
+/// The returned [`Compiled`] *owns* the executable memory; the installed callable
+/// is only valid while it is alive, so the caller must keep it alive for as long
+/// as the function may be run compiled (a use-after-free otherwise). This is the
+/// same lifetime contract as [`Compiled`] itself; graph-managed ownership arrives
+/// with deoptimization.
 ///
 /// # Safety
 /// `fn_node` must be a valid function node (`{ty: fn, value -> [input, output,
 /// body, bcode]}`) from the store, and any storage its body references must outlive
 /// every call to the returned [`Compiled`].
 pub unsafe fn compile_fn(
+    store: &mut crate::store::Store,
     lower: &LowerTable,
     types: CoreTypes,
     fn_node: DyadPtr,
@@ -785,10 +790,16 @@ pub unsafe fn compile_fn(
     let ret = if is_void_type(out) { None } else { Some(numtype_of_type(out)) };
     // The fn node is its own self-reference: a call to it inside `body` is recursion.
     let compiled = compile_body(lower, types, fn_node, body, &params, ret)?;
-    // Install the exec@ (a machine-code address) into the node's bcode slot, punned
-    // into the pointer-sized cell. `run` reads it back and calls it.
+    // Mint the callable — the finalized entry plus its convention — and install
+    // the node into the bcode slot. `run` reads the entry back and calls it.
+    let code = crate::identities::callable::mint(
+        store,
+        types.callable_,
+        compiled.ptr as usize,
+        types.conv_container,
+    );
     let bcode_slot = ((*fn_node).value as *mut DyadPtr).add(FN_BCODE);
-    *bcode_slot = compiled.ptr as DyadPtr;
+    *bcode_slot = code;
     Ok(compiled)
 }
 

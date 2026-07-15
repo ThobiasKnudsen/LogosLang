@@ -65,10 +65,9 @@ pub enum RunError {
 /// passes at most three arguments; Cranelift's default convention matches `extern "C"`.
 ///
 /// # Safety
-/// `bcode` must point at live machine code of exactly `args.len()` `i64` parameters
+/// `p` must point at live machine code of exactly `args.len()` `i64` parameters
 /// returning `i64` (as [`crate::compile::compile_fn`] produces).
-unsafe fn call_compiled(bcode: DyadPtr, args: &[i64]) -> Result<i64, RunError> {
-    let p = bcode as *const u8;
+unsafe fn call_compiled(p: *const u8, args: &[i64]) -> Result<i64, RunError> {
     let r = match args {
         [] => (std::mem::transmute::<*const u8, extern "C" fn() -> i64>(p))(),
         [a] => (std::mem::transmute::<*const u8, extern "C" fn(i64) -> i64>(p))(*a),
@@ -142,12 +141,14 @@ impl<'a> Runtime<'a> {
             if fields.is_null() {
                 return Err(RunError::NotRunnable(op));
             }
-            // Compiled: evaluate the arguments (in the current frame) and call the
-            // installed bcode with them. The exec@ is punned into the slot.
+            // Compiled: evaluate the arguments (in the current frame) and call
+            // the installed code — a callable node carrying the finalized entry
+            // under the container convention (issue #44).
             let bcode = *fields.add(FN_BCODE);
             if !bcode.is_null() {
                 let args = self.eval_args(op, node)?;
-                return call_compiled(bcode, &args);
+                let entry = crate::identities::callable::entry_of(bcode);
+                return call_compiled(entry as *const u8, &args);
             }
             // Interpreted: bind the call's arguments to the callee's parameters in a
             // fresh activation frame, walk the body, then drop the frame.
