@@ -148,13 +148,16 @@ impl Runtime {
                 result
             }
         } else {
-            // A declaration statement — a fn literal or a struct type standing
-            // as an expression — is inert at run time (its work happened at
-            // parse) and yields unit, the same precedent as `-> void`. Checked
-            // before the op-slot read below: a *compiled* fn literal's fourth
-            // slot holds its callable, and evaluating the declaration must not
-            // jump to it.
-            if op == self.fn_type || op == self.struct_ {
+            // A declaration statement — a fn literal, a struct type, or a type
+            // node standing as an expression — is inert at run time (its work
+            // happened at parse) and yields unit, the same precedent as
+            // `-> void`. The `Type : Type` root is the store's one self-typed
+            // node, so `op == (*op).ty` recognizes every type node (`x := i32`
+            // binds a name to one) without a dedicated handle. Checked before
+            // the op-slot read below: a *compiled* fn literal's fourth slot
+            // holds its callable, and evaluating the declaration must not jump
+            // to it.
+            if op == self.fn_type || op == self.struct_ || op == (*op).ty {
                 return Ok(0);
             }
             // `node` is data or a migrated application. A rational literal is

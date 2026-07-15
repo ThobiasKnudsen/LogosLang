@@ -170,6 +170,15 @@ fn repl() -> ExitCode {
         };
         scopes = scopes_back;
 
+        // A failed line must leave no trace: roll its declarations back out of
+        // the name index and close any scopes an error left open, or a typo
+        // would burn its name for the rest of the session ("shadowed" forever
+        // under the no-shadowing rule).
+        let fail = |scopes: &mut ScopeStack, trie: &mut RegexTrie| {
+            scopes.rollback(trie);
+            scopes.truncate(1);
+        };
+
         let node = match parsed {
             Ok(node) => node,
             Err(e) => {
@@ -177,6 +186,7 @@ fn repl() -> ExitCode {
                     "{}",
                     report::render("<repl>", &line, end, &report::parse_message(&e))
                 );
+                fail(&mut scopes, &mut engine.trie);
                 continue;
             }
         };
@@ -185,13 +195,14 @@ fn repl() -> ExitCode {
                 "{}",
                 report::render("<repl>", &line, end, "one expression per line in the REPL")
             );
+            fail(&mut scopes, &mut engine.trie);
             continue;
         }
 
         // Echo policy (settled): statements are silent — only value
         // expressions echo, like Python. The graph says which is which: a
         // declaration is a declare node, an assignment an assign/storeptr
-        // node, a bare fn or struct literal a declaration statement.
+        // node, a bare fn, struct, or type a declaration statement.
         // SAFETY: `node` is the valid dyad just parsed.
         let is_statement = unsafe {
             let ty = (*node).ty;
@@ -200,6 +211,7 @@ fn repl() -> ExitCode {
                 || ty == engine.core.storeptr_
                 || ty == engine.core.fn_type
                 || ty == engine.core.struct_
+                || ty == types.type_
         };
 
         let mut rt =
@@ -210,7 +222,12 @@ fn repl() -> ExitCode {
         match unsafe { rt.run(node) } {
             Ok(bits) if !is_statement => println!("{bits}"),
             Ok(_) => {}
-            Err(e) => eprintln!("run error: {}", report::run_message(&e)),
+            Err(e) => {
+                eprintln!("run error: {}", report::run_message(&e));
+                fail(&mut scopes, &mut engine.trie);
+                continue;
+            }
         }
+        scopes.commit();
     }
 }

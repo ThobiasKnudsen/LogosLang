@@ -90,6 +90,11 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::BadStep => "a literal loop step must be positive".into(),
         ParseError::BadAddressOf => "`&` needs a variable to take the address of".into(),
         ParseError::BadCast => "a conversion takes exactly one numeric value".into(),
+        ParseError::TypedDeclaration => {
+            "typed declarations (`name : type`) are not in the seed yet; \
+             declare with a value: `name := i32 0`"
+                .into()
+        }
     }
 }
 

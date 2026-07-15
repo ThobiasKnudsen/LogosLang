@@ -241,12 +241,17 @@ pub enum ResolveError {
 pub struct ScopeStack {
     open: Vec<DyadPtr>,
     set: HashSet<DyadPtr>,
+    /// Every `(spelling, scope)` declared since the last [`ScopeStack::commit`].
+    /// The REPL's undo log: a failed line rolls its declarations back out of the
+    /// name index ([`ScopeStack::rollback`]), so a typo never burns a name for
+    /// the rest of the session.
+    journal: Vec<(String, DyadPtr)>,
 }
 
 impl ScopeStack {
     /// An empty scope stack.
     pub fn new() -> Self {
-        ScopeStack { open: Vec::new(), set: HashSet::new() }
+        ScopeStack { open: Vec::new(), set: HashSet::new(), journal: Vec::new() }
     }
 
     /// Enter `scope`.
@@ -270,6 +275,38 @@ impl ScopeStack {
     /// Whether `scope` is currently open. O(1).
     pub fn is_open(&self, scope: DyadPtr) -> bool {
         self.set.contains(&scope)
+    }
+
+    /// Number of open scopes.
+    pub fn depth(&self) -> usize {
+        self.open.len()
+    }
+
+    /// Pop scopes until `depth` remain. An error propagating out of a nested
+    /// parse skips the balancing pops; a caller that keeps the stack across
+    /// parses (the REPL) restores its known depth with this.
+    pub fn truncate(&mut self, depth: usize) {
+        while self.open.len() > depth {
+            self.pop();
+        }
+    }
+
+    /// Accept the journalled declarations: they are permanent, the undo log
+    /// can be dropped.
+    pub fn commit(&mut self) {
+        self.journal.clear();
+    }
+
+    /// Undo every declaration journalled since the last [`ScopeStack::commit`],
+    /// removing each from the name index (newest first). Removal is by
+    /// spelling *and* declaring scope, so outer declarations of the same
+    /// spelling are untouched.
+    pub fn rollback(&mut self, trie: &mut RegexTrie) {
+        while let Some((name, scope)) = self.journal.pop() {
+            // The entry was inserted by this journal's own declare; a failed
+            // removal means it was already pruned, which is fine.
+            let _ = trie.remove(&name, scope);
+        }
     }
 
     /// Resolve `name` against `trie` to the single identity live in the open
@@ -307,9 +344,10 @@ impl ScopeStack {
     /// Declare `name` denoting `identity` in the current scope, enforcing
     /// no-shadowing: [`ResolveError::Shadowed`] if `name` already resolves to a
     /// live candidate in the open scopes. A known-but-out-of-scope or unknown
-    /// name is free to (re)declare here. Requires a current scope.
+    /// name is free to (re)declare here. Requires a current scope. The
+    /// declaration is journalled for [`ScopeStack::rollback`].
     pub fn declare(
-        &self,
+        &mut self,
         trie: &mut RegexTrie,
         name: &str,
         identity: DyadPtr,
@@ -324,7 +362,19 @@ impl ScopeStack {
             Err(e) => return Err(e),
         }
         trie.insert(name, IdContext::new(identity, scope));
+        self.journal.push((name.to_string(), scope));
         Ok(())
+    }
+
+    /// Re-point the just-declared `name` in the current scope at `identity`.
+    /// Used by the declaration fixpoint when the value turns out to *be* an
+    /// existing identity (a type): the name becomes another spelling of that
+    /// node, so pointer-identity checks (`is_numtype_node`, type equality) see
+    /// the original. The journal entry from the declare still covers it.
+    pub fn rebind(&mut self, trie: &mut RegexTrie, name: &str, identity: DyadPtr) {
+        let scope = self.current().expect("rebind needs an open scope");
+        let _ = trie.remove(name, scope);
+        trie.insert(name, IdContext::new(identity, scope));
     }
 }
 
@@ -618,6 +668,11 @@ pub enum ParseError {
     /// A numeric conversion `type(value)` was malformed: not exactly one operand, or a
     /// non-numeric operand (there is nothing to convert).
     BadCast,
+    /// A fresh name followed by `:` — the typed declaration `name : type`
+    /// (DESIGN ›Declarations are immutable by default‹). The seed's `:` lives
+    /// only inside field lists; the general form is later work, and this names
+    /// the gap instead of reporting the fresh name as unknown.
+    TypedDeclaration,
 }
 
 /// Build a call node `{ty: callee, value: [args…, null]}`, the application
@@ -1607,6 +1662,16 @@ impl<'a> Parser<'a> {
             // value can refer to it (self-recursion). A name not followed by `:=`
             // rewinds and resolves normally below.
             if let Some((nstart, nlen)) = self.lex_identifier() {
+                // A fresh name followed by `:` is the typed declaration
+                // `name : type` — not in the seed yet (`:` lives in field lists).
+                // Name the gap; reporting the name as unknown misleads.
+                if matches!(self.peek_kind(), Some((_, _, Construct::Colon)))
+                    && tape.is_empty()
+                    && self.scopes.resolve(self.trie, &source[nstart..]).is_err()
+                {
+                    self.pos = nstart;
+                    return Err(ParseError::TypedDeclaration);
+                }
                 if let Some((_, matched, Construct::Declare)) = self.peek_kind() {
                     // A declaration after a completed dyad starts the NEXT
                     // expression (expressions are self-delimiting): stop before it.
@@ -1623,9 +1688,11 @@ impl<'a> Parser<'a> {
                     // fixpoint below overwrites it with the value's real type.
                     let placeholder =
                         self.store.alloc_raw(self.types.fn_type, std::ptr::null_mut());
-                    self.scopes
-                        .declare(self.trie, name, placeholder)
-                        .map_err(ParseError::Resolve)?;
+                    if let Err(e) = self.scopes.declare(self.trie, name, placeholder) {
+                        // The stuck point is the name itself (it is what shadows).
+                        self.pos = nstart;
+                        return Err(ParseError::Resolve(e));
+                    }
                     // If the value opens with a `fn` literal, parse_fn publishes its
                     // signature onto the placeholder before the body parses.
                     self.pending_fn = placeholder;
@@ -1635,7 +1702,11 @@ impl<'a> Parser<'a> {
                     // `name` captured while parsing the value resolve to it. A
                     // construction binds the name to the *instance* (the storage)
                     // and keeps the construct statement as the initializer: the name
-                    // is the place, the statement fills it each run.
+                    // is the place, the statement fills it each run. A *type* value
+                    // (`x := i32`, `p := struct(…)`) rebinds the name to the type
+                    // node itself instead — the name becomes another spelling of
+                    // that type, so the pointer-identity checks (`is_numtype_node`,
+                    // cross-type mismatch, struct-type equality) see the original.
                     // SAFETY: `placeholder`/`value` are valid dyads just built.
                     let declared = unsafe {
                         if (*value).ty == self.types.construct_ {
@@ -1644,6 +1715,11 @@ impl<'a> Parser<'a> {
                             (*placeholder).ty = (*instance).ty;
                             (*placeholder).value = (*instance).value;
                             *ops = placeholder;
+                            value
+                        } else if (*value).ty == self.types.type_
+                            || (*value).ty == self.types.struct_
+                        {
+                            self.scopes.rebind(self.trie, name, value);
                             value
                         } else {
                             (*placeholder).ty = (*value).ty;
@@ -2149,6 +2225,48 @@ mod tests {
         // Nested scope while the outer declaration is live: still rejected.
         scopes.push(inner);
         assert_eq!(scopes.declare(&mut trie, "a", dyad(3)), Err(ResolveError::Shadowed));
+    }
+
+    #[test]
+    fn rollback_undoes_journalled_declarations() {
+        let mut trie = RegexTrie::new();
+        let mut scopes = ScopeStack::new();
+        scopes.push(dyad(100));
+        scopes.declare(&mut trie, "keep", dyad(1)).unwrap();
+        scopes.commit(); // committed declarations survive a rollback
+        scopes.declare(&mut trie, "gone", dyad(2)).unwrap();
+
+        scopes.rollback(&mut trie);
+        assert_eq!(scopes.resolve(&trie, "keep").unwrap().identity, dyad(1));
+        assert_eq!(scopes.resolve(&trie, "gone"), Err(ResolveError::Unknown));
+        // The rolled-back name is free again — no permanent "shadowed".
+        scopes.declare(&mut trie, "gone", dyad(3)).unwrap();
+        assert_eq!(scopes.resolve(&trie, "gone").unwrap().identity, dyad(3));
+    }
+
+    #[test]
+    fn rebind_points_a_spelling_at_the_original_identity() {
+        let mut trie = RegexTrie::new();
+        let mut scopes = ScopeStack::new();
+        scopes.push(dyad(100));
+        scopes.declare(&mut trie, "alias", dyad(1)).unwrap();
+        scopes.rebind(&mut trie, "alias", dyad(2));
+        assert_eq!(scopes.resolve(&trie, "alias").unwrap().identity, dyad(2));
+        // The declare's journal entry still covers the rebound binding.
+        scopes.rollback(&mut trie);
+        assert_eq!(scopes.resolve(&trie, "alias"), Err(ResolveError::Unknown));
+    }
+
+    #[test]
+    fn truncate_restores_a_known_depth() {
+        let mut scopes = ScopeStack::new();
+        scopes.push(dyad(100));
+        scopes.push(dyad(101)); // left open by an error mid-nesting
+        scopes.push(dyad(102));
+        scopes.truncate(1);
+        assert_eq!(scopes.depth(), 1);
+        assert_eq!(scopes.current(), Some(dyad(100)));
+        assert!(!scopes.is_open(dyad(101)));
     }
 
     #[test]
