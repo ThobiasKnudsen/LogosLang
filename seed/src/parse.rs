@@ -495,6 +495,30 @@ pub const FN_BODY: usize = 2;
 /// See [`FN_INPUT`]. The compiled code — a `callable` node (`[entry: @exec,
 /// convention]`), null until compiled.
 pub const FN_BCODE: usize = 3;
+/// See [`FN_INPUT`]. The activation-record byte size: a `u64` leaf holding the
+/// total size of the function's local frame (the per-call storage its `:=`
+/// locals, loop variables, and struct instances occupy at their offsets), or
+/// null for a function with no locals. Read by both tiers on entry —
+/// [`crate::run::Runtime`] to size the interpreter's activation buffer, the
+/// compiler to size the Cranelift stack slot. A trailing slot, so every reader
+/// of `FN_INPUT..=FN_BCODE` is unaffected.
+pub const FN_FRAME: usize = 4;
+
+/// The activation-record byte size a function node declares in its [`FN_FRAME`]
+/// slot: the `u64` the slot's leaf holds, or `0` when the slot is null (no
+/// locals). Read on every call to size the per-call storage.
+///
+/// # Safety
+/// `fn_node` must be a function node whose value is `[input, output, body,
+/// bcode, frame]` as [`Parser::parse_fn`] builds it.
+pub unsafe fn fn_frame_size(fn_node: DyadPtr) -> usize {
+    let frame = *((*fn_node).value as *const DyadPtr).add(FN_FRAME);
+    if frame.is_null() {
+        0
+    } else {
+        std::ptr::read_unaligned((*frame).value as *const u64) as usize
+    }
+}
 
 /// A core identity's native parse-time behaviour: how the driver schedules the
 /// token and how its dyad is built. Core identities are hand-built natives (see
@@ -1027,9 +1051,13 @@ impl<'a> Parser<'a> {
         let output = self.parse_return_type()?;
 
         if !declared.is_null() {
-            let early = self
-                .store
-                .alloc_operands(&[input, output, std::ptr::null_mut(), std::ptr::null_mut()]);
+            let early = self.store.alloc_operands(&[
+                input,
+                output,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            ]);
             // SAFETY: `declared` is the just-declared placeholder; nothing has read
             // a value from it yet, and the fixpoint overwrites it when the value
             // completes.
@@ -1055,7 +1083,15 @@ impl<'a> Parser<'a> {
         let body = unsafe { crate::identities::commit_fn_body(self.store, &self.types, body, output)? };
 
         // `bcode` starts null; `compile_fn` installs the exec@ into this slot.
-        let value = self.store.alloc_operands(&[input, output, body, std::ptr::null_mut()]);
+        // `frame` (FN_FRAME) is null here — Commit 1 wires the slot inert; the
+        // frame layout that fills it lands with frame-relative locals.
+        let value = self.store.alloc_operands(&[
+            input,
+            output,
+            body,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        ]);
         Ok(self.store.alloc_raw(fn_type, value))
     }
 

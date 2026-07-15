@@ -95,7 +95,8 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         }
         let v = lw.lower(rhs)?;
         let ct = numtype_of_type((*lhs).ty).cranelift_type();
-        lw.store(ct, (*lhs).value, v);
+        let addr = lw.place_addr(lhs);
+        lw.store_at(ct, addr, 0, v);
         Ok(v)
     }
 }

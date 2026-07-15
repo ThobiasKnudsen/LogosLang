@@ -22,18 +22,21 @@
 use std::collections::HashMap;
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
-use cranelift_codegen::ir::{types, AbiParam, Endianness, InstBuilder, MemFlagsData, Value};
+use cranelift_codegen::ir::{
+    types, AbiParam, Endianness, InstBuilder, MemFlagsData, StackSlot, StackSlotData,
+    StackSlotKind, Value,
+};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{default_libcall_names, FuncId, Linkage, Module};
 
-use crate::dyad::DyadPtr;
+use crate::dyad::{frame_offset, DyadPtr};
 use crate::identities::numtype::{
     is_void_type, numtype_of_type, of_type_node, ArithOp, CmpOp, NumType,
 };
 use crate::identities::{numtype_of, operands, Operand};
-use crate::parse::{CoreTypes, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
+use crate::parse::{fn_frame_size, CoreTypes, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
 
 /// A lowering rule: emit the IR for a node and return the SSA value it computes,
 /// recursing on operands via [`Lowerer::lower`].
@@ -106,6 +109,13 @@ pub struct Lowerer<'a, 'f> {
     /// The function node being compiled (null for a bare expression), so a call to it
     /// is recognized as self-recursion rather than a call to other machine code.
     self_fn: DyadPtr,
+    /// The Cranelift stack slot backing this call's activation record — the
+    /// compiled analogue of the interpreter's activation buffer, holding the
+    /// function's frame-relative locals at their offsets. `None` for a function
+    /// with no locals (an empty frame). A local place lowers to `stack_addr(slot,
+    /// offset)`; the machine call stack gives each activation its own copy, which
+    /// is what makes compiled recursion with locals correct.
+    frame_slot: Option<StackSlot>,
 }
 
 impl Lowerer<'_, '_> {
@@ -148,31 +158,29 @@ impl Lowerer<'_, '_> {
         self.builder.ins().iconst(types::I32, i64::from(v))
     }
 
-    /// Load a value of Cranelift type `ct` from a baked host address.
-    pub(crate) fn load(&mut self, ct: types::Type, addr: *const u8) -> Value {
-        let p = self.builder.ins().iconst(self.ptr_ty, addr as usize as i64);
-        self.builder.ins().load(ct, self.flags, p, 0)
-    }
-
-    /// Store `v` into the baked host address `addr` at Cranelift type `ct`'s width —
-    /// the storage dual of [`load`], and the compiler's analogue of the interpreter's
-    /// `write_scalar`. `v` must already have type `ct`: a resolved assignment lowers its
-    /// right side to the target variable's type, so the store width and the value width
-    /// agree. The `debug_assert` guards that invariant (a mismatch would silently store
-    /// the wrong number of bytes, since Cranelift's `store` writes `v`'s own width).
-    pub(crate) fn store(&mut self, ct: types::Type, addr: *mut u8, v: Value) {
-        debug_assert_eq!(
-            self.builder.func.dfg.value_type(v),
-            ct,
-            "assignment's right side must lower to the target variable's type"
-        );
-        let p = self.builder.ins().iconst(self.ptr_ty, addr as usize as i64);
-        self.builder.ins().store(self.flags, v, p, 0);
+    /// The address a place node denotes, as an SSA pointer value: a baked
+    /// `iconst` for a global/top-level place (an absolute host address), or
+    /// `stack_addr(frame_slot, offset)` for a frame-relative local of this call.
+    /// The one place the compiler decodes the frame tag (see
+    /// [`crate::dyad::FRAME_TAG`]); every load, store, and address-of of a local
+    /// resolves its address here, then uses [`Self::load_at`]/[`Self::store_at`].
+    ///
+    /// # Safety
+    /// `node` must be a valid place node; a frame-relative one only appears in a
+    /// function whose [`compile_body`] created a `frame_slot`.
+    pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> Value {
+        match frame_offset((*node).value) {
+            Some(off) => {
+                let slot = self.frame_slot.expect("a frame-relative place needs a frame slot");
+                self.builder.ins().stack_addr(self.ptr_ty, slot, off as i32)
+            }
+            None => self.builder.ins().iconst(self.ptr_ty, (*node).value as usize as i64),
+        }
     }
 
     /// Load a `ct`-typed value through a *runtime* address (an SSA i64 pointer)
-    /// at a byte offset — the dereference's load, where [`Self::load`] takes a
-    /// baked parse-time address.
+    /// at a byte offset. The address is a runtime value — from [`Self::place_addr`]
+    /// (a baked `iconst` or a frame `stack_addr`) or a dereferenced pointer.
     pub(crate) fn load_at(&mut self, ct: types::Type, addr: Value, offset: i64) -> Value {
         self.builder.ins().load(ct, self.flags, addr, offset as i32)
     }
@@ -517,10 +525,13 @@ impl Lowerer<'_, '_> {
     ) -> Result<Value, CompileError> {
         let nt = of_type_node((*var).ty);
         let ct = nt.cranelift_type();
-        let addr = (*var).value;
+        // The loop variable's address, resolved once in the current (dominating)
+        // block — a baked `iconst` for a top-level loop, a `stack_addr` for a
+        // loop whose variable is a frame local.
+        let base = self.place_addr(var);
 
         let s = self.lower(start)?;
-        self.store(ct, addr, s);
+        self.store_at(ct, base, 0, s);
         let e = self.lower(end)?;
         let d = if !step.is_null() {
             self.lower(step)?
@@ -556,7 +567,7 @@ impl Lowerer<'_, '_> {
         self.builder.ins().brif(pos, header, &[], exit, &[]);
 
         self.builder.switch_to_block(header);
-        let v = self.load(ct, addr as *const u8);
+        let v = self.load_at(ct, base, 0);
         let cond = if nt.is_float() {
             self.fcmp(FloatCC::LessThan, v, e)
         } else {
@@ -572,13 +583,13 @@ impl Lowerer<'_, '_> {
         self.builder.switch_to_block(body_b);
         self.builder.seal_block(body_b);
         self.lower(body)?;
-        let v2 = self.load(ct, addr as *const u8);
+        let v2 = self.load_at(ct, base, 0);
         let inc = if nt.is_float() {
             self.builder.ins().fadd(v2, d)
         } else {
             self.builder.ins().iadd(v2, d)
         };
-        self.store(ct, addr, inc);
+        self.store_at(ct, base, 0, inc);
         self.builder.ins().jump(header, &[]);
         // Both of the header's predecessors (the entry brif and the back-edge)
         // now exist.
@@ -888,6 +899,19 @@ pub(crate) unsafe fn compile_body(
             param_map.insert(p, vn);
         }
 
+        // The activation record: one explicit stack slot sized to the function's
+        // frame (its frame-relative locals), 8-byte aligned. A frameless function
+        // (`self_fn` null for a bare expression, or no locals) gets none, and its
+        // places all bake absolute addresses as before.
+        let frame_size = if self_fn.is_null() { 0 } else { fn_frame_size(self_fn) };
+        let frame_slot = (frame_size > 0).then(|| {
+            builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                frame_size as u32,
+                3,
+            ))
+        });
+
         let value = {
             let mut lw = Lowerer {
                 builder: &mut builder,
@@ -899,6 +923,7 @@ pub(crate) unsafe fn compile_body(
                 func_id,
                 types,
                 self_fn,
+                frame_slot,
             };
             lw.lower(root)?
         };

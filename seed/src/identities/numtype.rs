@@ -290,12 +290,17 @@ pub(crate) unsafe fn write_scalar_nt(nt: NumType, slot: *mut u8, bits: i64) {
 /// node. Guards a null address, mirroring the interpreter's `BadValue`.
 pub(crate) fn lower_var(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a numeric variable node from the store.
-    let addr = unsafe { (*node).value };
-    if addr.is_null() {
+    // A null value slot is a comptime/no-storage binding — BadValue, mirroring
+    // the interpreter. A frame-relative local is never null (its tag bit is set),
+    // so this guard rejects only genuine no-storage places; the address itself
+    // (baked absolute, or a frame `stack_addr`) comes from `place_addr`.
+    let raw = unsafe { (*node).value };
+    if raw.is_null() {
         return Err(CompileError::BadValue);
     }
     let ct = unsafe { of_type_node((*node).ty) }.cranelift_type();
-    Ok(lw.load(ct, addr))
+    let addr = unsafe { lw.place_addr(node) };
+    Ok(lw.load_at(ct, addr, 0))
 }
 
 /// The `NumType` a numeric type node describes (read from its value-slot tag).

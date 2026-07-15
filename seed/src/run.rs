@@ -21,8 +21,8 @@
 
 use std::collections::HashMap;
 
-use crate::dyad::DyadPtr;
-use crate::parse::{FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
+use crate::dyad::{frame_offset, DyadPtr};
+use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
 
 /// The signature of a seed-native shim — what a `seed-native` callable's entry
 /// points at. Takes the application node and returns its scalar result,
@@ -87,6 +87,15 @@ pub struct Runtime {
     /// nodes to their argument values. A parameter reference reads the top frame;
     /// each activation having its own frame is what makes recursion work.
     frames: Vec<HashMap<DyadPtr, i64>>,
+    /// One activation *record* per in-flight interpreted call: a byte buffer
+    /// holding the call's frame-relative locals at their offsets (sized from the
+    /// callee's `FN_FRAME`). A local place reads/writes `base + offset` in the
+    /// top record, so each call's locals are private — the interpreter half of
+    /// per-call activation records. Each buffer is a `Box<[u8]>`, so its data
+    /// pointer is stable even as this `Vec` grows under nested calls, which keeps
+    /// a `&local` address valid for the whole call. Empty for a call whose callee
+    /// has no locals.
+    activations: Vec<Box<[u8]>>,
 }
 
 impl Runtime {
@@ -94,7 +103,31 @@ impl Runtime {
     /// `struct_`, molding `rational` leaves on read, with an empty frame stack.
     /// Everything executable is reached through the graph.
     pub fn new(fn_type: DyadPtr, rational: DyadPtr, struct_: DyadPtr) -> Self {
-        Runtime { fn_type, rational, struct_, frames: Vec::new() }
+        Runtime { fn_type, rational, struct_, frames: Vec::new(), activations: Vec::new() }
+    }
+
+    /// The machine address a place node denotes: an absolute pointer for a
+    /// global/top-level place, or `activation_base + offset` for a frame-relative
+    /// local of the call in progress (the top activation record). This is the one
+    /// place the interpreter decodes the frame tag (see [`crate::dyad::FRAME_TAG`]);
+    /// every read, write, and address-of of a local goes through it.
+    ///
+    /// # Safety
+    /// `node` must be a valid place node. A frame-relative place is only ever
+    /// built inside a function body, so an activation record is on the stack
+    /// whenever one is read.
+    pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> *mut u8 {
+        match frame_offset((*node).value) {
+            Some(off) => {
+                let base = self
+                    .activations
+                    .last_mut()
+                    .expect("a frame-relative place needs an active call frame")
+                    .as_mut_ptr();
+                base.add(off)
+            }
+            None => (*node).value,
+        }
     }
 
     /// Run `node`: read its operation (its `type`). If the operation is a
@@ -130,16 +163,21 @@ impl Runtime {
                 let entry = crate::identities::callable::entry_of(bcode);
                 return call_compiled(entry as *const u8, &args);
             }
-            // Interpreted: bind the call's arguments to the callee's parameters in a
-            // fresh activation frame, walk the body, then drop the frame.
+            // Interpreted: bind the call's arguments to the callee's parameters in
+            // a fresh activation frame, allocate the call's activation record (its
+            // frame-relative locals, zeroed, sized from `FN_FRAME`), walk the body,
+            // then drop both. `bind_frame` evaluates the arguments in the *caller's*
+            // frame, before the callee's activation is pushed.
             let frame = self.bind_frame(op, node)?;
             let body = *fields.add(FN_BODY);
             if body.is_null() {
                 return Err(RunError::NotRunnable(op));
             }
+            self.activations.push(vec![0u8; fn_frame_size(op)].into_boxed_slice());
             self.frames.push(frame);
             let result = self.run(body);
             self.frames.pop();
+            self.activations.pop();
             // A `-> void` function runs its body for effect and yields unit (0 bits),
             // matching the compiled void fn's `return 0`, so both tiers agree.
             if crate::identities::numtype::is_void_type(*fields.add(FN_OUTPUT)) {
@@ -202,7 +240,7 @@ impl Runtime {
             if !crate::identities::numtype::is_scalar_type((*node).ty) {
                 return Err(RunError::BadValue);
             }
-            let slot = (*node).value;
+            let slot = self.place_addr(node);
             if slot.is_null() {
                 return Err(RunError::BadValue);
             }
