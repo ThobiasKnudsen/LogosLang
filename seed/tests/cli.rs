@@ -104,6 +104,22 @@ fn the_repl_rolls_back_a_failed_lines_declarations() {
 }
 
 #[test]
+fn an_else_if_chain_selects_the_matching_arm() {
+    // `else if` is sugar for a nested `if` in the else slot, so a chain picks the
+    // first matching arm with no hand-written `else ( if … )`. Each reachable arm
+    // is exercised — a middle `else if`, a later one, the final `else` — and the
+    // explicit nested form yields the same value the sugar does.
+    let (echoes, stderr) = repl(
+        b"x := i32 1\nif (x == 0) (i32 10) else if (x == 1) (i32 20) else (i32 30)\n\
+          y := i32 2\nif (y == 0) (i32 10) else if (y == 1) (i32 20) else if (y == 2) (i32 30) else (i32 40)\n\
+          z := i32 9\nif (z == 0) (i32 10) else if (z == 1) (i32 20) else (i32 30)\n\
+          if (x == 1) (i32 20) else ( if (x == 2) (i32 30) else (i32 40) )\n",
+    );
+    assert_eq!(echoes, ["20", "30", "30", "20"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
 fn the_repl_binds_a_name_to_a_type() {
     // `t := i32` makes `t` another spelling of `i32` (a `:=` value may be a
     // type): it works by juxtaposition, as a conversion, and in a fn

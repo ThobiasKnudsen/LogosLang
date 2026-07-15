@@ -1067,8 +1067,9 @@ impl<'a> Parser<'a> {
     /// two-way branch. An else-less `if` is a statement — it yields unit — so value
     /// positions reject it ([`ParseError::MissingElse`]); and because branches are
     /// always parenthesized, a nested `if` cannot capture an outer `else` (no
-    /// dangling else). Unlike `fn`, `if` opens no new scope — its parts resolve in
-    /// the enclosing one.
+    /// dangling else). `else if ( cond ) ( then ) …` is sugar for a nested `if` in
+    /// the else slot, so chains parse right-associatively without `else ( if … )`.
+    /// Unlike `fn`, `if` opens no new scope — its parts resolve in the enclosing one.
     pub fn parse_if(&mut self, if_type: DyadPtr) -> Result<DyadPtr, ParseError> {
         // Condition: a parenthesized expression, required to be a bool.
         self.expect_open()?;
@@ -1086,12 +1087,22 @@ impl<'a> Parser<'a> {
         self.expect_close()?;
 
         // The optional `else`, then the else-branch; absent, the slot stays null
-        // and the `if` is a unit-valued statement.
+        // and the `if` is a unit-valued statement. `else if ( cond ) ( then ) …` is
+        // sugar: an `if` right after the `else` becomes the else-branch directly
+        // (unparenthesized), so a chain nests right-associatively into `if` nodes
+        // and needs no hand-written `else ( if … )`. The nested `if` carries its own
+        // value-ness — else-less it is unit, exactly as the explicit form is — so the
+        // sugar builds a structurally identical tree and introduces no new case.
         let els = if self.consume_else() {
-            self.expect_open()?;
-            let els = self.parse_sequence()?;
-            self.expect_close()?;
-            els
+            if let Some((_, matched, Construct::If)) = self.peek_kind() {
+                self.pos += matched;
+                self.parse_if(if_type)?
+            } else {
+                self.expect_open()?;
+                let els = self.parse_sequence()?;
+                self.expect_close()?;
+                els
+            }
         } else {
             std::ptr::null_mut()
         };
