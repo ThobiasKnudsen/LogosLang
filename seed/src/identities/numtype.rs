@@ -62,6 +62,23 @@ impl NumType {
         }
     }
 
+    /// The canonical source spelling of this type (`i32`, `f64`, …), for display.
+    pub(crate) fn spelling(self) -> &'static str {
+        use NumType::*;
+        match self {
+            I8 => "i8",
+            I16 => "i16",
+            I32 => "i32",
+            I64 => "i64",
+            U8 => "u8",
+            U16 => "u16",
+            U32 => "u32",
+            U64 => "u64",
+            F32 => "f32",
+            F64 => "f64",
+        }
+    }
+
     /// Whether this is a floating-point type.
     pub(crate) fn is_float(self) -> bool {
         matches!(self, NumType::F32 | NumType::F64)

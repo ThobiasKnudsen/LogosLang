@@ -132,6 +132,39 @@ fn the_repl_binds_a_name_to_a_type() {
 }
 
 #[test]
+fn type_is_a_value_reflected_by_dot_type_and_compared_by_identity() {
+    // Roadmap #30: `type` is a first-class value. `.type` yields a value's type, and
+    // `==`/`!=` compare types by identity (types are interned, so pointer identity is
+    // type identity). Every result is a bool, so it echoes; declarations stay silent.
+    let (echoes, stderr) = repl(
+        b"i32 == i32\ni32 == f64\ni32 != f64\ni32.type == type\ni32.type == i32\n\
+          x := i32 5\nx.type == i32\nx.type == f64\nt := type\ni32.type == t\ntype.type == type\n",
+    );
+    assert_eq!(
+        echoes,
+        ["true", "false", "true", "true", "false", "true", "false", "true", "true"],
+        "stderr: {stderr}"
+    );
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
+fn the_type_reflection_example_runs() {
+    let out = logos().arg("examples/type_reflection.logos").output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "true\n");
+}
+
+#[test]
+fn a_type_value_prints_its_spelling() {
+    // A program whose value is a type prints the type's name, not the raw bit
+    // container (roadmap #30). The value rides out of a scope (comment + expression).
+    let out = logos().arg("tests/fixtures/type_name.logos").output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "i32\n");
+}
+
+#[test]
 fn a_typed_declaration_names_the_gap() {
     // `name : type` is settled design but not in the seed; the error must say
     // that, at the name, instead of calling the fresh name unknown.

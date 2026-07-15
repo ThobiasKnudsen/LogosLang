@@ -1305,6 +1305,26 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `lhs` must be a valid dyad from the store.
     unsafe fn parse_field_access(&mut self, lhs: DyadPtr) -> Result<DyadPtr, ParseError> {
+        // `.type` is reflection, not a struct field: it yields the lhs's own type as a
+        // first-class type-value (an interned type node), so it works on ANY node, not
+        // only struct instances (roadmap #30; the sketch's `tape[0].type`). `type` is
+        // reserved for this — a struct member literally named `type` is not honored.
+        // Peek the field name and rewind if it is not `type`, so an ordinary field
+        // falls through to the resolution below unchanged.
+        let save = self.pos;
+        if let Some((nstart, nlen)) = self.lex_identifier() {
+            if &self.source[nstart..nstart + nlen] == "type" {
+                // A deref's logical type is its pointee (held in the node, not in its
+                // `.ty`); every other node's type is its `.ty` pointer, already an
+                // interned type node ready to use as a value.
+                if (*lhs).ty == self.types.deref_ {
+                    let (_, pointee, _) = crate::identities::pointer::deref_parts(lhs);
+                    return Ok(pointee);
+                }
+                return Ok((*lhs).ty);
+            }
+        }
+        self.pos = save;
         // Through a struct pointer, `p@.x` folds the field offset into the deref
         // (the address is runtime; the offset and the field's type are not).
         if (*lhs).ty == self.types.deref_ {

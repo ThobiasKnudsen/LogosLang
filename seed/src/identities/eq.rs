@@ -9,7 +9,7 @@
 use cranelift_codegen::ir::Value;
 
 use super::numtype::CmpOp;
-use super::{bool_mod, meta, rational, resolve_binary, Cx};
+use super::{bool_mod, is_type_value, meta, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
@@ -39,6 +39,13 @@ fn build(
     // Two comptime rationals fold now to a `bool` literal; otherwise resolve and build.
     if let Some(v) = rational::compare_literals(types.rational, CmpOp::Eq, lhs, rhs) {
         return Ok(bool_mod::literal_node(store, types.bool_, v));
+    }
+    // Two type-values compare by identity: types are interned, so pointer identity
+    // *is* type identity and a type never varies at runtime, making the comparison a
+    // parse-time constant (roadmap #30). This is what powers `x.type == i32`.
+    // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
+    if unsafe { is_type_value(types, lhs) && is_type_value(types, rhs) } {
+        return Ok(bool_mod::literal_node(store, types.bool_, lhs == rhs));
     }
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let ([lhs, rhs], nt) = unsafe { resolve_binary(store, types, lhs, rhs) }?;
