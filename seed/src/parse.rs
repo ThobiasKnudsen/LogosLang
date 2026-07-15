@@ -451,9 +451,10 @@ pub enum Construct {
     Atom(fn(&mut Store, DyadPtr, &str) -> Result<DyadPtr, ParseError>),
     /// A prefix keyword that takes the rest of the expression as one operand
     /// (e.g. `return <expr>`): build a node from the identity and that parsed
-    /// operand. v1 consumes to the end of the current expression; delimited forms
-    /// come with brackets.
-    Prefix(fn(&mut Store, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>),
+    /// operand. The [`CoreTypes`] lets the builder reference its native leaf.
+    /// v1 consumes to the end of the current expression; delimited forms come
+    /// with brackets.
+    Prefix(fn(&mut Store, &CoreTypes, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>),
     /// An infix binary operator: build a node from its operator identity and two
     /// already-reduced operands. The `build` callback receives the [`CoreTypes`] so
     /// an abstract operator (`+`) can resolve its concrete machine op from the
@@ -1023,7 +1024,7 @@ impl<'a> Parser<'a> {
             std::ptr::null_mut()
         };
 
-        let value = self.store.alloc_operands(&[cond, then, els]);
+        let value = self.store.alloc_operands(&[cond, then, els, self.types.ops.if_]);
         Ok(self.store.alloc_raw(if_type, value))
     }
 
@@ -1040,7 +1041,8 @@ impl<'a> Parser<'a> {
         if !unsafe { is_bool_result(&types, operand) } {
             return Err(ParseError::NonBoolOperands);
         }
-        Ok(self.store.alloc_raw(not_id, operand.cast()))
+        let value = self.store.alloc_operands(&[operand, self.types.ops.not_]);
+        Ok(self.store.alloc_raw(not_id, value))
     }
 
     /// Parse a loop `while ( cond ) ( body )` (given the resolved `while` identity).
@@ -1067,7 +1069,7 @@ impl<'a> Parser<'a> {
         if unsafe { contains_return(&types, body) } {
             return Err(ParseError::EarlyReturn);
         }
-        let value = self.store.alloc_operands(&[cond, body]);
+        let value = self.store.alloc_operands(&[cond, body, self.types.ops.while_]);
         Ok(self.store.alloc_raw(while_id, value))
     }
 
@@ -1143,7 +1145,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::EarlyReturn);
         }
 
-        let value = self.store.alloc_operands(&[var, start, end, step, body]);
+        let value = self.store.alloc_operands(&[var, start, end, step, body, self.types.ops.for_]);
         Ok(self.store.alloc_raw(for_id, value))
     }
 
@@ -1720,7 +1722,8 @@ impl<'a> Parser<'a> {
                 // operand, then build. (v1 grabs to the end of the expression.)
                 Some(Construct::Prefix(build)) => {
                     let operand = self.parse_expression()?;
-                    let dyad = build(self.store, id, operand)?;
+                    let types = self.types;
+                    let dyad = build(self.store, &types, id, operand)?;
                     tape.push(Cell::Dyad(dyad));
                 }
                 // An opening bracket. If a reduced operand precedes it, this is a

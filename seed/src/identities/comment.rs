@@ -18,22 +18,17 @@ use super::numtype::COMMENT_TAG;
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::run::{RunError, Runtime};
 
 /// Register the `comment` type: its [`COMMENT_TAG`] node — no spelling; the
-/// parser builds comment nodes from `#` — plus unit-valued run and lowering as a
-/// backstop should one ever be forced directly.
+/// parser builds comment nodes from `#` — plus a unit-valued lowering as a
+/// backstop should one ever be forced directly. Prose is *data*, not behaviour:
+/// the interpreter's data path yields unit for a comment node off its graph tag
+/// (see [`crate::run`]), so no run entry exists anywhere.
 pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, COMMENT_TAG);
     let id = cx.store.alloc_raw(cx.type_, record);
-    cx.bcode.insert(id, run);
     cx.lower.insert(id, lower);
     id
-}
-
-/// Run: prose yields unit.
-fn run(_rt: &mut Runtime, _node: DyadPtr) -> Result<i64, RunError> {
-    Ok(0)
 }
 
 /// Lower: prose yields unit.

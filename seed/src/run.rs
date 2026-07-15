@@ -199,8 +199,13 @@ impl<'a> Runtime<'a> {
                     }
                 }
             }
-            // The text substance (a string or comment node) and unit have no
-            // scalar to read; refuse rather than reinterpret their bytes.
+            // Prose is data, invisible to value flow: a comment node forced
+            // directly yields unit, off its graph tag (no run entry exists).
+            if crate::identities::numtype::is_comment_type((*node).ty) {
+                return Ok(0);
+            }
+            // The text substance (a string node) and unit have no scalar to
+            // read; refuse rather than reinterpret their bytes.
             if !crate::identities::numtype::is_scalar_type((*node).ty) {
                 return Err(RunError::BadValue);
             }

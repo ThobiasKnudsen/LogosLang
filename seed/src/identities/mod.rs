@@ -284,20 +284,29 @@ impl Core {
         op_leaves.and_ = and_leaf;
         let (or_, or_leaf) = or::register(&mut cx, &callables);
         op_leaves.or_ = or_leaf;
-        let not_ = not::register(&mut cx);
-        let if_ = if_mod::register(&mut cx);
-        let while_ = while_mod::register(&mut cx);
-        let for_ = for_mod::register(&mut cx);
+        let (not_, not_leaf) = not::register(&mut cx, &callables);
+        op_leaves.not_ = not_leaf;
+        let (if_, if_leaf) = if_mod::register(&mut cx, &callables);
+        op_leaves.if_ = if_leaf;
+        let (while_, while_leaf) = while_mod::register(&mut cx, &callables);
+        op_leaves.while_ = while_leaf;
+        let (for_, for_leaf) = for_mod::register(&mut cx, &callables);
+        op_leaves.for_ = for_leaf;
         fn_mod::register_syntax(&mut cx);
         paren::register(&mut cx);
-        let return_ = return_mod::register(&mut cx);
+        let (return_, return_leaf) = return_mod::register(&mut cx, &callables);
+        op_leaves.return_ = return_leaf;
         // `:=` is a parse-time-only token; the driver dispatches on its Construct.
         declare::register(&mut cx);
         let struct_ = struct_mod::register(&mut cx);
         // Struct instances: the construction statement and the `.` field access.
-        let construct_ = instance::register(&mut cx);
+        let (construct_, construct_leaf) = instance::register(&mut cx, &callables);
+        op_leaves.construct_ = construct_leaf;
         // Pointers: the `@`/`&` tokens and the deref/storeptr identities.
-        let (deref_, storeptr_) = pointer::register(&mut cx);
+        let (deref_, storeptr_, deref_leaf, storeptr_leaf) =
+            pointer::register(&mut cx, &callables);
+        op_leaves.deref_ = deref_leaf;
+        op_leaves.storeptr_ = storeptr_leaf;
         // A multi-expression block is a `scope`-typed sequence node; its run and
         // lowering are registered once the tables exist.
         scope::register_exec(&mut cx, scope_);
@@ -461,7 +470,9 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
         || ty == types.ne
         || ty == types.and_
         || ty == types.or_
+        || ty == types.not_
         || ty == types.assign
+        || ty == types.return_
     {
         return Operand::Concrete(NumType::I32);
     }
@@ -473,11 +484,14 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
     if types.numtypes.iter().any(|&t| !t.is_null() && t == ty) {
         return Operand::Concrete(numtype::of_type_node(ty));
     }
-    // An else-less `if` yields unit, not a value (it has no false branch to produce
-    // one); with both branches it resolves through the fn-typed default below (the
-    // `if` identity is itself fn-typed).
-    if ty == types.if_ && (*((*node).value as *const DyadPtr).add(2)).is_null() {
-        return Operand::NonNumeric;
+    // An else-less `if` yields unit, not a value (it has no false branch to
+    // produce one); with both branches it takes the bare i32 default its
+    // applications always had.
+    if ty == types.if_ {
+        if (*((*node).value as *const DyadPtr).add(2)).is_null() {
+            return Operand::NonNumeric;
+        }
+        return Operand::Concrete(NumType::I32);
     }
     // A `while`/`for` loop and a struct construction are statements yielding
     // unit, never values.
@@ -771,11 +785,11 @@ unsafe fn commit_tail(
         let value = store.alloc_bytes(&bits.to_ne_bytes()[..nt.bytes()]);
         return Ok(store.alloc_raw(output, value));
     }
-    // `return X`: X is the tail (the node's `value` *is* that operand).
+    // `return X`: X is the tail (the node's first slot, `[value, op]`).
     if (*node).ty == types.return_ {
-        let operand: DyadPtr = (*node).value.cast();
-        let committed = commit_tail(store, types, operand, output)?;
-        (*node).value = committed.cast();
+        let ops = (*node).value as *mut DyadPtr;
+        let committed = commit_tail(store, types, *ops, output)?;
+        *ops = committed;
         return Ok(node);
     }
     // `if (c) (then) else (else)`: both branches are tails (value `[cond, then, else]`).
@@ -1115,8 +1129,9 @@ mod tests {
             let iops = (*input).value as *const DyadPtr;
             let x_field = *iops.add(1); // [scope, x, null]
             assert_eq!((*x_field).ty, core.i32_);
-            // The body `return x` resolved `x` to that parameter field.
-            let return_operand = (*body).value as DyadPtr;
+            // The body `return x` resolved `x` to that parameter field
+            // (`return` is `[value, op]`; the operand is its first slot).
+            let return_operand = *((*body).value as *const DyadPtr);
             assert_eq!(return_operand, x_field);
         }
     }

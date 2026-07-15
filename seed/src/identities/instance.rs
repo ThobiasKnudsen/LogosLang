@@ -20,6 +20,7 @@
 
 use cranelift_codegen::ir::Value;
 
+use super::callable::{self, Callables};
 use super::numtype::{self, NumType};
 use super::{commit_if_literal, meta, numtype_of, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
@@ -30,19 +31,20 @@ use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
 /// Register the instance machinery: the `construct` identity (no spelling; the
-/// parser builds these from a struct-typed callee) with its run and lowering,
-/// and the `.` field-access token (parse-only; access nodes are plain data).
-pub(super) fn register(cx: &mut Cx) -> DyadPtr {
+/// parser builds these from a struct-typed callee) with its native leaf and
+/// lowering, and the `.` field-access token (parse-only; access nodes are plain
+/// data). Returns `(identity, leaf)`.
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let record = meta::operand_record(
         cx,
         meta::LIST_TAG,
         0.0,
         crate::parse::Assoc::Left,
-        &["instance"],
+        &["instance", "op"],
     );
-    let construct = cx.store.alloc_raw(cx.fn_type, record);
-    cx.bcode.insert(construct, run);
+    let construct = cx.store.alloc_raw(cx.type_, record);
     cx.lower.insert(construct, lower);
+    let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
 
     // Escaped, because `.` is a regex metacharacter (as `\(` and `\)` are).
     let record = meta::record(cx.store, meta::TOKEN_TAG);
@@ -50,7 +52,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     cx.trie.insert(r"\.", IdContext::new(dot, cx.root_scope));
     cx.metas.insert(dot, Construct::Dot);
 
-    construct
+    (construct, leaf)
 }
 
 /// The layout a struct type derives from its field declarations (DESIGN ›a type
@@ -109,10 +111,11 @@ pub(crate) unsafe fn build_ctor(
     if args.len() != fields.len() {
         return Err(ParseError::CtorArity);
     }
-    let mut ops = Vec::with_capacity(args.len() + 2);
+    let mut ops = Vec::with_capacity(args.len() + 3);
     let blob = store.alloc_bytes(&vec![0u8; size.max(1)]);
     let instance = store.alloc_raw(struct_type, blob);
     ops.push(instance);
+    ops.push(types.ops.construct_);
     for (&arg, &(field, nt, _)) in args.iter().zip(&fields) {
         let fty = (*field).ty;
         let field_ptr = numtype::is_pointer_type(fty);
@@ -150,8 +153,9 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let instance = *ops;
         let blob = (*instance).value;
         let (fields, _) = layout((*instance).ty).map_err(|_| RunError::BadValue)?;
+        // The arguments follow the two fixed head slots (instance, op).
         for (i, &(field, _, offset)) in fields.iter().enumerate() {
-            let bits = rt.run(*ops.add(i + 1))?;
+            let bits = rt.run(*ops.add(i + 2))?;
             numtype::write_scalar((*field).ty, blob.add(offset), bits);
         }
         Ok(0)
@@ -166,8 +170,9 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         let instance = *ops;
         let blob = (*instance).value;
         let (fields, _) = layout((*instance).ty).map_err(|_| CompileError::BadValue)?;
+        // The arguments follow the two fixed head slots (instance, op).
         for (i, &(_, nt, offset)) in fields.iter().enumerate() {
-            let v = lw.lower(*ops.add(i + 1))?;
+            let v = lw.lower(*ops.add(i + 2))?;
             lw.store(nt.cranelift_type(), blob.add(offset), v);
         }
         Ok(lw.const_i32(0))

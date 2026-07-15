@@ -26,6 +26,7 @@
 //! Value layout (16 bytes, native-endian): `[entry: usize][convention: dyad@]`.
 
 use crate::dyad::DyadPtr;
+use crate::run::RunFn;
 use crate::store::Store;
 
 use super::{meta, string, Cx};
@@ -87,6 +88,17 @@ pub(crate) fn mint(
     store.alloc_raw(callable, value)
 }
 
+/// Mint a seed-native leaf from its Rust shim — the fn-pointer-to-address cast
+/// done once, honestly, at the one place addresses enter the graph.
+pub(crate) fn mint_native(
+    store: &mut Store,
+    callable: DyadPtr,
+    entry: RunFn,
+    convention: DyadPtr,
+) -> DyadPtr {
+    mint(store, callable, entry as usize, convention)
+}
+
 /// Whether `node` is a callable leaf, read from the graph alone: its type's
 /// record kind is [`meta::CALLABLE_TAG`].
 ///
@@ -126,7 +138,7 @@ mod tests {
         let core = Core::build(&mut store, &mut trie);
 
         fn probe() {}
-        let entry = probe as usize;
+        let entry = probe as fn() as usize;
         let leaf = mint(&mut store, core.callable_, entry, core.conv_seed_native);
         // SAFETY: `leaf` was just minted; the core handles are valid identities.
         unsafe {

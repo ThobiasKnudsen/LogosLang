@@ -16,6 +16,7 @@
 
 use cranelift_codegen::ir::Value;
 
+use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
@@ -30,21 +31,22 @@ const IF_THEN: usize = 1;
 /// The index of the else-branch.
 const IF_ELSE: usize = 2;
 
-/// Register `if` (the conditional keyword, its run native, and its lowering) and the
-/// `else` token the parser consumes between the branches. Returns the `if` identity.
-pub(super) fn register(cx: &mut Cx) -> DyadPtr {
+/// Register `if` (the conditional keyword, its native leaf, and its lowering)
+/// and the `else` token the parser consumes between the branches. Returns
+/// `(identity, leaf)`.
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
         0.0,
         Assoc::Left,
-        &["condition", "then", "else"],
+        &["condition", "then", "else", "op"],
     );
-    let if_ = cx.store.alloc_raw(cx.fn_type, record);
+    let if_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("if", IdContext::new(if_, cx.root_scope));
     cx.metas.insert(if_, Construct::If);
-    cx.bcode.insert(if_, run);
     cx.lower.insert(if_, lower);
+    let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
 
     // `else` is a parse-only token between the branches, not a function.
     let record = meta::record(cx.store, meta::TOKEN_TAG);
@@ -52,7 +54,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     cx.trie.insert("else", IdContext::new(else_, cx.root_scope));
     cx.metas.insert(else_, Construct::Else);
 
-    if_
+    (if_, leaf)
 }
 
 /// The `(cond, then, else)` operands of an `if` node (the else null when absent).

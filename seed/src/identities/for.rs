@@ -19,6 +19,7 @@
 
 use cranelift_codegen::ir::Value;
 
+use super::callable::{self, Callables};
 use super::numtype::{self, ArithOp, CmpOp};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
@@ -31,19 +32,19 @@ use crate::run::{RunError, Runtime};
 /// structural `in` and `..` tokens the parser consumes. `..` registers escaped
 /// (`.` is a regex metacharacter); the trie's longest-match keeps it distinct
 /// from the field-access `.` and from a rational's fractional part.
-pub(super) fn register(cx: &mut Cx) -> DyadPtr {
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
         0.0,
         Assoc::Left,
-        &["variable", "start", "end", "step", "body"],
+        &["variable", "start", "end", "step", "body", "op"],
     );
-    let for_ = cx.store.alloc_raw(cx.fn_type, record);
+    let for_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("for", IdContext::new(for_, cx.root_scope));
     cx.metas.insert(for_, Construct::For);
-    cx.bcode.insert(for_, run);
     cx.lower.insert(for_, lower);
+    let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
 
     let record = meta::record(cx.store, meta::TOKEN_TAG);
     let in_ = cx.store.alloc_raw(cx.type_, record);
@@ -55,7 +56,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     cx.trie.insert(r"\.\.", IdContext::new(range, cx.root_scope));
     cx.metas.insert(range, Construct::DotDot);
 
-    for_
+    (for_, leaf)
 }
 
 /// The `(var, start, end, step, body)` operands of a `for` node (step null when

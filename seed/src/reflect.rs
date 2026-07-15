@@ -294,15 +294,15 @@ mod tests {
                 (core.and_, meta::TUPLE_TAG, 3),
                 (core.or_, meta::TUPLE_TAG, 3),
                 (core.assign, meta::TUPLE_TAG, 3),
-                (core.if_, meta::TUPLE_TAG, 3),
-                (core.while_, meta::TUPLE_TAG, 2),
-                (core.for_, meta::TUPLE_TAG, 5),
+                (core.if_, meta::TUPLE_TAG, 4),
+                (core.while_, meta::TUPLE_TAG, 3),
+                (core.for_, meta::TUPLE_TAG, 6),
                 (core.convert, meta::TUPLE_TAG, 4),
-                (core.deref_, meta::TUPLE_TAG, 3),
-                (core.storeptr_, meta::TUPLE_TAG, 4),
-                (core.return_, meta::PUNNED_TAG, 1),
-                (core.not_, meta::PUNNED_TAG, 1),
-                (core.construct_, meta::LIST_TAG, 1),
+                (core.deref_, meta::TUPLE_TAG, 4),
+                (core.storeptr_, meta::TUPLE_TAG, 5),
+                (core.return_, meta::TUPLE_TAG, 2),
+                (core.not_, meta::TUPLE_TAG, 2),
+                (core.construct_, meta::LIST_TAG, 2),
             ] {
                 assert_eq!(meta::kind_of(id), Some(kind));
                 assert_eq!(meta::arity_of(id), arity);
@@ -342,7 +342,7 @@ mod tests {
 
             let roles: Vec<&[u8]> =
                 (0..meta::arity_of(core.for_)).map(|i| text_of(meta::role_of(core.for_, i))).collect();
-            assert_eq!(roles, [&b"variable"[..], b"start", b"end", b"step", b"body"]);
+            assert_eq!(roles, [&b"variable"[..], b"start", b"end", b"step", b"body", b"op"]);
             assert_eq!(text_of(meta::role_of(core.return_, 0)), b"value");
             assert_eq!(text_of(meta::role_of(core.fn_type, 1)), b"output");
         }
@@ -413,11 +413,11 @@ mod tests {
             assert_eq!(text_of(slots[0].role), b"condition");
             assert!(!slots[2].node.is_null());
 
-            // The for: [variable, start, end, step, body], the step absent.
+            // The for: [variable, start, end, step, body, op], the step absent.
             let Shape::Tuple { slots } = describe(&types, roots[5]) else {
                 panic!("for should be a tuple");
             };
-            assert_eq!(slots.len(), 5);
+            assert_eq!(slots.len(), 6);
             assert_eq!(text_of(slots[3].role), b"step");
             assert!(slots[3].node.is_null());
             assert_eq!(describe(&types, slots[0].node), Shape::Scalar(NumType::I32));

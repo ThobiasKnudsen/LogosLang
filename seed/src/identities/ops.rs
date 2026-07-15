@@ -48,6 +48,24 @@ pub struct OpLeaves {
     /// `convert`'s native — a single leaf; its from/to pair rides the node as
     /// graph data. Minted by [`super::convert::register`].
     pub(crate) convert_: DyadPtr,
+    /// The statement natives, one leaf each, minted by their identities'
+    /// registrations: control flow branches on graph structure, so no
+    /// per-machine-type variants exist.
+    pub(crate) if_: DyadPtr,
+    /// `while`'s native.
+    pub(crate) while_: DyadPtr,
+    /// `for`'s native.
+    pub(crate) for_: DyadPtr,
+    /// `return`'s native.
+    pub(crate) return_: DyadPtr,
+    /// `not`'s native.
+    pub(crate) not_: DyadPtr,
+    /// `construct`'s native (struct construction).
+    pub(crate) construct_: DyadPtr,
+    /// `deref`'s native (postfix `@`).
+    pub(crate) deref_: DyadPtr,
+    /// `storeptr`'s native (`=` through a deref).
+    pub(crate) storeptr_: DyadPtr,
 }
 
 impl OpLeaves {
@@ -198,6 +216,14 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
         and_: std::ptr::null_mut(),
         or_: std::ptr::null_mut(),
         convert_: std::ptr::null_mut(),
+        if_: std::ptr::null_mut(),
+        while_: std::ptr::null_mut(),
+        for_: std::ptr::null_mut(),
+        return_: std::ptr::null_mut(),
+        not_: std::ptr::null_mut(),
+        construct_: std::ptr::null_mut(),
+        deref_: std::ptr::null_mut(),
+        storeptr_: std::ptr::null_mut(),
     }
 }
 

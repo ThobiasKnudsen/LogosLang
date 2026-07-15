@@ -13,6 +13,7 @@
 
 use cranelift_codegen::ir::Value;
 
+use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
@@ -20,16 +21,17 @@ use crate::id_context::IdContext;
 use crate::parse::{Assoc, Construct};
 use crate::run::{RunError, Runtime};
 
-/// Register `while`: spelling, its `While` construct, run native, and lowering.
-pub(super) fn register(cx: &mut Cx) -> DyadPtr {
+/// Register `while`: spelling, its `While` construct, native leaf, and
+/// lowering. Returns `(identity, leaf)`.
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let record =
-        meta::operand_record(cx, meta::TUPLE_TAG, 0.0, Assoc::Left, &["condition", "body"]);
-    let while_ = cx.store.alloc_raw(cx.fn_type, record);
+        meta::operand_record(cx, meta::TUPLE_TAG, 0.0, Assoc::Left, &["condition", "body", "op"]);
+    let while_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("while", IdContext::new(while_, cx.root_scope));
     cx.metas.insert(while_, Construct::While);
-    cx.bcode.insert(while_, run);
     cx.lower.insert(while_, lower);
-    while_
+    let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
+    (while_, leaf)
 }
 
 /// The `(cond, body)` operands of a `while` node.

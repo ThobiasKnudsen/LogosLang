@@ -1,9 +1,11 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `return`: an optional early exit from the enclosing function. It is a function
-//! whose single operand is its `value`; run and compile evaluate that operand and
-//! yield it. Surface: prefix, `return <expr>`.
+//! `return`: an optional early exit from the enclosing function. Its node is
+//! `{ty: return, value: [value, op]}` — the punned single-operand form widened
+//! so the node can reference its native leaf like every other runnable (issue
+//! #44) — and run/compile evaluate the operand and yield it. Surface: prefix,
+//! `return <expr>`.
 //!
 //! `return` is not needed to produce a value: a scope is valued by what it
 //! evaluates to (its trailing expression), so `return X` and `X` coincide in tail
@@ -13,46 +15,56 @@
 
 use cranelift_codegen::ir::Value;
 
+use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, Construct, ParseError};
+use crate::parse::{Assoc, Construct, CoreTypes, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
-/// Register `return`: spelling, prefix constructor, run bcode, and lowering. In v1
-/// `return` is optional (a body is valued by what it evaluates to); it is kept as
-/// an explicit yield and becomes early-return once control flow lands.
-pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let record = meta::operand_record(cx, meta::PUNNED_TAG, 0.0, Assoc::Left, &["value"]);
-    let id = cx.store.alloc_raw(cx.fn_type, record);
+/// Register `return`: spelling, prefix constructor, native leaf, and lowering.
+/// In v1 `return` is optional (a body is valued by what it evaluates to); it is
+/// kept as an explicit yield and becomes early-return once control flow lands.
+/// Returns `(identity, leaf)`.
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
+    let record = meta::operand_record(cx, meta::TUPLE_TAG, 0.0, Assoc::Left, &["value", "op"]);
+    let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("return", IdContext::new(id, cx.root_scope));
     cx.metas.insert(id, Construct::Prefix(build));
-    cx.bcode.insert(id, run);
     cx.lower.insert(id, lower);
-    id
+    let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
+    (id, leaf)
 }
 
-/// Build `return <operand>` as `{ty: return, value: operand}`.
-fn build(store: &mut Store, return_id: DyadPtr, operand: DyadPtr) -> Result<DyadPtr, ParseError> {
-    Ok(store.alloc_raw(return_id, operand.cast()))
+/// Build `return <operand>` as `{ty: return, value: [operand, op]}`.
+fn build(
+    store: &mut Store,
+    types: &CoreTypes,
+    return_id: DyadPtr,
+    operand: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
+    let value = store.alloc_operands(&[operand, types.ops.return_]);
+    Ok(store.alloc_raw(return_id, value))
 }
 
-/// Run: evaluate the single operand (the node's `value`) and yield it.
+/// The single operand of a `return` node (its first slot).
+///
+/// # Safety
+/// `node` must be a `return` node `[value, op]` as [`build`] lays it out.
+unsafe fn operand(node: DyadPtr) -> DyadPtr {
+    *((*node).value as *const DyadPtr)
+}
+
+/// Run: evaluate the single operand and yield it.
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a valid return dyad; its `value` is its operand node.
-    unsafe {
-        let operand = (*node).value.cast::<crate::dyad::Dyad>();
-        rt.run(operand)
-    }
+    // SAFETY: `node` is a valid return node; its first slot is its operand.
+    unsafe { rt.run(operand(node)) }
 }
 
 /// Lower: lower the single operand and yield it.
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a valid return dyad; its `value` is its operand node.
-    unsafe {
-        let operand = (*node).value.cast::<crate::dyad::Dyad>();
-        lw.lower(operand)
-    }
+    // SAFETY: `node` is a valid return node; its first slot is its operand.
+    unsafe { lw.lower(operand(node)) }
 }

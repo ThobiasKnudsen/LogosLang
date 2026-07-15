@@ -29,6 +29,7 @@
 
 use cranelift_codegen::ir::Value;
 
+use super::callable::{self, Callables};
 use super::numtype::{self, NumType};
 use super::{commit_if_literal, meta, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
@@ -39,10 +40,11 @@ use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
 /// Register the pointer machinery: the `@` and `&` tokens (driver-dispatched),
-/// and the `deref` and `storeptr` identities with their run and lowering
-/// natives — those two have no spelling; the parser builds deref nodes from
-/// postfix `@` and storeptr nodes from `=` over a deref.
-pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
+/// and the `deref` and `storeptr` identities with their native leaves and
+/// lowerings — those two have no spelling; the parser builds deref nodes from
+/// postfix `@` and storeptr nodes from `=` over a deref. Returns the two
+/// identities and their leaves.
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::record(cx.store, meta::TOKEN_TAG);
     let at = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("@", IdContext::new(at, cx.root_scope));
@@ -58,24 +60,25 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
         meta::TUPLE_TAG,
         0.0,
         Assoc::Left,
-        &["pointer", "pointee", "offset"],
+        &["pointer", "pointee", "offset", "op"],
     );
-    let deref = cx.store.alloc_raw(cx.fn_type, record);
-    cx.bcode.insert(deref, run_deref);
+    let deref = cx.store.alloc_raw(cx.type_, record);
     cx.lower.insert(deref, lower_deref);
+    let deref_leaf = callable::mint_native(cx.store, cs.callable, run_deref, cs.seed_native);
 
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
         0.0,
         Assoc::Left,
-        &["pointer", "value", "pointee", "offset"],
+        &["pointer", "value", "pointee", "offset", "op"],
     );
-    let storeptr = cx.store.alloc_raw(cx.fn_type, record);
-    cx.bcode.insert(storeptr, run_storeptr);
+    let storeptr = cx.store.alloc_raw(cx.type_, record);
     cx.lower.insert(storeptr, lower_storeptr);
+    let storeptr_leaf =
+        callable::mint_native(cx.store, cs.callable, run_storeptr, cs.seed_native);
 
-    (deref, storeptr)
+    (deref, storeptr, deref_leaf, storeptr_leaf)
 }
 
 /// Build a pointer type node `@pointee`: `{ty: type, value -> record}`, the
@@ -98,7 +101,7 @@ pub(crate) fn build_deref(
 ) -> DyadPtr {
     let off_bytes = store.alloc_bytes(&(offset as u64).to_ne_bytes());
     let off_node = store.alloc_raw(types.numtypes[NumType::U64 as usize], off_bytes);
-    let value = store.alloc_operands(&[ptr_expr, pointee, off_node]);
+    let value = store.alloc_operands(&[ptr_expr, pointee, off_node, types.ops.deref_]);
     store.alloc_raw(types.deref_, value)
 }
 
@@ -140,7 +143,7 @@ pub(crate) unsafe fn build_storeptr(
     } else {
         rhs
     };
-    let value = store.alloc_operands(&[ptr_expr, rhs, pointee, off_node]);
+    let value = store.alloc_operands(&[ptr_expr, rhs, pointee, off_node, types.ops.storeptr_]);
     Ok(store.alloc_raw(types.storeptr_, value))
 }
 

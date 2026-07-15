@@ -30,7 +30,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     cx.trie.insert("or", IdContext::new(id, cx.root_scope));
     cx.metas.insert(id, Construct::Infix { build });
     cx.lower.insert(id, lower);
-    let leaf = callable::mint(cx.store, cs.callable, run as usize, cs.seed_native);
+    let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     (id, leaf)
 }
 
