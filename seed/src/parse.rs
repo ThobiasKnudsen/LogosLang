@@ -343,6 +343,8 @@ pub enum Assoc {
 pub struct CoreTypes {
     /// `scope`: the type of each scope the parser opens.
     pub scope: DyadPtr,
+    /// `array` (of `dyad@`): a sequence's expression list rides behind one.
+    pub array_: DyadPtr,
     /// `struct`: the type of a parameter-list / field-list node.
     pub struct_: DyadPtr,
     /// `fn`: the type of a function; a call whose callee is `fn`-typed yields a
@@ -643,30 +645,23 @@ pub(crate) unsafe fn is_bool_result(types: &CoreTypes, node: DyadPtr) -> bool {
 }
 
 /// The trailing *value* expression of a sequence node
-/// `{ty: scope, value: [expr0 …, null]}` — trailing comment nodes are prose, not
-/// the tail — or `None` for a scope with no expression list (a
+/// `{ty: scope, value: [exprs, op]}` — trailing comment nodes are prose, not
+/// the tail — or `None` for a scope with no expression array (a
 /// struct/parameter-list scope).
 ///
 /// # Safety
-/// `node` must be a valid dyad from the store; a non-null value must be a
-/// null-terminated `dyad@` array as built by [`Parser::parse_sequence`].
+/// `node` must be a valid dyad from the store; a non-null value must be the
+/// `[exprs, op]` pair as built by [`Parser::parse_sequence`].
 pub(crate) unsafe fn last_sequence_expr(node: DyadPtr) -> Option<DyadPtr> {
-    let p = (*node).value as *const DyadPtr;
-    if p.is_null() {
+    if (*node).value.is_null() {
         return None;
     }
-    let mut i = 0;
-    while !(*p.add(i)).is_null() {
-        i += 1;
-    }
-    while i > 0 {
-        let cand = *p.add(i - 1);
-        if !crate::identities::numtype::is_comment_type((*cand).ty) {
-            return Some(cand);
-        }
-        i -= 1;
-    }
-    None
+    let arr = *((*node).value as *const DyadPtr);
+    crate::identities::array::items(arr)
+        .iter()
+        .rev()
+        .find(|&&e| !crate::identities::numtype::is_comment_type((*e).ty))
+        .copied()
 }
 
 /// Whether `node` is or contains a `return` in the positions v1 recognizes as
@@ -688,17 +683,13 @@ unsafe fn contains_return(types: &CoreTypes, node: DyadPtr) -> bool {
         return contains_return(types, then) || (!els.is_null() && contains_return(types, els));
     }
     if ty == types.scope {
-        let p = (*node).value as *const DyadPtr;
-        if p.is_null() {
+        if (*node).value.is_null() {
             return false;
         }
-        let mut i = 0;
-        while !(*p.add(i)).is_null() {
-            if contains_return(types, *p.add(i)) {
-                return true;
-            }
-            i += 1;
-        }
+        let arr = *((*node).value as *const DyadPtr);
+        return crate::identities::array::items(arr)
+            .iter()
+            .any(|&e| contains_return(types, e));
     }
     false
 }
@@ -1506,10 +1497,12 @@ impl<'a> Parser<'a> {
                         return Err(ParseError::EarlyReturn);
                     }
                 }
-                let mut ops = Vec::with_capacity(exprs.len() + 1);
-                ops.extend_from_slice(&exprs);
-                ops.push(std::ptr::null_mut());
-                let value = self.store.alloc_operands(&ops);
+                // A scope IS an array: the expression list lives behind one
+                // indirection (its own array node), never inline in the scope's
+                // value, which is the `[exprs, op]` pair.
+                let arr =
+                    crate::identities::array::build(self.store, self.types.array_, &exprs);
+                let value = self.store.alloc_operands(&[arr, self.types.ops.scope_]);
                 // SAFETY: `scope` was just allocated and is unaliased.
                 unsafe {
                     (*scope).value = value;

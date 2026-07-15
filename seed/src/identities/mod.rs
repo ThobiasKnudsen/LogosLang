@@ -63,6 +63,7 @@ mod while_mod;
 #[path = "for.rs"]
 mod for_mod;
 mod and;
+pub(crate) mod array;
 mod assign;
 pub(crate) mod callable;
 mod comment;
@@ -168,6 +169,9 @@ pub struct Core {
     pub deref_: DyadPtr,
     /// `storeptr`, the store-through node `=` builds over a deref lhs.
     pub storeptr_: DyadPtr,
+    /// `array` (of `dyad@`), the seed's first array form: a sequence's
+    /// expression list lives behind one of these, never inline in the node.
+    pub array_: DyadPtr,
     /// `callable`, the type whose values are the complete jump information
     /// (`[entry: @exec, convention]`); every exec leaf's type (issue #44).
     pub callable_: DyadPtr,
@@ -247,16 +251,20 @@ impl Core {
         // leaves (`and`, `or`, `convert`, …) are patched in by their files'
         // registrations below.
         let mut op_leaves = ops::register(&mut cx, &callables);
+        // The array-of-dyad type: a sequence's expression list rides behind one.
+        let array_ = array::register(&mut cx);
         // The foundations allocated before the build context get their records
         // now: `type`'s values are types carrying records like its own (the
-        // fixed point), a `scope`'s value is the null-terminated expression list.
+        // fixed point); a `scope`'s value is `[exprs, op]` — its expression
+        // array and its sequence native (a scope IS an array; the list is
+        // never inline in the node).
         let record = meta::record(cx.store, meta::TYPEREC_TAG);
         // SAFETY: `type_`/`scope_` were allocated above with null value slots
         // nothing has read yet.
         unsafe {
             (*type_).value = record;
         }
-        let record = meta::operand_record(&mut cx, meta::LIST_TAG, 0.0, Assoc::Left, &[]);
+        let record = meta::operand_record(&mut cx, meta::TUPLE_TAG, 0.0, Assoc::Left, &["exprs", "op"]);
         unsafe {
             (*scope_).value = record;
         }
@@ -307,14 +315,15 @@ impl Core {
             pointer::register(&mut cx, &callables);
         op_leaves.deref_ = deref_leaf;
         op_leaves.storeptr_ = storeptr_leaf;
-        // A multi-expression block is a `scope`-typed sequence node; its run and
-        // lowering are registered once the tables exist.
-        scope::register_exec(&mut cx, scope_);
+        // A multi-expression block is a `scope`-typed sequence node; its native
+        // leaf and lowering are registered once the callable machinery exists.
+        op_leaves.scope_ = scope::register_exec(&mut cx, scope_, &callables);
 
         let Cx { metas, bcode, lower, .. } = cx;
         Core {
             type_,
             scope_,
+            array_,
             root_scope,
             fn_type,
             i32_,
@@ -364,6 +373,7 @@ impl Core {
     pub fn types(&self) -> CoreTypes {
         CoreTypes {
             scope: self.scope_,
+            array_: self.array_,
             struct_: self.struct_,
             fn_type: self.fn_type,
             i32_: self.i32_,
@@ -814,19 +824,19 @@ unsafe fn commit_tail(
         return Err(ParseError::StatementAsValue);
     }
     // A sequence: its trailing non-comment expression is the tail (trailing prose
-    // is invisible to value flow).
+    // is invisible to value flow). The expressions live behind the array node in
+    // the sequence's first slot; the tail commits in place there.
     if (*node).ty == types.scope {
-        let ops = (*node).value as *mut DyadPtr;
-        if !ops.is_null() {
-            let mut i = 0;
-            while !(*ops.add(i)).is_null() {
-                i += 1;
-            }
+        if !(*node).value.is_null() {
+            let arr = *((*node).value as *const DyadPtr);
+            let (len, data) = array::parts(arr);
+            let data = data as *mut DyadPtr;
+            let mut i = len;
             while i > 0 {
-                let cand = *ops.add(i - 1);
+                let cand = *data.add(i - 1);
                 if !numtype::is_comment_type((*cand).ty) {
                     let committed = commit_tail(store, types, cand, output)?;
-                    *ops.add(i - 1) = committed;
+                    *data.add(i - 1) = committed;
                     break;
                 }
                 i -= 1;
@@ -2758,14 +2768,19 @@ mod tests {
             );
             p.parse_expression().unwrap()
         };
-        // The body is the sequence [comment, 42, comment]; the tail for typing
-        // and value is the 42, committed through the trailing prose.
+        // The body is the sequence [comment, 42, comment] — behind its array —
+        // and the tail for typing and value is the 42, committed through the
+        // trailing prose.
         unsafe {
             let body = *((*func).value as *const DyadPtr).add(FN_BODY);
             assert_eq!((*body).ty, core.scope_);
-            let ops = (*body).value as *const DyadPtr;
-            let (c1, mid, c2) = (*ops, *ops.add(1), *ops.add(2));
-            assert!((*ops.add(3)).is_null());
+            let arr = *((*body).value as *const DyadPtr);
+            assert_eq!((*arr).ty, core.array_);
+            let exprs = crate::identities::array::items(arr);
+            let [c1, mid, c2] = exprs else {
+                panic!("the sequence should hold exactly three expressions");
+            };
+            let (c1, mid, c2) = (*c1, *mid, *c2);
             assert_eq!((*c1).ty, core.comment_);
             assert_eq!(crate::identities::string::text((*c1).value.cast()), b"the answer");
             assert_eq!((*mid).ty, core.i32_);

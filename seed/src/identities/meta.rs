@@ -73,6 +73,11 @@ pub(crate) const CALLABLE_TAG: u8 = 20;
 /// renders per target; decisive at the FFI boundary). A convention value's slot
 /// holds its name string node.
 pub(crate) const CONVENTION_TAG: u8 = 21;
+/// Kind: values are arrays of `dyad@` — `[len: u64][data: @dyad]`, 16 bytes,
+/// the list itself behind one indirection (settled: a growable thing never
+/// lives inline in a node's value). The seed's first array form; element-typed
+/// arrays and surface syntax arrive with the `array` type proper.
+pub(crate) const ARRAY_TAG: u8 = 22;
 
 /// Byte offset of the associativity in a record.
 const ASSOC_OFF: usize = 1;

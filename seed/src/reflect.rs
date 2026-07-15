@@ -85,6 +85,12 @@ pub enum Shape {
         /// The operand itself.
         operand: DyadPtr,
     },
+    /// An array of `dyad@`: the elements live behind the node's `[len, data]`
+    /// value (a sequence's expression list rides in one of these).
+    Array {
+        /// The elements, in order.
+        items: Vec<DyadPtr>,
+    },
     /// A callable leaf: the complete jump information — an opaque `@exec` entry
     /// (machine code is the reflection boundary; one invokes it, never reads
     /// into it) under a declared convention.
@@ -163,6 +169,9 @@ pub unsafe fn describe(types: &CoreTypes, node: DyadPtr) -> Shape {
         STRING_TAG => Shape::Text,
         COMMENT_TAG => Shape::Prose { text: (*node).value.cast() },
         ADDR_TAG => Shape::Pointer { pointee: numtype::pointee_of(ty) },
+        meta::ARRAY_TAG => Shape::Array {
+            items: crate::identities::array::items(node).to_vec(),
+        },
         meta::CALLABLE_TAG => Shape::Callable {
             convention: crate::identities::callable::convention_of(node),
         },
@@ -315,7 +324,8 @@ mod tests {
             assert_eq!(meta::kind_of(core.comment_), Some(COMMENT_TAG));
             assert_eq!(meta::kind_of(core.rational), Some(meta::FRACTION_TAG));
             assert_eq!(meta::kind_of(core.type_), Some(meta::TYPEREC_TAG));
-            assert_eq!(meta::kind_of(core.scope_), Some(meta::LIST_TAG));
+            assert_eq!(meta::kind_of(core.scope_), Some(meta::TUPLE_TAG));
+            assert_eq!(meta::kind_of(core.array_), Some(meta::ARRAY_TAG));
             assert_eq!(meta::kind_of(core.struct_), Some(meta::LIST_TAG));
             assert_eq!(meta::kind_of(core.fn_type), Some(meta::TUPLE_TAG));
             assert_eq!(meta::arity_of(core.fn_type), 4);
@@ -422,12 +432,16 @@ mod tests {
             assert!(slots[3].node.is_null());
             assert_eq!(describe(&types, slots[0].node), Shape::Scalar(NumType::I32));
 
-            // The sequence: a headless list whose middle entry is prose.
-            let Shape::List { head, tail } = describe(&types, roots[6]) else {
-                panic!("a sequence should be a list");
+            // The sequence: `[exprs, op]` — its expression list rides behind
+            // the array node in the first slot; the middle element is prose.
+            let Shape::Tuple { slots } = describe(&types, roots[6]) else {
+                panic!("a sequence should be a tuple");
             };
-            assert!(head.is_empty());
-            let Shape::Prose { text } = describe(&types, tail[1]) else {
+            assert_eq!(text_of(slots[0].role), b"exprs");
+            let Shape::Array { items } = describe(&types, slots[0].node) else {
+                panic!("the exprs slot should be an array");
+            };
+            let Shape::Prose { text } = describe(&types, items[1]) else {
                 panic!("the comment should be prose");
             };
             assert_eq!(text_of(text), b"prose");
@@ -494,6 +508,7 @@ mod tests {
                 Shape::Tuple { .. } => "tuple",
                 Shape::List { .. } => "list",
                 Shape::Punned { .. } => "punned",
+                Shape::Array { .. } => "array",
                 Shape::Callable { .. } => "callable",
                 Shape::Convention { .. } => "convention",
                 Shape::Call { .. } => "call",

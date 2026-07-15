@@ -10,17 +10,20 @@
 //! A scope node is both the parser's membership marker — the
 //! [`ScopeStack`](crate::parse::ScopeStack) keys on its address, so the root
 //! scope, each struct/parameter-list scope, and each block are typed `scope` —
-//! and, for a multi-expression block, the *sequence node* itself: its value is
-//! the null-terminated expression list `[expr0 … exprN, null]`, run in order and
-//! yielding the trailing expression (DESIGN ›A scope's value is what it evaluates
-//! to‹). A struct/parameter scope keeps an undefined value. The grant-bearing
-//! `gate` role (visibility and access; DESIGN ›Read and write are one mechanism‹)
-//! is deferred. `scope` is created internally by the parser, never written in
-//! source, so it needs no spelling.
+//! and, for a multi-expression block, the *sequence node* itself. A scope *is*
+//! an array (settled, July 2026): its value is `[exprs, op]` — an
+//! [`array`](super::array) node holding the expression list behind one
+//! indirection (never inline in the node), and the sequence native's leaf in
+//! the op slot — run in order and yielding the trailing expression (DESIGN ›A
+//! scope's value is what it evaluates to‹). A struct/parameter scope keeps an
+//! undefined value. The grant-bearing `gate` role (visibility and access;
+//! DESIGN ›Read and write are one mechanism‹) is deferred. `scope` is created
+//! internally by the parser, never written in source, so it needs no spelling.
 
 use cranelift_codegen::ir::Value;
 
-use super::Cx;
+use super::callable::{self, Callables};
+use super::{array, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::run::{RunError, Runtime};
@@ -32,33 +35,40 @@ pub(super) fn register(store: &mut Store, type_: DyadPtr) -> DyadPtr {
     store.alloc_raw(type_, std::ptr::null_mut())
 }
 
-/// Register `scope`'s executable behaviour: a sequence node runs its expressions
-/// in order and yields the trailing one. Done after the build context exists.
-pub(super) fn register_exec(cx: &mut Cx, scope_: DyadPtr) {
-    cx.bcode.insert(scope_, run);
+/// Register `scope`'s executable behaviour: the sequence native as a callable
+/// leaf (a sequence node references it from its op slot) and the lowering.
+/// Done after the build context exists. Returns the leaf.
+pub(super) fn register_exec(cx: &mut Cx, scope_: DyadPtr, cs: &Callables) -> DyadPtr {
     cx.lower.insert(scope_, lower);
+    callable::mint_native(cx.store, cs.callable, run, cs.seed_native)
+}
+
+/// The expression array of a sequence node (`value` is `[exprs, op]`).
+///
+/// # Safety
+/// `node` must be a sequence node as `Parser::parse_sequence` builds it, with a
+/// non-null value; the store must outlive the returned slice.
+unsafe fn exprs<'a>(node: DyadPtr) -> &'a [DyadPtr] {
+    let arr = *((*node).value as *const DyadPtr);
+    array::items(arr)
 }
 
 /// Run: each expression in order, for effect; the trailing one's value is the
-/// sequence's. A scope with no expression list is not runnable data.
+/// sequence's. A scope with no expression array is not runnable data.
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a sequence node whose value is a null-terminated list of
-    // valid dyads (as `Parser::parse_sequence` builds; it never builds it empty).
+    // SAFETY: `node` is a sequence node whose first slot is its expression
+    // array (as `Parser::parse_sequence` builds; it never builds it empty).
     unsafe {
-        let p = (*node).value as *const DyadPtr;
-        if p.is_null() {
+        if (*node).value.is_null() {
             return Err(RunError::BadValue);
         }
         let mut last = 0i64;
-        let mut i = 0;
-        while !(*p.add(i)).is_null() {
-            let expr = *p.add(i);
+        for &expr in exprs(node) {
             // A comment node is prose — reflectable structure invisible to value
             // flow: never run, never the tail.
             if !super::numtype::is_comment_type((*expr).ty) {
                 last = rt.run(expr)?;
             }
-            i += 1;
         }
         Ok(last)
     }
@@ -69,19 +79,15 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: as [`run`].
     unsafe {
-        let p = (*node).value as *const DyadPtr;
-        if p.is_null() {
+        if (*node).value.is_null() {
             return Err(CompileError::BadValue);
         }
         let mut last = None;
-        let mut i = 0;
-        while !(*p.add(i)).is_null() {
-            let expr = *p.add(i);
+        for &expr in exprs(node) {
             // Prose is not lowered; see [`run`].
             if !super::numtype::is_comment_type((*expr).ty) {
                 last = Some(lw.lower(expr)?);
             }
-            i += 1;
         }
         last.ok_or(CompileError::BadValue)
     }
