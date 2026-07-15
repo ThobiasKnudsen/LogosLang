@@ -82,6 +82,7 @@ mod modulo;
 mod ne;
 mod not;
 pub(crate) mod numtype;
+pub(crate) mod ops;
 mod or;
 mod paren;
 mod plus;
@@ -176,6 +177,9 @@ pub struct Core {
     pub conv_seed_native: DyadPtr,
     /// `container-i64`: the compiled-artifact convention (uniform `i64` containers).
     pub conv_container_i64: DyadPtr,
+    /// The concrete-op leaves (`add_i32`, `lt_f64`, `store_u8`, …), indexed for
+    /// the parse-time resolver.
+    pub ops: ops::OpLeaves,
     /// The parser's table: parse-time behaviour keyed by identity.
     pub metas: HashMap<DyadPtr, Construct>,
     /// One run version: each function identity's `bcode`.
@@ -238,6 +242,9 @@ impl Core {
         // seed conventions. After `string` (convention names are string nodes),
         // before everything executable (exec leaves are callable values).
         let callables = callable::register(&mut cx);
+        // The concrete machine operations: every (operation, machine type) pair
+        // as a callable leaf, from one table-driven loop.
+        let op_leaves = ops::register(&mut cx, &callables);
         // The foundations allocated before the build context get their records
         // now: `type`'s values are types carrying records like its own (the
         // fixed point), a `scope`'s value is the null-terminated expression list.
@@ -331,6 +338,7 @@ impl Core {
             convention_: callables.convention,
             conv_seed_native: callables.seed_native,
             conv_container_i64: callables.container_i64,
+            ops: op_leaves,
             metas,
             bcode,
             lower,

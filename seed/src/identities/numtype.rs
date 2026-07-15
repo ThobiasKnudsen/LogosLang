@@ -44,7 +44,7 @@ pub enum NumType {
 
 impl NumType {
     /// Recover a `NumType` from a tag byte.
-    fn from_tag(t: u8) -> NumType {
+    pub(crate) fn from_tag(t: u8) -> NumType {
         use NumType::*;
         match t {
             0 => I8,
@@ -258,9 +258,19 @@ pub(crate) unsafe fn read_scalar(type_node: DyadPtr, slot: *const u8) -> i64 {
 /// # Safety
 /// `type_node` is a valid type node; `slot` points at storage of that type's width.
 pub(crate) unsafe fn write_scalar(type_node: DyadPtr, slot: *mut u8, bits: i64) {
+    write_scalar_nt(numtype_of_type(type_node), slot, bits)
+}
+
+/// [`write_scalar`] with the width already resolved to a `NumType` — the form a
+/// concrete store op uses, its type baked at registration rather than read from
+/// a node.
+///
+/// # Safety
+/// `slot` points at storage of `nt`'s width.
+pub(crate) unsafe fn write_scalar_nt(nt: NumType, slot: *mut u8, bits: i64) {
     use std::ptr::write_unaligned as wr;
     use NumType::*;
-    match numtype_of_type(type_node) {
+    match nt {
         I8 => wr(slot as *mut i8, bits as i8),
         I16 => wr(slot as *mut i16, bits as i16),
         I32 => wr(slot as *mut i32, bits as i32),
@@ -325,6 +335,7 @@ unsafe fn stored_numtype(node: DyadPtr) -> NumType {
 /// the well-defined 0. Float `Div` is IEEE; float `Rem` is rejected at parse
 /// (Cranelift has no float remainder instruction).
 #[derive(Debug, Clone, Copy)]
+#[repr(u8)]
 pub(crate) enum ArithOp {
     Add,
     Sub,
@@ -333,8 +344,25 @@ pub(crate) enum ArithOp {
     Rem,
 }
 
+impl ArithOp {
+    /// Recover an `ArithOp` from its discriminant — the concrete-op registration
+    /// loop's index (a const generic cannot be an enum on stable Rust).
+    pub(crate) fn from_tag(t: u8) -> ArithOp {
+        use ArithOp::*;
+        match t {
+            0 => Add,
+            1 => Sub,
+            2 => Mul,
+            3 => Div,
+            4 => Rem,
+            _ => unreachable!("invalid ArithOp tag {t}"),
+        }
+    }
+}
+
 /// The six machine comparisons (their result is `bool`, an i32 0/1).
 #[derive(Debug, Clone, Copy)]
+#[repr(u8)]
 pub(crate) enum CmpOp {
     Lt,
     Gt,
@@ -342,6 +370,22 @@ pub(crate) enum CmpOp {
     Ge,
     Eq,
     Ne,
+}
+
+impl CmpOp {
+    /// Recover a `CmpOp` from its discriminant, as [`ArithOp::from_tag`].
+    pub(crate) fn from_tag(t: u8) -> CmpOp {
+        use CmpOp::*;
+        match t {
+            0 => Lt,
+            1 => Gt,
+            2 => Le,
+            3 => Ge,
+            4 => Eq,
+            5 => Ne,
+            _ => unreachable!("invalid CmpOp tag {t}"),
+        }
+    }
 }
 
 /// Interpret the `i64` bit-containers `l`/`r` as `ty`, apply the arithmetic `op` with
