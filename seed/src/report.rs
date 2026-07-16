@@ -95,6 +95,11 @@ pub fn parse_message(e: &ParseError) -> String {
              declare with a value: `name := i32 0`"
                 .into()
         }
+        ParseError::NonComptimeTypeCall => {
+            "a `-> type` call must be evaluable at parse time; \
+             its arguments must be comptime-known"
+                .into()
+        }
     }
 }
 

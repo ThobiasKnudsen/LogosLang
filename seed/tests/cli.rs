@@ -165,6 +165,36 @@ fn a_type_value_prints_its_spelling() {
 }
 
 #[test]
+fn a_type_returning_function_resolves_at_comptime() {
+    // Roadmap #30 Phase 2: a `-> type` call is run during parsing and becomes the
+    // concrete type it yields, so it flows through `==` and `:=` like any type.
+    let (echoes, stderr) = repl(
+        b"pick := fn (i:i32) -> type (if (i==0)(i32) else (f64))\n\
+          pick(0) == i32\npick(1) == f64\npick(0) == f64\nt := pick(0)\nt == i32\n",
+    );
+    assert_eq!(echoes, ["true", "true", "false", "true"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
+fn the_type_returning_fn_example_runs() {
+    let out = logos().arg("examples/type_returning_fn.logos").output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "true\n");
+}
+
+#[test]
+fn a_type_call_with_a_runtime_argument_is_rejected() {
+    // A `-> type` call is comptime-only; an argument not known at parse time (here a
+    // function parameter) is reported, not silently mis-evaluated.
+    let (_echoes, stderr) = repl(
+        b"pick := fn (i:i32) -> type (if (i==0)(i32) else (f64))\n\
+          g := fn (n:i32) -> i32 ( a := pick(n)  1 )\n",
+    );
+    assert!(stderr.contains("must be evaluable at parse time"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_typed_declaration_names_the_gap() {
     // `name : type` is settled design but not in the seed; the error must say
     // that, at the name, instead of calling the fresh name unknown.

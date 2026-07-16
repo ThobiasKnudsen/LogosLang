@@ -148,17 +148,23 @@ impl Runtime {
                 result
             }
         } else {
-            // A declaration statement — a fn literal, a struct type, or a type
-            // node standing as an expression — is inert at run time (its work
-            // happened at parse) and yields unit, the same precedent as
-            // `-> void`. The `Type : Type` root is the store's one self-typed
-            // node, so `op == (*op).ty` recognizes every type node (`x := i32`
-            // binds a name to one) without a dedicated handle. Checked before
-            // the op-slot read below: a *compiled* fn literal's fourth slot
-            // holds its callable, and evaluating the declaration must not jump
-            // to it.
-            if op == self.fn_type || op == self.struct_ || op == (*op).ty {
+            // A fn literal is an inert declaration statement (its work happened at
+            // parse) and yields unit, the same precedent as `-> void`. Checked
+            // before the op-slot read below: a *compiled* fn literal's fourth slot
+            // holds its callable, and evaluating the declaration must not jump to it.
+            if op == self.fn_type {
                 return Ok(0);
+            }
+            // A type node standing as a value carries its identity AS its value: its
+            // bits are its own address. So a `-> type` function, or an `if` that
+            // yields a type, returns the type it produced (roadmap #30), and `x := i32`
+            // still binds a name to one. The `Type : Type` root is the store's one
+            // self-typed node, so `op == (*op).ty` recognizes every type node (numeric
+            // types, the root, `bool`, `void`, pointer types); `op == self.struct_` is
+            // a struct *type* node — a struct *instance* has `op ==` its struct type,
+            // not `struct_`, and is handled by the lower branch.
+            if op == self.struct_ || op == (*op).ty {
+                return Ok(node as i64);
             }
             // `node` is data or a migrated application. A rational literal is
             // molded to its i32 value (a fraction like 3.14 has none:

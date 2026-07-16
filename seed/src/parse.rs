@@ -673,6 +673,11 @@ pub enum ParseError {
     /// only inside field lists; the general form is later work, and this names
     /// the gap instead of reporting the fresh name as unknown.
     TypedDeclaration,
+    /// A `-> type` call could not be resolved at parse time — either running it
+    /// failed (its arguments were not comptime-known) or it did not yield a type.
+    /// A type-returning function is evaluated during parsing (roadmap #30), so its
+    /// arguments must be known then.
+    NonComptimeTypeCall,
 }
 
 /// Build a call node `{ty: callee, value: [args…, null]}`, the application
@@ -1383,6 +1388,44 @@ impl<'a> Parser<'a> {
         Ok((field, offset))
     }
 
+    /// Whether `callee` is a function whose declared return type is the `type` root —
+    /// it yields a type, resolved at comptime (roadmap #30).
+    ///
+    /// # Safety
+    /// `callee` must be a resolved dyad from the store.
+    unsafe fn returns_type(&self, callee: DyadPtr) -> bool {
+        if callee.is_null() || (*callee).ty != self.types.fn_type {
+            return false;
+        }
+        let fields = (*callee).value as *const DyadPtr;
+        !fields.is_null() && *fields.add(FN_OUTPUT) == self.types.type_
+    }
+
+    /// Comptime-evaluate a type-returning call to the concrete type it produces,
+    /// substituting that type node for the call. The call runs under a fresh
+    /// interpreter — which works off raw handles and never touches the store — so
+    /// interpretation doubles as parse-time evaluation (DESIGN ›Build and run are one
+    /// self-directing pass‹); the result bits are the produced type node's address.
+    /// A run failure (e.g. a runtime-only argument) or a non-type result is reported
+    /// as [`ParseError::NonComptimeTypeCall`].
+    ///
+    /// # Safety
+    /// `call` must be a reduced call node from the store.
+    unsafe fn eval_type_call(&mut self, call: DyadPtr) -> Result<DyadPtr, ParseError> {
+        let mut rt = crate::run::Runtime::new(
+            self.types.fn_type,
+            self.types.rational,
+            self.types.struct_,
+        );
+        let bits = rt.run(call).map_err(|_| ParseError::NonComptimeTypeCall)?;
+        let node = bits as usize as DyadPtr;
+        if crate::identities::is_type_value(&self.types, node) {
+            Ok(node)
+        } else {
+            Err(ParseError::NonComptimeTypeCall)
+        }
+    }
+
     /// Build a postfix dereference `lhs@`: the lhs's static type must be a
     /// pointer type — a pointer variable or `&x` literal (its `ty`), a pointer
     /// field place, or another deref whose pointee is a pointer (`p@@`).
@@ -1934,7 +1977,17 @@ impl<'a> Parser<'a> {
                             unsafe {
                                 crate::identities::commit_call_args(self.store, &types, callee, &mut args)?;
                             }
-                            build_call(self.store, callee, &args)
+                            let call = build_call(self.store, callee, &args);
+                            // A call whose callee returns a type is resolved NOW, at
+                            // comptime: run it and substitute the concrete type it
+                            // produces (roadmap #30), so the result flows as an
+                            // ordinary type value through `==`, `:=`, `.type`, and
+                            // display. SAFETY: `callee`/`call` are reduced dyads.
+                            if unsafe { self.returns_type(callee) } {
+                                unsafe { self.eval_type_call(call)? }
+                            } else {
+                                call
+                            }
                         };
                         tape.push(Cell::Dyad(node));
                     } else {
