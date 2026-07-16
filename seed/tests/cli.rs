@@ -310,10 +310,11 @@ fn the_metatypefn_example_runs() {
     // The station #30 north-star, end to end: a `-> type` fn computes the type,
     // `a : metatype(…)` declares with it, and a comptime `if` dispatches on
     // `a.type`, skipping the untaken branches unparsed. The expected value
-    // tracks the file's current argument (2 → f64 → the 9.9 arm).
+    // tracks the file's current argument (3 → `type` → `a` is a type variable
+    // the last arm fills with i32, so the program's value is that type).
     let out = logos().arg("examples/metatypefn.logos").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "9.9\n");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "i32\n");
 }
 
 #[test]

@@ -8,7 +8,7 @@
 # only in the world where it can run. Every argument works: 0 → i32 place, prints 9;
 # 1/2 → f32/f64 place, prints 9.9; 3 → `type`, so `a` is a TYPE VARIABLE the last
 # arm fills with the type i32 at parse, and the program's value is a type (prints
-# i32). Currently metatype(2): prints 9.9.
+# i32). Currently metatype(3): prints i32.
 
 metatype := fn (i:i32) -> type(
     if (i==0) (i32)
@@ -17,7 +17,7 @@ metatype := fn (i:i32) -> type(
     else (type)
 )
 b:=type i32
-a:metatype(2)
+a:metatype(3)
 if (a.type == i32) (a=9)
 else if (a.type == f32 or a.type == f64) (a=9.9)
 else if (a.type == type) (a=i32)
