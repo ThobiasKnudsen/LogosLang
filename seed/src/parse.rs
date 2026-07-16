@@ -665,25 +665,36 @@ impl Schedule {
     }
 }
 
-/// A core identity's native *build* code: how its dyad is constructed once the
-/// schedule (now graph data, see [`Schedule`]) has placed it. Core identities
-/// are hand-built natives (see `crate::identities`); these functions are the
-/// behaviour half of the record's constructor slot, ported onto callable
-/// leaves next and to graph-resident constructors at self-hosting.
+/// An Atom-scheduled identity's build shim — the entry its constructor-slot
+/// leaf carries: build a leaf node from the matched source span.
+pub type AtomFn = fn(&mut Store, DyadPtr, &str) -> Result<DyadPtr, ParseError>;
+
+/// A Prefix-scheduled identity's build shim: build a node from the identity
+/// and its one parsed operand. The [`CoreTypes`] lets the builder reference
+/// its native leaf.
+pub type PrefixFn = fn(&mut Store, &CoreTypes, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>;
+
+/// An Infix-scheduled identity's build shim: build a node from the operator
+/// identity and its two already-reduced operands. The [`CoreTypes`] lets an
+/// abstract operator (`+`) resolve its concrete machine op from the operand
+/// types.
+pub type InfixFn =
+    fn(&mut Store, &CoreTypes, DyadPtr, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>;
+
+/// A core identity's native *build* code at registration — the transient
+/// carrier `Core::build` turns into a callable leaf in the identity's
+/// constructor slot (issue #30) and then drops. The parser never consults it;
+/// dispatch reads the schedule byte and jumps the constructor leaf, and the
+/// bodies stay `native` Rust until self-hosting ports them to Logos source.
 #[derive(Clone, Copy)]
 pub enum Construct {
-    /// A literal/atom: build a leaf node from the matched source span.
-    Atom(fn(&mut Store, DyadPtr, &str) -> Result<DyadPtr, ParseError>),
-    /// A prefix keyword that takes the rest of the expression as one operand
-    /// (e.g. `return <expr>`): build a node from the identity and that parsed
-    /// operand. The [`CoreTypes`] lets the builder reference its native leaf.
-    Prefix(fn(&mut Store, &CoreTypes, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>),
-    /// An infix binary operator: build a node from its operator identity and two
-    /// already-reduced operands. The `build` callback receives the [`CoreTypes`] so
-    /// an abstract operator (`+`) can resolve its concrete machine op from the
-    /// operand types.
+    /// A literal/atom build ([`AtomFn`]).
+    Atom(AtomFn),
+    /// A prefix keyword build ([`PrefixFn`]).
+    Prefix(PrefixFn),
+    /// An infix operator build ([`InfixFn`]).
     Infix {
-        build: fn(&mut Store, &CoreTypes, DyadPtr, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>,
+        build: InfixFn,
     },
 }
 
@@ -904,7 +915,6 @@ pub struct Parser<'a> {
     scopes: ScopeStack,
     store: &'a mut Store,
     trie: &'a mut RegexTrie,
-    metas: &'a std::collections::HashMap<DyadPtr, Construct>,
     /// The core type handles the parser types opened nodes with (see [`CoreTypes`]).
     types: CoreTypes,
     /// The placeholder of the declaration currently awaiting its value, or null.
@@ -941,14 +951,14 @@ struct OpenFn {
 }
 
 impl<'a> Parser<'a> {
-    /// A parser over `source`, resolving against `scopes` and `metas`, allocating
-    /// into `store`, and lexing via `trie`. `types` are the core handles the parser
-    /// types the scopes and structs it opens with.
+    /// A parser over `source`, resolving against `scopes`, allocating into
+    /// `store`, and lexing via `trie`. `types` are the core handles the parser
+    /// types the scopes and structs it opens with. Dispatch needs nothing else:
+    /// schedules and constructors are read from the identities' own records.
     pub fn new(
         source: &'a str,
         store: &'a mut Store,
         trie: &'a mut RegexTrie,
-        metas: &'a std::collections::HashMap<DyadPtr, Construct>,
         types: CoreTypes,
         scopes: ScopeStack,
     ) -> Self {
@@ -958,7 +968,6 @@ impl<'a> Parser<'a> {
             scopes,
             store,
             trie,
-            metas,
             types,
             pending_fn: std::ptr::null_mut(),
             frames: Vec::new(),
@@ -1114,39 +1123,43 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The Atom build of a literal identity — the behaviour half of its
-    /// constructor, still table-resident until the constructor slot carries it.
-    fn atom_build(
-        &self,
-        id: DyadPtr,
-    ) -> Option<fn(&mut Store, DyadPtr, &str) -> Result<DyadPtr, ParseError>> {
-        match self.metas.get(&id) {
-            Some(Construct::Atom(build)) => Some(*build),
-            _ => None,
+    /// The constructor-slot entry of `id`, decoded to the shim signature its
+    /// schedule byte licenses — the parse-time analogue of `run`'s op-slot
+    /// jump: dispatch flows through the graph, no table anywhere. `None` for
+    /// an undefined constructor (a delimiter token, a data type).
+    ///
+    /// # Safety
+    /// The caller must have matched `id`'s schedule to the signature it
+    /// transmutes to; the mint at registration guarantees the pairing.
+    unsafe fn constructor_entry(&self, id: DyadPtr) -> Option<usize> {
+        let leaf = crate::identities::meta::constructor_of(id);
+        if leaf.is_null() {
+            return None;
         }
+        Some(crate::identities::callable::entry_of(leaf))
+    }
+
+    /// The Atom build of a literal identity: its constructor leaf's entry, an
+    /// [`AtomFn`] by its schedule.
+    fn atom_build(&self, id: DyadPtr) -> Option<AtomFn> {
+        debug_assert_eq!(self.schedule(id), Schedule::Atom);
+        // SAFETY: an Atom-scheduled identity's constructor entry was minted
+        // from an `AtomFn` at registration.
+        unsafe { self.constructor_entry(id).map(|e| std::mem::transmute::<usize, AtomFn>(e)) }
     }
 
     /// The Prefix build of a keyword identity, as [`Parser::atom_build`].
-    fn prefix_build(
-        &self,
-        id: DyadPtr,
-    ) -> Option<fn(&mut Store, &CoreTypes, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>> {
-        match self.metas.get(&id) {
-            Some(Construct::Prefix(build)) => Some(*build),
-            _ => None,
-        }
+    fn prefix_build(&self, id: DyadPtr) -> Option<PrefixFn> {
+        debug_assert_eq!(self.schedule(id), Schedule::Prefix);
+        // SAFETY: as [`Parser::atom_build`], with a `PrefixFn` entry.
+        unsafe { self.constructor_entry(id).map(|e| std::mem::transmute::<usize, PrefixFn>(e)) }
     }
 
     /// The Infix build of an operator identity, as [`Parser::atom_build`].
-    fn infix_build(
-        &self,
-        id: DyadPtr,
-    ) -> Option<fn(&mut Store, &CoreTypes, DyadPtr, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>>
-    {
-        match self.metas.get(&id) {
-            Some(Construct::Infix { build }) => Some(*build),
-            _ => None,
-        }
+    fn infix_build(&self, id: DyadPtr) -> Option<InfixFn> {
+        debug_assert_eq!(self.schedule(id), Schedule::Infix);
+        // SAFETY: as [`Parser::atom_build`], with an `InfixFn` entry.
+        unsafe { self.constructor_entry(id).map(|e| std::mem::transmute::<usize, InfixFn>(e)) }
     }
 
     /// Peek the next token's [`Schedule`] without consuming it. `None` at end

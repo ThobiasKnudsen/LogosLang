@@ -247,7 +247,7 @@ mod tests {
         for src in sources {
             let mut scopes = ScopeStack::new();
             scopes.push(core.root_scope);
-            let mut p = Parser::new(src, &mut store, &mut trie, &core.metas, core.types(), scopes);
+            let mut p = Parser::new(src, &mut store, &mut trie, core.types(), scopes);
             roots.push(p.parse_expression().unwrap());
         }
         (store, core, roots)

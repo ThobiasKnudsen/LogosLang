@@ -6,15 +6,17 @@
 //! shared by its values‹, issue #30) and of layout-as-graph-data (issue #42).
 //!
 //! Anything that stands in a node's `ty` position stores, once, the members its
-//! values share: its parse `precedence` and `associativity`, slots for its
-//! `constructor` and `destructor`, and the *layout* that says how a value of it
-//! is read — a scalar width, a text or fraction blob, a pointer's pointee, or
-//! the arity and role names of an application's operands. A generic walker
-//! ([`crate::reflect`]) reads any node's structure from these records alone; the
-//! native `run`/`lower`/`Construct` *logic* stays in the per-phase Rust tables
-//! (the #42 boundary: structure becomes data now, behaviour is ported one
-//! identity at a time at self-hosting), which is why the constructor and
-//! destructor slots are reserved zeroes for the seed.
+//! values share: its parse `precedence`, `associativity`, and `schedule`, its
+//! `constructor` (a native callable leaf; see below) and `destructor` (null:
+//! the honest undefined until drop semantics exist), and the *layout* that says
+//! how a value of it is read — a scalar width, a text or fraction blob, a
+//! pointer's pointee, or the arity and role names of an application's operands.
+//! A generic walker ([`crate::reflect`]) reads any node's structure from these
+//! records alone, and since #30 the parser dispatches from them too: the
+//! schedule byte places a token and the constructor slot carries its build
+//! code, a `seed-parse` callable whose body stays `native` until self-hosting
+//! ports it to Logos source (the #42 boundary). Only `run`'s lowering table
+//! remains Rust-side, awaiting per-backend keying.
 //!
 //! Record layout (unaligned, native-endian, byte offsets):
 //!
@@ -22,8 +24,9 @@
 //! [0]        u8   kind — the type-tag namespace (see below)
 //! [1]        u8   associativity (0 left-to-right, 1 right-to-left)
 //! [2..10]    f64  precedence
-//! [10..18]   u64  constructor (reserved 0; the native Construct lives in `metas`)
-//! [18..26]   u64  destructor  (reserved 0)
+//! [10..18]   u64  constructor — a callable leaf (`seed-parse` convention,
+//!                 entry signature per the schedule byte), or 0: undefined
+//! [18..26]   u64  destructor  (0: undefined until drop semantics exist)
 //! [26]       u8   schedule — how the driver schedules the token (see
 //!                 [`crate::parse::Schedule`]; 0 = plain operand)
 //! [27..]     payload, per kind:
@@ -152,6 +155,28 @@ fn header(kind: u8, assoc: Assoc, precedence: f64, schedule: Schedule) -> [u8; P
 /// As [`precedence_of`].
 pub(crate) unsafe fn schedule_of(id: DyadPtr) -> Schedule {
     Schedule::from_tag(*(*id).value.add(SCHED_OFF))
+}
+
+/// The constructor stored in `id`'s record: a callable leaf under the
+/// `seed-parse` convention (its entry a Rust shim whose signature the schedule
+/// byte selects), or null — the *undefined* constructor of a pure delimiter
+/// token or a data type, whose parse role is scheduling alone.
+///
+/// # Safety
+/// As [`precedence_of`].
+pub(crate) unsafe fn constructor_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned((*id).value.add(CTOR_OFF) as *const DyadPtr)
+}
+
+/// Install `leaf` (a callable value) as `id`'s constructor — the registration
+/// back-fill's writer, run once per identity while the record is still under
+/// construction; nothing has read the slot before the fill.
+///
+/// # Safety
+/// `id` must carry a record and `leaf` must be a callable leaf whose entry
+/// matches `id`'s schedule byte.
+pub(crate) unsafe fn install_constructor(id: DyadPtr, leaf: DyadPtr) {
+    std::ptr::write_unaligned((*id).value.add(CTOR_OFF) as *mut DyadPtr, leaf);
 }
 
 /// The record kind of `id`, or `None` for a null value slot (a still-unbound

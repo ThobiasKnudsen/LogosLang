@@ -192,12 +192,10 @@ pub struct Core {
     /// The concrete-op leaves (`add_i32`, `lt_f64`, `store_u8`, …), indexed for
     /// the parse-time resolver.
     pub ops: ops::OpLeaves,
-    /// The parser's table: parse-time behaviour keyed by identity.
-    pub metas: HashMap<DyadPtr, Construct>,
-    /// One compile version: each operation's Cranelift lowering rule. The run
-    /// side has no table — run behaviour lives on the callable leaves the
-    /// nodes reference (issue #44); this one retires into per-backend
-    /// identities next.
+    /// One compile version: each operation's Cranelift lowering rule. Parse
+    /// behaviour lives on the constructor leaves the records carry (issue #30)
+    /// and run behaviour on the callable leaves the nodes reference (issue
+    /// #44); this one table retires into per-backend identities next.
     pub lower: LowerTable,
 }
 
@@ -344,7 +342,28 @@ impl Core {
         // leaf and lowering are registered once the callable machinery exists.
         op_leaves.scope_ = scope::register_exec(&mut cx, scope_, &callables);
 
-        let Cx { metas, lower, .. } = cx;
+        // Constructor slots (#30): the registration table was only ever the
+        // collection point. Every identity's parse-time build code moves onto a
+        // callable leaf — the `seed-parse` convention, the entry signature
+        // selected by the identity's schedule byte — installed in its record's
+        // constructor slot; the table then drops here, before any parsing
+        // runs. The fn-pointer→address cast is the licensed mint, exactly as
+        // for the run natives (issue #44).
+        let Cx { store, metas, lower, .. } = cx;
+        // SAFETY: every key in `metas` is an identity whose registration built
+        // its record, and each entry is minted from the matching build fn.
+        unsafe {
+            for (&id, construct) in &metas {
+                let entry = match construct {
+                    Construct::Atom(f) => *f as usize,
+                    Construct::Prefix(f) => *f as usize,
+                    Construct::Infix { build } => *build as usize,
+                };
+                let leaf = callable::mint(store, callables.callable, entry, callables.seed_parse);
+                meta::install_constructor(id, leaf);
+            }
+        }
+        drop(metas);
         Core {
             type_,
             scope_,
@@ -389,7 +408,6 @@ impl Core {
             conv_seed_native: callables.seed_native,
             conv_container_i64: callables.container_i64,
             ops: op_leaves,
-            metas,
             lower,
         }
     }
@@ -1139,7 +1157,7 @@ mod tests {
         scopes.declare(&mut trie, "a", a).unwrap();
 
         let root = {
-            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, core.types(), scopes);
+            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
@@ -1176,7 +1194,7 @@ mod tests {
         scopes.declare(&mut trie, "a", a).unwrap();
 
         let root = {
-            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, core.types(), scopes);
+            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
@@ -1210,7 +1228,7 @@ mod tests {
                 "fn () -> i32 ( return a + 1 )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 scopes,
             );
@@ -1239,7 +1257,7 @@ mod tests {
         scopes.push(core.root_scope);
 
         let node = {
-            let mut p = Parser::new("( return 40 + 2 )", &mut store, &mut trie, &core.metas, core.types(), scopes);
+            let mut p = Parser::new("( return 40 + 2 )", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
@@ -1259,7 +1277,7 @@ mod tests {
         let bare = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new("return 7", &mut store, &mut trie, &core.metas, core.types(), s);
+            let mut p = Parser::new("return 7", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
@@ -1269,7 +1287,7 @@ mod tests {
         let nested = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new("( ( return 5 ) )", &mut store, &mut trie, &core.metas, core.types(), s);
+            let mut p = Parser::new("( ( return 5 ) )", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         assert_eq!(unsafe { rt.run(nested) }.unwrap(), 5);
@@ -1283,7 +1301,7 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
 
-        let mut p = Parser::new("( return 1", &mut store, &mut trie, &core.metas, core.types(), scopes);
+        let mut p = Parser::new("( return 1", &mut store, &mut trie, core.types(), scopes);
         assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::UnclosedBracket));
     }
 
@@ -1303,7 +1321,7 @@ mod tests {
                 "fn () -> i32 ( return 40 + 2 )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 scopes,
             );
@@ -1349,7 +1367,7 @@ mod tests {
                 "fn (x : i32) -> i32 ( return x )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 scopes,
             );
@@ -1388,7 +1406,7 @@ mod tests {
                 "fn (x : i32, y : i32) -> i32 ( return x + y )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -1400,7 +1418,7 @@ mod tests {
             s.push(core.root_scope);
             s.declare(&mut trie, "add", add).unwrap();
             let mut p =
-                Parser::new("add(40, 2)", &mut store, &mut trie, &core.metas, core.types(), s);
+                Parser::new("add(40, 2)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
 
@@ -1431,7 +1449,7 @@ mod tests {
             "fn () ( return 1 )",
             &mut store,
             &mut trie,
-            &core.metas,
+            
             core.types(),
             scopes,
         );
@@ -1455,7 +1473,7 @@ mod tests {
                 "fn (x : i32, y : i32) -> i32 ( return x + y )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -1468,7 +1486,7 @@ mod tests {
             s.push(core.root_scope);
             s.declare(&mut trie, "add", add).unwrap();
             let mut p =
-                Parser::new("add(40, 2)", &mut store, &mut trie, &core.metas, core.types(), s);
+                Parser::new("add(40, 2)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
 
@@ -1496,7 +1514,7 @@ mod tests {
                 "fn (x : i32, y : i32) -> i32 ( return x + y )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -1507,7 +1525,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             s.declare(&mut trie, "add", add).unwrap();
-            let mut p = Parser::new("add(40)", &mut store, &mut trie, &core.metas, core.types(), s);
+            let mut p = Parser::new("add(40)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
 
@@ -1531,7 +1549,7 @@ mod tests {
                 "fn () -> i32 ( 40 + 2 )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 scopes,
             );
@@ -1553,7 +1571,7 @@ mod tests {
         scopes.push(core.root_scope);
 
         let node = {
-            let mut p = Parser::new("struct ()", &mut store, &mut trie, &core.metas, core.types(), scopes);
+            let mut p = Parser::new("struct ()", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
@@ -1576,7 +1594,7 @@ mod tests {
 
         let node = {
             let mut p =
-                Parser::new("struct (x : i32, y : i32)", &mut store, &mut trie, &core.metas, core.types(), scopes);
+                Parser::new("struct (x : i32, y : i32)", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
@@ -1610,7 +1628,7 @@ mod tests {
         scopes.push(core.root_scope);
 
         let node = {
-            let mut p = Parser::new("struct (t)", &mut store, &mut trie, &core.metas, core.types(), scopes);
+            let mut p = Parser::new("struct (t)", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
@@ -1638,7 +1656,7 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
 
-        let mut p = Parser::new("struct 40", &mut store, &mut trie, &core.metas, core.types(), scopes);
+        let mut p = Parser::new("struct 40", &mut store, &mut trie, core.types(), scopes);
         assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::ExpectedOpen));
     }
 
@@ -1659,7 +1677,7 @@ mod tests {
         scopes.push(core.root_scope);
         let node = {
             let mut p =
-                Parser::new("struct (x : i32)", &mut store, &mut trie, &core.metas, core.types(), scopes);
+                Parser::new("struct (x : i32)", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
         unsafe {
@@ -1681,7 +1699,7 @@ mod tests {
         scopes.declare(&mut trie, "a", a).unwrap();
 
         let root = {
-            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core.metas, core.types(), scopes);
+            let mut p = Parser::new("a = a + 1", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
@@ -1728,7 +1746,7 @@ mod tests {
                 "fn () -> i64 ( a = a + 5000000000 )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 scopes,
             );
@@ -1775,7 +1793,7 @@ mod tests {
                 "fn () -> i32 ( return 40 + 2 )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 scopes,
             );
@@ -1821,7 +1839,7 @@ mod tests {
         scopes.push(core.root_scope);
 
         let node = {
-            let mut p = Parser::new("3.14", &mut store, &mut trie, &core.metas, core.types(), scopes);
+            let mut p = Parser::new("3.14", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap() // parsing a decimal succeeds
         };
         unsafe {
@@ -1847,7 +1865,7 @@ mod tests {
         scopes.push(core.root_scope);
 
         let node = {
-            let mut p = Parser::new("6.0", &mut store, &mut trie, &core.metas, core.types(), scopes);
+            let mut p = Parser::new("6.0", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
         let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
@@ -1880,7 +1898,7 @@ mod tests {
                 "fn (a : i32, b : i32, c : i32, d : i32) -> i32 ( return a + b + c + d )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -1897,7 +1915,7 @@ mod tests {
             s.push(core.root_scope);
             s.declare(&mut trie, "add4", add4).unwrap();
             let mut p =
-                Parser::new("add4(1, 2, 3, 4)", &mut store, &mut trie, &core.metas, core.types(), s);
+                Parser::new("add4(1, 2, 3, 4)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
@@ -1920,7 +1938,7 @@ mod tests {
         scopes.declare(&mut trie, "x", x).unwrap();
 
         let node = {
-            let mut p = Parser::new("x", &mut store, &mut trie, &core.metas, core.types(), scopes);
+            let mut p = Parser::new("x", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
         // Interpreter: clean BadValue.
@@ -1954,7 +1972,7 @@ mod tests {
                 "fn () -> i32 ( a + 20 + 12 )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 scopes,
             );
@@ -1998,7 +2016,7 @@ mod tests {
                 "double := fn (x : i32) -> i32 ( x + x )\npoint := struct (a : i32)\ndouble(21)",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 scopes,
             );
@@ -2038,7 +2056,7 @@ mod tests {
             let node = {
                 let mut s = ScopeStack::new();
                 s.push(core.root_scope);
-                let mut p = Parser::new(src, &mut store, &mut trie, &core.metas, core.types(), s);
+                let mut p = Parser::new(src, &mut store, &mut trie, core.types(), s);
                 p.parse_expression().unwrap()
             };
             // SAFETY: `node` is the literal just parsed.
@@ -2064,7 +2082,7 @@ mod tests {
         let func = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new(src, &mut store, &mut trie, &core.metas, core.types(), s);
+            let mut p = Parser::new(src, &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
@@ -2101,7 +2119,7 @@ mod tests {
                 "fn (a : i32) -> i32 ( a - a * 3 )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -2154,7 +2172,7 @@ mod tests {
                 "fn (a : i32) -> i32 ( a < 5 )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -2226,7 +2244,7 @@ mod tests {
             let func = {
                 let mut s = ScopeStack::new();
                 s.push(core.root_scope);
-                let mut p = Parser::new(src, &mut store, &mut trie, &core.metas, core.types(), s);
+                let mut p = Parser::new(src, &mut store, &mut trie, core.types(), s);
                 p.parse_expression().unwrap()
             };
             // SAFETY: `func` is the fn node just parsed.
@@ -2289,7 +2307,7 @@ mod tests {
         let bad = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new("y < 1", &mut store, &mut trie, &core.metas, core.types(), s);
+            let mut p = Parser::new("y < 1", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         assert_eq!(unsafe { rt.run(bad) }, Err(crate::run::RunError::BadValue));
@@ -2299,7 +2317,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p =
-                Parser::new("false and y < 1", &mut store, &mut trie, &core.metas, core.types(), s);
+                Parser::new("false and y < 1", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         assert_eq!(unsafe { rt.run(and_sc) }.unwrap(), 0);
@@ -2309,7 +2327,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p =
-                Parser::new("true or y < 1", &mut store, &mut trie, &core.metas, core.types(), s);
+                Parser::new("true or y < 1", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         assert_eq!(unsafe { rt.run(or_sc) }.unwrap(), 1);
@@ -2324,7 +2342,7 @@ mod tests {
             let core = Core::build(&mut store, &mut trie);
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new(src, &mut store, &mut trie, &core.metas, core.types(), s);
+            let mut p = Parser::new(src, &mut store, &mut trie, core.types(), s);
             assert_eq!(
                 p.parse_expression(),
                 Err(crate::parse::ParseError::NonBoolOperands),
@@ -2340,7 +2358,7 @@ mod tests {
         let core = Core::build(&mut store, &mut trie);
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        let mut p = Parser::new("not true", &mut store, &mut trie, &core.metas, core.types(), s);
+        let mut p = Parser::new("not true", &mut store, &mut trie, core.types(), s);
         assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::ExpectedOpen));
     }
 
@@ -2370,7 +2388,7 @@ mod tests {
                     "fn (n : i32) -> i32 ( if (n < 1) (100) else (200) )",
                     &mut store,
                     &mut trie,
-                    &core.metas,
+                    
                     core.types(),
                     s,
                 );
@@ -2382,7 +2400,7 @@ mod tests {
                 s.declare(&mut trie, "f", func).unwrap();
                 let src = format!("f({arg})");
                 let mut p =
-                    Parser::new(&src, &mut store, &mut trie, &core.metas, core.types(), s);
+                    Parser::new(&src, &mut store, &mut trie, core.types(), s);
                 p.parse_expression().unwrap()
             };
             let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
@@ -2409,7 +2427,7 @@ mod tests {
             "fn () -> i32 ( if (1) (100) else (200) )",
             &mut store,
             &mut trie,
-            &core.metas,
+            
             core.types(),
             s,
         );
@@ -2444,7 +2462,7 @@ mod tests {
                 "fn () -> void ( if (a < 100) (a = a + 1) )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 scopes,
             );
@@ -2505,7 +2523,7 @@ mod tests {
                 "fn () -> void ( if (a < 1) ( if (a < 1) (a = a + 1) ) else (a = a + 2) )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 scopes,
             );
@@ -2538,7 +2556,7 @@ mod tests {
         s.push(core.root_scope);
         let a = store.alloc_raw(core.i32_, std::ptr::null_mut());
         s.declare(&mut trie, "a", a).unwrap();
-        let mut p = Parser::new("a = 3.5", &mut store, &mut trie, &core.metas, core.types(), s);
+        let mut p = Parser::new("a = 3.5", &mut store, &mut trie, core.types(), s);
         assert_eq!(p.parse_expression(), Err(ParseError::UncomputableLiteral));
     }
 
@@ -2558,7 +2576,7 @@ mod tests {
                 "fn (x : i64, y : i64) -> i64 ( x * y )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -2572,7 +2590,7 @@ mod tests {
                 "fn () -> i64 ( mul(2000000000, 3) )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -2613,7 +2631,7 @@ mod tests {
                 "fn (x : f64) -> f64 ( x + 0.5 )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -2625,7 +2643,7 @@ mod tests {
                 "fn () -> f64 ( g(a) )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 scopes,
             );
@@ -2661,7 +2679,7 @@ mod tests {
                 "s := fn (n : i64) -> i64 ( if (n < 1) (2000000000 + 2000000000) else (s(n - 1)) )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -2674,7 +2692,7 @@ mod tests {
         let call = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new("s(3)", &mut store, &mut trie, &core.metas, core.types(), s);
+            let mut p = Parser::new("s(3)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
@@ -2704,7 +2722,7 @@ mod tests {
                 "fn (x : i32, y : i32) -> i32 ( x + y )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -2720,7 +2738,7 @@ mod tests {
                 "fn () -> i32 ( add(40) )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -2754,7 +2772,7 @@ mod tests {
                 "fn (x : i32) -> i32 ( x )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -2763,7 +2781,7 @@ mod tests {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         s.declare(&mut trie, "f", func).unwrap();
-        let mut p = Parser::new("f(2.5)", &mut store, &mut trie, &core.metas, core.types(), s);
+        let mut p = Parser::new("f(2.5)", &mut store, &mut trie, core.types(), s);
         assert_eq!(p.parse_expression(), Err(ParseError::UncomputableLiteral));
     }
 
@@ -2783,7 +2801,7 @@ mod tests {
                 "fact := fn (n : i64) -> i64 ( if (n < 1) (1) else (n * fact(n - 1)) )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -2796,7 +2814,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p =
-                Parser::new("fact(20)", &mut store, &mut trie, &core.metas, core.types(), s);
+                Parser::new("fact(20)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
@@ -2875,7 +2893,7 @@ mod tests {
             "fn (a : i32, b : i64) -> void ( for i in a..b ( a = 0 ) )",
             &mut store,
             &mut trie,
-            &core.metas,
+            
             core.types(),
             s,
         );
@@ -3009,7 +3027,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p =
-                Parser::new("«hello world»", &mut store, &mut trie, &core.metas, core.types(), s);
+                Parser::new("«hello world»", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         // SAFETY: `node` is the string literal just parsed.
@@ -3039,7 +3057,7 @@ mod tests {
                 "fn () -> i32 ( # the answer\n 40 + 2\n # «checked twice» )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -3095,7 +3113,7 @@ mod tests {
                 "incr := fn (p : @i32) -> void ( p@ = p@ + 1 )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -3104,7 +3122,7 @@ mod tests {
         let incr = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new("incr", &mut store, &mut trie, &core.metas, core.types(), s);
+            let mut p = Parser::new("incr", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         let func = {
@@ -3114,7 +3132,7 @@ mod tests {
                 "fn () -> i32 ( x := i32 41  x = 41  incr(&x)  x )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -3160,7 +3178,7 @@ mod tests {
                 "fn () -> i32 ( pt := point(3, 4)  q := &pt  q@.x = q@.x + 10  fp := &pt.y  fp@ = fp@ + 1  pp := &q  pp@@.x + pt.y )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -3191,7 +3209,7 @@ mod tests {
                 "holder := struct (r : @i32)",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -3204,7 +3222,7 @@ mod tests {
                 "fn () -> i32 ( x := i32 7  x = 7  h := holder(&x)  h.r@ + 1 )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -3251,7 +3269,7 @@ mod tests {
                 "f := fn (p : @i32) -> void ( p@ = 1 )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -3259,7 +3277,7 @@ mod tests {
         }
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        let mut p = Parser::new("f(0)", &mut store, &mut trie, &core.metas, core.types(), s);
+        let mut p = Parser::new("f(0)", &mut store, &mut trie, core.types(), s);
         assert_eq!(p.parse_expression(), Err(ParseError::TypeMismatch));
     }
 
@@ -3271,7 +3289,7 @@ mod tests {
             "point := struct (x : i32, y : i32)",
             store,
             trie,
-            &core.metas,
+            
             core.types(),
             s,
         );
@@ -3296,7 +3314,7 @@ mod tests {
                 "fn () -> i32 ( p := point(3, 4)  p.x = p.x + 36  p.x + p.y + 2 )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -3328,7 +3346,7 @@ mod tests {
                 "cell := struct (a : u8, b : i64, c : i32)",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -3341,7 +3359,7 @@ mod tests {
                 "fn (n : i64) -> i64 ( q := cell(200, n, 7)  q.b + i64(q.a) + i64(q.c) )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -3355,7 +3373,7 @@ mod tests {
                 "f(5000000000)",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -3381,7 +3399,7 @@ mod tests {
         let mut check = |src: &str, expect: ParseError| {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new(src, &mut store, &mut trie, &core.metas, core.types(), s);
+            let mut p = Parser::new(src, &mut store, &mut trie, core.types(), s);
             assert_eq!(p.parse_expression(), Err(expect), "`{src}`");
         };
         // Wrong argument count; a literal with no exact field value; an instance
@@ -3431,7 +3449,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p =
-                Parser::new("( x := 5, x + 1 )", &mut store, &mut trie, &core.metas, core.types(), s);
+                Parser::new("( x := 5, x + 1 )", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
@@ -3443,7 +3461,7 @@ mod tests {
 
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        let mut p = Parser::new("x", &mut store, &mut trie, &core.metas, core.types(), s);
+        let mut p = Parser::new("x", &mut store, &mut trie, core.types(), s);
         assert_eq!(
             p.parse_expression(),
             Err(crate::parse::ParseError::Resolve(crate::parse::ResolveError::OutOfScope))
@@ -3496,7 +3514,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p =
-                Parser::new("x := 5", &mut store, &mut trie, &core.metas, core.types(), s);
+                Parser::new("x := 5", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         // The declare node carries the name and the bound value: a rational
@@ -3513,7 +3531,7 @@ mod tests {
         let x_ref = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new("x", &mut store, &mut trie, &core.metas, core.types(), s);
+            let mut p = Parser::new("x", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         assert_eq!(x_ref, bound); // the reference resolves to the bound node
@@ -3536,12 +3554,12 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p =
-                Parser::new("y := 1", &mut store, &mut trie, &core.metas, core.types(), s);
+                Parser::new("y := 1", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap();
         }
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        let mut p = Parser::new("y := 2", &mut store, &mut trie, &core.metas, core.types(), s);
+        let mut p = Parser::new("y := 2", &mut store, &mut trie, core.types(), s);
         assert_eq!(
             p.parse_expression(),
             Err(crate::parse::ParseError::Resolve(crate::parse::ResolveError::Shadowed))
@@ -3566,7 +3584,7 @@ mod tests {
                 "fact := fn (n : i32) -> i32 ( if (n < 1) (1) else (n * fact(n - 1)) )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -3579,7 +3597,7 @@ mod tests {
                 s.push(core.root_scope);
                 let src = format!("fact({arg})");
                 let mut p =
-                    Parser::new(&src, &mut store, &mut trie, &core.metas, core.types(), s);
+                    Parser::new(&src, &mut store, &mut trie, core.types(), s);
                 p.parse_expression().unwrap()
             };
             let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
@@ -3605,7 +3623,7 @@ mod tests {
                 "fact := fn (n : i32) -> i32 ( if (n < 1) (1) else (n * fact(n - 1)) )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -3625,7 +3643,7 @@ mod tests {
                 s.push(core.root_scope);
                 let src = format!("fact({arg})");
                 let mut p =
-                    Parser::new(&src, &mut store, &mut trie, &core.metas, core.types(), s);
+                    Parser::new(&src, &mut store, &mut trie, core.types(), s);
                 p.parse_expression().unwrap()
             };
             // SAFETY: `call` applies the bound `fact` to a literal.
@@ -3648,7 +3666,7 @@ mod tests {
                 s.push(core.root_scope);
                 let src = format!("fact({arg})");
                 let mut p =
-                    Parser::new(&src, &mut store, &mut trie, &core.metas, core.types(), s);
+                    Parser::new(&src, &mut store, &mut trie, core.types(), s);
                 p.parse_expression().unwrap()
             };
             // SAFETY: `_compiled` is alive; `call` applies the compiled `fact`.
@@ -3673,7 +3691,7 @@ mod tests {
         for def in defs {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new(def, &mut store, &mut trie, &core.metas, core.types(), s);
+            let mut p = Parser::new(def, &mut store, &mut trie, core.types(), s);
             last = p.parse_expression().unwrap();
         }
         let f = declare::declared_of(last);
@@ -3682,7 +3700,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let src = format!("{name}({arg})");
-            let mut p = Parser::new(&src, store, trie, &core.metas, core.types(), s);
+            let mut p = Parser::new(&src, store, trie, core.types(), s);
             p.parse_expression().unwrap()
         };
 
@@ -3817,7 +3835,7 @@ mod tests {
                 "outer := fn (a : i32) -> i32 ( inner := fn (b : i32) -> i32 ( y := b  y + b )  inner(a) + 1 )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -3827,7 +3845,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p =
-                Parser::new("outer(5)", &mut store, &mut trie, &core.metas, core.types(), s);
+                Parser::new("outer(5)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
@@ -3864,12 +3882,12 @@ mod tests {
         for def in defs {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new(def, &mut store, &mut trie, &core.metas, core.types(), s);
+            let mut p = Parser::new(def, &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap();
         }
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        let mut p = Parser::new(src, &mut store, &mut trie, &core.metas, core.types(), s);
+        let mut p = Parser::new(src, &mut store, &mut trie, core.types(), s);
         p.parse_expression().unwrap_err()
     }
 
@@ -3908,7 +3926,7 @@ mod tests {
         for line in ["x := i32 7", "y := i32 9", "p := &x", "p@", "p = &y", "p@"] {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new(line, &mut store, &mut trie, &core.metas, core.types(), s);
+            let mut p = Parser::new(line, &mut store, &mut trie, core.types(), s);
             let node = p.parse_expression().unwrap();
             // SAFETY: `node` is the reduced dyad just parsed.
             result = unsafe { rt.run(node) }.unwrap();
@@ -3931,7 +3949,7 @@ mod tests {
                 "fn (x : i32, y : i32) -> i32 ( x + y )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -3946,7 +3964,7 @@ mod tests {
                 "fn () -> i32 ( add(40, 2) )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 s,
             );
@@ -3981,14 +3999,14 @@ mod tests {
         let func = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new(fn_src, &mut store, &mut trie, &core.metas, core.types(), s);
+            let mut p = Parser::new(fn_src, &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         let call = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             s.declare(&mut trie, "f", func).unwrap();
-            let mut p = Parser::new(call_src, &mut store, &mut trie, &core.metas, core.types(), s);
+            let mut p = Parser::new(call_src, &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
@@ -4041,7 +4059,7 @@ mod tests {
         let a = store.alloc_raw(core.numtypes[nt as usize], a_val);
         scopes.declare(&mut trie, "a", a).unwrap();
         let func = {
-            let mut p = Parser::new(fn_src, &mut store, &mut trie, &core.metas, core.types(), scopes);
+            let mut p = Parser::new(fn_src, &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
@@ -4086,7 +4104,7 @@ mod tests {
         let core = Core::build(&mut store, &mut trie);
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        let mut p = Parser::new(src, &mut store, &mut trie, &core.metas, core.types(), s);
+        let mut p = Parser::new(src, &mut store, &mut trie, core.types(), s);
         p.parse_expression().unwrap_err()
     }
 
@@ -4160,7 +4178,7 @@ mod tests {
                 "fn () -> void ( a = a + 1 )",
                 &mut store,
                 &mut trie,
-                &core.metas,
+                
                 core.types(),
                 scopes,
             );
@@ -4194,7 +4212,7 @@ mod tests {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let node = {
-            let mut p = Parser::new("1 + 2", &mut store, &mut trie, &core.metas, core.types(), s);
+            let mut p = Parser::new("1 + 2", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         // SAFETY: `node` is the folded literal just parsed.
@@ -4255,7 +4273,7 @@ mod tests {
             "fn (x : i32, y : i64) -> i64 ( x + y )",
             &mut store,
             &mut trie,
-            &core.metas,
+            
             core.types(),
             s,
         );
@@ -4274,7 +4292,7 @@ mod tests {
             "fn (x : i32) -> i32 ( x + 1.5 )",
             &mut store,
             &mut trie,
-            &core.metas,
+            
             core.types(),
             s,
         );
@@ -4292,7 +4310,7 @@ mod tests {
         scopes.push(core.root_scope);
 
         let mut p =
-            Parser::new("struct () + 1", &mut store, &mut trie, &core.metas, core.types(), scopes);
+            Parser::new("struct () + 1", &mut store, &mut trie, core.types(), scopes);
         assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::UnsupportedOperands));
     }
 }

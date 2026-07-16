@@ -37,16 +37,21 @@ const ENTRY_OFF: usize = 0;
 const CONVENTION_OFF: usize = 8;
 
 /// The callable machinery's identities: the `callable` type, the `convention`
-/// type, and the two conventions the seed mints values under.
+/// type, and the conventions the seed mints values under.
 pub(crate) struct Callables {
     /// The `callable` type; every exec leaf's `ty`.
     pub callable: DyadPtr,
-    /// The `convention` type; the two identities below are its values.
+    /// The `convention` type; the identities below are its values.
     pub convention: DyadPtr,
     /// `seed-native`: a Rust shim `fn(&mut Runtime, DyadPtr) -> Result<i64, RunError>`.
     pub seed_native: DyadPtr,
     /// `container-i64`: compiled code taking uniform `i64` bit-containers.
     pub container_i64: DyadPtr,
+    /// `seed-parse`: a Rust parse shim whose exact signature is selected by the
+    /// identity's schedule byte (an Atom, Prefix, or Infix build) — the
+    /// convention of every constructor slot's leaf until self-hosting ports
+    /// constructors to Logos source.
+    pub seed_parse: DyadPtr,
 }
 
 /// Register the `callable` and `convention` types and the two seed conventions.
@@ -61,8 +66,9 @@ pub(super) fn register(cx: &mut Cx) -> Callables {
 
     let seed_native = mint_convention(cx, convention, b"seed-native");
     let container_i64 = mint_convention(cx, convention, b"container-i64");
+    let seed_parse = mint_convention(cx, convention, b"seed-parse");
 
-    Callables { callable, convention, seed_native, container_i64 }
+    Callables { callable, convention, seed_native, container_i64, seed_parse }
 }
 
 /// Mint a convention identity: `{ty: convention, value -> name string node}`.

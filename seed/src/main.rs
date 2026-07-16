@@ -92,14 +92,7 @@ fn run_file(path: &str) -> ExitCode {
 
     let types = engine.core.types();
     let mut rt = Runtime::new(engine.core.fn_type, engine.core.rational, engine.core.struct_);
-    let mut p = Parser::new(
-        &source,
-        &mut engine.store,
-        &mut engine.trie,
-        &engine.core.metas,
-        types,
-        scopes,
-    );
+    let mut p = Parser::new(&source, &mut engine.store, &mut engine.trie, types, scopes);
 
     // The tail: the last non-comment expression and its value, printed at the
     // end (prose is invisible to value flow, so a trailing comment never
@@ -186,14 +179,7 @@ fn repl() -> ExitCode {
 
         let types = engine.core.types();
         let (parsed, end, scopes_back) = {
-            let mut p = Parser::new(
-                &line,
-                &mut engine.store,
-                &mut engine.trie,
-                &engine.core.metas,
-                types,
-                scopes,
-            );
+            let mut p = Parser::new(&line, &mut engine.store, &mut engine.trie, types, scopes);
             let parsed = p.parse_expression();
             let end = p.offset();
             (parsed, end, p.into_scopes())
