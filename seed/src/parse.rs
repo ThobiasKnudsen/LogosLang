@@ -205,14 +205,17 @@ impl ParsingTape {
     }
 }
 
-/// A resolved name: how many source bytes it matched and the single identity
-/// live in the open scopes.
+/// A resolved name: how many source bytes it matched, the single identity
+/// live in the open scopes, and the scope it was declared in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Resolved {
     /// Bytes consumed from the start of the input.
     pub matched: usize,
     /// The identity live in the open scopes.
     pub identity: DyadPtr,
+    /// The scope the winning declaration was made in (an open ancestor) — what
+    /// a rebind that completes that declaration must target.
+    pub scope: DyadPtr,
 }
 
 /// Why a name could not be resolved or declared.
@@ -336,7 +339,9 @@ impl ScopeStack {
         let mut live = m.contexts.iter().filter(|c| self.is_open(c.scope));
         match (live.next(), live.next()) {
             (None, _) => Err(ResolveError::OutOfScope),
-            (Some(c), None) => Ok(Resolved { matched: m.matched, identity: c.identity }),
+            (Some(c), None) => {
+                Ok(Resolved { matched: m.matched, identity: c.identity, scope: c.scope })
+            }
             (Some(_), Some(_)) => Err(ResolveError::Ambiguous),
         }
     }
@@ -700,10 +705,10 @@ pub enum ParseError {
     /// only inside field lists; the general form is later work, and this names
     /// the gap instead of reporting the fresh name as unknown.
     TypedDeclaration,
-    /// A nested function referenced (or took the address of) a local of an
-    /// enclosing function — a closure capture, which v1 does not support. Each
-    /// function's locals live in its own per-call activation record; reaching an
-    /// outer one would read the wrong frame at run time.
+    /// A nested function referenced (or took the address of) a local or a
+    /// parameter of an enclosing function — a closure capture, which v1 does not
+    /// support. Each function's locals and parameters live in its own per-call
+    /// activation; reaching an outer one would read the wrong frame at run time.
     CapturedLocal,
 }
 
@@ -819,14 +824,25 @@ pub struct Parser<'a> {
     /// signature onto it before the body parses, so a recursive self-call resolves
     /// its parameter and return types instead of the unbound-placeholder defaults.
     pending_fn: DyadPtr,
-    /// A stack of frame-size accumulators, one per enclosing function body being
+    /// A stack of open function frames, one per enclosing function body being
     /// parsed. Empty at top level, where declarations get absolute global storage
     /// that persists across REPL lines; non-empty inside a function, where each
     /// local declaration claims the next byte offset in the current frame (via
     /// [`Parser::alloc_local`]) and bumps the top accumulator. [`Parser::parse_fn`]
     /// pushes it around the body and writes the final size into the fn's
     /// [`FN_FRAME`] slot.
-    frames: Vec<usize>,
+    frames: Vec<OpenFn>,
+}
+
+/// One enclosing function body being parsed: the byte-size accumulator its local
+/// declarations claim offsets from, and its parameter scope (the input struct's
+/// scope), which the capture guard checks — a parameter of a non-innermost
+/// function is as much a capture as a frame-relative local of one.
+struct OpenFn {
+    /// Bytes claimed so far by this function's frame-relative locals.
+    size: usize,
+    /// The input struct's scope, where the parameters are declared.
+    params: DyadPtr,
 }
 
 impl<'a> Parser<'a> {
@@ -866,9 +882,9 @@ impl<'a> Parser<'a> {
             self.store.alloc_bytes(&vec![0u8; width])
         } else {
             let depth = self.frames.len();
-            let size = self.frames.last_mut().unwrap();
-            let offset = *size;
-            *size += width;
+            let frame = self.frames.last_mut().unwrap();
+            let offset = frame.size;
+            frame.size += width;
             crate::dyad::frame_place(depth, offset)
         };
         self.store.alloc_raw(ty_node, place)
@@ -879,6 +895,9 @@ impl<'a> Parser<'a> {
     /// closures, so a nested function cannot read an outer function's local — and
     /// doing so would resolve against the wrong activation record at run time. A
     /// local of the current frame, and every absolute (global) place, pass.
+    /// Parameters are the other per-call bindings and capture the same way; they
+    /// carry no frame tag (they resolve through the call's frame map, not a
+    /// place), so [`Parser::check_param_capture`] guards them by scope instead.
     ///
     /// # Safety
     /// `node` must be a resolved dyad from the store.
@@ -887,6 +906,21 @@ impl<'a> Parser<'a> {
             if depth != self.frames.len() {
                 return Err(ParseError::CapturedLocal);
             }
+        }
+        Ok(())
+    }
+
+    /// Reject a *parameter* capture: a resolution that landed in the parameter
+    /// scope of an enclosing (non-innermost) function. A parameter is per-call
+    /// state exactly like a frame local — it resolves against the callee's own
+    /// frame at run time — so a nested function reading an outer function's
+    /// parameter would read the wrong call's binding; without this guard it
+    /// parses and then fails at run time with an unrelated no-storage error.
+    /// The innermost function's own parameters, and every non-parameter scope,
+    /// pass.
+    fn check_param_capture(&self, r: &Resolved) -> Result<(), ParseError> {
+        if self.frames.iter().rev().skip(1).any(|f| f.params == r.scope) {
+            return Err(ParseError::CapturedLocal);
         }
         Ok(())
     }
@@ -1134,15 +1168,16 @@ impl<'a> Parser<'a> {
         // SAFETY: `input` is the struct just built; its `value[0]` is its scope.
         let scope = unsafe { *((*input).value as *const DyadPtr) };
         // Open this function's frame: the body's local declarations claim per-call
-        // byte offsets in it. A nested `fn` literal pushes its own, so its locals
-        // never land in this frame.
-        self.frames.push(0);
+        // byte offsets in it, and its parameter scope feeds the capture guard. A
+        // nested `fn` literal pushes its own, so its locals never land in this
+        // frame.
+        self.frames.push(OpenFn { size: 0, params: scope });
         self.scopes.push(scope);
         self.expect_open()?;
         let body = self.parse_sequence()?;
         self.expect_close()?;
         self.scopes.pop();
-        let frame_size = self.frames.pop().expect("parse_fn pushed a frame");
+        let frame_size = self.frames.pop().expect("parse_fn pushed a frame").size;
 
         // A comptime-rational tail expression commits to the declared return type here
         // (the typed slot), so `fn () -> i64 ( 2000000000 + 2000000000 )` returns i64
@@ -1535,6 +1570,9 @@ impl<'a> Parser<'a> {
             // Keywords, operators, literals: not places.
             return Err(ParseError::BadAddressOf);
         }
+        // No taking the address of an enclosing function's parameter (a capture);
+        // checked before the storage test so the error names the real problem.
+        self.check_param_capture(&r)?;
         self.pos += r.matched;
         let mut node = r.identity;
         while let Some((_, matched, Construct::Dot)) = self.peek_kind() {
@@ -1953,11 +1991,12 @@ impl<'a> Parser<'a> {
 
             match c {
                 // A plain operand: a reference to the resolved identity. A
-                // frame-local of an enclosing function (a capture) is rejected —
-                // v1 has no closures.
+                // frame-local or parameter of an enclosing function (a capture)
+                // is rejected — v1 has no closures.
                 None => {
                     // SAFETY: `id` is a resolved dyad from the store.
                     unsafe { self.check_capture(id)? };
+                    self.check_param_capture(&r)?;
                     tape.push(Cell::Dyad(id));
                 }
                 // A literal: build its leaf now from the matched span. A numeric

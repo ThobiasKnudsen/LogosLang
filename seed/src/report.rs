@@ -96,8 +96,8 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::CapturedLocal => {
-            "a nested function cannot use an outer function's local \
-             (no closures yet); pass it as a parameter"
+            "a nested function cannot use an outer function's local or parameter \
+             (no closures yet); pass it in as the nested function's own parameter"
                 .into()
         }
     }
