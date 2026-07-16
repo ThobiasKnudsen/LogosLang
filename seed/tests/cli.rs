@@ -184,6 +184,19 @@ fn the_type_returning_fn_example_runs() {
 }
 
 #[test]
+fn file_mode_runs_each_expression_as_it_parses() {
+    // Build and run are one pass: a top-level expression runs the moment it is
+    // parsed, so parse-time evaluation (a `-> type` call reading an earlier
+    // binding) sees committed state and file mode agrees with the REPL. Before,
+    // the file driver parsed everything first and ran afterward, so the call
+    // read x's zeroed storage instead of 5 and answered i32 rather than f64.
+    let out =
+        logos().arg("tests/fixtures/comptime_sees_committed_state.logos").output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "true\n");
+}
+
+#[test]
 fn a_type_call_with_a_runtime_argument_is_rejected() {
     // A `-> type` call is comptime-only; an argument not known at parse time (here a
     // function parameter) is reported, not silently mis-evaluated.

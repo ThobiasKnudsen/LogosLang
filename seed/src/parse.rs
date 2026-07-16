@@ -1597,32 +1597,8 @@ impl<'a> Parser<'a> {
         let scope = self.store.alloc_raw(self.types.scope, std::ptr::null_mut());
         self.scopes.push(scope);
         let mut exprs = Vec::new();
-        loop {
-            self.skip_whitespace();
-            if self.pos >= self.source.len() {
-                break;
-            }
-            // A statement-level `#` builds a reflectable comment node — prose is
-            // part of the body's structure (DESIGN ›`#` is the one comment
-            // constructor‹). Mid-expression `#`s remain trivia ([`skip_trivia`]).
-            if self.source.as_bytes()[self.pos] == b'#' {
-                let comment = self.parse_comment()?;
-                exprs.push(comment);
-                continue;
-            }
-            if self.at_close() {
-                break;
-            }
-            exprs.push(self.parse_expression()?);
-            // A `#` directly after the expression is the next statement-level
-            // comment — the separator peek must not read through it as trivia.
-            self.skip_whitespace();
-            if self.pos < self.source.len() && self.source.as_bytes()[self.pos] == b'#' {
-                continue;
-            }
-            // The optional `,`: a boundary the expressions already imply, consumed
-            // where written (also purely for readability).
-            self.consume_separator();
+        while let Some(item) = self.parse_next() {
+            exprs.push(item?);
         }
         self.scopes.pop();
         // Prose is invisible to value flow: the expression count and the tail are
@@ -1665,6 +1641,42 @@ impl<'a> Parser<'a> {
                 Ok(scope)
             }
         }
+    }
+
+    /// Parse the next statement-level item — a reflectable comment node or one
+    /// expression — consuming an optional `,` after an expression (DESIGN
+    /// ›Expressions are self-delimiting; `,` is the one explicit separator‹).
+    /// `None` at the sequence's end: the end of input, or an unconsumed `)` left
+    /// for the enclosing opener. This is the one sequencing step, shared by
+    /// [`Parser::parse_sequence`] (which collects a whole block) and the file
+    /// driver (which runs each top-level item as it is parsed — build and run
+    /// are one pass, so parse-time evaluation sees every earlier item's effect).
+    pub fn parse_next(&mut self) -> Option<Result<DyadPtr, ParseError>> {
+        self.skip_whitespace();
+        if self.pos >= self.source.len() {
+            return None;
+        }
+        // A statement-level `#` builds a reflectable comment node — prose is
+        // part of the body's structure (DESIGN ›`#` is the one comment
+        // constructor‹). Mid-expression `#`s remain trivia ([`skip_trivia`]).
+        if self.source.as_bytes()[self.pos] == b'#' {
+            return Some(self.parse_comment());
+        }
+        if self.at_close() {
+            return None;
+        }
+        let expr = self.parse_expression();
+        if expr.is_ok() {
+            // A `#` directly after the expression is the next statement-level
+            // comment — the separator peek must not read through it as trivia.
+            self.skip_whitespace();
+            if !(self.pos < self.source.len() && self.source.as_bytes()[self.pos] == b'#') {
+                // The optional `,`: a boundary the expressions already imply,
+                // consumed where written (also purely for readability).
+                self.consume_separator();
+            }
+        }
+        Some(expr)
     }
 
     /// Parse a statement-level comment: `#` followed by a `«…»` string or raw
