@@ -1,14 +1,11 @@
 # Copyright 2026 Thobias Melfjord Knudsen
 # SPDX-License-Identifier: Apache-2.0
 
-# Roadmap #30 (Type) north-star — does NOT run on the current seed. It reaches the
-# deep end of the station:
-#   - a function returning a type (`-> type`) with type-valued branches   [#30 Phase 2]
-#   - a dependent typed declaration `a : metatype(0)`: the type is the     [#30 Phase 3]
-#     result of running a function, which needs comptime-eval-to-a-type
-# Phase 1 (type spelled, `.type`, `==` over types, `else if`) already lands — lines
-# 1-6 below parse and bind `metatype`; the first hard blocker is the `a : metatype(0)`
-# typed declaration. Kept as the target to grow toward, not a passing example.
+# The station #30 (Type) north-star, and it runs: a `-> type` function computes a
+# type at comptime (resolved inline in the one pass), a typed declaration takes that
+# computed type (`a : metatype(0)` — the dependent declaration), and a comptime `if`
+# dispatches on `a.type`, dropping the untaken branches unparsed (which is why the
+# f32/f64 and type branches coexist with `a : i32`). Prints 9.
 
 metatype := fn (i:i32) -> type(
     if (i==0) (i32)
@@ -17,7 +14,7 @@ metatype := fn (i:i32) -> type(
     else (type)
 )
 a:metatype(0)
-if a.type == i32 (a=9)
-else if a.type == f32 or a.type == f64 (a=9.9)
-else if a.type == type (a=i32)
+if (a.type == i32) (a=9)
+else if (a.type == f32 or a.type == f64) (a=9.9)
+else if (a.type == type) (a=i32)
 a

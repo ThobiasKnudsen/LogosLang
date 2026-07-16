@@ -668,11 +668,15 @@ pub enum ParseError {
     /// A numeric conversion `type(value)` was malformed: not exactly one operand, or a
     /// non-numeric operand (there is nothing to convert).
     BadCast,
-    /// A fresh name followed by `:` — the typed declaration `name : type`
-    /// (DESIGN ›Declarations are immutable by default‹). The seed's `:` lives
-    /// only inside field lists; the general form is later work, and this names
-    /// the gap instead of reporting the fresh name as unknown.
-    TypedDeclaration,
+    /// A typed declaration's `name :` was followed by something that is not a
+    /// type value — the type slot holds a type, so the expression after `:`
+    /// must evaluate to one (a spelled type, or a `-> type` call resolved at
+    /// parse time).
+    BadDeclaredType,
+    /// A typed declaration of a non-numeric type (`a : type`, a struct, a
+    /// pointer, `bool`, `void`) — the declared-type storage for those is not in
+    /// the seed yet, and this names the gap instead of mis-storing the value.
+    NonNumericDeclaredType,
     /// A `-> type` call could not be resolved at parse time — either running it
     /// failed (its arguments were not comptime-known) or it did not yield a type.
     /// A type-returning function is evaluated during parsing (roadmap #30), so its
@@ -710,6 +714,21 @@ pub(crate) unsafe fn is_bool_result(types: &CoreTypes, node: DyadPtr) -> bool {
         || ty == types.and_
         || ty == types.or_
         || ty == types.not_
+}
+
+/// The parse-time truth of a bool literal — `{ty: bool, value -> i32 0/1}`, the
+/// shape the `true`/`false` keywords and every comptime fold produce — or `None`
+/// for anything else. Deliberately no scope unwrapping: a sequence-valued
+/// condition may carry effectful non-tail expressions that a fold would silently
+/// drop, so only a bare literal (pure by construction) counts as comptime.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn bool_literal_value(types: &CoreTypes, node: DyadPtr) -> Option<bool> {
+    if (*node).ty != types.bool_ || (*node).value.is_null() {
+        return None;
+    }
+    Some(std::ptr::read_unaligned((*node).value as *const i32) != 0)
 }
 
 /// The trailing *value* expression of a sequence node
@@ -1086,6 +1105,18 @@ impl<'a> Parser<'a> {
             return Err(ParseError::NonBoolCondition);
         }
 
+        // A comptime condition — a bool literal, the shape `true`/`false` and
+        // every parse-time fold produce (`a.type == i32`, two-literal
+        // comparisons) — resolves the conditional NOW, in the one pass: the
+        // taken branch parses in place and an untaken branch's tokens are
+        // dropped unlexed, so nothing inside it is resolved, committed, or
+        // declared. This is what lets branches for *other* comptime types
+        // coexist (`a=9.9` under `a : i32` parses only in the world where it is
+        // taken). SAFETY: `cond` is the reduced dyad just parsed.
+        if let Some(truth) = unsafe { bool_literal_value(&types, cond) } {
+            return self.parse_comptime_if(if_type, cond, truth);
+        }
+
         // Then-branch.
         self.expect_open()?;
         let then = self.parse_sequence()?;
@@ -1114,6 +1145,139 @@ impl<'a> Parser<'a> {
 
         let value = self.store.alloc_operands(&[cond, then, els, self.types.ops.if_]);
         Ok(self.store.alloc_raw(if_type, value))
+    }
+
+    /// Resolve an `if` whose condition is already a parse-time bool (roadmap #30).
+    /// True with an else: the then-branch parses in place and IS the result (the
+    /// if's value is the taken branch's), the dead else-tail dropped unparsed.
+    /// False: the then-branch is dropped unparsed; an `else if` continues the
+    /// chain through [`Parser::parse_if`] (comptime or not) and an `else ( … )`
+    /// body is the result. An else-less `if` stays an ordinary statement `if`
+    /// node in both cases — it yields unit whether or not its condition is
+    /// comptime-known, so folding must not turn it into a value — with the
+    /// then-branch parsed when true (it runs) and dropped when false (the
+    /// condition doubles as a harmless never-run then-slot dummy).
+    fn parse_comptime_if(
+        &mut self,
+        if_type: DyadPtr,
+        cond: DyadPtr,
+        truth: bool,
+    ) -> Result<DyadPtr, ParseError> {
+        if truth {
+            self.expect_open()?;
+            let then = self.parse_sequence()?;
+            self.expect_close()?;
+            if self.consume_else() {
+                self.skip_else_tail()?;
+                return Ok(then);
+            }
+            // Else-less: a statement yielding unit, comptime or not — folding
+            // to the branch's value would make the same text a value or a
+            // statement depending on whether the condition is comptime-known.
+            // Keep the ordinary `if` node (the then-branch parsed; it runs).
+            let value = self
+                .store
+                .alloc_operands(&[cond, then, std::ptr::null_mut(), self.types.ops.if_]);
+            return Ok(self.store.alloc_raw(if_type, value));
+        }
+        self.skip_group()?;
+        if self.consume_else() {
+            if let Some((_, matched, Construct::If)) = self.peek_kind() {
+                self.pos += matched;
+                return self.parse_if(if_type);
+            }
+            self.expect_open()?;
+            let els = self.parse_sequence()?;
+            self.expect_close()?;
+            return Ok(els);
+        }
+        let value =
+            self.store.alloc_operands(&[cond, cond, std::ptr::null_mut(), self.types.ops.if_]);
+        Ok(self.store.alloc_raw(if_type, value))
+    }
+
+    /// Drop a balanced `( … )` group without parsing it — the tape's `remove`
+    /// power in its minimal form (DESIGN ›a constructor may splice tokens in or
+    /// drop upcoming ones before they lex‹). Comptime-`if` uses it to discard an
+    /// untaken branch, so nothing inside is resolved, committed, or declared.
+    /// `«…»` text (the byte pair `C2 AB` … `C2 BB`, unambiguous in UTF-8) and
+    /// `#` prose (a `«…»` string, or raw text to the line's end) are skipped
+    /// opaquely — their parentheses are text, not structure. An unterminated
+    /// group or text is [`ParseError::UnclosedBracket`].
+    fn skip_group(&mut self) -> Result<(), ParseError> {
+        /// Skip a `«…»` span starting at `pos` (which must point at `«`),
+        /// returning the position just past the `»`, or `None` if unterminated.
+        fn skip_text(bytes: &[u8], mut pos: usize) -> Option<usize> {
+            pos += 2; // the «
+            while pos + 1 < bytes.len() {
+                if bytes[pos] == 0xC2 && bytes[pos + 1] == 0xBB {
+                    return Some(pos + 2);
+                }
+                pos += 1;
+            }
+            None
+        }
+        self.expect_open()?;
+        let bytes = self.source.as_bytes();
+        let mut depth = 1usize;
+        while self.pos < bytes.len() {
+            match bytes[self.pos] {
+                b'(' => {
+                    depth += 1;
+                    self.pos += 1;
+                }
+                b')' => {
+                    depth -= 1;
+                    self.pos += 1;
+                    if depth == 0 {
+                        return Ok(());
+                    }
+                }
+                0xC2 if bytes.get(self.pos + 1) == Some(&0xAB) => {
+                    self.pos =
+                        skip_text(bytes, self.pos).ok_or(ParseError::UnclosedBracket)?;
+                }
+                b'#' => {
+                    // `#` takes a following «…» string or the rest of the line,
+                    // exactly as the comment constructor reads it.
+                    self.pos += 1;
+                    while self.pos < bytes.len() && matches!(bytes[self.pos], b' ' | b'\t') {
+                        self.pos += 1;
+                    }
+                    if bytes.get(self.pos) == Some(&0xC2)
+                        && bytes.get(self.pos + 1) == Some(&0xAB)
+                    {
+                        self.pos =
+                            skip_text(bytes, self.pos).ok_or(ParseError::UnclosedBracket)?;
+                    } else {
+                        while self.pos < bytes.len() && bytes[self.pos] != b'\n' {
+                            self.pos += 1;
+                        }
+                    }
+                }
+                _ => self.pos += 1,
+            }
+        }
+        Err(ParseError::UnclosedBracket)
+    }
+
+    /// Drop an already-`else`d dead tail without parsing it: `if ( cond )
+    /// ( then )` links (looping while further `else`s follow) or the final
+    /// `( body )`. Used when a comptime-true condition has taken its branch and
+    /// the rest of the chain can never run.
+    fn skip_else_tail(&mut self) -> Result<(), ParseError> {
+        loop {
+            if let Some((_, matched, Construct::If)) = self.peek_kind() {
+                self.pos += matched;
+                self.skip_group()?; // ( cond )
+                self.skip_group()?; // ( then )
+                if self.consume_else() {
+                    continue;
+                }
+                return Ok(());
+            }
+            return self.skip_group(); // else ( body )
+        }
     }
 
     /// Parse a logical negation `not ( operand )` (given the resolved `not`
@@ -1749,18 +1913,69 @@ impl<'a> Parser<'a> {
             // rewinds and resolves normally below.
             if let Some((nstart, nlen)) = self.lex_identifier() {
                 // A fresh name followed by `:` is the typed declaration
-                // `name : type` — not in the seed yet (`:` lives in field lists).
-                // Name the gap; reporting the name as unknown misleads. The name
-                // must begin an expression — the tape is empty or the previous
-                // expression already reduced to a dyad — so a `:` mid-expression
-                // (a field list) is not mistaken for one, while a typed declaration
-                // that *follows* other code is still named rather than called unknown.
+                // `name : type`: it introduces the name and sets its type slot,
+                // leaving the value undefined (DESIGN ›Declarations are immutable by
+                // default‹ — `a : i32` and `a := i32 ?` declare the same node; the
+                // seed approximates undefined as zeroed storage until phase bits
+                // land). The type may be computed: the type expression parses
+                // through the ordinary machinery, so a `-> type` call (`a :
+                // metatype(0)`) comptime-resolves to its concrete type first — the
+                // dependent declaration is the same declaration. The fresh-name
+                // gate keeps a resolvable name before `:` a field-list `:`.
                 if matches!(self.peek_kind(), Some((_, _, Construct::Colon)))
                     && matches!(tape.last(), None | Some(Cell::Dyad(_)))
                     && self.scopes.resolve(self.trie, &source[nstart..]).is_err()
                 {
-                    self.pos = nstart;
-                    return Err(ParseError::TypedDeclaration);
+                    // After a completed dyad the declaration starts the NEXT
+                    // expression (expressions are self-delimiting): stop before it.
+                    if matches!(tape.last(), Some(Cell::Dyad(_))) {
+                        self.pos = start;
+                        break;
+                    }
+                    let Some((_, matched, _)) = self.peek_kind() else { unreachable!() };
+                    self.pos += matched; // consume `:`
+                    // The type first, the name after: the declared type must be a
+                    // comptime-known type value, and the name is not yet bound
+                    // while its own type parses (`a : a` fails resolution cleanly).
+                    let t = self.parse_expression()?;
+                    // SAFETY: `t` is the reduced dyad just parsed.
+                    if !unsafe { crate::identities::is_type_value(&self.types, t) } {
+                        self.pos = nstart;
+                        return Err(ParseError::BadDeclaredType);
+                    }
+                    if !crate::identities::is_numtype_node(&self.types, t) {
+                        self.pos = nstart;
+                        return Err(ParseError::NonNumericDeclaredType);
+                    }
+                    // The place: zeroed storage at the type's width, the same shape
+                    // `build_scalar_binding` gives a `:=` snapshot — reads are plain
+                    // loads and `=` reassigns — but with no initializer to run.
+                    // SAFETY: `t` is a registered numeric type node.
+                    let nt = unsafe { crate::identities::numtype::of_type_node(t) };
+                    let blob = self.store.alloc_bytes(&vec![0u8; nt.bytes()]);
+                    let place = self.store.alloc_raw(t, blob);
+                    let name = &source[nstart..nstart + nlen];
+                    if let Err(e) = self.scopes.declare(self.trie, name, place) {
+                        self.pos = nstart;
+                        return Err(ParseError::Resolve(e));
+                    }
+                    // The declaration is graph structure: a declare node carrying
+                    // the spelling and the place (its run is a harmless load — a
+                    // declaration is a statement, silent and unit-valued).
+                    let name_node = crate::identities::string::build_text(
+                        self.store,
+                        self.types.string_,
+                        name.as_bytes(),
+                    );
+                    let node = crate::identities::declare::build(
+                        self.store,
+                        self.types.declare_,
+                        self.types.ops.declare_,
+                        name_node,
+                        place,
+                    );
+                    tape.push(Cell::Dyad(node));
+                    continue;
                 }
                 if let Some((_, matched, Construct::Declare)) = self.peek_kind() {
                     // A declaration after a completed dyad starts the NEXT
@@ -1860,10 +2075,24 @@ impl<'a> Parser<'a> {
                 self.pos = start;
             }
 
-            let r = self
-                .scopes
-                .resolve(self.trie, &source[start..])
-                .map_err(ParseError::Resolve)?;
+            let r = match self.scopes.resolve(self.trie, &source[start..]) {
+                Ok(r) => r,
+                // An unresolvable token after a completed dyad starts the NEXT
+                // expression (expressions are self-delimiting): stop before it,
+                // exactly as a resolvable operand-starter does below. The next
+                // expression may legitimately begin with it — a typed
+                // declaration parsing its type expression must not trip on the
+                // name that follows — and a genuinely unknown name is reported
+                // at the same position when that expression parses it. With an
+                // operand still pending, this expression needs the token: error.
+                Err(e) => {
+                    if matches!(tape.last(), Some(Cell::Dyad(_))) {
+                        self.pos = start;
+                        break;
+                    }
+                    return Err(ParseError::Resolve(e));
+                }
+            };
             let id = r.identity;
             let c = self.metas.get(&id).copied();
 

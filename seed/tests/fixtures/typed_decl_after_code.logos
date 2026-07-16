@@ -1,3 +1,5 @@
-# a typed declaration that follows other code still names the gap (not "unknown name")
+# a typed declaration works anywhere an expression can start, not only first
 x := i32 1
 a : i32
+a = 9
+x + a

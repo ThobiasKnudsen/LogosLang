@@ -208,23 +208,73 @@ fn a_type_call_with_a_runtime_argument_is_rejected() {
 }
 
 #[test]
-fn a_typed_declaration_names_the_gap() {
-    // `name : type` is settled design but not in the seed; the error must say
-    // that, at the name, instead of calling the fresh name unknown.
-    let (echoes, stderr) = repl(b"a : i32\n");
-    assert!(echoes.is_empty());
-    assert!(stderr.contains("<repl>:1:1: error: typed declarations"), "stderr: {stderr}");
+fn a_typed_declaration_declares_a_place_of_that_type() {
+    // `a : i32` introduces the name with its type slot set and its value
+    // undefined (zeroed until phase bits land): the declaration is silent,
+    // `.type` reflects the declared type, `=` fills the value, reads load it.
+    let (echoes, stderr) = repl(b"a : i32\na.type == i32\na = 9\na\n");
+    assert_eq!(echoes, ["true", "9"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
 }
 
 #[test]
-fn a_typed_declaration_names_the_gap_after_other_code() {
-    // The same gap must be named when the typed declaration is not the first
-    // expression — a fresh name beginning an expression, tape non-empty. Before,
-    // this fell through to a misleading "unknown name".
+fn a_dependent_typed_declaration_takes_a_computed_type() {
+    // `b : metatype(1)` — the declared type is the result of running a
+    // `-> type` function at parse time (roadmap #30): the dependent
+    // declaration is the same declaration, its type just computed.
+    let (echoes, stderr) = repl(
+        b"metatype := fn (i:i32) -> type (if (i==0)(i32) else (f64))\n\
+          b : metatype(1)\nb.type == f64\nb = 7\nb\n",
+    );
+    assert_eq!(echoes, ["true", "7.0"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
+fn a_typed_declaration_works_after_other_code() {
     let out = logos().arg("tests/fixtures/typed_decl_after_code.logos").output().unwrap();
-    assert_eq!(out.status.code(), Some(1));
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("3:1: error: typed declarations"), "stderr: {err}");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "10\n");
+}
+
+#[test]
+fn a_typed_declaration_rejects_a_non_type() {
+    let (_echoes, stderr) = repl(b"a : 5\n");
+    assert!(stderr.contains("must be a type value"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_typed_declaration_names_the_non_numeric_gap() {
+    // Storage for `a : type` (and struct/pointer/bool/void declarations) is not
+    // in the seed yet; the error names the gap instead of mis-storing.
+    let (_echoes, stderr) = repl(b"a : type\n");
+    assert!(stderr.contains("non-numeric types are not in the seed yet"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_comptime_if_drops_the_untaken_branch_unparsed() {
+    // The condition folds to a bool literal at parse time (`a.type == i32`), so
+    // the `if` resolves during parsing and the untaken branch's tokens are
+    // dropped unlexed: `a = 9.9` under `a : i32` would be a parse error
+    // (UncomputableLiteral) if it were ever parsed — the proof it was skipped
+    // is that this runs at all. A comptime-false chain link falls through to
+    // the branch whose condition holds.
+    let (echoes, stderr) = repl(
+        b"a : i32\nif (a.type == i32) (a = 9) else (a = 9.9)\na\n\
+          b : f64\nif (b.type == i32) (b = 1) else if (b.type == f64) (b = 2.5) else (b = 3)\nb\n",
+    );
+    assert_eq!(echoes, ["9", "2.5"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
+fn the_metatypefn_example_runs() {
+    // The station #30 north-star, end to end: a `-> type` fn computes the type,
+    // `a : metatype(0)` declares with it, and a comptime `if` dispatches on
+    // `a.type`, skipping the branches that could not even parse under i32.
+    let out = logos().arg("examples/metatypefn.logos").output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "9\n");
 }
 
 #[test]
