@@ -21,7 +21,7 @@ use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, Construct};
+use crate::parse::{Assoc, Schedule};
 use crate::run::{RunError, Runtime};
 
 /// The index of the condition in an `if` node's value struct.
@@ -40,19 +40,18 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         meta::TUPLE_TAG,
         0.0,
         Assoc::Left,
+        Schedule::If,
         &["condition", "then", "else", "op"],
     );
     let if_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("if", IdContext::new(if_, cx.root_scope));
-    cx.metas.insert(if_, Construct::If);
     cx.lower.insert(if_, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
 
     // `else` is a parse-only token between the branches, not a function.
-    let record = meta::record(cx.store, meta::TOKEN_TAG);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Else);
     let else_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("else", IdContext::new(else_, cx.root_scope));
-    cx.metas.insert(else_, Construct::Else);
 
     (if_, leaf)
 }

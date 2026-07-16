@@ -25,7 +25,7 @@ use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, Construct};
+use crate::parse::{Assoc, Schedule};
 use crate::run::{RunError, Runtime};
 
 /// Register `for` (the loop keyword, its run native, and its lowering) plus the
@@ -38,23 +38,21 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         meta::TUPLE_TAG,
         0.0,
         Assoc::Left,
+        Schedule::For,
         &["variable", "start", "end", "step", "body", "op"],
     );
     let for_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("for", IdContext::new(for_, cx.root_scope));
-    cx.metas.insert(for_, Construct::For);
     cx.lower.insert(for_, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::In);
     let in_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("in", IdContext::new(in_, cx.root_scope));
-    cx.metas.insert(in_, Construct::In);
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::DotDot);
     let range = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(r"\.\.", IdContext::new(range, cx.root_scope));
-    cx.metas.insert(range, Construct::DotDot);
 
     (for_, leaf)
 }

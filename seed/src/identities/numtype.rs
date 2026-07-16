@@ -147,7 +147,7 @@ impl NumType {
 /// lowering [`lower_var`]. The interpreter reads its values through the type's
 /// width (see [`read_scalar`]).
 pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr {
-    let record = super::meta::record(cx.store, nt as u8);
+    let record = super::meta::record(cx.store, nt as u8, crate::parse::Schedule::Operand);
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(spelling, IdContext::new(id, cx.root_scope));
     cx.lower.insert(id, lower_var);
@@ -164,7 +164,7 @@ pub(crate) const VOID_TAG: u8 = 10;
 /// a `->` return type, marking a function that runs its body for effect and yields
 /// unit.
 pub(crate) fn register_void(cx: &mut Cx) -> DyadPtr {
-    let record = super::meta::record(cx.store, VOID_TAG);
+    let record = super::meta::record(cx.store, VOID_TAG, crate::parse::Schedule::Operand);
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("void", IdContext::new(id, cx.root_scope));
     id

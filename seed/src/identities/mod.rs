@@ -39,7 +39,7 @@ use std::collections::HashMap;
 
 use crate::compile::LowerTable;
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc, Construct, CoreTypes, ParseError, FN_OUTPUT};
+use crate::parse::{Assoc, Construct, CoreTypes, ParseError, Schedule, FN_OUTPUT};
 use crate::regex_trie::RegexTrie;
 use crate::store::Store;
 
@@ -266,7 +266,7 @@ impl Core {
         // fixed point); a `scope`'s value is `[exprs, op]` — its expression
         // array and its sequence native (a scope IS an array; the list is
         // never inline in the node).
-        let record = meta::record(cx.store, meta::TYPEREC_TAG);
+        let record = meta::record(cx.store, meta::TYPEREC_TAG, Schedule::Operand);
         // SAFETY: `type_`/`scope_` were allocated above with null value slots
         // nothing has read yet.
         unsafe {
@@ -279,7 +279,14 @@ impl Core {
         // operand and `t := type` binds it through the same `== type_` rebind branch
         // a numeric type uses — so this one line is the whole spelling.
         cx.trie.insert("type", crate::id_context::IdContext::new(type_, cx.root_scope));
-        let record = meta::operand_record(&mut cx, meta::TUPLE_TAG, 0.0, Assoc::Left, &["exprs", "op"]);
+        let record = meta::operand_record(
+            &mut cx,
+            meta::TUPLE_TAG,
+            0.0,
+            Assoc::Left,
+            Schedule::Operand,
+            &["exprs", "op"],
+        );
         unsafe {
             (*scope_).value = record;
         }

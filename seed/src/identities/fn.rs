@@ -22,7 +22,7 @@
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, Construct};
+use crate::parse::{Assoc, Schedule};
 use crate::store::Store;
 
 /// Create the `fn` type (its own type is `type`) and return it. Called before the
@@ -36,7 +36,6 @@ pub(super) fn register(store: &mut Store, type_: DyadPtr) -> DyadPtr {
 /// parser's table.
 pub(super) fn register_syntax(cx: &mut Cx) {
     cx.trie.insert("fn", IdContext::new(cx.fn_type, cx.root_scope));
-    cx.metas.insert(cx.fn_type, Construct::Fn);
 
     // `fn`'s own record, installed now that the string type exists for the role
     // names: an fn value is the five fixed slots `[input, output, body, bcode,
@@ -48,6 +47,7 @@ pub(super) fn register_syntax(cx: &mut Cx) {
         meta::TUPLE_TAG,
         0.0,
         Assoc::Left,
+        Schedule::Fn,
         &["input", "output", "body", "bcode", "frame"],
     );
     // SAFETY: `fn_type` was allocated by [`register`] and nothing has read its
@@ -57,8 +57,7 @@ pub(super) fn register_syntax(cx: &mut Cx) {
     }
 
     // `->` separates a fn's parameter list from its return type.
-    let record = meta::record(cx.store, meta::TOKEN_TAG);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Arrow);
     let arrow = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("->", IdContext::new(arrow, cx.root_scope));
-    cx.metas.insert(arrow, Construct::Arrow);
 }

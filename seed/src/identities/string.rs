@@ -19,14 +19,14 @@ use super::numtype::STRING_TAG;
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Construct, ParseError};
+use crate::parse::{Construct, ParseError, Schedule};
 use crate::store::Store;
 
 /// Register `string`: its [`STRING_TAG`] type node and the `«…»` literal pattern
 /// (no escapes yet, so a `»` cannot occur inside the text; unanchored, like the
 /// rational pattern, so the lexer longest-matches a prefix).
 pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
-    let record = meta::record(cx.store, STRING_TAG);
+    let record = meta::record(cx.store, STRING_TAG, Schedule::Atom);
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("«[^»]*»", IdContext::new(id, cx.root_scope));
     cx.metas.insert(id, Construct::Atom(build));

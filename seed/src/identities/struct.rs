@@ -19,26 +19,24 @@
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, Construct};
+use crate::parse::{Assoc, Schedule};
 
 /// Register `struct` and the field-list punctuation (`:`, `,`) it consumes.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     // A struct definition's value is `[scope, field…, null]`: one fixed slot,
     // then the variadic field list.
-    let record = meta::operand_record(cx, meta::LIST_TAG, 0.0, Assoc::Left, &["scope"]);
+    let record =
+        meta::operand_record(cx, meta::LIST_TAG, 0.0, Assoc::Left, Schedule::Struct, &["scope"]);
     let struct_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("struct", IdContext::new(struct_, cx.root_scope));
-    cx.metas.insert(struct_, Construct::Struct);
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Colon);
     let colon = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(":", IdContext::new(colon, cx.root_scope));
-    cx.metas.insert(colon, Construct::Colon);
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Separator);
     let comma = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(",", IdContext::new(comma, cx.root_scope));
-    cx.metas.insert(comma, Construct::Separator);
 
     struct_
 }

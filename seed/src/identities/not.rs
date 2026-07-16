@@ -19,16 +19,22 @@ use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, Construct};
+use crate::parse::{Assoc, Schedule};
 use crate::run::{RunError, Runtime};
 
 /// Register `not`: spelling, the parenthesized-operand construct, native leaf,
 /// and lowering. Returns `(identity, leaf)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
-    let record = meta::operand_record(cx, meta::TUPLE_TAG, 0.0, Assoc::Left, &["operand", "op"]);
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        0.0,
+        Assoc::Left,
+        Schedule::Not,
+        &["operand", "op"],
+    );
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("not", IdContext::new(id, cx.root_scope));
-    cx.metas.insert(id, Construct::Not);
     cx.lower.insert(id, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     (id, leaf)

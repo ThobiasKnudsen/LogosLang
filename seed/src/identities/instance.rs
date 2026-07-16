@@ -26,7 +26,7 @@ use super::{commit_if_literal, meta, numtype_of, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Construct, CoreTypes, ParseError};
+use crate::parse::{CoreTypes, ParseError, Schedule};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -40,6 +40,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         meta::LIST_TAG,
         0.0,
         crate::parse::Assoc::Left,
+        Schedule::Operand,
         &["instance", "op"],
     );
     let construct = cx.store.alloc_raw(cx.type_, record);
@@ -47,10 +48,9 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
 
     // Escaped, because `.` is a regex metacharacter (as `\(` and `\)` are).
-    let record = meta::record(cx.store, meta::TOKEN_TAG);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Dot);
     let dot = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(r"\.", IdContext::new(dot, cx.root_scope));
-    cx.metas.insert(dot, Construct::Dot);
 
     (construct, leaf)
 }

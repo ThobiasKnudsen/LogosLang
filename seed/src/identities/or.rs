@@ -17,7 +17,9 @@ use super::{bool_mod, meta, operands, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{bool_literal_value, is_bool_result, Assoc, Construct, CoreTypes, ParseError};
+use crate::parse::{
+    bool_literal_value, is_bool_result, Assoc, Construct, CoreTypes, ParseError, Schedule,
+};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -25,7 +27,14 @@ use crate::store::Store;
 /// looser than `and`), its lowering, and its short-circuiting native leaf.
 /// Returns `(identity, leaf)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
-    let record = meta::operand_record(cx, meta::TUPLE_TAG, 1.1, Assoc::Left, &["lhs", "rhs", "op"]);
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        1.1,
+        Assoc::Left,
+        Schedule::Infix,
+        &["lhs", "rhs", "op"],
+    );
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("or", IdContext::new(id, cx.root_scope));
     cx.metas.insert(id, Construct::Infix { build });

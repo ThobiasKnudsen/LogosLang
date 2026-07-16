@@ -23,7 +23,7 @@ const DATA_OFF: usize = 8;
 /// Register the array-of-dyad type: `{ty: type, value -> record}`, the record
 /// [`meta::ARRAY_TAG`]-kinded.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let record = meta::record(cx.store, meta::ARRAY_TAG);
+    let record = meta::record(cx.store, meta::ARRAY_TAG, crate::parse::Schedule::Operand);
     cx.store.alloc_raw(cx.type_, record)
 }
 

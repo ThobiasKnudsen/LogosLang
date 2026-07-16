@@ -24,7 +24,9 @@
 //! [2..10]    f64  precedence
 //! [10..18]   u64  constructor (reserved 0; the native Construct lives in `metas`)
 //! [18..26]   u64  destructor  (reserved 0)
-//! [26..]     payload, per kind:
+//! [26]       u8   schedule — how the driver schedules the token (see
+//!                 [`crate::parse::Schedule`]; 0 = plain operand)
+//! [27..]     payload, per kind:
 //!              ADDR              pointee type node (`dyad@`)
 //!              TUPLE/LIST         u8 arity, then arity × `dyad@` role-name strings
 //! ```
@@ -38,7 +40,7 @@
 //! leaves their op slots reference.
 
 use crate::dyad::DyadPtr;
-use crate::parse::Assoc;
+use crate::parse::{Assoc, Schedule};
 use crate::store::Store;
 
 use super::numtype::ADDR_TAG;
@@ -83,30 +85,35 @@ const PREC_OFF: usize = 2;
 const CTOR_OFF: usize = 10;
 /// Byte offset of the reserved destructor slot.
 const DTOR_OFF: usize = 18;
+/// Byte offset of the schedule byte.
+const SCHED_OFF: usize = 26;
 /// Byte offset of the kind-specific payload (a pointer type's pointee, or an
 /// operand record's arity + roles).
-pub(crate) const PAYLOAD_OFF: usize = 26;
+pub(crate) const PAYLOAD_OFF: usize = 27;
 
-/// Build a plain record: `kind`, no precedence, no payload. The scalar types,
-/// the text substance, the foundations, and the parse-only tokens.
-pub(crate) fn record(store: &mut Store, kind: u8) -> *mut u8 {
-    let blob = header(kind, Assoc::Left, 0.0);
+/// Build a plain record: `kind` and `schedule`, no precedence, no payload. The
+/// scalar types, the text substance, the foundations, and the parse-only tokens
+/// (whose schedule is their whole parse role).
+pub(crate) fn record(store: &mut Store, kind: u8, schedule: Schedule) -> *mut u8 {
+    let blob = header(kind, Assoc::Left, 0.0, schedule);
     store.alloc_bytes(&blob)
 }
 
 /// Build an operand record for an operator/statement identity: its layout
 /// `kind` ([`TUPLE_TAG`] or [`LIST_TAG`]), its parse
-/// `precedence`/`assoc`, and one role-name string node per operand slot.
+/// `precedence`/`assoc`/`schedule`, and one role-name string node per operand
+/// slot.
 pub(crate) fn operand_record(
     cx: &mut Cx,
     kind: u8,
     precedence: f64,
     assoc: Assoc,
+    schedule: Schedule,
     roles: &[&str],
 ) -> *mut u8 {
     debug_assert!(matches!(kind, TUPLE_TAG | LIST_TAG), "operand records carry operand kinds");
     debug_assert!(!cx.string_.is_null(), "role names need the string type registered");
-    let mut blob = header(kind, assoc, precedence).to_vec();
+    let mut blob = header(kind, assoc, precedence, schedule).to_vec();
     blob.push(roles.len() as u8);
     for role in roles {
         let name = string::build_text(cx.store, cx.string_, role.as_bytes());
@@ -118,14 +125,14 @@ pub(crate) fn operand_record(
 /// Build a pointer type's record: kind [`ADDR_TAG`], the pointee node as the
 /// payload. Pointer types are created fresh per use and carry no parse members.
 pub(crate) fn pointer_record(store: &mut Store, pointee: DyadPtr) -> *mut u8 {
-    let mut blob = header(ADDR_TAG, Assoc::Left, 0.0).to_vec();
+    let mut blob = header(ADDR_TAG, Assoc::Left, 0.0, Schedule::Operand).to_vec();
     blob.extend_from_slice(&(pointee as usize).to_ne_bytes());
     store.alloc_bytes(&blob)
 }
 
-/// The fixed head of every record: kind, associativity, precedence, and the two
-/// reserved slots.
-fn header(kind: u8, assoc: Assoc, precedence: f64) -> [u8; PAYLOAD_OFF] {
+/// The fixed head of every record: kind, associativity, precedence, the two
+/// reserved slots, and the schedule byte.
+fn header(kind: u8, assoc: Assoc, precedence: f64, schedule: Schedule) -> [u8; PAYLOAD_OFF] {
     let mut h = [0u8; PAYLOAD_OFF];
     h[0] = kind;
     h[ASSOC_OFF] = match assoc {
@@ -133,9 +140,18 @@ fn header(kind: u8, assoc: Assoc, precedence: f64) -> [u8; PAYLOAD_OFF] {
         Assoc::Right => 1,
     };
     h[PREC_OFF..CTOR_OFF].copy_from_slice(&precedence.to_ne_bytes());
-    // CTOR_OFF..DTOR_OFF and DTOR_OFF..PAYLOAD_OFF stay zero: reserved.
+    // CTOR_OFF..DTOR_OFF and DTOR_OFF..SCHED_OFF stay zero: reserved.
     let _ = DTOR_OFF;
+    h[SCHED_OFF] = schedule as u8;
     h
+}
+
+/// The parse schedule stored in `id`'s record.
+///
+/// # Safety
+/// As [`precedence_of`].
+pub(crate) unsafe fn schedule_of(id: DyadPtr) -> Schedule {
+    Schedule::from_tag(*(*id).value.add(SCHED_OFF))
 }
 
 /// The record kind of `id`, or `None` for a null value slot (a still-unbound

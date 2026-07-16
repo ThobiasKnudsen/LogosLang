@@ -20,7 +20,7 @@ use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, Construct, CoreTypes, ParseError};
+use crate::parse::{Assoc, Construct, CoreTypes, ParseError, Schedule};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -29,7 +29,14 @@ use crate::store::Store;
 /// kept as an explicit yield and becomes early-return once control flow lands.
 /// Returns `(identity, leaf)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
-    let record = meta::operand_record(cx, meta::TUPLE_TAG, 0.0, Assoc::Left, &["value", "op"]);
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        0.0,
+        Assoc::Left,
+        Schedule::Prefix,
+        &["value", "op"],
+    );
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("return", IdContext::new(id, cx.root_scope));
     cx.metas.insert(id, Construct::Prefix(build));

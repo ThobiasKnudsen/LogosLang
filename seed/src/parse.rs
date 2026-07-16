@@ -538,15 +538,138 @@ pub unsafe fn fn_frame_size(fn_node: DyadPtr) -> usize {
     }
 }
 
-/// A core identity's native parse-time behaviour: how the driver schedules the
-/// token and how its dyad is built. Core identities are hand-built natives (see
-/// `crate::identities`). The *data* half of parsing — an operator's precedence
-/// and associativity, and its operand layout — already rides the graph as each
-/// identity's shared-member record ([`crate::identities::meta`]); what remains
-/// here is behaviour, ported to graph-resident constructors at self-hosting. In
-/// this seed the driver owns tape scheduling and the `build` functions only
-/// construct the node; general tape-driving constructors (needed for macros and
-/// token-rewriting operators) come later.
+/// How the driver schedules a token — the parse-role half of an identity's
+/// shared members, stored as one byte in its record
+/// ([`crate::identities::meta`], issue #30) and read from the graph at
+/// dispatch, exactly as precedence and associativity already are. The
+/// *behaviour* half (how the dyad is built) is the [`Construct`] table for
+/// now, ported to constructor callables in the records next. In this seed the
+/// driver owns tape scheduling; general tape-driving constructors (needed for
+/// macros and token-rewriting operators) come at self-hosting.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum Schedule {
+    /// A plain operand — a value, a type, a user binding: no parse role beyond
+    /// standing as itself. The zero default: a record that says nothing
+    /// schedules as an operand.
+    Operand = 0,
+    /// A literal/atom: build a leaf node from the matched source span.
+    Atom = 1,
+    /// A prefix keyword that takes the rest of the expression as one operand
+    /// (e.g. `return <expr>`). v1 consumes to the end of the current
+    /// expression; delimited forms come with brackets.
+    Prefix = 2,
+    /// An infix binary operator: reduced against its neighbours by the
+    /// precedence and associativity in the same record.
+    Infix = 3,
+    /// An opening bracket `(`: parse the body up to the matching close; the
+    /// scope's value is what that body evaluates to (DESIGN ›A scope's value is
+    /// what it evaluates to‹). An explicit `return` is optional.
+    Open = 4,
+    /// A closing bracket `)`: ends the current scope's body.
+    Close = 5,
+    /// The `struct` keyword: parse the following `( field-list )` into a struct
+    /// node. The field list is a bespoke sub-parse ([`Parser::parse_struct`]),
+    /// because a field name is a *fresh* spelling the eager-resolve driver cannot
+    /// resolve; it is reused for a function's parameter list (DESIGN ›A function's
+    /// surface‹: the parameter list *is* a struct).
+    Struct = 6,
+    /// A field separator `,`: ends the current field's type expression the way `)`
+    /// ends a scope. The field-list parser consumes it; the generic driver treats
+    /// it as a structural break.
+    Separator = 7,
+    /// A declaration colon `:` in `name : type`: separates a field name from its
+    /// type, and opens the typed declaration at statement level.
+    Colon = 8,
+    /// The `fn` keyword: parse a function literal `fn ( params ) -> ret ( body )`
+    /// (DESIGN ›A function's surface‹) via [`Parser::parse_fn`]. The parameter list
+    /// is a `struct` (step 2's field list); the body is a `( )` scope with the
+    /// parameters open.
+    Fn = 9,
+    /// The return arrow `->` in a fn signature: separates the parameter list from
+    /// the return type. Consumed by [`Parser::parse_fn`].
+    Arrow = 10,
+    /// The `if` keyword: parse a conditional `if ( cond ) ( then )` with an
+    /// optional `else ( else )` via [`Parser::parse_if`]. Each part is a
+    /// parenthesized expression; the condition must be a `bool`.
+    If = 11,
+    /// The `else` keyword: separates an `if`'s two branches when present. Consumed
+    /// by [`Parser::parse_if`]; a structural token elsewhere.
+    Else = 12,
+    /// The declaration operator `:=`. Detected by the driver *before* name
+    /// resolution (a fresh name followed by `:=` is a declaration); see
+    /// [`Parser::parse_expression`]. It never reaches the main dispatch as an
+    /// operand, so it is grouped with the structural delimiters there.
+    Declare = 13,
+    /// The `not` keyword: parse a logical negation `not ( operand )` via
+    /// [`Parser::parse_not`]. The operand is parenthesized (like an `if` condition)
+    /// and must be a `bool`.
+    Not = 14,
+    /// The `while` keyword: parse a loop `while ( cond ) ( body )` via
+    /// [`Parser::parse_while`]. A statement: the body reruns for effect while the
+    /// `bool` condition holds, and the loop yields unit.
+    While = 15,
+    /// The field-access dot `lhs.name`: resolved by the driver at parse time to a
+    /// *place* inside the instance's storage (DESIGN ›Resolution is one rule‹),
+    /// binding tightest.
+    Dot = 16,
+    /// The `for` keyword: parse a counted loop `for i in a..b[..d] ( body )` via
+    /// [`Parser::parse_for`]. A statement yielding unit, like `while`.
+    For = 17,
+    /// The `in` keyword between a `for`'s variable and its range. Consumed by
+    /// [`Parser::parse_for`]; a structural token elsewhere.
+    In = 18,
+    /// The range dots `..` between a `for`'s endpoints (and before its optional
+    /// step). Consumed by [`Parser::parse_for`]; a structural token elsewhere.
+    DotDot = 19,
+    /// The `@`: after a completed dyad, a postfix dereference (`p@`, chaining as
+    /// `p@.x` and `p@@`); elsewhere, the pointer-type prefix (`@i32`, `@point`,
+    /// `@@i32`). A dereference can never start an expression, so the two
+    /// positions never collide.
+    At = 20,
+    /// The `&`: address-of a storage-backed place (`&x`, `&p.x`), yielding a
+    /// pointer value typed `@T`. Handled by the driver, like prefix minus.
+    Amp = 21,
+}
+
+impl Schedule {
+    /// Decode a record's schedule byte. The records are seed-built, so an
+    /// unknown byte is a corrupt record, not a case to tolerate.
+    pub(crate) fn from_tag(b: u8) -> Schedule {
+        use Schedule::*;
+        match b {
+            0 => Operand,
+            1 => Atom,
+            2 => Prefix,
+            3 => Infix,
+            4 => Open,
+            5 => Close,
+            6 => Struct,
+            7 => Separator,
+            8 => Colon,
+            9 => Fn,
+            10 => Arrow,
+            11 => If,
+            12 => Else,
+            13 => Declare,
+            14 => Not,
+            15 => While,
+            16 => Dot,
+            17 => For,
+            18 => In,
+            19 => DotDot,
+            20 => At,
+            21 => Amp,
+            _ => unreachable!("a record's schedule byte is seed-written"),
+        }
+    }
+}
+
+/// A core identity's native *build* code: how its dyad is constructed once the
+/// schedule (now graph data, see [`Schedule`]) has placed it. Core identities
+/// are hand-built natives (see `crate::identities`); these functions are the
+/// behaviour half of the record's constructor slot, ported onto callable
+/// leaves next and to graph-resident constructors at self-hosting.
 #[derive(Clone, Copy)]
 pub enum Construct {
     /// A literal/atom: build a leaf node from the matched source span.
@@ -554,87 +677,14 @@ pub enum Construct {
     /// A prefix keyword that takes the rest of the expression as one operand
     /// (e.g. `return <expr>`): build a node from the identity and that parsed
     /// operand. The [`CoreTypes`] lets the builder reference its native leaf.
-    /// v1 consumes to the end of the current expression; delimited forms come
-    /// with brackets.
     Prefix(fn(&mut Store, &CoreTypes, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>),
     /// An infix binary operator: build a node from its operator identity and two
     /// already-reduced operands. The `build` callback receives the [`CoreTypes`] so
     /// an abstract operator (`+`) can resolve its concrete machine op from the
-    /// operand types. Its precedence and associativity are not here: they are graph
-    /// data, shared members of the identity's own record (DESIGN ›A type's metadata
-    /// is shared by its values‹), read at dispatch via [`crate::identities::meta`].
+    /// operand types.
     Infix {
         build: fn(&mut Store, &CoreTypes, DyadPtr, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>,
     },
-    /// An opening bracket `(`: parse the body up to the matching close; the
-    /// scope's value is what that body evaluates to (DESIGN ›A scope's value is
-    /// what it evaluates to‹). An explicit `return` is optional.
-    Open,
-    /// A closing bracket `)`: ends the current scope's body.
-    Close,
-    /// The `struct` keyword: parse the following `( field-list )` into a struct
-    /// node. The field list is a bespoke sub-parse ([`Parser::parse_struct`]),
-    /// because a field name is a *fresh* spelling the eager-resolve driver cannot
-    /// resolve; it is reused for a function's parameter list (DESIGN ›A function's
-    /// surface‹: the parameter list *is* a struct).
-    Struct,
-    /// A field separator `,`: ends the current field's type expression the way `)`
-    /// ends a scope. The field-list parser consumes it; the generic driver treats
-    /// it as a structural break.
-    Separator,
-    /// A declaration colon `:` in `name : type`: separates a field name from its
-    /// type. v1 appears only inside a field list; the general declaration operator
-    /// is later.
-    Colon,
-    /// The `fn` keyword: parse a function literal `fn ( params ) -> ret ( body )`
-    /// (DESIGN ›A function's surface‹) via [`Parser::parse_fn`]. The parameter list
-    /// is a `struct` (step 2's field list); the body is a `( )` scope with the
-    /// parameters open.
-    Fn,
-    /// The return arrow `->` in a fn signature: separates the parameter list from
-    /// the return type. Consumed by [`Parser::parse_fn`].
-    Arrow,
-    /// The `if` keyword: parse a conditional `if ( cond ) ( then )` with an
-    /// optional `else ( else )` via [`Parser::parse_if`]. Each part is a
-    /// parenthesized expression; the condition must be a `bool`.
-    If,
-    /// The `else` keyword: separates an `if`'s two branches when present. Consumed
-    /// by [`Parser::parse_if`]; a structural token elsewhere.
-    Else,
-    /// The declaration operator `:=`. Detected by the driver *before* name
-    /// resolution (a fresh name followed by `:=` is a declaration); see
-    /// [`Parser::parse_expression`]. It never reaches the main dispatch as an
-    /// operand, so it is grouped with the structural delimiters there.
-    Declare,
-    /// The `not` keyword: parse a logical negation `not ( operand )` via
-    /// [`Parser::parse_not`]. The operand is parenthesized (like an `if` condition)
-    /// and must be a `bool`.
-    Not,
-    /// The `while` keyword: parse a loop `while ( cond ) ( body )` via
-    /// [`Parser::parse_while`]. A statement: the body reruns for effect while the
-    /// `bool` condition holds, and the loop yields unit.
-    While,
-    /// The field-access dot `lhs.name`: resolved by the driver at parse time to a
-    /// *place* inside the instance's storage (DESIGN ›Resolution is one rule‹),
-    /// binding tightest.
-    Dot,
-    /// The `for` keyword: parse a counted loop `for i in a..b[..d] ( body )` via
-    /// [`Parser::parse_for`]. A statement yielding unit, like `while`.
-    For,
-    /// The `in` keyword between a `for`'s variable and its range. Consumed by
-    /// [`Parser::parse_for`]; a structural token elsewhere.
-    In,
-    /// The range dots `..` between a `for`'s endpoints (and before its optional
-    /// step). Consumed by [`Parser::parse_for`]; a structural token elsewhere.
-    DotDot,
-    /// The `@`: after a completed dyad, a postfix dereference (`p@`, chaining as
-    /// `p@.x` and `p@@`); elsewhere, the pointer-type prefix (`@i32`, `@point`,
-    /// `@@i32`). A dereference can never start an expression, so the two
-    /// positions never collide.
-    At,
-    /// The `&`: address-of a storage-backed place (`&x`, `&p.x`), yielding a
-    /// pointer value typed `@T`. Handled by the driver, like prefix minus.
-    Amp,
 }
 
 /// Why elaboration failed.
@@ -1034,8 +1084,8 @@ impl<'a> Parser<'a> {
             .scopes
             .resolve(self.trie, &source[start..])
             .map_err(ParseError::Resolve)?;
-        match self.metas.get(&r.identity).copied() {
-            Some(Construct::Close) => {
+        match self.schedule(r.identity) {
+            Schedule::Close => {
                 self.pos = start + r.matched;
                 Ok(())
             }
@@ -1043,24 +1093,83 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Peek the next token's `Construct` without consuming it. `None` at end of
-    /// input or when the token is not a known structural identity: a fresh name
-    /// resolves to nothing here and is read raw by the field-list parser instead.
-    fn peek_kind(&mut self) -> Option<(DyadPtr, usize, Construct)> {
+    /// The parse schedule of a resolved identity, read from its shared-member
+    /// record — the graph, not a parser table, says how a token schedules
+    /// (issue #30). Only a type identity carries a record in its value slot
+    /// (its `ty` is the `Type : Type` root); everything else a name can
+    /// resolve to — a user binding, a fn value, a struct type, a type
+    /// variable — is a plain operand.
+    fn schedule(&self, id: DyadPtr) -> Schedule {
+        // SAFETY: `id` is a resolved dyad from the store; the record read is
+        // gated on it being a type identity whose registration built the record.
+        unsafe {
+            if !id.is_null()
+                && (*id).ty == self.types.type_
+                && crate::identities::meta::kind_of(id).is_some()
+            {
+                crate::identities::meta::schedule_of(id)
+            } else {
+                Schedule::Operand
+            }
+        }
+    }
+
+    /// The Atom build of a literal identity — the behaviour half of its
+    /// constructor, still table-resident until the constructor slot carries it.
+    fn atom_build(
+        &self,
+        id: DyadPtr,
+    ) -> Option<fn(&mut Store, DyadPtr, &str) -> Result<DyadPtr, ParseError>> {
+        match self.metas.get(&id) {
+            Some(Construct::Atom(build)) => Some(*build),
+            _ => None,
+        }
+    }
+
+    /// The Prefix build of a keyword identity, as [`Parser::atom_build`].
+    fn prefix_build(
+        &self,
+        id: DyadPtr,
+    ) -> Option<fn(&mut Store, &CoreTypes, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>> {
+        match self.metas.get(&id) {
+            Some(Construct::Prefix(build)) => Some(*build),
+            _ => None,
+        }
+    }
+
+    /// The Infix build of an operator identity, as [`Parser::atom_build`].
+    fn infix_build(
+        &self,
+        id: DyadPtr,
+    ) -> Option<fn(&mut Store, &CoreTypes, DyadPtr, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>>
+    {
+        match self.metas.get(&id) {
+            Some(Construct::Infix { build }) => Some(*build),
+            _ => None,
+        }
+    }
+
+    /// Peek the next token's [`Schedule`] without consuming it. `None` at end
+    /// of input or when the token has no parse role (a plain operand): a fresh
+    /// name resolves to nothing here and is read raw by the field-list parser
+    /// instead.
+    fn peek_kind(&mut self) -> Option<(DyadPtr, usize, Schedule)> {
         self.skip_trivia();
         let source = self.source;
         if self.pos >= source.len() {
             return None;
         }
         let r = self.scopes.resolve(self.trie, &source[self.pos..]).ok()?;
-        let c = self.metas.get(&r.identity).copied()?;
-        Some((r.identity, r.matched, c))
+        match self.schedule(r.identity) {
+            Schedule::Operand => None,
+            s => Some((r.identity, r.matched, s)),
+        }
     }
 
     /// Consume the `(` that opens a field list, or fail.
     fn expect_open(&mut self) -> Result<(), ParseError> {
         match self.peek_kind() {
-            Some((_, matched, Construct::Open)) => {
+            Some((_, matched, Schedule::Open)) => {
                 self.pos += matched;
                 Ok(())
             }
@@ -1071,7 +1180,7 @@ impl<'a> Parser<'a> {
     /// Consume a `:` if the next token is one, reporting whether it was.
     fn consume_colon(&mut self) -> bool {
         match self.peek_kind() {
-            Some((_, matched, Construct::Colon)) => {
+            Some((_, matched, Schedule::Colon)) => {
                 self.pos += matched;
                 true
             }
@@ -1082,7 +1191,7 @@ impl<'a> Parser<'a> {
     /// Consume a `,` if the next token is one, reporting whether it was.
     fn consume_separator(&mut self) -> bool {
         match self.peek_kind() {
-            Some((_, matched, Construct::Separator)) => {
+            Some((_, matched, Schedule::Separator)) => {
                 self.pos += matched;
                 true
             }
@@ -1092,7 +1201,7 @@ impl<'a> Parser<'a> {
 
     /// Whether the next token is a closing `)` (peek, no consume).
     fn at_close(&mut self) -> bool {
-        matches!(self.peek_kind(), Some((_, _, Construct::Close)))
+        matches!(self.peek_kind(), Some((_, _, Schedule::Close)))
     }
 
     /// Read a raw identifier `[A-Za-z_][A-Za-z0-9_]*` at the cursor, advancing past
@@ -1297,7 +1406,7 @@ impl<'a> Parser<'a> {
         // value-ness — else-less it is unit, exactly as the explicit form is — so the
         // sugar builds a structurally identical tree and introduces no new case.
         let els = if self.consume_else() {
-            if let Some((_, matched, Construct::If)) = self.peek_kind() {
+            if let Some((_, matched, Schedule::If)) = self.peek_kind() {
                 self.pos += matched;
                 self.parse_if(if_type)?
             } else {
@@ -1350,7 +1459,7 @@ impl<'a> Parser<'a> {
         }
         self.skip_group()?;
         if self.consume_else() {
-            if let Some((_, matched, Construct::If)) = self.peek_kind() {
+            if let Some((_, matched, Schedule::If)) = self.peek_kind() {
                 self.pos += matched;
                 return self.parse_if(if_type);
             }
@@ -1435,7 +1544,7 @@ impl<'a> Parser<'a> {
     /// the rest of the chain can never run.
     fn skip_else_tail(&mut self) -> Result<(), ParseError> {
         loop {
-            if let Some((_, matched, Construct::If)) = self.peek_kind() {
+            if let Some((_, matched, Schedule::If)) = self.peek_kind() {
                 self.pos += matched;
                 self.skip_group()?; // ( cond )
                 self.skip_group()?; // ( then )
@@ -1519,17 +1628,17 @@ impl<'a> Parser<'a> {
         let source = self.source;
         let name = &source[nstart..nstart + nlen];
         match self.peek_kind() {
-            Some((_, matched, Construct::In)) => self.pos += matched,
+            Some((_, matched, Schedule::In)) => self.pos += matched,
             _ => return Err(ParseError::ExpectedIn),
         }
         let start = self.parse_range_operand()?;
         match self.peek_kind() {
-            Some((_, matched, Construct::DotDot)) => self.pos += matched,
+            Some((_, matched, Schedule::DotDot)) => self.pos += matched,
             _ => return Err(ParseError::ExpectedRange),
         }
         let end = self.parse_range_operand()?;
         let step = match self.peek_kind() {
-            Some((_, matched, Construct::DotDot)) => {
+            Some((_, matched, Schedule::DotDot)) => {
                 self.pos += matched;
                 Some(self.parse_range_operand()?)
             }
@@ -1601,26 +1710,28 @@ impl<'a> Parser<'a> {
             .resolve(self.trie, &source[self.pos..])
             .map_err(ParseError::Resolve)?;
         let id = r.identity;
-        match self.metas.get(&id).copied() {
+        match self.schedule(id) {
             // An explicit parenthesized expression.
-            Some(Construct::Open) => {
+            Schedule::Open => {
                 self.pos += r.matched;
                 let e = self.parse_sequence()?;
                 self.expect_close()?;
                 Ok(e)
             }
             // A literal.
-            Some(Construct::Atom(build)) => {
+            Schedule::Atom => {
+                let build = self.atom_build(id).ok_or(ParseError::ExpectedRange)?;
                 let start = self.pos;
                 self.pos += r.matched;
                 let span = &source[start..start + r.matched];
                 build(self.store, id, span)
             }
             // A negated literal (`-` then a rational), as in the driver.
-            Some(Construct::Infix { .. }) if id == self.types.minus => {
+            Schedule::Infix if id == self.types.minus => {
                 self.pos += r.matched;
-                if let Some((lit, matched, Construct::Atom(build))) = self.peek_kind() {
+                if let Some((lit, matched, Schedule::Atom)) = self.peek_kind() {
                     if lit == self.types.rational {
+                        let build = self.atom_build(lit).ok_or(ParseError::ExpectedRange)?;
                         let lstart = self.pos;
                         self.pos += matched;
                         let span = &source[lstart..lstart + matched];
@@ -1634,10 +1745,10 @@ impl<'a> Parser<'a> {
                 Err(ParseError::ExpectedRange)
             }
             // A plain resolved name, with an optional `.field` chain.
-            None => {
+            Schedule::Operand => {
                 self.pos += r.matched;
                 let mut node = id;
-                while let Some((_, matched, Construct::Dot)) = self.peek_kind() {
+                while let Some((_, matched, Schedule::Dot)) = self.peek_kind() {
                     self.pos += matched;
                     // SAFETY: `node` is a resolved dyad from the store.
                     node = unsafe { self.parse_field_access(node)? };
@@ -1803,7 +1914,7 @@ impl<'a> Parser<'a> {
     /// the identity.
     fn parse_pointer_type(&mut self) -> Result<DyadPtr, ParseError> {
         let mut depth = 1usize;
-        while let Some((_, matched, Construct::At)) = self.peek_kind() {
+        while let Some((_, matched, Schedule::At)) = self.peek_kind() {
             self.pos += matched;
             depth += 1;
         }
@@ -1848,7 +1959,7 @@ impl<'a> Parser<'a> {
             .scopes
             .resolve(self.trie, &source[self.pos..])
             .map_err(ParseError::Resolve)?;
-        if self.metas.get(&r.identity).is_some() {
+        if self.schedule(r.identity) != Schedule::Operand {
             // Keywords, operators, literals: not places.
             return Err(ParseError::BadAddressOf);
         }
@@ -1857,7 +1968,7 @@ impl<'a> Parser<'a> {
         self.check_param_capture(&r)?;
         self.pos += r.matched;
         let mut node = r.identity;
-        while let Some((_, matched, Construct::Dot)) = self.peek_kind() {
+        while let Some((_, matched, Schedule::Dot)) = self.peek_kind() {
             self.pos += matched;
             // SAFETY: `node` is a resolved dyad from the store.
             node = unsafe { self.parse_field_access(node)? };
@@ -1885,7 +1996,7 @@ impl<'a> Parser<'a> {
     /// Consume an `else` if the next token is one, reporting whether it was.
     fn consume_else(&mut self) -> bool {
         match self.peek_kind() {
-            Some((_, matched, Construct::Else)) => {
+            Some((_, matched, Schedule::Else)) => {
                 self.pos += matched;
                 true
             }
@@ -1896,7 +2007,7 @@ impl<'a> Parser<'a> {
     /// Consume the `->` that separates a fn's parameter list from its return type.
     fn expect_arrow(&mut self) -> Result<(), ParseError> {
         match self.peek_kind() {
-            Some((_, matched, Construct::Arrow)) => {
+            Some((_, matched, Schedule::Arrow)) => {
                 self.pos += matched;
                 Ok(())
             }
@@ -1907,7 +2018,7 @@ impl<'a> Parser<'a> {
     /// Parse a fn's return type: a single resolved type identity (`i32`, …) or a
     /// pointer type (`@i32`). Compound type expressions arrive later.
     fn parse_return_type(&mut self) -> Result<DyadPtr, ParseError> {
-        if let Some((_, matched, Construct::At)) = self.peek_kind() {
+        if let Some((_, matched, Schedule::At)) = self.peek_kind() {
             self.pos += matched;
             return self.parse_pointer_type();
         }
@@ -2059,9 +2170,9 @@ impl<'a> Parser<'a> {
                 .map_err(ParseError::Resolve)?;
             let span = &source[self.pos..self.pos + r.matched];
             self.pos += r.matched;
-            match self.metas.get(&r.identity).copied() {
-                Some(Construct::Atom(build)) => build(self.store, r.identity, span)?,
-                _ => return Err(ParseError::BadLiteral),
+            match self.atom_build(r.identity) {
+                Some(build) => build(self.store, r.identity, span)?,
+                None => return Err(ParseError::BadLiteral),
             }
         } else {
             // Raw text to the end of the line, trimmed.
@@ -2117,7 +2228,7 @@ impl<'a> Parser<'a> {
                 // metatype(0)`) comptime-resolves to its concrete type first — the
                 // dependent declaration is the same declaration. The fresh-name
                 // gate keeps a resolvable name before `:` a field-list `:`.
-                if matches!(self.peek_kind(), Some((_, _, Construct::Colon)))
+                if matches!(self.peek_kind(), Some((_, _, Schedule::Colon)))
                     && matches!(tape.last(), None | Some(Cell::Dyad(_)))
                     && self.scopes.resolve(self.trie, &source[nstart..]).is_err()
                 {
@@ -2181,7 +2292,7 @@ impl<'a> Parser<'a> {
                     tape.push(Cell::Dyad(node));
                     continue;
                 }
-                if let Some((_, matched, Construct::Declare)) = self.peek_kind() {
+                if let Some((_, matched, Schedule::Declare)) = self.peek_kind() {
                     // A declaration after a completed dyad starts the NEXT
                     // expression (expressions are self-delimiting): stop before it.
                     if matches!(tape.last(), Some(Cell::Dyad(_))) {
@@ -2368,23 +2479,21 @@ impl<'a> Parser<'a> {
                 }
             };
             let id = r.identity;
-            let c = self.metas.get(&id).copied();
+            let c = self.schedule(id);
 
             // A structural delimiter (`)`, `,`, `:`, `->`) ends this
             // (sub-)expression; leave it unconsumed for the enclosing constructor
             // (the opener that started the scope, the field-list or fn parser).
             if matches!(
                 c,
-                Some(
-                    Construct::Close
-                        | Construct::Separator
-                        | Construct::Colon
-                        | Construct::Arrow
-                        | Construct::Else
-                        | Construct::Declare
-                        | Construct::In
-                        | Construct::DotDot
-                )
+                Schedule::Close
+                    | Schedule::Separator
+                    | Schedule::Colon
+                    | Schedule::Arrow
+                    | Schedule::Else
+                    | Schedule::Declare
+                    | Schedule::In
+                    | Schedule::DotDot
             ) {
                 break;
             }
@@ -2395,23 +2504,22 @@ impl<'a> Parser<'a> {
             // continues the expression, so neither is a boundary.
             let starts_operand = matches!(
                 c,
-                None | Some(
-                    Construct::Atom(_)
-                        | Construct::Prefix(_)
-                        | Construct::Struct
-                        | Construct::Fn
-                        | Construct::If
-                        | Construct::Not
-                        | Construct::While
-                        | Construct::For
-                        | Construct::Amp
-                )
+                Schedule::Operand
+                    | Schedule::Atom
+                    | Schedule::Prefix
+                    | Schedule::Struct
+                    | Schedule::Fn
+                    | Schedule::If
+                    | Schedule::Not
+                    | Schedule::While
+                    | Schedule::For
+                    | Schedule::Amp
             );
             // `type literal` juxtaposition is not a boundary: a numeric type dyad
             // directly before a literal consumes it into an anonymous typed value
             // (DESIGN ›an anonymous typed value is written by juxtaposition‹).
             let juxtaposition = id == self.types.rational
-                && matches!(c, Some(Construct::Atom(_)))
+                && c == Schedule::Atom
                 && tape
                     .last()
                     .and_then(Cell::as_dyad)
@@ -2425,7 +2533,7 @@ impl<'a> Parser<'a> {
                 // A plain operand: a reference to the resolved identity. A
                 // frame-local or parameter of an enclosing function (a capture)
                 // is rejected — v1 has no closures.
-                None => {
+                Schedule::Operand => {
                     // SAFETY: `id` is a resolved dyad from the store.
                     unsafe { self.check_capture(id)? };
                     self.check_param_capture(&r)?;
@@ -2435,7 +2543,8 @@ impl<'a> Parser<'a> {
                 // type dyad directly before it consumes it (juxtaposition): the
                 // literal commits exactly to that type, giving a typed value with
                 // real storage (`sum := i32 0`, the sketch's own spelling).
-                Some(Construct::Atom(build)) => {
+                Schedule::Atom => {
+                    let build = self.atom_build(id).ok_or(ParseError::BadLiteral)?;
                     let span = &source[start..start + r.matched];
                     let dyad = build(self.store, id, span)?;
                     if juxtaposition {
@@ -2452,7 +2561,8 @@ impl<'a> Parser<'a> {
                 }
                 // A prefix keyword: parse the rest of the expression as its
                 // operand, then build. (v1 grabs to the end of the expression.)
-                Some(Construct::Prefix(build)) => {
+                Schedule::Prefix => {
+                    let build = self.prefix_build(id).ok_or(ParseError::MissingOperand)?;
                     let operand = self.parse_expression()?;
                     let types = self.types;
                     let dyad = build(self.store, &types, id, operand)?;
@@ -2461,7 +2571,7 @@ impl<'a> Parser<'a> {
                 // An opening bracket. If a reduced operand precedes it, this is a
                 // call: `callee( args )` (juxtaposition, binding tightest). Else it
                 // is a grouping scope whose value is its body.
-                Some(Construct::Open) => {
+                Schedule::Open => {
                     if matches!(tape.last(), Some(Cell::Dyad(_))) {
                         let callee = tape.pop().and_then(|c| c.as_dyad()).unwrap();
                         let args = self.parse_arg_list()?;
@@ -2527,14 +2637,14 @@ impl<'a> Parser<'a> {
                 }
                 // The `struct` keyword: parse its `( field-list )` into a struct
                 // node (a bespoke sub-parse; fresh field names can't be resolved).
-                Some(Construct::Struct) => {
+                Schedule::Struct => {
                     let s = self.parse_struct(id)?;
                     tape.push(Cell::Dyad(s));
                 }
                 // The `fn` keyword: parse a `fn ( params ) -> ret ( body )` literal.
                 // When it opens a declaration's value, the declared placeholder
                 // rides along so the signature publishes before the body parses.
-                Some(Construct::Fn) => {
+                Schedule::Fn => {
                     let declared = if tape.is_empty() {
                         std::mem::replace(&mut self.pending_fn, std::ptr::null_mut())
                     } else {
@@ -2544,28 +2654,28 @@ impl<'a> Parser<'a> {
                     tape.push(Cell::Dyad(f));
                 }
                 // The `if` keyword: parse an `if ( cond ) ( then ) else ( else )`.
-                Some(Construct::If) => {
+                Schedule::If => {
                     let node = self.parse_if(id)?;
                     tape.push(Cell::Dyad(node));
                 }
                 // The `not` keyword: parse a logical negation `not ( operand )`.
-                Some(Construct::Not) => {
+                Schedule::Not => {
                     let node = self.parse_not(id)?;
                     tape.push(Cell::Dyad(node));
                 }
                 // The `while` keyword: parse a loop `while ( cond ) ( body )`.
-                Some(Construct::While) => {
+                Schedule::While => {
                     let node = self.parse_while(id)?;
                     tape.push(Cell::Dyad(node));
                 }
                 // The `for` keyword: parse a counted loop `for i in a..b[..d] ( body )`.
-                Some(Construct::For) => {
+                Schedule::For => {
                     let node = self.parse_for(id)?;
                     tape.push(Cell::Dyad(node));
                 }
                 // Field access `lhs.name`: resolved now, to a place inside the
                 // instance's storage; the access binds tightest, like a call.
-                Some(Construct::Dot) => {
+                Schedule::Dot => {
                     let lhs = tape
                         .last()
                         .and_then(Cell::as_dyad)
@@ -2577,7 +2687,7 @@ impl<'a> Parser<'a> {
                 }
                 // The `@`: postfix deref after a completed dyad, the pointer-type
                 // prefix otherwise. Deref binds tightest, like `.`.
-                Some(Construct::At) => {
+                Schedule::At => {
                     if let Some(lhs) = tape.last().and_then(Cell::as_dyad) {
                         // SAFETY: `lhs` is a reduced dyad; pointer checks inside.
                         let node = unsafe { self.build_deref(lhs)? };
@@ -2589,13 +2699,13 @@ impl<'a> Parser<'a> {
                     }
                 }
                 // The `&`: address-of a storage-backed place.
-                Some(Construct::Amp) => {
+                Schedule::Amp => {
                     let node = self.parse_address_of()?;
                     tape.push(Cell::Dyad(node));
                 }
                 // An operator: reduce anything binding tighter to its left, then
                 // shift it onto the tape as a pending token.
-                Some(Construct::Infix { .. }) => {
+                Schedule::Infix => {
                     // A `-` prefixes a numeric literal (`-` is always an operator;
                     // the literal regex is unsigned) when it has no left operand
                     // (`f(-1)`, `x := -5`) or directly follows a numeric *type*
@@ -2612,8 +2722,10 @@ impl<'a> Parser<'a> {
                     if id == self.types.minus
                         && (after_type || !matches!(tape.last(), Some(Cell::Dyad(_))))
                     {
-                        if let Some((lit, matched, Construct::Atom(build))) = self.peek_kind() {
+                        if let Some((lit, matched, Schedule::Atom)) = self.peek_kind() {
                             if lit == self.types.rational {
+                                let build =
+                                    self.atom_build(lit).ok_or(ParseError::BadLiteral)?;
                                 let lstart = self.pos;
                                 self.pos += matched;
                                 let span = &source[lstart..lstart + matched];
@@ -2656,16 +2768,14 @@ impl<'a> Parser<'a> {
                     tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
                 }
                 // Handled by the structural-break peek above.
-                Some(
-                    Construct::Close
-                    | Construct::Separator
-                    | Construct::Colon
-                    | Construct::Arrow
-                    | Construct::Else
-                    | Construct::Declare
-                    | Construct::In
-                    | Construct::DotDot,
-                ) => {
+                Schedule::Close
+                | Schedule::Separator
+                | Schedule::Colon
+                | Schedule::Arrow
+                | Schedule::Else
+                | Schedule::Declare
+                | Schedule::In
+                | Schedule::DotDot => {
                     unreachable!("structural delimiter ends the loop")
                 }
             }
@@ -2705,9 +2815,9 @@ impl<'a> Parser<'a> {
                 Some(d) => d,
                 None => break,
             };
-            let build = match self.metas.get(&op_id).copied() {
-                Some(Construct::Infix { build }) => build,
-                _ => break,
+            let build = match self.infix_build(op_id) {
+                Some(build) => build,
+                None => break,
             };
             // SAFETY: `op_id` is an operator identity from the store (it matched
             // `Infix` above), carrying its registration-built record.
@@ -2739,9 +2849,9 @@ impl<'a> Parser<'a> {
                 tape.cell(op_idx - 1).and_then(Cell::as_dyad).ok_or(ParseError::MissingOperand)?;
             let rhs =
                 tape.cell(op_idx + 1).and_then(Cell::as_dyad).ok_or(ParseError::MissingOperand)?;
-            let build = match self.metas.get(&op_id).copied() {
-                Some(Construct::Infix { build }) => build,
-                _ => return Err(ParseError::Trailing),
+            let build = match self.infix_build(op_id) {
+                Some(build) => build,
+                None => return Err(ParseError::Trailing),
             };
             let types = self.types;
             let dyad = build(self.store, &types, op_id, lhs, rhs)?;

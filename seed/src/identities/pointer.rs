@@ -35,7 +35,7 @@ use super::{commit_if_literal, meta, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, Construct, CoreTypes, ParseError};
+use crate::parse::{Assoc, CoreTypes, ParseError, Schedule};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -48,21 +48,20 @@ pub(super) fn register(
     cx: &mut Cx,
     cs: &Callables,
 ) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
-    let record = meta::record(cx.store, meta::TOKEN_TAG);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::At);
     let at = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("@", IdContext::new(at, cx.root_scope));
-    cx.metas.insert(at, Construct::At);
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Amp);
     let amp = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("&", IdContext::new(amp, cx.root_scope));
-    cx.metas.insert(amp, Construct::Amp);
 
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
         0.0,
         Assoc::Left,
+        Schedule::Operand,
         &["pointer", "pointee", "offset", "op"],
     );
     let deref = cx.store.alloc_raw(cx.type_, record);
@@ -74,6 +73,7 @@ pub(super) fn register(
         meta::TUPLE_TAG,
         0.0,
         Assoc::Left,
+        Schedule::Operand,
         &["pointer", "value", "pointee", "offset", "op"],
     );
     let storeptr = cx.store.alloc_raw(cx.type_, record);
@@ -83,8 +83,14 @@ pub(super) fn register(
 
     // `addr` (prefix `&`): no spelling of its own beyond the `&` token; the
     // parser builds these from `parse_address_of`. `[place, pointee, op]`.
-    let record =
-        meta::operand_record(cx, meta::TUPLE_TAG, 0.0, Assoc::Left, &["place", "pointee", "op"]);
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        0.0,
+        Assoc::Left,
+        Schedule::Operand,
+        &["place", "pointee", "op"],
+    );
     let addr = cx.store.alloc_raw(cx.type_, record);
     cx.lower.insert(addr, lower_addr);
     let addr_leaf = callable::mint_native(cx.store, cs.callable, run_addr, cs.seed_native);
