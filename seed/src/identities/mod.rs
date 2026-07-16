@@ -57,7 +57,7 @@ mod return_mod;
 #[path = "struct.rs"]
 mod struct_mod;
 #[path = "bool.rs"]
-mod bool_mod;
+pub(crate) mod bool_mod;
 #[path = "if.rs"]
 mod if_mod;
 #[path = "while.rs"]

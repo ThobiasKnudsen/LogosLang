@@ -245,10 +245,48 @@ fn a_typed_declaration_rejects_a_non_type() {
 
 #[test]
 fn a_typed_declaration_names_the_non_numeric_gap() {
-    // Storage for `a : type` (and struct/pointer/bool/void declarations) is not
-    // in the seed yet; the error names the gap instead of mis-storing.
-    let (_echoes, stderr) = repl(b"a : type\n");
+    // Storage for `a : bool` (and struct/pointer/void declarations) is not in
+    // the seed yet; the error names the gap instead of mis-storing. (`a : type`
+    // is no longer a gap — it declares a type variable.)
+    let (_echoes, stderr) = repl(b"a : bool\n");
     assert!(stderr.contains("non-numeric types are not in the seed yet"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_type_variable_declares_fills_once_and_becomes_the_type() {
+    // `a : type` declares a type variable (an undefined type); `a = i32` fills
+    // it at parse — comptime rebinding — after which the name is a full
+    // spelling of the type: `==` folds, juxtaposition builds typed values.
+    let (echoes, stderr) = repl(
+        b"a : type\na.type == type\na == i32\na = i32\na == i32\ny := a 5\ny\n",
+    );
+    assert_eq!(echoes, ["true", "false", "true", "5"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
+fn a_type_variable_fill_is_define_once_and_comptime_only() {
+    // A second fill finds a real type, not the placeholder, and is an ordinary
+    // (rejected) assignment; a fill inside a fn body is rejected explicitly —
+    // it would rebind at parse, where parse and run do not coincide.
+    let (_e1, stderr1) = repl(b"a : type\na = i32\na = f64\n");
+    assert!(stderr1.contains("not an assignable place"), "stderr: {stderr1}");
+    let (_e2, stderr2) = repl(b"a : type\ng := fn () -> i32 ( a = i32  1 )\n");
+    assert!(stderr2.contains("where parsing and running coincide"), "stderr: {stderr2}");
+    let (_e3, stderr3) = repl(b"a : type\na = 5\n");
+    assert!(stderr3.contains("must be a type value"), "stderr: {stderr3}");
+}
+
+#[test]
+fn logical_operators_fold_over_bool_literals() {
+    // and/or/not over bare bool literals fold at parse (pure, nothing lost) —
+    // what keeps a comptime chain comptime; runtime operands still build nodes.
+    let (echoes, stderr) = repl(
+        b"true or false\ntrue and true\nnot (true)\n\
+          a : type\nif (a.type == f32 or a.type == type) (a = f64) else (a = i32)\na == f64\n",
+    );
+    assert_eq!(echoes, ["true", "true", "false", "true"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
 }
 
 #[test]
@@ -270,11 +308,22 @@ fn a_comptime_if_drops_the_untaken_branch_unparsed() {
 #[test]
 fn the_metatypefn_example_runs() {
     // The station #30 north-star, end to end: a `-> type` fn computes the type,
-    // `a : metatype(0)` declares with it, and a comptime `if` dispatches on
-    // `a.type`, skipping the branches that could not even parse under i32.
+    // `a : metatype(…)` declares with it, and a comptime `if` dispatches on
+    // `a.type`, skipping the untaken branches unparsed. The expected value
+    // tracks the file's current argument (2 → f64 → the 9.9 arm).
     let out = logos().arg("examples/metatypefn.logos").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "9\n");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "9.9\n");
+}
+
+#[test]
+fn the_metatype_type_arm_fills_a_type_variable() {
+    // The deep arm the example reaches with argument 3: `a : metatype(3)` is
+    // `a : type` — a type variable — and the comptime chain's last arm fills it
+    // with the type i32, so the program's value IS a type and prints `i32`.
+    let out = logos().arg("tests/fixtures/metatype_type_arm.logos").output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "i32\n");
 }
 
 #[test]

@@ -91,7 +91,12 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::BadAddressOf => "`&` needs a variable to take the address of".into(),
         ParseError::BadCast => "a conversion takes exactly one numeric value".into(),
         ParseError::BadDeclaredType => {
-            "`name :` needs a type here — the declared type must be a type value"
+            "the declared or assigned type must be a type value"
+                .into()
+        }
+        ParseError::NonComptimeTypeAssign => {
+            "a type variable can only be assigned where parsing and running \
+             coincide — not inside a function body, loop, or runtime branch"
                 .into()
         }
         ParseError::NonNumericDeclaredType => {

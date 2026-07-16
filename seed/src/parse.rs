@@ -205,14 +205,17 @@ impl ParsingTape {
     }
 }
 
-/// A resolved name: how many source bytes it matched and the single identity
-/// live in the open scopes.
+/// A resolved name: how many source bytes it matched, the single identity
+/// live in the open scopes, and the scope it was declared in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Resolved {
     /// Bytes consumed from the start of the input.
     pub matched: usize,
     /// The identity live in the open scopes.
     pub identity: DyadPtr,
+    /// The scope the winning declaration was made in (an open ancestor) — what
+    /// a rebind that completes that declaration must target.
+    pub scope: DyadPtr,
 }
 
 /// Why a name could not be resolved or declared.
@@ -336,7 +339,9 @@ impl ScopeStack {
         let mut live = m.contexts.iter().filter(|c| self.is_open(c.scope));
         match (live.next(), live.next()) {
             (None, _) => Err(ResolveError::OutOfScope),
-            (Some(c), None) => Ok(Resolved { matched: m.matched, identity: c.identity }),
+            (Some(c), None) => {
+                Ok(Resolved { matched: m.matched, identity: c.identity, scope: c.scope })
+            }
             (Some(_), Some(_)) => Err(ResolveError::Ambiguous),
         }
     }
@@ -373,6 +378,16 @@ impl ScopeStack {
     /// the original. The journal entry from the declare still covers it.
     pub fn rebind(&mut self, trie: &mut RegexTrie, name: &str, identity: DyadPtr) {
         let scope = self.current().expect("rebind needs an open scope");
+        let _ = trie.remove(name, scope);
+        trie.insert(name, IdContext::new(identity, scope));
+    }
+
+    /// Re-point `name`, declared in `scope` (an open ancestor, from
+    /// [`Resolved::scope`]), at `identity`. Unlike [`ScopeStack::rebind`] the
+    /// target is the *declaring* scope, not the current one: a type variable's
+    /// fill inside a comptime-taken branch completes the outer declaration,
+    /// rather than binding a block-local spelling that dies with the branch.
+    pub fn rebind_at(trie: &mut RegexTrie, name: &str, identity: DyadPtr, scope: DyadPtr) {
         let _ = trie.remove(name, scope);
         trie.insert(name, IdContext::new(identity, scope));
     }
@@ -668,11 +683,15 @@ pub enum ParseError {
     /// A numeric conversion `type(value)` was malformed: not exactly one operand, or a
     /// non-numeric operand (there is nothing to convert).
     BadCast,
-    /// A typed declaration's `name :` was followed by something that is not a
-    /// type value — the type slot holds a type, so the expression after `:`
-    /// must evaluate to one (a spelled type, or a `-> type` call resolved at
-    /// parse time).
+    /// A typed declaration's `name :` — or a type variable's fill `name = …` —
+    /// was followed by something that is not a type value: the type slot holds
+    /// a type, so the expression must evaluate to one (a spelled type, or a
+    /// `-> type` call resolved at parse time).
     BadDeclaredType,
+    /// A type variable was assigned inside a deferred or repeated body (a fn
+    /// body, loop body, or runtime `if` branch). The fill rebinds the name at
+    /// parse time, which is only sound where parsing and running coincide.
+    NonComptimeTypeAssign,
     /// A typed declaration of a non-numeric type (`a : type`, a struct, a
     /// pointer, `bool`, `void`) — the declared-type storage for those is not in
     /// the seed yet, and this names the gap instead of mis-storing the value.
@@ -811,6 +830,13 @@ pub struct Parser<'a> {
     /// signature onto it before the body parses, so a recursive self-call resolves
     /// its parameter and return types instead of the unbound-placeholder defaults.
     pending_fn: DyadPtr,
+    /// How many deferred-or-repeated bodies enclose the current position — fn
+    /// bodies, loop bodies, and runtime `if` branches — where parse order and run
+    /// order do NOT coincide. Comptime effects that rebind names at parse (a type
+    /// variable's fill) are rejected while this is non-zero: inside such a body
+    /// the rebinding would happen once, at the wrong time, and on both runtime
+    /// branches. Comptime-taken `if` branches do not count (they run iff parsed).
+    runtime_depth: u32,
 }
 
 impl<'a> Parser<'a> {
@@ -825,7 +851,17 @@ impl<'a> Parser<'a> {
         types: CoreTypes,
         scopes: ScopeStack,
     ) -> Self {
-        Parser { source, pos: 0, scopes, store, trie, metas, types, pending_fn: std::ptr::null_mut() }
+        Parser {
+            source,
+            pos: 0,
+            scopes,
+            store,
+            trie,
+            metas,
+            types,
+            pending_fn: std::ptr::null_mut(),
+            runtime_depth: 0,
+        }
     }
 
     /// Advance past whitespace only (never a `#`): the sequence parser peeks at a
@@ -1063,13 +1099,16 @@ impl<'a> Parser<'a> {
         }
 
         // Reopen the parameter scope (the input struct's `value[0]`) so the body
-        // resolves parameters, then parse the `( body )`.
+        // resolves parameters, then parse the `( body )` — a deferred body (it
+        // runs at calls, not at parse), so parse-time rebinding is off inside.
         // SAFETY: `input` is the struct just built; its `value[0]` is its scope.
         let scope = unsafe { *((*input).value as *const DyadPtr) };
         self.scopes.push(scope);
+        self.runtime_depth += 1;
         self.expect_open()?;
         let body = self.parse_sequence()?;
         self.expect_close()?;
+        self.runtime_depth -= 1;
         self.scopes.pop();
 
         // A comptime-rational tail expression commits to the declared return type here
@@ -1117,7 +1156,9 @@ impl<'a> Parser<'a> {
             return self.parse_comptime_if(if_type, cond, truth);
         }
 
-        // Then-branch.
+        // Then-branch. A runtime branch may or may not run, so parse-time
+        // rebinding is off inside it (and inside the else below).
+        self.runtime_depth += 1;
         self.expect_open()?;
         let then = self.parse_sequence()?;
         self.expect_close()?;
@@ -1142,6 +1183,7 @@ impl<'a> Parser<'a> {
         } else {
             std::ptr::null_mut()
         };
+        self.runtime_depth -= 1;
 
         let value = self.store.alloc_operands(&[cond, then, els, self.types.ops.if_]);
         Ok(self.store.alloc_raw(if_type, value))
@@ -1293,6 +1335,16 @@ impl<'a> Parser<'a> {
         if !unsafe { is_bool_result(&types, operand) } {
             return Err(ParseError::NonBoolOperands);
         }
+        // A bool-literal operand folds now (pure, nothing lost), like the
+        // `==`/`and`/`or` folds — what keeps a comptime chain comptime.
+        // SAFETY: `operand` is the reduced dyad just parsed.
+        if let Some(v) = unsafe { bool_literal_value(&types, operand) } {
+            return Ok(crate::identities::bool_mod::literal_node(
+                self.store,
+                self.types.bool_,
+                !v,
+            ));
+        }
         let value = self.store.alloc_operands(&[operand, self.types.ops.not_]);
         Ok(self.store.alloc_raw(not_id, value))
     }
@@ -1314,9 +1366,12 @@ impl<'a> Parser<'a> {
         if !unsafe { is_bool_result(&types, cond) } {
             return Err(ParseError::NonBoolCondition);
         }
+        // A repeated body: parse-time rebinding is off inside it.
+        self.runtime_depth += 1;
         self.expect_open()?;
         let body = self.parse_sequence()?;
         self.expect_close()?;
+        self.runtime_depth -= 1;
         // SAFETY: `body` is the reduced dyad just parsed.
         if unsafe { contains_return(&types, body) } {
             return Err(ParseError::EarlyReturn);
@@ -1388,9 +1443,12 @@ impl<'a> Parser<'a> {
         let scope = self.store.alloc_raw(types.scope, std::ptr::null_mut());
         self.scopes.push(scope);
         self.scopes.declare(self.trie, name, var).map_err(ParseError::Resolve)?;
+        // A repeated body: parse-time rebinding is off inside it.
+        self.runtime_depth += 1;
         self.expect_open()?;
         let body = self.parse_sequence()?;
         self.expect_close()?;
+        self.runtime_depth -= 1;
         self.scopes.pop();
         // SAFETY: `body` is the reduced dyad just parsed.
         if unsafe { contains_return(&types, body) } {
@@ -1943,17 +2001,26 @@ impl<'a> Parser<'a> {
                         self.pos = nstart;
                         return Err(ParseError::BadDeclaredType);
                     }
-                    if !crate::identities::is_numtype_node(&self.types, t) {
+                    // The binding, by declared type. A numeric type gets a zeroed
+                    // place at its width, the same shape `build_scalar_binding`
+                    // gives a `:=` snapshot — reads are plain loads, `=` reassigns —
+                    // but with no initializer to run. The `type` root declares a
+                    // TYPE VARIABLE: a null-valued placeholder — the undefined
+                    // type, the null value being the marker no real type node has
+                    // (every registered type carries a record) — filled once by a
+                    // later `name = <type>`, which rebinds the name at parse
+                    // (types are comptime; roadmap #30).
+                    let place = if t == self.types.type_ {
+                        self.store.alloc_raw(self.types.type_, std::ptr::null_mut())
+                    } else if crate::identities::is_numtype_node(&self.types, t) {
+                        // SAFETY: `t` is a registered numeric type node.
+                        let nt = unsafe { crate::identities::numtype::of_type_node(t) };
+                        let blob = self.store.alloc_bytes(&vec![0u8; nt.bytes()]);
+                        self.store.alloc_raw(t, blob)
+                    } else {
                         self.pos = nstart;
                         return Err(ParseError::NonNumericDeclaredType);
-                    }
-                    // The place: zeroed storage at the type's width, the same shape
-                    // `build_scalar_binding` gives a `:=` snapshot — reads are plain
-                    // loads and `=` reassigns — but with no initializer to run.
-                    // SAFETY: `t` is a registered numeric type node.
-                    let nt = unsafe { crate::identities::numtype::of_type_node(t) };
-                    let blob = self.store.alloc_bytes(&vec![0u8; nt.bytes()]);
-                    let place = self.store.alloc_raw(t, blob);
+                    };
                     let name = &source[nstart..nstart + nlen];
                     if let Err(e) = self.scopes.declare(self.trie, name, place) {
                         self.pos = nstart;
@@ -2070,6 +2137,66 @@ impl<'a> Parser<'a> {
                     );
                     tape.push(Cell::Dyad(node));
                     continue;
+                }
+                // A type variable's fill: `name = <type>` where `name` resolves
+                // to an unfilled type placeholder (`ty == type`, null value — the
+                // marker no real type node has). The fill rebinds the name to the
+                // type node at parse, completing the `name : type` declaration —
+                // types are comptime, so the assignment is elaboration, not a
+                // runtime store; from here the name is a full spelling of the
+                // type (`==` folds, `a 5` juxtaposes, printing reads it). Only at
+                // a comptime execution position: inside a deferred or repeated
+                // body the rebind would fire once at parse, the wrong time and on
+                // both runtime branches ([`ParseError::NonComptimeTypeAssign`]).
+                // A second fill finds a real type node, never the placeholder, and
+                // falls through to ordinary (rejected) assignment: define-once.
+                if let Some((eq_id, matched, _)) = self.peek_kind() {
+                    if eq_id == self.types.assign {
+                        if let Ok(r) = self.scopes.resolve(self.trie, &source[nstart..]) {
+                            let binding = r.identity;
+                            let decl_scope = r.scope;
+                            // SAFETY: `binding` is a resolved dyad from the store.
+                            if unsafe {
+                                (*binding).ty == self.types.type_ && (*binding).value.is_null()
+                            } {
+                                // After a completed dyad the fill starts the NEXT
+                                // expression: stop before it.
+                                if matches!(tape.last(), Some(Cell::Dyad(_))) {
+                                    self.pos = start;
+                                    break;
+                                }
+                                if self.runtime_depth > 0 {
+                                    self.pos = nstart;
+                                    return Err(ParseError::NonComptimeTypeAssign);
+                                }
+                                self.pos += matched; // consume `=`
+                                let t = self.parse_expression()?;
+                                // SAFETY: `t` is the reduced dyad just parsed.
+                                if !unsafe { crate::identities::is_type_value(&self.types, t) } {
+                                    self.pos = nstart;
+                                    return Err(ParseError::BadDeclaredType);
+                                }
+                                let name = &source[nstart..nstart + nlen];
+                                ScopeStack::rebind_at(self.trie, name, t, decl_scope);
+                                // The fill IS the definition completing the
+                                // declaration: a declare node, a silent statement.
+                                let name_node = crate::identities::string::build_text(
+                                    self.store,
+                                    self.types.string_,
+                                    name.as_bytes(),
+                                );
+                                let node = crate::identities::declare::build(
+                                    self.store,
+                                    self.types.declare_,
+                                    self.types.ops.declare_,
+                                    name_node,
+                                    t,
+                                );
+                                tape.push(Cell::Dyad(node));
+                                continue;
+                            }
+                        }
+                    }
                 }
                 // Not a declaration: rewind and resolve the name normally.
                 self.pos = start;
