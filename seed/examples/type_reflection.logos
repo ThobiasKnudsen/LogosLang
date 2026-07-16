@@ -1,0 +1,13 @@
+# Copyright 2026 Thobias Melfjord Knudsen
+# SPDX-License-Identifier: Apache-2.0
+
+# Roadmap #30 — `type` is a first-class value.
+# A value's type is reached with `.type`, and types compare by identity with `==`.
+
+x := i32 5
+
+same  := x.type == i32     # true: x was built as an i32
+cross := x.type == f64     # false: i32 is not f64
+meta  := i32.type == type  # true: a type's own type is the `type` root
+
+same and meta and not (cross)

@@ -13,11 +13,11 @@
 use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
-use super::{meta, operands, Cx};
+use super::{bool_mod, meta, operands, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{is_bool_result, Assoc, Construct, CoreTypes, ParseError};
+use crate::parse::{bool_literal_value, is_bool_result, Assoc, Construct, CoreTypes, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -46,6 +46,14 @@ fn build(
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store; reading their type is safe.
     if !unsafe { is_bool_result(types, lhs) && is_bool_result(types, rhs) } {
         return Err(ParseError::NonBoolOperands);
+    }
+    // Two bool literals fold now (a bare literal is pure, so nothing is lost),
+    // like `==` over rationals or types — what keeps a comptime chain comptime.
+    // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
+    if let (Some(a), Some(b)) =
+        unsafe { (bool_literal_value(types, lhs), bool_literal_value(types, rhs)) }
+    {
+        return Ok(bool_mod::literal_node(store, types.bool_, a || b));
     }
     let value = store.alloc_operands(&[lhs, rhs, types.ops.or_]);
     Ok(store.alloc_raw(or, value))

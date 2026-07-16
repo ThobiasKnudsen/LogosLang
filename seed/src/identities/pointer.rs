@@ -114,7 +114,7 @@ fn run_addr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an addr node; its first operand is a place.
     unsafe {
         let place = *((*node).value as *const DyadPtr);
-        Ok(rt.place_addr(place) as i64)
+        Ok(rt.place_addr(place).ok_or(RunError::BadValue)? as i64)
     }
 }
 

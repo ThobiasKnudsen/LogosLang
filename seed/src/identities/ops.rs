@@ -128,7 +128,7 @@ fn store_run<const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunEr
     unsafe {
         let (lhs, rhs) = operands(node);
         let bits = rt.run(rhs)?;
-        let slot = rt.place_addr(lhs);
+        let slot = rt.place_addr(lhs).ok_or(RunError::BadValue)?;
         if slot.is_null() {
             return Err(RunError::BadValue);
         }

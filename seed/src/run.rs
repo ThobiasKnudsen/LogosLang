@@ -112,23 +112,25 @@ impl Runtime {
     /// place the interpreter decodes the frame tag (see [`crate::dyad::FRAME_TAG`]);
     /// every read, write, and address-of of a local goes through it.
     ///
+    /// `None` is a frame-relative place with *no call in progress*: its storage
+    /// does not exist. Ordinary execution never sees this (a frame place is only
+    /// built inside a function body, which only runs under a call), but parse-time
+    /// evaluation does — a `-> type` call whose argument touches an enclosing
+    /// function's local runs before any activation exists — and every caller maps
+    /// it to a clean [`RunError::BadValue`], which the comptime path reports as
+    /// not-comptime-known.
+    ///
     /// # Safety
-    /// `node` must be a valid place node. A frame-relative place is only ever
-    /// built inside a function body, so an activation record is on the stack
-    /// whenever one is read.
-    pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> *mut u8 {
+    /// `node` must be a valid place node.
+    pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> Option<*mut u8> {
         match frame_ref((*node).value) {
             // Only the offset matters at run time — the local is in the call in
             // progress (the top record); the depth is a parse-time capture guard.
             Some((_, off)) => {
-                let base = self
-                    .activations
-                    .last_mut()
-                    .expect("a frame-relative place needs an active call frame")
-                    .as_mut_ptr();
-                base.add(off)
+                let base = self.activations.last_mut()?.as_mut_ptr();
+                Some(base.add(off))
             }
-            None => (*node).value,
+            None => Some((*node).value),
         }
     }
 
@@ -188,17 +190,23 @@ impl Runtime {
                 result
             }
         } else {
-            // A declaration statement — a fn literal, a struct type, or a type
-            // node standing as an expression — is inert at run time (its work
-            // happened at parse) and yields unit, the same precedent as
-            // `-> void`. The `Type : Type` root is the store's one self-typed
-            // node, so `op == (*op).ty` recognizes every type node (`x := i32`
-            // binds a name to one) without a dedicated handle. Checked before
-            // the op-slot read below: a *compiled* fn literal's fourth slot
-            // holds its callable, and evaluating the declaration must not jump
-            // to it.
-            if op == self.fn_type || op == self.struct_ || op == (*op).ty {
+            // A fn literal is an inert declaration statement (its work happened at
+            // parse) and yields unit, the same precedent as `-> void`. Checked
+            // before the op-slot read below: a *compiled* fn literal's fourth slot
+            // holds its callable, and evaluating the declaration must not jump to it.
+            if op == self.fn_type {
                 return Ok(0);
+            }
+            // A type node standing as a value carries its identity AS its value: its
+            // bits are its own address. So a `-> type` function, or an `if` that
+            // yields a type, returns the type it produced (roadmap #30), and `x := i32`
+            // still binds a name to one. The `Type : Type` root is the store's one
+            // self-typed node, so `op == (*op).ty` recognizes every type node (numeric
+            // types, the root, `bool`, `void`, pointer types); `op == self.struct_` is
+            // a struct *type* node — a struct *instance* has `op ==` its struct type,
+            // not `struct_`, and is handled by the lower branch.
+            if op == self.struct_ || op == (*op).ty {
+                return Ok(node as i64);
             }
             // `node` is data or a migrated application. A rational literal is
             // molded to its i32 value (a fraction like 3.14 has none:
@@ -242,7 +250,7 @@ impl Runtime {
             if !crate::identities::numtype::is_scalar_type((*node).ty) {
                 return Err(RunError::BadValue);
             }
-            let slot = self.place_addr(node);
+            let slot = self.place_addr(node).ok_or(RunError::BadValue)?;
             if slot.is_null() {
                 return Err(RunError::BadValue);
             }

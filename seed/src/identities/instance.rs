@@ -157,7 +157,7 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         // The arguments follow the two fixed head slots (instance, op).
         for (i, &(field, _, offset)) in fields.iter().enumerate() {
             let bits = rt.run(*ops.add(i + 2))?;
-            let blob = rt.place_addr(instance);
+            let blob = rt.place_addr(instance).ok_or(RunError::BadValue)?;
             numtype::write_scalar((*field).ty, blob.add(offset), bits);
         }
         Ok(0)

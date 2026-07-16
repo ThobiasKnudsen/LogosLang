@@ -907,11 +907,19 @@ pub(crate) unsafe fn compile_body(
         // places all bake absolute addresses as before.
         let frame_size = if self_fn.is_null() { 0 } else { fn_frame_size(self_fn) };
         let frame_slot = (frame_size > 0).then(|| {
-            builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                frame_size as u32,
-                3,
-            ))
+            // Rounded up to whole i64 words so the zeroing below covers it.
+            let size = (frame_size as u32).next_multiple_of(8);
+            let slot = builder
+                .create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3));
+            // Zero the record on entry, exactly as the interpreter zeroes its
+            // activation buffer: a typed declaration (`a : i32`) has no
+            // initializer, so its first read must see the same zeroed
+            // "undefined" on both tiers.
+            let zero = builder.ins().iconst(types::I64, 0);
+            for off in (0..size).step_by(8) {
+                builder.ins().stack_store(zero, slot, off as i32);
+            }
+            slot
         });
 
         let value = {

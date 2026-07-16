@@ -17,7 +17,7 @@ use std::io::{BufRead, Write};
 use std::process::ExitCode;
 
 use seed::identities::Core;
-use seed::parse::{Parser, ScopeStack};
+use seed::parse::{ParseError, Parser, ScopeStack};
 use seed::regex_trie::RegexTrie;
 use seed::report;
 use seed::run::Runtime;
@@ -72,9 +72,12 @@ fn help() -> String {
     )
 }
 
-/// Run a file: parse its whole body as one sequence, evaluate it, print its
-/// value. Parse errors render with file:line:col and a caret; run errors are
-/// message-only (nodes carry no source positions yet).
+/// Run a file: one pass — each top-level expression runs the moment it is
+/// parsed (DESIGN ›Build and run are one self-directing pass‹), so everything
+/// the parser itself evaluates (a `-> type` call reading an earlier binding)
+/// sees committed state, and file and REPL agree. The file's value is its tail
+/// expression's, printed at the end. Parse errors render with file:line:col and
+/// a caret; run errors are message-only (nodes carry no source positions yet).
 fn run_file(path: &str) -> ExitCode {
     let source = match std::fs::read_to_string(path) {
         Ok(s) => s,
@@ -88,24 +91,49 @@ fn run_file(path: &str) -> ExitCode {
     scopes.push(engine.core.root_scope);
 
     let types = engine.core.types();
-    let (root, end) = {
-        let mut p = Parser::new(
-            &source,
-            &mut engine.store,
-            &mut engine.trie,
-            &engine.core.metas,
-            types,
-            scopes,
-        );
-        match p.parse_sequence() {
-            Ok(root) => (root, p.offset()),
+    let mut rt = Runtime::new(engine.core.fn_type, engine.core.rational, engine.core.struct_);
+    let mut p = Parser::new(
+        &source,
+        &mut engine.store,
+        &mut engine.trie,
+        &engine.core.metas,
+        types,
+        scopes,
+    );
+
+    // The tail: the last non-comment expression and its value, printed at the
+    // end (prose is invisible to value flow, so a trailing comment never
+    // becomes the file's value).
+    let mut last = None;
+    while let Some(item) = p.parse_next() {
+        let node = match item {
+            Ok(node) => node,
             Err(e) => {
-                eprintln!("{}", report::render(path, &source, p.offset(), &report::parse_message(&e)));
+                eprintln!(
+                    "{}",
+                    report::render(path, &source, p.offset(), &report::parse_message(&e))
+                );
+                return ExitCode::FAILURE;
+            }
+        };
+        // SAFETY: `node` and everything it reaches were just parsed into the
+        // store, which lives for the rest of this function. The runtime works
+        // off raw handles, so running interleaves with the open parse.
+        match unsafe { rt.run(node) } {
+            Ok(bits) => {
+                // SAFETY: `node` is the valid dyad just parsed.
+                if unsafe { (*node).ty != types.comment_ } {
+                    last = Some((node, bits));
+                }
+            }
+            Err(e) => {
+                eprintln!("{path}: run error: {}", report::run_message(&e));
                 return ExitCode::FAILURE;
             }
         }
-    };
-    // A stray `)` breaks the sequence loop without being consumed.
+    }
+    // A stray `)` ends the item loop without being consumed.
+    let end = p.offset();
     if !source[end..].trim_start().is_empty() {
         eprintln!(
             "{}",
@@ -114,17 +142,18 @@ fn run_file(path: &str) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let mut rt = Runtime::new(engine.core.fn_type, engine.core.rational, engine.core.struct_);
-    // SAFETY: `root` and everything it reaches were just parsed into the store,
-    // which lives for the rest of this function.
-    match unsafe { rt.run(root) } {
-        Ok(bits) => {
-            // SAFETY: `root` is the parsed dyad whose value `bits` is.
-            println!("{}", unsafe { seed::identities::display_value(&types, root, bits) });
+    match last {
+        Some((node, bits)) => {
+            // SAFETY: `node` is the parsed dyad whose value `bits` is.
+            println!("{}", unsafe { seed::identities::display_value(&types, node, bits) });
             ExitCode::SUCCESS
         }
-        Err(e) => {
-            eprintln!("{path}: run error: {}", report::run_message(&e));
+        // An empty or prose-only file has no value, as before.
+        None => {
+            eprintln!(
+                "{}",
+                report::render(path, &source, end, &report::parse_message(&ParseError::Empty))
+            );
             ExitCode::FAILURE
         }
     }

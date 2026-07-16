@@ -381,6 +381,16 @@ impl ScopeStack {
         let _ = trie.remove(name, scope);
         trie.insert(name, IdContext::new(identity, scope));
     }
+
+    /// Re-point `name`, declared in `scope` (an open ancestor, from
+    /// [`Resolved::scope`]), at `identity`. Unlike [`ScopeStack::rebind`] the
+    /// target is the *declaring* scope, not the current one: a type variable's
+    /// fill inside a comptime-taken branch completes the outer declaration,
+    /// rather than binding a block-local spelling that dies with the branch.
+    pub fn rebind_at(trie: &mut RegexTrie, name: &str, identity: DyadPtr, scope: DyadPtr) {
+        let _ = trie.remove(name, scope);
+        trie.insert(name, IdContext::new(identity, scope));
+    }
 }
 
 /// Operator associativity.
@@ -700,11 +710,24 @@ pub enum ParseError {
     /// A numeric conversion `type(value)` was malformed: not exactly one operand, or a
     /// non-numeric operand (there is nothing to convert).
     BadCast,
-    /// A fresh name followed by `:` — the typed declaration `name : type`
-    /// (DESIGN ›Declarations are immutable by default‹). The seed's `:` lives
-    /// only inside field lists; the general form is later work, and this names
-    /// the gap instead of reporting the fresh name as unknown.
-    TypedDeclaration,
+    /// A typed declaration's `name :` — or a type variable's fill `name = …` —
+    /// was followed by something that is not a type value: the type slot holds
+    /// a type, so the expression must evaluate to one (a spelled type, or a
+    /// `-> type` call resolved at parse time).
+    BadDeclaredType,
+    /// A type variable was assigned inside a deferred or repeated body (a fn
+    /// body, loop body, or runtime `if` branch). The fill rebinds the name at
+    /// parse time, which is only sound where parsing and running coincide.
+    NonComptimeTypeAssign,
+    /// A typed declaration of a non-numeric type (`a : type`, a struct, a
+    /// pointer, `bool`, `void`) — the declared-type storage for those is not in
+    /// the seed yet, and this names the gap instead of mis-storing the value.
+    NonNumericDeclaredType,
+    /// A `-> type` call could not be resolved at parse time — either running it
+    /// failed (its arguments were not comptime-known) or it did not yield a type.
+    /// A type-returning function is evaluated during parsing (roadmap #30), so its
+    /// arguments must be known then.
+    NonComptimeTypeCall,
     /// A nested function referenced (or took the address of) a local or a
     /// parameter of an enclosing function — a closure capture, which v1 does not
     /// support. Each function's locals and parameters live in its own per-call
@@ -742,6 +765,21 @@ pub(crate) unsafe fn is_bool_result(types: &CoreTypes, node: DyadPtr) -> bool {
         || ty == types.and_
         || ty == types.or_
         || ty == types.not_
+}
+
+/// The parse-time truth of a bool literal — `{ty: bool, value -> i32 0/1}`, the
+/// shape the `true`/`false` keywords and every comptime fold produce — or `None`
+/// for anything else. Deliberately no scope unwrapping: a sequence-valued
+/// condition may carry effectful non-tail expressions that a fold would silently
+/// drop, so only a bare literal (pure by construction) counts as comptime.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn bool_literal_value(types: &CoreTypes, node: DyadPtr) -> Option<bool> {
+    if (*node).ty != types.bool_ || (*node).value.is_null() {
+        return None;
+    }
+    Some(std::ptr::read_unaligned((*node).value as *const i32) != 0)
 }
 
 /// The trailing *value* expression of a sequence node
@@ -832,6 +870,13 @@ pub struct Parser<'a> {
     /// pushes it around the body and writes the final size into the fn's
     /// [`FN_FRAME`] slot.
     frames: Vec<OpenFn>,
+    /// How many deferred-or-repeated bodies enclose the current position — fn
+    /// bodies, loop bodies, and runtime `if` branches — where parse order and run
+    /// order do NOT coincide. Comptime effects that rebind names at parse (a type
+    /// variable's fill) are rejected while this is non-zero: inside such a body
+    /// the rebinding would happen once, at the wrong time, and on both runtime
+    /// branches. Comptime-taken `if` branches do not count (they run iff parsed).
+    runtime_depth: u32,
 }
 
 /// One enclosing function body being parsed: the byte-size accumulator its local
@@ -867,6 +912,7 @@ impl<'a> Parser<'a> {
             types,
             pending_fn: std::ptr::null_mut(),
             frames: Vec::new(),
+            runtime_depth: 0,
         }
     }
 
@@ -1164,7 +1210,8 @@ impl<'a> Parser<'a> {
         }
 
         // Reopen the parameter scope (the input struct's `value[0]`) so the body
-        // resolves parameters, then parse the `( body )`.
+        // resolves parameters, then parse the `( body )` — a deferred body (it
+        // runs at calls, not at parse), so parse-time rebinding is off inside.
         // SAFETY: `input` is the struct just built; its `value[0]` is its scope.
         let scope = unsafe { *((*input).value as *const DyadPtr) };
         // Open this function's frame: the body's local declarations claim per-call
@@ -1173,9 +1220,11 @@ impl<'a> Parser<'a> {
         // frame.
         self.frames.push(OpenFn { size: 0, params: scope });
         self.scopes.push(scope);
+        self.runtime_depth += 1;
         self.expect_open()?;
         let body = self.parse_sequence()?;
         self.expect_close()?;
+        self.runtime_depth -= 1;
         self.scopes.pop();
         let frame_size = self.frames.pop().expect("parse_fn pushed a frame").size;
 
@@ -1207,8 +1256,9 @@ impl<'a> Parser<'a> {
     /// two-way branch. An else-less `if` is a statement — it yields unit — so value
     /// positions reject it ([`ParseError::MissingElse`]); and because branches are
     /// always parenthesized, a nested `if` cannot capture an outer `else` (no
-    /// dangling else). Unlike `fn`, `if` opens no new scope — its parts resolve in
-    /// the enclosing one.
+    /// dangling else). `else if ( cond ) ( then ) …` is sugar for a nested `if` in
+    /// the else slot, so chains parse right-associatively without `else ( if … )`.
+    /// Unlike `fn`, `if` opens no new scope — its parts resolve in the enclosing one.
     pub fn parse_if(&mut self, if_type: DyadPtr) -> Result<DyadPtr, ParseError> {
         // Condition: a parenthesized expression, required to be a bool.
         self.expect_open()?;
@@ -1220,24 +1270,182 @@ impl<'a> Parser<'a> {
             return Err(ParseError::NonBoolCondition);
         }
 
-        // Then-branch.
+        // A comptime condition — a bool literal, the shape `true`/`false` and
+        // every parse-time fold produce (`a.type == i32`, two-literal
+        // comparisons) — resolves the conditional NOW, in the one pass: the
+        // taken branch parses in place and an untaken branch's tokens are
+        // dropped unlexed, so nothing inside it is resolved, committed, or
+        // declared. This is what lets branches for *other* comptime types
+        // coexist (`a=9.9` under `a : i32` parses only in the world where it is
+        // taken). SAFETY: `cond` is the reduced dyad just parsed.
+        if let Some(truth) = unsafe { bool_literal_value(&types, cond) } {
+            return self.parse_comptime_if(if_type, cond, truth);
+        }
+
+        // Then-branch. A runtime branch may or may not run, so parse-time
+        // rebinding is off inside it (and inside the else below).
+        self.runtime_depth += 1;
         self.expect_open()?;
         let then = self.parse_sequence()?;
         self.expect_close()?;
 
         // The optional `else`, then the else-branch; absent, the slot stays null
-        // and the `if` is a unit-valued statement.
+        // and the `if` is a unit-valued statement. `else if ( cond ) ( then ) …` is
+        // sugar: an `if` right after the `else` becomes the else-branch directly
+        // (unparenthesized), so a chain nests right-associatively into `if` nodes
+        // and needs no hand-written `else ( if … )`. The nested `if` carries its own
+        // value-ness — else-less it is unit, exactly as the explicit form is — so the
+        // sugar builds a structurally identical tree and introduces no new case.
         let els = if self.consume_else() {
-            self.expect_open()?;
-            let els = self.parse_sequence()?;
-            self.expect_close()?;
-            els
+            if let Some((_, matched, Construct::If)) = self.peek_kind() {
+                self.pos += matched;
+                self.parse_if(if_type)?
+            } else {
+                self.expect_open()?;
+                let els = self.parse_sequence()?;
+                self.expect_close()?;
+                els
+            }
         } else {
             std::ptr::null_mut()
         };
+        self.runtime_depth -= 1;
 
         let value = self.store.alloc_operands(&[cond, then, els, self.types.ops.if_]);
         Ok(self.store.alloc_raw(if_type, value))
+    }
+
+    /// Resolve an `if` whose condition is already a parse-time bool (roadmap #30).
+    /// True with an else: the then-branch parses in place and IS the result (the
+    /// if's value is the taken branch's), the dead else-tail dropped unparsed.
+    /// False: the then-branch is dropped unparsed; an `else if` continues the
+    /// chain through [`Parser::parse_if`] (comptime or not) and an `else ( … )`
+    /// body is the result. An else-less `if` stays an ordinary statement `if`
+    /// node in both cases — it yields unit whether or not its condition is
+    /// comptime-known, so folding must not turn it into a value — with the
+    /// then-branch parsed when true (it runs) and dropped when false (the
+    /// condition doubles as a harmless never-run then-slot dummy).
+    fn parse_comptime_if(
+        &mut self,
+        if_type: DyadPtr,
+        cond: DyadPtr,
+        truth: bool,
+    ) -> Result<DyadPtr, ParseError> {
+        if truth {
+            self.expect_open()?;
+            let then = self.parse_sequence()?;
+            self.expect_close()?;
+            if self.consume_else() {
+                self.skip_else_tail()?;
+                return Ok(then);
+            }
+            // Else-less: a statement yielding unit, comptime or not — folding
+            // to the branch's value would make the same text a value or a
+            // statement depending on whether the condition is comptime-known.
+            // Keep the ordinary `if` node (the then-branch parsed; it runs).
+            let value = self
+                .store
+                .alloc_operands(&[cond, then, std::ptr::null_mut(), self.types.ops.if_]);
+            return Ok(self.store.alloc_raw(if_type, value));
+        }
+        self.skip_group()?;
+        if self.consume_else() {
+            if let Some((_, matched, Construct::If)) = self.peek_kind() {
+                self.pos += matched;
+                return self.parse_if(if_type);
+            }
+            self.expect_open()?;
+            let els = self.parse_sequence()?;
+            self.expect_close()?;
+            return Ok(els);
+        }
+        let value =
+            self.store.alloc_operands(&[cond, cond, std::ptr::null_mut(), self.types.ops.if_]);
+        Ok(self.store.alloc_raw(if_type, value))
+    }
+
+    /// Drop a balanced `( … )` group without parsing it — the tape's `remove`
+    /// power in its minimal form (DESIGN ›a constructor may splice tokens in or
+    /// drop upcoming ones before they lex‹). Comptime-`if` uses it to discard an
+    /// untaken branch, so nothing inside is resolved, committed, or declared.
+    /// `«…»` text (the byte pair `C2 AB` … `C2 BB`, unambiguous in UTF-8) and
+    /// `#` prose (a `«…»` string, or raw text to the line's end) are skipped
+    /// opaquely — their parentheses are text, not structure. An unterminated
+    /// group or text is [`ParseError::UnclosedBracket`].
+    fn skip_group(&mut self) -> Result<(), ParseError> {
+        /// Skip a `«…»` span starting at `pos` (which must point at `«`),
+        /// returning the position just past the `»`, or `None` if unterminated.
+        fn skip_text(bytes: &[u8], mut pos: usize) -> Option<usize> {
+            pos += 2; // the «
+            while pos + 1 < bytes.len() {
+                if bytes[pos] == 0xC2 && bytes[pos + 1] == 0xBB {
+                    return Some(pos + 2);
+                }
+                pos += 1;
+            }
+            None
+        }
+        self.expect_open()?;
+        let bytes = self.source.as_bytes();
+        let mut depth = 1usize;
+        while self.pos < bytes.len() {
+            match bytes[self.pos] {
+                b'(' => {
+                    depth += 1;
+                    self.pos += 1;
+                }
+                b')' => {
+                    depth -= 1;
+                    self.pos += 1;
+                    if depth == 0 {
+                        return Ok(());
+                    }
+                }
+                0xC2 if bytes.get(self.pos + 1) == Some(&0xAB) => {
+                    self.pos =
+                        skip_text(bytes, self.pos).ok_or(ParseError::UnclosedBracket)?;
+                }
+                b'#' => {
+                    // `#` takes a following «…» string or the rest of the line,
+                    // exactly as the comment constructor reads it.
+                    self.pos += 1;
+                    while self.pos < bytes.len() && matches!(bytes[self.pos], b' ' | b'\t') {
+                        self.pos += 1;
+                    }
+                    if bytes.get(self.pos) == Some(&0xC2)
+                        && bytes.get(self.pos + 1) == Some(&0xAB)
+                    {
+                        self.pos =
+                            skip_text(bytes, self.pos).ok_or(ParseError::UnclosedBracket)?;
+                    } else {
+                        while self.pos < bytes.len() && bytes[self.pos] != b'\n' {
+                            self.pos += 1;
+                        }
+                    }
+                }
+                _ => self.pos += 1,
+            }
+        }
+        Err(ParseError::UnclosedBracket)
+    }
+
+    /// Drop an already-`else`d dead tail without parsing it: `if ( cond )
+    /// ( then )` links (looping while further `else`s follow) or the final
+    /// `( body )`. Used when a comptime-true condition has taken its branch and
+    /// the rest of the chain can never run.
+    fn skip_else_tail(&mut self) -> Result<(), ParseError> {
+        loop {
+            if let Some((_, matched, Construct::If)) = self.peek_kind() {
+                self.pos += matched;
+                self.skip_group()?; // ( cond )
+                self.skip_group()?; // ( then )
+                if self.consume_else() {
+                    continue;
+                }
+                return Ok(());
+            }
+            return self.skip_group(); // else ( body )
+        }
     }
 
     /// Parse a logical negation `not ( operand )` (given the resolved `not`
@@ -1252,6 +1460,16 @@ impl<'a> Parser<'a> {
         // SAFETY: `operand` is the reduced dyad just parsed.
         if !unsafe { is_bool_result(&types, operand) } {
             return Err(ParseError::NonBoolOperands);
+        }
+        // A bool-literal operand folds now (pure, nothing lost), like the
+        // `==`/`and`/`or` folds — what keeps a comptime chain comptime.
+        // SAFETY: `operand` is the reduced dyad just parsed.
+        if let Some(v) = unsafe { bool_literal_value(&types, operand) } {
+            return Ok(crate::identities::bool_mod::literal_node(
+                self.store,
+                self.types.bool_,
+                !v,
+            ));
         }
         let value = self.store.alloc_operands(&[operand, self.types.ops.not_]);
         Ok(self.store.alloc_raw(not_id, value))
@@ -1274,9 +1492,12 @@ impl<'a> Parser<'a> {
         if !unsafe { is_bool_result(&types, cond) } {
             return Err(ParseError::NonBoolCondition);
         }
+        // A repeated body: parse-time rebinding is off inside it.
+        self.runtime_depth += 1;
         self.expect_open()?;
         let body = self.parse_sequence()?;
         self.expect_close()?;
+        self.runtime_depth -= 1;
         // SAFETY: `body` is the reduced dyad just parsed.
         if unsafe { contains_return(&types, body) } {
             return Err(ParseError::EarlyReturn);
@@ -1348,9 +1569,12 @@ impl<'a> Parser<'a> {
         let scope = self.store.alloc_raw(types.scope, std::ptr::null_mut());
         self.scopes.push(scope);
         self.scopes.declare(self.trie, name, var).map_err(ParseError::Resolve)?;
+        // A repeated body: parse-time rebinding is off inside it.
+        self.runtime_depth += 1;
         self.expect_open()?;
         let body = self.parse_sequence()?;
         self.expect_close()?;
+        self.runtime_depth -= 1;
         self.scopes.pop();
         // SAFETY: `body` is the reduced dyad just parsed.
         if unsafe { contains_return(&types, body) } {
@@ -1434,6 +1658,26 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `lhs` must be a valid dyad from the store.
     unsafe fn parse_field_access(&mut self, lhs: DyadPtr) -> Result<DyadPtr, ParseError> {
+        // `.type` is reflection, not a struct field: it yields the lhs's own type as a
+        // first-class type-value (an interned type node), so it works on ANY node, not
+        // only struct instances (roadmap #30; the sketch's `tape[0].type`). `type` is
+        // reserved for this — a struct member literally named `type` is not honored.
+        // Peek the field name and rewind if it is not `type`, so an ordinary field
+        // falls through to the resolution below unchanged.
+        let save = self.pos;
+        if let Some((nstart, nlen)) = self.lex_identifier() {
+            if &self.source[nstart..nstart + nlen] == "type" {
+                // A deref's logical type is its pointee (held in the node, not in its
+                // `.ty`); every other node's type is its `.ty` pointer, already an
+                // interned type node ready to use as a value.
+                if (*lhs).ty == self.types.deref_ {
+                    let (_, pointee, _) = crate::identities::pointer::deref_parts(lhs);
+                    return Ok(pointee);
+                }
+                return Ok((*lhs).ty);
+            }
+        }
+        self.pos = save;
         // Through a struct pointer, `p@.x` folds the field offset into the deref
         // (the address is runtime; the offset and the field's type are not).
         if (*lhs).ty == self.types.deref_ {
@@ -1493,6 +1737,44 @@ impl<'a> Parser<'a> {
             .find(|&(f, _, _)| f == field)
             .ok_or(ParseError::ExpectedField)?;
         Ok((field, offset))
+    }
+
+    /// Whether `callee` is a function whose declared return type is the `type` root —
+    /// it yields a type, resolved at comptime (roadmap #30).
+    ///
+    /// # Safety
+    /// `callee` must be a resolved dyad from the store.
+    unsafe fn returns_type(&self, callee: DyadPtr) -> bool {
+        if callee.is_null() || (*callee).ty != self.types.fn_type {
+            return false;
+        }
+        let fields = (*callee).value as *const DyadPtr;
+        !fields.is_null() && *fields.add(FN_OUTPUT) == self.types.type_
+    }
+
+    /// Comptime-evaluate a type-returning call to the concrete type it produces,
+    /// substituting that type node for the call. The call runs under a fresh
+    /// interpreter — which works off raw handles and never touches the store — so
+    /// interpretation doubles as parse-time evaluation (DESIGN ›Build and run are one
+    /// self-directing pass‹); the result bits are the produced type node's address.
+    /// A run failure (e.g. a runtime-only argument) or a non-type result is reported
+    /// as [`ParseError::NonComptimeTypeCall`].
+    ///
+    /// # Safety
+    /// `call` must be a reduced call node from the store.
+    unsafe fn eval_type_call(&mut self, call: DyadPtr) -> Result<DyadPtr, ParseError> {
+        let mut rt = crate::run::Runtime::new(
+            self.types.fn_type,
+            self.types.rational,
+            self.types.struct_,
+        );
+        let bits = rt.run(call).map_err(|_| ParseError::NonComptimeTypeCall)?;
+        let node = bits as usize as DyadPtr;
+        if crate::identities::is_type_value(&self.types, node) {
+            Ok(node)
+        } else {
+            Err(ParseError::NonComptimeTypeCall)
+        }
     }
 
     /// Build a postfix dereference `lhs@`: the lhs's static type must be a
@@ -1674,32 +1956,8 @@ impl<'a> Parser<'a> {
         let scope = self.store.alloc_raw(self.types.scope, std::ptr::null_mut());
         self.scopes.push(scope);
         let mut exprs = Vec::new();
-        loop {
-            self.skip_whitespace();
-            if self.pos >= self.source.len() {
-                break;
-            }
-            // A statement-level `#` builds a reflectable comment node — prose is
-            // part of the body's structure (DESIGN ›`#` is the one comment
-            // constructor‹). Mid-expression `#`s remain trivia ([`skip_trivia`]).
-            if self.source.as_bytes()[self.pos] == b'#' {
-                let comment = self.parse_comment()?;
-                exprs.push(comment);
-                continue;
-            }
-            if self.at_close() {
-                break;
-            }
-            exprs.push(self.parse_expression()?);
-            // A `#` directly after the expression is the next statement-level
-            // comment — the separator peek must not read through it as trivia.
-            self.skip_whitespace();
-            if self.pos < self.source.len() && self.source.as_bytes()[self.pos] == b'#' {
-                continue;
-            }
-            // The optional `,`: a boundary the expressions already imply, consumed
-            // where written (also purely for readability).
-            self.consume_separator();
+        while let Some(item) = self.parse_next() {
+            exprs.push(item?);
         }
         self.scopes.pop();
         // Prose is invisible to value flow: the expression count and the tail are
@@ -1742,6 +2000,42 @@ impl<'a> Parser<'a> {
                 Ok(scope)
             }
         }
+    }
+
+    /// Parse the next statement-level item — a reflectable comment node or one
+    /// expression — consuming an optional `,` after an expression (DESIGN
+    /// ›Expressions are self-delimiting; `,` is the one explicit separator‹).
+    /// `None` at the sequence's end: the end of input, or an unconsumed `)` left
+    /// for the enclosing opener. This is the one sequencing step, shared by
+    /// [`Parser::parse_sequence`] (which collects a whole block) and the file
+    /// driver (which runs each top-level item as it is parsed — build and run
+    /// are one pass, so parse-time evaluation sees every earlier item's effect).
+    pub fn parse_next(&mut self) -> Option<Result<DyadPtr, ParseError>> {
+        self.skip_whitespace();
+        if self.pos >= self.source.len() {
+            return None;
+        }
+        // A statement-level `#` builds a reflectable comment node — prose is
+        // part of the body's structure (DESIGN ›`#` is the one comment
+        // constructor‹). Mid-expression `#`s remain trivia ([`skip_trivia`]).
+        if self.source.as_bytes()[self.pos] == b'#' {
+            return Some(self.parse_comment());
+        }
+        if self.at_close() {
+            return None;
+        }
+        let expr = self.parse_expression();
+        if expr.is_ok() {
+            // A `#` directly after the expression is the next statement-level
+            // comment — the separator peek must not read through it as trivia.
+            self.skip_whitespace();
+            if !(self.pos < self.source.len() && self.source.as_bytes()[self.pos] == b'#') {
+                // The optional `,`: a boundary the expressions already imply,
+                // consumed where written (also purely for readability).
+                self.consume_separator();
+            }
+        }
+        Some(expr)
     }
 
     /// Parse a statement-level comment: `#` followed by a `«…»` string or raw
@@ -1814,14 +2108,78 @@ impl<'a> Parser<'a> {
             // rewinds and resolves normally below.
             if let Some((nstart, nlen)) = self.lex_identifier() {
                 // A fresh name followed by `:` is the typed declaration
-                // `name : type` — not in the seed yet (`:` lives in field lists).
-                // Name the gap; reporting the name as unknown misleads.
+                // `name : type`: it introduces the name and sets its type slot,
+                // leaving the value undefined (DESIGN ›Declarations are immutable by
+                // default‹ — `a : i32` and `a := i32 ?` declare the same node; the
+                // seed approximates undefined as zeroed storage until phase bits
+                // land). The type may be computed: the type expression parses
+                // through the ordinary machinery, so a `-> type` call (`a :
+                // metatype(0)`) comptime-resolves to its concrete type first — the
+                // dependent declaration is the same declaration. The fresh-name
+                // gate keeps a resolvable name before `:` a field-list `:`.
                 if matches!(self.peek_kind(), Some((_, _, Construct::Colon)))
-                    && tape.is_empty()
+                    && matches!(tape.last(), None | Some(Cell::Dyad(_)))
                     && self.scopes.resolve(self.trie, &source[nstart..]).is_err()
                 {
-                    self.pos = nstart;
-                    return Err(ParseError::TypedDeclaration);
+                    // After a completed dyad the declaration starts the NEXT
+                    // expression (expressions are self-delimiting): stop before it.
+                    if matches!(tape.last(), Some(Cell::Dyad(_))) {
+                        self.pos = start;
+                        break;
+                    }
+                    let Some((_, matched, _)) = self.peek_kind() else { unreachable!() };
+                    self.pos += matched; // consume `:`
+                    // The type first, the name after: the declared type must be a
+                    // comptime-known type value, and the name is not yet bound
+                    // while its own type parses (`a : a` fails resolution cleanly).
+                    let t = self.parse_expression()?;
+                    // SAFETY: `t` is the reduced dyad just parsed.
+                    if !unsafe { crate::identities::is_type_value(&self.types, t) } {
+                        self.pos = nstart;
+                        return Err(ParseError::BadDeclaredType);
+                    }
+                    // The binding, by declared type. A numeric type gets a zeroed
+                    // place at its width, the same shape a `:=` snapshot's place
+                    // takes — reads are plain loads, `=` reassigns — but with no
+                    // initializer to run; per-call (frame-relative) inside a
+                    // function, absolute at top level, like every local. The
+                    // `type` root declares a TYPE VARIABLE: a null-valued
+                    // placeholder — the undefined type, the null value being the
+                    // marker no real type node has (every registered type carries
+                    // a record) — filled once by a later `name = <type>`, which
+                    // rebinds the name at parse (types are comptime; roadmap #30).
+                    let place = if t == self.types.type_ {
+                        self.store.alloc_raw(self.types.type_, std::ptr::null_mut())
+                    } else if crate::identities::is_numtype_node(&self.types, t) {
+                        // SAFETY: `t` is a registered numeric type node.
+                        let nt = unsafe { crate::identities::numtype::of_type_node(t) };
+                        self.alloc_local(t, nt.bytes())
+                    } else {
+                        self.pos = nstart;
+                        return Err(ParseError::NonNumericDeclaredType);
+                    };
+                    let name = &source[nstart..nstart + nlen];
+                    if let Err(e) = self.scopes.declare(self.trie, name, place) {
+                        self.pos = nstart;
+                        return Err(ParseError::Resolve(e));
+                    }
+                    // The declaration is graph structure: a declare node carrying
+                    // the spelling and the place (its run is a harmless load — a
+                    // declaration is a statement, silent and unit-valued).
+                    let name_node = crate::identities::string::build_text(
+                        self.store,
+                        self.types.string_,
+                        name.as_bytes(),
+                    );
+                    let node = crate::identities::declare::build(
+                        self.store,
+                        self.types.declare_,
+                        self.types.ops.declare_,
+                        name_node,
+                        place,
+                    );
+                    tape.push(Cell::Dyad(node));
+                    continue;
                 }
                 if let Some((_, matched, Construct::Declare)) = self.peek_kind() {
                     // A declaration after a completed dyad starts the NEXT
@@ -1927,14 +2285,88 @@ impl<'a> Parser<'a> {
                     tape.push(Cell::Dyad(node));
                     continue;
                 }
+                // A type variable's fill: `name = <type>` where `name` resolves
+                // to an unfilled type placeholder (`ty == type`, null value — the
+                // marker no real type node has). The fill rebinds the name to the
+                // type node at parse, completing the `name : type` declaration —
+                // types are comptime, so the assignment is elaboration, not a
+                // runtime store; from here the name is a full spelling of the
+                // type (`==` folds, `a 5` juxtaposes, printing reads it). Only at
+                // a comptime execution position: inside a deferred or repeated
+                // body the rebind would fire once at parse, the wrong time and on
+                // both runtime branches ([`ParseError::NonComptimeTypeAssign`]).
+                // A second fill finds a real type node, never the placeholder, and
+                // falls through to ordinary (rejected) assignment: define-once.
+                if let Some((eq_id, matched, _)) = self.peek_kind() {
+                    if eq_id == self.types.assign {
+                        if let Ok(r) = self.scopes.resolve(self.trie, &source[nstart..]) {
+                            let binding = r.identity;
+                            let decl_scope = r.scope;
+                            // SAFETY: `binding` is a resolved dyad from the store.
+                            if unsafe {
+                                (*binding).ty == self.types.type_ && (*binding).value.is_null()
+                            } {
+                                // After a completed dyad the fill starts the NEXT
+                                // expression: stop before it.
+                                if matches!(tape.last(), Some(Cell::Dyad(_))) {
+                                    self.pos = start;
+                                    break;
+                                }
+                                if self.runtime_depth > 0 {
+                                    self.pos = nstart;
+                                    return Err(ParseError::NonComptimeTypeAssign);
+                                }
+                                self.pos += matched; // consume `=`
+                                let t = self.parse_expression()?;
+                                // SAFETY: `t` is the reduced dyad just parsed.
+                                if !unsafe { crate::identities::is_type_value(&self.types, t) } {
+                                    self.pos = nstart;
+                                    return Err(ParseError::BadDeclaredType);
+                                }
+                                let name = &source[nstart..nstart + nlen];
+                                ScopeStack::rebind_at(self.trie, name, t, decl_scope);
+                                // The fill IS the definition completing the
+                                // declaration: a declare node, a silent statement.
+                                let name_node = crate::identities::string::build_text(
+                                    self.store,
+                                    self.types.string_,
+                                    name.as_bytes(),
+                                );
+                                let node = crate::identities::declare::build(
+                                    self.store,
+                                    self.types.declare_,
+                                    self.types.ops.declare_,
+                                    name_node,
+                                    t,
+                                );
+                                tape.push(Cell::Dyad(node));
+                                continue;
+                            }
+                        }
+                    }
+                }
                 // Not a declaration: rewind and resolve the name normally.
                 self.pos = start;
             }
 
-            let r = self
-                .scopes
-                .resolve(self.trie, &source[start..])
-                .map_err(ParseError::Resolve)?;
+            let r = match self.scopes.resolve(self.trie, &source[start..]) {
+                Ok(r) => r,
+                // An unresolvable token after a completed dyad starts the NEXT
+                // expression (expressions are self-delimiting): stop before it,
+                // exactly as a resolvable operand-starter does below. The next
+                // expression may legitimately begin with it — a typed
+                // declaration parsing its type expression must not trip on the
+                // name that follows — and a genuinely unknown name is reported
+                // at the same position when that expression parses it. With an
+                // operand still pending, this expression needs the token: error.
+                Err(e) => {
+                    if matches!(tape.last(), Some(Cell::Dyad(_))) {
+                        self.pos = start;
+                        break;
+                    }
+                    return Err(ParseError::Resolve(e));
+                }
+            };
             let id = r.identity;
             let c = self.metas.get(&id).copied();
 
@@ -2074,7 +2506,17 @@ impl<'a> Parser<'a> {
                             unsafe {
                                 crate::identities::commit_call_args(self.store, &types, callee, &mut args)?;
                             }
-                            build_call(self.store, callee, &args)
+                            let call = build_call(self.store, callee, &args);
+                            // A call whose callee returns a type is resolved NOW, at
+                            // comptime: run it and substitute the concrete type it
+                            // produces (roadmap #30), so the result flows as an
+                            // ordinary type value through `==`, `:=`, `.type`, and
+                            // display. SAFETY: `callee`/`call` are reduced dyads.
+                            if unsafe { self.returns_type(callee) } {
+                                unsafe { self.eval_type_call(call)? }
+                            } else {
+                                call
+                            }
                         };
                         tape.push(Cell::Dyad(node));
                     } else {

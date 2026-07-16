@@ -57,7 +57,7 @@ mod return_mod;
 #[path = "struct.rs"]
 mod struct_mod;
 #[path = "bool.rs"]
-mod bool_mod;
+pub(crate) mod bool_mod;
 #[path = "if.rs"]
 mod if_mod;
 #[path = "while.rs"]
@@ -272,6 +272,13 @@ impl Core {
         unsafe {
             (*type_).value = record;
         }
+        // Spell the `Type : Type` root so `type` resolves as a first-class value
+        // (roadmap #30). The insert waits until here: `register_root` builds the
+        // fixed point before the trie and `root_scope` exist. Everything downstream
+        // already treats the root as first-class — `type` now resolves as a plain
+        // operand and `t := type` binds it through the same `== type_` rebind branch
+        // a numeric type uses — so this one line is the whole spelling.
+        cx.trie.insert("type", crate::id_context::IdContext::new(type_, cx.root_scope));
         let record = meta::operand_record(&mut cx, meta::TUPLE_TAG, 0.0, Assoc::Left, &["exprs", "op"]);
         unsafe {
             (*scope_).value = record;
@@ -664,6 +671,42 @@ pub(crate) fn is_numtype_node(types: &CoreTypes, node: DyadPtr) -> bool {
     types.numtypes.iter().any(|&t| !t.is_null() && t == node)
 }
 
+/// Whether `node` is a type-value: a node classified by the `Type : Type` root or
+/// by `struct` — a numeric type, the root itself, `bool`, a pointer or struct type.
+/// Type identities are interned, so pointer identity *is* type identity, which is
+/// what lets `==`/`!=` fold a comparison of two type-values at parse time and lets
+/// `.type` yield a value comparable this way (roadmap #30).
+///
+/// # Safety
+/// `node` must be null or a valid dyad from the store.
+pub(crate) unsafe fn is_type_value(types: &CoreTypes, node: DyadPtr) -> bool {
+    !node.is_null() && ((*node).ty == types.type_ || (*node).ty == types.struct_)
+}
+
+/// The display spelling of a type-value (`i32`, `bool`, `type`, `struct`, …). Numeric
+/// types and `void` read their name from the record tag; the root, `bool`, and any
+/// struct type are recognized by identity; other type-values (pointers, text) fall
+/// back to the generic `type`.
+///
+/// # Safety
+/// `node` must satisfy [`is_type_value`].
+unsafe fn type_name(types: &CoreTypes, node: DyadPtr) -> String {
+    if node == types.type_ {
+        return "type".to_string();
+    }
+    if node == types.bool_ {
+        return "bool".to_string();
+    }
+    if (*node).ty == types.struct_ {
+        return "struct".to_string();
+    }
+    match meta::kind_of(node) {
+        Some(t) if t <= NumType::F64 as u8 => NumType::from_tag(t).spelling().to_string(),
+        Some(numtype::VOID_TAG) => "void".to_string(),
+        _ => "type".to_string(),
+    }
+}
+
 /// The place type and byte width a declaration's snapshot binding needs for a
 /// runtime scalar `value`: a `Concrete` numeric (or `bool`) commits to its type
 /// node at its width; a `Pointer` value (an `&x`, a pointer variable) becomes a
@@ -766,16 +809,42 @@ unsafe fn pointee_types_match(a: DyadPtr, b: DyadPtr) -> bool {
 /// `node` must be a valid dyad from the store (the parsed expression whose value
 /// `bits` is).
 pub unsafe fn display_value(types: &CoreTypes, node: DyadPtr, bits: i64) -> String {
+    // A file or block is a scope whose value is its trailing expression; render
+    // through that so the type-directed formatting below sees the actual value node
+    // (a multi-line program ending in a type — or a float — not the scope wrapper).
+    let node = trailing_expr(types, node);
     // A comparison / logical result is physically an i32; show its truth. A bool
     // stored into a variable reads back as its i32 0/1 (the seed has no distinct
     // bool storage), so only a direct bool-valued expression renders this way.
     if crate::parse::is_bool_result(types, node) {
         return if bits != 0 { "true" } else { "false" }.to_string();
     }
+    // A type is a first-class value; show its spelling, not the raw bit container
+    // (roadmap #30) — so a program ending in `i32` prints `i32`, not `0`.
+    if is_type_value(types, node) {
+        return type_name(types, node);
+    }
     match numtype_of(types, node) {
         Operand::Concrete(nt) => format_scalar(nt, bits),
         _ => bits.to_string(),
     }
+}
+
+/// Follow a scope to the trailing expression it evaluates to, so display formats the
+/// real value node rather than the scope wrapper; nested scopes unwrap to the
+/// innermost trailing expression. The run result `bits` is already that expression's
+/// value (a scope's value *is* its trailing expression), so the two stay in step.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+unsafe fn trailing_expr(types: &CoreTypes, mut node: DyadPtr) -> DyadPtr {
+    while !node.is_null() && (*node).ty == types.scope {
+        match crate::parse::last_sequence_expr(node) {
+            Some(inner) if inner != node => node = inner,
+            _ => break,
+        }
+    }
+    node
 }
 
 /// Format an `i64` bit container as its `NumType`: floats decoded from their
@@ -3685,6 +3754,23 @@ mod tests {
                 &["fact := fn (n : i32) -> i32 ( acc := i32 1  if (n < 1) (acc) else (acc = n * fact(n - 1)  acc) )"],
                 "fact",
                 &[(0, 1), (1, 1), (5, 120), (7, 5040)],
+            );
+        }
+    }
+
+    #[test]
+    fn recursion_with_a_typed_declaration_local_both_tiers() {
+        // A typed declaration (`a : i32`, no initializer) is a per-call local
+        // too: it reads zero on entry — the undefined approximation, identical
+        // on both tiers because the JIT zeroes the frame slot exactly as the
+        // interpreter zeroes its activation buffer — and each activation then
+        // writes its own copy, which the read-after-recursion checks.
+        // SAFETY: a self-contained recursive definition and literal calls.
+        unsafe {
+            assert_recursion_both_tiers(
+                &["f := fn (n : i32) -> i32 ( a : i32  a = a + n  if (n < 1) (a) else (f(n - 1)  a) )"],
+                "f",
+                &[(0, 0), (1, 1), (5, 5)],
             );
         }
     }

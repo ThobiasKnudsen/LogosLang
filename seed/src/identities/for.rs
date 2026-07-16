@@ -89,20 +89,20 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let nt = numtype::of_type_node((*var).ty);
         let s = rt.run(start)?;
         let var_ty = (*var).ty;
-        numtype::write_scalar(var_ty, rt.place_addr(var), s);
+        numtype::write_scalar(var_ty, rt.place_addr(var).ok_or(RunError::BadValue)?, s);
         let e = rt.run(end)?;
         let d = if step.is_null() { one_bits(nt) } else { rt.run(step)? };
         if numtype::apply_compare(CmpOp::Gt, nt, d, 0) == 0 {
             return Ok(0);
         }
         loop {
-            let v = numtype::read_scalar(var_ty, rt.place_addr(var));
+            let v = numtype::read_scalar(var_ty, rt.place_addr(var).ok_or(RunError::BadValue)?);
             if numtype::apply_compare(CmpOp::Lt, nt, v, e) == 0 {
                 break;
             }
             rt.run(body)?;
             let next = numtype::apply_arith(ArithOp::Add, nt, v, d);
-            numtype::write_scalar(var_ty, rt.place_addr(var), next);
+            numtype::write_scalar(var_ty, rt.place_addr(var).ok_or(RunError::BadValue)?, next);
         }
         Ok(0)
     }

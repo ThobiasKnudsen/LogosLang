@@ -1,0 +1,24 @@
+# Copyright 2026 Thobias Melfjord Knudsen
+# SPDX-License-Identifier: Apache-2.0
+
+# The station #30 (Type) north-star, and it runs: a `-> type` function computes a
+# type at comptime (resolved inline in the one pass), a typed declaration takes the
+# computed type (`a : metatype(…)` — the dependent declaration), and a comptime `if`
+# dispatches on `a.type`, dropping the untaken branches unparsed — each arm parses
+# only in the world where it can run. Every argument works: 0 → i32 place, prints 9;
+# 1/2 → f32/f64 place, prints 9.9; 3 → `type`, so `a` is a TYPE VARIABLE the last
+# arm fills with the type i32 at parse, and the program's value is a type (prints
+# i32). Currently metatype(2): prints 9.9.
+
+metatype := fn (i:i32) -> type(
+    if (i==0) (i32)
+    else if (i==1) (f32)
+    else if (i==2) (f64)
+    else (type)
+)
+b:=type i32
+a:metatype(2)
+if (a.type == i32) (a=9)
+else if (a.type == f32 or a.type == f64) (a=9.9)
+else if (a.type == type) (a=i32)
+a

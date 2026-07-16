@@ -90,9 +90,22 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::BadStep => "a literal loop step must be positive".into(),
         ParseError::BadAddressOf => "`&` needs a variable to take the address of".into(),
         ParseError::BadCast => "a conversion takes exactly one numeric value".into(),
-        ParseError::TypedDeclaration => {
-            "typed declarations (`name : type`) are not in the seed yet; \
-             declare with a value: `name := i32 0`"
+        ParseError::BadDeclaredType => {
+            "the declared or assigned type must be a type value"
+                .into()
+        }
+        ParseError::NonComptimeTypeAssign => {
+            "a type variable can only be assigned where parsing and running \
+             coincide — not inside a function body, loop, or runtime branch"
+                .into()
+        }
+        ParseError::NonNumericDeclaredType => {
+            "typed declarations of non-numeric types are not in the seed yet"
+                .into()
+        }
+        ParseError::NonComptimeTypeCall => {
+            "a `-> type` call must be evaluable at parse time; \
+             its arguments must be comptime-known"
                 .into()
         }
         ParseError::CapturedLocal => {
