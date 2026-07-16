@@ -253,6 +253,24 @@ mod tests {
         (store, core, roots)
     }
 
+    #[test]
+    fn an_fn_value_reflects_all_five_slots() {
+        // The fn record must agree with the value parse_fn builds: [input,
+        // output, body, bcode, frame]. The frame slot (the activation-record
+        // byte size) joined in the activation-records work, and a generic
+        // walker reads slots off the record — a stale four-role record would
+        // hide the fifth slot from reflection.
+        let (_store, core, roots) = parse_all(&["fn (n : i32) -> i32 ( x := n  x )"]);
+        // SAFETY: the root is the fn value just parsed, from the store.
+        let Shape::Tuple { slots } = (unsafe { describe(&core.types(), roots[0]) }) else {
+            panic!("an fn value reads as its fixed slots");
+        };
+        let roles: Vec<&[u8]> = slots.iter().map(|s| unsafe { text_of(s.role) }).collect();
+        assert_eq!(roles, [b"input" as &[u8], b"output", b"body", b"bcode", b"frame"]);
+        // This fn has a local, so its frame slot holds a real size leaf.
+        assert!(!slots[4].node.is_null(), "a fn with locals carries its frame size");
+    }
+
     /// Every core identity carries its shared-member record, with the layout
     /// kind its values need — the #42 acceptance shape.
     #[test]
@@ -304,7 +322,7 @@ mod tests {
             assert_eq!(meta::kind_of(core.array_), Some(meta::ARRAY_TAG));
             assert_eq!(meta::kind_of(core.struct_), Some(meta::LIST_TAG));
             assert_eq!(meta::kind_of(core.fn_type), Some(meta::TUPLE_TAG));
-            assert_eq!(meta::arity_of(core.fn_type), 4);
+            assert_eq!(meta::arity_of(core.fn_type), crate::parse::FN_FRAME + 1);
         }
     }
 
