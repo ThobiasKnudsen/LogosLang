@@ -67,12 +67,16 @@ pub(super) fn build(
     if lhs_pointer && unsafe { (*rhs).ty } == types.rational {
         return Err(ParseError::TypeMismatch);
     }
+    // A literal right side commits to the target's type (the typed slot); a
+    // non-literal one must already BE that type — no implicit coercion
+    // ([`super::check_store_type`]).
     // SAFETY: as above.
     let rhs = unsafe {
         if (*rhs).ty == types.rational {
             let nt = of_type_node((*lhs).ty);
             commit_if_literal(store, rhs, &Operand::Literal, (*lhs).ty, nt)?
         } else {
+            super::check_store_type(types, (*lhs).ty, rhs)?;
             rhs
         }
     };

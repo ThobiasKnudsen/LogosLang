@@ -714,6 +714,48 @@ pub(crate) unsafe fn build_scalar_init(
     assign::build(store, types, types.assign, place, value)
 }
 
+/// Check a store's non-literal right side against the target's declared type —
+/// the no-coercion rule (DESIGN ›two different concrete types do not silently
+/// lower — there is no implicit coercion‹) applied to `=` and `p@ = …`. A
+/// numeric target takes exactly its own width-kind (`bool` rides `I32` here, as
+/// everywhere in the classifier); a pointer target takes a pointer to a matching
+/// pointee; everything else — a cross-type value, a value into a pointer, a
+/// pointer into a numeric, a unit-valued statement — is [`ParseError::TypeMismatch`].
+/// An uncommitted literal never reaches this: the callers commit it to the
+/// target's type first (the typed slot), which is the one sanctioned crossing.
+///
+/// # Safety
+/// `target_ty` must be a numeric or pointer type node and `rhs` a reduced dyad,
+/// both from the store.
+pub(crate) unsafe fn check_store_type(
+    types: &CoreTypes,
+    target_ty: DyadPtr,
+    rhs: DyadPtr,
+) -> Result<(), ParseError> {
+    let ok = if numtype::is_pointer_type(target_ty) {
+        matches!(numtype_of(types, rhs),
+            Operand::Pointer(p) if pointee_types_match(numtype::pointee_of(target_ty), p))
+    } else {
+        matches!(numtype_of(types, rhs),
+            Operand::Concrete(nt) if nt == numtype::of_type_node(target_ty))
+    };
+    if ok { Ok(()) } else { Err(ParseError::TypeMismatch) }
+}
+
+/// Whether two pointee type nodes denote the same type: the same node (numeric
+/// and struct types are interned singletons), or pointer types whose pointees
+/// match recursively — pointer type nodes are minted per spelling, so `@@i32`
+/// and `@@i32` are different nodes describing one type.
+///
+/// # Safety
+/// `a`/`b` must be type nodes from the store.
+unsafe fn pointee_types_match(a: DyadPtr, b: DyadPtr) -> bool {
+    a == b
+        || (numtype::is_pointer_type(a)
+            && numtype::is_pointer_type(b)
+            && pointee_types_match(numtype::pointee_of(a), numtype::pointee_of(b)))
+}
+
 /// Render a run result for display: `bits` (the i64 the interpreter computes in)
 /// interpreted through `node`'s static type — a float via its bit pattern, an
 /// unsigned integer at its own width, a `bool` as `true`/`false` — so the CLI
@@ -3698,6 +3740,87 @@ mod tests {
         let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
         // SAFETY: `call` applies the bound `outer` to a literal.
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 11, "outer(5)");
+    }
+
+    #[test]
+    fn a_nested_function_cannot_capture_an_outer_parameter() {
+        // A parameter is per-call state exactly like a frame local, so a nested
+        // fn reading (or taking the address of) an enclosing fn's parameter is
+        // the same capture — caught at parse as CapturedLocal, not surfacing as
+        // an unrelated no-storage error at run time.
+        assert_eq!(
+            parse_err(
+                "outer := fn (a : i32) -> i32 ( inner := fn () -> i32 ( a )  inner() )"
+            ),
+            ParseError::CapturedLocal,
+        );
+        assert_eq!(
+            parse_err(
+                "outer := fn (a : i32) -> i32 ( in2 := fn () -> i32 ( p := &a  p@ )  in2() )"
+            ),
+            ParseError::CapturedLocal,
+        );
+    }
+
+    /// Parse `defs` in order (declarations into the shared root scope), then
+    /// expect `src` to fail to parse with the returned error.
+    fn parse_err_after(defs: &[&str], src: &str) -> ParseError {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        for def in defs {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(def, &mut store, &mut trie, &core.metas, core.types(), s);
+            p.parse_expression().unwrap();
+        }
+        let mut s = ScopeStack::new();
+        s.push(core.root_scope);
+        let mut p = Parser::new(src, &mut store, &mut trie, &core.metas, core.types(), s);
+        p.parse_expression().unwrap_err()
+    }
+
+    #[test]
+    fn assignment_rejects_a_cross_type_right_side() {
+        // No implicit coercion (DESIGN ›Numeric literals are uncommitted until
+        // context types them‹): a non-literal right side must already BE the
+        // target's type; crossing is explicit (`i64(b)`). Only a literal commits
+        // to the target (the typed slot), which the suite covers elsewhere.
+        let defs = &["a := i64 1", "b := i32 2"];
+        assert_eq!(parse_err_after(defs, "a = b"), ParseError::TypeMismatch);
+        assert_eq!(parse_err_after(defs, "b = a"), ParseError::TypeMismatch);
+    }
+
+    #[test]
+    fn assignment_rejects_pointer_type_mismatches() {
+        // The pointer target's crossings: a pointer to the wrong pointee, a
+        // plain value into a pointer (a wild address in the making), a pointer
+        // into a plain value, and a store-through of the wrong type.
+        let defs = &["x := i32 7", "y := f64 2.5", "p := &x", "b := i32 2"];
+        assert_eq!(parse_err_after(defs, "p = &y"), ParseError::TypeMismatch);
+        assert_eq!(parse_err_after(defs, "p = b"), ParseError::TypeMismatch);
+        assert_eq!(parse_err_after(defs, "b = p"), ParseError::TypeMismatch);
+        assert_eq!(parse_err_after(defs, "p@ = y"), ParseError::TypeMismatch);
+    }
+
+    #[test]
+    fn assignment_accepts_a_matching_pointer_and_rewires() {
+        // The sanctioned rewiring: `p = &y` with a matching pointee re-aims the
+        // pointer, and `p@` reads the new target.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut result = 0;
+        for line in ["x := i32 7", "y := i32 9", "p := &x", "p@", "p = &y", "p@"] {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(line, &mut store, &mut trie, &core.metas, core.types(), s);
+            let node = p.parse_expression().unwrap();
+            // SAFETY: `node` is the reduced dyad just parsed.
+            result = unsafe { rt.run(node) }.unwrap();
+        }
+        assert_eq!(result, 9, "p@ after p = &y");
     }
 
     #[test]

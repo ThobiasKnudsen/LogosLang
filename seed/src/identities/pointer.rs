@@ -188,6 +188,9 @@ pub(crate) unsafe fn build_storeptr(
         let nt = numtype::of_type_node(pointee);
         commit_if_literal(store, rhs, &Operand::Literal, pointee, nt)?
     } else {
+        // A non-literal rhs must already be the pointee's type — no implicit
+        // coercion ([`super::check_store_type`]).
+        super::check_store_type(types, pointee, rhs)?;
         rhs
     };
     let value = store.alloc_operands(&[ptr_expr, rhs, pointee, off_node, types.ops.storeptr_]);
