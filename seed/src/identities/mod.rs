@@ -358,6 +358,7 @@ impl Core {
                     Construct::Atom(f) => *f as usize,
                     Construct::Prefix(f) => *f as usize,
                     Construct::Infix { build } => *build as usize,
+                    Construct::Keyword(f) => *f as usize,
                 };
                 let leaf = callable::mint(store, callables.callable, entry, callables.seed_parse);
                 meta::install_constructor(id, leaf);

@@ -22,7 +22,7 @@
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, Schedule};
+use crate::parse::{Assoc, Construct, Schedule};
 use crate::store::Store;
 
 /// Create the `fn` type (its own type is `type`) and return it. Called before the
@@ -36,6 +36,16 @@ pub(super) fn register(store: &mut Store, type_: DyadPtr) -> DyadPtr {
 /// parser's table.
 pub(super) fn register_syntax(cx: &mut Cx) {
     cx.trie.insert("fn", IdContext::new(cx.fn_type, cx.root_scope));
+    // `fn`'s constructor claims the pending declaration placeholder (the driver
+    // suppresses it when the literal does not open a (sub-)expression), so a
+    // recursive self-call inside the body resolves the published signature.
+    cx.metas.insert(
+        cx.fn_type,
+        Construct::Keyword(|p, id, _left| {
+            let declared = p.take_pending_fn();
+            p.parse_fn(id, declared)
+        }),
+    );
 
     // `fn`'s own record, installed now that the string type exists for the role
     // names: an fn value is the five fixed slots `[input, output, body, bcode,

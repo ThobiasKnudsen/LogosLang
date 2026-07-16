@@ -681,6 +681,14 @@ pub type PrefixFn = fn(&mut Store, &CoreTypes, DyadPtr, DyadPtr) -> Result<DyadP
 pub type InfixFn =
     fn(&mut Store, &CoreTypes, DyadPtr, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>;
 
+/// A keyword identity's build shim — every keyword schedule (`struct`, `fn`,
+/// `if`, `not`, `while`, `for`, `.`, `@`, `&`) shares it: the parser (the
+/// constructors re-enter it as a service), the identity, and `left`, the
+/// completed dyad immediately left of the token or null — the seed's reading
+/// of the model's `tape[-1]`. A postfix constructor (`.`, `@`) consumes
+/// `left`; the openers ignore it.
+pub type KeywordFn = fn(&mut Parser, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>;
+
 /// A core identity's native *build* code at registration — the transient
 /// carrier `Core::build` turns into a callable leaf in the identity's
 /// constructor slot (issue #30) and then drops. The parser never consults it;
@@ -696,6 +704,8 @@ pub enum Construct {
     Infix {
         build: InfixFn,
     },
+    /// A keyword build ([`KeywordFn`]).
+    Keyword(KeywordFn),
 }
 
 /// Why elaboration failed.
@@ -1160,6 +1170,31 @@ impl<'a> Parser<'a> {
         debug_assert_eq!(self.schedule(id), Schedule::Infix);
         // SAFETY: as [`Parser::atom_build`], with an `InfixFn` entry.
         unsafe { self.constructor_entry(id).map(|e| std::mem::transmute::<usize, InfixFn>(e)) }
+    }
+
+    /// The Keyword build of a keyword identity, as [`Parser::atom_build`].
+    fn keyword_build(&self, id: DyadPtr) -> Option<KeywordFn> {
+        debug_assert!(matches!(
+            self.schedule(id),
+            Schedule::Struct
+                | Schedule::Fn
+                | Schedule::If
+                | Schedule::Not
+                | Schedule::While
+                | Schedule::For
+                | Schedule::Dot
+                | Schedule::At
+                | Schedule::Amp
+        ));
+        // SAFETY: as [`Parser::atom_build`], with a `KeywordFn` entry.
+        unsafe { self.constructor_entry(id).map(|e| std::mem::transmute::<usize, KeywordFn>(e)) }
+    }
+
+    /// Take the pending declaration placeholder (see [`Parser::pending_fn`]):
+    /// `fn`'s constructor claims it so a recursive self-call inside the body
+    /// resolves the published signature.
+    pub(crate) fn take_pending_fn(&mut self) -> DyadPtr {
+        std::mem::replace(&mut self.pending_fn, std::ptr::null_mut())
     }
 
     /// Peek the next token's [`Schedule`] without consuming it. `None` at end
@@ -1781,7 +1816,7 @@ impl<'a> Parser<'a> {
     ///
     /// # Safety
     /// `lhs` must be a valid dyad from the store.
-    unsafe fn parse_field_access(&mut self, lhs: DyadPtr) -> Result<DyadPtr, ParseError> {
+    pub(crate) unsafe fn parse_field_access(&mut self, lhs: DyadPtr) -> Result<DyadPtr, ParseError> {
         // `.type` is reflection, not a struct field: it yields the lhs's own type as a
         // first-class type-value (an interned type node), so it works on ANY node, not
         // only struct instances (roadmap #30; the sketch's `tape[0].type`). `type` is
@@ -1907,7 +1942,7 @@ impl<'a> Parser<'a> {
     ///
     /// # Safety
     /// `lhs` must be a reduced dyad from the store.
-    unsafe fn build_deref(&mut self, lhs: DyadPtr) -> Result<DyadPtr, ParseError> {
+    pub(crate) unsafe fn build_deref(&mut self, lhs: DyadPtr) -> Result<DyadPtr, ParseError> {
         let ptr_ty = if (*lhs).ty == self.types.deref_ {
             crate::identities::pointer::deref_parts(lhs).1
         } else {
@@ -1925,7 +1960,7 @@ impl<'a> Parser<'a> {
     /// further `@`s deepen it (`@@i32`), then a resolved type name — a numeric
     /// type or a struct type — closes it. Fresh nodes per use; pointees carry
     /// the identity.
-    fn parse_pointer_type(&mut self) -> Result<DyadPtr, ParseError> {
+    pub(crate) fn parse_pointer_type(&mut self) -> Result<DyadPtr, ParseError> {
         let mut depth = 1usize;
         while let Some((_, matched, Schedule::At)) = self.peek_kind() {
             self.pos += matched;
@@ -1962,7 +1997,7 @@ impl<'a> Parser<'a> {
     /// the place's address at run/lower time, so a frame-relative local yields a
     /// per-activation address. A parameter or comptime binding has no storage and
     /// is [`ParseError::BadAddressOf`].
-    fn parse_address_of(&mut self) -> Result<DyadPtr, ParseError> {
+    pub(crate) fn parse_address_of(&mut self) -> Result<DyadPtr, ParseError> {
         self.skip_trivia();
         let source = self.source;
         if self.pos >= source.len() {
@@ -2648,72 +2683,41 @@ impl<'a> Parser<'a> {
                         tape.push(Cell::Dyad(body));
                     }
                 }
-                // The `struct` keyword: parse its `( field-list )` into a struct
-                // node (a bespoke sub-parse; fresh field names can't be resolved).
-                Schedule::Struct => {
-                    let s = self.parse_struct(id)?;
-                    tape.push(Cell::Dyad(s));
-                }
-                // The `fn` keyword: parse a `fn ( params ) -> ret ( body )` literal.
-                // When it opens a declaration's value, the declared placeholder
-                // rides along so the signature publishes before the body parses.
-                Schedule::Fn => {
-                    let declared = if tape.is_empty() {
-                        std::mem::replace(&mut self.pending_fn, std::ptr::null_mut())
-                    } else {
-                        std::ptr::null_mut()
-                    };
-                    let f = self.parse_fn(id, declared)?;
-                    tape.push(Cell::Dyad(f));
-                }
-                // The `if` keyword: parse an `if ( cond ) ( then ) else ( else )`.
-                Schedule::If => {
-                    let node = self.parse_if(id)?;
-                    tape.push(Cell::Dyad(node));
-                }
-                // The `not` keyword: parse a logical negation `not ( operand )`.
-                Schedule::Not => {
-                    let node = self.parse_not(id)?;
-                    tape.push(Cell::Dyad(node));
-                }
-                // The `while` keyword: parse a loop `while ( cond ) ( body )`.
-                Schedule::While => {
-                    let node = self.parse_while(id)?;
-                    tape.push(Cell::Dyad(node));
-                }
-                // The `for` keyword: parse a counted loop `for i in a..b[..d] ( body )`.
-                Schedule::For => {
-                    let node = self.parse_for(id)?;
-                    tape.push(Cell::Dyad(node));
-                }
-                // Field access `lhs.name`: resolved now, to a place inside the
-                // instance's storage; the access binds tightest, like a call.
-                Schedule::Dot => {
-                    let lhs = tape
-                        .last()
-                        .and_then(Cell::as_dyad)
-                        .ok_or(ParseError::MissingOperand)?;
-                    // SAFETY: `lhs` is a reduced dyad; instance checks inside.
-                    let node = unsafe { self.parse_field_access(lhs)? };
-                    tape.pop();
-                    tape.push(Cell::Dyad(node));
-                }
-                // The `@`: postfix deref after a completed dyad, the pointer-type
-                // prefix otherwise. Deref binds tightest, like `.`.
-                Schedule::At => {
-                    if let Some(lhs) = tape.last().and_then(Cell::as_dyad) {
-                        // SAFETY: `lhs` is a reduced dyad; pointer checks inside.
-                        let node = unsafe { self.build_deref(lhs)? };
-                        tape.pop();
-                        tape.push(Cell::Dyad(node));
-                    } else {
-                        let node = self.parse_pointer_type()?;
-                        tape.push(Cell::Dyad(node));
+                // An opener keyword (`struct`, `fn`, `if`, `not`, `while`,
+                // `for`, `&`): jump its constructor. The one scheduling nuance
+                // is `fn`'s declaration handoff — the pending placeholder is
+                // claimed by `fn`'s constructor only when the literal opens a
+                // (sub-)expression (an empty tape), so with anything already on
+                // the tape the driver suppresses it around the jump.
+                Schedule::Struct
+                | Schedule::Fn
+                | Schedule::If
+                | Schedule::Not
+                | Schedule::While
+                | Schedule::For
+                | Schedule::Amp => {
+                    let suppressed = (c == Schedule::Fn && !tape.is_empty())
+                        .then(|| self.take_pending_fn());
+                    let build = self.keyword_build(id).ok_or(ParseError::MissingOperand)?;
+                    let node = build(self, id, std::ptr::null_mut())?;
+                    if let Some(pending) = suppressed {
+                        self.pending_fn = pending;
                     }
+                    tape.push(Cell::Dyad(node));
                 }
-                // The `&`: address-of a storage-backed place.
-                Schedule::Amp => {
-                    let node = self.parse_address_of()?;
+                // A postfix-capable token (`.`, `@`): its constructor consumes
+                // the completed dyad to its left — the model's `tape[-1]` read.
+                // `.` requires one; `@` without one is the pointer-type prefix.
+                Schedule::Dot | Schedule::At => {
+                    let left = match tape.last().and_then(Cell::as_dyad) {
+                        Some(d) => {
+                            tape.pop();
+                            d
+                        }
+                        None => std::ptr::null_mut(),
+                    };
+                    let build = self.keyword_build(id).ok_or(ParseError::MissingOperand)?;
+                    let node = build(self, id, left)?;
                     tape.push(Cell::Dyad(node));
                 }
                 // An operator: reduce anything binding tighter to its left, then

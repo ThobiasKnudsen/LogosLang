@@ -25,7 +25,7 @@ use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, Schedule};
+use crate::parse::{Assoc, Construct, Schedule};
 use crate::run::{RunError, Runtime};
 
 /// Register `for` (the loop keyword, its run native, and its lowering) plus the
@@ -43,6 +43,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     );
     let for_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("for", IdContext::new(for_, cx.root_scope));
+    cx.metas.insert(for_, Construct::Keyword(|p, id, _left| p.parse_for(id)));
     cx.lower.insert(for_, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
 

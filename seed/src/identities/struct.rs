@@ -19,7 +19,7 @@
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, Schedule};
+use crate::parse::{Assoc, Construct, Schedule};
 
 /// Register `struct` and the field-list punctuation (`:`, `,`) it consumes.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
@@ -29,6 +29,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
         meta::operand_record(cx, meta::LIST_TAG, 0.0, Assoc::Left, Schedule::Struct, &["scope"]);
     let struct_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("struct", IdContext::new(struct_, cx.root_scope));
+    cx.metas.insert(struct_, Construct::Keyword(|p, id, _left| p.parse_struct(id)));
 
     let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Colon);
     let colon = cx.store.alloc_raw(cx.type_, record);

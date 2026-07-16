@@ -35,7 +35,7 @@ use super::{commit_if_literal, meta, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, CoreTypes, ParseError, Schedule};
+use crate::parse::{Assoc, Construct, CoreTypes, ParseError, Schedule};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -51,10 +51,25 @@ pub(super) fn register(
     let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::At);
     let at = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("@", IdContext::new(at, cx.root_scope));
+    // `@`'s constructor reads its own left context (the model's tape[-1]): a
+    // completed dyad makes it a postfix deref, none makes it the pointer-type
+    // prefix.
+    cx.metas.insert(
+        at,
+        Construct::Keyword(|p, _id, left| {
+            if left.is_null() {
+                p.parse_pointer_type()
+            } else {
+                // SAFETY: `left` is the reduced dyad the driver popped for us.
+                unsafe { p.build_deref(left) }
+            }
+        }),
+    );
 
     let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Amp);
     let amp = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("&", IdContext::new(amp, cx.root_scope));
+    cx.metas.insert(amp, Construct::Keyword(|p, _id, _left| p.parse_address_of()));
 
     let record = meta::operand_record(
         cx,
