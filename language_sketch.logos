@@ -89,7 +89,7 @@ fn := type (
     input  : struct
     output : ?
     body   : ?                                       # the reflectable LG body
-    bcode  : @exec                                   # the opaque compiled machine code (NULL until compiled)
+    bcode  : callable                                # the complete jump info [entry @exec, convention] (NULL until compiled)
     frame  : u64                                     # the activation-record byte size (per-call locals), NULL when none
 )
 
@@ -140,6 +140,11 @@ f64 : type
 bool : type          # a comparison's result type; an if condition must be one
 @void : type
 @exec : type
+
+callable := struct (         # the complete jump info — the ONE representation of jumpable code, never a bare address
+    entry      : @exec
+    convention : @dyad       # the declared calling-convention identity
+)
 
 if : ?
 else : ?
@@ -245,9 +250,11 @@ a = a + 1
                 lhs:@dyad -> a
                 rhs:@dyad -> {
                     type:@dyad -> rational_number
-                    value:@void -> «1»
+                    value:@void -> [num 1, den 1]    # a reduced fraction — never text
                 }
+                op:@dyad -> add_i32                  # the resolved concrete operation (the conserved third slot)
             }
         }
+        op:@dyad -> store_i32                        # the resolved store at the target's width
     }
 }
