@@ -1308,25 +1308,13 @@ impl<'a> Parser<'a> {
                 std::ptr::null_mut()
             };
             let field = self.store.alloc_raw(ty, std::ptr::null_mut());
+            // The field's NAME is not stored on the struct: declaring it here
+            // puts an id_context in the shared name index, and resolution is
+            // open-scope filtering over that one index (DESIGN ›Name resolution
+            // is scope-filtered‹; a per-struct names store is recorded as
+            // rejected).
             self.scopes.declare(self.trie, name, field).map_err(ParseError::Resolve)?;
-            // A field is a declaration, and a declaration is graph structure:
-            // the entry is a declare node carrying the spelling as a string
-            // node — the same shape the top-level `:=`/`:` paths build — so a
-            // struct's field names read from the graph alone, not the trie
-            // (issue #30: the sketch's `names`, minimally).
-            let name_node = crate::identities::string::build_text(
-                self.store,
-                self.types.string_,
-                name.as_bytes(),
-            );
-            let decl = crate::identities::declare::build(
-                self.store,
-                self.types.declare_,
-                self.types.ops.declare_,
-                name_node,
-                field,
-            );
-            fields.push(decl);
+            fields.push(field);
             if !self.consume_separator() {
                 break;
             }

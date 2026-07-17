@@ -786,16 +786,14 @@ pub unsafe fn compile_fn(
     if fields.is_null() {
         return Err(CompileError::NotLowerable(fn_node));
     }
-    // The parameter nodes: the input struct's value is `[scope, decl0 …, null]`
-    // (each entry a declare node carrying the spelling), so the declared
-    // parameters run from index 1 to the null terminator (see
-    // `Parser::parse_struct`).
+    // The parameter nodes: the input struct's value is `[scope, p0 …, null]`, so
+    // they run from index 1 to the null terminator (see `Parser::parse_struct`).
     let mut params = Vec::new();
     let pstart = (*(*fields.add(FN_INPUT))).value as *const DyadPtr;
     if !pstart.is_null() {
         let mut i = 1;
         while !(*pstart.add(i)).is_null() {
-            params.push(crate::identities::declare::declared_of(*pstart.add(i)));
+            params.push(*pstart.add(i));
             i += 1;
         }
     }

@@ -74,8 +74,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
 ///
 /// # Safety
 /// `struct_type` must be a struct type node from the store
-/// (`{ty: struct, value: [scope, decl0 …, null]}`, each entry a declare node
-/// wrapping its field).
+/// (`{ty: struct, value: [scope, field0 …, null]}`).
 pub(crate) unsafe fn layout(
     struct_type: DyadPtr,
 ) -> Result<(Vec<(DyadPtr, NumType, usize)>, usize), ParseError> {
@@ -89,9 +88,7 @@ pub(crate) unsafe fn layout(
     let mut offset = 0usize;
     let mut i = 1; // value[0] is the struct's scope
     while !(*ops.add(i)).is_null() {
-        // Each entry is the field's declare node (its name rides there as a
-        // string node); the layout reads the declared field itself.
-        let field = super::declare::declared_of(*ops.add(i));
+        let field = *ops.add(i);
         let fty = (*field).ty;
         if fty.is_null() || (*fty).ty != type_root || !numtype::is_scalar_type(fty) {
             return Err(ParseError::UnsupportedOperands);
