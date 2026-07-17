@@ -1309,7 +1309,24 @@ impl<'a> Parser<'a> {
             };
             let field = self.store.alloc_raw(ty, std::ptr::null_mut());
             self.scopes.declare(self.trie, name, field).map_err(ParseError::Resolve)?;
-            fields.push(field);
+            // A field is a declaration, and a declaration is graph structure:
+            // the entry is a declare node carrying the spelling as a string
+            // node — the same shape the top-level `:=`/`:` paths build — so a
+            // struct's field names read from the graph alone, not the trie
+            // (issue #30: the sketch's `names`, minimally).
+            let name_node = crate::identities::string::build_text(
+                self.store,
+                self.types.string_,
+                name.as_bytes(),
+            );
+            let decl = crate::identities::declare::build(
+                self.store,
+                self.types.declare_,
+                self.types.ops.declare_,
+                name_node,
+                field,
+            );
+            fields.push(decl);
             if !self.consume_separator() {
                 break;
             }

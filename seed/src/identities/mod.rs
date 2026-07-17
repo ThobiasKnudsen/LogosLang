@@ -974,10 +974,11 @@ pub(crate) unsafe fn commit_call_args(
         return Ok(());
     }
     for (i, arg) in args.iter_mut().enumerate() {
-        let param = *params.add(i + 1); // [scope, p0 …, null]
-        if param.is_null() {
+        let entry = *params.add(i + 1); // [scope, decl0 …, null]
+        if entry.is_null() {
             break;
         }
+        let param = declare::declared_of(entry);
         let pty = (*param).ty;
         if !pty.is_null() && numtype::is_pointer_type(pty) {
             // A pointer parameter takes only a pointer to the same pointee — a
@@ -1380,9 +1381,10 @@ mod tests {
             let v = (*func).value as *const DyadPtr;
             let (input, output, body) = (*v.add(FN_INPUT), *v.add(FN_OUTPUT), *v.add(FN_BODY));
             assert_eq!(output, core.i32_);
-            // The single parameter `x`, an i32 field in the input struct.
+            // The single parameter `x`, an i32 field in the input struct,
+            // declare-wrapped so its spelling is graph data.
             let iops = (*input).value as *const DyadPtr;
-            let x_field = *iops.add(1); // [scope, x, null]
+            let x_field = declare::declared_of(*iops.add(1)); // [scope, decl(x), null]
             assert_eq!((*x_field).ty, core.i32_);
             // The body `return x` resolved `x` to that parameter field
             // (`return` is `[value, op]`; the operand is its first slot).
@@ -1600,11 +1602,17 @@ mod tests {
         };
 
         // Two `:` declaration fields, each typed i32 with an undefined value.
+        // Each entry is a declare node — the field's name is graph data — and
+        // the declared field is a `:` declaration typed i32, value undefined.
         let (scope, fx, fy) = unsafe {
             assert_eq!((*node).ty, core.struct_);
             let ops = (*node).value as *const DyadPtr;
             assert!((*ops.add(3)).is_null()); // terminator after two fields
-            (*ops, *ops.add(1), *ops.add(2))
+            let (dx, dy) = (*ops.add(1), *ops.add(2));
+            let name = |d: DyadPtr| *((*d).value as *const DyadPtr);
+            assert_eq!(crate::identities::string::text(name(dx)), b"x");
+            assert_eq!(crate::identities::string::text(name(dy)), b"y");
+            (*ops, declare::declared_of(dx), declare::declared_of(dy))
         };
         unsafe {
             assert_eq!((*fx).ty, core.i32_);
@@ -1633,11 +1641,11 @@ mod tests {
             p.parse_expression().unwrap()
         };
 
-        // A bare name: one field with an undefined type slot.
+        // A bare name: one declare-wrapped field with an undefined type slot.
         let (scope, ft) = unsafe {
             let ops = (*node).value as *const DyadPtr;
             assert!((*ops.add(2)).is_null()); // terminator after one field
-            (*ops, *ops.add(1))
+            (*ops, declare::declared_of(*ops.add(1)))
         };
         unsafe {
             assert!((*ft).ty.is_null()); // bare name: type undefined

@@ -306,10 +306,13 @@ impl Runtime {
     ) -> Result<HashMap<DyadPtr, i64>, RunError> {
         let values = self.eval_args(fn_node, call_node)?;
         let input = *((*fn_node).value as *const DyadPtr).add(FN_INPUT);
-        let params = (*input).value as *const DyadPtr; // [scope, param0 …, null]
+        let params = (*input).value as *const DyadPtr; // [scope, decl0 …, null]
         let mut frame = HashMap::new();
         for (i, &value) in values.iter().enumerate() {
-            frame.insert(*params.add(i + 1), value);
+            // Each entry is the parameter's declare node; the frame binds the
+            // declared parameter itself, which is what body references resolve to.
+            let param = crate::identities::declare::declared_of(*params.add(i + 1));
+            frame.insert(param, value);
         }
         Ok(frame)
     }

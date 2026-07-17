@@ -254,6 +254,31 @@ mod tests {
     }
 
     #[test]
+    fn struct_field_names_are_graph_data() {
+        // The sketch's `names`, minimally: each field entry is a declare node
+        // carrying the spelling as a string node, so a struct's field names
+        // read from the graph alone — no trie, no parser state (issue #30).
+        let (_store, core, roots) = parse_all(&["struct (alpha : i32, beta : i32)"]);
+        let types = core.types();
+        // SAFETY: the root is the struct type just parsed, from the store.
+        unsafe {
+            let Shape::List { tail: fields, .. } = describe(&types, roots[0]) else {
+                panic!("a struct definition reads as a list");
+            };
+            let names: Vec<&[u8]> = fields
+                .iter()
+                .map(|&d| {
+                    let Shape::Tuple { slots } = describe(&types, d) else {
+                        panic!("a field entry is its declare node");
+                    };
+                    text_of(slots[0].node)
+                })
+                .collect();
+            assert_eq!(names, [b"alpha" as &[u8], b"beta"]);
+        }
+    }
+
+    #[test]
     fn an_fn_value_reflects_all_five_slots() {
         // The fn record must agree with the value parse_fn builds: [input,
         // output, body, bcode, frame]. The frame slot (the activation-record
@@ -474,7 +499,13 @@ mod tests {
             let Shape::List { tail: params, .. } = describe(&types, slots[0].node) else {
                 panic!("the input struct should be a list");
             };
-            let Shape::Pointer { pointee } = describe(&types, params[0]) else {
+            // A parameter entry is its declare node — the spelling is graph
+            // data — and the declared field behind it is the pointer.
+            let Shape::Tuple { slots: pdecl } = describe(&types, params[0]) else {
+                panic!("a parameter entry should be its declare node");
+            };
+            assert_eq!(text_of(pdecl[0].node), b"p");
+            let Shape::Pointer { pointee } = describe(&types, pdecl[1].node) else {
                 panic!("the parameter should be a pointer");
             };
             assert_eq!(pointee, core.i32_);
