@@ -189,6 +189,9 @@ pub struct Core {
     pub conv_seed_native: DyadPtr,
     /// `container-i64`: the compiled-artifact convention (uniform `i64` containers).
     pub conv_container_i64: DyadPtr,
+    /// `seed-parse`: the constructor-shim convention (signature per the
+    /// identity's schedule byte).
+    pub conv_seed_parse: DyadPtr,
     /// The concrete-op leaves (`add_i32`, `lt_f64`, `store_u8`, …), indexed for
     /// the parse-time resolver.
     pub ops: ops::OpLeaves,
@@ -408,6 +411,7 @@ impl Core {
             convention_: callables.convention,
             conv_seed_native: callables.seed_native,
             conv_container_i64: callables.container_i64,
+            conv_seed_parse: callables.seed_parse,
             ops: op_leaves,
             lower,
         }

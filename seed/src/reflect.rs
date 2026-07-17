@@ -26,7 +26,7 @@ use crate::identities::meta;
 use crate::identities::numtype::{
     self, NumType, ADDR_TAG, COMMENT_TAG, STRING_TAG, VOID_TAG,
 };
-use crate::parse::CoreTypes;
+use crate::parse::{CoreTypes, Schedule};
 
 /// One operand slot of a [`Shape::Tuple`] or a [`Shape::List`] head: the role
 /// naming it (a string node from the identity's record) and the operand node
@@ -112,12 +112,22 @@ pub enum Shape {
         size: usize,
     },
     /// The node is itself a type/identity carrying a shared-member record: its
-    /// layout kind and parse members are the record's.
+    /// layout kind and parse members are the record's — the sealed `type`
+    /// model's shared members (issue #30), every field readable.
     TypeNode {
         /// The node's own record kind (a tag from `numtype`/`meta`).
         kind: u8,
         /// The node's parse precedence (0.0 when it is not an operator).
         precedence: f64,
+        /// How the parser schedules the identity's token.
+        schedule: Schedule,
+        /// The constructor: a callable leaf (`seed-parse` convention, a
+        /// `native` body — invoked, never read into), or null: undefined, for
+        /// a pure delimiter or a data type whose parse role is its schedule.
+        constructor: DyadPtr,
+        /// The destructor: null on every seed identity — the honest undefined
+        /// until drop semantics exist.
+        destructor: DyadPtr,
     },
     /// Declared but not (yet) defined: a null type, a null value where operands
     /// would be, or a layout that cannot be derived.
@@ -171,6 +181,9 @@ pub unsafe fn describe(types: &CoreTypes, node: DyadPtr) -> Shape {
         meta::TYPEREC_TAG => Shape::TypeNode {
             kind: meta::kind_of(node).unwrap_or(meta::TOKEN_TAG),
             precedence: meta::precedence_of(node),
+            schedule: meta::schedule_of(node),
+            constructor: meta::constructor_of(node),
+            destructor: meta::destructor_of(node),
         },
         meta::TUPLE_TAG | meta::LIST_TAG => operands_of(ty, node),
         _ => Shape::Undefined, // a TOKEN-kinded type has no values
@@ -251,6 +264,91 @@ mod tests {
             roots.push(p.parse_expression().unwrap());
         }
         (store, core, roots)
+    }
+
+    #[test]
+    fn every_identity_declares_its_parse_members() {
+        // The sealed model's shared members, pinned for every spelled identity
+        // (issue #30): the schedule byte says how the token places, and the
+        // constructor slot carries its build code — a callable leaf under the
+        // seed-parse convention — exactly where behaviour exists. A pure
+        // delimiter's or data type's constructor is null (its parse role IS
+        // its schedule), and every destructor is null: the honest undefined
+        // until drop semantics exist. No table anywhere backs any of this.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+
+        let cases: &[(&str, Schedule, bool)] = &[
+            // Operators: infix builds.
+            ("+", Schedule::Infix, true),
+            ("-", Schedule::Infix, true),
+            ("*", Schedule::Infix, true),
+            ("/", Schedule::Infix, true),
+            ("%", Schedule::Infix, true),
+            ("<", Schedule::Infix, true),
+            (">", Schedule::Infix, true),
+            ("<=", Schedule::Infix, true),
+            (">=", Schedule::Infix, true),
+            ("==", Schedule::Infix, true),
+            ("!=", Schedule::Infix, true),
+            ("and", Schedule::Infix, true),
+            ("or", Schedule::Infix, true),
+            ("=", Schedule::Infix, true),
+            // Literals and the prefix keyword.
+            ("42", Schedule::Atom, true),
+            ("«t»", Schedule::Atom, true),
+            ("return", Schedule::Prefix, true),
+            // Keyword constructors.
+            ("struct", Schedule::Struct, true),
+            ("fn", Schedule::Fn, true),
+            ("if", Schedule::If, true),
+            ("not", Schedule::Not, true),
+            ("while", Schedule::While, true),
+            ("for", Schedule::For, true),
+            (".", Schedule::Dot, true),
+            ("@", Schedule::At, true),
+            ("&", Schedule::Amp, true),
+            // Pure delimiters: schedule-only, constructor undefined.
+            ("(", Schedule::Open, false),
+            (")", Schedule::Close, false),
+            (",", Schedule::Separator, false),
+            (":", Schedule::Colon, false),
+            (":=", Schedule::Declare, false),
+            ("->", Schedule::Arrow, false),
+            ("else", Schedule::Else, false),
+            ("in", Schedule::In, false),
+            ("..", Schedule::DotDot, false),
+            // Data types: plain operands, constructor undefined.
+            ("i32", Schedule::Operand, false),
+            ("f64", Schedule::Operand, false),
+            ("bool", Schedule::Operand, false),
+            ("void", Schedule::Operand, false),
+            ("type", Schedule::Operand, false),
+        ];
+        for &(spelling, schedule, has_ctor) in cases {
+            let id = scopes.resolve(&trie, spelling).unwrap().identity;
+            // SAFETY: every resolved identity carries its registration-built record.
+            unsafe {
+                assert_eq!(meta::schedule_of(id), schedule, "schedule of {spelling}");
+                let ctor = meta::constructor_of(id);
+                assert_eq!(!ctor.is_null(), has_ctor, "constructor of {spelling}");
+                if has_ctor {
+                    assert!(
+                        crate::identities::callable::is_callable(ctor),
+                        "constructor of {spelling} is a callable leaf"
+                    );
+                    assert_eq!(
+                        crate::identities::callable::convention_of(ctor),
+                        core.conv_seed_parse,
+                        "constructor convention of {spelling}"
+                    );
+                }
+                assert!(meta::destructor_of(id).is_null(), "destructor of {spelling}");
+            }
+        }
     }
 
     #[test]
@@ -510,19 +608,30 @@ mod tests {
             };
             assert_eq!(pointee, core.i32_);
 
-            // Identities self-describe as types: their kind and precedence.
-            assert_eq!(
-                describe(&types, core.plus),
-                Shape::TypeNode { kind: meta::TUPLE_TAG, precedence: 2.0 }
-            );
-            assert_eq!(
-                describe(&types, core.i32_),
-                Shape::TypeNode { kind: NumType::I32 as u8, precedence: 0.0 }
-            );
-            assert_eq!(
-                describe(&types, core.type_),
-                Shape::TypeNode { kind: meta::TYPEREC_TAG, precedence: 0.0 }
-            );
+            // Identities self-describe as types: every shared member readable.
+            // An operator carries its constructor (a callable leaf); a data
+            // type's constructor and every destructor are the honest undefined.
+            let Shape::TypeNode { kind, precedence, schedule, constructor, destructor } =
+                describe(&types, core.plus)
+            else {
+                panic!("an identity self-describes");
+            };
+            assert_eq!((kind, precedence, schedule), (meta::TUPLE_TAG, 2.0, Schedule::Infix));
+            assert!(!constructor.is_null() && destructor.is_null());
+            let Shape::TypeNode { kind, precedence, schedule, constructor, destructor } =
+                describe(&types, core.i32_)
+            else {
+                panic!("an identity self-describes");
+            };
+            assert_eq!((kind, precedence, schedule), (NumType::I32 as u8, 0.0, Schedule::Operand));
+            assert!(constructor.is_null() && destructor.is_null());
+            let Shape::TypeNode { kind, precedence, schedule, constructor, destructor } =
+                describe(&types, core.type_)
+            else {
+                panic!("an identity self-describes");
+            };
+            assert_eq!((kind, precedence, schedule), (meta::TYPEREC_TAG, 0.0, Schedule::Operand));
+            assert!(constructor.is_null() && destructor.is_null());
         }
     }
 

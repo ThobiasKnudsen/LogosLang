@@ -168,6 +168,16 @@ pub(crate) unsafe fn constructor_of(id: DyadPtr) -> DyadPtr {
     std::ptr::read_unaligned((*id).value.add(CTOR_OFF) as *const DyadPtr)
 }
 
+/// The destructor stored in `id`'s record — null for every seed identity: the
+/// honest *undefined*, filled the day drop semantics exist, never faked with a
+/// no-op.
+///
+/// # Safety
+/// As [`precedence_of`].
+pub(crate) unsafe fn destructor_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned((*id).value.add(DTOR_OFF) as *const DyadPtr)
+}
+
 /// Install `leaf` (a callable value) as `id`'s constructor — the registration
 /// back-fill's writer, run once per identity while the record is still under
 /// construction; nothing has read the slot before the fill.
