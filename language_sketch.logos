@@ -30,13 +30,11 @@ struct := type (
             error «token does not denote struct»
         # build the struct type from the following body scope — TBD
     )
-    names : hashtable string u32
+    # field NAMES are not stored here: they enter the shared name index (the
+    # regex trie of id_contexts) like every declaration and resolve by open-
+    # scope filtering. a per-struct names hashtable was rejected.
     fields : array dyad
     size_bytes : u64
-)
-
-hashtable := struct (
-
 )
 
 id_context := struct (
@@ -92,6 +90,7 @@ fn := type (
     output : ?
     body   : ?                                       # the reflectable LG body
     bcode  : @exec                                   # the opaque compiled machine code (NULL until compiled)
+    frame  : u64                                     # the activation-record byte size (per-call locals), NULL when none
 )
 
 @ : ?
@@ -192,27 +191,8 @@ type {
   value -> {
     type -> struct
     value -> {
-      names -> {
-        type -> hashtable
-        value ->  {
-          arr -> {
-            type -> array
-            value -> {
-              element_type -> struct (key:string, value:u32)
-              size -> {type -> u64, value -> ?}
-              capacity -> {type -> u64, value -> ?}
-              data -> [
-                {key -> «precedence», value -> 0},
-                {key -> «associativity», value -> 1},
-                {key -> «constructor», value -> 2},
-                {key -> «fields», value -> 3},
-                {key -> «destructor», value -> 4}
-
-              ]
-            }
-          }
-        }
-      }
+      # member NAMES are id_context entries in the shared name index, not data
+      # stored here (per-struct names hashtable: rejected)
       fields -> {
         type -> array
         value -> {
