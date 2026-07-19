@@ -173,8 +173,12 @@ pub(crate) fn register_void(cx: &mut Cx) -> DyadPtr {
 /// Whether `type_node` is the `void` unit type (its value slot holds [`VOID_TAG`]).
 ///
 /// # Safety
-/// `type_node` must be a valid type node from the store.
+/// `type_node` must be null or a valid type node from the store (null — a bare
+/// parameter's undeclared type — is no `void`).
 pub(crate) unsafe fn is_void_type(type_node: DyadPtr) -> bool {
+    if type_node.is_null() {
+        return false;
+    }
     let v = (*type_node).value;
     !v.is_null() && *(v as *const u8) == VOID_TAG
 }
@@ -188,8 +192,12 @@ pub(crate) const COMMENT_TAG: u8 = 12;
 /// Whether `type_node` is the `comment` type — prose, invisible to value flow.
 ///
 /// # Safety
-/// `type_node` must be a valid type node from the store.
+/// `type_node` must be null or a valid type node from the store (null — a bare
+/// parameter's undeclared type — is no comment).
 pub(crate) unsafe fn is_comment_type(type_node: DyadPtr) -> bool {
+    if type_node.is_null() {
+        return false;
+    }
     let v = (*type_node).value;
     !v.is_null() && *(v as *const u8) == COMMENT_TAG
 }
@@ -203,8 +211,12 @@ pub(crate) const ADDR_TAG: u8 = 13;
 /// Whether `type_node` is a pointer type (`@T`).
 ///
 /// # Safety
-/// `type_node` must be a valid type node from the store.
+/// `type_node` must be null or a valid type node from the store (null — a bare
+/// parameter's undeclared type — is no pointer).
 pub(crate) unsafe fn is_pointer_type(type_node: DyadPtr) -> bool {
+    if type_node.is_null() {
+        return false;
+    }
     let v = (*type_node).value;
     !v.is_null() && *(v as *const u8) == ADDR_TAG
 }
@@ -220,12 +232,16 @@ pub(crate) unsafe fn pointee_of(type_node: DyadPtr) -> DyadPtr {
 
 /// Whether a data node typed `type_node` holds a scalar the interpreter can read
 /// at a width: a numeric type, `bool` (whose type node carries no tag), or a
-/// pointer (an 8-byte address). The unit `void` and the text substance
-/// (`string`, `comment`) are not scalars.
+/// pointer (an 8-byte address). The unit `void`, the text substance
+/// (`string`, `comment`), and the null undeclared type of a bare parameter are
+/// not scalars.
 ///
 /// # Safety
-/// `type_node` must be a valid type node from the store.
+/// `type_node` must be null or a valid type node from the store.
 pub(crate) unsafe fn is_scalar_type(type_node: DyadPtr) -> bool {
+    if type_node.is_null() {
+        return false;
+    }
     let v = (*type_node).value;
     if v.is_null() {
         return true;

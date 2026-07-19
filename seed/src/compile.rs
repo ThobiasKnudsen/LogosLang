@@ -91,11 +91,6 @@ pub struct Lowerer<'a, 'f> {
     /// Memory flags for loads/stores: plain (no alignment assumption, may trap),
     /// since variable storage is only byte-aligned. The builder interns these.
     flags: MemFlagsData,
-    /// Parameter nodes mapped to the function's block params (its arguments). A
-    /// parameter reference lowers to its argument value, the compiled analogue of
-    /// the interpreter reading its frame; every other node dispatches through
-    /// `lower`.
-    params: &'a HashMap<DyadPtr, Value>,
     /// The module the function is compiled into, so a call can reference the function
     /// being defined (self-recursion) or an already-compiled callee's machine code.
     module: &'a mut dyn Module,
@@ -110,26 +105,33 @@ pub struct Lowerer<'a, 'f> {
     /// is recognized as self-recursion rather than a call to other machine code.
     self_fn: DyadPtr,
     /// The Cranelift stack slot backing this call's activation record — the
-    /// compiled analogue of the interpreter's activation buffer, holding the
-    /// function's frame-relative locals at their offsets. `None` for a function
-    /// with no locals (an empty frame). A local place lowers to `stack_addr(slot,
-    /// offset)`; the machine call stack gives each activation its own copy, which
-    /// is what makes compiled recursion with locals correct.
+    /// compiled analogue of the interpreter's frame, holding the function's
+    /// parameters (spilled from the block params on entry) and frame-relative
+    /// locals at their parse-assigned offsets. `None` for a function with no
+    /// parameters and no locals (an empty frame). A frame place lowers to
+    /// `stack_addr(slot, offset)`; the machine call stack gives each activation
+    /// its own copy, which is what makes compiled recursion correct.
     frame_slot: Option<StackSlot>,
 }
 
 impl Lowerer<'_, '_> {
-    /// Lower `node`: a parameter reference to its block param, else dispatch to its
-    /// operation's lowering rule.
+    /// Lower `node`: dispatch to its operation's lowering rule; a parameter
+    /// reads its frame slot through the same place machinery as a local.
     ///
     /// # Safety
     /// `node` must be a valid dyad from the store; lowering dereferences it and
     /// its operands to read baked constants and structure.
     pub unsafe fn lower(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
-        if let Some(&v) = self.params.get(&node) {
-            return Ok(v);
-        }
         let op = (*node).ty;
+        // A bare parameter (`fn (a)`) has no declared type; its frame slot holds
+        // the full i64 bit-container the call passed.
+        if op.is_null() {
+            if frame_ref((*node).value).is_some() {
+                let addr = self.place_addr(node);
+                return Ok(self.load_at(types::I64, addr, 0));
+            }
+            return Err(CompileError::NotLowerable(op));
+        }
         if let Some(f) = self.lower.get(&op).copied() {
             return f(self, node);
         }
@@ -832,11 +834,14 @@ pub unsafe fn compile_nullary_i32(
     compile_body(lower, types, std::ptr::null_mut(), root, &[], Some(NumType::I32))
 }
 
-/// Compile `root` as a function of `params`, mapping each parameter node to its
-/// argument (an `i64` bit-container narrowed to the parameter's declared type) and
-/// returning `ret` (`None` for `-> void`, which yields unit). `root` references those
-/// parameter nodes where it uses them (they resolve to the block params), and its
-/// other leaves bake addresses/immediates as usual.
+/// Compile `root` as a function of `params`, spilling each argument (an `i64`
+/// bit-container, narrowed to the parameter's declared type where it has one)
+/// into the parameter's frame slot on entry, and returning `ret` (`None` for
+/// `-> void`, which yields unit). `root` references those parameter nodes where
+/// it uses them — they read their frame slots through the same place machinery
+/// as locals, which is what makes `&param` and parameter reassignment agree
+/// with the interpreter — and its other leaves bake addresses/immediates as
+/// usual.
 ///
 /// # Safety
 /// `root` must be a valid dyad tree from the store, and any variable storage its
@@ -890,21 +895,11 @@ pub(crate) unsafe fn compile_body(
         builder.switch_to_block(entry);
         builder.seal_block(entry);
 
-        // Each parameter node maps to its block param (the matching function arg). The
-        // block param is the `i64` bit-container; narrow it to the parameter's real
-        // type before the body uses it.
-        let block_params = builder.block_params(entry).to_vec();
-        let mut param_map = HashMap::new();
-        for (&p, &v) in params.iter().zip(block_params.iter()) {
-            let nt = numtype_of_type((*p).ty);
-            let vn = narrow_from_i64(&mut builder, v, nt);
-            param_map.insert(p, vn);
-        }
-
         // The activation record: one explicit stack slot sized to the function's
-        // frame (its frame-relative locals), 8-byte aligned. A frameless function
-        // (`self_fn` null for a bare expression, or no locals) gets none, and its
-        // places all bake absolute addresses as before.
+        // frame — its parameters first, its frame-relative locals after — 8-byte
+        // aligned. A frameless function (`self_fn` null for a bare expression,
+        // or no parameters and no locals) gets none, and its places all bake
+        // absolute addresses as before.
         let frame_size = if self_fn.is_null() { 0 } else { fn_frame_size(self_fn) };
         let frame_slot = (frame_size > 0).then(|| {
             // Rounded up to whole i64 words so the zeroing below covers it.
@@ -912,9 +907,8 @@ pub(crate) unsafe fn compile_body(
             let slot = builder
                 .create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3));
             // Zero the record on entry, exactly as the interpreter zeroes its
-            // activation buffer: a typed declaration (`a : i32`) has no
-            // initializer, so its first read must see the same zeroed
-            // "undefined" on both tiers.
+            // frame: a typed declaration (`a : i32`) has no initializer, so its
+            // first read must see the same zeroed "undefined" on both tiers.
             let zero = builder.ins().iconst(types::I64, 0);
             for off in (0..size).step_by(8) {
                 builder.ins().stack_store(zero, slot, off as i32);
@@ -922,13 +916,37 @@ pub(crate) unsafe fn compile_body(
             slot
         });
 
+        // Spill each argument into its parameter's frame slot — the compiled
+        // side of the one calling convention: the caller passes the i64
+        // bit-containers per the uniform signature, and entry writes each into
+        // the slot the parser assigned, narrowed to the parameter's declared
+        // scalar type (a bare or type-valued parameter keeps the full
+        // container). Parameter uses then read their slots exactly as the
+        // interpreter's do, so `&param` and parameter writes agree across
+        // tiers.
+        let block_params = builder.block_params(entry).to_vec();
+        for (&p, &v) in params.iter().zip(block_params.iter()) {
+            // A parameter always has a parse-assigned slot; a function node
+            // without one is malformed and cannot be compiled.
+            let Some((_, off)) = frame_ref((*p).value) else {
+                return Err(CompileError::NotLowerable(p));
+            };
+            let slot = frame_slot.expect("parameters occupy the frame, so a frame slot exists");
+            let ty = (*p).ty;
+            if !ty.is_null() && crate::identities::numtype::is_scalar_type(ty) {
+                let vn = narrow_from_i64(&mut builder, v, numtype_of_type(ty));
+                builder.ins().stack_store(vn, slot, off as i32);
+            } else {
+                builder.ins().stack_store(v, slot, off as i32);
+            }
+        }
+
         let value = {
             let mut lw = Lowerer {
                 builder: &mut builder,
                 lower,
                 ptr_ty,
                 flags: MemFlagsData::new(),
-                params: &param_map,
                 module: &mut module,
                 func_id,
                 types,

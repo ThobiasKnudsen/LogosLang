@@ -514,17 +514,18 @@ pub const FN_BODY: usize = 2;
 /// convention]`), null until compiled.
 pub const FN_BCODE: usize = 3;
 /// See [`FN_INPUT`]. The activation-record byte size: a `u64` leaf holding the
-/// total size of the function's local frame (the per-call storage its `:=`
-/// locals, loop variables, and struct instances occupy at their offsets), or
-/// null for a function with no locals. Read by both tiers on entry —
-/// [`crate::run::Runtime`] to size the interpreter's activation buffer, the
-/// compiler to size the Cranelift stack slot. A trailing slot, so every reader
-/// of `FN_INPUT..=FN_BCODE` is unaffected.
+/// total size of the function's frame — its parameters first, then the
+/// per-call storage its `:=` locals, loop variables, and struct instances
+/// occupy at their offsets — or null for a function with no parameters and no
+/// locals. Read by both tiers on entry — [`crate::run::Runtime`] to claim the
+/// interpreter's frame from its activation stack, the compiler to size the
+/// Cranelift stack slot. A trailing slot, so every reader of
+/// `FN_INPUT..=FN_BCODE` is unaffected.
 pub const FN_FRAME: usize = 4;
 
 /// The activation-record byte size a function node declares in its [`FN_FRAME`]
 /// slot: the `u64` the slot's leaf holds, or `0` when the slot is null (no
-/// locals). Read on every call to size the per-call storage.
+/// parameters and no locals). Read on every call to size the per-call storage.
 ///
 /// # Safety
 /// `fn_node` must be a function node whose value is `[input, output, body,
@@ -775,8 +776,8 @@ pub enum ParseError {
     /// A `for`'s literal step was not positive: with the end-exclusive `var < end`
     /// condition, a non-positive step could never terminate as stated.
     BadStep,
-    /// An `&` of something without storage to point at: a parameter (frame-bound,
-    /// no memory slot), a comptime binding, or a non-place expression.
+    /// An `&` of something without storage to point at: a comptime binding or a
+    /// non-place expression.
     BadAddressOf,
     /// A numeric conversion `type(value)` was malformed: not exactly one operand, or a
     /// non-numeric operand (there is nothing to convert).
@@ -949,15 +950,15 @@ pub struct Parser<'a> {
     runtime_depth: u32,
 }
 
-/// One enclosing function body being parsed: the byte-size accumulator its local
-/// declarations claim offsets from, and its parameter scope (the input struct's
-/// scope), which the capture guard checks — a parameter of a non-innermost
-/// function is as much a capture as a frame-relative local of one.
+/// One enclosing function body being parsed: the byte-size accumulator its
+/// parameter and local declarations claim offsets from. Parameters claim the
+/// frame's first offsets (a call frame is an instance of its function — DESIGN
+/// ›Resolution is one rule‹), the body's locals continue after them, and both
+/// are frame-relative places the one capture guard covers by depth.
 struct OpenFn {
-    /// Bytes claimed so far by this function's frame-relative locals.
+    /// Bytes claimed so far by this function's parameters and frame-relative
+    /// locals.
     size: usize,
-    /// The input struct's scope, where the parameters are declared.
-    params: DyadPtr,
 }
 
 impl<'a> Parser<'a> {
@@ -987,11 +988,12 @@ impl<'a> Parser<'a> {
 
     /// Allocate storage for a function-local place of `width` bytes, typed
     /// `ty_node`. Inside a function (the frame stack is non-empty) the place is
-    /// *frame-relative*: it claims the next offset in the current frame and its
-    /// storage is per-call — the interpreter's activation buffer, the JIT's stack
-    /// slot. At top level it is an absolute global blob, exactly as before. The
-    /// node is `{ty: ty_node, value: <place>}`, its value an [`crate::dyad::FRAME_TAG`]
-    /// offset or a real address respectively.
+    /// *frame-relative*: it claims the next offset in the current frame — after
+    /// the parameters, which claimed the frame's first offsets at the signature
+    /// — and its storage is per-call: the interpreter's frame on its activation
+    /// stack, the JIT's stack slot. At top level it is an absolute global blob,
+    /// exactly as before. The node is `{ty: ty_node, value: <place>}`, its value
+    /// an [`crate::dyad::FRAME_TAG`] offset or a real address respectively.
     fn alloc_local(&mut self, ty_node: DyadPtr, width: usize) -> DyadPtr {
         let place = if self.frames.is_empty() {
             self.store.alloc_bytes(&vec![0u8; width])
@@ -1005,14 +1007,12 @@ impl<'a> Parser<'a> {
         self.store.alloc_raw(ty_node, place)
     }
 
-    /// Reject a *capture*: a reference to a frame-relative local that belongs to
-    /// an enclosing function's frame (its depth is not the current one). v1 has no
-    /// closures, so a nested function cannot read an outer function's local — and
-    /// doing so would resolve against the wrong activation record at run time. A
-    /// local of the current frame, and every absolute (global) place, pass.
-    /// Parameters are the other per-call bindings and capture the same way; they
-    /// carry no frame tag (they resolve through the call's frame map, not a
-    /// place), so [`Parser::check_param_capture`] guards them by scope instead.
+    /// Reject a *capture*: a reference to a frame-relative place — a local or a
+    /// parameter — that belongs to an enclosing function's frame (its depth is
+    /// not the current one). v1 has no closures, so a nested function cannot
+    /// read an outer function's per-call state — doing so would resolve against
+    /// the wrong activation record at run time. A place of the current frame,
+    /// and every absolute (global) place, pass.
     ///
     /// # Safety
     /// `node` must be a resolved dyad from the store.
@@ -1021,21 +1021,6 @@ impl<'a> Parser<'a> {
             if depth != self.frames.len() {
                 return Err(ParseError::CapturedLocal);
             }
-        }
-        Ok(())
-    }
-
-    /// Reject a *parameter* capture: a resolution that landed in the parameter
-    /// scope of an enclosing (non-innermost) function. A parameter is per-call
-    /// state exactly like a frame local — it resolves against the callee's own
-    /// frame at run time — so a nested function reading an outer function's
-    /// parameter would read the wrong call's binding; without this guard it
-    /// parses and then fails at run time with an unrelated no-storage error.
-    /// The innermost function's own parameters, and every non-parameter scope,
-    /// pass.
-    fn check_param_capture(&self, r: &Resolved) -> Result<(), ParseError> {
-        if self.frames.iter().rev().skip(1).any(|f| f.params == r.scope) {
-            return Err(ParseError::CapturedLocal);
         }
         Ok(())
     }
@@ -1355,6 +1340,44 @@ impl<'a> Parser<'a> {
         self.expect_arrow()?;
         let output = self.parse_return_type()?;
 
+        // Open this function's frame and give the parameters its first per-call
+        // byte offsets — a call frame is an instance of its function, so a
+        // parameter resolves to a frame slot exactly as a local does (DESIGN
+        // ›Resolution is one rule‹), and the caller writes the argument values
+        // into those slots (›Operands travel on the stack‹). A scalar-typed
+        // parameter stores at its type's width, like a local of that type;
+        // anything else — a bare `name`, a type-valued parameter — rides the
+        // full 8-byte i64 bit-container the call convention already passes.
+        // The body's local declarations then claim the offsets after these; a
+        // nested `fn` literal pushes its own frame, so its state never lands
+        // in this one.
+        self.frames.push(OpenFn { size: 0 });
+        let depth = self.frames.len();
+        // SAFETY: `input` is the struct just built; its value is the
+        // null-terminated `[scope, param0 …, null]` field list, and each
+        // parameter's value slot is still the null parse_struct left there.
+        unsafe {
+            let fields = (*input).value as *const DyadPtr;
+            let mut i = 1;
+            loop {
+                let param = *fields.add(i);
+                if param.is_null() {
+                    break;
+                }
+                let ty = (*param).ty;
+                let width = if !ty.is_null() && crate::identities::numtype::is_scalar_type(ty) {
+                    crate::identities::numtype::numtype_of_type(ty).bytes()
+                } else {
+                    8
+                };
+                let frame = self.frames.last_mut().expect("parse_fn just pushed a frame");
+                let offset = frame.size;
+                frame.size += width;
+                (*param).value = crate::dyad::frame_place(depth, offset);
+                i += 1;
+            }
+        }
+
         if !declared.is_null() {
             let early = self.store.alloc_operands(&[
                 input,
@@ -1376,11 +1399,6 @@ impl<'a> Parser<'a> {
         // runs at calls, not at parse), so parse-time rebinding is off inside.
         // SAFETY: `input` is the struct just built; its `value[0]` is its scope.
         let scope = unsafe { *((*input).value as *const DyadPtr) };
-        // Open this function's frame: the body's local declarations claim per-call
-        // byte offsets in it, and its parameter scope feeds the capture guard. A
-        // nested `fn` literal pushes its own, so its locals never land in this
-        // frame.
-        self.frames.push(OpenFn { size: 0, params: scope });
         self.scopes.push(scope);
         self.runtime_depth += 1;
         self.expect_open()?;
@@ -1397,8 +1415,9 @@ impl<'a> Parser<'a> {
         let body = unsafe { crate::identities::commit_fn_body(self.store, &self.types, body, output)? };
 
         // `bcode` starts null; `compile_fn` installs the exec@ into that slot.
-        // FN_FRAME holds the activation-record byte size — a `u64` leaf both tiers
-        // read on entry, or null when the function declares no locals.
+        // FN_FRAME holds the activation-record byte size — parameters first,
+        // locals after, a `u64` leaf both tiers read on entry — or null when
+        // the function declares no parameters and no locals.
         let frame = if frame_size == 0 {
             std::ptr::null_mut()
         } else {
@@ -1999,9 +2018,9 @@ impl<'a> Parser<'a> {
     /// with an optional `.field` chain, ending at a storage-backed place — a
     /// numeric, pointer, or struct-typed node with a value slot. Yields an
     /// `addr` node (see [`crate::identities::pointer::build_addr`]) that resolves
-    /// the place's address at run/lower time, so a frame-relative local yields a
-    /// per-activation address. A parameter or comptime binding has no storage and
-    /// is [`ParseError::BadAddressOf`].
+    /// the place's address at run/lower time, so a frame-relative local or
+    /// parameter yields a per-activation address. A comptime binding has no
+    /// storage and is [`ParseError::BadAddressOf`].
     pub(crate) fn parse_address_of(&mut self) -> Result<DyadPtr, ParseError> {
         self.skip_trivia();
         let source = self.source;
@@ -2016,9 +2035,6 @@ impl<'a> Parser<'a> {
             // Keywords, operators, literals: not places.
             return Err(ParseError::BadAddressOf);
         }
-        // No taking the address of an enclosing function's parameter (a capture);
-        // checked before the storage test so the error names the real problem.
-        self.check_param_capture(&r)?;
         self.pos += r.matched;
         let mut node = r.identity;
         while let Some((_, matched, Schedule::Dot)) = self.peek_kind() {
@@ -2033,15 +2049,17 @@ impl<'a> Parser<'a> {
                 || crate::identities::numtype::is_pointer_type(ty)
                 || (!ty.is_null() && (*ty).ty == self.types.struct_);
             if !is_place || (*node).value.is_null() {
-                // Parameters (frame-bound) and comptime bindings have no storage.
+                // Comptime bindings have no storage.
                 return Err(ParseError::BadAddressOf);
             }
-            // No taking the address of an enclosing function's local (a capture).
+            // No taking the address of an enclosing function's local or
+            // parameter (a capture).
             self.check_capture(node)?;
             // `&` is a runtime address-of node (like `@` deref), not a baked
             // literal: it resolves the place's address through `place_addr` at
-            // run/lower time, so a frame-relative local yields a per-activation
-            // address — a different one on each recursive call, exactly like C.
+            // run/lower time, so a frame-relative local or parameter yields a
+            // per-activation address — a different one on each recursive call,
+            // exactly like C.
             Ok(crate::identities::pointer::build_addr(self.store, &self.types, node))
         }
     }
@@ -2589,7 +2607,6 @@ impl<'a> Parser<'a> {
                 Schedule::Operand => {
                     // SAFETY: `id` is a resolved dyad from the store.
                     unsafe { self.check_capture(id)? };
-                    self.check_param_capture(&r)?;
                     tape.push(Cell::Dyad(id));
                 }
                 // A literal: build its leaf now from the matched span. A numeric

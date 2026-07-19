@@ -3251,8 +3251,9 @@ mod tests {
     #[test]
     fn pointer_misuse_is_rejected() {
         // Deref of a non-pointer; pointer arithmetic; a literal into a pointer
-        // variable; & of a comptime binding; & of a parameter (no storage); a
-        // pointer as a numeric function's tail.
+        // variable; & of a comptime binding; a pointer as a numeric function's
+        // tail. (& of a parameter is no longer misuse: a parameter is a frame
+        // place with storage, like a local — see `address_of_a_parameter_works`.)
         assert_eq!(parse_err("( x := i32 1  x@ )"), ParseError::UnsupportedOperands);
         assert_eq!(
             parse_err("( x := i32 1  p := &x  p + 1 )"),
@@ -3260,8 +3261,71 @@ mod tests {
         );
         assert_eq!(parse_err("( x := i32 1  p := &x  p = 5 )"), ParseError::TypeMismatch);
         assert_eq!(parse_err("( y := 5  &y )"), ParseError::BadAddressOf);
-        assert_eq!(parse_err("fn (a : i32) -> void ( q := &a  q@ )"), ParseError::BadAddressOf);
         assert_eq!(parse_err("fn () -> i32 ( x := i32 1  x = 1  &x )"), ParseError::TypeMismatch);
+    }
+
+    #[test]
+    fn address_of_a_parameter_works_both_tiers() {
+        // A parameter is a frame place — a field of the call's activation
+        // record — so `&a` yields its per-call address and `q@` reads the
+        // argument back through it, on both tiers alike.
+        diff_typed_call("fn (a : i32) -> i32 ( q := &a  q@ )", "f(7)", 7);
+        // Writing through the pointer writes the parameter's slot.
+        diff_typed_call("fn (a : i32) -> i32 ( q := &a  q@ = 5  a )", "f(7)", 5);
+    }
+
+    #[test]
+    fn parameter_reassignment_works_both_tiers() {
+        // A parameter's slot is written like a local's: reassignment is
+        // ordinary storage, agreed on by interpreter and JIT. (Before
+        // parameters had frame slots, this was a runtime error interpreted and
+        // a wild store compiled.)
+        diff_typed_call("fn (a : i32) -> i32 ( a = a + 1  a )", "f(41)", 42);
+    }
+
+    /// Parse `src` as a whole script (a top-level sequence) and run it
+    /// interpreted, returning its tail value.
+    fn run_script(src: &str) -> i64 {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let root = {
+            let mut p = Parser::new(src, &mut store, &mut trie, core.types(), scopes);
+            p.parse_sequence().unwrap()
+        };
+        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        // SAFETY: `root` is the sequence just parsed; its exprs are valid.
+        unsafe { rt.run(root) }.unwrap()
+    }
+
+    #[test]
+    fn interpreted_recursion_stacks_frames() {
+        // Deep interpreted recursion: each call claims its own frame from the
+        // activation stack, with the parameter and the local at distinct
+        // per-call slots. The sum 1..=500 = 125250 is right only if no call's
+        // frame aliases another's — 500 live frames stacked at once.
+        let src = "f := fn (n : i64) -> i64 ( m := i64 0  m = n  if (n == 0) (0) else (m + f(n - 1)) )\nf(500)";
+        assert_eq!(run_script(src), 125_250);
+    }
+
+    #[test]
+    fn nested_calls_in_argument_position_release_frames_lifo() {
+        // An argument that is itself a call: the callee's frame is claimed
+        // before the arguments evaluate, the inner calls claim and release
+        // theirs above it, and the outer frame is still intact when its
+        // parameters are written. g(3) = 6 and g(4) = 8, so f sees 14.
+        let src = "g := fn (x : i64) -> i64 ( x + x )\nf := fn (a : i64, b : i64) -> i64 ( a + b )\nf(g(3), g(4) + g(0))";
+        assert_eq!(run_script(src), 14);
+    }
+
+    #[test]
+    fn a_bare_parameter_carries_the_container() {
+        // A bare `name` parameter (DESIGN: accepts any type-value dyad) has no
+        // declared type; its frame slot carries the full i64 bit-container and
+        // a read yields it back.
+        assert_eq!(run_script("f := fn (a) -> i64 ( a )\nf(42)"), 42);
     }
 
     #[test]
