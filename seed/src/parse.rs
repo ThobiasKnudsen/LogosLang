@@ -546,8 +546,9 @@ pub unsafe fn fn_frame_size(fn_node: DyadPtr) -> usize {
 /// shared members, stored as one byte in its record
 /// ([`crate::identities::meta`], issue #30) and read from the graph at
 /// dispatch, exactly as precedence and associativity already are. The
-/// *behaviour* half (how the dyad is built) is the [`Construct`] table for
-/// now, ported to constructor callables in the records next. In this seed the
+/// *behaviour* half (how the dyad is built) rides the records too: each
+/// identity's constructor callable, minted from the [`Construct`]
+/// registration table, which drops before parsing runs. In this seed the
 /// driver owns tape scheduling; general tape-driving constructors (needed for
 /// macros and token-rewriting operators) come at self-hosting.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -2324,8 +2325,9 @@ impl<'a> Parser<'a> {
                 // A fresh name followed by `:` is the typed declaration
                 // `name : type`: it introduces the name and sets its type slot,
                 // leaving the value undefined (DESIGN ›Declarations are immutable by
-                // default‹ — `a : i32` and `a := i32 ?` declare the same node; the
-                // seed approximates undefined as zeroed storage until phase bits
+                // default‹ — `a : i32` and `a := i32 ?` will declare the same node
+                // once `?` exists (no `?` token yet, issue #38); the seed
+                // approximates undefined as zeroed storage until phase bits
                 // land). The type may be computed: the type expression parses
                 // through the ordinary machinery, so a `-> type` call (`a :
                 // metatype(0)`) comptime-resolves to its concrete type first — the

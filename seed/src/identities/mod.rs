@@ -10,7 +10,7 @@
 //! built from, plus each primitive (`type`, `fn`, `i32`, `rational`, `=`, `+`).
 //!
 //! Each primitive file defines exactly one identity: its node, its spelling, and
-//! its behaviour across the phases (parse `Construct`, run native, compile
+//! its behaviour across the phases (parse construction, run native, compile
 //! lowering). [`Core::build`] wires them into the graph. Structure — parse
 //! precedence and associativity, and the layout values are read through (a
 //! scalar width, operand arity and role names) — rides the graph as each
@@ -18,10 +18,12 @@
 //! shared by its values‹). Run behaviour rides the graph too (issue #44): each
 //! native is a [`callable`] leaf the resolved nodes reference from their op
 //! slots, so the interpreter consults no table — alternative run versions live
-//! in versioned scopes, not in swapped HashMaps. What stays native-table-keyed
-//! is parse construction (`metas`, until constructors move in-graph at
-//! self-hosting) and the Cranelift lowering (`lower`, until it re-keys per
-//! backend identity).
+//! in versioned scopes, not in swapped HashMaps. Parse construction rides the
+//! graph the same way: each identity's constructor is a callable leaf in its
+//! record, minted from the build-time `metas` table, which drops before
+//! parsing runs (bodies stay native until self-hosting). What stays
+//! native-table-keyed is the Cranelift lowering (`lower`, until it re-keys
+//! per backend identity).
 //!
 //! Deferred surface the sketch declares that the seed does not yet register —
 //! tracked here so each gap is deliberate, not drift: the operators `^` and
@@ -31,9 +33,14 @@
 //! (nested) fields and struct parameters/returns; the `string` *name* and operations over
 //! strings (the `«…»` literal exists as an inert value, above all as the comment
 //! substance); `mut` at every level (DESIGN ›Mutability and construction‹); the
-//! `hashtable` and `array` types; and the declaration forms `key : type = value`
-//! and bare `key :` outside field lists. Each arrives with the machinery it
-//! needs (layout, places, the borrow rule), not before.
+//! `hashtable` and `array` types; bare `key :` outside field lists (the
+//! composed `key : type = value` is rejected, not deferred — DESIGN
+//! ›Declarations are immutable by default‹); `?` the unknown (issue #38 — no
+//! token exists yet); error unions `(T | Error)` with `match` and the
+//! `success`/`fails` combinators (DESIGN ›Error handling‹); and the explicit
+//! `comptime` marker (the inferred path — `-> type` calls resolving in the
+//! pass — exists). Each arrives with the machinery it needs (layout, places,
+//! the borrow rule), not before.
 
 use std::collections::HashMap;
 
@@ -3397,6 +3404,18 @@ mod tests {
             parse_err("fn () -> i32 ( g := fn () -> i32 ( 1 )  g.compile() )"),
             ParseError::StatementAsValue
         );
+    }
+
+    #[test]
+    fn compile_on_a_type_returning_fn_refuses_cleanly() {
+        // Types are comptime values, resolved in the pass: a `-> type` call is
+        // already gone at run time, so compiling the function is refused with
+        // a clean error (this used to panic on the type root's record tag).
+        let e = run_script_result(
+            "metatype := fn (i : i32) -> type ( if (i == 0) (i32) else (f64) )\nmetatype.compile()",
+        )
+        .unwrap_err();
+        assert!(matches!(e, crate::run::RunError::CompileFailed(_)), "got {e:?}");
     }
 
     #[test]

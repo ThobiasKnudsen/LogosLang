@@ -953,10 +953,19 @@ unsafe fn compile_fn_body(
         }
     }
     let body = *fields.add(FN_BODY);
-    // A `-> void` function yields unit (compiled to `return 0`); every other output is
-    // a numeric type the body's value widens to.
+    // A `-> void` function yields unit (compiled to `return 0`); every other
+    // compilable output is a scalar type the body's value widens to. A
+    // non-scalar output — above all `-> type` — refuses cleanly: types are
+    // comptime values, resolved in the pass (DESIGN ›Types are comptime
+    // values‹), so the call this code would serve is already gone at run time.
     let out = *fields.add(FN_OUTPUT);
-    let ret = if is_void_type(out) { None } else { Some(numtype_of_type(out)) };
+    let ret = if is_void_type(out) {
+        None
+    } else if !out.is_null() && crate::identities::numtype::is_scalar_type(out) {
+        Some(numtype_of_type(out))
+    } else {
+        return Err(CompileError::NotLowerable(out));
+    };
     // The fn node is its own self-reference: a call to it inside `body` is recursion.
     compile_body(lower, types, fn_node, body, &params, ret)
 }
