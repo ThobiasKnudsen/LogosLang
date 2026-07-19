@@ -225,7 +225,7 @@ fn run_deref(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a deref node; its parts are valid dyads.
     unsafe {
         let (ptr_expr, pointee, off) = deref_parts(node);
-        if !numtype::is_scalar_type(pointee) {
+        if !numtype::is_scalar_place_type(rt.struct_type(), pointee) {
             return Err(RunError::BadValue);
         }
         let addr = (rt.run(ptr_expr)? as u64).wrapping_add(off) as *const u8;
@@ -254,7 +254,7 @@ fn lower_deref(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a deref node; its parts are valid dyads.
     unsafe {
         let (ptr_expr, pointee, off) = deref_parts(node);
-        if !numtype::is_scalar_type(pointee) {
+        if !numtype::is_scalar_place_type(lw.struct_type(), pointee) {
             return Err(CompileError::BadValue);
         }
         let addr = lw.lower(ptr_expr)?;

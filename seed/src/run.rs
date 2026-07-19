@@ -196,6 +196,13 @@ struct CompilerCx {
 }
 
 impl Runtime {
+    /// The `struct` keyword identity — the type every struct type node is
+    /// typed by, needed to exclude struct types before a record-tag read
+    /// (see [`crate::identities::numtype::is_scalar_place_type`]).
+    pub(crate) fn struct_type(&self) -> DyadPtr {
+        self.struct_
+    }
+
     /// A runtime recognizing functions by `fn_type` and struct instances by
     /// `struct_`, molding `rational` leaves on read, with an empty activation
     /// stack (its first chunk is claimed lazily, at the first call that needs
@@ -522,7 +529,7 @@ impl Runtime {
                     };
                     let slot = base.add(off);
                     let ty = (*param).ty;
-                    if !ty.is_null() && crate::identities::numtype::is_scalar_type(ty) {
+                    if crate::identities::numtype::is_scalar_place_type(self.struct_, ty) {
                         crate::identities::numtype::write_scalar(ty, slot, bits);
                     } else {
                         std::ptr::write_unaligned(slot as *mut i64, bits);

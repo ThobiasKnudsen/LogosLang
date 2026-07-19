@@ -237,7 +237,12 @@ pub(crate) unsafe fn pointee_of(type_node: DyadPtr) -> DyadPtr {
 /// not scalars.
 ///
 /// # Safety
-/// `type_node` must be null or a valid type node from the store.
+/// `type_node` must be null or a *record-carrying* type node from the store —
+/// an identity whose value slot is a [`super::meta`] record with a kind tag as
+/// its first byte. A **struct type node does not qualify**: its value is its
+/// `[scope, field0 …]` list, whose first byte is a node address's low byte,
+/// not a tag — reading it as one is nondeterministic garbage. Callers whose
+/// type can be a struct type use [`is_scalar_place_type`] instead.
 pub(crate) unsafe fn is_scalar_type(type_node: DyadPtr) -> bool {
     if type_node.is_null() {
         return false;
@@ -248,6 +253,17 @@ pub(crate) unsafe fn is_scalar_type(type_node: DyadPtr) -> bool {
     }
     let tag = *(v as *const u8);
     tag < VOID_TAG || tag == ADDR_TAG
+}
+
+/// [`is_scalar_type`] for a *declared* type that may be a struct type node
+/// (`struct_kw` is the `struct` keyword identity a struct type is typed by):
+/// a struct type is never a scalar, and its value slot holds its field list
+/// rather than a tagged record, so it must be excluded before the tag read.
+///
+/// # Safety
+/// `type_node` must be null or a valid type node from the store.
+pub(crate) unsafe fn is_scalar_place_type(struct_kw: DyadPtr, type_node: DyadPtr) -> bool {
+    !type_node.is_null() && (*type_node).ty != struct_kw && is_scalar_type(type_node)
 }
 
 /// The `NumType` of a type node, or `I32` for a fixed-width scalar type without a

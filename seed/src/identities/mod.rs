@@ -3407,15 +3407,18 @@ mod tests {
     }
 
     #[test]
-    fn compile_on_a_type_returning_fn_refuses_cleanly() {
-        // Types are comptime values, resolved in the pass: a `-> type` call is
-        // already gone at run time, so compiling the function is refused with
-        // a clean error (this used to panic on the type root's record tag).
-        let e = run_script_result(
-            "metatype := fn (i : i32) -> type ( if (i == 0) (i32) else (f64) )\nmetatype.compile()",
-        )
-        .unwrap_err();
-        assert!(matches!(e, crate::run::RunError::CompileFailed(_)), "got {e:?}");
+    fn a_type_returning_fn_compiles_and_serves_comptime_calls() {
+        // A type value is a node address, so a `-> type` function is integers
+        // in, an integer out — it compiles (type nodes bake as i64 address
+        // immediates, run's own rule), and the parse-time comptime evaluation
+        // of later `metatype(...)` calls jumps to the installed code. This
+        // used to panic on the type root's record tag.
+        assert_eq!(
+            run_script(
+                "metatype := fn (i : i32) -> type ( if (i == 0) (i32) else (f64) )\nmetatype.compile()\nsame := metatype(0) == i32\nother := metatype(1) == f64\nif (same and other) (i64 1) else (i64 0)"
+            ),
+            1
+        );
     }
 
     #[test]

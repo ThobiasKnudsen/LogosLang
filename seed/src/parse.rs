@@ -1369,7 +1369,10 @@ impl<'a> Parser<'a> {
                     break;
                 }
                 let ty = (*param).ty;
-                let width = if !ty.is_null() && crate::identities::numtype::is_scalar_type(ty) {
+                let width = if crate::identities::numtype::is_scalar_place_type(
+                    self.types.struct_,
+                    ty,
+                ) {
                     crate::identities::numtype::numtype_of_type(ty).bytes()
                 } else {
                     8

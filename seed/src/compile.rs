@@ -204,6 +204,20 @@ impl Lowerer<'_, '_> {
         if op == self.types.fn_type || op == self.types.struct_ {
             return Ok(self.const_i32(0));
         }
+        // A type node standing as a value carries its identity AS its value:
+        // its bits are its own address, baked as an i64 immediate — run's rule
+        // mirrored (the interpreter is the compiler's oracle), which is what
+        // lets a `-> type` function compile: type identities are interned and
+        // per-run, and so is the machine code baking them. A frame place
+        // *typed* by a type (`t : type`, a type-valued parameter) is not a
+        // type standing as a value: its slot holds the bound type's address,
+        // read as the container.
+        if op == (*op).ty {
+            if frame_ref((*node).value).is_some() {
+                return Ok(self.read_place(node, types::I64));
+            }
+            return Ok(self.builder.ins().iconst(types::I64, node as i64));
+        }
         // A node whose operation is a user function is a call: `op` is the
         // callee. The operator identities are plain types with lowering rules
         // above; only real functions are fn-typed.
@@ -224,6 +238,13 @@ impl Lowerer<'_, '_> {
         self.builder.ins().iconst(types::I32, i64::from(v))
     }
 
+    /// The `struct` keyword identity — the type every struct type node is
+    /// typed by, needed to exclude struct types before a record-tag read
+    /// (see [`crate::identities::numtype::is_scalar_place_type`]).
+    pub(crate) fn struct_type(&self) -> DyadPtr {
+        self.types.struct_
+    }
+
     /// The address a place node denotes, as an SSA pointer value: a baked
     /// `iconst` for a global/top-level place (an absolute host address), or
     /// `stack_addr(frame_slot, offset)` for a frame-relative place of this
@@ -237,10 +258,11 @@ impl Lowerer<'_, '_> {
     /// `node` must be a valid place node; a frame-relative one only appears in a
     /// function whose [`compile_body`] created a `frame_slot`.
     pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> Value {
+        let struct_kw = self.types.struct_;
         if let Some(stats) = self.collect.as_deref_mut() {
             if let Some((_, off)) = frame_ref((*node).value) {
                 let ty = (*node).ty;
-                if !ty.is_null() && crate::identities::numtype::is_scalar_type(ty) {
+                if crate::identities::numtype::is_scalar_place_type(struct_kw, ty) {
                     stats.dirty.push((off, numtype_of_type(ty).bytes()));
                 } else {
                     // A non-scalar place (an instance base, a bare parameter's
@@ -953,15 +975,20 @@ unsafe fn compile_fn_body(
         }
     }
     let body = *fields.add(FN_BODY);
-    // A `-> void` function yields unit (compiled to `return 0`); every other
-    // compilable output is a scalar type the body's value widens to. A
-    // non-scalar output — above all `-> type` — refuses cleanly: types are
-    // comptime values, resolved in the pass (DESIGN ›Types are comptime
-    // values‹), so the call this code would serve is already gone at run time.
+    // A `-> void` function yields unit (compiled to `return 0`); a `-> type`
+    // function yields a type identity's address, already the i64 container
+    // (type values are node addresses, so a type-returning function is
+    // integers in, an integer out — and comptime evaluation runs it like any
+    // other, jumping to installed bcode per ›Build and run are one
+    // self-directing pass‹); every other compilable output is a scalar type
+    // the body's value widens to. A remaining non-scalar output (a struct)
+    // refuses cleanly.
     let out = *fields.add(FN_OUTPUT);
     let ret = if is_void_type(out) {
         None
-    } else if !out.is_null() && crate::identities::numtype::is_scalar_type(out) {
+    } else if out == types.type_ {
+        Some(NumType::I64)
+    } else if crate::identities::numtype::is_scalar_place_type(types.struct_, out) {
         Some(numtype_of_type(out))
     } else {
         return Err(CompileError::NotLowerable(out));
@@ -1170,9 +1197,11 @@ unsafe fn build_pass(
                 return Err(CompileError::NotLowerable(p));
             };
             let ty = (*p).ty;
-            let scalar = !ty.is_null() && crate::identities::numtype::is_scalar_type(ty);
+            let scalar = crate::identities::numtype::is_scalar_place_type(types.struct_, ty);
             if let Some(&(var, _)) = promoted.get(&off) {
-                let vn = narrow_from_i64(&mut builder, v, numtype_of_type(ty));
+                // A promoted container parameter (a type-valued `t : type`,
+                // promoted through its i64 reads) keeps the full container.
+                let vn = if scalar { narrow_from_i64(&mut builder, v, numtype_of_type(ty)) } else { v };
                 builder.def_var(var, vn);
                 continue;
             }

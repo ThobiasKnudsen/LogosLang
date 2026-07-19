@@ -16,6 +16,10 @@ metatype := fn (i:i32) -> type(
     else if (i==2) (f64)
     else (type)
 )
+# A type value is a node address, so a -> type function is integers in, an
+# integer out: it compiles like any other, and the comptime evaluation of the
+# metatype(3) call below jumps to the installed machine code.
+metatype.compile()
 b:=type i32
 a:metatype(3)
 if (a.type == i32) (a=9)
