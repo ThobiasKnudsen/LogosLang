@@ -71,13 +71,23 @@ pub enum Shape {
         slots: Vec<Slot>,
     },
     /// Fixed named head slots then a null-terminated variadic tail: a sequence
-    /// (empty head), a struct definition (`[scope, field…, null]`), a
-    /// construction (`[instance, arg…, null]`).
+    /// (empty head), a construction (`[instance, arg…, null]`).
     List {
         /// The fixed, named prefix.
         head: Vec<Slot>,
         /// The variadic tail.
         tail: Vec<DyadPtr>,
+    },
+    /// A struct *type* definition: the stored layout its definition derived
+    /// and locked (issue #47) — the field-name scope, the field declarations
+    /// (behind the stored `fields` array node), and the packed byte size.
+    StructType {
+        /// The scope its field names are declared in.
+        scope: DyadPtr,
+        /// The field declaration nodes, in order.
+        fields: Vec<DyadPtr>,
+        /// The packed byte size instances occupy.
+        size_bytes: u64,
     },
     /// An array of `dyad@`: the elements live behind the node's `[len, data]`
     /// value (a sequence's expression list rides in one of these).
@@ -146,6 +156,18 @@ pub unsafe fn describe(types: &CoreTypes, node: DyadPtr) -> Shape {
     let ty = (*node).ty;
     if ty.is_null() {
         return Shape::Undefined;
+    }
+    // A struct type definition reads its stored layout record (issue #47); a
+    // still-unbound placeholder typed `struct` has no record yet.
+    if ty == types.struct_ {
+        if (*node).value.is_null() {
+            return Shape::Undefined;
+        }
+        return Shape::StructType {
+            scope: meta::struct_scope_of(node),
+            fields: crate::identities::array::items(meta::struct_fields_of(node)).to_vec(),
+            size_bytes: meta::struct_size_of(node),
+        };
     }
     // A value of a struct type is an instance: its layout derives from the
     // definition's field list.
@@ -374,8 +396,8 @@ mod tests {
         };
         // SAFETY: the root is the struct type just parsed, from the store.
         unsafe {
-            let ops = (*node).value as *const DyadPtr;
-            let (scope, falpha) = (*ops, *ops.add(1));
+            let scope = meta::struct_scope_of(node);
+            let falpha = crate::identities::array::items(meta::struct_fields_of(node))[0];
             // The entry is the bare field node — no name stored anywhere on it.
             assert_eq!(describe(&core.types(), falpha), Shape::Scalar(NumType::I32));
             // The spelling resolves only with the struct's scope open…
@@ -524,17 +546,19 @@ mod tests {
             assert_eq!(text_of(init[0].role), b"lhs");
             assert_eq!(describe(&types, init[0].node), Shape::Scalar(NumType::I32));
 
-            // The struct definition, behind its declaration: [scope, a, b] —
-            // one named head, two fields.
+            // The struct definition, behind its declaration: its stored layout
+            // (issue #47) — the field-name scope, two fields, a + b packed.
             let Shape::Tuple { slots } = describe(&types, roots[1]) else {
                 panic!("a declaration should be a tuple");
             };
-            let Shape::List { head, tail } = describe(&types, slots[1].node) else {
-                panic!("struct definition should be a list");
+            let Shape::StructType { scope, fields, size_bytes } =
+                describe(&types, slots[1].node)
+            else {
+                panic!("struct definition should read its stored layout");
             };
-            assert_eq!(head.len(), 1);
-            assert_eq!(text_of(head[0].role), b"scope");
-            assert_eq!(tail.len(), 2);
+            assert!(!scope.is_null());
+            assert_eq!(fields.len(), 2);
+            assert_eq!(size_bytes, 12); // i32 + i64, packed
 
             // The construction, behind its declaration: [instance, op | args…];
             // the instance lays out a:0, b:4.
@@ -607,8 +631,9 @@ mod tests {
                 panic!("an fn value should be a tuple");
             };
             assert_eq!(text_of(slots[0].role), b"input");
-            let Shape::List { tail: params, .. } = describe(&types, slots[0].node) else {
-                panic!("the input struct should be a list");
+            let Shape::StructType { fields: params, .. } = describe(&types, slots[0].node)
+            else {
+                panic!("the input struct reads its stored layout");
             };
             let Shape::Pointer { pointee } = describe(&types, params[0]) else {
                 panic!("the parameter should be a pointer");
@@ -677,6 +702,7 @@ mod tests {
                 Shape::Convention { .. } => "convention",
                 Shape::Call { .. } => "call",
                 Shape::Instance { .. } => "instance",
+                Shape::StructType { .. } => "struct-type",
                 Shape::TypeNode { .. } => "type",
                 Shape::Undefined => "undefined",
             };

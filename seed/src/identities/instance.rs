@@ -65,20 +65,20 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     (construct, leaf)
 }
 
-/// The layout a struct type derives from its field declarations (DESIGN ›a type
-/// whose constructor derives the layout automatically‹): each field with its
-/// numeric type and byte offset, in declaration order, plus the total size.
-/// Fields must be numeric or pointer-typed (8 bytes) in v1
-/// ([`ParseError::UnsupportedOperands`] otherwise — there is no nested layout
-/// yet).
+/// The layout a struct type stores from its field declarations (DESIGN ›a type
+/// whose constructor derives the layout automatically‹, issue #47): each field
+/// with its numeric type and byte offset, in declaration order, plus the total
+/// size — the offsets walked from the stored `fields` array, the size matching
+/// the stored `size_bytes`. Fields must be numeric or pointer-typed (8 bytes)
+/// in v1 ([`ParseError::UnsupportedOperands`] otherwise — there is no nested
+/// layout yet).
 ///
 /// # Safety
-/// `struct_type` must be a struct type node from the store
-/// (`{ty: struct, value: [scope, field0 …, null]}`).
+/// `struct_type` must be a struct type node from the store (its value a
+/// [`meta::STRUCT_TAG`] record).
 pub(crate) unsafe fn layout(
     struct_type: DyadPtr,
 ) -> Result<(Vec<(DyadPtr, NumType, usize)>, usize), ParseError> {
-    let ops = (*struct_type).value as *const DyadPtr;
     // A field's type must be a *type node* (its own type is `type`, reachable as
     // the struct type's type's type — the fixed point): that excludes a nested
     // struct definition and a value node standing in type position, whose value
@@ -86,9 +86,7 @@ pub(crate) unsafe fn layout(
     let type_root = (*(*struct_type).ty).ty;
     let mut fields = Vec::new();
     let mut offset = 0usize;
-    let mut i = 1; // value[0] is the struct's scope
-    while !(*ops.add(i)).is_null() {
-        let field = *ops.add(i);
+    for &field in super::array::items(meta::struct_fields_of(struct_type)) {
         let fty = (*field).ty;
         if fty.is_null() || (*fty).ty != type_root || !numtype::is_scalar_type(fty) {
             return Err(ParseError::UnsupportedOperands);
@@ -96,8 +94,12 @@ pub(crate) unsafe fn layout(
         let nt = numtype::of_type_node(fty);
         fields.push((field, nt, offset));
         offset += nt.bytes();
-        i += 1;
     }
+    debug_assert_eq!(
+        offset as u64,
+        meta::struct_size_of(struct_type),
+        "the walked layout matches the size stored at definition"
+    );
     Ok((fields, offset))
 }
 

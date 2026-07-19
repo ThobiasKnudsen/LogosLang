@@ -55,8 +55,9 @@ use super::{string, Cx};
 /// `[input, output, body, bcode]`.
 pub(crate) const TUPLE_TAG: u8 = 14;
 /// Kind: values are `arity` fixed named `dyad@` slots followed by a
-/// null-terminated variadic tail — a sequence (`arity` 0), a struct definition
-/// (`[scope, field…, null]`), a construction (`[instance, arg…, null]`).
+/// null-terminated variadic tail — a sequence (`arity` 0), a construction
+/// (`[instance, arg…, null]`). (A struct *definition*'s value is a
+/// [`STRUCT_TAG`] record, not a list.)
 pub(crate) const LIST_TAG: u8 = 15;
 /// Kind: values are `[num: i64, den: i64]` comptime fractions (`rational`).
 pub(crate) const FRACTION_TAG: u8 = 16;
@@ -79,6 +80,15 @@ pub(crate) const CONVENTION_TAG: u8 = 21;
 /// lives inline in a node's value). The seed's first array form; element-typed
 /// arrays and surface syntax arrive with the `array` type proper.
 pub(crate) const ARRAY_TAG: u8 = 22;
+/// Kind: a struct *type* node's record (issue #47) — the stored layout the
+/// constructor derives at definition (DESIGN ›a type whose constructor derives
+/// the layout automatically — reading the field declarations in its scope and
+/// filling `fields` and `size_bytes`‹), locked before first instantiation. The
+/// payload is `[scope: @dyad][fields: @dyad (an array node over the field
+/// declarations)][size_bytes: u64]`, 24 bytes. Giving struct types a real
+/// record also makes their first value byte an honest kind tag — before this,
+/// it was a node address's low byte, and any tag read on it was garbage.
+pub(crate) const STRUCT_TAG: u8 = 23;
 
 /// Byte offset of the associativity in a record.
 const ASSOC_OFF: usize = 1;
@@ -131,6 +141,51 @@ pub(crate) fn pointer_record(store: &mut Store, pointee: DyadPtr) -> *mut u8 {
     let mut blob = header(ADDR_TAG, Assoc::Left, 0.0, Schedule::Operand).to_vec();
     blob.extend_from_slice(&(pointee as usize).to_ne_bytes());
     store.alloc_bytes(&blob)
+}
+
+/// Build a struct type node's record (issue #47): the [`STRUCT_TAG`] head and
+/// the stored layout — the field-list scope, the `fields` array node over the
+/// field declarations, and the derived `size_bytes` — filled at definition,
+/// where the type's layout locks (DESIGN ›A type's layout-relevant slots must
+/// be defined and frozen before its first instantiation‹).
+pub(crate) fn struct_record(
+    store: &mut Store,
+    scope: DyadPtr,
+    fields: DyadPtr,
+    size_bytes: u64,
+) -> *mut u8 {
+    let mut blob = header(STRUCT_TAG, Assoc::Left, 0.0, Schedule::Operand).to_vec();
+    blob.extend_from_slice(&(scope as usize).to_ne_bytes());
+    blob.extend_from_slice(&(fields as usize).to_ne_bytes());
+    blob.extend_from_slice(&size_bytes.to_ne_bytes());
+    store.alloc_bytes(&blob)
+}
+
+/// The stored scope of a struct type node — where its field names are declared.
+///
+/// # Safety
+/// `id` must carry a [`STRUCT_TAG`] record ([`struct_record`]).
+pub(crate) unsafe fn struct_scope_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF) as *const DyadPtr)
+}
+
+/// The stored `fields` array node of a struct type node — the field
+/// declarations, in order, behind one indirection (the system's first
+/// element-typed array in spirit: an array of `dyad`).
+///
+/// # Safety
+/// As [`struct_scope_of`].
+pub(crate) unsafe fn struct_fields_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF + 8) as *const DyadPtr)
+}
+
+/// The stored `size_bytes` of a struct type node — the packed byte size its
+/// instances occupy, derived at definition.
+///
+/// # Safety
+/// As [`struct_scope_of`].
+pub(crate) unsafe fn struct_size_of(id: DyadPtr) -> u64 {
+    std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF + 16) as *const u64)
 }
 
 /// The fixed head of every record: kind, associativity, precedence, the two

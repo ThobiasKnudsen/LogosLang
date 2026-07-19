@@ -4,11 +4,15 @@
 //! `struct`: the type whose constructor derives a layout from a `( field-list )`.
 //! Written `struct ( name : type, … | bare name )`; the field list *is* a
 //! function's parameter list (DESIGN ›A function's surface‹), so the same parse
-//! serves both. v1 builds the minimal carrier: the node is
-//! `{ty: struct, value -> [scope, field0 … fieldN, null]}`, with each field a `:`
-//! declaration dyad and its name declared in the struct's own scope. The sketch's
-//! richer value (`names` hashtable, `fields` array, `size_bytes`) arrives once
-//! instances need a real layout.
+//! serves both. A struct type node stores the layout its definition derived
+//! (issue #47): its value is a [`meta::STRUCT_TAG`] record holding the
+//! field-name scope, the `fields` array node over the field declarations, and
+//! the packed `size_bytes` — filled at definition, where the layout locks
+//! (DESIGN ›a type whose constructor derives the layout automatically —
+//! reading the field declarations in its scope and filling `fields` and
+//! `size_bytes`‹). Field names are not stored on the struct: they enter the
+//! shared name index and resolve by open-scope filtering (a per-struct names
+//! store is recorded as rejected).
 //!
 //! The field-list parse lives in [`crate::parse::Parser::parse_struct`] because it
 //! needs the parser's tape, scope stack, and reentrant expression parse; here we

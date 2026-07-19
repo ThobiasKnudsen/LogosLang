@@ -468,14 +468,14 @@ impl Runtime {
         call_node: DyadPtr,
     ) -> Result<([i64; 3], usize), RunError> {
         let input = *((*fn_node).value as *const DyadPtr).add(FN_INPUT);
-        let params = (*input).value as *const DyadPtr; // [scope, param0 …, null]
+        let params =
+            crate::identities::array::items(crate::identities::meta::struct_fields_of(input));
         let args = (*call_node).value as *const DyadPtr; // [arg0 …, null] or null
 
         let mut values = [0i64; 3];
         let mut i = 0usize;
         loop {
-            // Parameters start after the scope at index 0; arguments at index 0.
-            let param = if params.is_null() { std::ptr::null_mut() } else { *params.add(i + 1) };
+            let param = params.get(i).copied().unwrap_or(std::ptr::null_mut());
             let arg = if args.is_null() { std::ptr::null_mut() } else { *args.add(i) };
             match (param.is_null(), arg.is_null()) {
                 (true, true) => break, // both exhausted: counts matched
@@ -511,12 +511,13 @@ impl Runtime {
         base: *mut u8,
     ) -> Result<(), RunError> {
         let input = *((*fn_node).value as *const DyadPtr).add(FN_INPUT);
-        let params = (*input).value as *const DyadPtr; // [scope, param0 …, null]
+        let params =
+            crate::identities::array::items(crate::identities::meta::struct_fields_of(input));
         let args = (*call_node).value as *const DyadPtr; // [arg0 …, null] or null
 
         let mut i = 0usize;
         loop {
-            let param = if params.is_null() { std::ptr::null_mut() } else { *params.add(i + 1) };
+            let param = params.get(i).copied().unwrap_or(std::ptr::null_mut());
             let arg = if args.is_null() { std::ptr::null_mut() } else { *args.add(i) };
             match (param.is_null(), arg.is_null()) {
                 (true, true) => break, // both exhausted: counts matched

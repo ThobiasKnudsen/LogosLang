@@ -994,15 +994,12 @@ pub(crate) unsafe fn commit_call_args(
     if fields.is_null() {
         return Ok(());
     }
-    let params = (*(*fields.add(crate::parse::FN_INPUT))).value as *const DyadPtr;
-    if params.is_null() {
-        return Ok(());
-    }
+    let input = *fields.add(crate::parse::FN_INPUT);
+    let params = array::items(meta::struct_fields_of(input));
     for (i, arg) in args.iter_mut().enumerate() {
-        let param = *params.add(i + 1); // [scope, p0 …, null]
-        if param.is_null() {
+        let Some(&param) = params.get(i) else {
             break;
-        }
+        };
         let pty = (*param).ty;
         if !pty.is_null() && numtype::is_pointer_type(pty) {
             // A pointer parameter takes only a pointer to the same pointee — a
@@ -1362,8 +1359,7 @@ mod tests {
             let v = (*func).value as *const DyadPtr;
             let (input, output, body) = (*v.add(FN_INPUT), *v.add(FN_OUTPUT), *v.add(FN_BODY));
             assert_eq!((*input).ty, core.struct_); // input is a struct
-            let iops = (*input).value as *const DyadPtr;
-            assert!((*iops.add(1)).is_null()); // no fields (scope then terminator)
+            assert!(array::items(meta::struct_fields_of(input)).is_empty()); // no params
             assert_eq!(output, core.i32_); // return type i32
             assert!(!body.is_null());
         }
@@ -1407,8 +1403,7 @@ mod tests {
             let (input, output, body) = (*v.add(FN_INPUT), *v.add(FN_OUTPUT), *v.add(FN_BODY));
             assert_eq!(output, core.i32_);
             // The single parameter `x`, an i32 field in the input struct.
-            let iops = (*input).value as *const DyadPtr;
-            let x_field = *iops.add(1); // [scope, x, null]
+            let x_field = array::items(meta::struct_fields_of(input))[0];
             assert_eq!((*x_field).ty, core.i32_);
             // The body `return x` resolved `x` to that parameter field
             // (`return` is `[value, op]`; the operand is its first slot).
@@ -1602,12 +1597,13 @@ mod tests {
             p.parse_expression().unwrap()
         };
 
-        // `{ty: struct, value -> [scope, null]}`: a scope, zero fields.
+        // The stored layout (issue #47): a scope, an empty fields array, zero
+        // size.
         unsafe {
             assert_eq!((*node).ty, core.struct_);
-            let ops = (*node).value as *const DyadPtr;
-            assert!(!(*ops).is_null()); // scope at index 0
-            assert!((*ops.add(1)).is_null()); // terminator: no fields
+            assert!(!meta::struct_scope_of(node).is_null());
+            assert!(array::items(meta::struct_fields_of(node)).is_empty());
+            assert_eq!(meta::struct_size_of(node), 0);
         }
     }
 
@@ -1626,15 +1622,16 @@ mod tests {
         };
 
         // Two `:` declaration fields, each typed i32 with an undefined value.
-        // Two `:` declaration fields, each typed i32 with an undefined value.
         // No name is stored on the struct: the spellings live in the shared
         // name index alone (the scope-filtered resolution below is the one
-        // mechanism; a per-struct names store is recorded as rejected).
+        // mechanism; a per-struct names store is recorded as rejected). The
+        // record stores the layout: fields array and packed size (issue #47).
         let (scope, fx, fy) = unsafe {
             assert_eq!((*node).ty, core.struct_);
-            let ops = (*node).value as *const DyadPtr;
-            assert!((*ops.add(3)).is_null()); // terminator after two fields
-            (*ops, *ops.add(1), *ops.add(2))
+            let fields = array::items(meta::struct_fields_of(node));
+            assert_eq!(fields.len(), 2);
+            assert_eq!(meta::struct_size_of(node), 8); // two i32s, packed
+            (meta::struct_scope_of(node), fields[0], fields[1])
         };
         unsafe {
             assert_eq!((*fx).ty, core.i32_);
@@ -1663,11 +1660,13 @@ mod tests {
             p.parse_expression().unwrap()
         };
 
-        // A bare name: one field with an undefined type slot.
+        // A bare name: one field with an undefined type slot, carried as the
+        // 8-byte container in the stored size.
         let (scope, ft) = unsafe {
-            let ops = (*node).value as *const DyadPtr;
-            assert!((*ops.add(2)).is_null()); // terminator after one field
-            (*ops, *ops.add(1))
+            let fields = array::items(meta::struct_fields_of(node));
+            assert_eq!(fields.len(), 1);
+            assert_eq!(meta::struct_size_of(node), 8);
+            (meta::struct_scope_of(node), fields[0])
         };
         unsafe {
             assert!((*ft).ty.is_null()); // bare name: type undefined
@@ -1703,7 +1702,7 @@ mod tests {
             assert_eq!((*core.root_scope).ty, core.scope_);
         }
 
-        // A struct opens its own `scope`-typed node (value[0]).
+        // A struct opens its own `scope`-typed node (stored in its record).
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
         let node = {
@@ -1712,7 +1711,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         unsafe {
-            let scope = *((*node).value as *const DyadPtr);
+            let scope = meta::struct_scope_of(node);
             assert_eq!((*scope).ty, core.scope_);
         }
     }

@@ -818,17 +818,23 @@ impl Lowerer<'_, '_> {
         if fields.is_null() {
             return Err(CompileError::UncompiledCallee(callee));
         }
-        // The callee's parameter count (input value is `[scope, p0 …, null]`) and
-        // numeric return type (`None` for void).
-        let params = (*(*fields.add(FN_INPUT))).value as *const DyadPtr;
-        let mut param_count = 0;
-        if !params.is_null() {
-            while !(*params.add(param_count + 1)).is_null() {
-                param_count += 1;
-            }
-        }
+        // The callee's parameter count (from the input struct's stored fields
+        // array) and return type (`None` for void; a `-> type` callee cannot
+        // appear here — its calls comptime-resolve at parse — but the guard
+        // keeps the tag read honest).
+        let input = *fields.add(FN_INPUT);
+        let param_count =
+            crate::identities::array::items(crate::identities::meta::struct_fields_of(input)).len();
         let out = *fields.add(FN_OUTPUT);
-        let ret = if is_void_type(out) { None } else { Some(numtype_of_type(out)) };
+        let ret = if is_void_type(out) {
+            None
+        } else if out == self.types.type_ {
+            Some(NumType::I64)
+        } else if crate::identities::numtype::is_scalar_place_type(self.types.struct_, out) {
+            Some(numtype_of_type(out))
+        } else {
+            return Err(CompileError::NotLowerable(out));
+        };
 
         // Lower each argument and widen it into its i64 bit-container.
         let args = (*node).value as *const DyadPtr; // [arg0 …, null] or null
@@ -963,17 +969,11 @@ unsafe fn compile_fn_body(
     if fields.is_null() {
         return Err(CompileError::NotLowerable(fn_node));
     }
-    // The parameter nodes: the input struct's value is `[scope, p0 …, null]`, so
-    // they run from index 1 to the null terminator (see `Parser::parse_struct`).
-    let mut params = Vec::new();
-    let pstart = (*(*fields.add(FN_INPUT))).value as *const DyadPtr;
-    if !pstart.is_null() {
-        let mut i = 1;
-        while !(*pstart.add(i)).is_null() {
-            params.push(*pstart.add(i));
-            i += 1;
-        }
-    }
+    // The parameter nodes, from the input struct's stored fields array (see
+    // `Parser::parse_struct`).
+    let input = *fields.add(FN_INPUT);
+    let params: Vec<DyadPtr> =
+        crate::identities::array::items(crate::identities::meta::struct_fields_of(input)).to_vec();
     let body = *fields.add(FN_BODY);
     // A `-> void` function yields unit (compiled to `return 0`); a `-> type`
     // function yields a type identity's address, already the i64 container

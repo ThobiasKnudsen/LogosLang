@@ -1269,10 +1269,16 @@ impl<'a> Parser<'a> {
     /// that introduced it (`struct`, or later `fn`'s parameter list). Fields are
     /// `name : type` or a bare `name`, separated by `,`; each becomes a `:`
     /// declaration dyad `{ty: field-type, value: undefined}` whose name is declared
-    /// in the struct's own scope. The node is
-    /// `{ty: struct_type, value -> [scope, field0 … fieldN, null]}` (scope at index
-    /// 0, null-terminated). Fresh field names are read raw here, which is why the
-    /// field list needs its own sub-parse rather than the generic driver.
+    /// in the struct's own scope. The node's value is a [`STRUCT_TAG`] record
+    /// storing the layout the definition derives — the scope, the `fields`
+    /// array node, and the packed `size_bytes` — filled here, where the type's
+    /// layout locks (issue #47; DESIGN ›a type whose constructor derives the
+    /// layout automatically — reading the field declarations in its scope and
+    /// filling `fields` and `size_bytes`‹). Fresh field names are read raw
+    /// here, which is why the field list needs its own sub-parse rather than
+    /// the generic driver.
+    ///
+    /// [`STRUCT_TAG`]: crate::identities::meta::STRUCT_TAG
     pub fn parse_struct(&mut self, struct_type: DyadPtr) -> Result<DyadPtr, ParseError> {
         self.expect_open()?;
         // The struct's own scope: a `scope`-typed node keyed by address for
@@ -1312,12 +1318,28 @@ impl<'a> Parser<'a> {
         self.scopes.pop();
         self.expect_close()?;
 
-        let mut ops = Vec::with_capacity(fields.len() + 2);
-        ops.push(scope);
-        ops.extend_from_slice(&fields);
-        ops.push(std::ptr::null_mut());
-        let value = self.store.alloc_operands(&ops);
-        Ok(self.store.alloc_raw(struct_type, value))
+        // The stored layout: fields pack in declaration order, a scalar at its
+        // type's width and anything else (a bare or type-valued name, only
+        // meaningful for parameter lists) as the 8-byte container — the same
+        // width rule parameters claim frame offsets by.
+        let size_bytes: u64 = fields
+            .iter()
+            .map(|&f| {
+                // SAFETY: `f` is the field dyad just built.
+                let ty = unsafe { (*f).ty };
+                if unsafe {
+                    crate::identities::numtype::is_scalar_place_type(self.types.struct_, ty)
+                } {
+                    unsafe { crate::identities::numtype::numtype_of_type(ty) }.bytes() as u64
+                } else {
+                    8
+                }
+            })
+            .sum();
+        let fields_arr = crate::identities::array::build(self.store, self.types.array_, &fields);
+        let record =
+            crate::identities::meta::struct_record(self.store, scope, fields_arr, size_bytes);
+        Ok(self.store.alloc_raw(struct_type, record.cast()))
     }
 
     /// Parse a function literal `fn ( params ) -> ret ( body )` (DESIGN ›A
@@ -1357,17 +1379,12 @@ impl<'a> Parser<'a> {
         // in this one.
         self.frames.push(OpenFn { size: 0 });
         let depth = self.frames.len();
-        // SAFETY: `input` is the struct just built; its value is the
-        // null-terminated `[scope, param0 …, null]` field list, and each
-        // parameter's value slot is still the null parse_struct left there.
+        // SAFETY: `input` is the struct just built; its record stores the
+        // fields array, and each parameter's value slot is still the null
+        // parse_struct left there.
         unsafe {
-            let fields = (*input).value as *const DyadPtr;
-            let mut i = 1;
-            loop {
-                let param = *fields.add(i);
-                if param.is_null() {
-                    break;
-                }
+            let fields = crate::identities::meta::struct_fields_of(input);
+            for &param in crate::identities::array::items(fields) {
                 let ty = (*param).ty;
                 let width = if crate::identities::numtype::is_scalar_place_type(
                     self.types.struct_,
@@ -1381,7 +1398,6 @@ impl<'a> Parser<'a> {
                 let offset = frame.size;
                 frame.size += width;
                 (*param).value = crate::dyad::frame_place(depth, offset);
-                i += 1;
             }
         }
 
@@ -1401,11 +1417,12 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // Reopen the parameter scope (the input struct's `value[0]`) so the body
-        // resolves parameters, then parse the `( body )` — a deferred body (it
-        // runs at calls, not at parse), so parse-time rebinding is off inside.
-        // SAFETY: `input` is the struct just built; its `value[0]` is its scope.
-        let scope = unsafe { *((*input).value as *const DyadPtr) };
+        // Reopen the parameter scope (stored in the input struct's record) so
+        // the body resolves parameters, then parse the `( body )` — a deferred
+        // body (it runs at calls, not at parse), so parse-time rebinding is
+        // off inside.
+        // SAFETY: `input` is the struct just built; its record stores its scope.
+        let scope = unsafe { crate::identities::meta::struct_scope_of(input) };
         self.scopes.push(scope);
         self.runtime_depth += 1;
         self.expect_open()?;
@@ -1946,7 +1963,7 @@ impl<'a> Parser<'a> {
         let source = self.source;
         let name = &source[nstart..nstart + nlen];
         let mut field_scope = ScopeStack::new();
-        field_scope.push(*((*struct_type).value as *const DyadPtr));
+        field_scope.push(crate::identities::meta::struct_scope_of(struct_type));
         let field =
             field_scope.resolve(self.trie, name).map_err(ParseError::Resolve)?.identity;
         let (fields, _) = crate::identities::instance::layout(struct_type)?;
