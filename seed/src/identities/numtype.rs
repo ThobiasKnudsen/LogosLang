@@ -318,22 +318,22 @@ pub(crate) unsafe fn write_scalar_nt(nt: NumType, slot: *mut u8, bits: i64) {
     }
 }
 
-/// Lower a numeric variable/value: load it from its baked storage at its type's width.
-/// The shared lowering rule (a [`crate::compile::LowerFn`]) for every numeric type
-/// node. Guards a null address, mirroring the interpreter's `BadValue`.
+/// Lower a numeric variable/value: read it at its type's width — a promoted
+/// frame place from its register variable, anything else from its baked
+/// storage. The shared lowering rule (a [`crate::compile::LowerFn`]) for every
+/// numeric type node. Guards a null address, mirroring the interpreter's
+/// `BadValue`.
 pub(crate) fn lower_var(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a numeric variable node from the store.
     // A null value slot is a comptime/no-storage binding — BadValue, mirroring
     // the interpreter. A frame-relative local is never null (its tag bit is set),
-    // so this guard rejects only genuine no-storage places; the address itself
-    // (baked absolute, or a frame `stack_addr`) comes from `place_addr`.
+    // so this guard rejects only genuine no-storage places.
     let raw = unsafe { (*node).value };
     if raw.is_null() {
         return Err(CompileError::BadValue);
     }
     let ct = unsafe { of_type_node((*node).ty) }.cranelift_type();
-    let addr = unsafe { lw.place_addr(node) };
-    Ok(lw.load_at(ct, addr, 0))
+    Ok(unsafe { lw.read_place(node, ct) })
 }
 
 /// The `NumType` a numeric type node describes (read from its value-slot tag).

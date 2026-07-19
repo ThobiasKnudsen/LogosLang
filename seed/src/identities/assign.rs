@@ -93,10 +93,12 @@ pub(super) fn build(
     Ok(store.alloc_raw(op, value))
 }
 
-/// Lower: store the right operand into the left operand's baked storage. Guards a
-/// null storage address, mirroring the interpreter's `BadValue` — without it the
-/// compiler would bake a store to address 0 and SIGSEGV at call time where the
-/// interpreter cleanly errors, breaking interpreter/JIT parity.
+/// Lower: write the right operand into the left operand's place — a promoted
+/// frame place defines its register variable, anything else stores to its
+/// baked storage. Guards a null storage address, mirroring the interpreter's
+/// `BadValue` — without it the compiler would bake a store to address 0 and
+/// SIGSEGV at call time where the interpreter cleanly errors, breaking
+/// interpreter/JIT parity.
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid application dyad, so its operands are valid nodes.
     unsafe {
@@ -106,8 +108,7 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         }
         let v = lw.lower(rhs)?;
         let ct = numtype_of_type((*lhs).ty).cranelift_type();
-        let addr = lw.place_addr(lhs);
-        lw.store_at(ct, addr, 0, v);
+        lw.write_place(lhs, ct, v);
         Ok(v)
     }
 }

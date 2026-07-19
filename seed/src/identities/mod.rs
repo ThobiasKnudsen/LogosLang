@@ -3412,6 +3412,32 @@ mod tests {
     }
 
     #[test]
+    fn an_addressed_local_stays_in_memory_under_promotion() {
+        // Register promotion must not lift a local whose address is taken: the
+        // write through `p` targets `a`'s frame slot, and the following read
+        // of `a` must see it on both tiers. A promoted `a` would return the
+        // stale 5.
+        diff_typed_call(
+            "fn (x : i64) -> i64 ( a := i64 5  p := &a  p@ = 7  a + x )",
+            "f(1)",
+            8,
+        );
+    }
+
+    #[test]
+    fn a_promoted_loop_matches_the_interpreter() {
+        // The register-promotion showcase: loop counter and accumulator are
+        // clean scalars (no address taken), so the compiled loop runs them in
+        // registers — and the value still matches the interpreted walk.
+        assert_eq!(
+            run_script(
+                "sum_to := fn (n : i64) -> i64 ( i := i64 0  s := i64 0  while (i < n) ( s = s + i  i = i + 1 )  s )\nbefore := sum_to(1000)\nsum_to.compile()\nbefore + sum_to(1000)"
+            ),
+            999_000
+        );
+    }
+
+    #[test]
     fn compile_is_reserved_only_on_fn_typed_values() {
         // A struct field named `compile` still resolves as an ordinary field:
         // the member intercept fires only when the lhs is fn-typed, so the

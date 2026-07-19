@@ -27,7 +27,7 @@ use cranelift_codegen::ir::{
     StackSlotKind, Value,
 };
 use cranelift_codegen::settings::{self, Configurable};
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{default_libcall_names, FuncId, Linkage, Module};
 
@@ -41,6 +41,62 @@ use crate::parse::{fn_frame_size, CoreTypes, FN_BCODE, FN_BODY, FN_INPUT, FN_OUT
 /// A lowering rule: emit the IR for a node and return the SSA value it computes,
 /// recursing on operands via [`Lowerer::lower`].
 pub type LowerFn = fn(&mut Lowerer, DyadPtr) -> Result<Value, CompileError>;
+
+/// What the register-promotion analysis pass records about a function's frame
+/// places (DESIGN ›Operands travel on the stack‹: compiled code has "locals
+/// assigned to registers or stack slots"). A frame offset promotes to a
+/// register variable only when every observation of it is a plain scalar read
+/// or write of one consistent type; materializing its *address* (`&x`, an
+/// instance base, a bare parameter's container) pins it to memory, since a
+/// register has no address.
+#[derive(Default)]
+pub(crate) struct PlaceStats {
+    /// Offsets read/written as scalars: offset → the one Cranelift type seen.
+    uses: HashMap<usize, types::Type>,
+    /// Offsets seen at more than one type — never promoted.
+    conflicted: Vec<usize>,
+    /// Byte ranges whose address escaped into the code: `(offset, len)`.
+    /// Anything overlapping one stays in memory.
+    dirty: Vec<(usize, usize)>,
+    /// A frame address of unknown extent escaped (a non-scalar place):
+    /// promote nothing.
+    kill: bool,
+}
+
+impl PlaceStats {
+    fn record_use(&mut self, off: usize, ct: types::Type) {
+        match self.uses.get(&off) {
+            Some(&seen) if seen != ct => self.conflicted.push(off),
+            _ => {
+                self.uses.insert(off, ct);
+            }
+        }
+    }
+
+    /// The promotable offsets and their types: used consistently, address
+    /// never taken, no dirty overlap.
+    fn promotable(&self) -> Vec<(usize, types::Type)> {
+        if self.kill {
+            return Vec::new();
+        }
+        let mut out: Vec<(usize, types::Type)> = self
+            .uses
+            .iter()
+            .filter(|(off, ct)| {
+                let (off, width) = (**off, ct.bytes() as usize);
+                !self.conflicted.contains(&off)
+                    && !self
+                        .dirty
+                        .iter()
+                        .any(|&(doff, dlen)| off < doff + dlen && doff < off + width)
+            })
+            .map(|(&off, &ct)| (off, ct))
+            .collect();
+        // Deterministic variable numbering across builds.
+        out.sort_by_key(|&(off, _)| off);
+        out
+    }
+}
 
 /// Lowering rules keyed by operation identity (a primitive's compiled form).
 pub type LowerTable = HashMap<DyadPtr, LowerFn>;
@@ -112,6 +168,14 @@ pub struct Lowerer<'a, 'f> {
     /// `stack_addr(slot, offset)`; the machine call stack gives each activation
     /// its own copy, which is what makes compiled recursion correct.
     frame_slot: Option<StackSlot>,
+    /// Analysis mode: the stats the first lowering pass records frame-place
+    /// usage into. `None` on the real (second) pass.
+    collect: Option<&'a mut PlaceStats>,
+    /// The promoted frame places, offset → register variable and its type —
+    /// DESIGN's "locals assigned to registers or stack slots": a promoted
+    /// place reads and writes a Cranelift variable (a register after regalloc)
+    /// instead of its frame-slot memory. Empty on the analysis pass.
+    promoted: &'a HashMap<usize, (Variable, types::Type)>,
 }
 
 impl Lowerer<'_, '_> {
@@ -162,24 +226,91 @@ impl Lowerer<'_, '_> {
 
     /// The address a place node denotes, as an SSA pointer value: a baked
     /// `iconst` for a global/top-level place (an absolute host address), or
-    /// `stack_addr(frame_slot, offset)` for a frame-relative local of this call.
-    /// The one place the compiler decodes the frame tag (see
-    /// [`crate::dyad::FRAME_TAG`]); every load, store, and address-of of a local
-    /// resolves its address here, then uses [`Self::load_at`]/[`Self::store_at`].
+    /// `stack_addr(frame_slot, offset)` for a frame-relative place of this
+    /// call. Materializing a frame place's address pins it to memory — a
+    /// register has no address — so the analysis pass records it as dirty
+    /// here; scalar reads and writes that need no address go through
+    /// [`Self::read_place`]/[`Self::write_place`] instead, which is what lets
+    /// them promote.
     ///
     /// # Safety
     /// `node` must be a valid place node; a frame-relative one only appears in a
     /// function whose [`compile_body`] created a `frame_slot`.
     pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> Value {
+        if let Some(stats) = self.collect.as_deref_mut() {
+            if let Some((_, off)) = frame_ref((*node).value) {
+                let ty = (*node).ty;
+                if !ty.is_null() && crate::identities::numtype::is_scalar_type(ty) {
+                    stats.dirty.push((off, numtype_of_type(ty).bytes()));
+                } else {
+                    // A non-scalar place (an instance base, a bare parameter's
+                    // container): the escaping extent is unknown here, so
+                    // promote nothing in this function.
+                    stats.kill = true;
+                }
+            }
+        }
+        debug_assert!(
+            frame_ref((*node).value)
+                .is_none_or(|(_, off)| !self.promoted.contains_key(&off)),
+            "a promoted place's address must never be taken (the analysis pass keeps them apart)"
+        );
+        self.place_addr_raw(node)
+    }
+
+    /// [`Self::place_addr`] without the analysis bookkeeping — the address
+    /// materialization itself. The one place the compiler decodes the frame
+    /// tag (see [`crate::dyad::FRAME_TAG`]); the depth is a parse-time capture
+    /// guard, only the offset into this call's stack slot matters here.
+    unsafe fn place_addr_raw(&mut self, node: DyadPtr) -> Value {
         match frame_ref((*node).value) {
-            // The depth is a parse-time capture guard; here only the offset into
-            // this call's stack slot matters.
             Some((_, off)) => {
                 let slot = self.frame_slot.expect("a frame-relative place needs a frame slot");
                 self.builder.ins().stack_addr(self.ptr_ty, slot, off as i32)
             }
             None => self.builder.ins().iconst(self.ptr_ty, (*node).value as usize as i64),
         }
+    }
+
+    /// Read a place as a `ct`-typed scalar: a promoted frame place reads its
+    /// register variable; everything else loads from its address. The analysis
+    /// pass records the use, which is what qualifies the place for promotion.
+    ///
+    /// # Safety
+    /// `node` must be a valid place node holding a `ct`-typed scalar.
+    pub(crate) unsafe fn read_place(&mut self, node: DyadPtr, ct: types::Type) -> Value {
+        if let Some((_, off)) = frame_ref((*node).value) {
+            if let Some(&(var, vct)) = self.promoted.get(&off) {
+                debug_assert_eq!(vct, ct, "a promoted place is used at one type");
+                return self.builder.use_var(var);
+            }
+            if let Some(stats) = self.collect.as_deref_mut() {
+                stats.record_use(off, ct);
+            }
+        }
+        let addr = self.place_addr_raw(node);
+        self.load_at(ct, addr, 0)
+    }
+
+    /// Write `v` (of type `ct`) to a place — the dual of [`Self::read_place`]:
+    /// a promoted frame place defines its register variable; everything else
+    /// stores through its address.
+    ///
+    /// # Safety
+    /// As [`Self::read_place`].
+    pub(crate) unsafe fn write_place(&mut self, node: DyadPtr, ct: types::Type, v: Value) {
+        if let Some((_, off)) = frame_ref((*node).value) {
+            if let Some(&(var, vct)) = self.promoted.get(&off) {
+                debug_assert_eq!(vct, ct, "a promoted place is used at one type");
+                self.builder.def_var(var, v);
+                return;
+            }
+            if let Some(stats) = self.collect.as_deref_mut() {
+                stats.record_use(off, ct);
+            }
+        }
+        let addr = self.place_addr_raw(node);
+        self.store_at(ct, addr, 0, v);
     }
 
     /// Load a `ct`-typed value through a *runtime* address (an SSA i64 pointer)
@@ -509,12 +640,13 @@ impl Lowerer<'_, '_> {
         Ok(self.const_i32(0))
     }
 
-    /// Lower a `for` loop: store the start into the variable's baked address,
-    /// hoist the end and step (default 1) as SSA in the pre-header, guard
-    /// `step > 0` (a non-positive step runs zero iterations, as interpreted),
-    /// then loop — load the variable, compare `< end` (signed/unsigned/float per
-    /// the loop type), run the body for effect, increment through the address.
-    /// Yields unit. Block discipline as [`Lowerer::lower_while`].
+    /// Lower a `for` loop: write the start into the loop variable's place
+    /// (its register variable when promoted, its storage otherwise), hoist the
+    /// end and step (default 1) as SSA in the pre-header, guard `step > 0` (a
+    /// non-positive step runs zero iterations, as interpreted), then loop —
+    /// read the variable, compare `< end` (signed/unsigned/float per the loop
+    /// type), run the body for effect, increment. Yields unit. Block
+    /// discipline as [`Lowerer::lower_while`].
     ///
     /// # Safety
     /// The parts must be valid dyads from the store, as `Parser::parse_for`
@@ -529,13 +661,9 @@ impl Lowerer<'_, '_> {
     ) -> Result<Value, CompileError> {
         let nt = of_type_node((*var).ty);
         let ct = nt.cranelift_type();
-        // The loop variable's address, resolved once in the current (dominating)
-        // block — a baked `iconst` for a top-level loop, a `stack_addr` for a
-        // loop whose variable is a frame local.
-        let base = self.place_addr(var);
 
         let s = self.lower(start)?;
-        self.store_at(ct, base, 0, s);
+        self.write_place(var, ct, s);
         let e = self.lower(end)?;
         let d = if !step.is_null() {
             self.lower(step)?
@@ -571,7 +699,7 @@ impl Lowerer<'_, '_> {
         self.builder.ins().brif(pos, header, &[], exit, &[]);
 
         self.builder.switch_to_block(header);
-        let v = self.load_at(ct, base, 0);
+        let v = self.read_place(var, ct);
         let cond = if nt.is_float() {
             self.fcmp(FloatCC::LessThan, v, e)
         } else {
@@ -587,13 +715,13 @@ impl Lowerer<'_, '_> {
         self.builder.switch_to_block(body_b);
         self.builder.seal_block(body_b);
         self.lower(body)?;
-        let v2 = self.load_at(ct, base, 0);
+        let v2 = self.read_place(var, ct);
         let inc = if nt.is_float() {
             self.builder.ins().fadd(v2, d)
         } else {
             self.builder.ins().iadd(v2, d)
         };
-        self.store_at(ct, base, 0, inc);
+        self.write_place(var, ct, inc);
         self.builder.ins().jump(header, &[]);
         // Both of the header's predecessors (the entry brif and the back-edge)
         // now exist.
@@ -905,6 +1033,42 @@ pub(crate) unsafe fn compile_body(
     if params.len() > MAX_COMPILED_PARAMS {
         return Err(CompileError::UnsupportedArity(params.len()));
     }
+    // Two passes (DESIGN ›Operands travel on the stack‹: compiled code has
+    // "locals assigned to registers or stack slots"). The first lowers into a
+    // discarded function while recording how every frame place is used; the
+    // offsets used only as consistent scalars, with their address never
+    // materialized, then promote to register variables on the real pass —
+    // FunctionBuilder's SSA construction carries them across blocks, and the
+    // register allocator keeps them out of memory. Address-taken places
+    // (`&x`), instance bases, and bare parameters stay in the frame slot,
+    // where the interpreter's layout and pointers into the frame need them.
+    let mut stats = PlaceStats::default();
+    build_pass(lower, types, self_fn, root, params, ret, Some(&mut stats), &[], false)?;
+    let promote = stats.promotable();
+    let compiled = build_pass(lower, types, self_fn, root, params, ret, None, &promote, true)?;
+    Ok(compiled.expect("the finishing pass returns the artifact"))
+}
+
+/// One lowering pass of [`compile_body`]: analysis (`collect` set, `finish`
+/// false — the built function is discarded) or the real build (`promote`
+/// filled, `finish` true — the function is defined and finalized). `promote`
+/// lists the frame offsets to place in register variables, with their types;
+/// the variables themselves are minted from the pass's own builder.
+///
+/// # Safety
+/// See [`compile_body`].
+#[allow(clippy::too_many_arguments)]
+unsafe fn build_pass(
+    lower: &LowerTable,
+    types: CoreTypes,
+    self_fn: DyadPtr,
+    root: DyadPtr,
+    params: &[DyadPtr],
+    ret: Option<NumType>,
+    mut collect: Option<&mut PlaceStats>,
+    promote: &[(usize, types::Type)],
+    finish: bool,
+) -> Result<Option<Compiled>, CompileError> {
     let mut flags = settings::builder();
     flags.set("use_colocated_libcalls", "false").map_err(cl)?;
     flags.set("is_pic", "false").map_err(cl)?;
@@ -960,14 +1124,35 @@ pub(crate) unsafe fn compile_body(
             slot
         });
 
-        // Spill each argument into its parameter's frame slot — the compiled
-        // side of the one calling convention: the caller passes the i64
-        // bit-containers per the uniform signature, and entry writes each into
-        // the slot the parser assigned, narrowed to the parameter's declared
-        // scalar type (a bare or type-valued parameter keeps the full
-        // container). Parameter uses then read their slots exactly as the
-        // interpreter's do, so `&param` and parameter writes agree across
-        // tiers.
+        // Every promoted place becomes a builder-minted variable, defined
+        // before the body lowers: parameters from their narrowed arguments
+        // below, locals to the all-zero value of their type — the register
+        // form of the zeroed frame, so a typed declaration's first read sees
+        // the same zeroed "undefined" on both tiers.
+        let param_offs: Vec<Option<usize>> =
+            params.iter().map(|&p| frame_ref((*p).value).map(|(_, off)| off)).collect();
+        let mut promoted: HashMap<usize, (Variable, types::Type)> = HashMap::new();
+        for &(off, ct) in promote {
+            let var = builder.declare_var(ct);
+            promoted.insert(off, (var, ct));
+            if param_offs.iter().flatten().any(|&poff| poff == off) {
+                continue; // defined from its argument below
+            }
+            let zero = match ct {
+                types::F32 => builder.ins().f32const(0.0),
+                types::F64 => builder.ins().f64const(0.0),
+                _ => builder.ins().iconst(ct, 0),
+            };
+            builder.def_var(var, zero);
+        }
+
+        // Bind each argument — the compiled side of the one calling
+        // convention: the caller passes the i64 bit-containers per the uniform
+        // signature, and entry narrows each to the parameter's declared scalar
+        // type (a bare or type-valued parameter keeps the full container). A
+        // promoted parameter defines its register variable; the rest spill
+        // into the slot the parser assigned, where `&param` and the
+        // interpreter's layout expect them.
         let block_params = builder.block_params(entry).to_vec();
         for (&p, &v) in params.iter().zip(block_params.iter()) {
             // A parameter always has a parse-assigned slot; a function node
@@ -975,9 +1160,15 @@ pub(crate) unsafe fn compile_body(
             let Some((_, off)) = frame_ref((*p).value) else {
                 return Err(CompileError::NotLowerable(p));
             };
-            let slot = frame_slot.expect("parameters occupy the frame, so a frame slot exists");
             let ty = (*p).ty;
-            if !ty.is_null() && crate::identities::numtype::is_scalar_type(ty) {
+            let scalar = !ty.is_null() && crate::identities::numtype::is_scalar_type(ty);
+            if let Some(&(var, _)) = promoted.get(&off) {
+                let vn = narrow_from_i64(&mut builder, v, numtype_of_type(ty));
+                builder.def_var(var, vn);
+                continue;
+            }
+            let slot = frame_slot.expect("parameters occupy the frame, so a frame slot exists");
+            if scalar {
                 let vn = narrow_from_i64(&mut builder, v, numtype_of_type(ty));
                 builder.ins().stack_store(vn, slot, off as i32);
             } else {
@@ -996,6 +1187,8 @@ pub(crate) unsafe fn compile_body(
                 types,
                 self_fn,
                 frame_slot,
+                collect: collect.as_deref_mut(),
+                promoted: &promoted,
             };
             lw.lower(root)?
         };
@@ -1009,12 +1202,15 @@ pub(crate) unsafe fn compile_body(
         builder.finalize();
     }
 
+    if !finish {
+        return Ok(None);
+    }
     module.define_function(func_id, &mut ctx).map_err(cl)?;
     module.clear_context(&mut ctx);
     module.finalize_definitions().map_err(cl)?;
     let ptr = module.get_finalized_function(func_id);
 
-    Ok(Compiled { module, ptr })
+    Ok(Some(Compiled { module, ptr }))
 }
 
 /// Narrow the `i64` bit-container `v` to `nt`'s native Cranelift value at the ABI
