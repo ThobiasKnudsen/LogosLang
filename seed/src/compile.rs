@@ -784,6 +784,31 @@ pub unsafe fn compile_fn(
     types: CoreTypes,
     fn_node: DyadPtr,
 ) -> Result<Compiled, CompileError> {
+    let compiled = compile_fn_body(lower, types, fn_node)?;
+    // Mint the callable — the finalized entry plus its convention — and install
+    // the node into the bcode slot. `run` reads the entry back and calls it.
+    let code = crate::identities::callable::mint(
+        store,
+        types.callable_,
+        compiled.ptr as usize,
+        types.conv_container,
+    );
+    let bcode_slot = ((*fn_node).value as *mut DyadPtr).add(FN_BCODE);
+    *bcode_slot = code;
+    Ok(compiled)
+}
+
+/// Compile a function node's body to machine code, without minting or
+/// installing anything — the shared work of [`compile_fn`] and
+/// [`compile_into`].
+///
+/// # Safety
+/// As [`compile_fn`].
+unsafe fn compile_fn_body(
+    lower: &LowerTable,
+    types: CoreTypes,
+    fn_node: DyadPtr,
+) -> Result<Compiled, CompileError> {
     let fields = (*fn_node).value as *const DyadPtr;
     if fields.is_null() {
         return Err(CompileError::NotLowerable(fn_node));
@@ -805,18 +830,37 @@ pub unsafe fn compile_fn(
     let out = *fields.add(FN_OUTPUT);
     let ret = if is_void_type(out) { None } else { Some(numtype_of_type(out)) };
     // The fn node is its own self-reference: a call to it inside `body` is recursion.
-    let compiled = compile_body(lower, types, fn_node, body, &params, ret)?;
-    // Mint the callable — the finalized entry plus its convention — and install
-    // the node into the bcode slot. `run` reads the entry back and calls it.
-    let code = crate::identities::callable::mint(
-        store,
-        types.callable_,
-        compiled.ptr as usize,
-        types.conv_container,
-    );
+    compile_body(lower, types, fn_node, body, &params, ret)
+}
+
+/// `f.compile()`'s run half: compile `fn_node`'s body and install the finalized
+/// entry into `code_leaf`, the callable the parser pre-minted (with a zero
+/// entry) when it built the compile node — minting needs the store, which the
+/// parser holds; patching an entry does not. The leaf then goes into the fn's
+/// `bcode` slot, so the next call jumps to the machine code instead of walking
+/// the body (DESIGN ›Build and run are one self-directing pass‹: "a construct
+/// can `compile` and then `run` a function during the same pass").
+///
+/// The compiled artifact owns its executable memory and is deliberately
+/// leaked: the installed entry must stay valid for every later call, and
+/// graph-managed artifact ownership arrives with deoptimization (see
+/// [`compile_fn`]'s lifetime note). One leak per `f.compile()`, alive to
+/// process exit — the same lifetime the machine code itself needs.
+///
+/// # Safety
+/// As [`compile_fn`]; `code_leaf` must be a callable value from the store.
+pub(crate) unsafe fn compile_into(
+    lower: &LowerTable,
+    types: CoreTypes,
+    fn_node: DyadPtr,
+    code_leaf: DyadPtr,
+) -> Result<(), CompileError> {
+    let compiled = compile_fn_body(lower, types, fn_node)?;
+    crate::identities::callable::install_entry(code_leaf, compiled.ptr as usize);
     let bcode_slot = ((*fn_node).value as *mut DyadPtr).add(FN_BCODE);
-    *bcode_slot = code;
-    Ok(compiled)
+    *bcode_slot = code_leaf;
+    std::mem::forget(compiled);
+    Ok(())
 }
 
 /// Compile `root` as a nullary function returning `i32` (a bare expression with no

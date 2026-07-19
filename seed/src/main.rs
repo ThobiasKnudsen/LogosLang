@@ -91,7 +91,11 @@ fn run_file(path: &str) -> ExitCode {
     scopes.push(engine.core.root_scope);
 
     let types = engine.core.types();
-    let mut rt = Runtime::new(engine.core.fn_type, engine.core.rational, engine.core.struct_);
+    // The compiler rides along so `f.compile()` works in the one pass; the
+    // engine (core + store) outlives the runtime, per `with_compiler`'s
+    // contract.
+    let mut rt = Runtime::new(engine.core.fn_type, engine.core.rational, engine.core.struct_)
+        .with_compiler(&engine.core.lower, types);
     let mut p = Parser::new(&source, &mut engine.store, &mut engine.trie, types, scopes);
 
     // The tail: the last non-comment expression and its value, printed at the
@@ -227,11 +231,16 @@ fn repl() -> ExitCode {
                 || ty == engine.core.storeptr_
                 || ty == engine.core.fn_type
                 || ty == engine.core.struct_
+                || ty == engine.core.compile_
                 || ty == types.type_
         };
 
+        // The compiler rides along so `f.compile()` works across lines: the
+        // installed bcode lives in the engine's store and the compiled
+        // artifact is process-lived, so a fresh per-line runtime is fine.
         let mut rt =
-            Runtime::new(engine.core.fn_type, engine.core.rational, engine.core.struct_);
+            Runtime::new(engine.core.fn_type, engine.core.rational, engine.core.struct_)
+                .with_compiler(&engine.core.lower, types);
         // SAFETY: `node` and everything it reaches live in the engine's store,
         // which outlives the loop. Statements still run — for their effect —
         // they just do not echo.

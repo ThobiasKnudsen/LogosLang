@@ -72,6 +72,8 @@ pub struct OpLeaves {
     pub(crate) scope_: DyadPtr,
     /// `declare`'s native (run the initializer for effect, yield unit).
     pub(crate) declare_: DyadPtr,
+    /// `compile`'s native (`f.compile()`, the fn type's shared member).
+    pub(crate) compile_: DyadPtr,
 }
 
 impl OpLeaves {
@@ -233,6 +235,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
         addr_: std::ptr::null_mut(),
         scope_: std::ptr::null_mut(),
         declare_: std::ptr::null_mut(),
+        compile_: std::ptr::null_mut(),
     }
 }
 

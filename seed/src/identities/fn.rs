@@ -19,10 +19,12 @@
 //! (`=`, `+`, `if`, …) keep their machine code in the run version's table
 //! instead (see `crate::run`).
 
+use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::parse::{Assoc, Construct, Schedule};
+use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
 /// Create the `fn` type (its own type is `type`) and return it. Called before the
@@ -70,4 +72,53 @@ pub(super) fn register_syntax(cx: &mut Cx) {
     let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Arrow);
     let arrow = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("->", IdContext::new(arrow, cx.root_scope));
+}
+
+/// Register `compile`, the `fn` type's shared member (DESIGN ›Execution is
+/// function application‹: "The `fn` type carries two shared functions:
+/// `compile` … and `run`"; `run` is calling). `f.compile()` lowers `f`'s body
+/// to machine code and installs it, so the next call jumps instead of walking
+/// the body — explicit direction in the one pass (DESIGN ›Build and run are
+/// one self-directing pass‹). No spelling enters the trie: `compile` resolves
+/// only after `.` on an fn-typed value ([`crate::parse::Parser::parse_field_access`]),
+/// the seed's stand-in for shared-member resolution through the type's scope.
+/// A statement yielding unit, like `while`; value positions reject it.
+///
+/// The node is `{ty: compile, value -> [function, code, op]}`: the target fn,
+/// the callable leaf pre-minted (entry zero) at parse for the compile to patch
+/// (minting needs the store, which run does not hold), and the run leaf.
+/// Returns `(identity, leaf)`.
+pub(super) fn register_compile(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        0.0,
+        Assoc::Left,
+        Schedule::Operand,
+        &["function", "code", "op"],
+    );
+    let compile_ = cx.store.alloc_raw(cx.type_, record);
+    let leaf = callable::mint_native(cx.store, cs.callable, compile_run, cs.seed_native);
+    (compile_, leaf)
+}
+
+/// The `(function, code)` operands of a compile node.
+///
+/// # Safety
+/// `node` must be a compile node as `parse_field_access` builds it, with a
+/// `[function, code, op]` value.
+unsafe fn parts(node: DyadPtr) -> (DyadPtr, DyadPtr) {
+    let p = (*node).value as *const DyadPtr;
+    (*p, *p.add(1))
+}
+
+/// Run: compile the target function's body and install the entry into the
+/// pre-minted leaf, through the runtime's compiler context; yield unit.
+fn compile_run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a valid compile node with `[function, code]` operands.
+    unsafe {
+        let (fn_node, code_leaf) = parts(node);
+        rt.compile_member(fn_node, code_leaf)?;
+        Ok(0)
+    }
 }

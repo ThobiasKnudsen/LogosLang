@@ -104,6 +104,18 @@ fn the_repl_rolls_back_a_failed_lines_declarations() {
 }
 
 #[test]
+fn the_repl_compiles_a_fn_across_lines() {
+    // `f.compile()` on one line installs the machine code; the call on the
+    // next line jumps to it. The compile itself is a silent statement, so the
+    // only echo is the call's value.
+    let (echoes, stderr) = repl(
+        b"double := fn (x : i64) -> i64 ( x + x )\ndouble.compile()\ndouble(21)\n",
+    );
+    assert_eq!(echoes, ["42"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
 fn an_else_if_chain_selects_the_matching_arm() {
     // `else if` is sugar for a nested `if` in the else slot, so a chain picks the
     // first matching arm with no hand-written `else ( if … )`. Each reachable arm

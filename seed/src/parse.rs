@@ -487,6 +487,9 @@ pub struct CoreTypes {
     /// `declare`: the type of the declaration node `name := value` builds; a
     /// statement yielding unit.
     pub declare_: DyadPtr,
+    /// `compile`: the fn type's shared member (`f.compile()`); a statement
+    /// yielding unit, so value positions reject it.
+    pub compile_: DyadPtr,
     /// `callable`: the type of every exec leaf and of a compiled fn's code
     /// (`[entry: @exec, convention]`).
     pub callable_: DyadPtr,
@@ -1858,6 +1861,35 @@ impl<'a> Parser<'a> {
                     return Ok(pointee);
                 }
                 return Ok((*lhs).ty);
+            }
+            // `.compile` on an fn-typed value is the fn type's shared member
+            // (DESIGN ›Execution is function application‹: "The `fn` type
+            // carries two shared functions: `compile` … and `run`"; `run` is
+            // calling). `f.compile()` builds a compile statement whose run
+            // lowers `f`'s body and installs its `bcode`, so the next call
+            // jumps to machine code. The name-compare here is the seed's
+            // stand-in for shared-member resolution through the type's scope
+            // (one mechanism at self-hosting); reserved only on fn-typed
+            // values, so a struct field named `compile` still resolves. The
+            // `()` is mandatory — compile is a function, applied like any
+            // other, taking no arguments (DESIGN ›Operands travel on the
+            // stack‹). The callable leaf is minted NOW, entry zero, because
+            // minting needs the store the parser holds; the run patches the
+            // finalized entry in.
+            if &self.source[nstart..nstart + nlen] == "compile"
+                && (*lhs).ty == self.types.fn_type
+            {
+                self.expect_open()?;
+                self.expect_close()?;
+                let code = crate::identities::callable::mint(
+                    self.store,
+                    self.types.callable_,
+                    0,
+                    self.types.conv_container,
+                );
+                let value =
+                    self.store.alloc_operands(&[lhs, code, self.types.ops.compile_]);
+                return Ok(self.store.alloc_raw(self.types.compile_, value));
             }
         }
         self.pos = save;

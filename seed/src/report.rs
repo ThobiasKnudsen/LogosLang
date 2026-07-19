@@ -147,6 +147,11 @@ pub fn run_message(e: &RunError) -> String {
         RunError::CompiledArity => {
             "compiled calls take at most three arguments in v1".into()
         }
+        RunError::CompilerUnavailable => {
+            "compile() is not available here (parse-time evaluation runs without the compiler)"
+                .into()
+        }
+        RunError::CompileFailed(msg) => format!("compile() failed: {msg}"),
     }
 }
 

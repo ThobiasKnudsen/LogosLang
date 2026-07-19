@@ -105,6 +105,18 @@ pub(crate) fn mint_native(
     mint(store, callable, entry as usize, convention)
 }
 
+/// Install `entry` into an already-minted callable leaf — the backend
+/// finalizing code into a leaf minted earlier with a zero entry (`f.compile()`
+/// mints its leaf at parse, when the store is at hand, and the compile at run
+/// time only patches the entry in). The same licensed-mint rule applies: the
+/// caller is the machinery that made `entry` executable.
+///
+/// # Safety
+/// `leaf` must be a callable value ([`is_callable`]) from the store.
+pub(crate) unsafe fn install_entry(leaf: DyadPtr, entry: usize) {
+    std::ptr::write_unaligned((*leaf).value.add(ENTRY_OFF) as *mut usize, entry);
+}
+
 /// Whether `node` is a callable leaf, read from the graph alone: its type's
 /// record kind is [`meta::CALLABLE_TAG`].
 ///

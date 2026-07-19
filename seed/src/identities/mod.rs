@@ -158,6 +158,9 @@ pub struct Core {
     /// `declare`, the type of the declaration node `name := value` builds
     /// (`[name, declared, op]`); a statement yielding unit.
     pub declare_: DyadPtr,
+    /// `compile`, the fn type's shared member (`f.compile()` — lower the body
+    /// to machine code, install its `bcode`); a statement yielding unit.
+    pub compile_: DyadPtr,
     /// `rational_number` (numeric literal carrier); a data type.
     pub rational: DyadPtr,
     /// `string` (the `«…»` text literal); inert in the seed, the comment substance.
@@ -324,6 +327,10 @@ impl Core {
         let (for_, for_leaf) = for_mod::register(&mut cx, &callables);
         op_leaves.for_ = for_leaf;
         fn_mod::register_syntax(&mut cx);
+        // `compile`, the fn type's shared member (`f.compile()`); no spelling
+        // — it resolves after `.` on an fn-typed value.
+        let (compile_, compile_leaf) = fn_mod::register_compile(&mut cx, &callables);
+        op_leaves.compile_ = compile_leaf;
         paren::register(&mut cx);
         let (return_, return_leaf) = return_mod::register(&mut cx, &callables);
         op_leaves.return_ = return_leaf;
@@ -399,6 +406,7 @@ impl Core {
             for_,
             return_,
             declare_,
+            compile_,
             rational,
             string_,
             comment_,
@@ -457,6 +465,7 @@ impl Core {
             not_: self.not_,
             assign: self.assign,
             declare_: self.declare_,
+            compile_: self.compile_,
             callable_: self.callable_,
             conv_container: self.conv_container_i64,
             ops: self.ops,
@@ -555,9 +564,14 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
         }
         return Operand::Concrete(NumType::I32);
     }
-    // A `while`/`for` loop, a struct construction, and a declaration are
-    // statements yielding unit, never values.
-    if ty == types.while_ || ty == types.for_ || ty == types.construct_ || ty == types.declare_ {
+    // A `while`/`for` loop, a struct construction, a declaration, and a
+    // `f.compile()` are statements yielding unit, never values.
+    if ty == types.while_
+        || ty == types.for_
+        || ty == types.construct_
+        || ty == types.declare_
+        || ty == types.compile_
+    {
         return Operand::NonNumeric;
     }
     // A pointer-typed value (an `&x` literal, a pointer variable, or a pointer
@@ -1063,12 +1077,13 @@ unsafe fn commit_tail(
         *ops.add(2) = else_c;
         return Ok(node);
     }
-    // A `while`/`for` loop, a construction, or a declaration yields unit, so
-    // none of them can be a numeric function's tail.
+    // A `while`/`for` loop, a construction, a declaration, or a `f.compile()`
+    // yields unit, so none of them can be a numeric function's tail.
     if (*node).ty == types.while_
         || (*node).ty == types.for_
         || (*node).ty == types.construct_
         || (*node).ty == types.declare_
+        || (*node).ty == types.compile_
     {
         return Err(ParseError::StatementAsValue);
     }
@@ -3283,9 +3298,9 @@ mod tests {
         diff_typed_call("fn (a : i32) -> i32 ( a = a + 1  a )", "f(41)", 42);
     }
 
-    /// Parse `src` as a whole script (a top-level sequence) and run it
-    /// interpreted, returning its tail value.
-    fn run_script(src: &str) -> i64 {
+    /// Parse `src` as a whole script (a top-level sequence) and run it with the
+    /// compiler attached (so `f.compile()` works), returning the run result.
+    fn run_script_result(src: &str) -> Result<i64, crate::run::RunError> {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
@@ -3295,9 +3310,15 @@ mod tests {
             let mut p = Parser::new(src, &mut store, &mut trie, core.types(), scopes);
             p.parse_sequence().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_)
+            .with_compiler(&core.lower, core.types());
         // SAFETY: `root` is the sequence just parsed; its exprs are valid.
-        unsafe { rt.run(root) }.unwrap()
+        unsafe { rt.run(root) }
+    }
+
+    /// [`run_script_result`], unwrapped: the script's tail value.
+    fn run_script(src: &str) -> i64 {
+        run_script_result(src).unwrap()
     }
 
     #[test]
@@ -3326,6 +3347,79 @@ mod tests {
         // declared type; its frame slot carries the full i64 bit-container and
         // a read yields it back.
         assert_eq!(run_script("f := fn (a) -> i64 ( a )\nf(42)"), 42);
+    }
+
+    #[test]
+    fn compile_member_installs_code_the_next_call_jumps_to() {
+        // `f.compile()` (DESIGN: "The `fn` type carries two shared functions:
+        // `compile` … and `run`"): write the body, compile, and the next call
+        // runs the machine code — same answer the body walk gives.
+        assert_eq!(
+            run_script("double := fn (x : i64) -> i64 ( x + x )\ndouble.compile()\ndouble(21)"),
+            42
+        );
+        // Compiled recursion through the member: the self-call jumps too.
+        assert_eq!(
+            run_script(
+                "fact := fn (n : i64) -> i64 ( if (n < 2) (1) else (n * fact(n - 1)) )\nfact.compile()\nfact(20)"
+            ),
+            2_432_902_008_176_640_000
+        );
+    }
+
+    #[test]
+    fn compile_member_before_and_after_agree() {
+        // A call before the compile walks the body; after, it jumps. Both
+        // answers in one script, summed: 42 + 42.
+        assert_eq!(
+            run_script(
+                "double := fn (x : i64) -> i64 ( x + x )\na := double(21)\ndouble.compile()\na + double(21)"
+            ),
+            84
+        );
+    }
+
+    #[test]
+    fn a_second_compile_is_a_no_op() {
+        // The code is installed; compiling again has nothing to do and errors
+        // nothing.
+        assert_eq!(
+            run_script(
+                "double := fn (x : i64) -> i64 ( x + x )\ndouble.compile()\ndouble.compile()\ndouble(21)"
+            ),
+            42
+        );
+    }
+
+    #[test]
+    fn compile_member_is_a_statement_not_a_value() {
+        assert_eq!(
+            parse_err("fn () -> i32 ( g := fn () -> i32 ( 1 )  g.compile() )"),
+            ParseError::StatementAsValue
+        );
+    }
+
+    #[test]
+    fn compile_member_on_four_params_reports_cleanly() {
+        // The compiled convention carries at most three arguments in v1;
+        // `.compile()` on a wider fn is a clean run error, and the function
+        // stays interpreted.
+        let e = run_script_result(
+            "f := fn (a : i64, b : i64, c : i64, d : i64) -> i64 ( a + b + c + d )\nf.compile()",
+        )
+        .unwrap_err();
+        assert!(matches!(e, crate::run::RunError::CompileFailed(_)), "got {e:?}");
+    }
+
+    #[test]
+    fn compile_is_reserved_only_on_fn_typed_values() {
+        // A struct field named `compile` still resolves as an ordinary field:
+        // the member intercept fires only when the lhs is fn-typed, so the
+        // spelling is not globally reserved (unlike `.type`).
+        assert_eq!(
+            run_script("point := struct (compile : i32)\np := point(7)\np.compile"),
+            7
+        );
     }
 
     #[test]

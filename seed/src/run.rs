@@ -44,6 +44,16 @@ pub enum RunError {
     /// supports (v1 calls compiled code with at most three `i64` bit-container
     /// arguments).
     CompiledArity,
+    /// `f.compile()` ran under a runtime with no compiler attached — parse-time
+    /// evaluation (a `-> type` call's body), where compiling would install code
+    /// behind the open pass's back.
+    CompilerUnavailable,
+    /// `f.compile()` failed: the body does not lower (a construct with no
+    /// lowering rule, or more parameters than the compiled convention carries).
+    /// Carries the rendered [`crate::compile::CompileError`], behind a thin
+    /// box so the error enum keeps its one-word payload — `run` recurses
+    /// deeply, and every frame carries a `Result` of this type.
+    CompileFailed(Box<String>),
 }
 
 /// Call compiled machine code (a `fn(i64…) -> i64`) with `args`, dispatching on
@@ -167,15 +177,82 @@ pub struct Runtime {
     /// last. A frame-relative place reads `base + offset` in the top entry;
     /// each call having its own frame is what makes recursion work.
     activations: Vec<*mut u8>,
+    /// What `f.compile()` needs, attached by [`Runtime::with_compiler`]: the
+    /// lowering table and the core handles. Absent (the default, and always at
+    /// parse-time evaluation), a compile node fails with
+    /// [`RunError::CompilerUnavailable`] instead of compiling behind the open
+    /// pass's back.
+    compiler: Option<CompilerCx>,
+}
+
+/// The compiler context a runtime carries to serve `f.compile()`. The lower
+/// table is held as a raw pointer because the runtime and the `Core` that owns
+/// the table live side by side in the driver, with no lifetime to name.
+struct CompilerCx {
+    /// The lowering table (`Core::lower`). Must outlive the runtime.
+    lower: *const crate::compile::LowerTable,
+    /// The core handles compilation resolves types against.
+    types: crate::parse::CoreTypes,
 }
 
 impl Runtime {
     /// A runtime recognizing functions by `fn_type` and struct instances by
     /// `struct_`, molding `rational` leaves on read, with an empty activation
     /// stack (its first chunk is claimed lazily, at the first call that needs
-    /// a frame). Everything executable is reached through the graph.
+    /// a frame). Everything executable is reached through the graph. No
+    /// compiler is attached; see [`Runtime::with_compiler`].
     pub fn new(fn_type: DyadPtr, rational: DyadPtr, struct_: DyadPtr) -> Self {
-        Runtime { fn_type, rational, struct_, stack: FrameStack::new(), activations: Vec::new() }
+        Runtime {
+            fn_type,
+            rational,
+            struct_,
+            stack: FrameStack::new(),
+            activations: Vec::new(),
+            compiler: None,
+        }
+    }
+
+    /// Attach the compiler context, enabling `f.compile()` under this runtime.
+    /// `lower` is `Core::lower`; the caller keeps the `Core` (and the store)
+    /// alive for the runtime's whole life, which the driver's structure already
+    /// guarantees — runtime and engine are siblings dropped together.
+    pub fn with_compiler(
+        mut self,
+        lower: &crate::compile::LowerTable,
+        types: crate::parse::CoreTypes,
+    ) -> Self {
+        self.compiler = Some(CompilerCx { lower, types });
+        self
+    }
+
+    /// `f.compile()`: lower `fn_node`'s body to machine code and install the
+    /// finalized entry into `code_leaf` (the leaf the parser pre-minted), so
+    /// the next call jumps instead of walking the body. Already-compiled is a
+    /// no-op — the code is installed, the call already jumps.
+    ///
+    /// # Safety
+    /// `fn_node` must be a valid dyad and `code_leaf` a callable value, both
+    /// from the store; the compiler context's table and types must be live.
+    pub(crate) unsafe fn compile_member(
+        &mut self,
+        fn_node: DyadPtr,
+        code_leaf: DyadPtr,
+    ) -> Result<(), RunError> {
+        let Some(cx) = &self.compiler else {
+            return Err(RunError::CompilerUnavailable);
+        };
+        if (*fn_node).ty != self.fn_type {
+            return Err(RunError::BadValue);
+        }
+        let fields = (*fn_node).value as *const DyadPtr;
+        if fields.is_null() {
+            return Err(RunError::NotRunnable(fn_node));
+        }
+        if !(*fields.add(FN_BCODE)).is_null() {
+            return Ok(());
+        }
+        crate::compile::compile_into(&*cx.lower, cx.types, fn_node, code_leaf)
+            .map_err(|e| RunError::CompileFailed(Box::new(crate::report::compile_message(&e))))
     }
 
     /// The machine address a place node denotes: an absolute pointer for a
