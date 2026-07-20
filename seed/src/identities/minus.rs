@@ -30,9 +30,35 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     );
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("-", IdContext::new(id, cx.root_scope));
-    cx.metas.insert(id, super::infix_construct!(build));
+    cx.metas.insert(id, construct);
     cx.lower.insert(id, lower);
     id
+}
+
+/// `-`'s constructor. At reduction (two completed operands flanking the
+/// cursor) it is ordinary subtraction. Opening fresh — no left operand — it
+/// prefixes a numeric literal (`f(-1)`, `x := -5`; the literal regex is
+/// unsigned, so the negative literal is this constructor negating at parse);
+/// anything else declines, and the driver shifts the `-` as a pending operator
+/// (general unary minus over non-literals is later work — it still parses as a
+/// dangling operator today).
+fn construct(
+    p: &mut crate::parse::Parser,
+    id: DyadPtr,
+    tape: &mut crate::parse::ParsingTape,
+) -> Result<crate::parse::Constructed, ParseError> {
+    if let Ok((lhs, rhs)) = tape.binary_operands() {
+        let types = p.types();
+        return build(p.store(), &types, id, lhs, rhs).map(crate::parse::Constructed::Node);
+    }
+    let types = p.types();
+    match p.consume_rational()? {
+        // SAFETY: `lit` is the rational literal just built.
+        Some(lit) => Ok(crate::parse::Constructed::Node(unsafe {
+            rational::negate(p.store(), types.rational, lit)
+        })),
+        None => Ok(crate::parse::Constructed::Decline),
+    }
 }
 
 /// Build `lhs - rhs`: resolve the operand type and store the concrete

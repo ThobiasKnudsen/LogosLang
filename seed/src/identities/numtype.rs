@@ -143,15 +143,42 @@ impl NumType {
 
 /// Register a numeric type node: its spelling (so it resolves as a type name), its
 /// shared-member record with the `NumType` tag as its kind (self-describing, so
-/// run/compile recover the type from the graph), and the shared numeric-variable
-/// lowering [`lower_var`]. The interpreter reads its values through the type's
-/// width (see [`read_scalar`]).
+/// run/compile recover the type from the graph), its juxtaposition constructor,
+/// and the shared numeric-variable lowering [`lower_var`]. The interpreter reads
+/// its values through the type's width (see [`read_scalar`]).
 pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr {
     let record = super::meta::record(cx.store, nt as u8, f64::NAN, crate::parse::Schedule::Operand);
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(spelling, IdContext::new(id, cx.root_scope));
+    cx.metas.insert(id, construct);
     cx.lower.insert(id, lower_var);
     id
+}
+
+/// A numeric type's constructor — juxtaposition (DESIGN ›an anonymous typed
+/// value is written by juxtaposition — `i32 32`, the type preceding the
+/// value‹): consume a directly following rational literal (or `- <rational>`,
+/// the negated literal) and commit it exactly to this type, an anonymous typed
+/// value with real storage. Anything else — `,`, an operator, a name, `(` —
+/// declines the right, and the constructor "yields its own dyad as-is — the
+/// type as a value" (DESIGN ›Expressions are self-delimiting‹): the type node
+/// itself, so `i32(x)` casts and `f(i32, 3)` passes the type.
+fn construct(
+    p: &mut crate::parse::Parser,
+    id: DyadPtr,
+    _tape: &mut crate::parse::ParsingTape,
+) -> Result<crate::parse::Constructed, crate::parse::ParseError> {
+    let lit = match p.consume_rational()? {
+        Some(l) => Some(l),
+        None => p.consume_negated_rational()?,
+    };
+    match lit {
+        // SAFETY: `l` is the literal just built; `id` is this numeric type's
+        // registered node.
+        Some(l) => unsafe { super::commit_literal_to(p.store(), l, id) }
+            .map(crate::parse::Constructed::Node),
+        None => Ok(crate::parse::Constructed::Node(id)),
+    }
 }
 
 /// The value-slot tag for the `void` unit type, one past every [`NumType`] discriminant

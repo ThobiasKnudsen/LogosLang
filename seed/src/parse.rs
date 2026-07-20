@@ -1261,6 +1261,44 @@ impl<'a> Parser<'a> {
         Some((r.identity, r.matched))
     }
 
+    /// Consume a directly following rational literal, building its node;
+    /// `None` (nothing consumed) when the next token is anything else. A
+    /// constructor service: the numeric types' juxtaposition (`i32 3`) and
+    /// `-`'s negated literal read their operand through this.
+    pub(crate) fn consume_rational(&mut self) -> Result<Option<DyadPtr>, ParseError> {
+        let Some((lit, matched)) = self.peek_token() else {
+            return Ok(None);
+        };
+        if lit != self.types.rational {
+            return Ok(None);
+        }
+        let start = self.pos;
+        self.pos += matched;
+        let span = &self.source[start..start + matched];
+        crate::identities::rational::build(self.store, lit, span).map(Some)
+    }
+
+    /// Consume `- <rational>` as a negated literal (the literal regex is
+    /// unsigned; the negative literal is the prefix `-` negating at parse), or
+    /// nothing — the two-token peek restores the position when no literal
+    /// follows the `-`.
+    pub(crate) fn consume_negated_rational(&mut self) -> Result<Option<DyadPtr>, ParseError> {
+        let save = self.pos;
+        if !self.consume_token(self.types.minus) {
+            return Ok(None);
+        }
+        match self.consume_rational()? {
+            // SAFETY: the literal was just built by `consume_rational`.
+            Some(lit) => Ok(Some(unsafe {
+                crate::identities::rational::negate(self.store, self.types.rational, lit)
+            })),
+            None => {
+                self.pos = save;
+                Ok(None)
+            }
+        }
+    }
+
     /// Consume the next token if it is the identity `id`, reporting whether it
     /// was.
     fn consume_token(&mut self, id: DyadPtr) -> bool {
@@ -1867,21 +1905,8 @@ impl<'a> Parser<'a> {
             self.pos += r.matched;
             self.construct_leaf(id, start, r.matched)?.ok_or(ParseError::ExpectedRange)
         } else if id == self.types.minus {
-            // A negated literal (`-` then a rational), as in the driver.
-            self.pos += r.matched;
-            if let Some((lit, matched)) = self.peek_token() {
-                if lit == self.types.rational {
-                    let lstart = self.pos;
-                    self.pos += matched;
-                    let span = &source[lstart..lstart + matched];
-                    let dyad = crate::identities::rational::build(self.store, lit, span)?;
-                    // SAFETY: `dyad` is the rational literal just built.
-                    return Ok(unsafe {
-                        crate::identities::rational::negate(self.store, lit, dyad)
-                    });
-                }
-            }
-            Err(ParseError::ExpectedRange)
+            // A negated literal (`-` then a rational), as in `-`'s constructor.
+            self.consume_negated_rational()?.ok_or(ParseError::ExpectedRange)
         } else if matches!(self.classify(id), Class::Operand) {
             // A plain resolved name, with an optional `.field` chain.
             self.pos += r.matched;
@@ -2702,17 +2727,10 @@ impl<'a> Parser<'a> {
             // (DESIGN ›Expressions are self-delimiting‹): stop without
             // consuming it. An extender continues the expression (an `(` after
             // a dyad stays a call — juxtaposition binds tightest), so it is
-            // never a boundary. `type literal` juxtaposition is the one
-            // fresh-start exception: a numeric type dyad directly before a
-            // literal consumes it into an anonymous typed value (DESIGN ›an
-            // anonymous typed value is written by juxtaposition‹).
-            let juxtaposition = id == self.types.rational
-                && tape
-                    .last()
-                    .and_then(Cell::as_dyad)
-                    .is_some_and(|d| crate::identities::is_numtype_node(&self.types, d));
+            // never a boundary. Type-literal juxtaposition needs no exception
+            // here: the numeric *type's* constructor consumes its literal
+            // forward, so the literal is never scanned at this level.
             if matches!(class, Class::Operand | Class::Construct(_))
-                && !juxtaposition
                 && matches!(tape.last(), Some(Cell::Dyad(_)))
             {
                 break;
@@ -2729,15 +2747,13 @@ impl<'a> Parser<'a> {
                     tape.push(Cell::Dyad(id));
                 }
                 // A fresh-start constructor — a keyword opener (`struct`, `fn`,
-                // `if`, `not`, `while`, `for`, `&`), a literal, `return`: jump
-                // it; it consumes its own forward tokens. Two scheduling
-                // nuances still ride here: `fn`'s declaration handoff — the
-                // pending placeholder is claimed by `fn`'s constructor only
-                // when the literal opens a (sub-)expression (an empty tape) —
-                // and `type literal` juxtaposition, where a literal commits to
-                // the numeric type dyad before it (`sum := i32 0`), giving a
-                // typed value with real storage. Both move into the
-                // constructors themselves as the conversion completes.
+                // `if`, `not`, `while`, `for`, `&`), a literal, a numeric type
+                // (juxtaposition), `return`: jump it; it consumes its own
+                // forward tokens. One scheduling nuance still rides here:
+                // `fn`'s declaration handoff — the pending placeholder is
+                // claimed by `fn`'s constructor only when the literal opens a
+                // (sub-)expression (an empty tape) — which moves into `fn`'s
+                // constructor with the declaration stage.
                 Class::Construct(construct) => {
                     let suppressed = (id == self.types.fn_type && !tape.is_empty())
                         .then(|| self.take_pending_fn());
@@ -2755,17 +2771,7 @@ impl<'a> Parser<'a> {
                         }
                     };
                     tape.pop(); // the construct's own token cell
-                    if juxtaposition {
-                        let ty_node = tape.pop().and_then(|c| c.as_dyad()).unwrap();
-                        // SAFETY: `dyad` is the literal just built; `ty_node` is a
-                        // numtype node (the `juxtaposition` check above).
-                        let committed = unsafe {
-                            crate::identities::commit_literal_to(self.store, dyad, ty_node)?
-                        };
-                        tape.push(Cell::Dyad(committed));
-                    } else {
-                        tape.push(Cell::Dyad(dyad));
-                    }
+                    tape.push(Cell::Dyad(dyad));
                 }
                 // A tight (infinite-precedence) extender — `(` as a call,
                 // postfix `.`/`@`: its constructor is invoked immediately and
@@ -2796,49 +2802,28 @@ impl<'a> Parser<'a> {
                 // shift it onto the tape as a pending token; its constructor is
                 // invoked at reduction, when precedence finalizes the cluster.
                 Class::Extender(precedence, assoc) => {
-                    // A `-` prefixes a numeric literal (`-` is always an operator;
-                    // the literal regex is unsigned) when it has no left operand
-                    // (`f(-1)`, `x := -5`) or directly follows a numeric *type*
-                    // node, where it is the juxtaposition of a negative literal
-                    // (`i64 -1`, the anonymous typed value). A numeric type node
-                    // never subtracts; a numeric *variable* (`x - 1`) is not a
-                    // numtype node, so that stays subtraction. General unary minus
-                    // over non-literals is later work — it still parses as a
-                    // dangling operator today.
-                    let after_type = tape
-                        .last()
-                        .and_then(Cell::as_dyad)
-                        .is_some_and(|d| crate::identities::is_numtype_node(&self.types, d));
-                    if id == self.types.minus
-                        && (after_type || !matches!(tape.last(), Some(Cell::Dyad(_))))
-                    {
-                        if let Some((lit, matched)) = self.peek_token() {
-                            if lit == self.types.rational {
-                                let lstart = self.pos;
-                                self.pos += matched;
-                                let span = &source[lstart..lstart + matched];
-                                let dyad =
-                                    crate::identities::rational::build(self.store, lit, span)?;
-                                // SAFETY: `dyad` is the rational literal just built.
-                                let neg = unsafe {
-                                    crate::identities::rational::negate(self.store, lit, dyad)
-                                };
-                                if after_type {
-                                    // Juxtaposition: commit the negative literal to
-                                    // the preceding type, an anonymous typed value.
-                                    let ty_node = tape.pop().and_then(|c| c.as_dyad()).unwrap();
-                                    // SAFETY: `neg` is the negated rational just
-                                    // built; `ty_node` is a numtype node.
-                                    let committed = unsafe {
-                                        crate::identities::commit_literal_to(
-                                            self.store, neg, ty_node,
-                                        )?
-                                    };
-                                    tape.push(Cell::Dyad(committed));
-                                } else {
-                                    tape.push(Cell::Dyad(neg));
+                    // With no completed operand to its left an extender opens
+                    // *fresh*, and its constructor decides — `-` consumes a
+                    // following numeric literal into a negated one (`f(-1)`,
+                    // `x := -5`); a Decline shifts the token as a pending
+                    // operator instead (the dangling-operator path: general
+                    // unary minus over non-literals is later work).
+                    if !matches!(tape.last(), Some(Cell::Dyad(_))) {
+                        if let Some(construct) = self.construct_of(id) {
+                            tape.push(Cell::Token(Token {
+                                start,
+                                len: r.matched,
+                                identity: id,
+                            }));
+                            match construct(self, id, &mut tape)? {
+                                Constructed::Node(d) => {
+                                    tape.pop(); // the construct's own token cell
+                                    tape.push(Cell::Dyad(d));
+                                    continue;
                                 }
-                                continue;
+                                Constructed::Decline => {
+                                    tape.pop(); // fall through to the shift
+                                }
                             }
                         }
                     }

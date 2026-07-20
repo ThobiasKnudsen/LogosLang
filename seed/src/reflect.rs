@@ -345,9 +345,12 @@ mod tests {
             ("else", Schedule::Else, false),
             ("in", Schedule::In, false),
             ("..", Schedule::DotDot, false),
+            // Numeric types carry the juxtaposition constructor (`i32 3`, the
+            // anonymous typed value; declining the right yields the type as a
+            // value).
+            ("i32", Schedule::Operand, true),
+            ("f64", Schedule::Operand, true),
             // Data types: plain operands, constructor undefined.
-            ("i32", Schedule::Operand, false),
-            ("f64", Schedule::Operand, false),
             ("bool", Schedule::Operand, false),
             ("void", Schedule::Operand, false),
             ("type", Schedule::Operand, false),
@@ -659,10 +662,11 @@ mod tests {
             };
             // A non-extender's precedence is the NaN sentinel: it never extends
             // an expression to its left, and the driver classifies by exactly
-            // this field (no schedule table).
+            // this field (no schedule table). A numeric type carries the
+            // juxtaposition constructor (`i32 3`).
             assert_eq!((kind, schedule), (NumType::I32 as u8, Schedule::Operand));
             assert!(precedence.is_nan());
-            assert!(constructor.is_null() && destructor.is_null());
+            assert!(!constructor.is_null() && destructor.is_null());
             let Shape::TypeNode { kind, precedence, schedule, constructor, destructor } =
                 describe(&types, core.type_)
             else {

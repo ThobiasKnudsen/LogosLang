@@ -542,9 +542,11 @@ pub(crate) struct Cx<'a> {
 
 /// The one-signature infix constructor over a file's `build` fn: read the two
 /// operands flanking the cursor from the tape (the model's `tape[-1]` and
-/// `tape[+1]`, completed dyads at reduction) and build the operator node. Each
-/// operator file expands this over its own `build`, keeping one constructor
-/// convention without fourteen hand-written wrappers.
+/// `tape[+1]`, completed dyads at reduction) and build the operator node. With
+/// no flanking operands — the driver invoking an extender that opened fresh —
+/// the construct declines, and the operator shifts as a pending token (the
+/// dangling-operator error path). Each operator file expands this over its own
+/// `build`, keeping one constructor convention without hand-written wrappers.
 macro_rules! infix_construct {
     ($build:path) => {{
         fn construct(
@@ -552,7 +554,9 @@ macro_rules! infix_construct {
             id: crate::dyad::DyadPtr,
             tape: &mut crate::parse::ParsingTape,
         ) -> Result<crate::parse::Constructed, crate::parse::ParseError> {
-            let (lhs, rhs) = tape.binary_operands()?;
+            let Ok((lhs, rhs)) = tape.binary_operands() else {
+                return Ok(crate::parse::Constructed::Decline);
+            };
             let types = p.types();
             $build(p.store(), &types, id, lhs, rhs).map(crate::parse::Constructed::Node)
         }
