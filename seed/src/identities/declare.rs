@@ -30,7 +30,7 @@ use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, Schedule};
+use crate::parse::{Assoc};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -38,12 +38,12 @@ use crate::store::Store;
 /// declare node's value; the name string node sits at 0.
 const DECL_DECLARED: usize = 1;
 
-/// Register the `:=` token (the driver dispatches on its `Schedule::Declare`;
-/// the trie longest-matches `:=` over the field-list `:`) and the `declare`
-/// identity its expressions are typed by, with its native leaf and lowering.
-/// Returns `(declare identity, leaf, := token)`.
+/// Register the `:=` token (a bare delimiter the driver's declaration
+/// lookahead detects; the trie longest-matches `:=` over the field-list `:`)
+/// and the `declare` identity its expressions are typed by, with its native
+/// leaf and lowering. Returns `(declare identity, leaf, := token)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr) {
-    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN, Schedule::Declare);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN);
     let token = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(":=", IdContext::new(token, cx.root_scope));
 
@@ -52,7 +52,6 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
         meta::TUPLE_TAG,
         f64::NAN,
         Assoc::Left,
-        Schedule::Operand,
         &["name", "declared", "op"],
     );
     let declare = cx.store.alloc_raw(cx.type_, record);

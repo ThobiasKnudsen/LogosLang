@@ -13,7 +13,7 @@ use super::{bool_mod, is_type_value, meta, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, CoreTypes, ParseError, Schedule};
+use crate::parse::{Assoc, CoreTypes, ParseError};
 use crate::store::Store;
 
 /// Register `!=`: spelling, precedence (equality, left-associative), and its
@@ -24,7 +24,6 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
         meta::TUPLE_TAG,
         1.4,
         Assoc::Left,
-        Schedule::Infix,
         &["lhs", "rhs", "op"],
     );
     let id = cx.store.alloc_raw(cx.type_, record);

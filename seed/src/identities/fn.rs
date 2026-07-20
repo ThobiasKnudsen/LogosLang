@@ -23,7 +23,7 @@ use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, Schedule};
+use crate::parse::{Assoc};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -56,7 +56,6 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
         meta::TUPLE_TAG,
         f64::NAN,
         Assoc::Left,
-        Schedule::Fn,
         &["input", "output", "body", "bcode", "frame"],
     );
     // SAFETY: `fn_type` was allocated by [`register`] and nothing has read its
@@ -66,7 +65,7 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
     }
 
     // `->` separates a fn's parameter list from its return type.
-    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN, Schedule::Arrow);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN);
     let arrow = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("->", IdContext::new(arrow, cx.root_scope));
     arrow
@@ -92,7 +91,6 @@ pub(super) fn register_compile(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr
         meta::TUPLE_TAG,
         f64::NAN,
         Assoc::Left,
-        Schedule::Operand,
         &["function", "code", "op"],
     );
     let compile_ = cx.store.alloc_raw(cx.type_, record);

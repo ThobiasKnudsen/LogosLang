@@ -18,7 +18,7 @@ use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, Schedule};
+use crate::parse::{Assoc};
 use crate::run::{RunError, Runtime};
 
 /// Register `while`: spelling, its `While` schedule, native leaf, and
@@ -29,7 +29,6 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         meta::TUPLE_TAG,
         f64::NAN,
         Assoc::Left,
-        Schedule::While,
         &["condition", "body", "op"],
     );
     let while_ = cx.store.alloc_raw(cx.type_, record);

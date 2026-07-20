@@ -25,7 +25,7 @@ use crate::dyad::DyadPtr;
 /// the interpreter's data path yields unit for a comment node off its graph tag
 /// (see [`crate::run`]), so no run entry exists anywhere.
 pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
-    let record = meta::record(cx.store, COMMENT_TAG, f64::NAN, crate::parse::Schedule::Operand);
+    let record = meta::record(cx.store, COMMENT_TAG, f64::NAN);
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.lower.insert(id, lower);
     id

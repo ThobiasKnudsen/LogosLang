@@ -6,30 +6,33 @@
 //! shared by its values‹, issue #30) and of layout-as-graph-data (issue #42).
 //!
 //! Anything that stands in a node's `ty` position stores, once, the members its
-//! values share: its parse `precedence`, `associativity`, and `schedule`, its
-//! `constructor` (a native callable leaf; see below) and `destructor` (null:
-//! the honest undefined until drop semantics exist), and the *layout* that says
-//! how a value of it is read — a scalar width, a text or fraction blob, a
-//! pointer's pointee, or the arity and role names of an application's operands.
-//! A generic walker ([`crate::reflect`]) reads any node's structure from these
-//! records alone, and since #30 the parser dispatches from them too: the
-//! schedule byte places a token and the constructor slot carries its build
-//! code, a `seed-parse` callable whose body stays `native` until self-hosting
-//! ports it to Logos source (the #42 boundary). Only `run`'s lowering table
-//! remains Rust-side, awaiting per-backend keying.
+//! values share: its parse `precedence` and `associativity`, its `constructor`
+//! (a native callable leaf; see below) and `destructor` (null: the honest
+//! undefined until drop semantics exist), and the *layout* that says how a
+//! value of it is read — a scalar width, a text or fraction blob, a pointer's
+//! pointee, or the arity and role names of an application's operands. A
+//! generic walker ([`crate::reflect`]) reads any node's structure from these
+//! records alone, and the parser dispatches from them too: the driver
+//! classifies a token from constructor presence, the precedence field (NaN
+//! never-extends / finite infix / +inf tight extender), and the kind byte —
+//! the constructors drive the tape (DESIGN ›Source becomes runnable›), and
+//! the schedule byte that stood in until they did is gone. The constructor is
+//! a `seed-parse` callable (one [`crate::parse::ConstructFn`] signature)
+//! whose body stays `native` until self-hosting ports it to Logos source (the
+//! #42 boundary). Only `run`'s lowering table remains Rust-side, awaiting
+//! per-backend keying.
 //!
 //! Record layout (unaligned, native-endian, byte offsets):
 //!
 //! ```text
 //! [0]        u8   kind — the type-tag namespace (see below)
 //! [1]        u8   associativity (0 left-to-right, 1 right-to-left)
-//! [2..10]    f64  precedence
+//! [2..10]    f64  precedence — NaN: never extends left; finite: infix;
+//!                 +inf: tight extender (call `(`, postfix `.`/`@`)
 //! [10..18]   u64  constructor — a callable leaf (`seed-parse` convention,
-//!                 entry signature per the schedule byte), or 0: undefined
+//!                 one `ConstructFn` signature), or 0: undefined
 //! [18..26]   u64  destructor  (0: undefined until drop semantics exist)
-//! [26]       u8   schedule — how the driver schedules the token (see
-//!                 [`crate::parse::Schedule`]; 0 = plain operand)
-//! [27..]     payload, per kind:
+//! [26..]     payload, per kind:
 //!              ADDR              pointee type node (`dyad@`)
 //!              TUPLE/LIST         u8 arity, then arity × `dyad@` role-name strings
 //! ```
@@ -43,7 +46,7 @@
 //! leaves their op slots reference.
 
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc, Schedule};
+use crate::parse::{Assoc};
 use crate::store::Store;
 
 use super::numtype::ADDR_TAG;
@@ -98,20 +101,18 @@ const PREC_OFF: usize = 2;
 const CTOR_OFF: usize = 10;
 /// Byte offset of the reserved destructor slot.
 const DTOR_OFF: usize = 18;
-/// Byte offset of the schedule byte.
-const SCHED_OFF: usize = 26;
 /// Byte offset of the kind-specific payload (a pointer type's pointee, or an
 /// operand record's arity + roles).
-pub(crate) const PAYLOAD_OFF: usize = 27;
+pub(crate) const PAYLOAD_OFF: usize = 26;
 
-/// Build a plain record: `kind`, `precedence`, and `schedule`, no payload. The
-/// scalar types, the text substance, the foundations, and the parse-only
-/// tokens. `precedence` is the extender signal the driver classifies by: NaN
-/// for a token that never extends an expression to its left, `+inf` for a
-/// tight extender (`(` as call, postfix `.`/`@`), finite only on the infix
+/// Build a plain record: `kind` and `precedence`, no payload. The scalar
+/// types, the text substance, the foundations, and the parse-only tokens.
+/// `precedence` is the extender signal the driver classifies by: NaN for a
+/// token that never extends an expression to its left, `+inf` for a tight
+/// extender (`(` as call, postfix `.`/`@`), finite only on the infix
 /// operators (which carry operand records instead).
-pub(crate) fn record(store: &mut Store, kind: u8, precedence: f64, schedule: Schedule) -> *mut u8 {
-    let blob = header(kind, Assoc::Left, precedence, schedule);
+pub(crate) fn record(store: &mut Store, kind: u8, precedence: f64) -> *mut u8 {
+    let blob = header(kind, Assoc::Left, precedence);
     store.alloc_bytes(&blob)
 }
 
@@ -124,12 +125,11 @@ pub(crate) fn operand_record(
     kind: u8,
     precedence: f64,
     assoc: Assoc,
-    schedule: Schedule,
     roles: &[&str],
 ) -> *mut u8 {
     debug_assert!(matches!(kind, TUPLE_TAG | LIST_TAG), "operand records carry operand kinds");
     debug_assert!(!cx.string_.is_null(), "role names need the string type registered");
-    let mut blob = header(kind, assoc, precedence, schedule).to_vec();
+    let mut blob = header(kind, assoc, precedence).to_vec();
     blob.push(roles.len() as u8);
     for role in roles {
         let name = string::build_text(cx.store, cx.string_, role.as_bytes());
@@ -141,7 +141,7 @@ pub(crate) fn operand_record(
 /// Build a pointer type's record: kind [`ADDR_TAG`], the pointee node as the
 /// payload. Pointer types are created fresh per use and carry no parse members.
 pub(crate) fn pointer_record(store: &mut Store, pointee: DyadPtr) -> *mut u8 {
-    let mut blob = header(ADDR_TAG, Assoc::Left, f64::NAN, Schedule::Operand).to_vec();
+    let mut blob = header(ADDR_TAG, Assoc::Left, f64::NAN).to_vec();
     blob.extend_from_slice(&(pointee as usize).to_ne_bytes());
     store.alloc_bytes(&blob)
 }
@@ -157,7 +157,7 @@ pub(crate) fn struct_record(
     fields: DyadPtr,
     size_bytes: u64,
 ) -> *mut u8 {
-    let mut blob = header(STRUCT_TAG, Assoc::Left, f64::NAN, Schedule::Operand).to_vec();
+    let mut blob = header(STRUCT_TAG, Assoc::Left, f64::NAN).to_vec();
     blob.extend_from_slice(&(scope as usize).to_ne_bytes());
     blob.extend_from_slice(&(fields as usize).to_ne_bytes());
     blob.extend_from_slice(&size_bytes.to_ne_bytes());
@@ -191,11 +191,11 @@ pub(crate) unsafe fn struct_size_of(id: DyadPtr) -> u64 {
     std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF + 16) as *const u64)
 }
 
-/// The fixed head of every record: kind, associativity, precedence, the two
-/// reserved slots, and the schedule byte. Precedence doubles as the extender
-/// signal: NaN (never extends left) / finite (infix, shift-reduce) / +inf
-/// (tight extender, constructor invoked immediately over its left).
-fn header(kind: u8, assoc: Assoc, precedence: f64, schedule: Schedule) -> [u8; PAYLOAD_OFF] {
+/// The fixed head of every record: kind, associativity, precedence, and the
+/// two reserved slots. Precedence doubles as the extender signal: NaN (never
+/// extends left) / finite (infix, shift-reduce) / +inf (tight extender,
+/// constructor invoked immediately over its left).
+fn header(kind: u8, assoc: Assoc, precedence: f64) -> [u8; PAYLOAD_OFF] {
     let mut h = [0u8; PAYLOAD_OFF];
     h[0] = kind;
     h[ASSOC_OFF] = match assoc {
@@ -203,18 +203,9 @@ fn header(kind: u8, assoc: Assoc, precedence: f64, schedule: Schedule) -> [u8; P
         Assoc::Right => 1,
     };
     h[PREC_OFF..CTOR_OFF].copy_from_slice(&precedence.to_ne_bytes());
-    // CTOR_OFF..DTOR_OFF and DTOR_OFF..SCHED_OFF stay zero: reserved.
+    // CTOR_OFF..DTOR_OFF and DTOR_OFF..PAYLOAD_OFF stay zero: reserved.
     let _ = DTOR_OFF;
-    h[SCHED_OFF] = schedule as u8;
     h
-}
-
-/// The parse schedule stored in `id`'s record.
-///
-/// # Safety
-/// As [`precedence_of`].
-pub(crate) unsafe fn schedule_of(id: DyadPtr) -> Schedule {
-    Schedule::from_tag(*(*id).value.add(SCHED_OFF))
 }
 
 /// The constructor stored in `id`'s record: a callable leaf under the

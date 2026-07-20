@@ -19,7 +19,7 @@ use cranelift_codegen::ir::Value;
 use super::callable::{self, Callables};
 use super::numtype::{apply_cast, of_type_node, NumType};
 use super::{meta, Cx};
-use crate::parse::{Assoc, CoreTypes, Schedule};
+use crate::parse::{Assoc, CoreTypes};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::run::{RunError, Runtime};
@@ -35,7 +35,6 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         meta::TUPLE_TAG,
         f64::NAN,
         Assoc::Left,
-        Schedule::Operand,
         &["operand", "from", "to", "op"],
     );
     let id = cx.store.alloc_raw(cx.type_, record);

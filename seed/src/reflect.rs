@@ -16,9 +16,10 @@
 //! comes from records.
 //!
 //! What stays opaque is machine code, not structure: a callable's entry is the
-//! reflection boundary (invoked, never read into), and the parse `Construct`s
-//! and Cranelift lowering remain table-keyed Rust, so [`Shape`] tells you how a
-//! node is *built*, never what it computes.
+//! reflection boundary (invoked, never read into) — each identity's parse
+//! constructor is such a leaf in its record, and only the Cranelift lowering
+//! remains table-keyed Rust — so [`Shape`] tells you how a node is *built*,
+//! never what it computes.
 
 use crate::dyad::DyadPtr;
 use crate::identities::instance;
@@ -26,7 +27,7 @@ use crate::identities::meta;
 use crate::identities::numtype::{
     self, NumType, ADDR_TAG, COMMENT_TAG, STRING_TAG, VOID_TAG,
 };
-use crate::parse::{CoreTypes, Schedule};
+use crate::parse::CoreTypes;
 
 /// One operand slot of a [`Shape::Tuple`] or a [`Shape::List`] head: the role
 /// naming it (a string node from the identity's record) and the operand node
@@ -127,13 +128,13 @@ pub enum Shape {
     TypeNode {
         /// The node's own record kind (a tag from `numtype`/`meta`).
         kind: u8,
-        /// The node's parse precedence (0.0 when it is not an operator).
-        precedence: f64,
-        /// How the parser schedules the identity's token.
-        schedule: Schedule,
+        /// The node's parse precedence — `None` for the NaN sentinel (the
+        /// identity never extends an expression to its left), `Some(+inf)`
+        /// for a tight extender, finite for an infix operator.
+        precedence: Option<f64>,
         /// The constructor: a callable leaf (`seed-parse` convention, a
         /// `native` body — invoked, never read into), or null: undefined, for
-        /// a pure delimiter or a data type whose parse role is its schedule.
+        /// a pure delimiter or a data type with no parse role of its own.
         constructor: DyadPtr,
         /// The destructor: null on every seed identity — the honest undefined
         /// until drop semantics exist.
@@ -202,8 +203,7 @@ pub unsafe fn describe(types: &CoreTypes, node: DyadPtr) -> Shape {
         meta::FRACTION_TAG => Shape::Fraction,
         meta::TYPEREC_TAG => Shape::TypeNode {
             kind: meta::kind_of(node).unwrap_or(meta::TOKEN_TAG),
-            precedence: meta::precedence_of(node),
-            schedule: meta::schedule_of(node),
+            precedence: Some(meta::precedence_of(node)).filter(|p| !p.is_nan()),
             constructor: meta::constructor_of(node),
             destructor: meta::destructor_of(node),
         },
@@ -290,76 +290,82 @@ mod tests {
 
     #[test]
     fn every_identity_declares_its_parse_members() {
-        // The sealed model's shared members, pinned for every spelled identity
-        // (issue #30): the schedule byte says how the token places, and the
-        // constructor slot carries its build code — a callable leaf under the
-        // seed-parse convention — exactly where behaviour exists. A pure
-        // delimiter's or data type's constructor is null (its parse role IS
-        // its schedule), and every destructor is null: the honest undefined
-        // until drop semantics exist. No table anywhere backs any of this.
+        // The sealed model's shared members, pinned for every spelled identity:
+        // the precedence field is the extender signal the driver classifies by
+        // (None here = the NaN sentinel, never extends left; +inf = tight
+        // extender; finite = infix), and the constructor slot carries the
+        // parse behaviour — a callable leaf under the seed-parse convention —
+        // exactly where behaviour exists. A pure delimiter's or plain data
+        // type's constructor is null, and every destructor is null: the honest
+        // undefined until drop semantics exist. No table anywhere backs any of
+        // this; there is no schedule byte.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
 
-        let cases: &[(&str, Schedule, bool)] = &[
-            // Operators: infix builds.
-            ("+", Schedule::Infix, true),
-            ("-", Schedule::Infix, true),
-            ("*", Schedule::Infix, true),
-            ("/", Schedule::Infix, true),
-            ("%", Schedule::Infix, true),
-            ("<", Schedule::Infix, true),
-            (">", Schedule::Infix, true),
-            ("<=", Schedule::Infix, true),
-            (">=", Schedule::Infix, true),
-            ("==", Schedule::Infix, true),
-            ("!=", Schedule::Infix, true),
-            ("and", Schedule::Infix, true),
-            ("or", Schedule::Infix, true),
-            ("=", Schedule::Infix, true),
-            // Literals and the prefix keyword.
-            ("42", Schedule::Atom, true),
-            ("«t»", Schedule::Atom, true),
-            ("return", Schedule::Prefix, true),
-            // Keyword constructors.
-            ("struct", Schedule::Struct, true),
-            ("fn", Schedule::Fn, true),
-            ("if", Schedule::If, true),
-            ("not", Schedule::Not, true),
-            ("while", Schedule::While, true),
-            ("for", Schedule::For, true),
-            (".", Schedule::Dot, true),
-            ("@", Schedule::At, true),
-            ("&", Schedule::Amp, true),
-            // `(` is a tight extender with a real constructor (call with a
-            // left dyad, grouping scope without).
-            ("(", Schedule::Open, true),
-            // Pure delimiters: constructor undefined.
-            (")", Schedule::Close, false),
-            (",", Schedule::Separator, false),
-            (":", Schedule::Colon, false),
-            (":=", Schedule::Declare, false),
-            ("->", Schedule::Arrow, false),
-            ("else", Schedule::Else, false),
-            ("in", Schedule::In, false),
-            ("..", Schedule::DotDot, false),
+        const INF: f64 = f64::INFINITY;
+        let cases: &[(&str, Option<f64>, bool)] = &[
+            // Operators: finite precedence, constructor invoked at reduction.
+            ("+", Some(2.0), true),
+            ("-", Some(2.0), true),
+            ("*", Some(3.0), true),
+            ("/", Some(3.0), true),
+            ("%", Some(3.0), true),
+            ("<", Some(1.5), true),
+            (">", Some(1.5), true),
+            ("<=", Some(1.5), true),
+            (">=", Some(1.5), true),
+            ("==", Some(1.4), true),
+            ("!=", Some(1.4), true),
+            ("and", Some(1.2), true),
+            ("or", Some(1.1), true),
+            ("=", Some(1.0), true),
+            // Literals and the prefix keyword: fresh-start constructors.
+            ("42", None, true),
+            ("«t»", None, true),
+            ("return", None, true),
+            // Keyword constructors: fresh-start.
+            ("struct", None, true),
+            ("fn", None, true),
+            ("if", None, true),
+            ("not", None, true),
+            ("while", None, true),
+            ("for", None, true),
+            ("&", None, true),
+            // Tight extenders: constructor invoked immediately over tape[-1].
+            (".", Some(INF), true),
+            ("@", Some(INF), true),
+            ("(", Some(INF), true),
+            // Pure delimiters: never extend, constructor undefined.
+            (")", None, false),
+            (",", None, false),
+            (":", None, false),
+            (":=", None, false),
+            ("->", None, false),
+            ("else", None, false),
+            ("in", None, false),
+            ("..", None, false),
             // Numeric types carry the juxtaposition constructor (`i32 3`, the
             // anonymous typed value; declining the right yields the type as a
             // value).
-            ("i32", Schedule::Operand, true),
-            ("f64", Schedule::Operand, true),
+            ("i32", None, true),
+            ("f64", None, true),
             // Data types: plain operands, constructor undefined.
-            ("bool", Schedule::Operand, false),
-            ("void", Schedule::Operand, false),
-            ("type", Schedule::Operand, false),
+            ("bool", None, false),
+            ("void", None, false),
+            ("type", None, false),
         ];
-        for &(spelling, schedule, has_ctor) in cases {
+        for &(spelling, precedence, has_ctor) in cases {
             let id = scopes.resolve(&trie, spelling).unwrap().identity;
             // SAFETY: every resolved identity carries its registration-built record.
             unsafe {
-                assert_eq!(meta::schedule_of(id), schedule, "schedule of {spelling}");
+                let p = meta::precedence_of(id);
+                match precedence {
+                    Some(want) => assert_eq!(p, want, "precedence of {spelling}"),
+                    None => assert!(p.is_nan(), "precedence sentinel of {spelling}"),
+                }
                 let ctor = meta::constructor_of(id);
                 assert_eq!(!ctor.is_null(), has_ctor, "constructor of {spelling}");
                 if has_ctor {
@@ -648,32 +654,30 @@ mod tests {
             // Identities self-describe as types: every shared member readable.
             // An operator carries its constructor (a callable leaf); a data
             // type's constructor and every destructor are the honest undefined.
-            let Shape::TypeNode { kind, precedence, schedule, constructor, destructor } =
+            let Shape::TypeNode { kind, precedence, constructor, destructor } =
                 describe(&types, core.plus)
             else {
                 panic!("an identity self-describes");
             };
-            assert_eq!((kind, precedence, schedule), (meta::TUPLE_TAG, 2.0, Schedule::Infix));
+            assert_eq!((kind, precedence), (meta::TUPLE_TAG, Some(2.0)));
             assert!(!constructor.is_null() && destructor.is_null());
-            let Shape::TypeNode { kind, precedence, schedule, constructor, destructor } =
+            let Shape::TypeNode { kind, precedence, constructor, destructor } =
                 describe(&types, core.i32_)
             else {
                 panic!("an identity self-describes");
             };
-            // A non-extender's precedence is the NaN sentinel: it never extends
-            // an expression to its left, and the driver classifies by exactly
-            // this field (no schedule table). A numeric type carries the
-            // juxtaposition constructor (`i32 3`).
-            assert_eq!((kind, schedule), (NumType::I32 as u8, Schedule::Operand));
-            assert!(precedence.is_nan());
+            // A non-extender's precedence surfaces as None (the NaN sentinel:
+            // it never extends an expression to its left, and the driver
+            // classifies by exactly this field — there is no schedule byte). A
+            // numeric type carries the juxtaposition constructor (`i32 3`).
+            assert_eq!((kind, precedence), (NumType::I32 as u8, None));
             assert!(!constructor.is_null() && destructor.is_null());
-            let Shape::TypeNode { kind, precedence, schedule, constructor, destructor } =
+            let Shape::TypeNode { kind, precedence, constructor, destructor } =
                 describe(&types, core.type_)
             else {
                 panic!("an identity self-describes");
             };
-            assert_eq!((kind, schedule), (meta::TYPEREC_TAG, Schedule::Operand));
-            assert!(precedence.is_nan());
+            assert_eq!((kind, precedence), (meta::TYPEREC_TAG, None));
             assert!(constructor.is_null() && destructor.is_null());
         }
     }

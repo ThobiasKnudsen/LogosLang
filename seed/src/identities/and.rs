@@ -18,7 +18,7 @@ use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::parse::{
-    bool_literal_value, is_bool_result, Assoc, CoreTypes, ParseError, Schedule,
+    bool_literal_value, is_bool_result, Assoc, CoreTypes, ParseError,
 };
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
@@ -32,7 +32,6 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         meta::TUPLE_TAG,
         1.2,
         Assoc::Left,
-        Schedule::Infix,
         &["lhs", "rhs", "op"],
     );
     let id = cx.store.alloc_raw(cx.type_, record);

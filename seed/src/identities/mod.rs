@@ -46,7 +46,7 @@ use std::collections::HashMap;
 
 use crate::compile::LowerTable;
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc, ConstructFn, CoreTypes, ParseError, Schedule, FN_OUTPUT};
+use crate::parse::{Assoc, ConstructFn, CoreTypes, ParseError, FN_OUTPUT};
 use crate::regex_trie::RegexTrie;
 use crate::store::Store;
 
@@ -299,7 +299,7 @@ impl Core {
         // fixed point); a `scope`'s value is `[exprs, op]` — its expression
         // array and its sequence native (a scope IS an array; the list is
         // never inline in the node).
-        let record = meta::record(cx.store, meta::TYPEREC_TAG, f64::NAN, Schedule::Operand);
+        let record = meta::record(cx.store, meta::TYPEREC_TAG, f64::NAN);
         // SAFETY: `type_`/`scope_` were allocated above with null value slots
         // nothing has read yet.
         unsafe {
@@ -317,7 +317,6 @@ impl Core {
             meta::TUPLE_TAG,
             f64::NAN,
             Assoc::Left,
-            Schedule::Operand,
             &["exprs", "op"],
         );
         unsafe {

@@ -11,7 +11,6 @@
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::Schedule;
 
 /// Register `(` and `)`, returning their handles (the parser's expect-helpers
 /// compare against them). The spellings are escaped (`\(`, `\)`) because
@@ -20,7 +19,7 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
     // `(` is a *tight extender*: with a completed dyad to its left it is a
     // call (juxtaposition binds tightest — DESIGN ›the call paren tightest‹),
     // without one its constructor opens a grouping scope.
-    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::INFINITY, Schedule::Open);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::INFINITY);
     let open = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(r"\(", IdContext::new(open, cx.root_scope));
     cx.metas.insert(open, |p, _id, tape| {
@@ -37,7 +36,7 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
         }
     });
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN, Schedule::Close);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN);
     let close = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(r"\)", IdContext::new(close, cx.root_scope));
 

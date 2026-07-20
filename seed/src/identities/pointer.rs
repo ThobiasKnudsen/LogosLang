@@ -35,7 +35,7 @@ use super::{commit_if_literal, meta, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, CoreTypes, ParseError, Schedule};
+use crate::parse::{Assoc, CoreTypes, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -48,7 +48,7 @@ pub(super) fn register(
     cx: &mut Cx,
     cs: &Callables,
 ) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
-    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::INFINITY, Schedule::At);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::INFINITY);
     let at = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("@", IdContext::new(at, cx.root_scope));
     // `@`'s constructor reads its own left context (the model's tape[-1]): a
@@ -65,7 +65,7 @@ pub(super) fn register(
         .map(crate::parse::Constructed::Node)
     });
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN, Schedule::Amp);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN);
     let amp = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("&", IdContext::new(amp, cx.root_scope));
     cx.metas
@@ -76,7 +76,6 @@ pub(super) fn register(
         meta::TUPLE_TAG,
         f64::NAN,
         Assoc::Left,
-        Schedule::Operand,
         &["pointer", "pointee", "offset", "op"],
     );
     let deref = cx.store.alloc_raw(cx.type_, record);
@@ -88,7 +87,6 @@ pub(super) fn register(
         meta::TUPLE_TAG,
         f64::NAN,
         Assoc::Left,
-        Schedule::Operand,
         &["pointer", "value", "pointee", "offset", "op"],
     );
     let storeptr = cx.store.alloc_raw(cx.type_, record);
@@ -103,7 +101,6 @@ pub(super) fn register(
         meta::TUPLE_TAG,
         f64::NAN,
         Assoc::Left,
-        Schedule::Operand,
         &["place", "pointee", "op"],
     );
     let addr = cx.store.alloc_raw(cx.type_, record);

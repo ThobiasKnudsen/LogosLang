@@ -20,7 +20,7 @@ use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, ParseError, Schedule};
+use crate::parse::{Assoc, ParseError};
 use crate::run::{RunError, Runtime};
 
 /// Register `return`: spelling, prefix constructor, native leaf, and lowering.
@@ -33,7 +33,6 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         meta::TUPLE_TAG,
         f64::NAN,
         Assoc::Left,
-        Schedule::Prefix,
         &["value", "op"],
     );
     let id = cx.store.alloc_raw(cx.type_, record);

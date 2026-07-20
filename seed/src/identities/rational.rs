@@ -26,13 +26,13 @@ use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Constructed, ParseError, ParsingTape, Parser, Schedule};
+use crate::parse::{Constructed, ParseError, ParsingTape, Parser};
 use crate::store::Store;
 
 /// Register `rational_number`: its spelling (integers or decimals), literal
 /// constructor, and lowering.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let record = meta::record(cx.store, meta::FRACTION_TAG, f64::NAN, Schedule::Atom);
+    let record = meta::record(cx.store, meta::FRACTION_TAG, f64::NAN);
     let id = cx.store.alloc_raw(cx.type_, record);
     // Digits and an optional fractional part. Unanchored: the lexer longest-matches
     // a prefix of the remaining input. The span is unsigned — `-` is always the
