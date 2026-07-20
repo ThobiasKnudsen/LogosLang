@@ -34,9 +34,9 @@ pub(super) fn register(store: &mut Store, type_: DyadPtr) -> DyadPtr {
 }
 
 /// Register `fn`'s surface syntax: the `fn` spelling and its `Fn` construct, plus
-/// the `->` return arrow. Done after the build context exists so it can add to the
-/// parser's table.
-pub(super) fn register_syntax(cx: &mut Cx) {
+/// the `->` return arrow, whose handle is returned. Done after the build context
+/// exists so it can add to the parser's table.
+pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
     cx.trie.insert("fn", IdContext::new(cx.fn_type, cx.root_scope));
     // `fn`'s constructor claims the pending declaration placeholder (the driver
     // suppresses it when the literal does not open a (sub-)expression), so a
@@ -69,6 +69,7 @@ pub(super) fn register_syntax(cx: &mut Cx) {
     let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Arrow);
     let arrow = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("->", IdContext::new(arrow, cx.root_scope));
+    arrow
 }
 
 /// Register `compile`, the `fn` type's shared member (DESIGN ›Execution is

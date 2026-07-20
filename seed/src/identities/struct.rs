@@ -25,8 +25,9 @@ use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::parse::{Assoc, Schedule};
 
-/// Register `struct` and the field-list punctuation (`:`, `,`) it consumes.
-pub(super) fn register(cx: &mut Cx) -> DyadPtr {
+/// Register `struct` and the field-list punctuation (`:`, `,`) it consumes,
+/// returning all three handles.
+pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr) {
     // A struct definition's value is `[scope, field…, null]`: one fixed slot,
     // then the variadic field list.
     let record =
@@ -44,5 +45,5 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let comma = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(",", IdContext::new(comma, cx.root_scope));
 
-    struct_
+    (struct_, colon, comma)
 }

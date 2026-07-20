@@ -516,6 +516,28 @@ pub struct CoreTypes {
     pub callable_: DyadPtr,
     /// `container-i64`: the convention compiled artifacts are minted under.
     pub conv_container: DyadPtr,
+    /// `(` — the opening paren/call token; the expect-helpers compare against it.
+    pub open_: DyadPtr,
+    /// `)` — the closing paren token.
+    pub close_: DyadPtr,
+    /// `:` — the typed-declaration / field-list token.
+    pub colon_: DyadPtr,
+    /// `,` — the one explicit separator.
+    pub sep_: DyadPtr,
+    /// `->` — the return-type arrow.
+    pub arrow_: DyadPtr,
+    /// `else` — the branch token `if`'s constructor consumes.
+    pub else_: DyadPtr,
+    /// `in` — the loop-range token `for`'s constructor consumes.
+    pub in_: DyadPtr,
+    /// `..` — the range token `for`'s constructor consumes.
+    pub dotdot_: DyadPtr,
+    /// `.` — the field-access token (its constructor consumes `tape[-1]`).
+    pub dot_: DyadPtr,
+    /// `@` — the pointer token (postfix deref / pointer-type prefix).
+    pub at_: DyadPtr,
+    /// `:=` — the declaration token.
+    pub declare_tok: DyadPtr,
     /// The concrete-op leaves (`add_i32`, `lt_f64`, `store_u8`, …): the
     /// parse-time resolver's `(family, operand type) → leaf` table. A builder
     /// resolves an application to one leaf and stores it in the node's op slot;
@@ -1113,12 +1135,11 @@ impl<'a> Parser<'a> {
             .scopes
             .resolve(self.trie, &source[start..])
             .map_err(ParseError::Resolve)?;
-        match self.schedule(r.identity) {
-            Schedule::Close => {
-                self.pos = start + r.matched;
-                Ok(())
-            }
-            _ => Err(ParseError::UnclosedBracket),
+        if r.identity == self.types.close_ {
+            self.pos = start + r.matched;
+            Ok(())
+        } else {
+            Err(ParseError::UnclosedBracket)
         }
     }
 
@@ -1206,42 +1227,54 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Peek the next token's identity and length without consuming it — the
+    /// graph, not a schedule table, is what the callers compare against
+    /// (`id == self.types.else_`). `None` at end of input or when nothing
+    /// resolves.
+    fn peek_token(&mut self) -> Option<(DyadPtr, usize)> {
+        self.skip_trivia();
+        let source = self.source;
+        if self.pos >= source.len() {
+            return None;
+        }
+        let r = self.scopes.resolve(self.trie, &source[self.pos..]).ok()?;
+        Some((r.identity, r.matched))
+    }
+
+    /// Consume the next token if it is the identity `id`, reporting whether it
+    /// was.
+    fn consume_token(&mut self, id: DyadPtr) -> bool {
+        match self.peek_token() {
+            Some((t, matched)) if t == id => {
+                self.pos += matched;
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Consume the `(` that opens a field list, or fail.
     fn expect_open(&mut self) -> Result<(), ParseError> {
-        match self.peek_kind() {
-            Some((_, matched, Schedule::Open)) => {
-                self.pos += matched;
-                Ok(())
-            }
-            _ => Err(ParseError::ExpectedOpen),
+        if self.consume_token(self.types.open_) {
+            Ok(())
+        } else {
+            Err(ParseError::ExpectedOpen)
         }
     }
 
     /// Consume a `:` if the next token is one, reporting whether it was.
     fn consume_colon(&mut self) -> bool {
-        match self.peek_kind() {
-            Some((_, matched, Schedule::Colon)) => {
-                self.pos += matched;
-                true
-            }
-            _ => false,
-        }
+        self.consume_token(self.types.colon_)
     }
 
     /// Consume a `,` if the next token is one, reporting whether it was.
     fn consume_separator(&mut self) -> bool {
-        match self.peek_kind() {
-            Some((_, matched, Schedule::Separator)) => {
-                self.pos += matched;
-                true
-            }
-            _ => false,
-        }
+        self.consume_token(self.types.sep_)
     }
 
     /// Whether the next token is a closing `)` (peek, no consume).
     fn at_close(&mut self) -> bool {
-        matches!(self.peek_kind(), Some((_, _, Schedule::Close)))
+        matches!(self.peek_token(), Some((id, _)) if id == self.types.close_)
     }
 
     /// Read a raw identifier `[A-Za-z_][A-Za-z0-9_]*` at the cursor, advancing past
@@ -1505,8 +1538,7 @@ impl<'a> Parser<'a> {
         // value-ness — else-less it is unit, exactly as the explicit form is — so the
         // sugar builds a structurally identical tree and introduces no new case.
         let els = if self.consume_else() {
-            if let Some((_, matched, Schedule::If)) = self.peek_kind() {
-                self.pos += matched;
+            if self.consume_token(self.types.if_) {
                 self.parse_if(if_type)?
             } else {
                 self.expect_open()?;
@@ -1558,8 +1590,7 @@ impl<'a> Parser<'a> {
         }
         self.skip_group()?;
         if self.consume_else() {
-            if let Some((_, matched, Schedule::If)) = self.peek_kind() {
-                self.pos += matched;
+            if self.consume_token(self.types.if_) {
                 return self.parse_if(if_type);
             }
             self.expect_open()?;
@@ -1643,8 +1674,7 @@ impl<'a> Parser<'a> {
     /// the rest of the chain can never run.
     fn skip_else_tail(&mut self) -> Result<(), ParseError> {
         loop {
-            if let Some((_, matched, Schedule::If)) = self.peek_kind() {
-                self.pos += matched;
+            if self.consume_token(self.types.if_) {
                 self.skip_group()?; // ( cond )
                 self.skip_group()?; // ( then )
                 if self.consume_else() {
@@ -1726,22 +1756,18 @@ impl<'a> Parser<'a> {
         let (nstart, nlen) = self.lex_identifier().ok_or(ParseError::ExpectedLoopVar)?;
         let source = self.source;
         let name = &source[nstart..nstart + nlen];
-        match self.peek_kind() {
-            Some((_, matched, Schedule::In)) => self.pos += matched,
-            _ => return Err(ParseError::ExpectedIn),
+        if !self.consume_token(self.types.in_) {
+            return Err(ParseError::ExpectedIn);
         }
         let start = self.parse_range_operand()?;
-        match self.peek_kind() {
-            Some((_, matched, Schedule::DotDot)) => self.pos += matched,
-            _ => return Err(ParseError::ExpectedRange),
+        if !self.consume_token(self.types.dotdot_) {
+            return Err(ParseError::ExpectedRange);
         }
         let end = self.parse_range_operand()?;
-        let step = match self.peek_kind() {
-            Some((_, matched, Schedule::DotDot)) => {
-                self.pos += matched;
-                Some(self.parse_range_operand()?)
-            }
-            _ => None,
+        let step = if self.consume_token(self.types.dotdot_) {
+            Some(self.parse_range_operand()?)
+        } else {
+            None
         };
 
         // Resolve the loop type across the range parts (concrete types must
@@ -1809,49 +1835,46 @@ impl<'a> Parser<'a> {
             .resolve(self.trie, &source[self.pos..])
             .map_err(ParseError::Resolve)?;
         let id = r.identity;
-        match self.schedule(id) {
+        if id == self.types.open_ {
             // An explicit parenthesized expression.
-            Schedule::Open => {
-                self.pos += r.matched;
-                let e = self.parse_sequence()?;
-                self.expect_close()?;
-                Ok(e)
-            }
+            self.pos += r.matched;
+            let e = self.parse_sequence()?;
+            self.expect_close()?;
+            Ok(e)
+        } else if id == self.types.rational || id == self.types.string_ {
             // A literal.
-            Schedule::Atom => {
-                let start = self.pos;
-                self.pos += r.matched;
-                self.construct_leaf(id, start, r.matched)?.ok_or(ParseError::ExpectedRange)
-            }
+            let start = self.pos;
+            self.pos += r.matched;
+            self.construct_leaf(id, start, r.matched)?.ok_or(ParseError::ExpectedRange)
+        } else if id == self.types.minus {
             // A negated literal (`-` then a rational), as in the driver.
-            Schedule::Infix if id == self.types.minus => {
-                self.pos += r.matched;
-                if let Some((lit, matched, Schedule::Atom)) = self.peek_kind() {
-                    if lit == self.types.rational {
-                        let lstart = self.pos;
-                        self.pos += matched;
-                        let span = &source[lstart..lstart + matched];
-                        let dyad = crate::identities::rational::build(self.store, lit, span)?;
-                        // SAFETY: `dyad` is the rational literal just built.
-                        return Ok(unsafe {
-                            crate::identities::rational::negate(self.store, lit, dyad)
-                        });
-                    }
-                }
-                Err(ParseError::ExpectedRange)
-            }
-            // A plain resolved name, with an optional `.field` chain.
-            Schedule::Operand => {
-                self.pos += r.matched;
-                let mut node = id;
-                while let Some((_, matched, Schedule::Dot)) = self.peek_kind() {
+            self.pos += r.matched;
+            if let Some((lit, matched)) = self.peek_token() {
+                if lit == self.types.rational {
+                    let lstart = self.pos;
                     self.pos += matched;
-                    // SAFETY: `node` is a resolved dyad from the store.
-                    node = unsafe { self.parse_field_access(node)? };
+                    let span = &source[lstart..lstart + matched];
+                    let dyad = crate::identities::rational::build(self.store, lit, span)?;
+                    // SAFETY: `dyad` is the rational literal just built.
+                    return Ok(unsafe {
+                        crate::identities::rational::negate(self.store, lit, dyad)
+                    });
                 }
-                Ok(node)
             }
-            _ => Err(ParseError::ExpectedRange),
+            Err(ParseError::ExpectedRange)
+        } else if self.schedule(id) == Schedule::Operand {
+            // A plain resolved name, with an optional `.field` chain. (The
+            // operand-ness test rides the schedule byte until the driver's
+            // classifier replaces it.)
+            self.pos += r.matched;
+            let mut node = id;
+            while self.consume_token(self.types.dot_) {
+                // SAFETY: `node` is a resolved dyad from the store.
+                node = unsafe { self.parse_field_access(node)? };
+            }
+            Ok(node)
+        } else {
+            Err(ParseError::ExpectedRange)
         }
     }
 
@@ -2039,8 +2062,7 @@ impl<'a> Parser<'a> {
     /// the identity.
     pub(crate) fn parse_pointer_type(&mut self) -> Result<DyadPtr, ParseError> {
         let mut depth = 1usize;
-        while let Some((_, matched, Schedule::At)) = self.peek_kind() {
-            self.pos += matched;
+        while self.consume_token(self.types.at_) {
             depth += 1;
         }
         self.skip_trivia();
@@ -2090,8 +2112,7 @@ impl<'a> Parser<'a> {
         }
         self.pos += r.matched;
         let mut node = r.identity;
-        while let Some((_, matched, Schedule::Dot)) = self.peek_kind() {
-            self.pos += matched;
+        while self.consume_token(self.types.dot_) {
             // SAFETY: `node` is a resolved dyad from the store.
             node = unsafe { self.parse_field_access(node)? };
         }
@@ -2119,31 +2140,22 @@ impl<'a> Parser<'a> {
 
     /// Consume an `else` if the next token is one, reporting whether it was.
     fn consume_else(&mut self) -> bool {
-        match self.peek_kind() {
-            Some((_, matched, Schedule::Else)) => {
-                self.pos += matched;
-                true
-            }
-            _ => false,
-        }
+        self.consume_token(self.types.else_)
     }
 
     /// Consume the `->` that separates a fn's parameter list from its return type.
     fn expect_arrow(&mut self) -> Result<(), ParseError> {
-        match self.peek_kind() {
-            Some((_, matched, Schedule::Arrow)) => {
-                self.pos += matched;
-                Ok(())
-            }
-            _ => Err(ParseError::ExpectedArrow),
+        if self.consume_token(self.types.arrow_) {
+            Ok(())
+        } else {
+            Err(ParseError::ExpectedArrow)
         }
     }
 
     /// Parse a fn's return type: a single resolved type identity (`i32`, …) or a
     /// pointer type (`@i32`). Compound type expressions arrive later.
     fn parse_return_type(&mut self) -> Result<DyadPtr, ParseError> {
-        if let Some((_, matched, Schedule::At)) = self.peek_kind() {
-            self.pos += matched;
+        if self.consume_token(self.types.at_) {
             return self.parse_pointer_type();
         }
         self.skip_trivia();
@@ -2350,7 +2362,7 @@ impl<'a> Parser<'a> {
                 // metatype(0)`) comptime-resolves to its concrete type first — the
                 // dependent declaration is the same declaration. The fresh-name
                 // gate keeps a resolvable name before `:` a field-list `:`.
-                if matches!(self.peek_kind(), Some((_, _, Schedule::Colon)))
+                if matches!(self.peek_token(), Some((id, _)) if id == self.types.colon_)
                     && matches!(tape.last(), None | Some(Cell::Dyad(_)))
                     && self.scopes.resolve(self.trie, &source[nstart..]).is_err()
                 {
@@ -2360,7 +2372,7 @@ impl<'a> Parser<'a> {
                         self.pos = start;
                         break;
                     }
-                    let Some((_, matched, _)) = self.peek_kind() else { unreachable!() };
+                    let Some((_, matched)) = self.peek_token() else { unreachable!() };
                     self.pos += matched; // consume `:`
                     // The type first, the name after: the declared type must be a
                     // comptime-known type value, and the name is not yet bound
@@ -2414,13 +2426,14 @@ impl<'a> Parser<'a> {
                     tape.push(Cell::Dyad(node));
                     continue;
                 }
-                if let Some((_, matched, Schedule::Declare)) = self.peek_kind() {
+                if matches!(self.peek_token(), Some((id, _)) if id == self.types.declare_tok) {
                     // A declaration after a completed dyad starts the NEXT
                     // expression (expressions are self-delimiting): stop before it.
                     if matches!(tape.last(), Some(Cell::Dyad(_))) {
                         self.pos = start;
                         break;
                     }
+                    let Some((_, matched)) = self.peek_token() else { unreachable!() };
                     self.pos += matched; // consume `:=`
                     // `source` is `&'a str` (Copy), independent of the `&mut self`
                     // the declaration and value parse then need (as in `parse_struct`).
@@ -2530,7 +2543,7 @@ impl<'a> Parser<'a> {
                 // both runtime branches ([`ParseError::NonComptimeTypeAssign`]).
                 // A second fill finds a real type node, never the placeholder, and
                 // falls through to ordinary (rejected) assignment: define-once.
-                if let Some((eq_id, matched, _)) = self.peek_kind() {
+                if let Some((eq_id, matched)) = self.peek_token() {
                     if eq_id == self.types.assign {
                         if let Ok(r) = self.scopes.resolve(self.trie, &source[nstart..]) {
                             let binding = r.identity;
@@ -2848,7 +2861,7 @@ impl<'a> Parser<'a> {
                     if id == self.types.minus
                         && (after_type || !matches!(tape.last(), Some(Cell::Dyad(_))))
                     {
-                        if let Some((lit, matched, Schedule::Atom)) = self.peek_kind() {
+                        if let Some((lit, matched)) = self.peek_token() {
                             if lit == self.types.rational {
                                 let lstart = self.pos;
                                 self.pos += matched;

@@ -199,9 +199,31 @@ pub struct Core {
     pub conv_seed_native: DyadPtr,
     /// `container-i64`: the compiled-artifact convention (uniform `i64` containers).
     pub conv_container_i64: DyadPtr,
-    /// `seed-parse`: the constructor-shim convention (signature per the
-    /// identity's schedule byte).
+    /// `seed-parse`: the constructor convention (one [`ConstructFn`] signature
+    /// for every identity).
     pub conv_seed_parse: DyadPtr,
+    /// `(` — the opening paren/call token (parse-only).
+    pub open_: DyadPtr,
+    /// `)` — the closing paren token (parse-only).
+    pub close_: DyadPtr,
+    /// `:` — the typed-declaration / field-list token (parse-only).
+    pub colon_: DyadPtr,
+    /// `,` — the one explicit separator (parse-only).
+    pub sep_: DyadPtr,
+    /// `->` — the return-type arrow (parse-only).
+    pub arrow_: DyadPtr,
+    /// `else` — the branch token `if`'s constructor consumes (parse-only).
+    pub else_: DyadPtr,
+    /// `in` — the loop-range token `for`'s constructor consumes (parse-only).
+    pub in_: DyadPtr,
+    /// `..` — the range token `for`'s constructor consumes (parse-only).
+    pub dotdot_: DyadPtr,
+    /// `.` — the field-access token (its constructor consumes `tape[-1]`).
+    pub dot_: DyadPtr,
+    /// `@` — the pointer token (postfix deref / pointer-type prefix).
+    pub at_: DyadPtr,
+    /// `:=` — the declaration token (parse-only).
+    pub declare_tok: DyadPtr,
     /// The concrete-op leaves (`add_i32`, `lt_f64`, `store_u8`, …), indexed for
     /// the parse-time resolver.
     pub ops: ops::OpLeaves,
@@ -327,30 +349,30 @@ impl Core {
         op_leaves.or_ = or_leaf;
         let (not_, not_leaf) = not::register(&mut cx, &callables);
         op_leaves.not_ = not_leaf;
-        let (if_, if_leaf) = if_mod::register(&mut cx, &callables);
+        let (if_, if_leaf, else_) = if_mod::register(&mut cx, &callables);
         op_leaves.if_ = if_leaf;
         let (while_, while_leaf) = while_mod::register(&mut cx, &callables);
         op_leaves.while_ = while_leaf;
-        let (for_, for_leaf) = for_mod::register(&mut cx, &callables);
+        let (for_, for_leaf, in_, dotdot_) = for_mod::register(&mut cx, &callables);
         op_leaves.for_ = for_leaf;
-        fn_mod::register_syntax(&mut cx);
+        let arrow_ = fn_mod::register_syntax(&mut cx);
         // `compile`, the fn type's shared member (`f.compile()`); no spelling
         // — it resolves after `.` on an fn-typed value.
         let (compile_, compile_leaf) = fn_mod::register_compile(&mut cx, &callables);
         op_leaves.compile_ = compile_leaf;
-        paren::register(&mut cx);
+        let (open_, close_) = paren::register(&mut cx);
         let (return_, return_leaf) = return_mod::register(&mut cx, &callables);
         op_leaves.return_ = return_leaf;
         // `:=`: the driver dispatches on the token's Construct and builds a
         // declare node — the declaration is graph structure, not parse vapor.
-        let (declare_, declare_leaf) = declare::register(&mut cx, &callables);
+        let (declare_, declare_leaf, declare_tok) = declare::register(&mut cx, &callables);
         op_leaves.declare_ = declare_leaf;
-        let struct_ = struct_mod::register(&mut cx);
+        let (struct_, colon_, sep_) = struct_mod::register(&mut cx);
         // Struct instances: the construction statement and the `.` field access.
-        let (construct_, construct_leaf) = instance::register(&mut cx, &callables);
+        let (construct_, construct_leaf, dot_) = instance::register(&mut cx, &callables);
         op_leaves.construct_ = construct_leaf;
         // Pointers: the `@`/`&` tokens and the deref/storeptr identities.
-        let (deref_, storeptr_, addr_, deref_leaf, storeptr_leaf, addr_leaf) =
+        let (deref_, storeptr_, addr_, deref_leaf, storeptr_leaf, addr_leaf, at_) =
             pointer::register(&mut cx, &callables);
         op_leaves.deref_ = deref_leaf;
         op_leaves.storeptr_ = storeptr_leaf;
@@ -426,6 +448,17 @@ impl Core {
             conv_seed_native: callables.seed_native,
             conv_container_i64: callables.container_i64,
             conv_seed_parse: callables.seed_parse,
+            open_,
+            close_,
+            colon_,
+            sep_,
+            arrow_,
+            else_,
+            in_,
+            dotdot_,
+            dot_,
+            at_,
+            declare_tok,
             ops: op_leaves,
             lower,
         }
@@ -474,6 +507,17 @@ impl Core {
             compile_: self.compile_,
             callable_: self.callable_,
             conv_container: self.conv_container_i64,
+            open_: self.open_,
+            close_: self.close_,
+            colon_: self.colon_,
+            sep_: self.sep_,
+            arrow_: self.arrow_,
+            else_: self.else_,
+            in_: self.in_,
+            dotdot_: self.dotdot_,
+            dot_: self.dot_,
+            at_: self.at_,
+            declare_tok: self.declare_tok,
             ops: self.ops,
         }
     }

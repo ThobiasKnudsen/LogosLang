@@ -47,7 +47,7 @@ use crate::store::Store;
 pub(super) fn register(
     cx: &mut Cx,
     cs: &Callables,
-) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
+) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::At);
     let at = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("@", IdContext::new(at, cx.root_scope));
@@ -110,7 +110,7 @@ pub(super) fn register(
     cx.lower.insert(addr, lower_addr);
     let addr_leaf = callable::mint_native(cx.store, cs.callable, run_addr, cs.seed_native);
 
-    (deref, storeptr, addr, deref_leaf, storeptr_leaf, addr_leaf)
+    (deref, storeptr, addr, deref_leaf, storeptr_leaf, addr_leaf, at)
 }
 
 /// Build an address-of node `{ty: addr, value: [place, pointee, op]}` over a

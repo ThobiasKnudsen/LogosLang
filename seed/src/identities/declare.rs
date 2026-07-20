@@ -41,8 +41,8 @@ const DECL_DECLARED: usize = 1;
 /// Register the `:=` token (the driver dispatches on its `Schedule::Declare`;
 /// the trie longest-matches `:=` over the field-list `:`) and the `declare`
 /// identity its expressions are typed by, with its native leaf and lowering.
-/// Returns `(declare identity, leaf)`.
-pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
+/// Returns `(declare identity, leaf, := token)`.
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Declare);
     let token = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(":=", IdContext::new(token, cx.root_scope));
@@ -58,7 +58,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let declare = cx.store.alloc_raw(cx.type_, record);
     cx.lower.insert(declare, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
-    (declare, leaf)
+    (declare, leaf, token)
 }
 
 /// Build a declare node `{ty: declare, value: [name, declared, op]}`.

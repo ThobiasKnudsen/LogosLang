@@ -32,7 +32,7 @@ use crate::run::{RunError, Runtime};
 /// structural `in` and `..` tokens the parser consumes. `..` registers escaped
 /// (`.` is a regex metacharacter); the trie's longest-match keeps it distinct
 /// from the field-access `.` and from a rational's fractional part.
-pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
@@ -55,7 +55,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let range = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(r"\.\.", IdContext::new(range, cx.root_scope));
 
-    (for_, leaf)
+    (for_, leaf, in_, range)
 }
 
 /// The `(var, start, end, step, body)` operands of a `for` node (step null when

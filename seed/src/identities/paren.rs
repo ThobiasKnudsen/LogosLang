@@ -9,12 +9,14 @@
 //! comes with `struct`/`fn`.
 
 use super::{meta, Cx};
+use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::parse::Schedule;
 
-/// Register `(` and `)`. The spellings are escaped (`\(`, `\)`) because `(`/`)`
-/// are regex metacharacters; escaped, they lex as literal single bytes.
-pub(super) fn register(cx: &mut Cx) {
+/// Register `(` and `)`, returning their handles (the parser's expect-helpers
+/// compare against them). The spellings are escaped (`\(`, `\)`) because
+/// `(`/`)` are regex metacharacters; escaped, they lex as literal single bytes.
+pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
     let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Open);
     let open = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(r"\(", IdContext::new(open, cx.root_scope));
@@ -22,4 +24,6 @@ pub(super) fn register(cx: &mut Cx) {
     let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Close);
     let close = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(r"\)", IdContext::new(close, cx.root_scope));
+
+    (open, close)
 }

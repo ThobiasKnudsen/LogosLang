@@ -33,8 +33,8 @@ use crate::store::Store;
 /// Register the instance machinery: the `construct` identity (no spelling; the
 /// parser builds these from a struct-typed callee) with its native leaf and
 /// lowering, and the `.` field-access token (parse-only; access nodes are plain
-/// data). Returns `(identity, leaf)`.
-pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
+/// data). Returns `(identity, leaf, . token)`.
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::operand_record(
         cx,
         meta::LIST_TAG,
@@ -60,7 +60,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         unsafe { p.parse_field_access(left) }.map(crate::parse::Constructed::Node)
     });
 
-    (construct, leaf)
+    (construct, leaf, dot)
 }
 
 /// The layout a struct type stores from its field declarations (DESIGN ›a type

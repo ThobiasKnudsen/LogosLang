@@ -33,8 +33,8 @@ const IF_ELSE: usize = 2;
 
 /// Register `if` (the conditional keyword, its native leaf, and its lowering)
 /// and the `else` token the parser consumes between the branches. Returns
-/// `(identity, leaf)`.
-pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
+/// `(identity, leaf, else token)`.
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
@@ -54,7 +54,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let else_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("else", IdContext::new(else_, cx.root_scope));
 
-    (if_, leaf)
+    (if_, leaf, else_)
 }
 
 /// The `(cond, then, else)` operands of an `if` node (the else null when absent).
