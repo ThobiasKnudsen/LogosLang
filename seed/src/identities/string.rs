@@ -26,7 +26,7 @@ use crate::store::Store;
 /// (no escapes yet, so a `»` cannot occur inside the text; unanchored, like the
 /// rational pattern, so the lexer longest-matches a prefix).
 pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
-    let record = meta::record(cx.store, STRING_TAG, Schedule::Atom);
+    let record = meta::record(cx.store, STRING_TAG, f64::NAN, Schedule::Atom);
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("«[^»]*»", IdContext::new(id, cx.root_scope));
     cx.metas.insert(id, construct);

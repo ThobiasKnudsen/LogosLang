@@ -58,10 +58,10 @@ pub(crate) struct Callables {
 /// Neither type has a spelling: callables are minted by registration loops and
 /// compilation, never written in source (the same as `convert`).
 pub(super) fn register(cx: &mut Cx) -> Callables {
-    let record = meta::record(cx.store, meta::CALLABLE_TAG, crate::parse::Schedule::Operand);
+    let record = meta::record(cx.store, meta::CALLABLE_TAG, f64::NAN, crate::parse::Schedule::Operand);
     let callable = cx.store.alloc_raw(cx.type_, record);
 
-    let record = meta::record(cx.store, meta::CONVENTION_TAG, crate::parse::Schedule::Operand);
+    let record = meta::record(cx.store, meta::CONVENTION_TAG, f64::NAN, crate::parse::Schedule::Operand);
     let convention = cx.store.alloc_raw(cx.type_, record);
 
     let seed_native = mint_convention(cx, convention, b"seed-native");

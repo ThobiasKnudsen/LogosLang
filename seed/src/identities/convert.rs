@@ -33,7 +33,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
-        0.0,
+        f64::NAN,
         Assoc::Left,
         Schedule::Operand,
         &["operand", "from", "to", "op"],

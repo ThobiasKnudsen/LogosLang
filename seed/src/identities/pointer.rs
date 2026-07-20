@@ -48,7 +48,7 @@ pub(super) fn register(
     cx: &mut Cx,
     cs: &Callables,
 ) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
-    let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::At);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::INFINITY, Schedule::At);
     let at = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("@", IdContext::new(at, cx.root_scope));
     // `@`'s constructor reads its own left context (the model's tape[-1]): a
@@ -65,7 +65,7 @@ pub(super) fn register(
         .map(crate::parse::Constructed::Node)
     });
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Amp);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN, Schedule::Amp);
     let amp = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("&", IdContext::new(amp, cx.root_scope));
     cx.metas
@@ -74,7 +74,7 @@ pub(super) fn register(
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
-        0.0,
+        f64::NAN,
         Assoc::Left,
         Schedule::Operand,
         &["pointer", "pointee", "offset", "op"],
@@ -86,7 +86,7 @@ pub(super) fn register(
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
-        0.0,
+        f64::NAN,
         Assoc::Left,
         Schedule::Operand,
         &["pointer", "value", "pointee", "offset", "op"],
@@ -101,7 +101,7 @@ pub(super) fn register(
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
-        0.0,
+        f64::NAN,
         Assoc::Left,
         Schedule::Operand,
         &["place", "pointee", "op"],

@@ -727,6 +727,30 @@ pub enum Constructed {
     Decline,
 }
 
+/// How the driver treats a resolved identity — computed from its record alone:
+/// constructor presence, the precedence field, and the record kind. This is
+/// the whole of the driver's dispatch; there is no schedule table (DESIGN
+/// ›The driver needs only one token of lookahead: it lexes the next token,
+/// reads its `precedence`, and shifts or reduces the frontier accordingly‹).
+#[derive(Clone, Copy)]
+enum Class {
+    /// A plain operand — a user binding, a data-type value: pushed.
+    Operand,
+    /// A finite-precedence extender (an infix operator): shifted and reduced
+    /// by precedence; its constructor is invoked at reduction.
+    Extender(f64, Assoc),
+    /// An infinite-precedence (tight) extender — `(` as a call, postfix
+    /// `.`/`@`: its constructor is invoked immediately over the left context.
+    Tight(ConstructFn),
+    /// A fresh-start constructor (keyword opener, literal, `&`): invoked; it
+    /// consumes forward tokens itself.
+    Construct(ConstructFn),
+    /// A bare delimiter token (`)`, `,`, `:`, `->`, `else`, `in`, `..`, `:=`):
+    /// never consumed by the driver — the expression finalizes and the
+    /// enclosing constructor eats it.
+    Delimiter,
+}
+
 /// Every identity's parse-time constructor — the one `seed-parse` entry
 /// signature its constructor-slot leaf carries. The constructor receives the
 /// parser (a service it re-enters for `parse_expression`, the expect-helpers,
@@ -1124,7 +1148,7 @@ impl<'a> Parser<'a> {
 
     /// Consume the closing `)` that matches an opening `(`, or fail if the body
     /// ended at something else (or the end of input).
-    fn expect_close(&mut self) -> Result<(), ParseError> {
+    pub(crate) fn expect_close(&mut self) -> Result<(), ParseError> {
         self.skip_trivia();
         let source = self.source;
         if self.pos >= source.len() {
@@ -1143,23 +1167,36 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The parse schedule of a resolved identity, read from its shared-member
-    /// record — the graph, not a parser table, says how a token schedules
-    /// (issue #30). Only a type identity carries a record in its value slot
-    /// (its `ty` is the `Type : Type` root); everything else a name can
-    /// resolve to — a user binding, a fn value, a struct type, a type
-    /// variable — is a plain operand.
-    fn schedule(&self, id: DyadPtr) -> Schedule {
+    /// Classify a resolved identity from its record alone — constructor
+    /// presence, the precedence field, and the record kind; no schedule table
+    /// (DESIGN ›it lexes the next token, reads its `precedence`, and shifts or
+    /// reduces the frontier accordingly‹). Only a type identity carries a
+    /// record in its value slot (its `ty` is the `Type : Type` root);
+    /// everything else a name can resolve to — a user binding, a fn value, a
+    /// struct type, a type variable — is a plain operand.
+    fn classify(&self, id: DyadPtr) -> Class {
         // SAFETY: `id` is a resolved dyad from the store; the record read is
         // gated on it being a type identity whose registration built the record.
         unsafe {
-            if !id.is_null()
-                && (*id).ty == self.types.type_
-                && crate::identities::meta::kind_of(id).is_some()
+            if id.is_null()
+                || (*id).ty != self.types.type_
+                || crate::identities::meta::kind_of(id).is_none()
             {
-                crate::identities::meta::schedule_of(id)
-            } else {
-                Schedule::Operand
+                return Class::Operand;
+            }
+            let prec = crate::identities::meta::precedence_of(id);
+            match self.construct_of(id) {
+                Some(c) if prec == f64::INFINITY => Class::Tight(c),
+                Some(_) if prec.is_finite() => {
+                    Class::Extender(prec, crate::identities::meta::assoc_of(id))
+                }
+                Some(c) => Class::Construct(c),
+                None if crate::identities::meta::kind_of(id)
+                    == Some(crate::identities::meta::TOKEN_TAG) =>
+                {
+                    Class::Delimiter
+                }
+                None => Class::Operand,
             }
         }
     }
@@ -1845,10 +1882,8 @@ impl<'a> Parser<'a> {
                 }
             }
             Err(ParseError::ExpectedRange)
-        } else if self.schedule(id) == Schedule::Operand {
-            // A plain resolved name, with an optional `.field` chain. (The
-            // operand-ness test rides the schedule byte until the driver's
-            // classifier replaces it.)
+        } else if matches!(self.classify(id), Class::Operand) {
+            // A plain resolved name, with an optional `.field` chain.
             self.pos += r.matched;
             let mut node = id;
             while self.consume_token(self.types.dot_) {
@@ -2089,7 +2124,7 @@ impl<'a> Parser<'a> {
             .scopes
             .resolve(self.trie, &source[self.pos..])
             .map_err(ParseError::Resolve)?;
-        if self.schedule(r.identity) != Schedule::Operand {
+        if !matches!(self.classify(r.identity), Class::Operand) {
             // Keywords, operators, literals: not places.
             return Err(ParseError::BadAddressOf);
         }
@@ -2149,6 +2184,62 @@ impl<'a> Parser<'a> {
         let r = self.scopes.resolve(self.trie, &source[self.pos..]).map_err(ParseError::Resolve)?;
         self.pos += r.matched;
         Ok(r.identity)
+    }
+
+    /// Build a call `callee ( args )`, the `(` already consumed — the service
+    /// `(`'s constructor re-enters when a completed dyad stands to its left
+    /// (juxtaposition binds tightest). A numeric type callee is a conversion
+    /// (`i32(a)`), a struct type constructs an instance, a type-returning
+    /// callee resolves NOW at comptime; any other callee is an ordinary call.
+    pub(crate) fn parse_call(&mut self, callee: DyadPtr) -> Result<DyadPtr, ParseError> {
+        let args = self.parse_arg_list()?;
+        self.expect_close()?;
+        if crate::identities::is_numtype_node(&self.types, callee) {
+            // SAFETY: `callee` is a numtype node; `args` are reduced dyads.
+            unsafe { crate::identities::build_cast(self.store, &self.types, callee, &args) }
+        } else if unsafe { !(*callee).ty.is_null() && (*callee).ty == self.types.struct_ } {
+            // A struct type applied to its field values constructs an
+            // instance — the type-constructor doctrine, like `i32(a)`.
+            let types = self.types;
+            // SAFETY: `callee` is a struct type node; `args` are reduced dyads
+            // from the store.
+            unsafe {
+                // The instance is a per-call local (a frame slot inside a
+                // function), sized from the struct layout, so a recursive call
+                // fills its own copy.
+                let (_, size) = crate::identities::instance::layout(callee)?;
+                let instance = self.alloc_local(callee, size.max(1));
+                crate::identities::instance::build_ctor(
+                    self.store,
+                    &types,
+                    types.construct_,
+                    callee,
+                    instance,
+                    &args,
+                )
+            }
+        } else {
+            // Each uncommitted literal argument commits to its parameter's
+            // declared type (the typed slot); an unbound callee has no
+            // signature yet and commits nothing.
+            let types = self.types;
+            let mut args = args;
+            // SAFETY: `callee` and `args` are reduced dyads from the store.
+            unsafe {
+                crate::identities::commit_call_args(self.store, &types, callee, &mut args)?;
+            }
+            let call = build_call(self.store, callee, &args);
+            // A call whose callee returns a type is resolved NOW, at comptime:
+            // run it and substitute the concrete type it produces (roadmap
+            // #30), so the result flows as an ordinary type value through
+            // `==`, `:=`, `.type`, and display. SAFETY: `callee`/`call` are
+            // reduced dyads.
+            if unsafe { self.returns_type(callee) } {
+                unsafe { self.eval_type_call(call) }
+            } else {
+                Ok(call)
+            }
+        }
     }
 
     /// Parse a call's argument list: comma-separated value expressions up to the
@@ -2597,74 +2688,65 @@ impl<'a> Parser<'a> {
                 }
             };
             let id = r.identity;
-            let c = self.schedule(id);
+            let class = self.classify(id);
 
-            // A structural delimiter (`)`, `,`, `:`, `->`) ends this
-            // (sub-)expression; leave it unconsumed for the enclosing constructor
-            // (the opener that started the scope, the field-list or fn parser).
-            if matches!(
-                c,
-                Schedule::Close
-                    | Schedule::Separator
-                    | Schedule::Colon
-                    | Schedule::Arrow
-                    | Schedule::Else
-                    | Schedule::Declare
-                    | Schedule::In
-                    | Schedule::DotDot
-            ) {
+            // A bare delimiter (`)`, `,`, `:`, `->`, `else`, `in`, `..`, `:=`)
+            // ends this (sub-)expression; leave it unconsumed for the enclosing
+            // constructor (the opener that started the scope, the field-list or
+            // fn parser).
+            if matches!(class, Class::Delimiter) {
                 break;
             }
-            // A token that starts a new operand while a completed dyad sits at the
-            // tape's tail begins the NEXT expression (DESIGN ›Expressions are
-            // self-delimiting‹): stop without consuming it. An `(` after a dyad
-            // stays a call (juxtaposition binds tightest), and an infix operator
-            // continues the expression, so neither is a boundary.
-            let starts_operand = matches!(
-                c,
-                Schedule::Operand
-                    | Schedule::Atom
-                    | Schedule::Prefix
-                    | Schedule::Struct
-                    | Schedule::Fn
-                    | Schedule::If
-                    | Schedule::Not
-                    | Schedule::While
-                    | Schedule::For
-                    | Schedule::Amp
-            );
-            // `type literal` juxtaposition is not a boundary: a numeric type dyad
-            // directly before a literal consumes it into an anonymous typed value
-            // (DESIGN ›an anonymous typed value is written by juxtaposition‹).
+            // A fresh start — an operand or a fresh-start constructor — while a
+            // completed dyad sits at the tape's tail begins the NEXT expression
+            // (DESIGN ›Expressions are self-delimiting‹): stop without
+            // consuming it. An extender continues the expression (an `(` after
+            // a dyad stays a call — juxtaposition binds tightest), so it is
+            // never a boundary. `type literal` juxtaposition is the one
+            // fresh-start exception: a numeric type dyad directly before a
+            // literal consumes it into an anonymous typed value (DESIGN ›an
+            // anonymous typed value is written by juxtaposition‹).
             let juxtaposition = id == self.types.rational
-                && c == Schedule::Atom
                 && tape
                     .last()
                     .and_then(Cell::as_dyad)
                     .is_some_and(|d| crate::identities::is_numtype_node(&self.types, d));
-            if starts_operand && !juxtaposition && matches!(tape.last(), Some(Cell::Dyad(_))) {
+            if matches!(class, Class::Operand | Class::Construct(_))
+                && !juxtaposition
+                && matches!(tape.last(), Some(Cell::Dyad(_)))
+            {
                 break;
             }
             self.pos = start + r.matched;
 
-            match c {
+            match class {
                 // A plain operand: a reference to the resolved identity. A
                 // frame-local or parameter of an enclosing function (a capture)
                 // is rejected — v1 has no closures.
-                Schedule::Operand => {
+                Class::Operand => {
                     // SAFETY: `id` is a resolved dyad from the store.
                     unsafe { self.check_capture(id)? };
                     tape.push(Cell::Dyad(id));
                 }
-                // A literal: its constructor builds the leaf from the cursor
-                // token's span. A numeric type dyad directly before it consumes
-                // it (juxtaposition): the literal commits exactly to that type,
-                // giving a typed value with real storage (`sum := i32 0`, the
-                // sketch's own spelling).
-                Schedule::Atom => {
-                    let construct = self.construct_of(id).ok_or(ParseError::BadLiteral)?;
+                // A fresh-start constructor — a keyword opener (`struct`, `fn`,
+                // `if`, `not`, `while`, `for`, `&`), a literal, `return`: jump
+                // it; it consumes its own forward tokens. Two scheduling
+                // nuances still ride here: `fn`'s declaration handoff — the
+                // pending placeholder is claimed by `fn`'s constructor only
+                // when the literal opens a (sub-)expression (an empty tape) —
+                // and `type literal` juxtaposition, where a literal commits to
+                // the numeric type dyad before it (`sum := i32 0`), giving a
+                // typed value with real storage. Both move into the
+                // constructors themselves as the conversion completes.
+                Class::Construct(construct) => {
+                    let suppressed = (id == self.types.fn_type && !tape.is_empty())
+                        .then(|| self.take_pending_fn());
                     tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
-                    let dyad = match construct(self, id, &mut tape)? {
+                    let node = construct(self, id, &mut tape);
+                    if let Some(pending) = suppressed {
+                        self.pending_fn = pending;
+                    }
+                    let dyad = match node? {
                         Constructed::Node(d) => d,
                         Constructed::Decline => {
                             tape.pop();
@@ -2685,130 +2767,15 @@ impl<'a> Parser<'a> {
                         tape.push(Cell::Dyad(dyad));
                     }
                 }
-                // A prefix keyword: its constructor parses the rest of the
-                // expression as its operand. (v1 grabs to the end of the
-                // expression.)
-                Schedule::Prefix => {
-                    let construct = self.construct_of(id).ok_or(ParseError::MissingOperand)?;
-                    tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
-                    let dyad = match construct(self, id, &mut tape)? {
-                        Constructed::Node(d) => d,
-                        Constructed::Decline => {
-                            tape.pop();
-                            self.pos = start;
-                            break;
-                        }
-                    };
-                    tape.pop(); // the construct's own token cell
-                    tape.push(Cell::Dyad(dyad));
-                }
-                // An opening bracket. If a reduced operand precedes it, this is a
-                // call: `callee( args )` (juxtaposition, binding tightest). Else it
-                // is a grouping scope whose value is its body.
-                Schedule::Open => {
-                    if matches!(tape.last(), Some(Cell::Dyad(_))) {
-                        let callee = tape.pop().and_then(|c| c.as_dyad()).unwrap();
-                        let args = self.parse_arg_list()?;
-                        self.expect_close()?;
-                        // A numeric type node applied to a value is a conversion
-                        // (`i32(a)`), the type constructor consuming its operand; any
-                        // other callee is an ordinary call.
-                        let node = if crate::identities::is_numtype_node(&self.types, callee) {
-                            // SAFETY: `callee` is a numtype node; `args` are reduced dyads.
-                            unsafe { crate::identities::build_cast(self.store, &self.types, callee, &args)? }
-                        } else if unsafe {
-                            !(*callee).ty.is_null() && (*callee).ty == self.types.struct_
-                        } {
-                            // A struct type applied to its field values constructs an
-                            // instance — the type-constructor doctrine, like `i32(a)`.
-                            let types = self.types;
-                            // SAFETY: `callee` is a struct type node; `args` are
-                            // reduced dyads from the store.
-                            unsafe {
-                                // The instance is a per-call local (a frame slot
-                                // inside a function), sized from the struct layout,
-                                // so a recursive call fills its own copy.
-                                let (_, size) =
-                                    crate::identities::instance::layout(callee)?;
-                                let instance = self.alloc_local(callee, size.max(1));
-                                crate::identities::instance::build_ctor(
-                                    self.store,
-                                    &types,
-                                    types.construct_,
-                                    callee,
-                                    instance,
-                                    &args,
-                                )?
-                            }
-                        } else {
-                            // Each uncommitted literal argument commits to its
-                            // parameter's declared type (the typed slot); an unbound
-                            // callee has no signature yet and commits nothing.
-                            let types = self.types;
-                            let mut args = args;
-                            // SAFETY: `callee` and `args` are reduced dyads from the store.
-                            unsafe {
-                                crate::identities::commit_call_args(self.store, &types, callee, &mut args)?;
-                            }
-                            let call = build_call(self.store, callee, &args);
-                            // A call whose callee returns a type is resolved NOW, at
-                            // comptime: run it and substitute the concrete type it
-                            // produces (roadmap #30), so the result flows as an
-                            // ordinary type value through `==`, `:=`, `.type`, and
-                            // display. SAFETY: `callee`/`call` are reduced dyads.
-                            if unsafe { self.returns_type(callee) } {
-                                unsafe { self.eval_type_call(call)? }
-                            } else {
-                                call
-                            }
-                        };
-                        tape.push(Cell::Dyad(node));
-                    } else {
-                        let body = self.parse_sequence()?;
-                        self.expect_close()?;
-                        tape.push(Cell::Dyad(body));
-                    }
-                }
-                // An opener keyword (`struct`, `fn`, `if`, `not`, `while`,
-                // `for`, `&`): jump its constructor. The one scheduling nuance
-                // is `fn`'s declaration handoff — the pending placeholder is
-                // claimed by `fn`'s constructor only when the literal opens a
-                // (sub-)expression (an empty tape), so with anything already on
-                // the tape the driver suppresses it around the jump.
-                Schedule::Struct
-                | Schedule::Fn
-                | Schedule::If
-                | Schedule::Not
-                | Schedule::While
-                | Schedule::For
-                | Schedule::Amp => {
-                    let suppressed = (c == Schedule::Fn && !tape.is_empty())
-                        .then(|| self.take_pending_fn());
-                    let construct = self.construct_of(id).ok_or(ParseError::MissingOperand)?;
-                    tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
-                    let node = construct(self, id, &mut tape);
-                    if let Some(pending) = suppressed {
-                        self.pending_fn = pending;
-                    }
-                    let node = match node? {
-                        Constructed::Node(d) => d,
-                        Constructed::Decline => {
-                            tape.pop();
-                            self.pos = start;
-                            break;
-                        }
-                    };
-                    tape.pop(); // the construct's own token cell
-                    tape.push(Cell::Dyad(node));
-                }
-                // A postfix-capable token (`.`, `@`): its constructor reads the
-                // completed dyad to its left from the tape — the model's
-                // `tape[-1]` read. `.` requires one; `@` without one is the
-                // pointer-type prefix. The driver splices: the construct's own
-                // token always, plus the left cell iff a completed dyad stood
-                // there for the constructor to consume.
-                Schedule::Dot | Schedule::At => {
-                    let construct = self.construct_of(id).ok_or(ParseError::MissingOperand)?;
+                // A tight (infinite-precedence) extender — `(` as a call,
+                // postfix `.`/`@`: its constructor is invoked immediately and
+                // reads the completed dyad to its left off the tape — the
+                // model's `tape[-1]` read. `.` requires one; `@` without one
+                // is the pointer-type prefix; `(` without one is a grouping
+                // scope. The driver splices: the construct's own token always,
+                // plus the left cell iff a completed dyad stood there for the
+                // constructor to consume.
+                Class::Tight(construct) => {
                     tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
                     let had_left = tape.left_dyad().is_some();
                     let node = match construct(self, id, &mut tape)? {
@@ -2826,8 +2793,9 @@ impl<'a> Parser<'a> {
                     tape.push(Cell::Dyad(node));
                 }
                 // An operator: reduce anything binding tighter to its left, then
-                // shift it onto the tape as a pending token.
-                Schedule::Infix => {
+                // shift it onto the tape as a pending token; its constructor is
+                // invoked at reduction, when precedence finalizes the cluster.
+                Class::Extender(precedence, assoc) => {
                     // A `-` prefixes a numeric literal (`-` is always an operator;
                     // the literal regex is unsigned) when it has no left operand
                     // (`f(-1)`, `x := -5`) or directly follows a numeric *type*
@@ -2874,30 +2842,15 @@ impl<'a> Parser<'a> {
                             }
                         }
                     }
-                    // Precedence and associativity are the operator's own shared
-                    // members, read from its record — the graph, not the parser's
+                    // Precedence and associativity came off the operator's own
+                    // record at classification — the graph, not a parser
                     // table, is their source of truth.
-                    // SAFETY: `id` is a resolved operator identity from the store,
-                    // carrying the record its registration built.
-                    let (precedence, assoc) = unsafe {
-                        (
-                            crate::identities::meta::precedence_of(id),
-                            crate::identities::meta::assoc_of(id),
-                        )
-                    };
                     self.reduce_pending(&mut tape, precedence, assoc)?;
                     tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
                 }
-                // Handled by the structural-break peek above.
-                Schedule::Close
-                | Schedule::Separator
-                | Schedule::Colon
-                | Schedule::Arrow
-                | Schedule::Else
-                | Schedule::Declare
-                | Schedule::In
-                | Schedule::DotDot => {
-                    unreachable!("structural delimiter ends the loop")
+                // Handled by the delimiter break above.
+                Class::Delimiter => {
+                    unreachable!("a delimiter ends the loop")
                 }
             }
         }

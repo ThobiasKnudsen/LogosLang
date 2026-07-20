@@ -26,7 +26,7 @@ use crate::id_context::IdContext;
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     // A bool is physically an i32 0/1, so its record carries the I32 width kind;
     // its bool-ness lives in the identity itself (comparisons point here).
-    let record = meta::record(cx.store, NumType::I32 as u8, crate::parse::Schedule::Operand);
+    let record = meta::record(cx.store, NumType::I32 as u8, f64::NAN, crate::parse::Schedule::Operand);
     let bool_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("bool", IdContext::new(bool_, cx.root_scope));
     cx.lower.insert(bool_, lower);

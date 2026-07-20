@@ -54,7 +54,7 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
-        0.0,
+        f64::NAN,
         Assoc::Left,
         Schedule::Fn,
         &["input", "output", "body", "bcode", "frame"],
@@ -66,7 +66,7 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
     }
 
     // `->` separates a fn's parameter list from its return type.
-    let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Arrow);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN, Schedule::Arrow);
     let arrow = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("->", IdContext::new(arrow, cx.root_scope));
     arrow
@@ -90,7 +90,7 @@ pub(super) fn register_compile(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
-        0.0,
+        f64::NAN,
         Assoc::Left,
         Schedule::Operand,
         &["function", "code", "op"],

@@ -17,11 +17,27 @@ use crate::parse::Schedule;
 /// compare against them). The spellings are escaped (`\(`, `\)`) because
 /// `(`/`)` are regex metacharacters; escaped, they lex as literal single bytes.
 pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
-    let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Open);
+    // `(` is a *tight extender*: with a completed dyad to its left it is a
+    // call (juxtaposition binds tightest — DESIGN ›the call paren tightest‹),
+    // without one its constructor opens a grouping scope.
+    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::INFINITY, Schedule::Open);
     let open = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(r"\(", IdContext::new(open, cx.root_scope));
+    cx.metas.insert(open, |p, _id, tape| {
+        // The model's `tape[-1]`: a completed dyad makes this a call on it
+        // (`f(x)`, `i32(x)`, `point(3, 4)`); none opens a grouping scope whose
+        // value is its body.
+        match tape.left_dyad() {
+            Some(callee) => p.parse_call(callee).map(crate::parse::Constructed::Node),
+            None => {
+                let body = p.parse_sequence()?;
+                p.expect_close()?;
+                Ok(crate::parse::Constructed::Node(body))
+            }
+        }
+    });
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Close);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN, Schedule::Close);
     let close = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(r"\)", IdContext::new(close, cx.root_scope));
 

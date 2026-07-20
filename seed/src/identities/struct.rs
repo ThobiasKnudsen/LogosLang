@@ -31,17 +31,17 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr) {
     // A struct definition's value is `[scope, field…, null]`: one fixed slot,
     // then the variadic field list.
     let record =
-        meta::operand_record(cx, meta::LIST_TAG, 0.0, Assoc::Left, Schedule::Struct, &["scope"]);
+        meta::operand_record(cx, meta::LIST_TAG, f64::NAN, Assoc::Left, Schedule::Struct, &["scope"]);
     let struct_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("struct", IdContext::new(struct_, cx.root_scope));
     cx.metas
         .insert(struct_, |p, id, _tape| p.parse_struct(id).map(crate::parse::Constructed::Node));
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Colon);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN, Schedule::Colon);
     let colon = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(":", IdContext::new(colon, cx.root_scope));
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Separator);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN, Schedule::Separator);
     let comma = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(",", IdContext::new(comma, cx.root_scope));
 

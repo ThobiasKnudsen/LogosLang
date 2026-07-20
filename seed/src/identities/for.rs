@@ -36,7 +36,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
-        0.0,
+        f64::NAN,
         Assoc::Left,
         Schedule::For,
         &["variable", "start", "end", "step", "body", "op"],
@@ -47,11 +47,11 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     cx.lower.insert(for_, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::In);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN, Schedule::In);
     let in_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("in", IdContext::new(in_, cx.root_scope));
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::DotDot);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN, Schedule::DotDot);
     let range = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(r"\.\.", IdContext::new(range, cx.root_scope));
 

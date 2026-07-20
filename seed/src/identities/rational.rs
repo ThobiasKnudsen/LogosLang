@@ -32,7 +32,7 @@ use crate::store::Store;
 /// Register `rational_number`: its spelling (integers or decimals), literal
 /// constructor, and lowering.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let record = meta::record(cx.store, meta::FRACTION_TAG, Schedule::Atom);
+    let record = meta::record(cx.store, meta::FRACTION_TAG, f64::NAN, Schedule::Atom);
     let id = cx.store.alloc_raw(cx.type_, record);
     // Digits and an optional fractional part. Unanchored: the lexer longest-matches
     // a prefix of the remaining input. The span is unsigned — `-` is always the

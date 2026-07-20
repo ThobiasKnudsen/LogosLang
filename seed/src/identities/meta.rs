@@ -104,11 +104,14 @@ const SCHED_OFF: usize = 26;
 /// operand record's arity + roles).
 pub(crate) const PAYLOAD_OFF: usize = 27;
 
-/// Build a plain record: `kind` and `schedule`, no precedence, no payload. The
-/// scalar types, the text substance, the foundations, and the parse-only tokens
-/// (whose schedule is their whole parse role).
-pub(crate) fn record(store: &mut Store, kind: u8, schedule: Schedule) -> *mut u8 {
-    let blob = header(kind, Assoc::Left, 0.0, schedule);
+/// Build a plain record: `kind`, `precedence`, and `schedule`, no payload. The
+/// scalar types, the text substance, the foundations, and the parse-only
+/// tokens. `precedence` is the extender signal the driver classifies by: NaN
+/// for a token that never extends an expression to its left, `+inf` for a
+/// tight extender (`(` as call, postfix `.`/`@`), finite only on the infix
+/// operators (which carry operand records instead).
+pub(crate) fn record(store: &mut Store, kind: u8, precedence: f64, schedule: Schedule) -> *mut u8 {
+    let blob = header(kind, Assoc::Left, precedence, schedule);
     store.alloc_bytes(&blob)
 }
 
@@ -138,7 +141,7 @@ pub(crate) fn operand_record(
 /// Build a pointer type's record: kind [`ADDR_TAG`], the pointee node as the
 /// payload. Pointer types are created fresh per use and carry no parse members.
 pub(crate) fn pointer_record(store: &mut Store, pointee: DyadPtr) -> *mut u8 {
-    let mut blob = header(ADDR_TAG, Assoc::Left, 0.0, Schedule::Operand).to_vec();
+    let mut blob = header(ADDR_TAG, Assoc::Left, f64::NAN, Schedule::Operand).to_vec();
     blob.extend_from_slice(&(pointee as usize).to_ne_bytes());
     store.alloc_bytes(&blob)
 }
@@ -154,7 +157,7 @@ pub(crate) fn struct_record(
     fields: DyadPtr,
     size_bytes: u64,
 ) -> *mut u8 {
-    let mut blob = header(STRUCT_TAG, Assoc::Left, 0.0, Schedule::Operand).to_vec();
+    let mut blob = header(STRUCT_TAG, Assoc::Left, f64::NAN, Schedule::Operand).to_vec();
     blob.extend_from_slice(&(scope as usize).to_ne_bytes());
     blob.extend_from_slice(&(fields as usize).to_ne_bytes());
     blob.extend_from_slice(&size_bytes.to_ne_bytes());
@@ -189,7 +192,9 @@ pub(crate) unsafe fn struct_size_of(id: DyadPtr) -> u64 {
 }
 
 /// The fixed head of every record: kind, associativity, precedence, the two
-/// reserved slots, and the schedule byte.
+/// reserved slots, and the schedule byte. Precedence doubles as the extender
+/// signal: NaN (never extends left) / finite (infix, shift-reduce) / +inf
+/// (tight extender, constructor invoked immediately over its left).
 fn header(kind: u8, assoc: Assoc, precedence: f64, schedule: Schedule) -> [u8; PAYLOAD_OFF] {
     let mut h = [0u8; PAYLOAD_OFF];
     h[0] = kind;

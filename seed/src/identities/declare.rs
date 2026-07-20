@@ -43,14 +43,14 @@ const DECL_DECLARED: usize = 1;
 /// identity its expressions are typed by, with its native leaf and lowering.
 /// Returns `(declare identity, leaf, := token)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr) {
-    let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Declare);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN, Schedule::Declare);
     let token = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(":=", IdContext::new(token, cx.root_scope));
 
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
-        0.0,
+        f64::NAN,
         Assoc::Left,
         Schedule::Operand,
         &["name", "declared", "op"],

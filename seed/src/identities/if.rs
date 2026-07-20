@@ -38,7 +38,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
-        0.0,
+        f64::NAN,
         Assoc::Left,
         Schedule::If,
         &["condition", "then", "else", "op"],
@@ -50,7 +50,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
 
     // `else` is a parse-only token between the branches, not a function.
-    let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Else);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN, Schedule::Else);
     let else_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("else", IdContext::new(else_, cx.root_scope));
 

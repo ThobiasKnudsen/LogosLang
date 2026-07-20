@@ -333,8 +333,10 @@ mod tests {
             (".", Schedule::Dot, true),
             ("@", Schedule::At, true),
             ("&", Schedule::Amp, true),
-            // Pure delimiters: schedule-only, constructor undefined.
-            ("(", Schedule::Open, false),
+            // `(` is a tight extender with a real constructor (call with a
+            // left dyad, grouping scope without).
+            ("(", Schedule::Open, true),
+            // Pure delimiters: constructor undefined.
             (")", Schedule::Close, false),
             (",", Schedule::Separator, false),
             (":", Schedule::Colon, false),
@@ -655,14 +657,19 @@ mod tests {
             else {
                 panic!("an identity self-describes");
             };
-            assert_eq!((kind, precedence, schedule), (NumType::I32 as u8, 0.0, Schedule::Operand));
+            // A non-extender's precedence is the NaN sentinel: it never extends
+            // an expression to its left, and the driver classifies by exactly
+            // this field (no schedule table).
+            assert_eq!((kind, schedule), (NumType::I32 as u8, Schedule::Operand));
+            assert!(precedence.is_nan());
             assert!(constructor.is_null() && destructor.is_null());
             let Shape::TypeNode { kind, precedence, schedule, constructor, destructor } =
                 describe(&types, core.type_)
             else {
                 panic!("an identity self-describes");
             };
-            assert_eq!((kind, precedence, schedule), (meta::TYPEREC_TAG, 0.0, Schedule::Operand));
+            assert_eq!((kind, schedule), (meta::TYPEREC_TAG, Schedule::Operand));
+            assert!(precedence.is_nan());
             assert!(constructor.is_null() && destructor.is_null());
         }
     }
