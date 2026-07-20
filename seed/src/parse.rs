@@ -1210,23 +1210,6 @@ impl<'a> Parser<'a> {
         std::mem::replace(&mut self.pending_fn, std::ptr::null_mut())
     }
 
-    /// Peek the next token's [`Schedule`] without consuming it. `None` at end
-    /// of input or when the token has no parse role (a plain operand): a fresh
-    /// name resolves to nothing here and is read raw by the field-list parser
-    /// instead.
-    fn peek_kind(&mut self) -> Option<(DyadPtr, usize, Schedule)> {
-        self.skip_trivia();
-        let source = self.source;
-        if self.pos >= source.len() {
-            return None;
-        }
-        let r = self.scopes.resolve(self.trie, &source[self.pos..]).ok()?;
-        match self.schedule(r.identity) {
-            Schedule::Operand => None,
-            s => Some((r.identity, r.matched, s)),
-        }
-    }
-
     /// Peek the next token's identity and length without consuming it — the
     /// graph, not a schedule table, is what the callers compare against
     /// (`id == self.types.else_`). `None` at end of input or when nothing
