@@ -553,7 +553,7 @@ macro_rules! infix_construct {
             id: crate::dyad::DyadPtr,
             tape: &mut crate::parse::ParsingTape,
         ) -> Result<crate::parse::Constructed, crate::parse::ParseError> {
-            let Ok((lhs, rhs)) = tape.binary_operands() else {
+            let Some((lhs, rhs)) = p.binary_operands(tape)? else {
                 return Ok(crate::parse::Constructed::Decline);
             };
             let types = p.types();

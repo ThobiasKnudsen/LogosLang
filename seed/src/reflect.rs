@@ -338,11 +338,13 @@ mod tests {
             (".", Some(INF), true),
             ("@", Some(INF), true),
             ("(", Some(INF), true),
+            // The declaration operators are tight extenders over the name
+            // token to their left, declining anywhere else.
+            (":", Some(INF), true),
+            (":=", Some(INF), true),
             // Pure delimiters: never extend, constructor undefined.
             (")", None, false),
             (",", None, false),
-            (":", None, false),
-            (":=", None, false),
             ("->", None, false),
             ("else", None, false),
             ("in", None, false),

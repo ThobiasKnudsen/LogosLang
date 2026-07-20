@@ -29,9 +29,29 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     );
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("=", IdContext::new(id, cx.root_scope));
-    cx.metas.insert(id, super::infix_construct!(build));
+    cx.metas.insert(id, construct);
     cx.lower.insert(id, lower);
     id
+}
+
+/// `=`'s constructor. At reduction it first tries the type variable's fill —
+/// `name = <type>` over an unfilled placeholder rebinds the name at parse
+/// ([`crate::parse::Parser::try_type_fill`]) — and otherwise builds the
+/// ordinary store. Invoked fresh (no flanking operands) it declines, and the
+/// driver shifts it as a pending operator.
+fn construct(
+    p: &mut crate::parse::Parser,
+    id: DyadPtr,
+    tape: &mut crate::parse::ParsingTape,
+) -> Result<crate::parse::Constructed, ParseError> {
+    if let Some(node) = p.try_type_fill(tape)? {
+        return Ok(crate::parse::Constructed::Node(node));
+    }
+    let Some((lhs, rhs)) = p.binary_operands(tape)? else {
+        return Ok(crate::parse::Constructed::Decline);
+    };
+    let types = p.types();
+    build(p.store(), &types, id, lhs, rhs).map(crate::parse::Constructed::Node)
 }
 
 /// Build `lhs = rhs`, committing an uncommitted literal right side to the target

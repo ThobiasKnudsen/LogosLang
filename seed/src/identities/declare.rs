@@ -38,14 +38,15 @@ use crate::store::Store;
 /// declare node's value; the name string node sits at 0.
 const DECL_DECLARED: usize = 1;
 
-/// Register the `:=` token (a bare delimiter the driver's declaration
-/// lookahead detects; the trie longest-matches `:=` over the field-list `:`)
-/// and the `declare` identity its expressions are typed by, with its native
-/// leaf and lowering. Returns `(declare identity, leaf, := token)`.
+/// Register the `:=` token (a tight extender whose constructor declares the
+/// name token to its left; the trie longest-matches `:=` over the field-list
+/// `:`) and the `declare` identity its expressions are typed by, with its
+/// native leaf and lowering. Returns `(declare identity, leaf, := token)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr) {
-    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::INFINITY);
     let token = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(":=", IdContext::new(token, cx.root_scope));
+    cx.metas.insert(token, |p, _id, tape| p.construct_decl(tape));
 
     let record = meta::operand_record(
         cx,

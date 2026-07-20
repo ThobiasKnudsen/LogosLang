@@ -51,11 +51,11 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     let dot = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(r"\.", IdContext::new(dot, cx.root_scope));
     cx.metas.insert(dot, |p, _id, tape| {
-        // The model's `tape[-1]`: the completed dyad left of the cursor.
-        let Some(left) = tape.left_dyad() else {
+        // The model's `tape[-1]`: the completed operand left of the cursor.
+        let Some(left) = p.left_operand(tape)? else {
             return Err(crate::parse::ParseError::MissingOperand);
         };
-        // SAFETY: `left` is a reduced dyad read off the tape.
+        // SAFETY: `left` is a reduced dyad off the tape.
         unsafe { p.parse_field_access(left) }.map(crate::parse::Constructed::Node)
     });
 

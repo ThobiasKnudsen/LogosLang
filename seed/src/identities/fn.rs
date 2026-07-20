@@ -41,9 +41,21 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
     // `fn`'s constructor claims the pending declaration placeholder (the driver
     // suppresses it when the literal does not open a (sub-)expression), so a
     // recursive self-call inside the body resolves the published signature.
-    cx.metas.insert(cx.fn_type, |p, id, _tape| {
-        let declared = p.take_pending_fn();
-        p.parse_fn(id, declared).map(crate::parse::Constructed::Node)
+    cx.metas.insert(cx.fn_type, |p, id, tape| {
+        // The pending declaration placeholder is claimed only when the literal
+        // opens its (sub-)expression — its own token the only cell on the
+        // tape. Anywhere else the handoff is suppressed around the parse (take
+        // and restore), so a grouped literal deeper in the same declaration's
+        // value can still claim it.
+        if tape.len() == 1 {
+            let declared = p.take_pending_fn();
+            p.parse_fn(id, declared).map(crate::parse::Constructed::Node)
+        } else {
+            let suppressed = p.take_pending_fn();
+            let node = p.parse_fn(id, std::ptr::null_mut());
+            p.restore_pending_fn(suppressed);
+            node.map(crate::parse::Constructed::Node)
+        }
     });
 
     // `fn`'s own record, installed now that the string type exists for the role

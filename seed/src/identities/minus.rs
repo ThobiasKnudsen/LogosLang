@@ -46,7 +46,7 @@ fn construct(
     id: DyadPtr,
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, ParseError> {
-    if let Ok((lhs, rhs)) = tape.binary_operands() {
+    if let Some((lhs, rhs)) = p.binary_operands(tape)? {
         let types = p.types();
         return build(p.store(), &types, id, lhs, rhs).map(crate::parse::Constructed::Node);
     }

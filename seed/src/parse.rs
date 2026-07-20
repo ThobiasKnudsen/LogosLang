@@ -204,21 +204,6 @@ impl ParsingTape {
         true
     }
 
-    /// The completed dyads flanking the cursor — an infix construct's two
-    /// operands, the model's `tape[-1]` and `tape[+1]` reads at reduction.
-    pub fn binary_operands(&self) -> Result<(DyadPtr, DyadPtr), ParseError> {
-        let lhs = self.at(-1).and_then(Cell::as_dyad).ok_or(ParseError::MissingOperand)?;
-        let rhs = self.at(1).and_then(Cell::as_dyad).ok_or(ParseError::MissingOperand)?;
-        Ok((lhs, rhs))
-    }
-
-    /// The completed dyad immediately left of the cursor, if any — a postfix
-    /// construct's left context (`.`'s value, `@`'s pointer), null when the
-    /// construct opens fresh (`@` as the pointer-type prefix).
-    pub fn left_dyad(&self) -> Option<DyadPtr> {
-        self.at(-1).and_then(Cell::as_dyad)
-    }
-
     /// The construct's own token — the cursor cell — its source span still
     /// attached. How an atom constructor reaches its matched text.
     pub fn own_token(&self) -> Option<Token> {
@@ -1118,6 +1103,90 @@ impl<'a> Parser<'a> {
     /// resolves the published signature.
     pub(crate) fn take_pending_fn(&mut self) -> DyadPtr {
         std::mem::replace(&mut self.pending_fn, std::ptr::null_mut())
+    }
+
+    /// Put a taken placeholder back — `fn`'s constructor suppresses the
+    /// handoff around a literal that does not open its (sub-)expression, so a
+    /// grouped literal deeper in the same declaration can still claim it.
+    pub(crate) fn restore_pending_fn(&mut self, pending: DyadPtr) {
+        self.pending_fn = pending;
+    }
+
+    /// True when `cell` stands as a completed operand at the frontier: a
+    /// reduced dyad, or a token that does not extend — a resolved operand or a
+    /// fresh name in waiting (null identity). A pending extender token is not
+    /// an operand.
+    fn is_operand_cell(&self, cell: &Cell) -> bool {
+        match cell {
+            Cell::Dyad(_) => true,
+            Cell::Token(t) => {
+                t.identity.is_null()
+                    || !matches!(
+                        self.classify(t.identity),
+                        Class::Extender(..) | Class::Tight(_)
+                    )
+            }
+        }
+    }
+
+    /// Convert an operand cell to its dyad at consumption — the one seam every
+    /// reader goes through. A reduced dyad passes; a resolved token yields its
+    /// identity (rejecting a capture, as the old scan-time push did); a
+    /// fresh-name token re-resolves its span for the precise error, reported
+    /// at the token's own start — the same message and position the eager
+    /// driver produced at scan.
+    fn as_operand(&mut self, cell: Cell) -> Result<DyadPtr, ParseError> {
+        match cell {
+            Cell::Dyad(d) => Ok(d),
+            Cell::Token(t) => {
+                let id = if t.identity.is_null() {
+                    let source = self.source;
+                    match self.scopes.resolve(self.trie, &source[t.start..]) {
+                        Ok(r) => r.identity,
+                        Err(e) => {
+                            self.pos = t.start;
+                            return Err(ParseError::Resolve(e));
+                        }
+                    }
+                } else {
+                    t.identity
+                };
+                // SAFETY: `id` is a resolved dyad from the store.
+                unsafe { self.check_capture(id)? };
+                Ok(id)
+            }
+        }
+    }
+
+    /// The completed operand immediately left of the tape's cursor, converted
+    /// — a tight extender's left context (`.`'s value, `@`'s pointer, `(`'s
+    /// callee); `None` when the construct opens fresh.
+    pub(crate) fn left_operand(
+        &mut self,
+        tape: &ParsingTape,
+    ) -> Result<Option<DyadPtr>, ParseError> {
+        match tape.at(-1) {
+            Some(&cell) if self.is_operand_cell(&cell) => self.as_operand(cell).map(Some),
+            _ => Ok(None),
+        }
+    }
+
+    /// The two completed operands flanking the tape's cursor, converted — an
+    /// infix construct's operands at reduction (the model's `tape[-1]` and
+    /// `tape[+1]` reads). `Ok(None)` when either side is structurally missing
+    /// (the construct was invoked fresh): the caller declines and the driver
+    /// shifts the token instead.
+    pub(crate) fn binary_operands(
+        &mut self,
+        tape: &ParsingTape,
+    ) -> Result<Option<(DyadPtr, DyadPtr)>, ParseError> {
+        let (Some(&l), Some(&r)) = (tape.at(-1), tape.at(1)) else {
+            return Ok(None);
+        };
+        if !self.is_operand_cell(&l) || !self.is_operand_cell(&r) {
+            return Ok(None);
+        }
+        Ok(Some((self.as_operand(l)?, self.as_operand(r)?)))
     }
 
     /// Peek the next token's identity and length without consuming it — the
@@ -2291,23 +2360,256 @@ impl<'a> Parser<'a> {
         Ok(self.store.alloc_raw(self.types.comment_, text_node.cast()))
     }
 
+    /// `:=`'s constructor body: the declaration `name := value`, the name the
+    /// token cell to the cursor's left. The name is declared *before* the
+    /// value parses, so the value can refer to it (self-recursion); the
+    /// fixpoint then makes the placeholder BE the value. A declaration is
+    /// legal only opening its expression — the name its first cell, the `:=`
+    /// its second — so anywhere else the construct declines and the driver
+    /// finalizes (a fresh name mid-expression then errors through
+    /// [`Parser::as_operand`] at its own position, exactly as before).
+    pub(crate) fn construct_decl(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        if tape.cursor() != 1 || tape.len() != 2 {
+            return Ok(Constructed::Decline);
+        }
+        let Some(tok) = tape.at(-1).and_then(Cell::as_token).copied() else {
+            return Ok(Constructed::Decline);
+        };
+        // `source` is `&'a str` (Copy), independent of the `&mut self` the
+        // declaration and value parse then need (as in `parse_struct`).
+        let source = self.source;
+        let name = &source[tok.start..tok.start + tok.len];
+        // The placeholder is `fn`-typed so a recursive self-call sees a
+        // function-typed callee while the value is still parsing; the
+        // fixpoint below overwrites it with the value's real type.
+        let placeholder = self.store.alloc_raw(self.types.fn_type, std::ptr::null_mut());
+        if let Err(e) = self.scopes.declare(self.trie, name, placeholder) {
+            // The stuck point is the name itself (it is what shadows).
+            self.pos = tok.start;
+            return Err(ParseError::Resolve(e));
+        }
+        // If the value opens with a `fn` literal, parse_fn publishes its
+        // signature onto the placeholder before the body parses.
+        self.pending_fn = placeholder;
+        let value = self.parse_expression()?;
+        self.pending_fn = std::ptr::null_mut();
+        // Fixpoint: make the placeholder *be* the value, so references to
+        // `name` captured while parsing the value resolve to it. A
+        // construction binds the name to the *instance* (the storage)
+        // and keeps the construct statement as the initializer: the name
+        // is the place, the statement fills it each run. A *type* value
+        // (`x := i32`, `p := struct(…)`) rebinds the name to the type
+        // node itself instead — the name becomes another spelling of
+        // that type, so the pointer-identity checks (`is_numtype_node`,
+        // cross-type mismatch, struct-type equality) see the original.
+        // SAFETY: `placeholder`/`value` are valid dyads just built.
+        let declared = unsafe {
+            if (*value).ty == self.types.construct_ {
+                let ops = (*value).value as *mut DyadPtr;
+                let instance = *ops;
+                (*placeholder).ty = (*instance).ty;
+                (*placeholder).value = (*instance).value;
+                *ops = placeholder;
+                value
+            } else if (*value).ty == self.types.type_ || (*value).ty == self.types.struct_ {
+                self.scopes.rebind(self.trie, name, value);
+                value
+            } else if (*value).ty != self.types.rational
+                && matches!(
+                    crate::identities::numtype_of(&self.types, value),
+                    crate::identities::Operand::Concrete(_)
+                        | crate::identities::Operand::Pointer(_)
+                )
+            {
+                // A runtime numeric or pointer value is *snapshotted*:
+                // fresh per-call storage (a frame slot inside a
+                // function, an absolute blob at top level), the name
+                // bound to that place, and the value kept as a
+                // re-runnable initializer — so a read is a plain load
+                // (never a re-evaluation of the initializer), `= …`
+                // reassigns, and a loop-body or recursive local
+                // re-initializes on each entry into its own storage. A
+                // bare rational stays comptime (the guard above); a
+                // fn/type/unit value keeps its own binding below.
+                let (ty_node, width) =
+                    crate::identities::scalar_binding_type(self.store, &self.types, value);
+                let place = self.alloc_local(ty_node, width);
+                let init =
+                    crate::identities::build_scalar_init(self.store, &self.types, place, value)?;
+                self.scopes.rebind(self.trie, name, place);
+                init
+            } else {
+                (*placeholder).ty = (*value).ty;
+                (*placeholder).value = (*value).value;
+                placeholder
+            }
+        };
+        // The declaration is graph structure, not parse vapor: the
+        // expression is a declare node carrying the spelling (the
+        // nominal identity's human half), the binding, and its native.
+        let name_node =
+            crate::identities::string::build_text(self.store, self.types.string_, name.as_bytes());
+        let node = crate::identities::declare::build(
+            self.store,
+            self.types.declare_,
+            self.types.ops.declare_,
+            name_node,
+            declared,
+        );
+        Ok(Constructed::Node(node))
+    }
+
+    /// `:`'s constructor body: the typed declaration `name : type` — it
+    /// introduces the name and sets its type slot, leaving the value undefined
+    /// (DESIGN ›Declarations are immutable by default‹ — `a : i32` and
+    /// `a := i32 ?` will declare the same node once `?` exists; the seed
+    /// approximates undefined as zeroed storage until phase bits land). The
+    /// type may be computed: the type expression parses through the ordinary
+    /// machinery, so a `-> type` call comptime-resolves first. Only a *fresh*
+    /// name declares — a resolved-token left keeps `:` a bare delimiter for
+    /// the field-list parsers, so the construct declines (as it does anywhere
+    /// but opening its expression).
+    pub(crate) fn construct_typed_decl(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        if tape.cursor() != 1 || tape.len() != 2 {
+            return Ok(Constructed::Decline);
+        }
+        let Some(tok) = tape.at(-1).and_then(Cell::as_token).copied() else {
+            return Ok(Constructed::Decline);
+        };
+        if !tok.identity.is_null() {
+            return Ok(Constructed::Decline);
+        }
+        let nstart = tok.start;
+        // The type first, the name after: the declared type must be a
+        // comptime-known type value, and the name is not yet bound
+        // while its own type parses (`a : a` fails resolution cleanly).
+        let t = self.parse_expression()?;
+        // SAFETY: `t` is the reduced dyad just parsed.
+        if !unsafe { crate::identities::is_type_value(&self.types, t) } {
+            self.pos = nstart;
+            return Err(ParseError::BadDeclaredType);
+        }
+        // The binding, by declared type. A numeric type gets a zeroed
+        // place at its width, the same shape a `:=` snapshot's place
+        // takes — reads are plain loads, `=` reassigns — but with no
+        // initializer to run; per-call (frame-relative) inside a
+        // function, absolute at top level, like every local. The
+        // `type` root declares a TYPE VARIABLE: a null-valued
+        // placeholder — the undefined type, the null value being the
+        // marker no real type node has (every registered type carries
+        // a record) — filled once by a later `name = <type>`, which
+        // rebinds the name at parse (types are comptime; roadmap #30).
+        let place = if t == self.types.type_ {
+            self.store.alloc_raw(self.types.type_, std::ptr::null_mut())
+        } else if crate::identities::is_numtype_node(&self.types, t) {
+            // SAFETY: `t` is a registered numeric type node.
+            let nt = unsafe { crate::identities::numtype::of_type_node(t) };
+            self.alloc_local(t, nt.bytes())
+        } else {
+            self.pos = nstart;
+            return Err(ParseError::NonNumericDeclaredType);
+        };
+        let source = self.source;
+        let name = &source[nstart..nstart + tok.len];
+        if let Err(e) = self.scopes.declare(self.trie, name, place) {
+            self.pos = nstart;
+            return Err(ParseError::Resolve(e));
+        }
+        // The declaration is graph structure: a declare node carrying
+        // the spelling and the place (its run is a harmless load — a
+        // declaration is a statement, silent and unit-valued).
+        let name_node =
+            crate::identities::string::build_text(self.store, self.types.string_, name.as_bytes());
+        let node = crate::identities::declare::build(
+            self.store,
+            self.types.declare_,
+            self.types.ops.declare_,
+            name_node,
+            place,
+        );
+        Ok(Constructed::Node(node))
+    }
+
+    /// A type variable's fill, tried by `=`'s constructor at reduction:
+    /// `name = <type>` where the name token's binding is an unfilled type
+    /// placeholder (`ty == type`, null value — the marker no real type node
+    /// has). The fill rebinds the name to the type node at parse, completing
+    /// the `name : type` declaration — types are comptime, so the assignment
+    /// is elaboration, not a runtime store; from here the name is a full
+    /// spelling of the type (`==` folds, `a 5` juxtaposes, printing reads
+    /// it). Only at a comptime execution position: inside a deferred or
+    /// repeated body the rebind would fire once at parse, the wrong time and
+    /// on both runtime branches ([`ParseError::NonComptimeTypeAssign`]). A
+    /// second fill finds a real type node, never the placeholder, and returns
+    /// `None` into ordinary (rejected) assignment: define-once.
+    pub(crate) fn try_type_fill(
+        &mut self,
+        tape: &ParsingTape,
+    ) -> Result<Option<DyadPtr>, ParseError> {
+        let Some(tok) = tape.at(-1).and_then(Cell::as_token).copied() else {
+            return Ok(None);
+        };
+        let binding = tok.identity;
+        if binding.is_null() {
+            return Ok(None);
+        }
+        // SAFETY: `binding` is a resolved dyad from the store.
+        if unsafe { !((*binding).ty == self.types.type_ && (*binding).value.is_null()) } {
+            return Ok(None);
+        }
+        if self.runtime_depth > 0 {
+            self.pos = tok.start;
+            return Err(ParseError::NonComptimeTypeAssign);
+        }
+        let rhs = tape.at(1).copied().ok_or(ParseError::MissingOperand)?;
+        let t = self.as_operand(rhs)?;
+        // SAFETY: `t` is a reduced dyad off the tape.
+        if !unsafe { crate::identities::is_type_value(&self.types, t) } {
+            self.pos = tok.start;
+            return Err(ParseError::BadDeclaredType);
+        }
+        let source = self.source;
+        let name = &source[tok.start..tok.start + tok.len];
+        let decl_scope =
+            self.scopes.resolve(self.trie, name).map_err(ParseError::Resolve)?.scope;
+        ScopeStack::rebind_at(self.trie, name, t, decl_scope);
+        // The fill IS the definition completing the declaration: a declare
+        // node, a silent statement.
+        let name_node =
+            crate::identities::string::build_text(self.store, self.types.string_, name.as_bytes());
+        let node = crate::identities::declare::build(
+            self.store,
+            self.types.declare_,
+            self.types.ops.declare_,
+            name_node,
+            t,
+        );
+        Ok(Some(node))
+    }
+
     /// Parse one expression to a single dyad, consuming source from the current
     /// position. Each call drives its own tape, so a prefix constructor can parse
     /// its operand by calling this again (the parser is a service the constructors
     /// re-enter, per the sealed "constructors drive" model). An expression is
     /// self-delimiting: a token that would start a new operand after a completed
-    /// dyad ends it (left unconsumed for [`Parser::parse_sequence`]).
+    /// operand ends it (left unconsumed for [`Parser::parse_sequence`]).
     pub fn parse_expression(&mut self) -> Result<DyadPtr, ParseError> {
         let mut tape = ParsingTape::new();
         loop {
-            // A `#` after a completed dyad ends the expression: it is the next
-            // statement-level comment, the sequence parser's to build into a node
-            // ([`Parser::parse_comment`]). Only a genuinely mid-expression `#`
-            // (after a pending operator) is trivia here.
+            // A `#` after a completed operand ends the expression: it is the
+            // next statement-level comment, the sequence parser's to build into
+            // a node ([`Parser::parse_comment`]). Only a genuinely
+            // mid-expression `#` (after a pending operator) is trivia here.
             self.skip_whitespace();
             if self.pos < self.source.len()
                 && self.source.as_bytes()[self.pos] == b'#'
-                && matches!(tape.last(), Some(Cell::Dyad(_)))
+                && tape.last().is_some_and(|c| self.is_operand_cell(c))
             {
                 break;
             }
@@ -2318,269 +2620,25 @@ impl<'a> Parser<'a> {
             let source = self.source;
             let start = self.pos;
 
-            // A fresh name in declaration position: `name := value` binds `name` to
-            // the value. The name is declared *before* the value is parsed, so the
-            // value can refer to it (self-recursion). A name not followed by `:=`
-            // rewinds and resolves normally below.
-            if let Some((nstart, nlen)) = self.lex_identifier() {
-                // A fresh name followed by `:` is the typed declaration
-                // `name : type`: it introduces the name and sets its type slot,
-                // leaving the value undefined (DESIGN ›Declarations are immutable by
-                // default‹ — `a : i32` and `a := i32 ?` will declare the same node
-                // once `?` exists (no `?` token yet, issue #38); the seed
-                // approximates undefined as zeroed storage until phase bits
-                // land). The type may be computed: the type expression parses
-                // through the ordinary machinery, so a `-> type` call (`a :
-                // metatype(0)`) comptime-resolves to its concrete type first — the
-                // dependent declaration is the same declaration. The fresh-name
-                // gate keeps a resolvable name before `:` a field-list `:`.
-                if matches!(self.peek_token(), Some((id, _)) if id == self.types.colon_)
-                    && matches!(tape.last(), None | Some(Cell::Dyad(_)))
-                    && self.scopes.resolve(self.trie, &source[nstart..]).is_err()
-                {
-                    // After a completed dyad the declaration starts the NEXT
-                    // expression (expressions are self-delimiting): stop before it.
-                    if matches!(tape.last(), Some(Cell::Dyad(_))) {
-                        self.pos = start;
-                        break;
-                    }
-                    let Some((_, matched)) = self.peek_token() else { unreachable!() };
-                    self.pos += matched; // consume `:`
-                    // The type first, the name after: the declared type must be a
-                    // comptime-known type value, and the name is not yet bound
-                    // while its own type parses (`a : a` fails resolution cleanly).
-                    let t = self.parse_expression()?;
-                    // SAFETY: `t` is the reduced dyad just parsed.
-                    if !unsafe { crate::identities::is_type_value(&self.types, t) } {
-                        self.pos = nstart;
-                        return Err(ParseError::BadDeclaredType);
-                    }
-                    // The binding, by declared type. A numeric type gets a zeroed
-                    // place at its width, the same shape a `:=` snapshot's place
-                    // takes — reads are plain loads, `=` reassigns — but with no
-                    // initializer to run; per-call (frame-relative) inside a
-                    // function, absolute at top level, like every local. The
-                    // `type` root declares a TYPE VARIABLE: a null-valued
-                    // placeholder — the undefined type, the null value being the
-                    // marker no real type node has (every registered type carries
-                    // a record) — filled once by a later `name = <type>`, which
-                    // rebinds the name at parse (types are comptime; roadmap #30).
-                    let place = if t == self.types.type_ {
-                        self.store.alloc_raw(self.types.type_, std::ptr::null_mut())
-                    } else if crate::identities::is_numtype_node(&self.types, t) {
-                        // SAFETY: `t` is a registered numeric type node.
-                        let nt = unsafe { crate::identities::numtype::of_type_node(t) };
-                        self.alloc_local(t, nt.bytes())
-                    } else {
-                        self.pos = nstart;
-                        return Err(ParseError::NonNumericDeclaredType);
-                    };
-                    let name = &source[nstart..nstart + nlen];
-                    if let Err(e) = self.scopes.declare(self.trie, name, place) {
-                        self.pos = nstart;
-                        return Err(ParseError::Resolve(e));
-                    }
-                    // The declaration is graph structure: a declare node carrying
-                    // the spelling and the place (its run is a harmless load — a
-                    // declaration is a statement, silent and unit-valued).
-                    let name_node = crate::identities::string::build_text(
-                        self.store,
-                        self.types.string_,
-                        name.as_bytes(),
-                    );
-                    let node = crate::identities::declare::build(
-                        self.store,
-                        self.types.declare_,
-                        self.types.ops.declare_,
-                        name_node,
-                        place,
-                    );
-                    tape.push(Cell::Dyad(node));
-                    continue;
-                }
-                if matches!(self.peek_token(), Some((id, _)) if id == self.types.declare_tok) {
-                    // A declaration after a completed dyad starts the NEXT
-                    // expression (expressions are self-delimiting): stop before it.
-                    if matches!(tape.last(), Some(Cell::Dyad(_))) {
-                        self.pos = start;
-                        break;
-                    }
-                    let Some((_, matched)) = self.peek_token() else { unreachable!() };
-                    self.pos += matched; // consume `:=`
-                    // `source` is `&'a str` (Copy), independent of the `&mut self`
-                    // the declaration and value parse then need (as in `parse_struct`).
-                    let name = &source[nstart..nstart + nlen];
-                    // The placeholder is `fn`-typed so a recursive self-call sees a
-                    // function-typed callee while the value is still parsing; the
-                    // fixpoint below overwrites it with the value's real type.
-                    let placeholder =
-                        self.store.alloc_raw(self.types.fn_type, std::ptr::null_mut());
-                    if let Err(e) = self.scopes.declare(self.trie, name, placeholder) {
-                        // The stuck point is the name itself (it is what shadows).
-                        self.pos = nstart;
-                        return Err(ParseError::Resolve(e));
-                    }
-                    // If the value opens with a `fn` literal, parse_fn publishes its
-                    // signature onto the placeholder before the body parses.
-                    self.pending_fn = placeholder;
-                    let value = self.parse_expression()?;
-                    self.pending_fn = std::ptr::null_mut();
-                    // Fixpoint: make the placeholder *be* the value, so references to
-                    // `name` captured while parsing the value resolve to it. A
-                    // construction binds the name to the *instance* (the storage)
-                    // and keeps the construct statement as the initializer: the name
-                    // is the place, the statement fills it each run. A *type* value
-                    // (`x := i32`, `p := struct(…)`) rebinds the name to the type
-                    // node itself instead — the name becomes another spelling of
-                    // that type, so the pointer-identity checks (`is_numtype_node`,
-                    // cross-type mismatch, struct-type equality) see the original.
-                    // SAFETY: `placeholder`/`value` are valid dyads just built.
-                    let declared = unsafe {
-                        if (*value).ty == self.types.construct_ {
-                            let ops = (*value).value as *mut DyadPtr;
-                            let instance = *ops;
-                            (*placeholder).ty = (*instance).ty;
-                            (*placeholder).value = (*instance).value;
-                            *ops = placeholder;
-                            value
-                        } else if (*value).ty == self.types.type_
-                            || (*value).ty == self.types.struct_
-                        {
-                            self.scopes.rebind(self.trie, name, value);
-                            value
-                        } else if (*value).ty != self.types.rational
-                            && matches!(
-                                crate::identities::numtype_of(&self.types, value),
-                                crate::identities::Operand::Concrete(_)
-                                    | crate::identities::Operand::Pointer(_)
-                            )
-                        {
-                            // A runtime numeric or pointer value is *snapshotted*:
-                            // fresh per-call storage (a frame slot inside a
-                            // function, an absolute blob at top level), the name
-                            // bound to that place, and the value kept as a
-                            // re-runnable initializer — so a read is a plain load
-                            // (never a re-evaluation of the initializer), `= …`
-                            // reassigns, and a loop-body or recursive local
-                            // re-initializes on each entry into its own storage. A
-                            // bare rational stays comptime (the guard above); a
-                            // fn/type/unit value keeps its own binding below.
-                            let (ty_node, width) = crate::identities::scalar_binding_type(
-                                self.store,
-                                &self.types,
-                                value,
-                            );
-                            let place = self.alloc_local(ty_node, width);
-                            let init = crate::identities::build_scalar_init(
-                                self.store,
-                                &self.types,
-                                place,
-                                value,
-                            )?;
-                            self.scopes.rebind(self.trie, name, place);
-                            init
-                        } else {
-                            (*placeholder).ty = (*value).ty;
-                            (*placeholder).value = (*value).value;
-                            placeholder
-                        }
-                    };
-                    // The declaration is graph structure, not parse vapor: the
-                    // expression is a declare node carrying the spelling (the
-                    // nominal identity's human half), the binding, and its native.
-                    let name_node = crate::identities::string::build_text(
-                        self.store,
-                        self.types.string_,
-                        name.as_bytes(),
-                    );
-                    let node = crate::identities::declare::build(
-                        self.store,
-                        self.types.declare_,
-                        self.types.ops.declare_,
-                        name_node,
-                        declared,
-                    );
-                    tape.push(Cell::Dyad(node));
-                    continue;
-                }
-                // A type variable's fill: `name = <type>` where `name` resolves
-                // to an unfilled type placeholder (`ty == type`, null value — the
-                // marker no real type node has). The fill rebinds the name to the
-                // type node at parse, completing the `name : type` declaration —
-                // types are comptime, so the assignment is elaboration, not a
-                // runtime store; from here the name is a full spelling of the
-                // type (`==` folds, `a 5` juxtaposes, printing reads it). Only at
-                // a comptime execution position: inside a deferred or repeated
-                // body the rebind would fire once at parse, the wrong time and on
-                // both runtime branches ([`ParseError::NonComptimeTypeAssign`]).
-                // A second fill finds a real type node, never the placeholder, and
-                // falls through to ordinary (rejected) assignment: define-once.
-                if let Some((eq_id, matched)) = self.peek_token() {
-                    if eq_id == self.types.assign {
-                        if let Ok(r) = self.scopes.resolve(self.trie, &source[nstart..]) {
-                            let binding = r.identity;
-                            let decl_scope = r.scope;
-                            // SAFETY: `binding` is a resolved dyad from the store.
-                            if unsafe {
-                                (*binding).ty == self.types.type_ && (*binding).value.is_null()
-                            } {
-                                // After a completed dyad the fill starts the NEXT
-                                // expression: stop before it.
-                                if matches!(tape.last(), Some(Cell::Dyad(_))) {
-                                    self.pos = start;
-                                    break;
-                                }
-                                if self.runtime_depth > 0 {
-                                    self.pos = nstart;
-                                    return Err(ParseError::NonComptimeTypeAssign);
-                                }
-                                self.pos += matched; // consume `=`
-                                let t = self.parse_expression()?;
-                                // SAFETY: `t` is the reduced dyad just parsed.
-                                if !unsafe { crate::identities::is_type_value(&self.types, t) } {
-                                    self.pos = nstart;
-                                    return Err(ParseError::BadDeclaredType);
-                                }
-                                let name = &source[nstart..nstart + nlen];
-                                ScopeStack::rebind_at(self.trie, name, t, decl_scope);
-                                // The fill IS the definition completing the
-                                // declaration: a declare node, a silent statement.
-                                let name_node = crate::identities::string::build_text(
-                                    self.store,
-                                    self.types.string_,
-                                    name.as_bytes(),
-                                );
-                                let node = crate::identities::declare::build(
-                                    self.store,
-                                    self.types.declare_,
-                                    self.types.ops.declare_,
-                                    name_node,
-                                    t,
-                                );
-                                tape.push(Cell::Dyad(node));
-                                continue;
-                            }
-                        }
-                    }
-                }
-                // Not a declaration: rewind and resolve the name normally.
-                self.pos = start;
-            }
-
             let r = match self.scopes.resolve(self.trie, &source[start..]) {
                 Ok(r) => r,
-                // An unresolvable token after a completed dyad starts the NEXT
-                // expression (expressions are self-delimiting): stop before it,
-                // exactly as a resolvable operand-starter does below. The next
-                // expression may legitimately begin with it — a typed
-                // declaration parsing its type expression must not trip on the
-                // name that follows — and a genuinely unknown name is reported
-                // at the same position when that expression parses it. With an
-                // operand still pending, this expression needs the token: error.
+                // An unresolvable token after a completed operand starts the
+                // NEXT expression (expressions are self-delimiting): stop
+                // before it — the next expression may legitimately begin with
+                // it, and a genuinely unknown name is reported at the same
+                // position when that expression consumes it. Otherwise a fresh
+                // name rides the tape as a spelling-only token (the
+                // null-until-reduction path): a following `:=` or `:` declares
+                // it at reduction, and any other consumer errors through
+                // [`Parser::as_operand`] at the token's own start.
                 Err(e) => {
-                    if matches!(tape.last(), Some(Cell::Dyad(_))) {
+                    if tape.last().is_some_and(|c| self.is_operand_cell(c)) {
                         self.pos = start;
                         break;
+                    }
+                    if let Some((nstart, nlen)) = self.lex_identifier() {
+                        tape.push(Cell::Token(Token::new(nstart, nlen)));
+                        continue;
                     }
                     return Err(ParseError::Resolve(e));
                 }
@@ -2596,46 +2654,36 @@ impl<'a> Parser<'a> {
                 break;
             }
             // A fresh start — an operand or a fresh-start constructor — while a
-            // completed dyad sits at the tape's tail begins the NEXT expression
-            // (DESIGN ›Expressions are self-delimiting‹): stop without
-            // consuming it. An extender continues the expression (an `(` after
-            // a dyad stays a call — juxtaposition binds tightest), so it is
-            // never a boundary. Type-literal juxtaposition needs no exception
-            // here: the numeric *type's* constructor consumes its literal
-            // forward, so the literal is never scanned at this level.
+            // completed operand sits at the tape's tail begins the NEXT
+            // expression (DESIGN ›Expressions are self-delimiting‹): stop
+            // without consuming it. An extender continues the expression (an
+            // `(` after an operand stays a call — juxtaposition binds
+            // tightest), so it is never a boundary. Type-literal juxtaposition
+            // needs no exception here: the numeric *type's* constructor
+            // consumes its literal forward, so the literal is never scanned at
+            // this level.
             if matches!(class, Class::Operand | Class::Construct(_))
-                && matches!(tape.last(), Some(Cell::Dyad(_)))
+                && tape.last().is_some_and(|c| self.is_operand_cell(c))
             {
                 break;
             }
             self.pos = start + r.matched;
 
             match class {
-                // A plain operand: a reference to the resolved identity. A
-                // frame-local or parameter of an enclosing function (a capture)
-                // is rejected — v1 has no closures.
+                // A plain operand: a token cell referencing the resolved
+                // identity, its span kept — converted at consumption by
+                // [`Parser::as_operand`] (which also rejects a capture).
                 Class::Operand => {
-                    // SAFETY: `id` is a resolved dyad from the store.
-                    unsafe { self.check_capture(id)? };
-                    tape.push(Cell::Dyad(id));
+                    tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
                 }
                 // A fresh-start constructor — a keyword opener (`struct`, `fn`,
                 // `if`, `not`, `while`, `for`, `&`), a literal, a numeric type
                 // (juxtaposition), `return`: jump it; it consumes its own
-                // forward tokens. One scheduling nuance still rides here:
-                // `fn`'s declaration handoff — the pending placeholder is
-                // claimed by `fn`'s constructor only when the literal opens a
-                // (sub-)expression (an empty tape) — which moves into `fn`'s
-                // constructor with the declaration stage.
+                // forward tokens (`fn`'s pending-declaration handoff lives in
+                // its own constructor).
                 Class::Construct(construct) => {
-                    let suppressed = (id == self.types.fn_type && !tape.is_empty())
-                        .then(|| self.take_pending_fn());
                     tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
-                    let node = construct(self, id, &mut tape);
-                    if let Some(pending) = suppressed {
-                        self.pending_fn = pending;
-                    }
-                    let dyad = match node? {
+                    let dyad = match construct(self, id, &mut tape)? {
                         Constructed::Node(d) => d,
                         Constructed::Decline => {
                             tape.pop();
@@ -2656,7 +2704,8 @@ impl<'a> Parser<'a> {
                 // constructor to consume.
                 Class::Tight(construct) => {
                     tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
-                    let had_left = tape.left_dyad().is_some();
+                    let had_left =
+                        tape.at(-1).is_some_and(|c| self.is_operand_cell(c));
                     let node = match construct(self, id, &mut tape)? {
                         Constructed::Node(d) => d,
                         Constructed::Decline => {
@@ -2681,7 +2730,7 @@ impl<'a> Parser<'a> {
                     // `x := -5`); a Decline shifts the token as a pending
                     // operator instead (the dangling-operator path: general
                     // unary minus over non-literals is later work).
-                    if !matches!(tape.last(), Some(Cell::Dyad(_))) {
+                    if !tape.last().is_some_and(|c| self.is_operand_cell(c)) {
                         if let Some(construct) = self.construct_of(id) {
                             tape.push(Cell::Token(Token {
                                 start,
@@ -2715,7 +2764,14 @@ impl<'a> Parser<'a> {
         self.reduce_all(&mut tape)?;
         match tape.len() {
             0 => Err(ParseError::Empty),
-            1 => tape.cell(0).and_then(Cell::as_dyad).ok_or(ParseError::MissingOperand),
+            1 => {
+                let cell = *tape.cell(0).expect("len checked");
+                if self.is_operand_cell(&cell) {
+                    self.as_operand(cell)
+                } else {
+                    Err(ParseError::MissingOperand)
+                }
+            }
             _ => Err(ParseError::Trailing),
         }
     }
@@ -2741,8 +2797,8 @@ impl<'a> Parser<'a> {
             };
             // Reduce only a token flanked by two completed operands; the
             // constructor reads them back off the tape (`tape[-1]`, `tape[+1]`).
-            if tape.cell(op_idx - 1).and_then(Cell::as_dyad).is_none()
-                || tape.cell(op_idx + 1).and_then(Cell::as_dyad).is_none()
+            if !tape.cell(op_idx - 1).is_some_and(|c| self.is_operand_cell(c))
+                || !tape.cell(op_idx + 1).is_some_and(|c| self.is_operand_cell(c))
             {
                 break;
             }
@@ -2781,8 +2837,8 @@ impl<'a> Parser<'a> {
                 Some(Cell::Token(t)) => t.identity,
                 _ => return Err(ParseError::Trailing),
             };
-            if tape.cell(op_idx - 1).and_then(Cell::as_dyad).is_none()
-                || tape.cell(op_idx + 1).and_then(Cell::as_dyad).is_none()
+            if !tape.cell(op_idx - 1).is_some_and(|c| self.is_operand_cell(c))
+                || !tape.cell(op_idx + 1).is_some_and(|c| self.is_operand_cell(c))
             {
                 return Err(ParseError::MissingOperand);
             }

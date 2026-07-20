@@ -55,10 +55,10 @@ pub(super) fn register(
     // completed dyad makes it a postfix deref, none makes it the pointer-type
     // prefix.
     cx.metas.insert(at, |p, _id, tape| {
-        // The model's `tape[-1]`: a completed dyad makes `@` a postfix deref,
-        // none makes it the pointer-type prefix.
-        match tape.left_dyad() {
-            // SAFETY: `left` is a reduced dyad read off the tape.
+        // The model's `tape[-1]`: a completed operand makes `@` a postfix
+        // deref, none makes it the pointer-type prefix.
+        match p.left_operand(tape)? {
+            // SAFETY: `left` is a reduced dyad off the tape.
             Some(left) => unsafe { p.build_deref(left) },
             None => p.parse_pointer_type(),
         }
