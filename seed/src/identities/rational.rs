@@ -26,7 +26,7 @@ use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Construct, ParseError, Schedule};
+use crate::parse::{Constructed, ParseError, ParsingTape, Parser, Schedule};
 use crate::store::Store;
 
 /// Register `rational_number`: its spelling (integers or decimals), literal
@@ -39,16 +39,25 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     // operator (else `a-1` would lex as `a` then the literal `-1`); a negative
     // literal is the prefix `-` negating the literal at parse time ([`negate`]).
     cx.trie.insert(r"[0-9]+(?:\.[0-9]+)?", IdContext::new(id, cx.root_scope));
-    cx.metas.insert(id, Construct::Atom(build));
+    cx.metas.insert(id, construct);
     cx.lower.insert(id, lower);
     id
+}
+
+/// The literal's constructor: read the matched span off the cursor token and
+/// build the leaf.
+fn construct(p: &mut Parser, id: DyadPtr, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
+    let t = tape.own_token().ok_or(ParseError::BadLiteral)?;
+    let span = &p.source()[t.start..t.start + t.len];
+    build(p.store(), id, span).map(Constructed::Node)
 }
 
 /// Build a rational literal `{ty: rational, value: [num, den]}` from its span,
 /// parsing the decimal text into a reduced fraction. A malformed or out-of-`i64`
 /// -range span is a [`ParseError::BadLiteral`]; a well-formed decimal always builds
-/// (whether it can later be computed as an `i32` is a use-site question).
-fn build(store: &mut Store, rational: DyadPtr, span: &str) -> Result<DyadPtr, ParseError> {
+/// (whether it can later be computed as an `i32` is a use-site question). Also the
+/// parser's direct path for the negated-literal and range-endpoint services.
+pub(crate) fn build(store: &mut Store, rational: DyadPtr, span: &str) -> Result<DyadPtr, ParseError> {
     let (num, den) = parse_fraction(span).ok_or(ParseError::BadLiteral)?;
     Ok(build_literal(store, rational, num, den))
 }

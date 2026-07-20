@@ -203,6 +203,27 @@ impl ParsingTape {
         self.cursor = self.cursor.min(self.cells.len().saturating_sub(1));
         true
     }
+
+    /// The completed dyads flanking the cursor — an infix construct's two
+    /// operands, the model's `tape[-1]` and `tape[+1]` reads at reduction.
+    pub fn binary_operands(&self) -> Result<(DyadPtr, DyadPtr), ParseError> {
+        let lhs = self.at(-1).and_then(Cell::as_dyad).ok_or(ParseError::MissingOperand)?;
+        let rhs = self.at(1).and_then(Cell::as_dyad).ok_or(ParseError::MissingOperand)?;
+        Ok((lhs, rhs))
+    }
+
+    /// The completed dyad immediately left of the cursor, if any — a postfix
+    /// construct's left context (`.`'s value, `@`'s pointer), null when the
+    /// construct opens fresh (`@` as the pointer-type prefix).
+    pub fn left_dyad(&self) -> Option<DyadPtr> {
+        self.at(-1).and_then(Cell::as_dyad)
+    }
+
+    /// The construct's own token — the cursor cell — its source span still
+    /// attached. How an atom constructor reaches its matched text.
+    pub fn own_token(&self) -> Option<Token> {
+        self.at(0).and_then(Cell::as_token).copied()
+    }
 }
 
 /// A resolved name: how many source bytes it matched, the single identity
@@ -670,48 +691,31 @@ impl Schedule {
     }
 }
 
-/// An Atom-scheduled identity's build shim — the entry its constructor-slot
-/// leaf carries: build a leaf node from the matched source span.
-pub type AtomFn = fn(&mut Store, DyadPtr, &str) -> Result<DyadPtr, ParseError>;
-
-/// A Prefix-scheduled identity's build shim: build a node from the identity
-/// and its one parsed operand. The [`CoreTypes`] lets the builder reference
-/// its native leaf.
-pub type PrefixFn = fn(&mut Store, &CoreTypes, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>;
-
-/// An Infix-scheduled identity's build shim: build a node from the operator
-/// identity and its two already-reduced operands. The [`CoreTypes`] lets an
-/// abstract operator (`+`) resolve its concrete machine op from the operand
-/// types.
-pub type InfixFn =
-    fn(&mut Store, &CoreTypes, DyadPtr, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>;
-
-/// A keyword identity's build shim — every keyword schedule (`struct`, `fn`,
-/// `if`, `not`, `while`, `for`, `.`, `@`, `&`) shares it: the parser (the
-/// constructors re-enter it as a service), the identity, and `left`, the
-/// completed dyad immediately left of the token or null — the seed's reading
-/// of the model's `tape[-1]`. A postfix constructor (`.`, `@`) consumes
-/// `left`; the openers ignore it.
-pub type KeywordFn = fn(&mut Parser, DyadPtr, DyadPtr) -> Result<DyadPtr, ParseError>;
-
-/// A core identity's native *build* code at registration — the transient
-/// carrier `Core::build` turns into a callable leaf in the identity's
-/// constructor slot (issue #30) and then drops. The parser never consults it;
-/// dispatch reads the schedule byte and jumps the constructor leaf, and the
-/// bodies stay `native` Rust until self-hosting ports them to Logos source.
-#[derive(Clone, Copy)]
-pub enum Construct {
-    /// A literal/atom build ([`AtomFn`]).
-    Atom(AtomFn),
-    /// A prefix keyword build ([`PrefixFn`]).
-    Prefix(PrefixFn),
-    /// An infix operator build ([`InfixFn`]).
-    Infix {
-        build: InfixFn,
-    },
-    /// A keyword build ([`KeywordFn`]).
-    Keyword(KeywordFn),
+/// What a constructor produced. `Node` is the built dyad; the *driver* splices
+/// it over the cells the construct consumed (its own token, a consumed left,
+/// an infix triple), so tape surgery stays in one place. `Decline` is "not
+/// mine": the constructor consumed nothing, the driver drops its token,
+/// rewinds to its start, and lets the expression finalize — the left-hand twin
+/// of DESIGN ›a constructor that accepts not consuming its right-hand side
+/// then yields its own dyad as-is‹ (which is an ordinary `Node` of itself).
+pub enum Constructed {
+    /// The constructed dyad.
+    Node(DyadPtr),
+    /// The construct does not apply here; nothing was consumed.
+    Decline,
 }
+
+/// Every identity's parse-time constructor — the one `seed-parse` entry
+/// signature its constructor-slot leaf carries. The constructor receives the
+/// parser (a service it re-enters for `parse_expression`, the expect-helpers,
+/// declaration), the identity being constructed, and the tape with the cursor
+/// on the construct's own token: it reads its span from the cursor cell, its
+/// left context from `tape.at(-1)` (the model's `tape[-1]`), its right operand
+/// from `tape.at(1)` (an infix, invoked at reduction), and any further tokens
+/// by consuming source forward. It returns what it built; the driver owns the
+/// splice.
+pub type ConstructFn =
+    fn(&mut Parser, DyadPtr, &mut ParsingTape) -> Result<Constructed, ParseError>;
 
 /// Why elaboration failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -990,6 +994,23 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// The source being parsed — how a constructor reads its own token's span
+    /// (the returned `&'a str` outlives the `&self` borrow, so a span slice and
+    /// a later `&mut self` service call compose).
+    pub(crate) fn source(&self) -> &'a str {
+        self.source
+    }
+
+    /// The store the constructors allocate into.
+    pub(crate) fn store(&mut self) -> &mut Store {
+        self.store
+    }
+
+    /// The core type handles (copied out, so a `&mut self` call can follow).
+    pub(crate) fn types(&self) -> CoreTypes {
+        self.types
+    }
+
     /// Allocate storage for a function-local place of `width` bytes, typed
     /// `ty_node`. Inside a function (the frame stack is non-empty) the place is
     /// *frame-relative*: it claims the next offset in the current frame — after
@@ -1122,61 +1143,43 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The constructor-slot entry of `id`, decoded to the shim signature its
-    /// schedule byte licenses — the parse-time analogue of `run`'s op-slot
-    /// jump: dispatch flows through the graph, no table anywhere. `None` for
-    /// an undefined constructor (a delimiter token, a data type).
-    ///
-    /// # Safety
-    /// The caller must have matched `id`'s schedule to the signature it
-    /// transmutes to; the mint at registration guarantees the pairing.
-    unsafe fn constructor_entry(&self, id: DyadPtr) -> Option<usize> {
-        let leaf = crate::identities::meta::constructor_of(id);
-        if leaf.is_null() {
-            return None;
+    /// Invoke `id`'s constructor over a fresh single-token tape — the
+    /// service-site form of the driver's dispatch, for a construct invoked from
+    /// inside another constructor (a comment's `«…»` text, a range endpoint
+    /// literal). `Ok(None)` when `id` has no constructor or it declined.
+    fn construct_leaf(
+        &mut self,
+        id: DyadPtr,
+        start: usize,
+        len: usize,
+    ) -> Result<Option<DyadPtr>, ParseError> {
+        let Some(construct) = self.construct_of(id) else {
+            return Ok(None);
+        };
+        let mut tape = ParsingTape::new();
+        tape.push(Cell::Token(Token { start, len, identity: id }));
+        match construct(self, id, &mut tape)? {
+            Constructed::Node(d) => Ok(Some(d)),
+            Constructed::Decline => Ok(None),
         }
-        Some(crate::identities::callable::entry_of(leaf))
     }
 
-    /// The Atom build of a literal identity: its constructor leaf's entry, an
-    /// [`AtomFn`] by its schedule.
-    fn atom_build(&self, id: DyadPtr) -> Option<AtomFn> {
-        debug_assert_eq!(self.schedule(id), Schedule::Atom);
-        // SAFETY: an Atom-scheduled identity's constructor entry was minted
-        // from an `AtomFn` at registration.
-        unsafe { self.constructor_entry(id).map(|e| std::mem::transmute::<usize, AtomFn>(e)) }
-    }
-
-    /// The Prefix build of a keyword identity, as [`Parser::atom_build`].
-    fn prefix_build(&self, id: DyadPtr) -> Option<PrefixFn> {
-        debug_assert_eq!(self.schedule(id), Schedule::Prefix);
-        // SAFETY: as [`Parser::atom_build`], with a `PrefixFn` entry.
-        unsafe { self.constructor_entry(id).map(|e| std::mem::transmute::<usize, PrefixFn>(e)) }
-    }
-
-    /// The Infix build of an operator identity, as [`Parser::atom_build`].
-    fn infix_build(&self, id: DyadPtr) -> Option<InfixFn> {
-        debug_assert_eq!(self.schedule(id), Schedule::Infix);
-        // SAFETY: as [`Parser::atom_build`], with an `InfixFn` entry.
-        unsafe { self.constructor_entry(id).map(|e| std::mem::transmute::<usize, InfixFn>(e)) }
-    }
-
-    /// The Keyword build of a keyword identity, as [`Parser::atom_build`].
-    fn keyword_build(&self, id: DyadPtr) -> Option<KeywordFn> {
-        debug_assert!(matches!(
-            self.schedule(id),
-            Schedule::Struct
-                | Schedule::Fn
-                | Schedule::If
-                | Schedule::Not
-                | Schedule::While
-                | Schedule::For
-                | Schedule::Dot
-                | Schedule::At
-                | Schedule::Amp
-        ));
-        // SAFETY: as [`Parser::atom_build`], with a `KeywordFn` entry.
-        unsafe { self.constructor_entry(id).map(|e| std::mem::transmute::<usize, KeywordFn>(e)) }
+    /// The constructor of `id`, decoded from its constructor-slot leaf — the
+    /// parse-time analogue of `run`'s op-slot jump: dispatch flows through the
+    /// graph, no table anywhere. `None` for an undefined constructor (a
+    /// delimiter token, a data type).
+    fn construct_of(&self, id: DyadPtr) -> Option<ConstructFn> {
+        // SAFETY: `id` is a resolved identity; every constructor leaf is
+        // minted from a `ConstructFn` at registration (`Core::build`) — one
+        // convention, one signature, so the transmute is exact.
+        unsafe {
+            let leaf = crate::identities::meta::constructor_of(id);
+            if leaf.is_null() {
+                return None;
+            }
+            let entry = crate::identities::callable::entry_of(leaf);
+            Some(std::mem::transmute::<usize, ConstructFn>(entry))
+        }
     }
 
     /// Take the pending declaration placeholder (see [`Parser::pending_fn`]):
@@ -1816,22 +1819,19 @@ impl<'a> Parser<'a> {
             }
             // A literal.
             Schedule::Atom => {
-                let build = self.atom_build(id).ok_or(ParseError::ExpectedRange)?;
                 let start = self.pos;
                 self.pos += r.matched;
-                let span = &source[start..start + r.matched];
-                build(self.store, id, span)
+                self.construct_leaf(id, start, r.matched)?.ok_or(ParseError::ExpectedRange)
             }
             // A negated literal (`-` then a rational), as in the driver.
             Schedule::Infix if id == self.types.minus => {
                 self.pos += r.matched;
                 if let Some((lit, matched, Schedule::Atom)) = self.peek_kind() {
                     if lit == self.types.rational {
-                        let build = self.atom_build(lit).ok_or(ParseError::ExpectedRange)?;
                         let lstart = self.pos;
                         self.pos += matched;
                         let span = &source[lstart..lstart + matched];
-                        let dyad = build(self.store, lit, span)?;
+                        let dyad = crate::identities::rational::build(self.store, lit, span)?;
                         // SAFETY: `dyad` is the rational literal just built.
                         return Ok(unsafe {
                             crate::identities::rational::negate(self.store, lit, dyad)
@@ -2292,12 +2292,9 @@ impl<'a> Parser<'a> {
                 .scopes
                 .resolve(self.trie, &source[self.pos..])
                 .map_err(ParseError::Resolve)?;
-            let span = &source[self.pos..self.pos + r.matched];
+            let start = self.pos;
             self.pos += r.matched;
-            match self.atom_build(r.identity) {
-                Some(build) => build(self.store, r.identity, span)?,
-                None => return Err(ParseError::BadLiteral),
-            }
+            self.construct_leaf(r.identity, start, r.matched)?.ok_or(ParseError::BadLiteral)?
         } else {
             // Raw text to the end of the line, trimmed.
             let start = self.pos;
@@ -2663,14 +2660,23 @@ impl<'a> Parser<'a> {
                     unsafe { self.check_capture(id)? };
                     tape.push(Cell::Dyad(id));
                 }
-                // A literal: build its leaf now from the matched span. A numeric
-                // type dyad directly before it consumes it (juxtaposition): the
-                // literal commits exactly to that type, giving a typed value with
-                // real storage (`sum := i32 0`, the sketch's own spelling).
+                // A literal: its constructor builds the leaf from the cursor
+                // token's span. A numeric type dyad directly before it consumes
+                // it (juxtaposition): the literal commits exactly to that type,
+                // giving a typed value with real storage (`sum := i32 0`, the
+                // sketch's own spelling).
                 Schedule::Atom => {
-                    let build = self.atom_build(id).ok_or(ParseError::BadLiteral)?;
-                    let span = &source[start..start + r.matched];
-                    let dyad = build(self.store, id, span)?;
+                    let construct = self.construct_of(id).ok_or(ParseError::BadLiteral)?;
+                    tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
+                    let dyad = match construct(self, id, &mut tape)? {
+                        Constructed::Node(d) => d,
+                        Constructed::Decline => {
+                            tape.pop();
+                            self.pos = start;
+                            break;
+                        }
+                    };
+                    tape.pop(); // the construct's own token cell
                     if juxtaposition {
                         let ty_node = tape.pop().and_then(|c| c.as_dyad()).unwrap();
                         // SAFETY: `dyad` is the literal just built; `ty_node` is a
@@ -2683,13 +2689,21 @@ impl<'a> Parser<'a> {
                         tape.push(Cell::Dyad(dyad));
                     }
                 }
-                // A prefix keyword: parse the rest of the expression as its
-                // operand, then build. (v1 grabs to the end of the expression.)
+                // A prefix keyword: its constructor parses the rest of the
+                // expression as its operand. (v1 grabs to the end of the
+                // expression.)
                 Schedule::Prefix => {
-                    let build = self.prefix_build(id).ok_or(ParseError::MissingOperand)?;
-                    let operand = self.parse_expression()?;
-                    let types = self.types;
-                    let dyad = build(self.store, &types, id, operand)?;
+                    let construct = self.construct_of(id).ok_or(ParseError::MissingOperand)?;
+                    tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
+                    let dyad = match construct(self, id, &mut tape)? {
+                        Constructed::Node(d) => d,
+                        Constructed::Decline => {
+                            tape.pop();
+                            self.pos = start;
+                            break;
+                        }
+                    };
+                    tape.pop(); // the construct's own token cell
                     tape.push(Cell::Dyad(dyad));
                 }
                 // An opening bracket. If a reduced operand precedes it, this is a
@@ -2774,26 +2788,45 @@ impl<'a> Parser<'a> {
                 | Schedule::Amp => {
                     let suppressed = (c == Schedule::Fn && !tape.is_empty())
                         .then(|| self.take_pending_fn());
-                    let build = self.keyword_build(id).ok_or(ParseError::MissingOperand)?;
-                    let node = build(self, id, std::ptr::null_mut())?;
+                    let construct = self.construct_of(id).ok_or(ParseError::MissingOperand)?;
+                    tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
+                    let node = construct(self, id, &mut tape);
                     if let Some(pending) = suppressed {
                         self.pending_fn = pending;
                     }
+                    let node = match node? {
+                        Constructed::Node(d) => d,
+                        Constructed::Decline => {
+                            tape.pop();
+                            self.pos = start;
+                            break;
+                        }
+                    };
+                    tape.pop(); // the construct's own token cell
                     tape.push(Cell::Dyad(node));
                 }
-                // A postfix-capable token (`.`, `@`): its constructor consumes
-                // the completed dyad to its left — the model's `tape[-1]` read.
-                // `.` requires one; `@` without one is the pointer-type prefix.
+                // A postfix-capable token (`.`, `@`): its constructor reads the
+                // completed dyad to its left from the tape — the model's
+                // `tape[-1]` read. `.` requires one; `@` without one is the
+                // pointer-type prefix. The driver splices: the construct's own
+                // token always, plus the left cell iff a completed dyad stood
+                // there for the constructor to consume.
                 Schedule::Dot | Schedule::At => {
-                    let left = match tape.last().and_then(Cell::as_dyad) {
-                        Some(d) => {
+                    let construct = self.construct_of(id).ok_or(ParseError::MissingOperand)?;
+                    tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
+                    let had_left = tape.left_dyad().is_some();
+                    let node = match construct(self, id, &mut tape)? {
+                        Constructed::Node(d) => d,
+                        Constructed::Decline => {
                             tape.pop();
-                            d
+                            self.pos = start;
+                            break;
                         }
-                        None => std::ptr::null_mut(),
                     };
-                    let build = self.keyword_build(id).ok_or(ParseError::MissingOperand)?;
-                    let node = build(self, id, left)?;
+                    tape.pop(); // the construct's own token cell
+                    if had_left {
+                        tape.pop(); // the left dyad the constructor consumed
+                    }
                     tape.push(Cell::Dyad(node));
                 }
                 // An operator: reduce anything binding tighter to its left, then
@@ -2817,12 +2850,11 @@ impl<'a> Parser<'a> {
                     {
                         if let Some((lit, matched, Schedule::Atom)) = self.peek_kind() {
                             if lit == self.types.rational {
-                                let build =
-                                    self.atom_build(lit).ok_or(ParseError::BadLiteral)?;
                                 let lstart = self.pos;
                                 self.pos += matched;
                                 let span = &source[lstart..lstart + matched];
-                                let dyad = build(self.store, lit, span)?;
+                                let dyad =
+                                    crate::identities::rational::build(self.store, lit, span)?;
                                 // SAFETY: `dyad` is the rational literal just built.
                                 let neg = unsafe {
                                     crate::identities::rational::negate(self.store, lit, dyad)
@@ -2900,16 +2932,15 @@ impl<'a> Parser<'a> {
                 Some(Cell::Token(t)) => t.identity,
                 _ => break,
             };
-            let lhs = match tape.cell(op_idx - 1).and_then(Cell::as_dyad) {
-                Some(d) => d,
-                None => break,
-            };
-            let rhs = match tape.cell(op_idx + 1).and_then(Cell::as_dyad) {
-                Some(d) => d,
-                None => break,
-            };
-            let build = match self.infix_build(op_id) {
-                Some(build) => build,
+            // Reduce only a token flanked by two completed operands; the
+            // constructor reads them back off the tape (`tape[-1]`, `tape[+1]`).
+            if tape.cell(op_idx - 1).and_then(Cell::as_dyad).is_none()
+                || tape.cell(op_idx + 1).and_then(Cell::as_dyad).is_none()
+            {
+                break;
+            }
+            let construct = match self.construct_of(op_id) {
+                Some(c) => c,
                 None => break,
             };
             // SAFETY: `op_id` is an operator identity from the store (it matched
@@ -2918,8 +2949,13 @@ impl<'a> Parser<'a> {
             if !(prev_prec > prec || (prev_prec == prec && assoc == Assoc::Left)) {
                 break;
             }
-            let types = self.types;
-            let dyad = build(self.store, &types, op_id, lhs, rhs)?;
+            tape.set_cursor(op_idx);
+            let dyad = match construct(self, op_id, tape)? {
+                Constructed::Node(d) => d,
+                // An infix that declines at reduction leaves the tape as-is; the
+                // seed's operators never do, but the contract stands.
+                Constructed::Decline => break,
+            };
             tape.reduce_binary(op_idx, dyad);
         }
         Ok(())
@@ -2938,16 +2974,20 @@ impl<'a> Parser<'a> {
                 Some(Cell::Token(t)) => t.identity,
                 _ => return Err(ParseError::Trailing),
             };
-            let lhs =
-                tape.cell(op_idx - 1).and_then(Cell::as_dyad).ok_or(ParseError::MissingOperand)?;
-            let rhs =
-                tape.cell(op_idx + 1).and_then(Cell::as_dyad).ok_or(ParseError::MissingOperand)?;
-            let build = match self.infix_build(op_id) {
-                Some(build) => build,
+            if tape.cell(op_idx - 1).and_then(Cell::as_dyad).is_none()
+                || tape.cell(op_idx + 1).and_then(Cell::as_dyad).is_none()
+            {
+                return Err(ParseError::MissingOperand);
+            }
+            let construct = match self.construct_of(op_id) {
+                Some(c) => c,
                 None => return Err(ParseError::Trailing),
             };
-            let types = self.types;
-            let dyad = build(self.store, &types, op_id, lhs, rhs)?;
+            tape.set_cursor(op_idx);
+            let dyad = match construct(self, op_id, tape)? {
+                Constructed::Node(d) => d,
+                Constructed::Decline => return Err(ParseError::Trailing),
+            };
             tape.reduce_binary(op_idx, dyad);
         }
         Ok(())

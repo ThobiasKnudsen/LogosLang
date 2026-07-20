@@ -14,7 +14,7 @@ use super::{commit_if_literal, is_numtype_node, meta, operands, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, Construct, CoreTypes, ParseError, Schedule};
+use crate::parse::{Assoc, CoreTypes, ParseError, Schedule};
 use crate::store::Store;
 
 /// Register `=`: spelling, parse precedence, and lowering. The run natives are
@@ -30,7 +30,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     );
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("=", IdContext::new(id, cx.root_scope));
-    cx.metas.insert(id, Construct::Infix { build });
+    cx.metas.insert(id, super::infix_construct!(build));
     cx.lower.insert(id, lower);
     id
 }

@@ -20,9 +20,8 @@ use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, Construct, CoreTypes, ParseError, Schedule};
+use crate::parse::{Assoc, ParseError, Schedule};
 use crate::run::{RunError, Runtime};
-use crate::store::Store;
 
 /// Register `return`: spelling, prefix constructor, native leaf, and lowering.
 /// In v1 `return` is optional (a body is valued by what it evaluates to); it is
@@ -39,21 +38,25 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     );
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("return", IdContext::new(id, cx.root_scope));
-    cx.metas.insert(id, Construct::Prefix(build));
+    cx.metas.insert(id, construct);
     cx.lower.insert(id, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     (id, leaf)
 }
 
-/// Build `return <operand>` as `{ty: return, value: [operand, op]}`.
-fn build(
-    store: &mut Store,
-    types: &CoreTypes,
-    return_id: DyadPtr,
-    operand: DyadPtr,
-) -> Result<DyadPtr, ParseError> {
-    let value = store.alloc_operands(&[operand, types.ops.return_]);
-    Ok(store.alloc_raw(return_id, value))
+/// The prefix constructor: parse the rest of the expression as the operand and
+/// build `return <operand>` as `{ty: return, value: [operand, op]}`. (v1 grabs
+/// to the end of the expression; early-return lands with control flow.)
+fn construct(
+    p: &mut crate::parse::Parser,
+    id: DyadPtr,
+    _tape: &mut crate::parse::ParsingTape,
+) -> Result<crate::parse::Constructed, ParseError> {
+    let operand = p.parse_expression()?;
+    let types = p.types();
+    let value = p.store().alloc_operands(&[operand, types.ops.return_]);
+    let node = p.store().alloc_raw(id, value);
+    Ok(crate::parse::Constructed::Node(node))
 }
 
 /// The single operand of a `return` node (its first slot).

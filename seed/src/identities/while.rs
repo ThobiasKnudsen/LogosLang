@@ -18,7 +18,7 @@ use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, Construct, Schedule};
+use crate::parse::{Assoc, Schedule};
 use crate::run::{RunError, Runtime};
 
 /// Register `while`: spelling, its `While` schedule, native leaf, and
@@ -34,7 +34,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     );
     let while_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("while", IdContext::new(while_, cx.root_scope));
-    cx.metas.insert(while_, Construct::Keyword(|p, id, _left| p.parse_while(id)));
+    cx.metas
+        .insert(while_, |p, id, _tape| p.parse_while(id).map(crate::parse::Constructed::Node));
     cx.lower.insert(while_, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     (while_, leaf)

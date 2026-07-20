@@ -21,7 +21,7 @@ use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, Construct, Schedule};
+use crate::parse::{Assoc, Schedule};
 use crate::run::{RunError, Runtime};
 
 /// The index of the condition in an `if` node's value struct.
@@ -45,7 +45,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     );
     let if_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("if", IdContext::new(if_, cx.root_scope));
-    cx.metas.insert(if_, Construct::Keyword(|p, id, _left| p.parse_if(id)));
+    cx.metas.insert(if_, |p, id, _tape| p.parse_if(id).map(crate::parse::Constructed::Node));
     cx.lower.insert(if_, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
 

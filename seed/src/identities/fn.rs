@@ -23,7 +23,7 @@ use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Assoc, Construct, Schedule};
+use crate::parse::{Assoc, Schedule};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -41,13 +41,10 @@ pub(super) fn register_syntax(cx: &mut Cx) {
     // `fn`'s constructor claims the pending declaration placeholder (the driver
     // suppresses it when the literal does not open a (sub-)expression), so a
     // recursive self-call inside the body resolves the published signature.
-    cx.metas.insert(
-        cx.fn_type,
-        Construct::Keyword(|p, id, _left| {
-            let declared = p.take_pending_fn();
-            p.parse_fn(id, declared)
-        }),
-    );
+    cx.metas.insert(cx.fn_type, |p, id, _tape| {
+        let declared = p.take_pending_fn();
+        p.parse_fn(id, declared).map(crate::parse::Constructed::Node)
+    });
 
     // `fn`'s own record, installed now that the string type exists for the role
     // names: an fn value is the five fixed slots `[input, output, body, bcode,

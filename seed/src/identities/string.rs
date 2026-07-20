@@ -19,7 +19,7 @@ use super::numtype::STRING_TAG;
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Construct, ParseError, Schedule};
+use crate::parse::{Constructed, ParseError, ParsingTape, Parser, Schedule};
 use crate::store::Store;
 
 /// Register `string`: its [`STRING_TAG`] type node and the `«…»` literal pattern
@@ -29,15 +29,18 @@ pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, STRING_TAG, Schedule::Atom);
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("«[^»]*»", IdContext::new(id, cx.root_scope));
-    cx.metas.insert(id, Construct::Atom(build));
+    cx.metas.insert(id, construct);
     id
 }
 
-/// Build a string literal from its `«…»` span (the guillemets are two bytes each
-/// in UTF-8).
-fn build(store: &mut Store, string_ty: DyadPtr, span: &str) -> Result<DyadPtr, ParseError> {
+/// The literal's constructor: read the `«…»` span off the cursor token and
+/// build the string node (the guillemets are two bytes each in UTF-8).
+fn construct(p: &mut Parser, id: DyadPtr, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
+    let t = tape.own_token().ok_or(ParseError::BadLiteral)?;
+    let span = &p.source()[t.start..t.start + t.len];
     let inner = &span.as_bytes()[2..span.len() - 2];
-    Ok(build_text(store, string_ty, inner))
+    let node = build_text(p.store(), id, inner);
+    Ok(Constructed::Node(node))
 }
 
 /// Build a string node `{ty: string, value -> [len, bytes]}` from raw text.

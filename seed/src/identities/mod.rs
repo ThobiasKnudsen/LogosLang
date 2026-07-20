@@ -46,7 +46,7 @@ use std::collections::HashMap;
 
 use crate::compile::LowerTable;
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc, Construct, CoreTypes, ParseError, Schedule, FN_OUTPUT};
+use crate::parse::{Assoc, ConstructFn, CoreTypes, ParseError, Schedule, FN_OUTPUT};
 use crate::regex_trie::RegexTrie;
 use crate::store::Store;
 
@@ -360,24 +360,23 @@ impl Core {
         op_leaves.scope_ = scope::register_exec(&mut cx, scope_, &callables);
 
         // Constructor slots (#30): the registration table was only ever the
-        // collection point. Every identity's parse-time build code moves onto a
-        // callable leaf — the `seed-parse` convention, the entry signature
-        // selected by the identity's schedule byte — installed in its record's
+        // collection point. Every identity's parse-time constructor moves onto
+        // a callable leaf — the `seed-parse` convention, ONE entry signature
+        // ([`ConstructFn`]) for every identity — installed in its record's
         // constructor slot; the table then drops here, before any parsing
         // runs. The fn-pointer→address cast is the licensed mint, exactly as
         // for the run natives (issue #44).
         let Cx { store, metas, lower, .. } = cx;
         // SAFETY: every key in `metas` is an identity whose registration built
-        // its record, and each entry is minted from the matching build fn.
+        // its record, and each entry is minted from a `ConstructFn`.
         unsafe {
-            for (&id, construct) in &metas {
-                let entry = match construct {
-                    Construct::Atom(f) => *f as usize,
-                    Construct::Prefix(f) => *f as usize,
-                    Construct::Infix { build } => *build as usize,
-                    Construct::Keyword(f) => *f as usize,
-                };
-                let leaf = callable::mint(store, callables.callable, entry, callables.seed_parse);
+            for (&id, &construct) in &metas {
+                let leaf = callable::mint(
+                    store,
+                    callables.callable,
+                    construct as usize,
+                    callables.seed_parse,
+                );
                 meta::install_constructor(id, leaf);
             }
         }
@@ -493,9 +492,30 @@ pub(crate) struct Cx<'a> {
     /// names are string nodes, so the identities registered after it can name
     /// their operands as graph data.
     string_: DyadPtr,
-    metas: HashMap<DyadPtr, Construct>,
+    metas: HashMap<DyadPtr, ConstructFn>,
     lower: LowerTable,
 }
+
+/// The one-signature infix constructor over a file's `build` fn: read the two
+/// operands flanking the cursor from the tape (the model's `tape[-1]` and
+/// `tape[+1]`, completed dyads at reduction) and build the operator node. Each
+/// operator file expands this over its own `build`, keeping one constructor
+/// convention without fourteen hand-written wrappers.
+macro_rules! infix_construct {
+    ($build:path) => {{
+        fn construct(
+            p: &mut crate::parse::Parser,
+            id: crate::dyad::DyadPtr,
+            tape: &mut crate::parse::ParsingTape,
+        ) -> Result<crate::parse::Constructed, crate::parse::ParseError> {
+            let (lhs, rhs) = tape.binary_operands()?;
+            let types = p.types();
+            $build(p.store(), &types, id, lhs, rhs).map(crate::parse::Constructed::Node)
+        }
+        construct as crate::parse::ConstructFn
+    }};
+}
+pub(crate) use infix_construct;
 
 /// The two `dyad@` operands of a binary application node.
 ///

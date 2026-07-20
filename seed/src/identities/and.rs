@@ -18,7 +18,7 @@ use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::parse::{
-    bool_literal_value, is_bool_result, Assoc, Construct, CoreTypes, ParseError, Schedule,
+    bool_literal_value, is_bool_result, Assoc, CoreTypes, ParseError, Schedule,
 };
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
@@ -37,7 +37,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     );
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("and", IdContext::new(id, cx.root_scope));
-    cx.metas.insert(id, Construct::Infix { build });
+    cx.metas.insert(id, super::infix_construct!(build));
     cx.lower.insert(id, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     (id, leaf)

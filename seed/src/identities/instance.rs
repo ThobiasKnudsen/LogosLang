@@ -26,7 +26,7 @@ use super::{commit_if_literal, meta, numtype_of, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
-use crate::parse::{Construct, CoreTypes, ParseError, Schedule};
+use crate::parse::{CoreTypes, ParseError, Schedule};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -51,16 +51,14 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let record = meta::record(cx.store, meta::TOKEN_TAG, Schedule::Dot);
     let dot = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(r"\.", IdContext::new(dot, cx.root_scope));
-    cx.metas.insert(
-        dot,
-        Construct::Keyword(|p, _id, left| {
-            if left.is_null() {
-                return Err(crate::parse::ParseError::MissingOperand);
-            }
-            // SAFETY: `left` is the reduced dyad the driver popped for us.
-            unsafe { p.parse_field_access(left) }
-        }),
-    );
+    cx.metas.insert(dot, |p, _id, tape| {
+        // The model's `tape[-1]`: the completed dyad left of the cursor.
+        let Some(left) = tape.left_dyad() else {
+            return Err(crate::parse::ParseError::MissingOperand);
+        };
+        // SAFETY: `left` is a reduced dyad read off the tape.
+        unsafe { p.parse_field_access(left) }.map(crate::parse::Constructed::Node)
+    });
 
     (construct, leaf)
 }
