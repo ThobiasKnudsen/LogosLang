@@ -47,10 +47,9 @@ pub(crate) struct Callables {
     pub seed_native: DyadPtr,
     /// `container-i64`: compiled code taking uniform `i64` bit-containers.
     pub container_i64: DyadPtr,
-    /// `seed-parse`: a Rust parse shim whose exact signature is selected by the
-    /// identity's schedule byte (an Atom, Prefix, or Infix build) — the
-    /// convention of every constructor slot's leaf until self-hosting ports
-    /// constructors to Logos source.
+    /// `seed-parse`: the one constructor signature
+    /// ([`crate::parse::ConstructFn`]) — the convention of every constructor
+    /// slot's leaf until self-hosting ports constructors to Logos source.
     pub seed_parse: DyadPtr,
 }
 

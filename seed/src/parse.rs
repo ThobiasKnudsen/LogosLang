@@ -13,11 +13,17 @@
 //!
 //! This module holds the parser's own state: the tape substrate (above), the
 //! scope stack, and name resolution over it. The parser owns resolution; the
-//! trie ([`crate::regex_trie`]) is only the name index. Still to come: pending
-//! tokens lexed lazily onto the tape itself (v1 lexes on demand but resolves
-//! each name eagerly at scan), and the general deferred-reduction driver that
-//! runs each identity's `constructor` (v1's driver owns the scheduling; see
-//! [`Construct`]).
+//! trie ([`crate::regex_trie`]) is only the name index. The driver is the
+//! minimal deferred-reduction loop DESIGN describes — lex the next token,
+//! classify it from its record alone ([`Parser::classify`]: constructor
+//! presence, the precedence field, the record kind), shift or reduce — and
+//! each identity's `constructor` ([`ConstructFn`]) does the actual
+//! consumption: operands and fresh names ride the tape as token cells,
+//! converted at consumption, and a construct reads its left context back off
+//! the tape and its operands forward from source. Still to come: deferred
+//! *resolution* (a resolved token's identity fixed only at reduction, which
+//! token-rewriting macros need — the fresh-name declaration path already
+//! works this way) and constructor-driven `insert`/`remove` splicing.
 
 use std::collections::HashSet;
 
@@ -27,21 +33,22 @@ use crate::regex_trie::{RegexTrie, RegexTrieError};
 use crate::store::Store;
 
 /// A pending, not-yet-reduced token: the source span it was lexed from and the
-/// identity it denotes. In the target model a token's identity is not fixed until
-/// it reduces into its dyad, so a higher-precedence operator to its right can still
-/// rewrite it (the token-rewriting mechanism); a reduced [`Cell::Dyad`] is frozen
-/// against that. The v1 driver builds no such operators, so it resolves each name
-/// eagerly at scan and pushes the token with `identity` already set: the
-/// null-until-reduction path ([`Token::new`]) is real but, until macros arrive, is
-/// exercised only by the tape tests.
+/// identity it denotes. A token's identity is not fixed until it is consumed
+/// into a dyad — a reduced [`Cell::Dyad`] is frozen against rewriting, a token
+/// is not. The driver resolves names eagerly at scan where it can (the
+/// identity set on push) and pushes a *fresh* name as the null-until-consumed
+/// form ([`Token::new`]): a following `:=`/`:` declares it at reduction, and
+/// any other consumer converts it through `as_operand`, which re-resolves the
+/// span. Full deferred resolution for already-resolvable names — what
+/// token-rewriting operators need — rides the same null path later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Token {
     /// Byte offset of the token in the source.
     pub start: usize,
     /// Byte length of the matched span.
     pub len: usize,
-    /// The identity this token denotes, or null until resolved. The v1 driver sets
-    /// it eagerly at scan; deferred resolution arrives with token-rewriting operators.
+    /// The identity this token denotes, or null until consumed (a fresh name
+    /// awaiting its declaration or its resolution error).
     pub identity: DyadPtr,
 }
 

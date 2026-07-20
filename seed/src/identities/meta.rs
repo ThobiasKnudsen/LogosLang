@@ -234,8 +234,8 @@ pub(crate) unsafe fn destructor_of(id: DyadPtr) -> DyadPtr {
 /// construction; nothing has read the slot before the fill.
 ///
 /// # Safety
-/// `id` must carry a record and `leaf` must be a callable leaf whose entry
-/// matches `id`'s schedule byte.
+/// `id` must carry a record and `leaf` must be a callable leaf whose entry is
+/// a [`crate::parse::ConstructFn`].
 pub(crate) unsafe fn install_constructor(id: DyadPtr, leaf: DyadPtr) {
     std::ptr::write_unaligned((*id).value.add(CTOR_OFF) as *mut DyadPtr, leaf);
 }
