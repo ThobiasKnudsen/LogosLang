@@ -56,20 +56,30 @@ pub(super) fn register(
     // prefix.
     cx.metas.insert(at, |p, _id, tape| {
         // The model's `tape[-1]`: a completed operand makes `@` a postfix
-        // deref, none makes it the pointer-type prefix.
+        // deref (the left consumed), none makes it the pointer-type prefix.
         match p.left_operand(tape)? {
-            // SAFETY: `left` is a reduced dyad off the tape.
-            Some(left) => unsafe { p.build_deref(left) },
-            None => p.parse_pointer_type(),
+            Some(left) => {
+                // SAFETY: `left` is a reduced dyad off the tape.
+                let node = unsafe { p.build_deref(left) }?;
+                tape.remove(-1); // the consumed left
+                tape.place(node);
+            }
+            None => {
+                let node = p.parse_pointer_type()?;
+                tape.place(node);
+            }
         }
-        .map(crate::parse::Constructed::Node)
+        Ok(crate::parse::Constructed::Placed)
     });
 
     let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN);
     let amp = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("&", IdContext::new(amp, cx.root_scope));
-    cx.metas
-        .insert(amp, |p, _id, _tape| p.parse_address_of().map(crate::parse::Constructed::Node));
+    cx.metas.insert(amp, |p, _id, tape| {
+        let node = p.parse_address_of()?;
+        tape.place(node);
+        Ok(crate::parse::Constructed::Placed)
+    });
 
     let record = meta::operand_record(
         cx,

@@ -45,13 +45,16 @@ fn construct(
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, ParseError> {
     if let Some(node) = p.try_type_fill(tape)? {
-        return Ok(crate::parse::Constructed::Node(node));
+        tape.reduce_here(node);
+        return Ok(crate::parse::Constructed::Placed);
     }
     let Some((lhs, rhs)) = p.binary_operands(tape)? else {
         return Ok(crate::parse::Constructed::Decline);
     };
     let types = p.types();
-    build(p.store(), &types, id, lhs, rhs).map(crate::parse::Constructed::Node)
+    let node = build(p.store(), &types, id, lhs, rhs)?;
+    tape.reduce_here(node);
+    Ok(crate::parse::Constructed::Placed)
 }
 
 /// Build `lhs = rhs`, committing an uncommitted literal right side to the target

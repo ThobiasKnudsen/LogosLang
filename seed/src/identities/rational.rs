@@ -44,12 +44,14 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     id
 }
 
-/// The literal's constructor: read the matched span off the cursor token and
-/// build the leaf.
+/// The literal's constructor: read the matched span off the cursor token,
+/// build the leaf, and place it over its own token.
 fn construct(p: &mut Parser, id: DyadPtr, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
     let t = tape.own_token().ok_or(ParseError::BadLiteral)?;
     let span = &p.source()[t.start..t.start + t.len];
-    build(p.store(), id, span).map(Constructed::Node)
+    let node = build(p.store(), id, span)?;
+    tape.place(node);
+    Ok(Constructed::Placed)
 }
 
 /// Build a rational literal `{ty: rational, value: [num, den]}` from its span,

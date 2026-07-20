@@ -47,15 +47,17 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
         // tape. Anywhere else the handoff is suppressed around the parse (take
         // and restore), so a grouped literal deeper in the same declaration's
         // value can still claim it.
-        if tape.len() == 1 {
+        let node = if tape.len() == 1 {
             let declared = p.take_pending_fn();
-            p.parse_fn(id, declared).map(crate::parse::Constructed::Node)
+            p.parse_fn(id, declared)?
         } else {
             let suppressed = p.take_pending_fn();
             let node = p.parse_fn(id, std::ptr::null_mut());
             p.restore_pending_fn(suppressed);
-            node.map(crate::parse::Constructed::Node)
-        }
+            node?
+        };
+        tape.place(node);
+        Ok(crate::parse::Constructed::Placed)
     });
 
     // `fn`'s own record, installed now that the string type exists for the role

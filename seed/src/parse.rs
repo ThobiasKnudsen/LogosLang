@@ -216,6 +216,23 @@ impl ParsingTape {
     pub fn own_token(&self) -> Option<Token> {
         self.at(0).and_then(Cell::as_token).copied()
     }
+
+    /// Replace the cursor cell — the construct's own token — with the dyad it
+    /// built: the in-place edit nearly every constructor ends with. (A
+    /// constructor may equally leave a *token* here via [`ParsingTape::at_mut`],
+    /// or splice cells anywhere with `insert`/`remove`; this is only the
+    /// common case.)
+    pub fn place(&mut self, dyad: DyadPtr) {
+        *self.at_mut(0).expect("the construct's token cell is at the cursor") = Cell::Dyad(dyad);
+    }
+
+    /// Reduce the triple around the cursor — `tape[-1]`, the construct's own
+    /// token, `tape[+1]` — to the single `dyad`: an infix constructor's
+    /// in-place splice at reduction.
+    pub fn reduce_here(&mut self, dyad: DyadPtr) {
+        let i = self.cursor;
+        assert!(self.reduce_binary(i, dyad), "an infix reduces between two operands");
+    }
 }
 
 /// A resolved name: how many source bytes it matched, the single identity
@@ -578,16 +595,21 @@ pub unsafe fn fn_frame_size(fn_node: DyadPtr) -> usize {
 }
 
 
-/// What a constructor produced. `Node` is the built dyad; the *driver* splices
-/// it over the cells the construct consumed (its own token, a consumed left,
-/// an infix triple), so tape surgery stays in one place. `Decline` is "not
-/// mine": the constructor consumed nothing, the driver drops its token,
-/// rewinds to its start, and lets the expression finalize — the left-hand twin
-/// of DESIGN ›a constructor that accepts not consuming its right-hand side
-/// then yields its own dyad as-is‹ (which is an ordinary `Node` of itself).
+/// Whether a constructor applied. A constructor never hands a result to a
+/// scheduling driver: it edits the tape *in place* — usually replacing its own
+/// token with the dyad it built ([`ParsingTape::place`]), splicing out the
+/// neighbours it consumed, and sometimes leaving another *token*, or inserting
+/// tokens elsewhere on the frontier (the macro mechanism: DESIGN ›a
+/// constructor may splice tokens in or drop upcoming ones before they lex‹).
+/// `Placed` reports only that it did; the tape is the result. `Decline` is
+/// "not mine": the constructor consumed nothing and touched nothing, and the
+/// driver drops its token, rewinds to its start, and lets the expression
+/// finalize (or shifts the token, for an extender) — an explicit signal,
+/// because a tape left holding a token is a legitimate outcome, not a
+/// refusal.
 pub enum Constructed {
-    /// The constructed dyad.
-    Node(DyadPtr),
+    /// The construct applied; its edits are on the tape.
+    Placed,
     /// The construct does not apply here; nothing was consumed.
     Decline,
 }
@@ -623,8 +645,10 @@ enum Class {
 /// on the construct's own token: it reads its span from the cursor cell, its
 /// left context from `tape.at(-1)` (the model's `tape[-1]`), its right operand
 /// from `tape.at(1)` (an infix, invoked at reduction), and any further tokens
-/// by consuming source forward. It returns what it built; the driver owns the
-/// splice.
+/// by consuming source forward — and it edits the tape *in place*: what it
+/// consumed it splices out, what it built it leaves at the cursor (a dyad, or
+/// another token). The driver decides only *when* constructors run — the
+/// precedence decision — never what they leave.
 pub type ConstructFn =
     fn(&mut Parser, DyadPtr, &mut ParsingTape) -> Result<Constructed, ParseError>;
 
@@ -1082,7 +1106,7 @@ impl<'a> Parser<'a> {
         let mut tape = ParsingTape::new();
         tape.push(Cell::Token(Token { start, len, identity: id }));
         match construct(self, id, &mut tape)? {
-            Constructed::Node(d) => Ok(Some(d)),
+            Constructed::Placed => Ok(tape.cell(0).and_then(Cell::as_dyad)),
             Constructed::Decline => Ok(None),
         }
     }
@@ -2466,7 +2490,9 @@ impl<'a> Parser<'a> {
             name_node,
             declared,
         );
-        Ok(Constructed::Node(node))
+        tape.remove(-1); // the name token, consumed
+        tape.place(node);
+        Ok(Constructed::Placed)
     }
 
     /// `:`'s constructor body: the typed declaration `name : type` — it
@@ -2540,7 +2566,9 @@ impl<'a> Parser<'a> {
             name_node,
             place,
         );
-        Ok(Constructed::Node(node))
+        tape.remove(-1); // the name token, consumed
+        tape.place(node);
+        Ok(Constructed::Placed)
     }
 
     /// A type variable's fill, tried by `=`'s constructor at reduction:
@@ -2683,49 +2711,25 @@ impl<'a> Parser<'a> {
                 Class::Operand => {
                     tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
                 }
-                // A fresh-start constructor — a keyword opener (`struct`, `fn`,
-                // `if`, `not`, `while`, `for`, `&`), a literal, a numeric type
-                // (juxtaposition), `return`: jump it; it consumes its own
-                // forward tokens (`fn`'s pending-declaration handoff lives in
-                // its own constructor).
-                Class::Construct(construct) => {
+                // A constructor that runs NOW — fresh-start (a keyword opener,
+                // a literal, a numeric type's juxtaposition, `return`) or a
+                // tight extender (`(` as a call, postfix `.`/`@`, the
+                // declarations `:`/`:=`, which read their left context off the
+                // tape, the model's `tape[-1]`): jump it. The constructor
+                // consumes forward tokens itself and edits the tape in place —
+                // the consumed left spliced out, its result at the cursor. On
+                // Decline the driver drops the token, rewinds, and finalizes:
+                // the token starts the next expression.
+                Class::Construct(construct) | Class::Tight(construct) => {
                     tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
-                    let dyad = match construct(self, id, &mut tape)? {
-                        Constructed::Node(d) => d,
+                    match construct(self, id, &mut tape)? {
+                        Constructed::Placed => {}
                         Constructed::Decline => {
                             tape.pop();
                             self.pos = start;
                             break;
                         }
-                    };
-                    tape.pop(); // the construct's own token cell
-                    tape.push(Cell::Dyad(dyad));
-                }
-                // A tight (infinite-precedence) extender — `(` as a call,
-                // postfix `.`/`@`: its constructor is invoked immediately and
-                // reads the completed dyad to its left off the tape — the
-                // model's `tape[-1]` read. `.` requires one; `@` without one
-                // is the pointer-type prefix; `(` without one is a grouping
-                // scope. The driver splices: the construct's own token always,
-                // plus the left cell iff a completed dyad stood there for the
-                // constructor to consume.
-                Class::Tight(construct) => {
-                    tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
-                    let had_left =
-                        tape.at(-1).is_some_and(|c| self.is_operand_cell(c));
-                    let node = match construct(self, id, &mut tape)? {
-                        Constructed::Node(d) => d,
-                        Constructed::Decline => {
-                            tape.pop();
-                            self.pos = start;
-                            break;
-                        }
-                    };
-                    tape.pop(); // the construct's own token cell
-                    if had_left {
-                        tape.pop(); // the left dyad the constructor consumed
                     }
-                    tape.push(Cell::Dyad(node));
                 }
                 // An operator: reduce anything binding tighter to its left, then
                 // shift it onto the tape as a pending token; its constructor is
@@ -2745,11 +2749,7 @@ impl<'a> Parser<'a> {
                                 identity: id,
                             }));
                             match construct(self, id, &mut tape)? {
-                                Constructed::Node(d) => {
-                                    tape.pop(); // the construct's own token cell
-                                    tape.push(Cell::Dyad(d));
-                                    continue;
-                                }
+                                Constructed::Placed => continue,
                                 Constructed::Decline => {
                                     tape.pop(); // fall through to the shift
                                 }
@@ -2819,14 +2819,18 @@ impl<'a> Parser<'a> {
             if !(prev_prec > prec || (prev_prec == prec && assoc == Assoc::Left)) {
                 break;
             }
+            let before = tape.len();
             tape.set_cursor(op_idx);
-            let dyad = match construct(self, op_id, tape)? {
-                Constructed::Node(d) => d,
+            match construct(self, op_id, tape)? {
+                // The constructor spliced its reduction in place
+                // ([`ParsingTape::reduce_here`]); a Placed that did not shrink
+                // the tape would loop forever, so it ends the reduction run.
+                Constructed::Placed if tape.len() < before => {}
+                Constructed::Placed => break,
                 // An infix that declines at reduction leaves the tape as-is; the
                 // seed's operators never do, but the contract stands.
                 Constructed::Decline => break,
-            };
-            tape.reduce_binary(op_idx, dyad);
+            }
         }
         Ok(())
     }
@@ -2853,12 +2857,12 @@ impl<'a> Parser<'a> {
                 Some(c) => c,
                 None => return Err(ParseError::Trailing),
             };
+            let before = tape.len();
             tape.set_cursor(op_idx);
-            let dyad = match construct(self, op_id, tape)? {
-                Constructed::Node(d) => d,
-                Constructed::Decline => return Err(ParseError::Trailing),
-            };
-            tape.reduce_binary(op_idx, dyad);
+            match construct(self, op_id, tape)? {
+                Constructed::Placed if tape.len() < before => {}
+                _ => return Err(ParseError::Trailing),
+            }
         }
         Ok(())
     }

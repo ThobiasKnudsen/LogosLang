@@ -557,7 +557,9 @@ macro_rules! infix_construct {
                 return Ok(crate::parse::Constructed::Decline);
             };
             let types = p.types();
-            $build(p.store(), &types, id, lhs, rhs).map(crate::parse::Constructed::Node)
+            let node = $build(p.store(), &types, id, lhs, rhs)?;
+            tape.reduce_here(node);
+            Ok(crate::parse::Constructed::Placed)
         }
         construct as crate::parse::ConstructFn
     }};

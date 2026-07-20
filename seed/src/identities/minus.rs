@@ -48,14 +48,18 @@ fn construct(
 ) -> Result<crate::parse::Constructed, ParseError> {
     if let Some((lhs, rhs)) = p.binary_operands(tape)? {
         let types = p.types();
-        return build(p.store(), &types, id, lhs, rhs).map(crate::parse::Constructed::Node);
+        let node = build(p.store(), &types, id, lhs, rhs)?;
+        tape.reduce_here(node);
+        return Ok(crate::parse::Constructed::Placed);
     }
     let types = p.types();
     match p.consume_rational()? {
-        // SAFETY: `lit` is the rational literal just built.
-        Some(lit) => Ok(crate::parse::Constructed::Node(unsafe {
-            rational::negate(p.store(), types.rational, lit)
-        })),
+        Some(lit) => {
+            // SAFETY: `lit` is the rational literal just built.
+            let neg = unsafe { rational::negate(p.store(), types.rational, lit) };
+            tape.place(neg);
+            Ok(crate::parse::Constructed::Placed)
+        }
         None => Ok(crate::parse::Constructed::Decline),
     }
 }

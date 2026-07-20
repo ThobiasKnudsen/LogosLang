@@ -42,7 +42,11 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     );
     let for_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("for", IdContext::new(for_, cx.root_scope));
-    cx.metas.insert(for_, |p, id, _tape| p.parse_for(id).map(crate::parse::Constructed::Node));
+    cx.metas.insert(for_, |p, id, tape| {
+        let node = p.parse_for(id)?;
+        tape.place(node);
+        Ok(crate::parse::Constructed::Placed)
+    });
     cx.lower.insert(for_, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
 

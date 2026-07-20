@@ -166,19 +166,20 @@ pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr
 fn construct(
     p: &mut crate::parse::Parser,
     id: DyadPtr,
-    _tape: &mut crate::parse::ParsingTape,
+    tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, crate::parse::ParseError> {
     let lit = match p.consume_rational()? {
         Some(l) => Some(l),
         None => p.consume_negated_rational()?,
     };
-    match lit {
+    let node = match lit {
         // SAFETY: `l` is the literal just built; `id` is this numeric type's
         // registered node.
-        Some(l) => unsafe { super::commit_literal_to(p.store(), l, id) }
-            .map(crate::parse::Constructed::Node),
-        None => Ok(crate::parse::Constructed::Node(id)),
-    }
+        Some(l) => unsafe { super::commit_literal_to(p.store(), l, id) }?,
+        None => id,
+    };
+    tape.place(node);
+    Ok(crate::parse::Constructed::Placed)
 }
 
 /// The value-slot tag for the `void` unit type, one past every [`NumType`] discriminant

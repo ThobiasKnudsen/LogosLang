@@ -24,16 +24,21 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
     cx.trie.insert(r"\(", IdContext::new(open, cx.root_scope));
     cx.metas.insert(open, |p, _id, tape| {
         // The model's `tape[-1]`: a completed operand makes this a call on it
-        // (`f(x)`, `i32(x)`, `point(3, 4)`); none opens a grouping scope whose
-        // value is its body.
+        // (`f(x)`, `i32(x)`, `point(3, 4)`), the callee consumed; none opens a
+        // grouping scope whose value is its body.
         match p.left_operand(tape)? {
-            Some(callee) => p.parse_call(callee).map(crate::parse::Constructed::Node),
+            Some(callee) => {
+                let node = p.parse_call(callee)?;
+                tape.remove(-1); // the consumed callee
+                tape.place(node);
+            }
             None => {
                 let body = p.parse_sequence()?;
                 p.expect_close()?;
-                Ok(crate::parse::Constructed::Node(body))
+                tape.place(body);
             }
         }
+        Ok(crate::parse::Constructed::Placed)
     });
 
     let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN);

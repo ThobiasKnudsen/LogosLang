@@ -49,13 +49,14 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
 fn construct(
     p: &mut crate::parse::Parser,
     id: DyadPtr,
-    _tape: &mut crate::parse::ParsingTape,
+    tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, ParseError> {
     let operand = p.parse_expression()?;
     let types = p.types();
     let value = p.store().alloc_operands(&[operand, types.ops.return_]);
     let node = p.store().alloc_raw(id, value);
-    Ok(crate::parse::Constructed::Node(node))
+    tape.place(node);
+    Ok(crate::parse::Constructed::Placed)
 }
 
 /// The single operand of a `return` node (its first slot).

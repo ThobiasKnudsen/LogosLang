@@ -34,8 +34,11 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr) {
         meta::operand_record(cx, meta::LIST_TAG, f64::NAN, Assoc::Left, &["scope"]);
     let struct_ = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("struct", IdContext::new(struct_, cx.root_scope));
-    cx.metas
-        .insert(struct_, |p, id, _tape| p.parse_struct(id).map(crate::parse::Constructed::Node));
+    cx.metas.insert(struct_, |p, id, tape| {
+        let node = p.parse_struct(id)?;
+        tape.place(node);
+        Ok(crate::parse::Constructed::Placed)
+    });
 
     // `:` is a tight extender: its constructor declares a fresh name token to
     // its left (`name : type`) and declines anywhere else, staying a bare

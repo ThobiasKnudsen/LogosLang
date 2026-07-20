@@ -56,7 +56,10 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
             return Err(crate::parse::ParseError::MissingOperand);
         };
         // SAFETY: `left` is a reduced dyad off the tape.
-        unsafe { p.parse_field_access(left) }.map(crate::parse::Constructed::Node)
+        let node = unsafe { p.parse_field_access(left) }?;
+        tape.remove(-1); // the consumed left
+        tape.place(node);
+        Ok(crate::parse::Constructed::Placed)
     });
 
     (construct, leaf, dot)
