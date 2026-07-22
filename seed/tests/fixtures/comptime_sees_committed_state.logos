@@ -1,6 +1,6 @@
 # build and run are one pass: x's initializer has already RUN when the parser
-# comptime-evaluates metatype(x) on the last line, so the call sees x = 5 (the
+# comptime-evaluates metalogos(x) on the last line, so the call sees x = 5 (the
 # else branch, f64), never the zeroed storage a separate parse pass would read
 x := i32 5
-metatype := fn (i : i32) -> type ( if (i == 0) (i32) else (f64) )
-metatype(x) == f64
+metalogos := fn (i : i32) -> logos ( if (i == 0) (i32) else (f64) )
+metalogos(x) == f64

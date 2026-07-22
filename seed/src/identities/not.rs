@@ -4,7 +4,7 @@
 //! `not (x)`: logical negation of a `bool`. Its operand must be a `bool`; the result
 //! is a `bool`. It takes a parenthesized operand (like `if`'s condition), which keeps
 //! its binding unambiguous without a unary-precedence rule: `not (a) and b` is
-//! `(not a) and b`. The node is `{ty: not, value: [operand, op]}` — the punned
+//! `(not a) and b`. The node is `{logos: not, value: [operand, op]}` — the punned
 //! single-operand form widened so the node references its native leaf like every
 //! other runnable (issue #44).
 //!
@@ -17,14 +17,14 @@ use cranelift_codegen::ir::Value;
 use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
-use crate::dyad::DyadPtr;
+use crate::synolon::SynolonPtr;
 use crate::id_context::IdContext;
 use crate::parse::{Assoc};
 use crate::run::{RunError, Runtime};
 
 /// Register `not`: spelling, the parenthesized-operand construct, native leaf,
 /// and lowering. Returns `(identity, leaf)`.
-pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (SynolonPtr, SynolonPtr) {
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
@@ -49,18 +49,18 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
 /// # Safety
 /// `node` must be a `not` node `[operand, op]` built by
 /// [`crate::parse::Parser::parse_not`].
-unsafe fn operand(node: DyadPtr) -> DyadPtr {
-    *((*node).value as *const DyadPtr)
+unsafe fn operand(node: SynolonPtr) -> SynolonPtr {
+    *((*node).hyle as *const SynolonPtr)
 }
 
 /// Run: `1` when the operand is false (0), else `0`.
-fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+fn run(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid `not` node; its first slot is its operand.
     unsafe { Ok(i64::from((rt.run(operand(node))? == 0) as i32)) }
 }
 
 /// Lower: `operand == 0`, yielding the i32 0/1.
-fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+fn lower(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid `not` node; its first slot is its operand.
     unsafe {
         let a = lw.lower(operand(node))?;

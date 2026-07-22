@@ -8,11 +8,11 @@
 //! read each value rides the graph, as each identity's shared-member record
 //! ([`crate::identities::meta`]). [`describe`] is that walker, and its dispatch
 //! is exactly `run`'s (DESIGN ›Execution is function application‹): consult the
-//! node's type; a value of a struct type is an instance, a value of a function
+//! node's logos; a value of a record logos is an instance, a value of a function
 //! is an application (its operands per the function's record, or a call), and
-//! everything else is data read through its type's record — grounding out at
-//! the `Type : Type` fixed point. The only handles it takes are the same three
-//! fixed points the interpreter holds (`type`, `fn`, `struct`); everything else
+//! everything else is data read through its logos's record — grounding out at
+//! the `logos : logos` fixed point. The only handles it takes are the same three
+//! fixed points the interpreter holds (`logos`, `fn`, `record`); everything else
 //! comes from records.
 //!
 //! What stays opaque is machine code, not structure: a callable's entry is the
@@ -21,7 +21,7 @@
 //! remains table-keyed Rust — so [`Shape`] tells you how a node is *built*,
 //! never what it computes.
 
-use crate::dyad::DyadPtr;
+use crate::synolon::SynolonPtr;
 use crate::identities::instance;
 use crate::identities::meta;
 use crate::identities::numtype::{
@@ -36,39 +36,39 @@ use crate::parse::CoreTypes;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Slot {
     /// The role-name string node.
-    pub role: DyadPtr,
+    pub role: SynolonPtr,
     /// The operand in this slot, or null when absent.
-    pub node: DyadPtr,
+    pub node: SynolonPtr,
 }
 
 /// A node's structure, read from the graph alone.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Shape {
-    /// A scalar value, read at its type's width (a `bool` is physically an i32;
+    /// A scalar value, read at its logos's width (a `bool` is physically an i32;
     /// a pointer value is its own variant below).
     Scalar(NumType),
-    /// The unit type's value: nothing to read.
+    /// The unit logos's value: nothing to read.
     Unit,
     /// Text `[len: u64][bytes]` (a `«…»` string).
     Text,
     /// A comment: prose whose substance is the punned string node.
     Prose {
         /// The string node holding the comment's text.
-        text: DyadPtr,
+        text: SynolonPtr,
     },
     /// An uncommitted comptime rational `[num: i64, den: i64]`.
     Fraction,
-    /// A pointer value: an 8-byte address, its pointee type carried by the
-    /// pointer type's record.
+    /// A pointer value: an 8-byte address, its pointee logos carried by the
+    /// pointer logos's record.
     Pointer {
-        /// The pointee type node (`@T` → `T`).
-        pointee: DyadPtr,
+        /// The pointee logos node (`@T` → `T`).
+        pointee: SynolonPtr,
     },
     /// An application/value of fixed named operand slots: an operator or
-    /// statement node (`[lhs, rhs, type]`, `[condition, then, else]`, …) or an
+    /// statement node (`[lhs, rhs, logos]`, `[condition, then, else]`, …) or an
     /// fn value (`[input, output, body, bcode]`).
     Tuple {
-        /// The operands, one per role in the type's record.
+        /// The operands, one per role in the logos's record.
         slots: Vec<Slot>,
     },
     /// Fixed named head slots then a null-terminated variadic tail: a sequence
@@ -77,55 +77,55 @@ pub enum Shape {
         /// The fixed, named prefix.
         head: Vec<Slot>,
         /// The variadic tail.
-        tail: Vec<DyadPtr>,
+        tail: Vec<SynolonPtr>,
     },
-    /// A struct *type* definition: the stored layout its definition derived
+    /// A record *logos* definition: the stored layout its definition derived
     /// and locked (issue #47) — the field-name scope, the field declarations
     /// (behind the stored `fields` array node), and the packed byte size.
-    StructType {
+    RecordLogos {
         /// The scope its field names are declared in.
-        scope: DyadPtr,
+        scope: SynolonPtr,
         /// The field declaration nodes, in order.
-        fields: Vec<DyadPtr>,
+        fields: Vec<SynolonPtr>,
         /// The packed byte size instances occupy.
         size_bytes: u64,
     },
-    /// An array of `dyad@`: the elements live behind the node's `[len, data]`
+    /// An array of `synolon@`: the elements live behind the node's `[len, data]`
     /// value (a sequence's expression list rides in one of these).
     Array {
         /// The elements, in order.
-        items: Vec<DyadPtr>,
+        items: Vec<SynolonPtr>,
     },
     /// A callable leaf: the complete jump information — an opaque `@exec` entry
     /// (machine code is the reflection boundary; one invokes it, never reads
     /// into it) under a declared convention.
     Callable {
         /// The convention identity the jump follows.
-        convention: DyadPtr,
+        convention: SynolonPtr,
     },
     /// A calling-convention identity, named by its string node.
     Convention {
         /// The convention's name string node.
-        name: DyadPtr,
+        name: SynolonPtr,
     },
-    /// A call: the callee is the node's type, the arguments its value.
+    /// A call: the callee is the node's logos, the arguments its value.
     Call {
         /// The user function being applied.
-        callee: DyadPtr,
+        callee: SynolonPtr,
         /// The arguments, in order.
-        args: Vec<DyadPtr>,
+        args: Vec<SynolonPtr>,
     },
-    /// An instance of a struct type: fields at derived offsets.
+    /// An instance of a record logos: fields at derived offsets.
     Instance {
-        /// Each field's declaration node, machine type, and byte offset.
-        fields: Vec<(DyadPtr, NumType, usize)>,
+        /// Each field's declaration node, machine logos, and byte offset.
+        fields: Vec<(SynolonPtr, NumType, usize)>,
         /// The instance storage's total size in bytes.
         size: usize,
     },
-    /// The node is itself a type/identity carrying a shared-member record: its
-    /// layout kind and parse members are the record's — the sealed `type`
+    /// The node is itself a logos/identity carrying a shared-member record: its
+    /// layout kind and parse members are the record's — the sealed `logos`
     /// model's shared members (issue #30), every field readable.
-    TypeNode {
+    LogosNode {
         /// The node's own record kind (a tag from `numtype`/`meta`).
         kind: u8,
         /// The node's parse precedence — `None` for the NaN sentinel (the
@@ -134,115 +134,113 @@ pub enum Shape {
         precedence: Option<f64>,
         /// The constructor: a callable leaf (`seed-parse` convention, a
         /// `native` body — invoked, never read into), or null: undefined, for
-        /// a pure delimiter or a data type with no parse role of its own.
-        constructor: DyadPtr,
+        /// a pure delimiter or a data logos with no parse role of its own.
+        constructor: SynolonPtr,
         /// The destructor: null on every seed identity — the honest undefined
         /// until drop semantics exist.
-        destructor: DyadPtr,
+        destructor: SynolonPtr,
     },
-    /// Declared but not (yet) defined: a null type, a null value where operands
+    /// Declared but not (yet) defined: a null logos, a null value where operands
     /// would be, or a layout that cannot be derived.
     Undefined,
 }
 
-/// Read `node`'s structure from the graph. `types` supplies only the three
-/// fixed-point handles the interpreter also holds (`type_`, `fn_type`,
-/// `struct_`); every layout decision comes from the records.
+/// Read `node`'s structure from the graph. `logos` supplies only the two
+/// fixed-point handles the interpreter also holds (`type_`, `fn_type`); every
+/// layout decision comes from the records.
 ///
 /// # Safety
-/// `node` must be a valid dyad from the store, in the shapes the parser and
-/// [`crate::identities::Core::build`] produce (every identity in type position
+/// `node` must be a valid synolon from the store, in the shapes the parser and
+/// [`crate::identities::Core::build`] produce (every identity in logos position
 /// carries its record).
-pub unsafe fn describe(types: &CoreTypes, node: DyadPtr) -> Shape {
-    let ty = (*node).ty;
-    if ty.is_null() {
+pub unsafe fn describe(types: &CoreTypes, node: SynolonPtr) -> Shape {
+    let logos = (*node).logos;
+    if logos.is_null() {
         return Shape::Undefined;
     }
-    // A struct type definition reads its stored layout record (issue #47); a
-    // still-unbound placeholder typed `struct` has no record yet.
-    if ty == types.struct_ {
-        if (*node).value.is_null() {
-            return Shape::Undefined;
-        }
-        return Shape::StructType {
-            scope: meta::struct_scope_of(node),
-            fields: crate::identities::array::items(meta::struct_fields_of(node)).to_vec(),
-            size_bytes: meta::struct_size_of(node),
+    // A record logos definition reads its stored layout record (issue #47),
+    // recognized by that record itself now that every logos is classified by
+    // the root.
+    if meta::is_record_type(node) {
+        return Shape::RecordLogos {
+            scope: meta::record_scope_of(node),
+            fields: crate::identities::array::items(meta::record_fields_of(node)).to_vec(),
+            size_bytes: meta::record_size_of(node),
         };
     }
-    // A value of a struct type is an instance: its layout derives from the
+    // A value of a record logos is an instance: its layout derives from the
     // definition's field list.
-    if (*ty).ty == types.struct_ {
-        return match instance::layout(ty) {
+    if meta::is_record_type(logos) {
+        return match instance::layout(logos) {
             Ok((fields, size)) => Shape::Instance { fields, size },
             Err(_) => Shape::Undefined,
         };
     }
     // A value of a function is an application — a call (the operators are
-    // plain types since #44; their applications read below, per their records).
-    if (*ty).ty == types.fn_type {
-        return Shape::Call { callee: ty, args: scan_null_terminated((*node).value) };
+    // plain logos since #44; their applications read below, per their records).
+    if (*logos).logos == types.fn_type {
+        return Shape::Call { callee: logos, args: scan_null_terminated((*node).hyle) };
     }
-    // Data: read the node through its type's record, grounding at Type : Type.
-    let Some(kind) = meta::kind_of(ty) else {
-        return Shape::Undefined; // an unbound placeholder standing as a type
+    // Data: read the node through its logos's record, grounding at logos : logos.
+    let Some(kind) = meta::kind_of(logos) else {
+        return Shape::Undefined; // an unbound placeholder standing as a logos
     };
     match kind {
-        k if k < VOID_TAG => Shape::Scalar(numtype::of_type_node(ty)),
+        k if k < VOID_TAG => Shape::Scalar(numtype::of_type_node(logos)),
         VOID_TAG => Shape::Unit,
         STRING_TAG => Shape::Text,
-        COMMENT_TAG => Shape::Prose { text: (*node).value.cast() },
-        ADDR_TAG => Shape::Pointer { pointee: numtype::pointee_of(ty) },
+        COMMENT_TAG => Shape::Prose { text: (*node).hyle.cast() },
+        ADDR_TAG => Shape::Pointer { pointee: numtype::pointee_of(logos) },
         meta::ARRAY_TAG => Shape::Array {
             items: crate::identities::array::items(node).to_vec(),
         },
         meta::CALLABLE_TAG => Shape::Callable {
             convention: crate::identities::callable::convention_of(node),
         },
-        meta::CONVENTION_TAG => Shape::Convention { name: (*node).value.cast() },
+        meta::CONVENTION_TAG => Shape::Convention { name: (*node).hyle.cast() },
         meta::FRACTION_TAG => Shape::Fraction,
-        meta::TYPEREC_TAG => Shape::TypeNode {
+        meta::TYPEREC_TAG => Shape::LogosNode {
             kind: meta::kind_of(node).unwrap_or(meta::TOKEN_TAG),
             precedence: Some(meta::precedence_of(node)).filter(|p| !p.is_nan()),
             constructor: meta::constructor_of(node),
             destructor: meta::destructor_of(node),
         },
-        meta::TUPLE_TAG | meta::LIST_TAG => operands_of(ty, node),
-        _ => Shape::Undefined, // a TOKEN-kinded type has no values
+        meta::TUPLE_TAG | meta::LIST_TAG => operands_of(logos, node),
+        _ => Shape::Undefined, // a TOKEN-kinded logos has no values
     }
 }
 
-/// Read `node`'s operands per `ty`'s operand record: a tuple's fixed slots, or
+/// Read `node`'s operands per `logos`'s operand record: a tuple's fixed slots, or
 /// a list's fixed head plus null-terminated tail.
 ///
 /// # Safety
-/// `ty` carries an operand record; `node.value` has the shape it declares.
-unsafe fn operands_of(ty: DyadPtr, node: DyadPtr) -> Shape {
-    let value = (*node).value as *const DyadPtr;
+/// `logos` carries an operand record; `node.hyle` has the shape it declares.
+unsafe fn operands_of(logos: SynolonPtr, node: SynolonPtr) -> Shape {
+    let value = (*node).hyle as *const SynolonPtr;
     if value.is_null() {
         return Shape::Undefined; // declared, no operands yet
     }
-    let kind = meta::kind_of(ty).expect("operand records have a kind");
-    let arity = meta::arity_of(ty);
+    let kind = meta::kind_of(logos).expect("operand records have a kind");
+    let arity = meta::arity_of(logos);
     let slots = (0..arity)
-        .map(|i| Slot { role: meta::role_of(ty, i), node: *value.add(i) })
+        .map(|i| Slot { role: meta::role_of(logos, i), node: *value.add(i) })
         .collect();
     match kind {
         meta::TUPLE_TAG => Shape::Tuple { slots },
         meta::LIST_TAG => Shape::List {
             head: slots,
-            tail: scan_null_terminated((*node).value.add(arity * std::mem::size_of::<DyadPtr>())),
+            tail: scan_null_terminated((*node).hyle.add(arity * std::mem::size_of::<SynolonPtr>())),
         },
         _ => unreachable!("operand records are tuple or list"),
     }
 }
 
-/// The nodes of a null-terminated `dyad@` array (empty for a null array).
+/// The nodes of a null-terminated `synolon@` array (empty for a null array).
 ///
 /// # Safety
-/// A non-null `value` must point at a null-terminated `dyad@` array.
-unsafe fn scan_null_terminated(value: *mut u8) -> Vec<DyadPtr> {
-    let p = value as *const DyadPtr;
+/// A non-null `value` must point at a null-terminated `synolon@` array.
+unsafe fn scan_null_terminated(value: *mut u8) -> Vec<SynolonPtr> {
+    let p = value as *const SynolonPtr;
     let mut out = Vec::new();
     if p.is_null() {
         return out;
@@ -259,9 +257,9 @@ unsafe fn scan_null_terminated(value: *mut u8) -> Vec<DyadPtr> {
 /// reading a [`Slot`]'s role name or a [`Shape::Prose`]'s substance.
 ///
 /// # Safety
-/// `node` must be a string node (`{ty: string, value -> [len, bytes]}`) whose
+/// `node` must be a string node (`{logos: string, value -> [len, bytes]}`) whose
 /// store outlives the returned slice.
-pub unsafe fn text_of<'a>(node: DyadPtr) -> &'a [u8] {
+pub unsafe fn text_of<'a>(node: SynolonPtr) -> &'a [u8] {
     crate::identities::string::text(node)
 }
 
@@ -274,7 +272,7 @@ mod tests {
     use crate::store::Store;
 
     /// One store/trie/core/scope setup, parsing each source expression in turn.
-    fn parse_all(sources: &[&str]) -> (Store, Core, Vec<DyadPtr>) {
+    fn parse_all(sources: &[&str]) -> (Store, Core, Vec<SynolonPtr>) {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
@@ -296,7 +294,7 @@ mod tests {
         // extender; finite = infix), and the constructor slot carries the
         // parse behaviour — a callable leaf under the seed-parse convention —
         // exactly where behaviour exists. A pure delimiter's or plain data
-        // type's constructor is null, and every destructor is null: the honest
+        // logos's constructor is null, and every destructor is null: the honest
         // undefined until drop semantics exist. No table anywhere backs any of
         // this; there is no schedule byte.
         let mut store = Store::new();
@@ -327,7 +325,7 @@ mod tests {
             ("«t»", None, true),
             ("return", None, true),
             // Keyword constructors: fresh-start.
-            ("struct", None, true),
+            ("logos", None, true),
             ("fn", None, true),
             ("if", None, true),
             ("not", None, true),
@@ -349,15 +347,17 @@ mod tests {
             ("else", None, false),
             ("in", None, false),
             ("..", None, false),
-            // Numeric types carry the juxtaposition constructor (`i32 3`, the
-            // anonymous typed value; declining the right yields the type as a
+            // Numeric logos carry the juxtaposition constructor (`i32 3`, the
+            // anonymous typed value; declining the right yields the logos as a
             // value).
             ("i32", None, true),
             ("f64", None, true),
-            // Data types: plain operands, constructor undefined.
+            // Data logos: plain operands, constructor undefined. (The root
+            // `logos` itself sits in the keyword group above: its merged
+            // constructor serves the record path and yields the classifier
+            // otherwise.)
             ("bool", None, false),
             ("void", None, false),
-            ("type", None, false),
         ];
         for &(spelling, precedence, has_ctor) in cases {
             let id = scopes.resolve(&trie, spelling).unwrap().identity;
@@ -389,9 +389,9 @@ mod tests {
     #[test]
     fn field_names_resolve_through_the_shared_index_alone() {
         // The ruled mechanism (DESIGN ›Name resolution is scope-filtered‹; a
-        // per-struct names store is recorded as rejected): a struct's value
+        // per-record names store is recorded as rejected): a record's value
         // holds bare field nodes, and the spelling reaches its field only
-        // through the shared name index filtered by the struct's own scope.
+        // through the shared name index filtered by the record's own scope.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
@@ -399,7 +399,7 @@ mod tests {
         scopes.push(core.root_scope);
         let node = {
             let mut p = Parser::new(
-                "struct (alpha : i32, beta : i32)",
+                "logos (alpha : i32, beta : i32)",
                 &mut store,
                 &mut trie,
                 core.types(),
@@ -407,13 +407,13 @@ mod tests {
             );
             p.parse_expression().unwrap()
         };
-        // SAFETY: the root is the struct type just parsed, from the store.
+        // SAFETY: the root is the record logos just parsed, from the store.
         unsafe {
-            let scope = meta::struct_scope_of(node);
-            let falpha = crate::identities::array::items(meta::struct_fields_of(node))[0];
+            let scope = meta::record_scope_of(node);
+            let falpha = crate::identities::array::items(meta::record_fields_of(node))[0];
             // The entry is the bare field node — no name stored anywhere on it.
             assert_eq!(describe(&core.types(), falpha), Shape::Scalar(NumType::I32));
-            // The spelling resolves only with the struct's scope open…
+            // The spelling resolves only with the record's scope open…
             let mut inner = ScopeStack::new();
             inner.push(scope);
             assert_eq!(inner.resolve(&trie, "alpha").unwrap().identity, falpha);
@@ -481,7 +481,7 @@ mod tests {
                 assert_eq!(meta::kind_of(id), Some(kind));
                 assert_eq!(meta::arity_of(id), arity);
             }
-            // Data and foundation types.
+            // Data and foundation logos.
             assert_eq!(meta::kind_of(core.i32_), Some(NumType::I32 as u8));
             assert_eq!(meta::kind_of(core.bool_), Some(NumType::I32 as u8));
             assert_eq!(meta::kind_of(core.void), Some(VOID_TAG));
@@ -491,7 +491,6 @@ mod tests {
             assert_eq!(meta::kind_of(core.type_), Some(meta::TYPEREC_TAG));
             assert_eq!(meta::kind_of(core.scope_), Some(meta::TUPLE_TAG));
             assert_eq!(meta::kind_of(core.array_), Some(meta::ARRAY_TAG));
-            assert_eq!(meta::kind_of(core.struct_), Some(meta::LIST_TAG));
             assert_eq!(meta::kind_of(core.fn_type), Some(meta::TUPLE_TAG));
             assert_eq!(meta::arity_of(core.fn_type), crate::parse::FN_FRAME + 1);
         }
@@ -524,13 +523,13 @@ mod tests {
     }
 
     /// The walker reads a real program's structure — operators, control flow,
-    /// structs, pointers, calls, comments — from the graph alone: no `Construct`,
+    /// records, pointers, calls, comments — from the graph alone: no `Construct`,
     /// no `metas`, no per-identity Rust.
     #[test]
     fn describe_reads_a_program_from_the_graph_alone() {
         let (_store, core, roots) = parse_all(&[
             "x := i32 41",
-            "point := struct (a : i32, b : i64)",
+            "point := logos (a : i32, b : i64)",
             "pt := point(3, 4)",
             "x = x + 1",
             // A runtime condition (`x` is a place): a comptime-known one would
@@ -559,15 +558,15 @@ mod tests {
             assert_eq!(text_of(init[0].role), b"lhs");
             assert_eq!(describe(&types, init[0].node), Shape::Scalar(NumType::I32));
 
-            // The struct definition, behind its declaration: its stored layout
+            // The record definition, behind its declaration: its stored layout
             // (issue #47) — the field-name scope, two fields, a + b packed.
             let Shape::Tuple { slots } = describe(&types, roots[1]) else {
                 panic!("a declaration should be a tuple");
             };
-            let Shape::StructType { scope, fields, size_bytes } =
+            let Shape::RecordLogos { scope, fields, size_bytes } =
                 describe(&types, slots[1].node)
             else {
-                panic!("struct definition should read its stored layout");
+                panic!("record definition should read its stored layout");
             };
             assert!(!scope.is_null());
             assert_eq!(fields.len(), 2);
@@ -590,7 +589,7 @@ mod tests {
             assert_eq!((fields[0].1, fields[0].2), (NumType::I32, 0));
             assert_eq!((fields[1].1, fields[1].2), (NumType::I64, 4));
 
-            // `x = x + 1`: a [lhs, rhs] tuple whose rhs is a [lhs, rhs, type] tuple.
+            // `x = x + 1`: a [lhs, rhs] tuple whose rhs is a [lhs, rhs, logos] tuple.
             let Shape::Tuple { slots } = describe(&types, roots[3]) else {
                 panic!("assignment should be a tuple");
             };
@@ -644,26 +643,26 @@ mod tests {
                 panic!("an fn value should be a tuple");
             };
             assert_eq!(text_of(slots[0].role), b"input");
-            let Shape::StructType { fields: params, .. } = describe(&types, slots[0].node)
+            let Shape::RecordLogos { fields: params, .. } = describe(&types, slots[0].node)
             else {
-                panic!("the input struct reads its stored layout");
+                panic!("the input record reads its stored layout");
             };
             let Shape::Pointer { pointee } = describe(&types, params[0]) else {
                 panic!("the parameter should be a pointer");
             };
             assert_eq!(pointee, core.i32_);
 
-            // Identities self-describe as types: every shared member readable.
+            // Identities self-describe as logos: every shared member readable.
             // An operator carries its constructor (a callable leaf); a data
-            // type's constructor and every destructor are the honest undefined.
-            let Shape::TypeNode { kind, precedence, constructor, destructor } =
+            // logos's constructor and every destructor are the honest undefined.
+            let Shape::LogosNode { kind, precedence, constructor, destructor } =
                 describe(&types, core.plus)
             else {
                 panic!("an identity self-describes");
             };
             assert_eq!((kind, precedence), (meta::TUPLE_TAG, Some(2.0)));
             assert!(!constructor.is_null() && destructor.is_null());
-            let Shape::TypeNode { kind, precedence, constructor, destructor } =
+            let Shape::LogosNode { kind, precedence, constructor, destructor } =
                 describe(&types, core.i32_)
             else {
                 panic!("an identity self-describes");
@@ -671,16 +670,18 @@ mod tests {
             // A non-extender's precedence surfaces as None (the NaN sentinel:
             // it never extends an expression to its left, and the driver
             // classifies by exactly this field — there is no schedule byte). A
-            // numeric type carries the juxtaposition constructor (`i32 3`).
+            // numeric logos carries the juxtaposition constructor (`i32 3`).
             assert_eq!((kind, precedence), (NumType::I32 as u8, None));
             assert!(!constructor.is_null() && destructor.is_null());
-            let Shape::TypeNode { kind, precedence, constructor, destructor } =
+            let Shape::LogosNode { kind, precedence, constructor, destructor } =
                 describe(&types, core.type_)
             else {
                 panic!("an identity self-describes");
             };
             assert_eq!((kind, precedence), (meta::TYPEREC_TAG, None));
-            assert!(constructor.is_null() && destructor.is_null());
+            // The root carries the merged constructor (record path / bare
+            // classifier); its destructor stays the honest undefined.
+            assert!(!constructor.is_null() && destructor.is_null());
         }
     }
 
@@ -690,7 +691,7 @@ mod tests {
     #[test]
     fn the_whole_store_describes() {
         let (store, core, _roots) = parse_all(&[
-            "point := struct (a : i32, b : i64)",
+            "point := logos (a : i32, b : i64)",
             "pt := point(3, 4)",
             "q := &pt",
             "f := fn (v : i64) -> i64 ( if (v < 2) ( 1 ) else ( v * 2 ) )",
@@ -703,7 +704,7 @@ mod tests {
 
         let mut counts = std::collections::HashMap::new();
         for node in store.iter() {
-            // SAFETY: `iter` yields every allocated dyad; describe only reads.
+            // SAFETY: `iter` yields every allocated synolon; describe only reads.
             let shape = unsafe { describe(&types, node) };
             let name = match shape {
                 Shape::Scalar(_) => "scalar",
@@ -719,19 +720,19 @@ mod tests {
                 Shape::Convention { .. } => "convention",
                 Shape::Call { .. } => "call",
                 Shape::Instance { .. } => "instance",
-                Shape::StructType { .. } => "struct-type",
-                Shape::TypeNode { .. } => "type",
+                Shape::RecordLogos { .. } => "record-logos",
+                Shape::LogosNode { .. } => "logos",
                 Shape::Undefined => "undefined",
             };
             *counts.entry(name).or_insert(0usize) += 1;
         }
         for expected in
-            ["scalar", "text", "prose", "fraction", "pointer", "tuple", "list", "call", "instance", "type"]
+            ["scalar", "text", "prose", "fraction", "pointer", "tuple", "list", "call", "instance", "logos"]
         {
             assert!(counts.get(expected).copied().unwrap_or(0) > 0, "no {expected} described");
         }
         // Every registered identity self-describes; the walker sees at least the
         // ones the Core exposes by handle.
-        assert!(counts["type"] >= 40, "core identities should describe as types");
+        assert!(counts["logos"] >= 40, "core identities should describe as logos");
     }
 }

@@ -10,7 +10,7 @@
 //! [`crate::parse::Parser::parse_expression`], performs it when it sees a fresh
 //! name followed by `:=`), but the declaration is *real graph structure*, not a
 //! parse-time vapor: the expression becomes
-//! `{ty: declare, value: [name, declared, op]}` — the spelling as a string node
+//! `{logos: declare, value: [name, declared, op]}` — the spelling as a string node
 //! (the human-stable half of the nominal identity; DESIGN ›A declaration has a
 //! stable identity across edits‹), the declared binding, and the native leaf.
 //! Anything downstream — the sequence runner, the REPL's echo policy, a
@@ -20,7 +20,7 @@
 //! Running a declaration runs its initializer for effect and yields unit: for
 //! a plain value the work already happened at parse (storage allocated, bytes
 //! written) and the run is a harmless read; a construction re-fills its
-//! instance each evaluation; a declared fn or struct is inert. A declaration
+//! instance each evaluation; a declared fn or record is inert. A declaration
 //! is a statement — value positions reject it.
 
 use cranelift_codegen::ir::Value;
@@ -28,7 +28,7 @@ use cranelift_codegen::ir::Value;
 use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
-use crate::dyad::DyadPtr;
+use crate::synolon::SynolonPtr;
 use crate::id_context::IdContext;
 use crate::parse::{Assoc};
 use crate::run::{RunError, Runtime};
@@ -42,7 +42,7 @@ const DECL_DECLARED: usize = 1;
 /// name token to its left; the trie longest-matches `:=` over the field-list
 /// `:`) and the `declare` identity its expressions are typed by, with its
 /// native leaf and lowering. Returns `(declare identity, leaf, := token)`.
-pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr) {
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (SynolonPtr, SynolonPtr, SynolonPtr) {
     let record = meta::record(cx.store, meta::TOKEN_TAG, f64::INFINITY);
     let token = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(":=", IdContext::new(token, cx.root_scope));
@@ -61,14 +61,14 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     (declare, leaf, token)
 }
 
-/// Build a declare node `{ty: declare, value: [name, declared, op]}`.
+/// Build a declare node `{logos: declare, value: [name, declared, op]}`.
 pub(crate) fn build(
     store: &mut Store,
-    declare: DyadPtr,
-    op: DyadPtr,
-    name: DyadPtr,
-    declared: DyadPtr,
-) -> DyadPtr {
+    declare: SynolonPtr,
+    op: SynolonPtr,
+    name: SynolonPtr,
+    declared: SynolonPtr,
+) -> SynolonPtr {
     let value = store.alloc_operands(&[name, declared, op]);
     store.alloc_raw(declare, value)
 }
@@ -77,15 +77,15 @@ pub(crate) fn build(
 ///
 /// # Safety
 /// `node` must be a declare node as [`build`] lays it out.
-pub(crate) unsafe fn declared_of(node: DyadPtr) -> DyadPtr {
-    *((*node).value as *const DyadPtr).add(DECL_DECLARED)
+pub(crate) unsafe fn declared_of(node: SynolonPtr) -> SynolonPtr {
+    *((*node).hyle as *const SynolonPtr).add(DECL_DECLARED)
 }
 
 /// Run: evaluate the initializer for its effect (a construction fills its
-/// instance; a plain binding's read is harmless; a fn or struct is inert) and
+/// instance; a plain binding's read is harmless; a fn or record is inert) and
 /// yield unit — a declaration is a statement.
-fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a valid declare node; its declared slot is a valid dyad.
+fn run(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a valid declare node; its declared slot is a valid synolon.
     unsafe {
         rt.run(declared_of(node))?;
     }
@@ -94,7 +94,7 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 
 /// Lower: the initializer lowers for its effect (a construction emits its
 /// stores; a dead load is cleaned up by the backend), yielding unit.
-fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+fn lower(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
     // SAFETY: as [`run`].
     unsafe {
         lw.lower(declared_of(node))?;

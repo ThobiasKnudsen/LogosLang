@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `return`: an optional early exit from the enclosing function. Its node is
-//! `{ty: return, value: [value, op]}` — the punned single-operand form widened
+//! `{logos: return, value: [value, op]}` — the punned single-operand form widened
 //! so the node can reference its native leaf like every other runnable (issue
 //! #44) — and run/compile evaluate the operand and yield it. Surface: prefix,
 //! `return <expr>`.
@@ -18,7 +18,7 @@ use cranelift_codegen::ir::Value;
 use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
-use crate::dyad::DyadPtr;
+use crate::synolon::SynolonPtr;
 use crate::id_context::IdContext;
 use crate::parse::{Assoc, ParseError};
 use crate::run::{RunError, Runtime};
@@ -27,7 +27,7 @@ use crate::run::{RunError, Runtime};
 /// In v1 `return` is optional (a body is valued by what it evaluates to); it is
 /// kept as an explicit yield and becomes early-return once control flow lands.
 /// Returns `(identity, leaf)`.
-pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (SynolonPtr, SynolonPtr) {
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
@@ -44,11 +44,11 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
 }
 
 /// The prefix constructor: parse the rest of the expression as the operand and
-/// build `return <operand>` as `{ty: return, value: [operand, op]}`. (v1 grabs
+/// build `return <operand>` as `{logos: return, value: [operand, op]}`. (v1 grabs
 /// to the end of the expression; early-return lands with control flow.)
 fn construct(
     p: &mut crate::parse::Parser,
-    id: DyadPtr,
+    id: SynolonPtr,
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, ParseError> {
     let operand = p.parse_expression()?;
@@ -63,18 +63,18 @@ fn construct(
 ///
 /// # Safety
 /// `node` must be a `return` node `[value, op]` as [`build`] lays it out.
-unsafe fn operand(node: DyadPtr) -> DyadPtr {
-    *((*node).value as *const DyadPtr)
+unsafe fn operand(node: SynolonPtr) -> SynolonPtr {
+    *((*node).hyle as *const SynolonPtr)
 }
 
 /// Run: evaluate the single operand and yield it.
-fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+fn run(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid return node; its first slot is its operand.
     unsafe { rt.run(operand(node)) }
 }
 
 /// Lower: lower the single operand and yield it.
-fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+fn lower(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid return node; its first slot is its operand.
     unsafe { lw.lower(operand(node)) }
 }

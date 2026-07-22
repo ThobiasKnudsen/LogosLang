@@ -5,13 +5,13 @@
 //! with the surface the old prototype settled (examples/*.logos there). The
 //! range is **end-exclusive** (`0..10` runs 0 through 9) with an optional step
 //! `d` (default 1), and start/end/step are evaluated **once**, before the loop.
-//! The loop variable is a fresh block-local of the range's resolved numeric type
-//! (endpoints resolve like a binary operator's operands: concrete types must
+//! The loop variable is a fresh block-local of the range's resolved numeric logos
+//! (endpoints resolve like a binary operator's operands: concrete logos must
 //! match, literals commit, all-literals default to i32). A non-positive step
 //! runs zero iterations — the guard both tiers emit — and a *literal* step must
 //! be positive at parse. Like `while`, `for` is a statement yielding unit.
 //!
-//! Node: `{ty: for, value: [var, start, end, step-or-null, body]}`. The surface
+//! Node: `{logos: for, value: [var, start, end, step-or-null, body]}`. The surface
 //! parse lives in [`crate::parse::Parser::parse_for`]; here we register the
 //! identity, the structural `in` and `..` tokens it consumes, and the run and
 //! lowering. Deferred, deliberately: ranges as first-class values, multi-variable
@@ -23,7 +23,7 @@ use super::callable::{self, Callables};
 use super::numtype::{self, ArithOp, CmpOp};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
-use crate::dyad::DyadPtr;
+use crate::synolon::SynolonPtr;
 use crate::id_context::IdContext;
 use crate::parse::{Assoc};
 use crate::run::{RunError, Runtime};
@@ -32,7 +32,7 @@ use crate::run::{RunError, Runtime};
 /// structural `in` and `..` tokens the parser consumes. `..` registers escaped
 /// (`.` is a regex metacharacter); the trie's longest-match keeps it distinct
 /// from the field-access `.` and from a rational's fractional part.
-pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (SynolonPtr, SynolonPtr, SynolonPtr, SynolonPtr) {
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
@@ -66,12 +66,12 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
 ///
 /// # Safety
 /// `node` must be a `for` node built by [`crate::parse::Parser::parse_for`].
-unsafe fn parts(node: DyadPtr) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
-    let p = (*node).value as *const DyadPtr;
+unsafe fn parts(node: SynolonPtr) -> (SynolonPtr, SynolonPtr, SynolonPtr, SynolonPtr, SynolonPtr) {
+    let p = (*node).hyle as *const SynolonPtr;
     (*p, *p.add(1), *p.add(2), *p.add(3), *p.add(4))
 }
 
-/// The default step's bit-container: 1 in the loop type (1.0 for floats).
+/// The default step's bit-container: 1 in the loop logos (1.0 for floats).
 fn one_bits(nt: numtype::NumType) -> i64 {
     use numtype::NumType::*;
     match nt {
@@ -84,13 +84,13 @@ fn one_bits(nt: numtype::NumType) -> i64 {
 /// Run: evaluate start (written to the variable), end, and step once; then
 /// rerun the body and increment while `var < end`. A non-positive step runs
 /// zero iterations. Yields unit.
-fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a valid `for` node; its parts are valid dyads.
+fn run(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a valid `for` node; its parts are valid synolons.
     unsafe {
         let (var, start, end, step, body) = parts(node);
-        let nt = numtype::of_type_node((*var).ty);
+        let nt = numtype::of_type_node((*var).logos);
         let s = rt.run(start)?;
-        let var_ty = (*var).ty;
+        let var_ty = (*var).logos;
         numtype::write_scalar(var_ty, rt.place_addr(var).ok_or(RunError::BadValue)?, s);
         let e = rt.run(end)?;
         let d = if step.is_null() { one_bits(nt) } else { rt.run(step)? };
@@ -111,8 +111,8 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 }
 
 /// Lower: see [`Lowerer::lower_for`].
-fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a valid `for` node; its parts are valid dyads.
+fn lower(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
+    // SAFETY: `node` is a valid `for` node; its parts are valid synolons.
     unsafe {
         let (var, start, end, step, body) = parts(node);
         lw.lower_for(var, start, end, step, body)

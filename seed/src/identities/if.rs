@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `if ( cond ) ( then )` with an optional `else ( else )`: the conditional. `if`
-//! is a function (its own type is `fn`), like the operators; its node is
-//! `{ty: if, value: [cond, then, else]}`, the else slot null when absent. The
+//! is a function (its own logos is `fn`), like the operators; its node is
+//! `{logos: if, value: [cond, then, else]}`, the else slot null when absent. The
 //! condition must be a `bool` (checked at parse time); run evaluates only the taken
 //! branch, compile emits a two-way branch merging to a single value (DESIGN ›A
 //! scope's value is what it evaluates to‹). With both branches an `if` is a value;
@@ -19,12 +19,12 @@ use cranelift_codegen::ir::Value;
 use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
-use crate::dyad::DyadPtr;
+use crate::synolon::SynolonPtr;
 use crate::id_context::IdContext;
 use crate::parse::{Assoc};
 use crate::run::{RunError, Runtime};
 
-/// The index of the condition in an `if` node's value struct.
+/// The index of the condition in an `if` node's value record.
 const IF_COND: usize = 0;
 /// The index of the then-branch.
 const IF_THEN: usize = 1;
@@ -34,7 +34,7 @@ const IF_ELSE: usize = 2;
 /// Register `if` (the conditional keyword, its native leaf, and its lowering)
 /// and the `else` token the parser consumes between the branches. Returns
 /// `(identity, leaf, else token)`.
-pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr) {
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (SynolonPtr, SynolonPtr, SynolonPtr) {
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
@@ -65,8 +65,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
 /// # Safety
 /// `node` must be an `if` node built by [`crate::parse::Parser::parse_if`], with a
 /// `[cond, then, else]` value.
-unsafe fn branches(node: DyadPtr) -> (DyadPtr, DyadPtr, DyadPtr) {
-    let p = (*node).value as *const DyadPtr;
+unsafe fn branches(node: SynolonPtr) -> (SynolonPtr, SynolonPtr, SynolonPtr) {
+    let p = (*node).hyle as *const SynolonPtr;
     (*p.add(IF_COND), *p.add(IF_THEN), *p.add(IF_ELSE))
 }
 
@@ -74,7 +74,7 @@ unsafe fn branches(node: DyadPtr) -> (DyadPtr, DyadPtr, DyadPtr) {
 /// is true, matching the compiled `brif`). An else-less `if` runs its then-branch
 /// for its effect when taken and yields unit (0 bits) either way, matching the
 /// compiled merge.
-fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+fn run(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid `if` node with `[cond, then, else]` operands.
     unsafe {
         let (cond, then, els) = branches(node);
@@ -95,7 +95,7 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 /// Lower: a two-way branch on the condition, each arm lowering its branch and
 /// jumping to a merge block whose parameter is the `if`'s value; an else-less `if`
 /// lowers as a unit-valued statement ([`Lowerer::lower_if_stmt`]).
-fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+fn lower(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid `if` node with `[cond, then, else]` operands.
     unsafe {
         let (cond, then, els) = branches(node);

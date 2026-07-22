@@ -58,8 +58,8 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::UnclosedBracket => "this `(` is never closed".into(),
         ParseError::ExpectedOpen => "expected a `(` here".into(),
         ParseError::ExpectedField => "expected a field name here".into(),
-        ParseError::ExpectedArrow => "expected `->` before the return type".into(),
-        ParseError::ExpectedReturnType => "expected a return type after `->`".into(),
+        ParseError::ExpectedArrow => "expected `->` before the return logos".into(),
+        ParseError::ExpectedReturnType => "expected a return logos after `->`".into(),
         ParseError::UnsupportedOperands => {
             "this operator cannot compute over these operands".into()
         }
@@ -69,10 +69,10 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::NonBoolOperands => "these operands must be bools".into(),
         ParseError::TypeMismatch => {
-            "these types do not match (cross-type needs an explicit cast)".into()
+            "these logos do not match (crossing logos needs an explicit cast)".into()
         }
         ParseError::UncomputableLiteral => {
-            "this literal has no exact value in the type it lands in".into()
+            "this literal has no exact value in the logos it lands in".into()
         }
         ParseError::EarlyReturn => {
             "`return` must be the last expression of its scope".into()
@@ -91,20 +91,20 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::BadAddressOf => "`&` needs a variable to take the address of".into(),
         ParseError::BadCast => "a conversion takes exactly one numeric value".into(),
         ParseError::BadDeclaredType => {
-            "the declared or assigned type must be a type value"
+            "the declared or assigned logos must be a logos value"
                 .into()
         }
         ParseError::NonComptimeTypeAssign => {
-            "a type variable can only be assigned where parsing and running \
+            "a logos variable can only be assigned where parsing and running \
              coincide — not inside a function body, loop, or runtime branch"
                 .into()
         }
         ParseError::NonNumericDeclaredType => {
-            "typed declarations of non-numeric types are not in the seed yet"
+            "declarations of non-numeric logos are not in the seed yet"
                 .into()
         }
         ParseError::NonComptimeTypeCall => {
-            "a `-> type` call must be evaluable at parse time; \
+            "a `-> logos` call must be evaluable at parse time; \
              its arguments must be comptime-known"
                 .into()
         }
@@ -139,7 +139,7 @@ pub fn run_message(e: &RunError) -> String {
         RunError::NotRunnable(_) => "this is not runnable".into(),
         RunError::BadValue => "a value here has no storage to read".into(),
         RunError::UncomputableLiteral => {
-            "a literal here has no exact value in its context type".into()
+            "a literal here has no exact value in its context logos".into()
         }
         RunError::ArityMismatch => {
             "a call's argument count does not match its function".into()
@@ -161,7 +161,7 @@ pub fn compile_message(e: &CompileError) -> String {
         CompileError::NotLowerable(_) => "this cannot be compiled yet".into(),
         CompileError::BadValue => "a value here has no storage to compile against".into(),
         CompileError::UncomputableLiteral => {
-            "a literal here has no exact value in its context type".into()
+            "a literal here has no exact value in its context logos".into()
         }
         CompileError::UnsupportedArity(n) => {
             format!("compiled functions take at most three parameters in v1 (this one has {n})")

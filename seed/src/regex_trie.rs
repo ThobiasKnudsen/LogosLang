@@ -15,7 +15,7 @@
 //!
 //! The stored value is a list of [`IdContext`]s: the identities the matched text
 //! can denote, each paired with the scope it was declared in. The trie does
-//! **not** own the dyads those contexts point at (they live in the graph/store),
+//! **not** own the synolons those contexts point at (they live in the graph/store),
 //! so it only holds and returns them; nothing is freed on removal. A spelling
 //! declared in several scopes accumulates several contexts; `get` returns the
 //! whole candidate list, and the parser's scope stack picks the one live in the
@@ -41,7 +41,7 @@ use std::cell::RefCell;
 
 use regex::bytes::Regex;
 
-use crate::dyad::DyadPtr;
+use crate::synolon::SynolonPtr;
 use crate::id_context::IdContext;
 
 use crate::regex_splitting::{is_pure_literal, regex_splitting, Segment};
@@ -384,13 +384,13 @@ impl RegexTrie {
     /// context goes (siblings and outer declarations of the same spelling stay).
     /// Errors with [`RegexTrieError::NodeNotFound`] if any of the key's paths
     /// lacks a context in `scope`, or they do not all denote the same identity.
-    pub fn remove(&mut self, regex_key: &str, scope: DyadPtr) -> Result<DyadPtr, RegexTrieError> {
+    pub fn remove(&mut self, regex_key: &str, scope: SynolonPtr) -> Result<SynolonPtr, RegexTrieError> {
         debug_assert!(!regex_key.is_empty());
         let paths = regex_splitting(regex_key);
 
         // Verify every path holds this scope's context and they agree on the
         // identity before mutating anything.
-        let mut held: Option<DyadPtr> = None;
+        let mut held: Option<SynolonPtr> = None;
         for path in &paths {
             let node = self.locate(path).filter(|n| n.check_eow());
             let ident = match node.and_then(|n| n.leaf_value.as_ref()) {
@@ -423,7 +423,7 @@ impl RegexTrie {
     /// end (clearing the leaf only when its last context goes) and pruning empty
     /// children on the way back up. Returns true if `node` itself became empty and
     /// the caller should drop the link to it.
-    fn prune_remove(node: &mut RegexTrie, steps: &[Step], i: usize, scope: DyadPtr) -> bool {
+    fn prune_remove(node: &mut RegexTrie, steps: &[Step], i: usize, scope: SynolonPtr) -> bool {
         if i == steps.len() {
             if let Some(leaf) = &mut node.leaf_value {
                 leaf.contexts.retain(|c| c.scope != scope);
@@ -610,17 +610,17 @@ fn flatten(path: &[Segment]) -> Vec<Step> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dyad::Dyad;
+    use crate::synolon::Synolon;
 
-    /// Leak a distinct dyad and return a pointer to it (its address is its id).
+    /// Leak a distinct synolon and return a pointer to it (its address is its id).
     /// Leaking is fine in tests: the process exits. Serves for both identities
-    /// and scopes, since a scope is just a dyad.
-    fn dummy(tag: usize) -> DyadPtr {
-        Box::into_raw(Box::new(Dyad { ty: std::ptr::null_mut(), value: tag as *mut u8 }))
+    /// and scopes, since a scope is just a synolon.
+    fn dummy(tag: usize) -> SynolonPtr {
+        Box::into_raw(Box::new(Synolon { logos: std::ptr::null_mut(), hyle: tag as *mut u8 }))
     }
 
     /// An `id_context` in `scope` for `identity`.
-    fn ic(identity: DyadPtr, scope: DyadPtr) -> IdContext {
+    fn ic(identity: SynolonPtr, scope: SynolonPtr) -> IdContext {
         IdContext::new(identity, scope)
     }
 

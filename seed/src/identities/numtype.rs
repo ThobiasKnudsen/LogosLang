@@ -1,31 +1,31 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `NumType`: the seed's numeric machine types, and the type-switched arithmetic and
+//! `NumType`: the seed's numeric machine logos, and the logos-switched arithmetic and
 //! comparison helpers the concrete ops' shims share.
 //!
-//! A binary numeric operator node is `{ty: op, value: [lhs, rhs, op-leaf]}` —
-//! the concrete machine operation resolved from the operand types rides the op
+//! A binary numeric operator node is `{logos: op, value: [lhs, rhs, op-leaf]}` —
+//! the concrete machine operation resolved from the operand logos rides the op
 //! slot (DESIGN ›which concrete machine operation runs is resolved from the
-//! operand types‹), each leaf's shim a monomorphic wrapper over the helpers
-//! here with its (operation, type) pair baked in ([`super::ops`]). One
-//! `+`/`<`/… identity serves every numeric type; the ~120 machine ops are graph
+//! operand logos‹), each leaf's shim a monomorphic wrapper over the helpers
+//! here with its (operation, logos) pair baked in ([`super::ops`]). One
+//! `+`/`<`/… identity serves every numeric logos; the ~120 machine ops are graph
 //! leaves, not ~120 files.
 //!
-//! Each numeric **type node** self-describes its `NumType` by the kind byte of the
-//! shared-member record in its value slot (see [`crate::identities::meta`] and
+//! Each numeric **logos node** self-describes its `NumType` by the kind byte of the
+//! shared-member record in its hyle slot (see [`crate::identities::meta`] and
 //! [`of_type_node`]), so neither the interpreter nor the compiler needs a separate
-//! type→NumType map — the tag rides the graph.
+//! logos→NumType map — the tag rides the graph.
 
 use cranelift_codegen::ir::{types, Value};
 
 use crate::compile::{CompileError, Lowerer};
-use crate::dyad::DyadPtr;
+use crate::synolon::SynolonPtr;
 use crate::id_context::IdContext;
 
 use super::Cx;
 
-/// A numeric machine type. `#[repr(u8)]` so the discriminant is the type node's tag.
+/// A numeric machine logos. `#[repr(u8)]` so the discriminant is the logos node's tag.
 /// Public through [`crate::identities::NumType`]: the reflect walker's scalar
 /// shapes carry it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,7 +62,7 @@ impl NumType {
         }
     }
 
-    /// The canonical source spelling of this type (`i32`, `f64`, …), for display.
+    /// The canonical source spelling of this logos (`i32`, `f64`, …), for display.
     pub(crate) fn spelling(self) -> &'static str {
         use NumType::*;
         match self {
@@ -79,12 +79,12 @@ impl NumType {
         }
     }
 
-    /// Whether this is a floating-point type.
+    /// Whether this is a floating-point logos.
     pub(crate) fn is_float(self) -> bool {
         matches!(self, NumType::F32 | NumType::F64)
     }
 
-    /// Whether this is a signed integer type (false for unsigned and floats).
+    /// Whether this is a signed integer logos (false for unsigned and floats).
     pub(crate) fn is_signed_int(self) -> bool {
         matches!(self, NumType::I8 | NumType::I16 | NumType::I32 | NumType::I64)
     }
@@ -100,7 +100,7 @@ impl NumType {
         }
     }
 
-    /// The `iconst` immediate encoding this integer type's MAX in its own width
+    /// The `iconst` immediate encoding this integer logos's MAX in its own width
     /// (an unsigned maximum is all-ones, which is -1 sign-narrowed) — the
     /// saturation sentinel division by zero yields.
     pub(crate) fn max_imm(self) -> i64 {
@@ -115,7 +115,7 @@ impl NumType {
         }
     }
 
-    /// The `iconst` immediate for this signed integer type's MIN.
+    /// The `iconst` immediate for this signed integer logos's MIN.
     pub(crate) fn min_imm(self) -> i64 {
         use NumType::*;
         match self {
@@ -127,7 +127,7 @@ impl NumType {
         }
     }
 
-    /// The Cranelift type a value of this `NumType` computes in.
+    /// The Cranelift logos a value of this `NumType` computes in.
     pub(crate) fn cranelift_type(self) -> types::Type {
         use NumType::*;
         match self {
@@ -141,12 +141,12 @@ impl NumType {
     }
 }
 
-/// Register a numeric type node: its spelling (so it resolves as a type name), its
+/// Register a numeric logos node: its spelling (so it resolves as a logos name), its
 /// shared-member record with the `NumType` tag as its kind (self-describing, so
-/// run/compile recover the type from the graph), its juxtaposition constructor,
+/// run/compile recover the logos from the graph), its juxtaposition constructor,
 /// and the shared numeric-variable lowering [`lower_var`]. The interpreter reads
-/// its values through the type's width (see [`read_scalar`]).
-pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr {
+/// its values through the logos's width (see [`read_scalar`]).
+pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> SynolonPtr {
     let record = super::meta::record(cx.store, nt as u8, f64::NAN);
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(spelling, IdContext::new(id, cx.root_scope));
@@ -155,17 +155,17 @@ pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr
     id
 }
 
-/// A numeric type's constructor — juxtaposition (DESIGN ›an anonymous typed
-/// value is written by juxtaposition — `i32 32`, the type preceding the
+/// A numeric logos's constructor — juxtaposition (DESIGN ›an anonymous typed
+/// value is written by juxtaposition — `i32 32`, the logos preceding the
 /// value‹): consume a directly following rational literal (or `- <rational>`,
-/// the negated literal) and commit it exactly to this type, an anonymous typed
+/// the negated literal) and commit it exactly to this logos, an anonymous typed
 /// value with real storage. Anything else — `,`, an operator, a name, `(` —
-/// declines the right, and the constructor "yields its own dyad as-is — the
-/// type as a value" (DESIGN ›Expressions are self-delimiting‹): the type node
-/// itself, so `i32(x)` casts and `f(i32, 3)` passes the type.
+/// declines the right, and the constructor "yields its own synolon as-is — the
+/// logos as a value" (DESIGN ›Expressions are self-delimiting‹): the logos node
+/// itself, so `i32(x)` casts and `f(i32, 3)` passes the logos.
 fn construct(
     p: &mut crate::parse::Parser,
-    id: DyadPtr,
+    id: SynolonPtr,
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, crate::parse::ParseError> {
     let lit = match p.consume_rational()? {
@@ -173,7 +173,7 @@ fn construct(
         None => p.consume_negated_rational()?,
     };
     let node = match lit {
-        // SAFETY: `l` is the literal just built; `id` is this numeric type's
+        // SAFETY: `l` is the literal just built; `id` is this numeric logos's
         // registered node.
         Some(l) => unsafe { super::commit_literal_to(p.store(), l, id) }?,
         None => id,
@@ -182,100 +182,98 @@ fn construct(
     Ok(crate::parse::Constructed::Placed)
 }
 
-/// The value-slot tag for the `void` unit type, one past every [`NumType`] discriminant
-/// (0..=9) so a void type node is told apart from a numeric one by its tag alone,
+/// The value-slot tag for the `void` unit logos, one past every [`NumType`] discriminant
+/// (0..=9) so a void logos node is told apart from a numeric one by its tag alone,
 /// without threading a separate handle through run and compile.
 pub(crate) const VOID_TAG: u8 = 10;
 
-/// Register the `void` unit type: its spelling and its [`VOID_TAG`]-kinded record.
-/// Unlike a numeric type it carries no lowering — in the seed `void` appears only as
-/// a `->` return type, marking a function that runs its body for effect and yields
+/// Register the `void` unit logos: its spelling and its [`VOID_TAG`]-kinded record.
+/// Unlike a numeric logos it carries no lowering — in the seed `void` appears only as
+/// a `->` return logos, marking a function that runs its body for effect and yields
 /// unit.
-pub(crate) fn register_void(cx: &mut Cx) -> DyadPtr {
+pub(crate) fn register_void(cx: &mut Cx) -> SynolonPtr {
     let record = super::meta::record(cx.store, VOID_TAG, f64::NAN);
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("void", IdContext::new(id, cx.root_scope));
     id
 }
 
-/// Whether `type_node` is the `void` unit type (its value slot holds [`VOID_TAG`]).
+/// Whether `type_node` is the `void` unit logos (its hyle slot holds [`VOID_TAG`]).
 ///
 /// # Safety
-/// `type_node` must be null or a valid type node from the store (null — a bare
-/// parameter's undeclared type — is no `void`).
-pub(crate) unsafe fn is_void_type(type_node: DyadPtr) -> bool {
+/// `type_node` must be null or a valid logos node from the store (null — a bare
+/// parameter's undeclared logos — is no `void`).
+pub(crate) unsafe fn is_void_type(type_node: SynolonPtr) -> bool {
     if type_node.is_null() {
         return false;
     }
-    let v = (*type_node).value;
+    let v = (*type_node).hyle;
     !v.is_null() && *(v as *const u8) == VOID_TAG
 }
 
-/// The value-slot tag for the `string` type, past [`VOID_TAG`].
+/// The value-slot tag for the `string` logos, past [`VOID_TAG`].
 pub(crate) const STRING_TAG: u8 = 11;
 
-/// The value-slot tag for the `comment` type (prose nodes), past [`STRING_TAG`].
+/// The value-slot tag for the `comment` logos (prose nodes), past [`STRING_TAG`].
 pub(crate) const COMMENT_TAG: u8 = 12;
 
-/// Whether `type_node` is the `comment` type — prose, invisible to value flow.
+/// Whether `type_node` is the `comment` logos — prose, invisible to value flow.
 ///
 /// # Safety
-/// `type_node` must be null or a valid type node from the store (null — a bare
-/// parameter's undeclared type — is no comment).
-pub(crate) unsafe fn is_comment_type(type_node: DyadPtr) -> bool {
+/// `type_node` must be null or a valid logos node from the store (null — a bare
+/// parameter's undeclared logos — is no comment).
+pub(crate) unsafe fn is_comment_type(type_node: SynolonPtr) -> bool {
     if type_node.is_null() {
         return false;
     }
-    let v = (*type_node).value;
+    let v = (*type_node).hyle;
     !v.is_null() && *(v as *const u8) == COMMENT_TAG
 }
 
-/// The value-slot tag for pointer types (`@T`), past [`COMMENT_TAG`]. A pointer
-/// type node's record carries its pointee as the payload, so the graph carries
+/// The value-slot tag for pointer logos (`@T`), past [`COMMENT_TAG`]. A pointer
+/// logos node's record carries its pointee as the payload, so the graph carries
 /// what is pointed at (see [`crate::identities::pointer`] and
 /// [`crate::identities::meta`]).
 pub(crate) const ADDR_TAG: u8 = 13;
 
-/// Whether `type_node` is a pointer type (`@T`).
+/// Whether `type_node` is a pointer logos (`@T`).
 ///
 /// # Safety
-/// `type_node` must be null or a valid type node from the store (null — a bare
-/// parameter's undeclared type — is no pointer).
-pub(crate) unsafe fn is_pointer_type(type_node: DyadPtr) -> bool {
+/// `type_node` must be null or a valid logos node from the store (null — a bare
+/// parameter's undeclared logos — is no pointer).
+pub(crate) unsafe fn is_pointer_type(type_node: SynolonPtr) -> bool {
     if type_node.is_null() {
         return false;
     }
-    let v = (*type_node).value;
+    let v = (*type_node).hyle;
     !v.is_null() && *(v as *const u8) == ADDR_TAG
 }
 
-/// The pointee type node of a pointer type (`@T` → `T`), the record's payload.
+/// The pointee logos node of a pointer logos (`@T` → `T`), the record's payload.
 ///
 /// # Safety
-/// `type_node` must be a pointer type node ([`is_pointer_type`]).
-pub(crate) unsafe fn pointee_of(type_node: DyadPtr) -> DyadPtr {
-    let p = (*type_node).value.add(super::meta::PAYLOAD_OFF);
-    std::ptr::read_unaligned(p as *const DyadPtr)
+/// `type_node` must be a pointer logos node ([`is_pointer_type`]).
+pub(crate) unsafe fn pointee_of(type_node: SynolonPtr) -> SynolonPtr {
+    let p = (*type_node).hyle.add(super::meta::PAYLOAD_OFF);
+    std::ptr::read_unaligned(p as *const SynolonPtr)
 }
 
-/// Whether a data node typed `type_node` holds a scalar the interpreter can read
-/// at a width: a numeric type, `bool` (whose type node carries no tag), or a
-/// pointer (an 8-byte address). The unit `void`, the text substance
-/// (`string`, `comment`), and the null undeclared type of a bare parameter are
-/// not scalars.
+/// Whether a data node whose logos is `type_node` holds a scalar the
+/// interpreter can read at a width: a numeric logos, `bool` (whose logos node
+/// carries no tag), or a pointer (an 8-byte address). The unit `void`, the
+/// text substance (`string`, `comment`), a record logos, and the null
+/// undeclared logos of a bare parameter are not scalars.
 ///
 /// # Safety
-/// `type_node` must be null or a *record-carrying* type node from the store —
-/// an identity whose value slot is a [`super::meta`] record with a kind tag as
-/// its first byte. A **struct type node does not qualify**: its value is its
-/// `[scope, field0 …]` list, whose first byte is a node address's low byte,
-/// not a tag — reading it as one is nondeterministic garbage. Callers whose
-/// type can be a struct type use [`is_scalar_place_type`] instead.
-pub(crate) unsafe fn is_scalar_type(type_node: DyadPtr) -> bool {
+/// `type_node` must be null or a *record-carrying* logos node from the store —
+/// an identity whose hyle is a [`super::meta`] record with a kind tag as its
+/// first byte. Every registered logos carries one (a record logos included,
+/// since issue #47's stored layout record).
+pub(crate) unsafe fn is_scalar_type(type_node: SynolonPtr) -> bool {
     if type_node.is_null() {
         return false;
     }
-    let v = (*type_node).value;
+    let v = (*type_node).hyle;
     if v.is_null() {
         return true;
     }
@@ -283,24 +281,27 @@ pub(crate) unsafe fn is_scalar_type(type_node: DyadPtr) -> bool {
     tag < VOID_TAG || tag == ADDR_TAG
 }
 
-/// [`is_scalar_type`] for a *declared* type that may be a struct type node
-/// (`struct_kw` is the `struct` keyword identity a struct type is typed by):
-/// a struct type is never a scalar, and its value slot holds its field list
-/// rather than a tagged record, so it must be excluded before the tag read.
+/// [`is_scalar_type`] with the null case decided: a *declared* logos that may
+/// be a record logos. A record logos is never a scalar — its [`RECORD_TAG`]
+/// (23) sits past the scalar range, so the ordinary tag read excludes it
+/// (since issue #47 a record logos carries a tagged layout record like every
+/// other logos, so no identity-based exclusion is needed).
+///
+/// [`RECORD_TAG`]: super::meta::RECORD_TAG
 ///
 /// # Safety
-/// `type_node` must be null or a valid type node from the store.
-pub(crate) unsafe fn is_scalar_place_type(struct_kw: DyadPtr, type_node: DyadPtr) -> bool {
-    !type_node.is_null() && (*type_node).ty != struct_kw && is_scalar_type(type_node)
+/// `type_node` must be null or a valid logos node from the store.
+pub(crate) unsafe fn is_scalar_place_type(type_node: SynolonPtr) -> bool {
+    !type_node.is_null() && is_scalar_type(type_node)
 }
 
-/// The `NumType` of a type node, or `I32` for a fixed-width scalar type without a
+/// The `NumType` of a logos node, or `I32` for a fixed-width scalar logos without a
 /// `NumType` tag (e.g. `bool`, physically an i32).
 ///
 /// # Safety
-/// `type_node` must be a valid type node from the store.
-pub(crate) unsafe fn numtype_of_type(type_node: DyadPtr) -> NumType {
-    if (*type_node).value.is_null() {
+/// `type_node` must be a valid logos node from the store.
+pub(crate) unsafe fn numtype_of_type(type_node: SynolonPtr) -> NumType {
+    if (*type_node).hyle.is_null() {
         NumType::I32
     } else {
         of_type_node(type_node)
@@ -312,8 +313,8 @@ pub(crate) unsafe fn numtype_of_type(type_node: DyadPtr) -> NumType {
 /// signedness; the raw float bits for `f32`/`f64`).
 ///
 /// # Safety
-/// `type_node` is a valid type node; `slot` points at a value of that type's width.
-pub(crate) unsafe fn read_scalar(type_node: DyadPtr, slot: *const u8) -> i64 {
+/// `type_node` is a valid logos node; `slot` points at a value of that logos's width.
+pub(crate) unsafe fn read_scalar(type_node: SynolonPtr, slot: *const u8) -> i64 {
     use std::ptr::read_unaligned as rd;
     use NumType::*;
     match numtype_of_type(type_node) {
@@ -334,13 +335,13 @@ pub(crate) unsafe fn read_scalar(type_node: DyadPtr, slot: *const u8) -> i64 {
 /// dual of [`read_scalar`], so a write then a read round-trips.
 ///
 /// # Safety
-/// `type_node` is a valid type node; `slot` points at storage of that type's width.
-pub(crate) unsafe fn write_scalar(type_node: DyadPtr, slot: *mut u8, bits: i64) {
+/// `type_node` is a valid logos node; `slot` points at storage of that logos's width.
+pub(crate) unsafe fn write_scalar(type_node: SynolonPtr, slot: *mut u8, bits: i64) {
     write_scalar_nt(numtype_of_type(type_node), slot, bits)
 }
 
 /// [`write_scalar`] with the width already resolved to a `NumType` — the form a
-/// concrete store op uses, its type baked at registration rather than read from
+/// concrete store op uses, its logos baked at registration rather than read from
 /// a node.
 ///
 /// # Safety
@@ -362,52 +363,52 @@ pub(crate) unsafe fn write_scalar_nt(nt: NumType, slot: *mut u8, bits: i64) {
     }
 }
 
-/// Lower a numeric variable/value: read it at its type's width — a promoted
+/// Lower a numeric variable/value: read it at its logos's width — a promoted
 /// frame place from its register variable, anything else from its baked
 /// storage. The shared lowering rule (a [`crate::compile::LowerFn`]) for every
-/// numeric type node. Guards a null address, mirroring the interpreter's
+/// numeric logos node. Guards a null address, mirroring the interpreter's
 /// `BadValue`.
-pub(crate) fn lower_var(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+pub(crate) fn lower_var(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a numeric variable node from the store.
-    // A null value slot is a comptime/no-storage binding — BadValue, mirroring
+    // A null hyle slot is a comptime/no-storage binding — BadValue, mirroring
     // the interpreter. A frame-relative local is never null (its tag bit is set),
     // so this guard rejects only genuine no-storage places.
-    let raw = unsafe { (*node).value };
+    let raw = unsafe { (*node).hyle };
     if raw.is_null() {
         return Err(CompileError::BadValue);
     }
-    let ct = unsafe { of_type_node((*node).ty) }.cranelift_type();
+    let ct = unsafe { of_type_node((*node).logos) }.cranelift_type();
     Ok(unsafe { lw.read_place(node, ct) })
 }
 
-/// The `NumType` a numeric type node describes (read from its value-slot tag).
-/// A pointer type reads and writes as its 8-byte address (`U64`) — the one
+/// The `NumType` a numeric logos node describes (read from its value-slot tag).
+/// A pointer logos reads and writes as its 8-byte address (`U64`) — the one
 /// central case that gives every width-driven path (reads, writes, leaf loads,
-/// the ABI boundary, struct layout) pointer behaviour with no further edits.
+/// the ABI boundary, record layout) pointer behaviour with no further edits.
 ///
 /// # Safety
-/// `type_node` must be a numeric or pointer type node with a tagged value slot
+/// `type_node` must be a numeric or pointer logos node with a tagged hyle slot
 /// (see `identities::i32` and its siblings, and `identities::pointer`).
-pub(crate) unsafe fn of_type_node(type_node: DyadPtr) -> NumType {
-    let tag = *((*type_node).value as *const u8);
+pub(crate) unsafe fn of_type_node(type_node: SynolonPtr) -> NumType {
+    let tag = *((*type_node).hyle as *const u8);
     if tag == ADDR_TAG {
         return NumType::U64;
     }
     NumType::from_tag(tag)
 }
 
-/// The type node stored at a conversion's third slot (its target,
+/// The logos node stored at a conversion's third slot (its target,
 /// `[operand, from, to, op]`).
 ///
 /// # Safety
 /// `node` must be a conversion node as `convert::build_convert` lays it out.
-pub(crate) unsafe fn stored_type(node: DyadPtr) -> DyadPtr {
-    *((*node).value as *const DyadPtr).add(2)
+pub(crate) unsafe fn stored_type(node: SynolonPtr) -> SynolonPtr {
+    *((*node).hyle as *const SynolonPtr).add(2)
 }
 
 
 /// The five machine arithmetic operations. Integer `Div`/`Rem` are TOTAL
-/// (settled): a zero divisor yields the type's MAX — a loud sentinel, easier to
+/// (settled): a zero divisor yields the logos's MAX — a loud sentinel, easier to
 /// discover than 0 — the signed MIN/-1 overflow saturates to MAX, and MIN % -1 is
 /// the well-defined 0. Float `Div` is IEEE; float `Rem` is rejected at parse
 /// (Cranelift has no float remainder instruction).
@@ -465,9 +466,9 @@ impl CmpOp {
     }
 }
 
-/// Interpret the `i64` bit-containers `l`/`r` as `ty`, apply the arithmetic `op` with
+/// Interpret the `i64` bit-containers `l`/`r` as `logos`, apply the arithmetic `op` with
 /// wrapping semantics (matching the JIT), and return the result's bit-container.
-pub(crate) fn apply_arith(op: ArithOp, ty: NumType, l: i64, r: i64) -> i64 {
+pub(crate) fn apply_arith(op: ArithOp, logos: NumType, l: i64, r: i64) -> i64 {
     macro_rules! int {
         ($t:ty) => {{
             let (a, b) = (l as $t, r as $t);
@@ -475,7 +476,7 @@ pub(crate) fn apply_arith(op: ArithOp, ty: NumType, l: i64, r: i64) -> i64 {
                 ArithOp::Add => a.wrapping_add(b),
                 ArithOp::Sub => a.wrapping_sub(b),
                 ArithOp::Mul => a.wrapping_mul(b),
-                // Total division: a zero divisor yields the type's MAX, and the
+                // Total division: a zero divisor yields the logos's MAX, and the
                 // signed MIN/-1 overflow saturates to MAX (see [`ArithOp`]).
                 ArithOp::Div => {
                     if b == 0 {
@@ -511,7 +512,7 @@ pub(crate) fn apply_arith(op: ArithOp, ty: NumType, l: i64, r: i64) -> i64 {
         }};
     }
     use NumType::*;
-    match ty {
+    match logos {
         I8 => int!(i8),
         I16 => int!(i16),
         I32 => int!(i32),
@@ -525,9 +526,9 @@ pub(crate) fn apply_arith(op: ArithOp, ty: NumType, l: i64, r: i64) -> i64 {
     }
 }
 
-/// Interpret `l`/`r` as `ty` and apply the comparison `op`, returning the i32 0/1
+/// Interpret `l`/`r` as `logos` and apply the comparison `op`, returning the i32 0/1
 /// bool in an `i64`.
-pub(crate) fn apply_compare(op: CmpOp, ty: NumType, l: i64, r: i64) -> i64 {
+pub(crate) fn apply_compare(op: CmpOp, logos: NumType, l: i64, r: i64) -> i64 {
     macro_rules! cmp {
         ($a:expr, $b:expr) => {{
             let (a, b) = ($a, $b);
@@ -543,7 +544,7 @@ pub(crate) fn apply_compare(op: CmpOp, ty: NumType, l: i64, r: i64) -> i64 {
         }};
     }
     use NumType::*;
-    match ty {
+    match logos {
         I8 => cmp!(l as i8, r as i8),
         I16 => cmp!(l as i16, r as i16),
         I32 => cmp!(l as i32, r as i32),

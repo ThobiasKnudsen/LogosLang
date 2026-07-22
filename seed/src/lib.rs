@@ -20,4 +20,4 @@ pub mod store;
 
 // The node cell and name-resolution pairing are core identities, but the rest of
 // the crate reaches them by these short paths.
-pub use identities::{dyad, id_context, Core};
+pub use identities::{synolon, id_context, Core};

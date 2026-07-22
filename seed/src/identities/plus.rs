@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `+`: addition. `+` is a *parse-time constructor* owning no code (DESIGN ›The
-//! callable ground is `@exec`‹; issue #44): from its operand types it resolves
+//! callable ground is `@exec`‹; issue #44): from its operand logos it resolves
 //! each application to one concrete machine operation and stores that leaf in
-//! the node's op slot — `{ty: +, value: [lhs, rhs, add_i32]}` — so run jumps
+//! the node's op slot — `{logos: +, value: [lhs, rhs, add_i32]}` — so run jumps
 //! through the node and compile reads the same resolution. One `+` identity
-//! serves every numeric type; the concrete additions are callable leaves
+//! serves every numeric logos; the concrete additions are callable leaves
 //! ([`crate::identities::ops`]).
 
 use cranelift_codegen::ir::Value;
@@ -14,15 +14,15 @@ use cranelift_codegen::ir::Value;
 use super::numtype::ArithOp;
 use super::{meta, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, Lowerer};
-use crate::dyad::DyadPtr;
+use crate::synolon::SynolonPtr;
 use crate::id_context::IdContext;
 use crate::parse::{Assoc, CoreTypes, ParseError};
 use crate::store::Store;
 
 /// Register `+`: spelling, parse precedence (left-associative, binding tighter
-/// than `=`), and its lowering. A plain type — its record is parse/layout
+/// than `=`), and its lowering. A plain logos — its record is parse/layout
 /// metadata; the executable code lives on the leaves its applications reference.
-pub(super) fn register(cx: &mut Cx) -> DyadPtr {
+pub(super) fn register(cx: &mut Cx) -> SynolonPtr {
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
@@ -37,31 +37,31 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     id
 }
 
-/// Build `lhs + rhs`: resolve the operand type and store the concrete addition in
-/// the op slot, giving `{ty: +, value: [lhs, rhs, add_<type>]}`. Resolution follows
-/// [`resolve_binary`]: matching concrete types keep theirs, a literal molds to its
+/// Build `lhs + rhs`: resolve the operand logos and store the concrete addition in
+/// the op slot, giving `{logos: +, value: [lhs, rhs, add_<logos>]}`. Resolution follows
+/// [`resolve_binary`]: matching concrete logos keep theirs, a literal molds to its
 /// partner, two literals fold exactly; non-numeric operands leave `+` unresolved
 /// ([`ParseError::UnsupportedOperands`]).
 fn build(
     store: &mut Store,
     types: &CoreTypes,
-    plus: DyadPtr,
-    lhs: DyadPtr,
-    rhs: DyadPtr,
-) -> Result<DyadPtr, ParseError> {
+    plus: SynolonPtr,
+    lhs: SynolonPtr,
+    rhs: SynolonPtr,
+) -> Result<SynolonPtr, ParseError> {
     // Two comptime rationals fold now (exact fraction math), staying rational until
-    // context types them; otherwise resolve the operand type and build the `+` node.
+    // context logos them; otherwise resolve the operand logos and build the `+` node.
     if let Some(folded) = rational::fold_arith(store, types.rational, ArithOp::Add, lhs, rhs)? {
         return Ok(folded);
     }
-    // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
+    // SAFETY: `lhs`/`rhs` are reduced synolons from the store.
     let ([lhs, rhs], nt) = unsafe { resolve_binary(store, types, lhs, rhs) }?;
     let value = store.alloc_operands(&[lhs, rhs, types.ops.arith_leaf(ArithOp::Add, nt)]);
     Ok(store.alloc_raw(plus, value))
 }
 
-/// Lower: emit the machine addition for the resolved operand type.
-fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+/// Lower: emit the machine addition for the resolved operand logos.
+fn lower(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid `+` application `[lhs, rhs, op]`.
     unsafe { lw.lower_arith(node, ArithOp::Add) }
 }

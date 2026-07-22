@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The concrete machine operations: `add_i32`, `lt_f64`, `store_u8`, … — one
-//! spelling-less identity per (operation, machine type), each a [`callable`]
+//! spelling-less identity per (operation, machine logos), each a [`callable`]
 //! value immutably carrying its `@exec` (DESIGN ›Concrete machine operations
 //! are identities‹; issue #44).
 //!
@@ -12,14 +12,14 @@
 //! a side table at run time — to evaluate a node, read its op slot and jump.
 //! The ~120 machine ops the original design worried would be ~120 files are
 //! ~120 graph *nodes*, registered here from one table-driven loop; their
-//! bodies stay the shared type-switched helpers in [`super::numtype`], each
-//! shim a monomorphic wrapper with its (operation, type) pair baked in as
+//! bodies stay the shared logos-switched helpers in [`super::numtype`], each
+//! shim a monomorphic wrapper with its (operation, logos) pair baked in as
 //! const generics.
 //!
 //! Float remainder mints no leaf: `%` over floats is rejected at parse
 //! (Cranelift has no float remainder), so a node referencing it cannot exist.
 
-use crate::dyad::DyadPtr;
+use crate::synolon::SynolonPtr;
 use crate::run::{RunError, RunFn, Runtime};
 
 use super::callable::{self, Callables};
@@ -27,78 +27,78 @@ use super::numtype::{apply_arith, apply_compare, write_scalar_nt, ArithOp, CmpOp
 use super::{operands, Cx};
 
 /// The concrete-op leaves, indexed by operation and [`NumType`] — the parse-time
-/// resolver's table (`(family, operand type) → leaf`). Rides [`crate::parse::CoreTypes`]
+/// resolver's table (`(family, operand logos) → leaf`). Rides [`crate::parse::CoreTypes`]
 /// so the `Construct` builders can resolve; the interpreter never consults it
-/// (each shim's type is baked in), and it retires into versioned scopes with the
+/// (each shim's logos is baked in), and it retires into versioned scopes with the
 /// rest of the Rust-side parse tables at self-hosting.
 #[derive(Clone, Copy, Debug)]
 pub struct OpLeaves {
     /// `[ArithOp][NumType]` → leaf; null only for the unmintable float remainders.
-    pub(crate) arith: [[DyadPtr; 10]; 5],
+    pub(crate) arith: [[SynolonPtr; 10]; 5],
     /// `[CmpOp][NumType]` → leaf.
-    pub(crate) cmp: [[DyadPtr; 10]; 6],
+    pub(crate) cmp: [[SynolonPtr; 10]; 6],
     /// `[NumType]` → the `=` store leaf writing at that width (a pointer target
     /// stores as its 8-byte address, `U64`, per `numtype::of_type_node`).
-    pub(crate) store: [DyadPtr; 10],
+    pub(crate) store: [SynolonPtr; 10],
     /// `and`'s short-circuiting native — a single leaf (bool has one width),
     /// minted by [`super::and::register`].
-    pub(crate) and_: DyadPtr,
+    pub(crate) and_: SynolonPtr,
     /// `or`'s short-circuiting native, minted by [`super::or::register`].
-    pub(crate) or_: DyadPtr,
+    pub(crate) or_: SynolonPtr,
     /// `convert`'s native — a single leaf; its from/to pair rides the node as
     /// graph data. Minted by [`super::convert::register`].
-    pub(crate) convert_: DyadPtr,
+    pub(crate) convert_: SynolonPtr,
     /// The statement natives, one leaf each, minted by their identities'
     /// registrations: control flow branches on graph structure, so no
-    /// per-machine-type variants exist.
-    pub(crate) if_: DyadPtr,
+    /// per-machine-logos variants exist.
+    pub(crate) if_: SynolonPtr,
     /// `while`'s native.
-    pub(crate) while_: DyadPtr,
+    pub(crate) while_: SynolonPtr,
     /// `for`'s native.
-    pub(crate) for_: DyadPtr,
+    pub(crate) for_: SynolonPtr,
     /// `return`'s native.
-    pub(crate) return_: DyadPtr,
+    pub(crate) return_: SynolonPtr,
     /// `not`'s native.
-    pub(crate) not_: DyadPtr,
-    /// `construct`'s native (struct construction).
-    pub(crate) construct_: DyadPtr,
+    pub(crate) not_: SynolonPtr,
+    /// `construct`'s native (record construction).
+    pub(crate) construct_: SynolonPtr,
     /// `deref`'s native (postfix `@`).
-    pub(crate) deref_: DyadPtr,
+    pub(crate) deref_: SynolonPtr,
     /// `storeptr`'s native (`=` through a deref).
-    pub(crate) storeptr_: DyadPtr,
+    pub(crate) storeptr_: SynolonPtr,
     /// `addr`'s native (prefix `&`): resolves a place's address at run time.
-    pub(crate) addr_: DyadPtr,
+    pub(crate) addr_: SynolonPtr,
     /// `scope`'s sequence native (run the array in order, yield the tail).
-    pub(crate) scope_: DyadPtr,
+    pub(crate) scope_: SynolonPtr,
     /// `declare`'s native (run the initializer for effect, yield unit).
-    pub(crate) declare_: DyadPtr,
-    /// `compile`'s native (`f.compile()`, the fn type's shared member).
-    pub(crate) compile_: DyadPtr,
+    pub(crate) declare_: SynolonPtr,
+    /// `compile`'s native (`f.compile()`, the fn logos's shared member).
+    pub(crate) compile_: SynolonPtr,
 }
 
 impl OpLeaves {
     /// The arithmetic leaf for `op` over `nt`.
-    pub(crate) fn arith_leaf(&self, op: ArithOp, nt: NumType) -> DyadPtr {
+    pub(crate) fn arith_leaf(&self, op: ArithOp, nt: NumType) -> SynolonPtr {
         self.arith[op as usize][nt as usize]
     }
 
     /// The comparison leaf for `op` over `nt`.
-    pub(crate) fn cmp_leaf(&self, op: CmpOp, nt: NumType) -> DyadPtr {
+    pub(crate) fn cmp_leaf(&self, op: CmpOp, nt: NumType) -> SynolonPtr {
         self.cmp[op as usize][nt as usize]
     }
 
     /// The store leaf writing at `nt`'s width.
-    pub(crate) fn store_leaf(&self, nt: NumType) -> DyadPtr {
+    pub(crate) fn store_leaf(&self, nt: NumType) -> SynolonPtr {
         self.store[nt as usize]
     }
 }
 
-/// Run a binary arithmetic node with the (operation, type) pair baked in:
+/// Run a binary arithmetic node with the (operation, logos) pair baked in:
 /// evaluate both operands and apply the shared helper. The concrete op never
-/// reads a type from the node — its type *is* this instantiation.
+/// reads a logos from the node — its logos *is* this instantiation.
 fn arith_run<const OP: u8, const NT: u8>(
     rt: &mut Runtime,
-    node: DyadPtr,
+    node: SynolonPtr,
 ) -> Result<i64, RunError> {
     // SAFETY: `node` is a resolved binary operator application whose first two
     // slots are its operands, as the family builders construct.
@@ -110,9 +110,9 @@ fn arith_run<const OP: u8, const NT: u8>(
     }
 }
 
-/// Run a binary comparison node with the (operation, type) pair baked in; the
+/// Run a binary comparison node with the (operation, logos) pair baked in; the
 /// result is the i32 0/1 bool.
-fn cmp_run<const OP: u8, const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+fn cmp_run<const OP: u8, const NT: u8>(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
     // SAFETY: as [`arith_run`].
     unsafe {
         let (lhs, rhs) = operands(node);
@@ -124,7 +124,7 @@ fn cmp_run<const OP: u8, const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Resul
 
 /// Run an assignment node with the target width baked in: evaluate the right
 /// operand, write it into the left operand's storage, yield the value.
-fn store_run<const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+fn store_run<const NT: u8>(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an assignment application `[lhs, rhs, op]`; `lhs` is a
     // typed variable whose storage the builder checked assignable.
     unsafe {
@@ -140,7 +140,7 @@ fn store_run<const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunEr
 }
 
 /// One row of monomorphic shims: a family instantiated across all ten machine
-/// types (a function item coerces to the `RunFn` pointer in a const array).
+/// logos (a function item coerces to the `RunFn` pointer in a const array).
 macro_rules! shim_row {
     ($f:ident, $o:literal) => {
         [
@@ -268,7 +268,7 @@ mod tests {
                 assert!(leaf.is_null(), "float remainder must not exist");
                 continue;
             }
-            // SAFETY: every minted leaf is a valid dyad from the store.
+            // SAFETY: every minted leaf is a valid synolon from the store.
             unsafe {
                 assert!(callable::is_callable(leaf));
                 assert_eq!(callable::convention_of(leaf), core.conv_seed_native);
@@ -295,7 +295,7 @@ mod tests {
         let value = store.alloc_operands(&[lhs, rhs, leaf]);
         let node = store.alloc_raw(core.plus, value);
 
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: the node and its operands were just built; the leaf is a
         // minted seed-native callable.
         assert_eq!(unsafe { rt.run(node) }.unwrap(), 42);
@@ -317,7 +317,7 @@ mod tests {
         let value = store.alloc_operands(&[lhs, rhs, leaf]);
         let node = store.alloc_raw(core.plus, value);
 
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: the leaf was minted from a seed-native RunFn shim; the node's
         // operands are valid committed scalars.
         let got = unsafe {

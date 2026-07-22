@@ -6,15 +6,15 @@
 //! Everything in Logos is an identity, but only the seed's *native* identities
 //! are authored in Rust; identities created while a program runs are graph data,
 //! never source files. This folder is that bounded native kernel: the node cell
-//! ([`dyad`]) and name-resolution pairing ([`id_context`]) the substrate is
-//! built from, plus each primitive (`type`, `fn`, `i32`, `rational`, `=`, `+`).
+//! ([`synolon`]) and name-resolution pairing ([`id_context`]) the substrate is
+//! built from, plus each primitive (`logos`, `fn`, `i32`, `rational`, `=`, `+`).
 //!
 //! Each primitive file defines exactly one identity: its node, its spelling, and
 //! its behaviour across the phases (parse construction, run native, compile
 //! lowering). [`Core::build`] wires them into the graph. Structure — parse
 //! precedence and associativity, and the layout values are read through (a
 //! scalar width, operand arity and role names) — rides the graph as each
-//! identity's shared-member record ([`meta`]; DESIGN ›A type's metadata is
+//! identity's shared-member record ([`meta`]; DESIGN ›A logos's metadata is
 //! shared by its values‹). Run behaviour rides the graph too (issue #44): each
 //! native is a [`callable`] leaf the resolved nodes reference from their op
 //! slots, so the interpreter consults no table — alternative run versions live
@@ -29,40 +29,38 @@
 //! tracked here so each gap is deliberate, not drift: the operators `^` and
 //! `xor`; ranges as first-class values, and `for`'s multi-variable, `in`-less,
 //! and `gpu` forms (the old prototype has them); pointer arithmetic, heap
-//! allocation, and checked `&mut` references (see `pointer`); struct-typed
-//! (nested) fields and struct parameters/returns; the `string` *name* and operations over
+//! allocation, and checked `&mut` references (see `pointer`); record-typed
+//! (nested) fields and record parameters/returns; the `string` *name* and operations over
 //! strings (the `«…»` literal exists as an inert value, above all as the comment
 //! substance); `mut` at every level (DESIGN ›Mutability and construction‹); the
-//! `hashtable` and `array` types; bare `key :` outside field lists (the
-//! composed `key : type = value` is rejected, not deferred — DESIGN
+//! `hashtable` and `array` logos; bare `key :` outside field lists (the
+//! composed `key : logos = value` is rejected, not deferred — DESIGN
 //! ›Declarations are immutable by default‹); `?` the unknown (issue #38 — no
 //! token exists yet); error unions `(T | Error)` with `match` and the
 //! `success`/`fails` combinators (DESIGN ›Error handling‹); and the explicit
-//! `comptime` marker (the inferred path — `-> type` calls resolving in the
+//! `comptime` marker (the inferred path — `-> logos` calls resolving in the
 //! pass — exists). Each arrives with the machinery it needs (layout, places,
 //! the borrow rule), not before.
 
 use std::collections::HashMap;
 
 use crate::compile::LowerTable;
-use crate::dyad::DyadPtr;
+use crate::synolon::SynolonPtr;
 use crate::parse::{Assoc, ConstructFn, CoreTypes, ParseError, FN_OUTPUT};
 use crate::regex_trie::RegexTrie;
 use crate::store::Store;
 
 pub use numtype::NumType;
 
-pub mod dyad;
+pub mod synolon;
 pub mod id_context;
 
-#[path = "type.rs"]
-mod type_mod;
+#[path = "logos.rs"]
+mod logos_mod;
 #[path = "fn.rs"]
 mod fn_mod;
 #[path = "return.rs"]
 mod return_mod;
-#[path = "struct.rs"]
-mod struct_mod;
 #[path = "bool.rs"]
 pub(crate) mod bool_mod;
 #[path = "if.rs"]
@@ -103,127 +101,124 @@ mod times;
 
 /// The core identities and the per-phase tables that drive them.
 pub struct Core {
-    /// The `Type : Type` self-loop, the one node whose type is itself.
-    pub type_: DyadPtr,
-    /// `scope`, the type of a scope node (the graph's spine). Each scope the parser
+    /// The `logos : logos` self-loop, the one node whose logos is itself.
+    pub type_: SynolonPtr,
+    /// `scope`, the logos of a scope node (the graph's spine). Each scope the parser
     /// opens is typed with this.
-    pub scope_: DyadPtr,
+    pub scope_: SynolonPtr,
     /// The scope every core identity is declared in; itself a `scope`-typed node.
-    pub root_scope: DyadPtr,
-    /// `fn`, the type whose values are functions.
-    pub fn_type: DyadPtr,
-    /// `i32`, the type of an integer variable/value (an alias for `numtypes[I32]`).
-    pub i32_: DyadPtr,
-    /// The numeric primitive type nodes, indexed by `NumType`. Unregistered types
+    pub root_scope: SynolonPtr,
+    /// `fn`, the logos whose values are functions.
+    pub fn_type: SynolonPtr,
+    /// `i32`, the logos of an integer variable/value (an alias for `numtypes[I32]`).
+    pub i32_: SynolonPtr,
+    /// The numeric primitive logos nodes, indexed by `NumType`. Unregistered logos
     /// (e.g. `f32`/`f64` before their phase) are null.
-    pub numtypes: [DyadPtr; 10],
-    /// `bool`, the type of a boolean value (a comparison result; an `if` condition).
-    pub bool_: DyadPtr,
-    /// `void`, the zero-sized unit type: a `-> void` function yields unit (0 bits).
-    pub void: DyadPtr,
+    pub numtypes: [SynolonPtr; 10],
+    /// `bool`, the logos of a boolean value (a comparison result; an `if` condition).
+    pub bool_: SynolonPtr,
+    /// `void`, the zero-sized unit logos: a `-> void` function yields unit (0 bits).
+    pub void: SynolonPtr,
     /// `=` (assignment); a function.
-    pub assign: DyadPtr,
-    /// `convert`: the shared scalar numeric conversion, built from a `type(value)`
-    /// constructor and carrying its source/target types per node.
-    pub convert: DyadPtr,
-    /// `+` (addition); resolves and stores its operand type per node.
-    pub plus: DyadPtr,
+    pub assign: SynolonPtr,
+    /// `convert`: the shared scalar numeric conversion, built from a `logos(value)`
+    /// constructor and carrying its source/target logos per node.
+    pub convert: SynolonPtr,
+    /// `+` (addition); resolves and stores its operand logos per node.
+    pub plus: SynolonPtr,
     /// `-` (subtraction).
-    pub minus: DyadPtr,
+    pub minus: SynolonPtr,
     /// `*` (multiplication).
-    pub times: DyadPtr,
+    pub times: SynolonPtr,
     /// `/` (division; total, saturating to MAX on a zero divisor).
-    pub div_: DyadPtr,
+    pub div_: SynolonPtr,
     /// `%` (remainder; total, saturating to MAX on a zero divisor).
-    pub rem_: DyadPtr,
+    pub rem_: SynolonPtr,
     /// `<` (less-than comparison); its result is `bool`.
-    pub lt: DyadPtr,
+    pub lt: SynolonPtr,
     /// `>` (greater-than comparison); its result is `bool`.
-    pub gt: DyadPtr,
+    pub gt: SynolonPtr,
     /// `==` (equality comparison); its result is `bool`.
-    pub eq: DyadPtr,
+    pub eq: SynolonPtr,
     /// `<=` (less-than-or-equal comparison); its result is `bool`.
-    pub le: DyadPtr,
+    pub le: SynolonPtr,
     /// `>=` (greater-than-or-equal comparison); its result is `bool`.
-    pub ge: DyadPtr,
+    pub ge: SynolonPtr,
     /// `!=` (inequality comparison); its result is `bool`.
-    pub ne: DyadPtr,
+    pub ne: SynolonPtr,
     /// `and` (short-circuiting logical conjunction); its result is `bool`.
-    pub and_: DyadPtr,
+    pub and_: SynolonPtr,
     /// `or` (short-circuiting logical disjunction); its result is `bool`.
-    pub or_: DyadPtr,
+    pub or_: SynolonPtr,
     /// `not` (logical negation); its result is `bool`.
-    pub not_: DyadPtr,
+    pub not_: SynolonPtr,
     /// `if` (the value-producing conditional); a function.
-    pub if_: DyadPtr,
+    pub if_: SynolonPtr,
     /// `while` (the loop statement); a function yielding unit.
-    pub while_: DyadPtr,
+    pub while_: SynolonPtr,
     /// `for` (the counted-loop statement); a function yielding unit.
-    pub for_: DyadPtr,
+    pub for_: SynolonPtr,
     /// `return` (the optional early yield); a function whose value is its operand.
-    pub return_: DyadPtr,
-    /// `declare`, the type of the declaration node `name := value` builds
+    pub return_: SynolonPtr,
+    /// `declare`, the logos of the declaration node `name := value` builds
     /// (`[name, declared, op]`); a statement yielding unit.
-    pub declare_: DyadPtr,
-    /// `compile`, the fn type's shared member (`f.compile()` — lower the body
+    pub declare_: SynolonPtr,
+    /// `compile`, the fn logos's shared member (`f.compile()` — lower the body
     /// to machine code, install its `bcode`); a statement yielding unit.
-    pub compile_: DyadPtr,
-    /// `rational_number` (numeric literal carrier); a data type.
-    pub rational: DyadPtr,
+    pub compile_: SynolonPtr,
+    /// `rational_number` (numeric literal carrier); a data logos.
+    pub rational: SynolonPtr,
     /// `string` (the `«…»` text literal); inert in the seed, the comment substance.
-    pub string_: DyadPtr,
+    pub string_: SynolonPtr,
     /// `comment` (the prose node a statement-level `#` builds); invisible to
     /// value flow.
-    pub comment_: DyadPtr,
-    /// `struct`, the type whose constructor derives a layout from a field list
-    /// (and whose field list is a function's parameter list).
-    pub struct_: DyadPtr,
-    /// `construct`, the struct-construction statement a struct-typed call builds.
-    pub construct_: DyadPtr,
+    pub comment_: SynolonPtr,
+    /// `construct`, the record-construction statement a record-logos call builds.
+    pub construct_: SynolonPtr,
     /// `deref`, the dereference node postfix `@` builds.
-    pub deref_: DyadPtr,
+    pub deref_: SynolonPtr,
     /// `storeptr`, the store-through node `=` builds over a deref lhs.
-    pub storeptr_: DyadPtr,
+    pub storeptr_: SynolonPtr,
     /// `addr`, the address-of node prefix `&` builds — resolves its place's
     /// address at run/lower time (per-activation for a frame local).
-    pub addr_: DyadPtr,
-    /// `array` (of `dyad@`), the seed's first array form: a sequence's
+    pub addr_: SynolonPtr,
+    /// `array` (of `synolon@`), the seed's first array form: a sequence's
     /// expression list lives behind one of these, never inline in the node.
-    pub array_: DyadPtr,
-    /// `callable`, the type whose values are the complete jump information
-    /// (`[entry: @exec, convention]`); every exec leaf's type (issue #44).
-    pub callable_: DyadPtr,
-    /// `convention`, the type whose values are calling-convention identities.
-    pub convention_: DyadPtr,
+    pub array_: SynolonPtr,
+    /// `callable`, the logos whose values are the complete jump information
+    /// (`[entry: @exec, convention]`); every exec leaf's logos (issue #44).
+    pub callable_: SynolonPtr,
+    /// `convention`, the logos whose values are calling-convention identities.
+    pub convention_: SynolonPtr,
     /// `seed-native`: the Rust-shim convention (`fn(&mut Runtime, node)`).
-    pub conv_seed_native: DyadPtr,
+    pub conv_seed_native: SynolonPtr,
     /// `container-i64`: the compiled-artifact convention (uniform `i64` containers).
-    pub conv_container_i64: DyadPtr,
+    pub conv_container_i64: SynolonPtr,
     /// `seed-parse`: the constructor convention (one [`ConstructFn`] signature
     /// for every identity).
-    pub conv_seed_parse: DyadPtr,
+    pub conv_seed_parse: SynolonPtr,
     /// `(` — the opening paren/call token (parse-only).
-    pub open_: DyadPtr,
+    pub open_: SynolonPtr,
     /// `)` — the closing paren token (parse-only).
-    pub close_: DyadPtr,
+    pub close_: SynolonPtr,
     /// `:` — the typed-declaration / field-list token (parse-only).
-    pub colon_: DyadPtr,
+    pub colon_: SynolonPtr,
     /// `,` — the one explicit separator (parse-only).
-    pub sep_: DyadPtr,
-    /// `->` — the return-type arrow (parse-only).
-    pub arrow_: DyadPtr,
+    pub sep_: SynolonPtr,
+    /// `->` — the return-logos arrow (parse-only).
+    pub arrow_: SynolonPtr,
     /// `else` — the branch token `if`'s constructor consumes (parse-only).
-    pub else_: DyadPtr,
+    pub else_: SynolonPtr,
     /// `in` — the loop-range token `for`'s constructor consumes (parse-only).
-    pub in_: DyadPtr,
+    pub in_: SynolonPtr,
     /// `..` — the range token `for`'s constructor consumes (parse-only).
-    pub dotdot_: DyadPtr,
+    pub dotdot_: SynolonPtr,
     /// `.` — the field-access token (its constructor consumes `tape[-1]`).
-    pub dot_: DyadPtr,
-    /// `@` — the pointer token (postfix deref / pointer-type prefix).
-    pub at_: DyadPtr,
+    pub dot_: SynolonPtr,
+    /// `@` — the pointer token (postfix deref / pointer-logos prefix).
+    pub at_: SynolonPtr,
     /// `:=` — the declaration token (parse-only).
-    pub declare_tok: DyadPtr,
+    pub declare_tok: SynolonPtr,
     /// The concrete-op leaves (`add_i32`, `lt_f64`, `store_u8`, …), indexed for
     /// the parse-time resolver.
     pub ops: ops::OpLeaves,
@@ -237,8 +232,8 @@ pub struct Core {
 impl Core {
     /// Hand-build the core graph into `store`, registering spellings in `trie`.
     pub fn build(store: &mut Store, trie: &mut RegexTrie) -> Core {
-        // Foundational types first: others reference them.
-        let type_ = type_mod::register_root(store);
+        // Foundational logos first: others reference them.
+        let type_ = logos_mod::register_root(store);
         let scope_ = scope::register(store, type_);
         let root_scope = store.alloc_raw(scope_, std::ptr::null_mut());
         let fn_type = fn_mod::register(store, type_);
@@ -254,9 +249,9 @@ impl Core {
             metas: HashMap::new(),
             lower: HashMap::new(),
         };
-        // The numeric primitive types. Each self-describes its `NumType` (a tag in its
-        // value slot); the shared lowering and interpreter read dispatch on the width.
-        let mut numtypes: [DyadPtr; 10] = [std::ptr::null_mut(); 10];
+        // The numeric primitive logos. Each self-describes its `NumType` (a tag in its
+        // hyle slot); the shared lowering and interpreter read dispatch on the width.
+        let mut numtypes: [SynolonPtr; 10] = [std::ptr::null_mut(); 10];
         for &(spelling, nt) in &[
             ("i8", NumType::I8),
             ("i16", NumType::I16),
@@ -272,7 +267,7 @@ impl Core {
             numtypes[nt as usize] = numtype::register_type(&mut cx, spelling, nt);
         }
         let i32_ = numtypes[NumType::I32 as usize];
-        // `void`: the zero-sized unit type (a `-> void` return). Self-describing via a
+        // `void`: the zero-sized unit logos (a `-> void` return). Self-describing via a
         // tag past the numeric range, so run/compile recognize it without a handle.
         let void = numtype::register_void(&mut cx);
         let bool_ = bool_mod::register(&mut cx);
@@ -283,35 +278,31 @@ impl Core {
         let string_ = string::register(&mut cx);
         cx.string_ = string_;
         let comment_ = comment::register(&mut cx);
-        // The callable machinery: the `callable`/`convention` types and the two
+        // The callable machinery: the `callable`/`convention` logos and the two
         // seed conventions. After `string` (convention names are string nodes),
         // before everything executable (exec leaves are callable values).
         let callables = callable::register(&mut cx);
-        // The concrete machine operations: every (operation, machine type) pair
+        // The concrete machine operations: every (operation, machine logos) pair
         // as a callable leaf, from one table-driven loop. The single-native
         // leaves (`and`, `or`, `convert`, …) are patched in by their files'
         // registrations below.
         let mut op_leaves = ops::register(&mut cx, &callables);
-        // The array-of-dyad type: a sequence's expression list rides behind one.
+        // The array-of-synolon logos: a sequence's expression list rides behind one.
         let array_ = array::register(&mut cx);
         // The foundations allocated before the build context get their records
-        // now: `type`'s values are types carrying records like its own (the
+        // now: `logos`'s values are logos carrying records like its own (the
         // fixed point); a `scope`'s value is `[exprs, op]` — its expression
         // array and its sequence native (a scope IS an array; the list is
         // never inline in the node).
         let record = meta::record(cx.store, meta::TYPEREC_TAG, f64::NAN);
-        // SAFETY: `type_`/`scope_` were allocated above with null value slots
+        // SAFETY: `type_`/`scope_` were allocated above with null hyle slots
         // nothing has read yet.
         unsafe {
-            (*type_).value = record;
+            (*type_).hyle = record;
         }
-        // Spell the `Type : Type` root so `type` resolves as a first-class value
-        // (roadmap #30). The insert waits until here: `register_root` builds the
-        // fixed point before the trie and `root_scope` exist. Everything downstream
-        // already treats the root as first-class — `type` now resolves as a plain
-        // operand and `t := type` binds it through the same `== type_` rebind branch
-        // a numeric type uses — so this one line is the whole spelling.
-        cx.trie.insert("type", crate::id_context::IdContext::new(type_, cx.root_scope));
+        // The root's spelling (`logos`) and merged constructor are attached in
+        // `logos_mod::register_syntax` below, once the punctuation it consumes
+        // can register alongside it.
         let record = meta::operand_record(
             &mut cx,
             meta::TUPLE_TAG,
@@ -320,16 +311,16 @@ impl Core {
             &["exprs", "op"],
         );
         unsafe {
-            (*scope_).value = record;
+            (*scope_).hyle = record;
         }
         let assign = assign::register(&mut cx);
         // The shared scalar numeric conversion (`i32(a)`, `f64(x)`, …). No spelling; the
-        // parser builds conversion nodes from the `type(value)` constructor surface.
+        // parser builds conversion nodes from the `logos(value)` constructor surface.
         let (convert, convert_leaf) = convert::register(&mut cx, &callables);
         op_leaves.convert_ = convert_leaf;
-        // The numeric operators. Each resolves its operand type at parse time and
-        // stores it in the node's value slot; run/compile switch on it (see
-        // `numtype`), so one identity per operator serves every numeric type.
+        // The numeric operators. Each resolves its operand logos at parse time and
+        // stores it in the node's hyle slot; run/compile switch on it (see
+        // `numtype`), so one identity per operator serves every numeric logos.
         let plus = plus::register(&mut cx);
         let minus = minus::register(&mut cx);
         let times = times::register(&mut cx);
@@ -355,7 +346,7 @@ impl Core {
         let (for_, for_leaf, in_, dotdot_) = for_mod::register(&mut cx, &callables);
         op_leaves.for_ = for_leaf;
         let arrow_ = fn_mod::register_syntax(&mut cx);
-        // `compile`, the fn type's shared member (`f.compile()`); no spelling
+        // `compile`, the fn logos's shared member (`f.compile()`); no spelling
         // — it resolves after `.` on an fn-typed value.
         let (compile_, compile_leaf) = fn_mod::register_compile(&mut cx, &callables);
         op_leaves.compile_ = compile_leaf;
@@ -366,7 +357,7 @@ impl Core {
         // declare node — the declaration is graph structure, not parse vapor.
         let (declare_, declare_leaf, declare_tok) = declare::register(&mut cx, &callables);
         op_leaves.declare_ = declare_leaf;
-        let (struct_, colon_, sep_) = struct_mod::register(&mut cx);
+        let (colon_, sep_) = logos_mod::register_syntax(&mut cx);
         // Struct instances: the construction statement and the `.` field access.
         let (construct_, construct_leaf, dot_) = instance::register(&mut cx, &callables);
         op_leaves.construct_ = construct_leaf;
@@ -437,7 +428,6 @@ impl Core {
             rational,
             string_,
             comment_,
-            struct_,
             construct_,
             deref_,
             storeptr_,
@@ -463,13 +453,12 @@ impl Core {
         }
     }
 
-    /// The core type handles the parser needs to type the nodes it opens and to
+    /// The core logos handles the parser needs to logos the nodes it opens and to
     /// resolve abstract operators.
     pub fn types(&self) -> CoreTypes {
         CoreTypes {
             scope: self.scope_,
             array_: self.array_,
-            struct_: self.struct_,
             fn_type: self.fn_type,
             i32_: self.i32_,
             numtypes: self.numtypes,
@@ -523,25 +512,25 @@ impl Core {
 }
 
 /// The shared context each identity registers itself into: the store and name
-/// index to build in, the foundational type handles it may reference, and the
+/// index to build in, the foundational logos handles it may reference, and the
 /// per-phase tables it fills.
 pub(crate) struct Cx<'a> {
     store: &'a mut Store,
     trie: &'a mut RegexTrie,
-    type_: DyadPtr,
-    fn_type: DyadPtr,
-    root_scope: DyadPtr,
-    /// The `string` type, once registered (null before): an operand record's role
+    type_: SynolonPtr,
+    fn_type: SynolonPtr,
+    root_scope: SynolonPtr,
+    /// The `string` logos, once registered (null before): an operand record's role
     /// names are string nodes, so the identities registered after it can name
     /// their operands as graph data.
-    string_: DyadPtr,
-    metas: HashMap<DyadPtr, ConstructFn>,
+    string_: SynolonPtr,
+    metas: HashMap<SynolonPtr, ConstructFn>,
     lower: LowerTable,
 }
 
 /// The one-signature infix constructor over a file's `build` fn: read the two
 /// operands flanking the cursor from the tape (the model's `tape[-1]` and
-/// `tape[+1]`, completed dyads at reduction) and build the operator node. With
+/// `tape[+1]`, completed synolons at reduction) and build the operator node. With
 /// no flanking operands — the driver invoking an extender that opened fresh —
 /// the construct declines, and the operator shifts as a pending token (the
 /// dangling-operator error path). Each operator file expands this over its own
@@ -550,7 +539,7 @@ macro_rules! infix_construct {
     ($build:path) => {{
         fn construct(
             p: &mut crate::parse::Parser,
-            id: crate::dyad::DyadPtr,
+            id: crate::synolon::SynolonPtr,
             tape: &mut crate::parse::ParsingTape,
         ) -> Result<crate::parse::Constructed, crate::parse::ParseError> {
             let Some((lhs, rhs)) = p.binary_operands(tape)? else {
@@ -566,119 +555,119 @@ macro_rules! infix_construct {
 }
 pub(crate) use infix_construct;
 
-/// The two `dyad@` operands of a binary application node.
+/// The two `synolon@` operands of a binary application node.
 ///
 /// # Safety
-/// `node.value` must point at an operand struct of at least two `dyad@` fields,
+/// `node.hyle` must point at an operand record of at least two `synolon@` fields,
 /// as produced by [`build_binary`].
-pub(crate) unsafe fn operands(node: DyadPtr) -> (DyadPtr, DyadPtr) {
-    let p = (*node).value as *const DyadPtr;
+pub(crate) unsafe fn operands(node: SynolonPtr) -> (SynolonPtr, SynolonPtr) {
+    let p = (*node).hyle as *const SynolonPtr;
     (*p, *p.add(1))
 }
 
-/// A binary numeric operator operand's character, for type resolution.
+/// A binary numeric operator operand's character, for logos resolution.
 pub(crate) enum Operand {
-    /// A value with a committed numeric type.
+    /// A value with a committed numeric logos.
     Concrete(NumType),
     /// An uncommitted number literal (a `rational`), which molds to context.
     Literal,
-    /// A pointer value, carrying its pointee type node. Pointer types compare by
+    /// A pointer value, carrying its pointee logos node. Pointer logos compare by
     /// pointee, never by node identity — they are created fresh per use.
-    Pointer(DyadPtr),
-    /// Not a number an operator can compute over (e.g. a `struct`).
+    Pointer(SynolonPtr),
+    /// Not a number an operator can compute over (e.g. a `record`).
     NonNumeric,
 }
 
-/// Classify `node` as an operand of a numeric operator: its committed type, an
+/// Classify `node` as an operand of a numeric operator: its committed logos, an
 /// uncommitted literal, or non-numeric.
 ///
 /// # Safety
-/// `node` must be a valid dyad from the store.
-pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
-    let ty = (*node).ty;
-    if ty == types.rational {
+/// `node` must be a valid synolon from the store.
+pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: SynolonPtr) -> Operand {
+    let logos = (*node).logos;
+    if logos == types.rational {
         return Operand::Literal;
     }
-    // An arithmetic operator's result type is its left operand's: resolution
-    // committed both operands to one type and stored the concrete op — not a
-    // type — in the op slot, so the type is read where it lives.
-    if ty == types.plus || ty == types.minus || ty == types.times || ty == types.div_ || ty == types.rem_ {
-        let lhs = *((*node).value as *const DyadPtr);
+    // An arithmetic operator's result logos is its left operand's: resolution
+    // committed both operands to one logos and stored the concrete op — not a
+    // logos — in the op slot, so the logos is read where it lives.
+    if logos == types.plus || logos == types.minus || logos == types.times || logos == types.div_ || logos == types.rem_ {
+        let lhs = *((*node).hyle as *const SynolonPtr);
         return numtype_of(types, lhs);
     }
     // A comparison's or logical operator's result is `bool`, physically an i32;
     // an assignment yields the stored value, read at the bare i32 default (the
     // behaviour these applications always had).
-    if ty == types.lt
-        || ty == types.gt
-        || ty == types.le
-        || ty == types.ge
-        || ty == types.eq
-        || ty == types.ne
-        || ty == types.and_
-        || ty == types.or_
-        || ty == types.not_
-        || ty == types.assign
-        || ty == types.return_
+    if logos == types.lt
+        || logos == types.gt
+        || logos == types.le
+        || logos == types.ge
+        || logos == types.eq
+        || logos == types.ne
+        || logos == types.and_
+        || logos == types.or_
+        || logos == types.not_
+        || logos == types.assign
+        || logos == types.return_
     {
         return Operand::Concrete(NumType::I32);
     }
-    // A conversion's result is its target type (stored at operand[2]).
-    if ty == types.convert {
+    // A conversion's result is its target logos (stored at operand[2]).
+    if logos == types.convert {
         return Operand::Concrete(numtype::of_type_node(numtype::stored_type(node)));
     }
-    // A numeric variable/value: its type is one of the numeric type nodes.
-    if types.numtypes.iter().any(|&t| !t.is_null() && t == ty) {
-        return Operand::Concrete(numtype::of_type_node(ty));
+    // A numeric variable/value: its logos is one of the numeric logos nodes.
+    if types.numtypes.iter().any(|&t| !t.is_null() && t == logos) {
+        return Operand::Concrete(numtype::of_type_node(logos));
     }
     // An else-less `if` yields unit, not a value (it has no false branch to
     // produce one); with both branches it takes the bare i32 default its
     // applications always had.
-    if ty == types.if_ {
-        if (*((*node).value as *const DyadPtr).add(2)).is_null() {
+    if logos == types.if_ {
+        if (*((*node).hyle as *const SynolonPtr).add(2)).is_null() {
             return Operand::NonNumeric;
         }
         return Operand::Concrete(NumType::I32);
     }
-    // A `while`/`for` loop, a struct construction, a declaration, and a
+    // A `while`/`for` loop, a record construction, a declaration, and a
     // `f.compile()` are statements yielding unit, never values.
-    if ty == types.while_
-        || ty == types.for_
-        || ty == types.construct_
-        || ty == types.declare_
-        || ty == types.compile_
+    if logos == types.while_
+        || logos == types.for_
+        || logos == types.construct_
+        || logos == types.declare_
+        || logos == types.compile_
     {
         return Operand::NonNumeric;
     }
     // A pointer-typed value (an `&x` literal, a pointer variable, or a pointer
     // field place): carries its pointee. Never arithmetic; passed and stored whole.
-    if !ty.is_null() && numtype::is_pointer_type(ty) {
-        return Operand::Pointer(numtype::pointee_of(ty));
+    if !logos.is_null() && numtype::is_pointer_type(logos) {
+        return Operand::Pointer(numtype::pointee_of(logos));
     }
-    // An address-of yields a pointer to its place's type (the pointee it stores
-    // at operand 1). Like deref/storeptr, its node type is its own identity, not
-    // a pointer type, so numtype_of is the single classifier.
-    if ty == types.addr_ {
-        return Operand::Pointer(*((*node).value as *const DyadPtr).add(1));
+    // An address-of yields a pointer to its place's logos (the pointee it stores
+    // at operand 1). Like deref/storeptr, its node logos is its own identity, not
+    // a pointer logos, so numtype_of is the single classifier.
+    if logos == types.addr_ {
+        return Operand::Pointer(*((*node).hyle as *const SynolonPtr).add(1));
     }
     // A dereference yields its pointee's value; a store-through yields the stored
     // value, like `=`. Both must precede the generic fn-typed fallback below,
     // which would misread them as i32-returning calls.
-    if ty == types.deref_ || ty == types.storeptr_ {
-        let p = (*node).value as *const DyadPtr;
-        let pointee = if ty == types.deref_ { *p.add(1) } else { *p.add(2) };
+    if logos == types.deref_ || logos == types.storeptr_ {
+        let p = (*node).hyle as *const SynolonPtr;
+        let pointee = if logos == types.deref_ { *p.add(1) } else { *p.add(2) };
         if numtype::is_pointer_type(pointee) {
             return Operand::Pointer(numtype::pointee_of(pointee));
         }
         if is_numtype_node(types, pointee) {
             return Operand::Concrete(numtype::of_type_node(pointee));
         }
-        return Operand::NonNumeric; // a struct pointee reads only through `.field`
+        return Operand::NonNumeric; // a record pointee reads only through `.field`
     }
     // A sequence's value is its trailing expression's. A literal tail takes the
     // bare-literal i32 default here rather than classifying as `Literal`: the
     // molding machinery commits a literal *node*, and this node is the sequence.
-    if ty == types.scope {
+    if logos == types.scope {
         return match crate::parse::last_sequence_expr(node) {
             Some(last) => match numtype_of(types, last) {
                 Operand::Literal => Operand::Concrete(NumType::I32),
@@ -687,13 +676,13 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
             None => Operand::NonNumeric,
         };
     }
-    // A call: its result is the callee's return type. A self-call resolves through
+    // A call: its result is the callee's return logos. A self-call resolves through
     // the signature the declaration published onto its placeholder; only a
     // placeholder with no published signature (the value did not open with `fn`)
     // falls back to the i32 default. A void-returning callee yields no numeric
     // value (and its output has no NumType).
-    if !ty.is_null() && (*ty).ty == types.fn_type {
-        let fields = (*ty).value as *const DyadPtr;
+    if !logos.is_null() && (*logos).logos == types.fn_type {
+        let fields = (*logos).hyle as *const SynolonPtr;
         if !fields.is_null() {
             let out = *fields.add(FN_OUTPUT);
             if !out.is_null() && numtype::is_void_type(out) {
@@ -703,15 +692,15 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
                 return Operand::Pointer(numtype::pointee_of(out));
             }
         }
-        return Operand::Concrete(call_return_numtype(ty));
+        return Operand::Concrete(call_return_numtype(logos));
     }
     Operand::NonNumeric
 }
 
-/// The numeric return type of a fn node (its `FN_OUTPUT`), or `I32` when the callee
+/// The numeric return logos of a fn node (its `FN_OUTPUT`), or `I32` when the callee
 /// is an unbound placeholder with no published signature, or returns a non-numeric.
-unsafe fn call_return_numtype(fn_node: DyadPtr) -> NumType {
-    let fields = (*fn_node).value as *const DyadPtr;
+unsafe fn call_return_numtype(fn_node: SynolonPtr) -> NumType {
+    let fields = (*fn_node).hyle as *const SynolonPtr;
     if fields.is_null() {
         return NumType::I32;
     }
@@ -723,23 +712,23 @@ unsafe fn call_return_numtype(fn_node: DyadPtr) -> NumType {
     }
 }
 
-/// Resolve a binary numeric operator's operand type: commit any uncommitted
+/// Resolve a binary numeric operator's operand logos: commit any uncommitted
 /// literal operand to it and return the committed operands with the resolved
 /// [`NumType`], from which the family's builder picks its concrete-op leaf
-/// (`add_i32`, `lt_f64`, …). Two different concrete types are a
-/// [`ParseError::TypeMismatch`] (cross-type needs an explicit cast); a
+/// (`add_i32`, `lt_f64`, …). Two different concrete logos are a
+/// [`ParseError::TypeMismatch`] (cross-logos needs an explicit cast); a
 /// non-numeric operand is [`ParseError::UnsupportedOperands`]; a literal that
-/// has no exact value in the resolved type is
+/// has no exact value in the resolved logos is
 /// [`ParseError::UncomputableLiteral`].
 ///
 /// # Safety
-/// `lhs`/`rhs` are valid dyads from the store.
+/// `lhs`/`rhs` are valid synolons from the store.
 pub(crate) unsafe fn resolve_binary(
     store: &mut Store,
     types: &CoreTypes,
-    lhs: DyadPtr,
-    rhs: DyadPtr,
-) -> Result<([DyadPtr; 2], NumType), ParseError> {
+    lhs: SynolonPtr,
+    rhs: SynolonPtr,
+) -> Result<([SynolonPtr; 2], NumType), ParseError> {
     let a = numtype_of(types, lhs);
     let b = numtype_of(types, rhs);
     let nt = match (&a, &b) {
@@ -771,11 +760,11 @@ pub(crate) unsafe fn resolve_binary(
 /// molded bytes); non-literal operands pass through unchanged.
 unsafe fn commit_if_literal(
     store: &mut Store,
-    node: DyadPtr,
+    node: SynolonPtr,
     op: &Operand,
-    type_node: DyadPtr,
+    type_node: SynolonPtr,
     nt: NumType,
-) -> Result<DyadPtr, ParseError> {
+) -> Result<SynolonPtr, ParseError> {
     if let Operand::Literal = op {
         let bits = rational::mold_to(node, nt).ok_or(ParseError::UncomputableLiteral)?;
         let value = store.alloc_bytes(&bits.to_ne_bytes()[..nt.bytes()]);
@@ -785,65 +774,62 @@ unsafe fn commit_if_literal(
     }
 }
 
-/// Whether `node` is one of the registered numeric type nodes (`i32`, `f64`, …). The
-/// parser uses this to recognize a `type(value)` conversion at a call site.
-pub(crate) fn is_numtype_node(types: &CoreTypes, node: DyadPtr) -> bool {
+/// Whether `node` is one of the registered numeric logos nodes (`i32`, `f64`, …). The
+/// parser uses this to recognize a `logos(value)` conversion at a call site.
+pub(crate) fn is_numtype_node(types: &CoreTypes, node: SynolonPtr) -> bool {
     types.numtypes.iter().any(|&t| !t.is_null() && t == node)
 }
 
-/// Whether `node` is a type-value: a node classified by the `Type : Type` root or
-/// by `struct` — a numeric type, the root itself, `bool`, a pointer or struct type.
-/// Type identities are interned, so pointer identity *is* type identity, which is
-/// what lets `==`/`!=` fold a comparison of two type-values at parse time and lets
-/// `.type` yield a value comparable this way (roadmap #30).
+/// Whether `node` is a logos-value: a node classified by the `logos : logos`
+/// root — a numeric logos, the root itself, `bool`, a pointer or record logos.
+/// Logos identities are interned, so pointer identity *is* logos identity, which
+/// is what lets `==`/`!=` fold a comparison of two logos-values at parse time and
+/// lets `.logos` yield a value comparable this way (roadmap #30).
 ///
 /// # Safety
-/// `node` must be null or a valid dyad from the store.
-pub(crate) unsafe fn is_type_value(types: &CoreTypes, node: DyadPtr) -> bool {
-    !node.is_null() && ((*node).ty == types.type_ || (*node).ty == types.struct_)
+/// `node` must be null or a valid synolon from the store.
+pub(crate) unsafe fn is_type_value(types: &CoreTypes, node: SynolonPtr) -> bool {
+    !node.is_null() && (*node).logos == types.type_
 }
 
-/// The display spelling of a type-value (`i32`, `bool`, `type`, `struct`, …). Numeric
-/// types and `void` read their name from the record tag; the root, `bool`, and any
-/// struct type are recognized by identity; other type-values (pointers, text) fall
-/// back to the generic `type`.
+/// The display spelling of a logos-value (`i32`, `bool`, `logos`, …). Numeric
+/// logos and `void` read their name from the record tag; the root and `bool`
+/// are recognized by identity; other logos-values (record logos, pointers,
+/// text) fall back to the generic `logos`.
 ///
 /// # Safety
 /// `node` must satisfy [`is_type_value`].
-unsafe fn type_name(types: &CoreTypes, node: DyadPtr) -> String {
+unsafe fn type_name(types: &CoreTypes, node: SynolonPtr) -> String {
     if node == types.type_ {
-        return "type".to_string();
+        return "logos".to_string();
     }
     if node == types.bool_ {
         return "bool".to_string();
     }
-    if (*node).ty == types.struct_ {
-        return "struct".to_string();
-    }
     match meta::kind_of(node) {
         Some(t) if t <= NumType::F64 as u8 => NumType::from_tag(t).spelling().to_string(),
         Some(numtype::VOID_TAG) => "void".to_string(),
-        _ => "type".to_string(),
+        _ => "logos".to_string(),
     }
 }
 
-/// The place type and byte width a declaration's snapshot binding needs for a
-/// runtime scalar `value`: a `Concrete` numeric (or `bool`) commits to its type
+/// The place logos and byte width a declaration's snapshot binding needs for a
+/// runtime scalar `value`: a `Concrete` numeric (or `bool`) commits to its logos
 /// node at its width; a `Pointer` value (an `&x`, a pointer variable) becomes a
 /// fresh `@pointee` place, 8 bytes wide, so `p := &x` gets real storage that
 /// `p = &y` can rewire. The caller mints the place with this — frame-relative
 /// inside a function, absolute at top level — and pairs it with
 /// [`build_scalar_init`]. A bare rational (`x := 5`) stays a comptime binding
-/// and never reaches here; a `fn`, type, or unit value keeps its own binding.
+/// and never reaches here; a `fn`, logos, or unit value keeps its own binding.
 ///
 /// # Safety
-/// `value` must be a reduced dyad from the store whose [`numtype_of`] is
+/// `value` must be a reduced synolon from the store whose [`numtype_of`] is
 /// [`Operand::Concrete`] or [`Operand::Pointer`].
 pub(crate) unsafe fn scalar_binding_type(
     store: &mut Store,
     types: &CoreTypes,
-    value: DyadPtr,
-) -> (DyadPtr, usize) {
+    value: SynolonPtr,
+) -> (SynolonPtr, usize) {
     match numtype_of(types, value) {
         Operand::Concrete(nt) => (types.numtypes[nt as usize], nt.bytes()),
         Operand::Pointer(pointee) => {
@@ -866,34 +852,34 @@ pub(crate) unsafe fn scalar_binding_type(
 /// place and keeps its `construct` node as a re-run initializer.
 ///
 /// # Safety
-/// `place`/`value` must be reduced dyads from the store, `place` a scalar or
-/// pointer place whose type matches `value`.
+/// `place`/`value` must be reduced synolons from the store, `place` a scalar or
+/// pointer place whose logos matches `value`.
 pub(crate) unsafe fn build_scalar_init(
     store: &mut Store,
     types: &CoreTypes,
-    place: DyadPtr,
-    value: DyadPtr,
-) -> Result<DyadPtr, ParseError> {
+    place: SynolonPtr,
+    value: SynolonPtr,
+) -> Result<SynolonPtr, ParseError> {
     assign::build(store, types, types.assign, place, value)
 }
 
-/// Check a store's non-literal right side against the target's declared type —
-/// the no-coercion rule (DESIGN ›two different concrete types do not silently
+/// Check a store's non-literal right side against the target's declared logos —
+/// the no-coercion rule (DESIGN ›two different concrete logos do not silently
 /// lower — there is no implicit coercion‹) applied to `=` and `p@ = …`. A
 /// numeric target takes exactly its own width-kind (`bool` rides `I32` here, as
 /// everywhere in the classifier); a pointer target takes a pointer to a matching
-/// pointee; everything else — a cross-type value, a value into a pointer, a
+/// pointee; everything else — a cross-logos value, a value into a pointer, a
 /// pointer into a numeric, a unit-valued statement — is [`ParseError::TypeMismatch`].
 /// An uncommitted literal never reaches this: the callers commit it to the
-/// target's type first (the typed slot), which is the one sanctioned crossing.
+/// target's logos first (the typed slot), which is the one sanctioned crossing.
 ///
 /// # Safety
-/// `target_ty` must be a numeric or pointer type node and `rhs` a reduced dyad,
+/// `target_ty` must be a numeric or pointer logos node and `rhs` a reduced synolon,
 /// both from the store.
 pub(crate) unsafe fn check_store_type(
     types: &CoreTypes,
-    target_ty: DyadPtr,
-    rhs: DyadPtr,
+    target_ty: SynolonPtr,
+    rhs: SynolonPtr,
 ) -> Result<(), ParseError> {
     let ok = if numtype::is_pointer_type(target_ty) {
         matches!(numtype_of(types, rhs),
@@ -905,14 +891,14 @@ pub(crate) unsafe fn check_store_type(
     if ok { Ok(()) } else { Err(ParseError::TypeMismatch) }
 }
 
-/// Whether two pointee type nodes denote the same type: the same node (numeric
-/// and struct types are interned singletons), or pointer types whose pointees
-/// match recursively — pointer type nodes are minted per spelling, so `@@i32`
-/// and `@@i32` are different nodes describing one type.
+/// Whether two pointee logos nodes denote the same logos: the same node (numeric
+/// and record logos are interned singletons), or pointer logos whose pointees
+/// match recursively — pointer logos nodes are minted per spelling, so `@@i32`
+/// and `@@i32` are different nodes describing one logos.
 ///
 /// # Safety
-/// `a`/`b` must be type nodes from the store.
-unsafe fn pointee_types_match(a: DyadPtr, b: DyadPtr) -> bool {
+/// `a`/`b` must be logos nodes from the store.
+unsafe fn pointee_types_match(a: SynolonPtr, b: SynolonPtr) -> bool {
     a == b
         || (numtype::is_pointer_type(a)
             && numtype::is_pointer_type(b)
@@ -920,18 +906,18 @@ unsafe fn pointee_types_match(a: DyadPtr, b: DyadPtr) -> bool {
 }
 
 /// Render a run result for display: `bits` (the i64 the interpreter computes in)
-/// interpreted through `node`'s static type — a float via its bit pattern, an
+/// interpreted through `node`'s static logos — a float via its bit pattern, an
 /// unsigned integer at its own width, a `bool` as `true`/`false` — so the CLI
 /// prints `5.5` and `true`, not the raw bit container. Non-scalar and comptime
 /// results fall back to the signed-decimal container, the plain default.
 ///
 /// # Safety
-/// `node` must be a valid dyad from the store (the parsed expression whose value
+/// `node` must be a valid synolon from the store (the parsed expression whose value
 /// `bits` is).
-pub unsafe fn display_value(types: &CoreTypes, node: DyadPtr, bits: i64) -> String {
+pub unsafe fn display_value(types: &CoreTypes, node: SynolonPtr, bits: i64) -> String {
     // A file or block is a scope whose value is its trailing expression; render
-    // through that so the type-directed formatting below sees the actual value node
-    // (a multi-line program ending in a type — or a float — not the scope wrapper).
+    // through that so the logos-directed formatting below sees the actual value node
+    // (a multi-line program ending in a logos — or a float — not the scope wrapper).
     let node = trailing_expr(types, node);
     // A comparison / logical result is physically an i32; show its truth. A bool
     // stored into a variable reads back as its i32 0/1 (the seed has no distinct
@@ -939,7 +925,7 @@ pub unsafe fn display_value(types: &CoreTypes, node: DyadPtr, bits: i64) -> Stri
     if crate::parse::is_bool_result(types, node) {
         return if bits != 0 { "true" } else { "false" }.to_string();
     }
-    // A type is a first-class value; show its spelling, not the raw bit container
+    // A logos is a first-class value; show its spelling, not the raw bit container
     // (roadmap #30) — so a program ending in `i32` prints `i32`, not `0`.
     if is_type_value(types, node) {
         return type_name(types, node);
@@ -956,9 +942,9 @@ pub unsafe fn display_value(types: &CoreTypes, node: DyadPtr, bits: i64) -> Stri
 /// value (a scope's value *is* its trailing expression), so the two stay in step.
 ///
 /// # Safety
-/// `node` must be a valid dyad from the store.
-unsafe fn trailing_expr(types: &CoreTypes, mut node: DyadPtr) -> DyadPtr {
-    while !node.is_null() && (*node).ty == types.scope {
+/// `node` must be a valid synolon from the store.
+unsafe fn trailing_expr(types: &CoreTypes, mut node: SynolonPtr) -> SynolonPtr {
+    while !node.is_null() && (*node).logos == types.scope {
         match crate::parse::last_sequence_expr(node) {
             Some(inner) if inner != node => node = inner,
             _ => break,
@@ -988,19 +974,19 @@ fn format_scalar(nt: NumType, bits: i64) -> String {
     }
 }
 
-/// Resolve a `for` range's operand type across its parts (start, end, optional
-/// step), like [`resolve_binary`] over more operands: concrete types must all
+/// Resolve a `for` range's operand logos across its parts (start, end, optional
+/// step), like [`resolve_binary`] over more operands: concrete logos must all
 /// match ([`ParseError::TypeMismatch`]), literals commit in place to the
-/// resolved type, all-literals default to i32, and a non-numeric part is
-/// rejected. Returns the resolved numeric type node.
+/// resolved logos, all-literals default to i32, and a non-numeric part is
+/// rejected. Returns the resolved numeric logos node.
 ///
 /// # Safety
-/// `parts` must be reduced dyads from the store.
+/// `parts` must be reduced synolons from the store.
 pub(crate) unsafe fn resolve_loop_parts(
     store: &mut Store,
     types: &CoreTypes,
-    parts: &mut [DyadPtr],
-) -> Result<DyadPtr, ParseError> {
+    parts: &mut [SynolonPtr],
+) -> Result<SynolonPtr, ParseError> {
     let mut nt: Option<NumType> = None;
     for &p in parts.iter() {
         match numtype_of(types, p) {
@@ -1015,61 +1001,61 @@ pub(crate) unsafe fn resolve_loop_parts(
         }
     }
     let nt = nt.unwrap_or(NumType::I32);
-    let ty = types.numtypes[nt as usize];
+    let logos = types.numtypes[nt as usize];
     for p in parts.iter_mut() {
         if let Operand::Literal = numtype_of(types, *p) {
-            *p = commit_if_literal(store, *p, &Operand::Literal, ty, nt)?;
+            *p = commit_if_literal(store, *p, &Operand::Literal, logos, nt)?;
         }
     }
-    Ok(ty)
+    Ok(logos)
 }
 
-/// Commit a rational literal node exactly to the numeric type `ty_node` — the
-/// `type literal` juxtaposition (`i32 32`, DESIGN ›an anonymous typed value is
+/// Commit a rational literal node exactly to the numeric logos `ty_node` — the
+/// `logos literal` juxtaposition (`i32 32`, DESIGN ›an anonymous typed value is
 /// written by juxtaposition‹). The result is a typed value with real storage.
 ///
 /// # Safety
-/// `lit` must be a rational literal from the store; `ty_node` a numeric type node.
+/// `lit` must be a rational literal from the store; `ty_node` a numeric logos node.
 pub(crate) unsafe fn commit_literal_to(
     store: &mut Store,
-    lit: DyadPtr,
-    ty_node: DyadPtr,
-) -> Result<DyadPtr, ParseError> {
+    lit: SynolonPtr,
+    ty_node: SynolonPtr,
+) -> Result<SynolonPtr, ParseError> {
     let nt = numtype::of_type_node(ty_node);
     commit_if_literal(store, lit, &Operand::Literal, ty_node, nt)
 }
 
 /// Commit a call's uncommitted literal arguments to their parameters' declared
-/// numeric types — the typed slot (DESIGN ›committing to a concrete type only when
+/// numeric logos — the typed slot (DESIGN ›committing to a concrete logos only when
 /// it finally lands in a typed slot‹), so `f(3000000000)` is exact for an i64
 /// parameter and `g(2.5)` reaches a float one. A non-fn callee, an unbound callee
 /// (no published signature yet), an untyped parameter, or a non-literal argument
 /// each pass through unchanged; extra arguments beyond the parameters are left for
 /// the run/compile arity check. A literal with no exact value in its parameter's
-/// type is [`ParseError::UncomputableLiteral`].
+/// logos is [`ParseError::UncomputableLiteral`].
 ///
 /// # Safety
-/// `callee` and `args` must be valid dyads from the store.
+/// `callee` and `args` must be valid synolons from the store.
 pub(crate) unsafe fn commit_call_args(
     store: &mut Store,
     types: &CoreTypes,
-    callee: DyadPtr,
-    args: &mut [DyadPtr],
+    callee: SynolonPtr,
+    args: &mut [SynolonPtr],
 ) -> Result<(), ParseError> {
-    if (*callee).ty != types.fn_type {
+    if (*callee).logos != types.fn_type {
         return Ok(());
     }
-    let fields = (*callee).value as *const DyadPtr;
+    let fields = (*callee).hyle as *const SynolonPtr;
     if fields.is_null() {
         return Ok(());
     }
     let input = *fields.add(crate::parse::FN_INPUT);
-    let params = array::items(meta::struct_fields_of(input));
+    let params = array::items(meta::record_fields_of(input));
     for (i, arg) in args.iter_mut().enumerate() {
         let Some(&param) = params.get(i) else {
             break;
         };
-        let pty = (*param).ty;
+        let pty = (*param).logos;
         if !pty.is_null() && numtype::is_pointer_type(pty) {
             // A pointer parameter takes only a pointer to the same pointee — a
             // committed literal here would be dereferenced as a wild address.
@@ -1079,7 +1065,7 @@ pub(crate) unsafe fn commit_call_args(
             }
             continue;
         }
-        if (**arg).ty == types.rational && is_numtype_node(types, pty) {
+        if (**arg).logos == types.rational && is_numtype_node(types, pty) {
             let nt = numtype::of_type_node(pty);
             *arg = commit_if_literal(store, *arg, &Operand::Literal, pty, nt)?;
         }
@@ -1087,19 +1073,19 @@ pub(crate) unsafe fn commit_call_args(
     Ok(())
 }
 
-/// Commit a comptime-rational function body to its declared return type — the typed-slot
+/// Commit a comptime-rational function body to its declared return logos — the typed-slot
 /// context (DESIGN ›a rational commits when it lands in a typed slot‹). A `void` return,
 /// or any non-concrete output, passes the body through; otherwise the body's tail value
 /// positions are committed (see [`commit_tail`]).
 ///
 /// # Safety
-/// `body`/`output` are valid dyads from the store.
+/// `body`/`output` are valid synolons from the store.
 pub(crate) unsafe fn commit_fn_body(
     store: &mut Store,
     types: &CoreTypes,
-    body: DyadPtr,
-    output: DyadPtr,
-) -> Result<DyadPtr, ParseError> {
+    body: SynolonPtr,
+    output: SynolonPtr,
+) -> Result<SynolonPtr, ParseError> {
     if !is_numtype_node(types, output) {
         return Ok(body);
     }
@@ -1107,7 +1093,7 @@ pub(crate) unsafe fn commit_fn_body(
 }
 
 /// Commit a comptime rational in tail (value-producing) position to `output`, a numeric
-/// type node. The tail positions are the leaves a function's value can come from: the
+/// logos node. The tail positions are the leaves a function's value can come from: the
 /// node itself, the operand of a `return`, and *both* branches of an `if` — recursively,
 /// so `return (if …)`, nested `if`s, and the like all reach their leaves. A rational
 /// leaf molds to `output` (exact, else [`ParseError::UncomputableLiteral`]); everything
@@ -1117,30 +1103,30 @@ pub(crate) unsafe fn commit_fn_body(
 /// yet aliased.
 ///
 /// # Safety
-/// `node`/`output` are valid dyads from the store; `output` is a numeric type node.
+/// `node`/`output` are valid synolons from the store; `output` is a numeric logos node.
 unsafe fn commit_tail(
     store: &mut Store,
     types: &CoreTypes,
-    node: DyadPtr,
-    output: DyadPtr,
-) -> Result<DyadPtr, ParseError> {
-    if (*node).ty == types.rational {
+    node: SynolonPtr,
+    output: SynolonPtr,
+) -> Result<SynolonPtr, ParseError> {
+    if (*node).logos == types.rational {
         let nt = numtype::of_type_node(output);
         let bits = rational::mold_to(node, nt).ok_or(ParseError::UncomputableLiteral)?;
         let value = store.alloc_bytes(&bits.to_ne_bytes()[..nt.bytes()]);
         return Ok(store.alloc_raw(output, value));
     }
     // `return X`: X is the tail (the node's first slot, `[value, op]`).
-    if (*node).ty == types.return_ {
-        let ops = (*node).value as *mut DyadPtr;
+    if (*node).logos == types.return_ {
+        let ops = (*node).hyle as *mut SynolonPtr;
         let committed = commit_tail(store, types, *ops, output)?;
         *ops = committed;
         return Ok(node);
     }
     // `if (c) (then) else (else)`: both branches are tails (value `[cond, then, else]`).
     // An else-less `if` yields unit, so it cannot be a numeric function's tail.
-    if (*node).ty == types.if_ {
-        let ops = (*node).value as *mut DyadPtr;
+    if (*node).logos == types.if_ {
+        let ops = (*node).hyle as *mut SynolonPtr;
         if (*ops.add(2)).is_null() {
             return Err(ParseError::MissingElse);
         }
@@ -1152,26 +1138,26 @@ unsafe fn commit_tail(
     }
     // A `while`/`for` loop, a construction, a declaration, or a `f.compile()`
     // yields unit, so none of them can be a numeric function's tail.
-    if (*node).ty == types.while_
-        || (*node).ty == types.for_
-        || (*node).ty == types.construct_
-        || (*node).ty == types.declare_
-        || (*node).ty == types.compile_
+    if (*node).logos == types.while_
+        || (*node).logos == types.for_
+        || (*node).logos == types.construct_
+        || (*node).logos == types.declare_
+        || (*node).logos == types.compile_
     {
         return Err(ParseError::StatementAsValue);
     }
     // A sequence: its trailing non-comment expression is the tail (trailing prose
     // is invisible to value flow). The expressions live behind the array node in
     // the sequence's first slot; the tail commits in place there.
-    if (*node).ty == types.scope {
-        if !(*node).value.is_null() {
-            let arr = *((*node).value as *const DyadPtr);
+    if (*node).logos == types.scope {
+        if !(*node).hyle.is_null() {
+            let arr = *((*node).hyle as *const SynolonPtr);
             let (len, data) = array::parts(arr);
-            let data = data as *mut DyadPtr;
+            let data = data as *mut SynolonPtr;
             let mut i = len;
             while i > 0 {
                 let cand = *data.add(i - 1);
-                if !numtype::is_comment_type((*cand).ty) {
+                if !numtype::is_comment_type((*cand).logos) {
                     let committed = commit_tail(store, types, cand, output)?;
                     *data.add(i - 1) = committed;
                     break;
@@ -1189,28 +1175,28 @@ unsafe fn commit_tail(
     Ok(node)
 }
 
-/// Build a scalar numeric conversion `target(operand)` — the `type(value)` constructor
-/// and the only cross-type path (DESIGN ›numeric conversion is the type constructor
+/// Build a scalar numeric conversion `target(operand)` — the `logos(value)` constructor
+/// and the only cross-logos path (DESIGN ›numeric conversion is the logos constructor
 /// consuming a value‹). A literal operand folds now, with `as` semantics, into a
-/// `target`-typed value; a runtime operand of a *different* concrete type becomes a
-/// [`convert`] node; the same concrete type passes through unchanged. Exactly one
+/// `target`-typed value; a runtime operand of a *different* concrete logos becomes a
+/// [`convert`] node; the same concrete logos passes through unchanged. Exactly one
 /// numeric operand is required, else [`ParseError::BadCast`].
 ///
 /// # Safety
-/// `target` is a numeric type node; `args` are valid dyads from the store.
+/// `target` is a numeric logos node; `args` are valid synolons from the store.
 pub(crate) unsafe fn build_cast(
     store: &mut Store,
     types: &CoreTypes,
-    target: DyadPtr,
-    args: &[DyadPtr],
-) -> Result<DyadPtr, ParseError> {
+    target: SynolonPtr,
+    args: &[SynolonPtr],
+) -> Result<SynolonPtr, ParseError> {
     let [operand] = args else {
         return Err(ParseError::BadCast);
     };
     let operand = *operand;
     let to = numtype::of_type_node(target);
     match numtype_of(types, operand) {
-        // A runtime value: a same-type cast is a no-op, a different type converts.
+        // A runtime value: a same-logos cast is a no-op, a different logos converts.
         Operand::Concrete(from) => {
             if from == to {
                 Ok(operand)
@@ -1256,18 +1242,18 @@ mod tests {
 
         // Expect the tree =(a, +(a, 1)).
         unsafe {
-            assert_eq!((*root).ty, core.assign);
-            let top = (*root).value as *const DyadPtr;
+            assert_eq!((*root).logos, core.assign);
+            let top = (*root).hyle as *const SynolonPtr;
             assert_eq!(*top, a); // =.lhs is the variable a
             let sum = *top.add(1); // =.rhs is the + application
-            assert_eq!((*sum).ty, core.plus);
-            let sops = (*sum).value as *const DyadPtr;
+            assert_eq!((*sum).logos, core.plus);
+            let sops = (*sum).hyle as *const SynolonPtr;
             assert_eq!(*sops, a); // +.lhs is a
-            // +.rhs is the literal `1`, committed to i32 (the type resolved from `a`).
+            // +.rhs is the literal `1`, committed to i32 (the logos resolved from `a`).
             let one = *sops.add(1);
-            assert_eq!((*one).ty, core.i32_);
-            assert_eq!(std::ptr::read_unaligned((*one).value as *const i32), 1);
-            // `+` stayed reflectable (ty is still `+`) and stored the resolved
+            assert_eq!((*one).logos, core.i32_);
+            assert_eq!(std::ptr::read_unaligned((*one).hyle as *const i32), 1);
+            // `+` stayed reflectable (logos is still `+`) and stored the resolved
             // concrete op in its op slot.
             assert_eq!(*sops.add(2), core.ops.arith_leaf(numtype::ArithOp::Add, NumType::I32));
         }
@@ -1292,8 +1278,8 @@ mod tests {
         };
 
         // run `a = a + 1`: yields 1 and leaves a holding 1.
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
-        // SAFETY: `root` is the valid dyad tree just parsed into `store`.
+        let mut rt = Runtime::new(core.fn_type, core.rational);
+        // SAFETY: `root` is the valid synolon tree just parsed into `store`.
         let result = unsafe { rt.run(root) }.unwrap();
         assert_eq!(result, 1);
         unsafe {
@@ -1327,10 +1313,10 @@ mod tests {
             );
             p.parse_expression().unwrap()
         };
-        // A nullary application of `main`: its type is `main`.
+        // A nullary application of `main`: its logos is `main`.
         let call = store.alloc_raw(main, std::ptr::null_mut());
 
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `call`/`main`/body are valid nodes in `store`.
         let result = unsafe { rt.run(call) }.unwrap();
         assert_eq!(result, 42); // a + 1 = 41 + 1
@@ -1354,8 +1340,8 @@ mod tests {
             p.parse_expression().unwrap()
         };
 
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
-        // SAFETY: `node` is the valid dyad tree just parsed.
+        let mut rt = Runtime::new(core.fn_type, core.rational);
+        // SAFETY: `node` is the valid synolon tree just parsed.
         let result = unsafe { rt.run(node) }.unwrap();
         assert_eq!(result, 42);
     }
@@ -1373,7 +1359,7 @@ mod tests {
             let mut p = Parser::new("return 7", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         assert_eq!(unsafe { rt.run(bare) }.unwrap(), 7);
 
         // Nested brackets group correctly.
@@ -1421,21 +1407,21 @@ mod tests {
             p.parse_expression().unwrap()
         };
 
-        // Node shape: `{ty: fn, value -> [input, output, body, bcode]}` with an empty
-        // input struct, an i32 return type, and a body (the `return`).
+        // Node shape: `{logos: fn, value -> [input, output, body, bcode]}` with an empty
+        // input record, an i32 return logos, and a body (the `return`).
         unsafe {
-            assert_eq!((*func).ty, core.fn_type);
-            let v = (*func).value as *const DyadPtr;
+            assert_eq!((*func).logos, core.fn_type);
+            let v = (*func).hyle as *const SynolonPtr;
             let (input, output, body) = (*v.add(FN_INPUT), *v.add(FN_OUTPUT), *v.add(FN_BODY));
-            assert_eq!((*input).ty, core.struct_); // input is a struct
-            assert!(array::items(meta::struct_fields_of(input)).is_empty()); // no params
-            assert_eq!(output, core.i32_); // return type i32
+            assert_eq!((*input).logos, core.type_); // input is a record
+            assert!(array::items(meta::record_fields_of(input)).is_empty()); // no params
+            assert_eq!(output, core.i32_); // return logos i32
             assert!(!body.is_null());
         }
 
         // Apply it and run: run finds no bcode for `func` and walks its body.
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `call`/`func`/body are valid nodes in `store`.
         let result = unsafe { rt.run(call) }.unwrap();
         assert_eq!(result, 42);
@@ -1443,7 +1429,7 @@ mod tests {
 
     #[test]
     fn parses_a_fn_with_a_param_visible_in_the_body() {
-        // A parameter is declared in the input struct's scope and resolves inside
+        // A parameter is declared in the input record's scope and resolves inside
         // the body: `fn (x : i32) -> i32 ( return x )` parses to a body `return(x)`
         // whose operand is the `x` parameter field. (Running it needs the calling
         // convention — param frame slots — which is later; here we check parsing.)
@@ -1467,16 +1453,16 @@ mod tests {
         };
 
         unsafe {
-            assert_eq!((*func).ty, core.fn_type);
-            let v = (*func).value as *const DyadPtr;
+            assert_eq!((*func).logos, core.fn_type);
+            let v = (*func).hyle as *const SynolonPtr;
             let (input, output, body) = (*v.add(FN_INPUT), *v.add(FN_OUTPUT), *v.add(FN_BODY));
             assert_eq!(output, core.i32_);
-            // The single parameter `x`, an i32 field in the input struct.
-            let x_field = array::items(meta::struct_fields_of(input))[0];
-            assert_eq!((*x_field).ty, core.i32_);
+            // The single parameter `x`, an i32 field in the input record.
+            let x_field = array::items(meta::record_fields_of(input))[0];
+            assert_eq!((*x_field).logos, core.i32_);
             // The body `return x` resolved `x` to that parameter field
             // (`return` is `[value, op]`; the operand is its first slot).
-            let return_operand = *((*body).value as *const DyadPtr);
+            let return_operand = *((*body).hyle as *const SynolonPtr);
             assert_eq!(return_operand, x_field);
         }
     }
@@ -1513,7 +1499,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
 
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // Oracle: interpret the call.
         // SAFETY: `call`/`add`/args are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
@@ -1583,10 +1569,10 @@ mod tests {
 
         // The call node applies `add` to its two arguments.
         unsafe {
-            assert_eq!((*call).ty, add);
+            assert_eq!((*call).logos, add);
         }
 
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `call`/`add`/args are valid nodes just parsed.
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 42);
     }
@@ -1620,7 +1606,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
 
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `call`/`add` are valid nodes just parsed.
         assert_eq!(unsafe { rt.run(call) }, Err(crate::run::RunError::ArityMismatch));
     }
@@ -1648,13 +1634,13 @@ mod tests {
         };
 
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `call`/`func`/body are valid nodes just parsed.
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 42);
     }
 
     #[test]
-    fn parses_an_empty_struct() {
+    fn parses_an_empty_record() {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
@@ -1662,22 +1648,22 @@ mod tests {
         scopes.push(core.root_scope);
 
         let node = {
-            let mut p = Parser::new("struct ()", &mut store, &mut trie, core.types(), scopes);
+            let mut p = Parser::new("logos ()", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
         // The stored layout (issue #47): a scope, an empty fields array, zero
         // size.
         unsafe {
-            assert_eq!((*node).ty, core.struct_);
-            assert!(!meta::struct_scope_of(node).is_null());
-            assert!(array::items(meta::struct_fields_of(node)).is_empty());
-            assert_eq!(meta::struct_size_of(node), 0);
+            assert_eq!((*node).logos, core.type_);
+            assert!(!meta::record_scope_of(node).is_null());
+            assert!(array::items(meta::record_fields_of(node)).is_empty());
+            assert_eq!(meta::record_size_of(node), 0);
         }
     }
 
     #[test]
-    fn parses_a_struct_with_typed_fields() {
+    fn parses_a_record_with_typed_fields() {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
@@ -1686,30 +1672,30 @@ mod tests {
 
         let node = {
             let mut p =
-                Parser::new("struct (x : i32, y : i32)", &mut store, &mut trie, core.types(), scopes);
+                Parser::new("logos (x : i32, y : i32)", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
         // Two `:` declaration fields, each typed i32 with an undefined value.
-        // No name is stored on the struct: the spellings live in the shared
+        // No name is stored on the record: the spellings live in the shared
         // name index alone (the scope-filtered resolution below is the one
-        // mechanism; a per-struct names store is recorded as rejected). The
+        // mechanism; a per-record names store is recorded as rejected). The
         // record stores the layout: fields array and packed size (issue #47).
         let (scope, fx, fy) = unsafe {
-            assert_eq!((*node).ty, core.struct_);
-            let fields = array::items(meta::struct_fields_of(node));
+            assert_eq!((*node).logos, core.type_);
+            let fields = array::items(meta::record_fields_of(node));
             assert_eq!(fields.len(), 2);
-            assert_eq!(meta::struct_size_of(node), 8); // two i32s, packed
-            (meta::struct_scope_of(node), fields[0], fields[1])
+            assert_eq!(meta::record_size_of(node), 8); // two i32s, packed
+            (meta::record_scope_of(node), fields[0], fields[1])
         };
         unsafe {
-            assert_eq!((*fx).ty, core.i32_);
-            assert!((*fx).value.is_null());
-            assert_eq!((*fy).ty, core.i32_);
-            assert!((*fy).value.is_null());
+            assert_eq!((*fx).logos, core.i32_);
+            assert!((*fx).hyle.is_null());
+            assert_eq!((*fy).logos, core.i32_);
+            assert!((*fy).hyle.is_null());
         }
 
-        // The field names are declared in the struct's own scope (index 0).
+        // The field names are declared in the record's own scope (index 0).
         let mut inner = ScopeStack::new();
         inner.push(scope);
         assert_eq!(inner.resolve(&trie, "x").unwrap().identity, fx);
@@ -1725,21 +1711,21 @@ mod tests {
         scopes.push(core.root_scope);
 
         let node = {
-            let mut p = Parser::new("struct (t)", &mut store, &mut trie, core.types(), scopes);
+            let mut p = Parser::new("logos (t)", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
-        // A bare name: one field with an undefined type slot, carried as the
+        // A bare name: one field with an undefined logos slot, carried as the
         // 8-byte container in the stored size.
         let (scope, ft) = unsafe {
-            let fields = array::items(meta::struct_fields_of(node));
+            let fields = array::items(meta::record_fields_of(node));
             assert_eq!(fields.len(), 1);
-            assert_eq!(meta::struct_size_of(node), 8);
-            (meta::struct_scope_of(node), fields[0])
+            assert_eq!(meta::record_size_of(node), 8);
+            (meta::record_scope_of(node), fields[0])
         };
         unsafe {
-            assert!((*ft).ty.is_null()); // bare name: type undefined
-            assert!((*ft).value.is_null());
+            assert!((*ft).logos.is_null()); // bare name: logos undefined
+            assert!((*ft).hyle.is_null());
         }
 
         let mut inner = ScopeStack::new();
@@ -1748,15 +1734,18 @@ mod tests {
     }
 
     #[test]
-    fn struct_without_parens_is_an_error() {
+    fn bare_logos_without_parens_yields_the_classifier() {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
 
-        let mut p = Parser::new("struct 40", &mut store, &mut trie, core.types(), scopes);
-        assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::ExpectedOpen));
+        // No `(` after `logos` means no record path: the merged constructor
+        // declines the right and yields the classifier itself, so `40` starts
+        // the next expression (the numeric logos' own juxtaposition shape).
+        let mut p = Parser::new("logos 40", &mut store, &mut trie, core.types(), scopes);
+        assert_eq!(p.parse_expression(), Ok(core.type_));
     }
 
     #[test]
@@ -1765,23 +1754,23 @@ mod tests {
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
 
-        // `scope` is a type (its own type is `type`), and the root scope is one.
+        // `scope` is a logos (its own logos is `logos`), and the root scope is one.
         unsafe {
-            assert_eq!((*core.scope_).ty, core.type_);
-            assert_eq!((*core.root_scope).ty, core.scope_);
+            assert_eq!((*core.scope_).logos, core.type_);
+            assert_eq!((*core.root_scope).logos, core.scope_);
         }
 
-        // A struct opens its own `scope`-typed node (stored in its record).
+        // A record opens its own `scope`-typed node (stored in its record).
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
         let node = {
             let mut p =
-                Parser::new("struct (x : i32)", &mut store, &mut trie, core.types(), scopes);
+                Parser::new("logos (x : i32)", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
         unsafe {
-            let scope = meta::struct_scope_of(node);
-            assert_eq!((*scope).ty, core.scope_);
+            let scope = meta::record_scope_of(node);
+            assert_eq!((*scope).logos, core.scope_);
         }
     }
 
@@ -1803,7 +1792,7 @@ mod tests {
         };
 
         // Oracle: the interpreter, from a = 0.
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `root` is the valid tree just parsed.
         let interp = unsafe { rt.run(root) }.unwrap();
         let interp_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
@@ -1838,7 +1827,7 @@ mod tests {
         let a = store.alloc_raw(core.numtypes[NumType::I64 as usize], a_val);
         scopes.declare(&mut trie, "a", a).unwrap();
 
-        // A nullary `-> i64` fn so the compiled return type is the declared i64
+        // A nullary `-> i64` fn so the compiled return logos is the declared i64
         // (`compile_fn` reads `FN_OUTPUT`); its body assigns into the enclosing `a`.
         let func = {
             let mut p = Parser::new(
@@ -1853,7 +1842,7 @@ mod tests {
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
 
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // Interpreted oracle: 0 + 5e9, and `a` now holds it.
         // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
         let interp = unsafe { rt.run(call) }.unwrap();
@@ -1902,12 +1891,12 @@ mod tests {
         // The same `run`, two paths on one node: interpret first (no bcode yet),
         // then compile and run again (jumps to the installed bcode). Both diffed.
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
 
         // Interpreted: bcode is null, so `run` walks the body.
         let interp = unsafe { rt.run(call) }.unwrap();
         unsafe {
-            let bcode = *((*func).value as *const DyadPtr).add(FN_BCODE);
+            let bcode = *((*func).hyle as *const SynolonPtr).add(FN_BCODE);
             assert!(bcode.is_null());
         }
 
@@ -1915,7 +1904,7 @@ mod tests {
         // SAFETY: `func` is the fn node just built and outlives the call.
         let _compiled = unsafe { compile_fn(&mut store, &core.lower, core.types(),func) }.unwrap();
         unsafe {
-            let bcode = *((*func).value as *const DyadPtr).add(FN_BCODE);
+            let bcode = *((*func).hyle as *const SynolonPtr).add(FN_BCODE);
             assert!(!bcode.is_null()); // bcode installed on the node
         }
 
@@ -1942,11 +1931,11 @@ mod tests {
             p.parse_expression().unwrap() // parsing a decimal succeeds
         };
         unsafe {
-            assert_eq!((*node).ty, core.rational);
+            assert_eq!((*node).logos, core.rational);
             assert_eq!(rational::mold(node), None); // 157/50 has no exact i32
         }
 
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `node` is the rational literal just parsed.
         assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::UncomputableLiteral));
         // SAFETY: same node; compilation reports the same outcome as the oracle.
@@ -1967,7 +1956,7 @@ mod tests {
             let mut p = Parser::new("6.0", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `node` is the rational literal just parsed.
         assert_eq!(unsafe { rt.run(node) }.unwrap(), 6);
     }
@@ -2017,7 +2006,7 @@ mod tests {
                 Parser::new("add4(1, 2, 3, 4)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `call`/`add4`/args are valid nodes just parsed.
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 10);
     }
@@ -2041,7 +2030,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         // Interpreter: clean BadValue.
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `node` is the variable reference just parsed.
         assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::BadValue));
         // Compiler: BadValue, not a baked load from address 0.
@@ -2052,7 +2041,7 @@ mod tests {
 
     #[test]
     fn plus_is_abstract_and_resolves_to_a_concrete_op() {
-        // `+` is not itself a machine addition: it stays reflectable (its node's type
+        // `+` is not itself a machine addition: it stays reflectable (its node's logos
         // is still `+`) but resolves to a concrete op it stores in its value, and both
         // run and compile delegate to it. A concrete operand (`a`) keeps it a `+` node —
         // two comptime literals would fold instead. Nested `+` resolves too.
@@ -2079,16 +2068,16 @@ mod tests {
         };
         // The body is a `+` node, reflectable as `+`, carrying its resolved op.
         unsafe {
-            let body = *((*func).value as *const DyadPtr).add(FN_BODY);
-            assert_eq!((*body).ty, core.plus);
+            let body = *((*func).hyle as *const SynolonPtr).add(FN_BODY);
+            assert_eq!((*body).logos, core.plus);
             assert_eq!(
-                *((*body).value as *const DyadPtr).add(2),
+                *((*body).hyle as *const SynolonPtr).add(2),
                 core.ops.arith_leaf(numtype::ArithOp::Add, NumType::I32)
             );
         }
 
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `call`/`func`/body are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` is the fn node just built and outlives the call.
@@ -2102,7 +2091,7 @@ mod tests {
     fn a_whole_file_runs_top_to_bottom_like_a_script() {
         // The CLI model (settled, July 2026): `logos file.logos` evaluates the
         // file's top-level scope in order, Python-style — no main function. A
-        // declaration statement (a fn literal or a struct type standing as an
+        // declaration statement (a fn literal or a record logos standing as an
         // expression) is inert at run time — its work happened at parse — and
         // yields unit; the file's value is its tail expression's.
         let mut store = Store::new();
@@ -2112,7 +2101,7 @@ mod tests {
         scopes.push(core.root_scope);
         let root = {
             let mut p = Parser::new(
-                "double := fn (x : i32) -> i32 ( x + x )\npoint := struct (a : i32)\ndouble(21)",
+                "double := fn (x : i32) -> i32 ( x + x )\npoint := logos (a : i32)\ndouble(21)",
                 &mut store,
                 &mut trie,
                 
@@ -2121,7 +2110,7 @@ mod tests {
             );
             p.parse_sequence().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `root` is the sequence just parsed; its exprs are valid.
         let interp = unsafe { rt.run(root) }.unwrap();
         assert_eq!(interp, 42);
@@ -2131,7 +2120,7 @@ mod tests {
         // SAFETY: the sequence's first expression is the fn declaration; the
         // bound fn is its declared slot.
         let func = unsafe {
-            let arr = *((*root).value as *const DyadPtr);
+            let arr = *((*root).hyle as *const SynolonPtr);
             declare::declared_of(crate::identities::array::items(arr)[0])
         };
         // SAFETY: `func` is the fn node just parsed and outlives the calls.
@@ -2160,9 +2149,9 @@ mod tests {
             };
             // SAFETY: `node` is the literal just parsed.
             unsafe {
-                assert_eq!((*node).ty, core.bool_);
+                assert_eq!((*node).logos, core.bool_);
             }
-            let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+            let mut rt = Runtime::new(core.fn_type, core.rational);
             // SAFETY: `node` is a valid `bool` literal.
             assert_eq!(unsafe { rt.run(node) }.unwrap(), expect);
             // SAFETY: same node; the `bool` lowering bakes its constant.
@@ -2185,7 +2174,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `call`/`func`/body are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` is the fn node just built and outlives the call.
@@ -2227,14 +2216,14 @@ mod tests {
         // Body is `-`(a, *(a, 3)): `-` resolved to sub_i32, its rhs `*` to mul_i32. A
         // concrete operand keeps each a node — two literals would fold.
         unsafe {
-            let body = *((*func).value as *const DyadPtr).add(FN_BODY);
-            assert_eq!((*body).ty, core.minus);
-            let bops = (*body).value as *const DyadPtr;
+            let body = *((*func).hyle as *const SynolonPtr).add(FN_BODY);
+            assert_eq!((*body).logos, core.minus);
+            let bops = (*body).hyle as *const SynolonPtr;
             assert_eq!(*bops.add(2), core.ops.arith_leaf(numtype::ArithOp::Sub, NumType::I32));
             let rhs = *bops.add(1);
-            assert_eq!((*rhs).ty, core.times);
+            assert_eq!((*rhs).logos, core.times);
             assert_eq!(
-                *((*rhs).value as *const DyadPtr).add(2),
+                *((*rhs).hyle as *const SynolonPtr).add(2),
                 core.ops.arith_leaf(numtype::ArithOp::Mul, NumType::I32)
             );
         }
@@ -2280,10 +2269,10 @@ mod tests {
         // The body stays reflectable as `<` and records the concrete op it resolved to
         // (a concrete operand keeps it a node; two literals would fold to a bool).
         unsafe {
-            let body = *((*func).value as *const DyadPtr).add(FN_BODY);
-            assert_eq!((*body).ty, core.lt);
+            let body = *((*func).hyle as *const SynolonPtr).add(FN_BODY);
+            assert_eq!((*body).logos, core.lt);
             assert_eq!(
-                *((*body).value as *const DyadPtr).add(2),
+                *((*body).hyle as *const SynolonPtr).add(2),
                 core.ops.cmp_leaf(numtype::CmpOp::Lt, NumType::I32)
             );
         }
@@ -2332,7 +2321,7 @@ mod tests {
 
         // A concrete operand (`a`) keeps each a node; two literals would fold to a bool.
         use numtype::CmpOp;
-        let cases: [(&str, DyadPtr, DyadPtr); 5] = [
+        let cases: [(&str, SynolonPtr, SynolonPtr); 5] = [
             ("fn (a : i32) -> i32 ( a > 2 )", core.gt, core.ops.cmp_leaf(CmpOp::Gt, NumType::I32)),
             ("fn (a : i32) -> i32 ( a == 2 )", core.eq, core.ops.cmp_leaf(CmpOp::Eq, NumType::I32)),
             ("fn (a : i32) -> i32 ( a <= 2 )", core.le, core.ops.cmp_leaf(CmpOp::Le, NumType::I32)),
@@ -2348,10 +2337,10 @@ mod tests {
             };
             // SAFETY: `func` is the fn node just parsed.
             unsafe {
-                let body = *((*func).value as *const DyadPtr).add(FN_BODY);
-                assert_eq!((*body).ty, abstract_op, "abstract op for `{src}`");
+                let body = *((*func).hyle as *const SynolonPtr).add(FN_BODY);
+                assert_eq!((*body).logos, abstract_op, "abstract op for `{src}`");
                 assert_eq!(
-                    *((*body).value as *const DyadPtr).add(2),
+                    *((*body).hyle as *const SynolonPtr).add(2),
                     concrete,
                     "concrete op for `{src}`"
                 );
@@ -2400,7 +2389,7 @@ mod tests {
             let y = store.alloc_raw(core.i32_, std::ptr::null_mut());
             s.declare(&mut trie, "y", y).unwrap();
         }
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
 
         // The right operand alone errors — this is what short-circuiting must skip.
         let bad = {
@@ -2502,7 +2491,7 @@ mod tests {
                     Parser::new(&src, &mut store, &mut trie, core.types(), s);
                 p.parse_expression().unwrap()
             };
-            let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+            let mut rt = Runtime::new(core.fn_type, core.rational);
             // SAFETY: `call`/`func`/body are valid nodes just parsed.
             let interp = unsafe { rt.run(call) }.unwrap();
             // SAFETY: `func` is the fn node just built and outlives the call.
@@ -2568,7 +2557,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // Interpreted: taken bumps a to 42; from 100, not taken, a stays.
         // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 0, "unit (interpreted)");
@@ -2629,7 +2618,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // Interpreted: outer condition false -> else-branch -> a = 7.
         // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 0);
@@ -2644,7 +2633,7 @@ mod tests {
 
     #[test]
     fn assignment_commits_a_literal_to_the_targets_type() {
-        // The rhs literal commits to the variable's declared type at parse time, so
+        // The rhs literal commits to the variable's declared logos at parse time, so
         // an i64 target takes a value past i32 exactly, in both tiers.
         diff_var_fn(NumType::I64, 0, "fn () -> i64 ( a = 5000000000  a )", 5_000_000_000);
         // And a literal with no exact value in the target is a parse error.
@@ -2699,7 +2688,7 @@ mod tests {
 
         // SAFETY: `mul` is the fn node just built and outlives every call.
         let _c_mul = unsafe { compile_fn(&mut store, &core.lower, core.types(), mul) }.unwrap();
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `call`/`outer` are valid nodes; the callee's artifact is alive.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `outer` is the fn node just built; both artifacts stay alive.
@@ -2752,7 +2741,7 @@ mod tests {
 
         // SAFETY: `g` is the fn node just built and outlives every call.
         let _c_g = unsafe { compile_fn(&mut store, &core.lower, core.types(), g) }.unwrap();
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `call`/`outer`/`a` are valid nodes; the callee's artifact is alive.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `outer` is the fn node just built; both artifacts stay alive.
@@ -2794,7 +2783,7 @@ mod tests {
             let mut p = Parser::new("s(3)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // Oracle: interpret the recursion (bcode not installed yet).
         // SAFETY: `call` applies the bound `s` to a literal.
         let interp = unsafe { rt.run(call) }.unwrap();
@@ -2916,7 +2905,7 @@ mod tests {
                 Parser::new("fact(20)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `call` applies the bound `fact` to a literal.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `fact` outlives every call; the artifact stays alive for the run.
@@ -2982,7 +2971,7 @@ mod tests {
             "f(5000000000)",
             15_000_000_003,
         );
-        // Mismatched concrete endpoint types are rejected.
+        // Mismatched concrete endpoint logos are rejected.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
@@ -3052,7 +3041,7 @@ mod tests {
     #[test]
     fn juxtaposition_types_a_literal() {
         // `i64 5000000000` is the anonymous typed value (DESIGN ›written by
-        // juxtaposition‹): the literal commits exactly to the type before it.
+        // juxtaposition‹): the literal commits exactly to the logos before it.
         diff_typed_call("fn () -> i64 ( x := i64 5000000000  x )", "f()", 5_000_000_000);
         // An exact commit, not a wrapping cast: a decimal into i32 is an error.
         assert_eq!(parse_err("i32 3.5"), ParseError::UncomputableLiteral);
@@ -3074,7 +3063,7 @@ mod tests {
 
     #[test]
     fn division_by_zero_saturates_to_max_both_tiers() {
-        // Settled: a zero divisor yields the type's MAX — a loud sentinel, easier
+        // Settled: a zero divisor yields the logos's MAX — a loud sentinel, easier
         // to discover than 0 — and signed MIN/-1, the other impossible quotient,
         // saturates to MAX too. MIN % -1 is the well-defined 0.
         diff_typed_call("fn (x : i32, y : i32) -> i32 ( x / y )", "f(10, 0)", i64::from(i32::MAX));
@@ -3131,11 +3120,11 @@ mod tests {
         };
         // SAFETY: `node` is the string literal just parsed.
         unsafe {
-            assert_eq!((*node).ty, core.string_);
+            assert_eq!((*node).logos, core.string_);
             assert_eq!(crate::identities::string::text(node), b"hello world");
         }
         // Inert: no scalar to read, and no operator accepts it.
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `node` is the string literal just parsed.
         assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::BadValue));
         assert_eq!(parse_err("«a» + 1"), ParseError::UnsupportedOperands);
@@ -3166,23 +3155,23 @@ mod tests {
         // and the tail for typing and value is the 42, committed through the
         // trailing prose.
         unsafe {
-            let body = *((*func).value as *const DyadPtr).add(FN_BODY);
-            assert_eq!((*body).ty, core.scope_);
-            let arr = *((*body).value as *const DyadPtr);
-            assert_eq!((*arr).ty, core.array_);
+            let body = *((*func).hyle as *const SynolonPtr).add(FN_BODY);
+            assert_eq!((*body).logos, core.scope_);
+            let arr = *((*body).hyle as *const SynolonPtr);
+            assert_eq!((*arr).logos, core.array_);
             let exprs = crate::identities::array::items(arr);
             let [c1, mid, c2] = exprs else {
                 panic!("the sequence should hold exactly three expressions");
             };
             let (c1, mid, c2) = (*c1, *mid, *c2);
-            assert_eq!((*c1).ty, core.comment_);
-            assert_eq!(crate::identities::string::text((*c1).value.cast()), b"the answer");
-            assert_eq!((*mid).ty, core.i32_);
-            assert_eq!((*c2).ty, core.comment_);
-            assert_eq!(crate::identities::string::text((*c2).value.cast()), b"checked twice");
+            assert_eq!((*c1).logos, core.comment_);
+            assert_eq!(crate::identities::string::text((*c1).hyle.cast()), b"the answer");
+            assert_eq!((*mid).logos, core.i32_);
+            assert_eq!((*c2).logos, core.comment_);
+            assert_eq!(crate::identities::string::text((*c2).hyle.cast()), b"checked twice");
         }
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `call`/`func`/body are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` outlives the call; the artifact stays alive.
@@ -3238,7 +3227,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `call`/`func`/`incr` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // Compile the callee first (the caller's call bakes its address).
@@ -3263,7 +3252,7 @@ mod tests {
 
     #[test]
     fn pointer_chains_and_field_pointers_work_both_tiers() {
-        // A struct pointer with q@.x (the postfix-deref ergonomics the syntax was
+        // A record pointer with q@.x (the postfix-deref ergonomics the syntax was
         // chosen for), a field pointer &pt.y, and double indirection pp@@.x.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
@@ -3284,7 +3273,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // x: 3 + 10 = 13 (via q@.x); y: 4 + 1 = 5 (via fp@); 13 + 5 = 18.
         // SAFETY: `call`/`func` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
@@ -3296,7 +3285,7 @@ mod tests {
     }
 
     #[test]
-    fn struct_pointer_fields_hold_addresses_both_tiers() {
+    fn record_pointer_fields_hold_addresses_both_tiers() {
         // A pointer-typed field (@i32): constructed from &x, read through h.r@.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
@@ -3305,7 +3294,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "holder := struct (r : @i32)",
+                "holder := logos (r : @i32)",
                 &mut store,
                 &mut trie,
                 
@@ -3328,7 +3317,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `call`/`func` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` outlives the call; the artifact stays alive.
@@ -3385,7 +3374,7 @@ mod tests {
             let mut p = Parser::new(src, &mut store, &mut trie, core.types(), scopes);
             p.parse_sequence().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_)
+        let mut rt = Runtime::new(core.fn_type, core.rational)
             .with_compiler(&core.lower, core.types());
         // SAFETY: `root` is the sequence just parsed; its exprs are valid.
         unsafe { rt.run(root) }
@@ -3418,15 +3407,15 @@ mod tests {
 
     #[test]
     fn a_bare_parameter_carries_the_container() {
-        // A bare `name` parameter (DESIGN: accepts any type-value dyad) has no
-        // declared type; its frame slot carries the full i64 bit-container and
+        // A bare `name` parameter (DESIGN: accepts any logos-value synolon) has no
+        // declared logos; its frame slot carries the full i64 bit-container and
         // a read yields it back.
         assert_eq!(run_script("f := fn (a) -> i64 ( a )\nf(42)"), 42);
     }
 
     #[test]
     fn compile_member_installs_code_the_next_call_jumps_to() {
-        // `f.compile()` (DESIGN: "The `fn` type carries two shared functions:
+        // `f.compile()` (DESIGN: "The `fn` logos carries two shared functions:
         // `compile` … and `run`"): write the body, compile, and the next call
         // runs the machine code — same answer the body walk gives.
         assert_eq!(
@@ -3476,14 +3465,14 @@ mod tests {
 
     #[test]
     fn a_type_returning_fn_compiles_and_serves_comptime_calls() {
-        // A type value is a node address, so a `-> type` function is integers
-        // in, an integer out — it compiles (type nodes bake as i64 address
+        // A logos value is a node address, so a `-> logos` function is integers
+        // in, an integer out — it compiles (logos nodes bake as i64 address
         // immediates, run's own rule), and the parse-time comptime evaluation
         // of later `metatype(...)` calls jumps to the installed code. This
-        // used to panic on the type root's record tag.
+        // used to panic on the logos root's record tag.
         assert_eq!(
             run_script(
-                "metatype := fn (i : i32) -> type ( if (i == 0) (i32) else (f64) )\nmetatype.compile()\nsame := metatype(0) == i32\nother := metatype(1) == f64\nif (same and other) (i64 1) else (i64 0)"
+                "metatype := fn (i : i32) -> logos ( if (i == 0) (i32) else (f64) )\nmetatype.compile()\nsame := metatype(0) == i32\nother := metatype(1) == f64\nif (same and other) (i64 1) else (i64 0)"
             ),
             1
         );
@@ -3529,11 +3518,11 @@ mod tests {
 
     #[test]
     fn compile_is_reserved_only_on_fn_typed_values() {
-        // A struct field named `compile` still resolves as an ordinary field:
+        // A record field named `compile` still resolves as an ordinary field:
         // the member intercept fires only when the lhs is fn-typed, so the
-        // spelling is not globally reserved (unlike `.type`).
+        // spelling is not globally reserved (unlike `.logos`).
         assert_eq!(
-            run_script("point := struct (compile : i32)\np := point(7)\np.compile"),
+            run_script("point := logos (compile : i32)\np := point(7)\np.compile"),
             7
         );
     }
@@ -3564,12 +3553,12 @@ mod tests {
         assert_eq!(p.parse_expression(), Err(ParseError::TypeMismatch));
     }
 
-    /// Declare `point := struct (x : i32, y : i32)` in the root scope.
+    /// Declare `point := logos (x : i32, y : i32)` in the root scope.
     fn declare_point(store: &mut Store, trie: &mut RegexTrie, core: &Core) {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(
-            "point := struct (x : i32, y : i32)",
+            "point := logos (x : i32, y : i32)",
             store,
             trie,
             
@@ -3580,9 +3569,9 @@ mod tests {
     }
 
     #[test]
-    fn struct_instances_construct_read_and_write_fields_both_tiers() {
-        // The type applied to its field values constructs the instance
-        // (point(3, 4), the type-constructor doctrine); `.` resolves to a place
+    fn record_instances_construct_read_and_write_fields_both_tiers() {
+        // The logos applied to its field values constructs the instance
+        // (point(3, 4), the logos-constructor doctrine); `.` resolves to a place
         // inside the instance's storage, so reads and writes are ordinary numeric
         // paths. Construction re-runs per call, so both tiers start from (3, 4).
         let mut store = Store::new();
@@ -3604,7 +3593,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // 3 + 36 = 39; 39 + 4 + 2 = 45.
         // SAFETY: `call`/`func` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
@@ -3616,7 +3605,7 @@ mod tests {
     }
 
     #[test]
-    fn struct_fields_lay_out_mixed_widths() {
+    fn record_fields_lay_out_mixed_widths() {
         // u8, i64, i32 pack in declaration order (offsets 0, 1, 9); a runtime
         // argument reaches its field, and each field reads back at its own width.
         let mut store = Store::new();
@@ -3626,7 +3615,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "cell := struct (a : u8, b : i64, c : i32)",
+                "cell := logos (a : u8, b : i64, c : i32)",
                 &mut store,
                 &mut trie,
                 
@@ -3662,7 +3651,7 @@ mod tests {
             );
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `call`/`func` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` outlives the call; the artifact stays alive.
@@ -3700,7 +3689,7 @@ mod tests {
     #[test]
     fn assigning_into_a_comptime_binding_is_rejected() {
         // `x := 5` binds a comptime rational (no machine storage); writing its
-        // value slot would corrupt the fraction, so `=` demands a typed variable.
+        // hyle slot would corrupt the fraction, so `=` demands a typed variable.
         assert_eq!(parse_err("( x := 5  x = 7 )"), ParseError::BadAssignTarget);
     }
 
@@ -3735,7 +3724,7 @@ mod tests {
                 Parser::new("( x := 5, x + 1 )", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `node` is the sequence just parsed.
         assert_eq!(unsafe { rt.run(node) }.unwrap(), 6);
         // SAFETY: same node; the sequence lowering yields its trailing value.
@@ -3804,10 +3793,10 @@ mod tests {
         // that molds to 5, held by the fixpointed placeholder.
         let bound = unsafe { declare::declared_of(decl) };
         unsafe {
-            assert_eq!((*decl).ty, core.declare_);
-            let name_node = *((*decl).value as *const DyadPtr);
+            assert_eq!((*decl).logos, core.declare_);
+            let name_node = *((*decl).hyle as *const SynolonPtr);
             assert_eq!(crate::identities::string::text(name_node), b"x");
-            assert_eq!((*bound).ty, core.rational);
+            assert_eq!((*bound).logos, core.rational);
             assert_eq!(rational::mold(bound), Some(5));
         }
 
@@ -3818,7 +3807,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         assert_eq!(x_ref, bound); // the reference resolves to the bound node
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `x_ref`/`decl` are valid nodes just parsed.
         unsafe {
             assert_eq!(rt.run(x_ref).unwrap(), 5);
@@ -3883,7 +3872,7 @@ mod tests {
                     Parser::new(&src, &mut store, &mut trie, core.types(), s);
                 p.parse_expression().unwrap()
             };
-            let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+            let mut rt = Runtime::new(core.fn_type, core.rational);
             // SAFETY: `call` applies the bound `fact` to a literal.
             assert_eq!(unsafe { rt.run(call) }.unwrap(), expect, "fact({arg})");
         }
@@ -3919,7 +3908,7 @@ mod tests {
         let cases = [(0i64, 1i64), (1, 1), (5, 120), (7, 5040)];
 
         // Oracle: interpret each call (bcode not yet installed → body walk).
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         for &(arg, expect) in &cases {
             let call = {
                 let mut s = ScopeStack::new();
@@ -3938,7 +3927,7 @@ mod tests {
         let _compiled = unsafe { compile_fn(&mut store, &core.lower, core.types(), fact) }.unwrap();
         // SAFETY: reading the installed bcode slot of the fn node.
         unsafe {
-            let bcode = *((*fact).value as *const DyadPtr).add(FN_BCODE);
+            let bcode = *((*fact).hyle as *const SynolonPtr).add(FN_BCODE);
             assert!(!bcode.is_null(), "bcode installed");
         }
 
@@ -3988,7 +3977,7 @@ mod tests {
         };
 
         // Oracle: interpret every case (no bcode yet → body walk).
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         for &(arg, expect) in cases {
             let call = parse_call(&mut store, &mut trie, arg);
             assert_eq!(rt.run(call).unwrap(), expect, "interpreter {name}({arg})");
@@ -4035,14 +4024,14 @@ mod tests {
     }
 
     #[test]
-    fn recursion_with_a_struct_local_is_per_activation_both_tiers() {
-        // A struct instance is a per-call local too: `pt := point(n, 0)`, recurse,
+    fn recursion_with_a_record_local_is_per_activation_both_tiers() {
+        // A record instance is a per-call local too: `pt := point(n, 0)`, recurse,
         // then read `pt.x`. Shared storage would clobber it to the innermost value.
         // SAFETY: `point` is defined first, then the recursive `h` uses it.
         unsafe {
             assert_recursion_both_tiers(
                 &[
-                    "point := struct ( x : i32, y : i32 )",
+                    "point := logos ( x : i32, y : i32 )",
                     "h := fn (n : i32) -> i32 ( pt := point(n, 0)  if (n < 1) (0) else (h(n - 1)  pt.x) )",
                 ],
                 "h",
@@ -4131,7 +4120,7 @@ mod tests {
                 Parser::new("outer(5)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `call` applies the bound `outer` to a literal.
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 11, "outer(5)");
     }
@@ -4177,8 +4166,8 @@ mod tests {
     #[test]
     fn assignment_rejects_a_cross_type_right_side() {
         // No implicit coercion (DESIGN ›Numeric literals are uncommitted until
-        // context types them‹): a non-literal right side must already BE the
-        // target's type; crossing is explicit (`i64(b)`). Only a literal commits
+        // context logos them‹): a non-literal right side must already BE the
+        // target's logos; crossing is explicit (`i64(b)`). Only a literal commits
         // to the target (the typed slot), which the suite covers elsewhere.
         let defs = &["a := i64 1", "b := i32 2"];
         assert_eq!(parse_err_after(defs, "a = b"), ParseError::TypeMismatch);
@@ -4189,7 +4178,7 @@ mod tests {
     fn assignment_rejects_pointer_type_mismatches() {
         // The pointer target's crossings: a pointer to the wrong pointee, a
         // plain value into a pointer (a wild address in the making), a pointer
-        // into a plain value, and a store-through of the wrong type.
+        // into a plain value, and a store-through of the wrong logos.
         let defs = &["x := i32 7", "y := f64 2.5", "p := &x", "b := i32 2"];
         assert_eq!(parse_err_after(defs, "p = &y"), ParseError::TypeMismatch);
         assert_eq!(parse_err_after(defs, "p = b"), ParseError::TypeMismatch);
@@ -4204,14 +4193,14 @@ mod tests {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         let mut result = 0;
         for line in ["x := i32 7", "y := i32 9", "p := &x", "p@", "p = &y", "p@"] {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(line, &mut store, &mut trie, core.types(), s);
             let node = p.parse_expression().unwrap();
-            // SAFETY: `node` is the reduced dyad just parsed.
+            // SAFETY: `node` is the reduced synolon just parsed.
             result = unsafe { rt.run(node) }.unwrap();
         }
         assert_eq!(result, 9, "p@ after p = &y");
@@ -4259,7 +4248,7 @@ mod tests {
         // SAFETY: `add` is the fn node just built and outlives every call.
         let _compiled_add = unsafe { compile_fn(&mut store, &core.lower, core.types(), add) }.unwrap();
 
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // Oracle: interpret `outer` (its body calls the already-compiled `add`).
         // SAFETY: `call`/`outer`/`add` are valid nodes; `_compiled_add` is alive.
         let interp = unsafe { rt.run(call) }.unwrap();
@@ -4292,7 +4281,7 @@ mod tests {
             let mut p = Parser::new(call_src, &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `call`/`func` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` is the fn node just built; the artifact outlives the call.
@@ -4328,7 +4317,7 @@ mod tests {
     }
 
     /// Diff a nullary `fn () -> ... ( body )` between the interpreter and the JIT, where
-    /// `body` reads an enclosing variable `a` of numeric type `nt` initialised to the
+    /// `body` reads an enclosing variable `a` of numeric logos `nt` initialised to the
     /// low `nt.bytes()` of `init` (its bit-container). Floats can't ride the i32-mold
     /// argument path, so a float operand has to be a real stored variable, not a call
     /// argument; the body only reads `a`, so no reset between runs is needed.
@@ -4346,7 +4335,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func`/`a` live in `store`, which outlives the call.
@@ -4395,7 +4384,7 @@ mod tests {
     fn casts_between_integer_widths_match_between_tiers() {
         // Widen sign-extends (i8 -1 kept as i32 -1); narrow drops high bits
         // (i32 300 -> i8 44); a same-width reinterpret keeps the bits (u32 3e9 -> i32
-        // is the negative reading); a same-type cast is the operand unchanged. 255
+        // is the negative reading); a same-logos cast is the operand unchanged. 255
         // has no exact i8, so reaching an i8 parameter takes an explicit `i8(255)`
         // (the wrapping cast), never a bare literal.
         diff_typed_call("fn (x : i8) -> i32 ( i32(x) )", "f(i8(255))", -1);
@@ -4435,7 +4424,7 @@ mod tests {
     fn malformed_casts_are_rejected() {
         assert_eq!(parse_err("i32()"), ParseError::BadCast); // no operand
         assert_eq!(parse_err("i32(1, 2)"), ParseError::BadCast); // too many operands
-        assert_eq!(parse_err("i32(struct ())"), ParseError::BadCast); // non-numeric operand
+        assert_eq!(parse_err("i32(logos ())"), ParseError::BadCast); // non-numeric operand
     }
 
     #[test]
@@ -4468,7 +4457,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational, core.struct_);
+        let mut rt = Runtime::new(core.fn_type, core.rational);
         // Interpreted: yields unit 0, leaves a = 42.
         // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
         let interp = unsafe { rt.run(call) }.unwrap();
@@ -4488,7 +4477,7 @@ mod tests {
     #[test]
     fn both_literal_arithmetic_stays_rational() {
         // `1 + 2` is not committed to i32 at parse time; it folds to a rational literal
-        // (exact), committing only when context types it.
+        // (exact), committing only when context logos it.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
@@ -4499,14 +4488,14 @@ mod tests {
             p.parse_expression().unwrap()
         };
         // SAFETY: `node` is the folded literal just parsed.
-        unsafe { assert_eq!((*node).ty, core.rational, "1 + 2 stays a rational literal") };
+        unsafe { assert_eq!((*node).logos, core.rational, "1 + 2 stays a rational literal") };
     }
 
     #[test]
     fn comptime_rational_arithmetic_folds_exactly_and_commits_on_context() {
         // Two comptime literals stay rational and fold exactly: `1000000 * 1000000` is
         // 10^12 (not an i32 overflow), committing to i64 through the cast; `2e9 + 2e9`
-        // commits to the i64 return type; a decimal fold reduces the fraction exactly.
+        // commits to the i64 return logos; a decimal fold reduces the fraction exactly.
         diff_typed_call("fn () -> i64 ( i64(1000000 * 1000000) )", "f()", 1_000_000_000_000);
         diff_typed_call("fn () -> i64 ( 2000000000 + 2000000000 )", "f()", 4_000_000_000);
         diff_typed_call("fn () -> i64 ( 2000000000 * 2 )", "f()", 4_000_000_000);
@@ -4533,8 +4522,8 @@ mod tests {
 
     #[test]
     fn comptime_rational_commits_through_if_branches() {
-        // An `if` in tail position is a value slot too: a large comptime rational in
-        // either branch commits to the i64 return type (it would otherwise fail the i32
+        // An `if` in tail position is a hyle slot too: a large comptime rational in
+        // either branch commits to the i64 return logos (it would otherwise fail the i32
         // mold shim). This also exercises the width-general `if` lowering (i64 branches).
         let fn_src = "fn (c : i32) -> i64 ( if (c < 1) (2000000000 + 2000000000) else (0) )";
         diff_typed_call(fn_src, "f(0)", 4_000_000_000); // then-branch taken
@@ -4546,7 +4535,7 @@ mod tests {
 
     #[test]
     fn different_concrete_types_are_a_mismatch() {
-        // Cross-type arithmetic needs an explicit cast; there is no implicit coercion.
+        // Cross-logos arithmetic needs an explicit cast; there is no implicit coercion.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
@@ -4584,7 +4573,7 @@ mod tests {
 
     #[test]
     fn plus_over_non_numeric_operands_is_unresolved() {
-        // `+` with a non-numeric operand (a struct value) has no concrete machine op
+        // `+` with a non-numeric operand (a record value) has no concrete machine op
         // to resolve to, so parsing reports UnsupportedOperands.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
@@ -4593,7 +4582,7 @@ mod tests {
         scopes.push(core.root_scope);
 
         let mut p =
-            Parser::new("struct () + 1", &mut store, &mut trie, core.types(), scopes);
+            Parser::new("logos () + 1", &mut store, &mut trie, core.types(), scopes);
         assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::UnsupportedOperands));
     }
 }

@@ -1,0 +1,14 @@
+# Copyright 2026 Thobias Melfjord Knudsen
+# SPDX-License-Identifier: Apache-2.0
+
+# Roadmap #30 Phase 2 — a function can return a logos (`-> logos`), resolved at
+# comptime: the call is run during parsing and becomes the concrete logos it
+# yields, so it flows as an ordinary logos value through `==`, `:=`, and `.logos`.
+
+pick := fn (i : i32) -> logos ( if (i == 0) (i32) else (f64) )
+
+same  := pick(0) == i32   # true:  branch 0 yields i32
+other := pick(1) == f64   # true:  branch 1 yields f64
+t     := pick(0)          # t := i32 (the call resolved to a logos, then rebinds)
+
+same and other and (t == i32)

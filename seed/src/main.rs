@@ -74,7 +74,7 @@ fn help() -> String {
 
 /// Run a file: one pass — each top-level expression runs the moment it is
 /// parsed (DESIGN ›Build and run are one self-directing pass‹), so everything
-/// the parser itself evaluates (a `-> type` call reading an earlier binding)
+/// the parser itself evaluates (a `-> logos` call reading an earlier binding)
 /// sees committed state, and file and REPL agree. The file's value is its tail
 /// expression's, printed at the end. Parse errors render with file:line:col and
 /// a caret; run errors are message-only (nodes carry no source positions yet).
@@ -94,7 +94,7 @@ fn run_file(path: &str) -> ExitCode {
     // The compiler rides along so `f.compile()` works in the one pass; the
     // engine (core + store) outlives the runtime, per `with_compiler`'s
     // contract.
-    let mut rt = Runtime::new(engine.core.fn_type, engine.core.rational, engine.core.struct_)
+    let mut rt = Runtime::new(engine.core.fn_type, engine.core.rational)
         .with_compiler(&engine.core.lower, types);
     let mut p = Parser::new(&source, &mut engine.store, &mut engine.trie, types, scopes);
 
@@ -118,8 +118,8 @@ fn run_file(path: &str) -> ExitCode {
         // off raw handles, so running interleaves with the open parse.
         match unsafe { rt.run(node) } {
             Ok(bits) => {
-                // SAFETY: `node` is the valid dyad just parsed.
-                if unsafe { (*node).ty != types.comment_ } {
+                // SAFETY: `node` is the valid synolon just parsed.
+                if unsafe { (*node).logos != types.comment_ } {
                     last = Some((node, bits));
                 }
             }
@@ -141,7 +141,7 @@ fn run_file(path: &str) -> ExitCode {
 
     match last {
         Some((node, bits)) => {
-            // SAFETY: `node` is the parsed dyad whose value `bits` is.
+            // SAFETY: `node` is the parsed synolon whose value `bits` is.
             println!("{}", unsafe { seed::identities::display_value(&types, node, bits) });
             ExitCode::SUCCESS
         }
@@ -222,30 +222,29 @@ fn repl() -> ExitCode {
         // Echo policy (settled): statements are silent — only value
         // expressions echo, like Python. The graph says which is which: a
         // declaration is a declare node, an assignment an assign/storeptr
-        // node, a bare fn, struct, or type a declaration statement.
-        // SAFETY: `node` is the valid dyad just parsed.
+        // node, a bare fn, record, or logos a declaration statement.
+        // SAFETY: `node` is the valid synolon just parsed.
         let is_statement = unsafe {
-            let ty = (*node).ty;
-            ty == engine.core.declare_
-                || ty == engine.core.assign
-                || ty == engine.core.storeptr_
-                || ty == engine.core.fn_type
-                || ty == engine.core.struct_
-                || ty == engine.core.compile_
-                || ty == types.type_
+            let logos = (*node).logos;
+            logos == engine.core.declare_
+                || logos == engine.core.assign
+                || logos == engine.core.storeptr_
+                || logos == engine.core.fn_type
+                || logos == engine.core.compile_
+                || logos == types.type_
         };
 
         // The compiler rides along so `f.compile()` works across lines: the
         // installed bcode lives in the engine's store and the compiled
         // artifact is process-lived, so a fresh per-line runtime is fine.
         let mut rt =
-            Runtime::new(engine.core.fn_type, engine.core.rational, engine.core.struct_)
+            Runtime::new(engine.core.fn_type, engine.core.rational)
                 .with_compiler(&engine.core.lower, types);
         // SAFETY: `node` and everything it reaches live in the engine's store,
         // which outlives the loop. Statements still run — for their effect —
         // they just do not echo.
         match unsafe { rt.run(node) } {
-            // SAFETY: `node` is the valid dyad just parsed, whose value `bits` is.
+            // SAFETY: `node` is the valid synolon just parsed, whose value `bits` is.
             Ok(bits) if !is_statement => {
                 println!("{}", unsafe { seed::identities::display_value(&types, node, bits) })
             }

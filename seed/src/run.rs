@@ -4,10 +4,10 @@
 //! `run`: execute a node.
 //!
 //! `run` is one primitive with no tables (DESIGN ›The callable ground is
-//! `@exec`‹; issue #44): read a node's operation (its `type`). A *user*
+//! `@exec`‹; issue #44): read a node's operation (its `logos`). A *user*
 //! function applies — jump to its installed code or walk its `body`
 //! (interpretation is just the null-code path). Everything else consults the
-//! node's own *op slot*: the last fixed slot of its type's record holds the
+//! node's own *op slot*: the last fixed slot of its logos's record holds the
 //! [`callable`](crate::identities::callable) leaf its constructor resolved at
 //! parse time (`add_i32` for a `+` node, `if_native` for an `if`), and run
 //! jumps to that leaf's entry with the node. No HashMap is consulted anywhere;
@@ -15,23 +15,23 @@
 //! versions live — versioned scopes — not in swapped tables. Identities carry
 //! only their shared-member *records* (the reflectable precedence/layout data,
 //! see [`crate::identities::meta`]), never code; a node with no code to reach
-//! is data, read through its type's layout. v1 scalar values ride an `i64`
-//! bit-container, read and written at their type's width (see
+//! is data, read through its logos's layout. v1 scalar values ride an `i64`
+//! bit-container, read and written at their logos's width (see
 //! `crate::identities::numtype`).
 
-use crate::dyad::{frame_ref, DyadPtr};
+use crate::synolon::{frame_ref, SynolonPtr};
 use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
 
 /// The signature of a seed-native shim — what a `seed-native` callable's entry
 /// points at. Takes the application node and returns its scalar result,
 /// recursing on operands via [`Runtime::run`].
-pub type RunFn = fn(&mut Runtime, DyadPtr) -> Result<i64, RunError>;
+pub type RunFn = fn(&mut Runtime, SynolonPtr) -> Result<i64, RunError>;
 
 /// Why a run failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunError {
     /// The operation is a function with neither `bcode` nor a `body` to walk.
-    NotRunnable(DyadPtr),
+    NotRunnable(SynolonPtr),
     /// A data node had no storage to read.
     BadValue,
     /// A numeric literal has no exact `i32` value to compute — a non-integer
@@ -45,22 +45,22 @@ pub enum RunError {
     /// arguments).
     CompiledArity,
     /// `f.compile()` ran under a runtime with no compiler attached — parse-time
-    /// evaluation (a `-> type` call's body), where compiling would install code
+    /// evaluation (a `-> logos` call's body), where compiling would install code
     /// behind the open pass's back.
     CompilerUnavailable,
     /// `f.compile()` failed: the body does not lower (a construct with no
     /// lowering rule, or more parameters than the compiled convention carries).
     /// Carries the rendered [`crate::compile::CompileError`], behind a thin
     /// box so the error enum keeps its one-word payload — `run` recurses
-    /// deeply, and every frame carries a `Result` of this type.
+    /// deeply, and every frame carries a `Result` of this logos.
     CompileFailed(Box<String>),
 }
 
 /// Call compiled machine code (a `fn(i64…) -> i64`) with `args`, dispatching on
-/// arity, since a raw code pointer must be given a concrete function type to call.
+/// arity, since a raw code pointer must be given a concrete function logos to call.
 /// The calling convention is uniform: every argument and the result is the `i64`
-/// bit-container (the compiled body reinterprets them to their real types at the
-/// boundary), so this dispatch is independent of the parameter/return types. The seed
+/// bit-container (the compiled body reinterprets them to their real logos at the
+/// boundary), so this dispatch is independent of the parameter/return logos. The seed
 /// passes at most three arguments; Cranelift's default convention matches `extern "C"`.
 ///
 /// # Safety
@@ -158,19 +158,16 @@ impl FrameStack {
     }
 }
 
-/// A running evaluation. Holds the `fn` type (to tell a function application from
+/// A running evaluation. Holds the `fn` logos (to tell a function application from
 /// a data read) and the activation stack. Operand computation rides the Rust
 /// call stack (each `run` is a frame); the explicit [`FrameStack`] holds each
 /// in-flight interpreted call's frame — its parameters and locals at their
 /// parse-assigned byte offsets.
 pub struct Runtime {
-    fn_type: DyadPtr,
-    /// `rational_number`: a data leaf of this type is molded to its `i32` value
+    fn_type: SynolonPtr,
+    /// `rational_number`: a data leaf of this logos is molded to its `i32` value
     /// when read, rather than read raw through the generic i32 layout.
-    rational: DyadPtr,
-    /// `struct`: an instance of a struct type is not a scalar — its fields are
-    /// read through `.` places, never the whole value.
-    struct_: DyadPtr,
+    rational: SynolonPtr,
     /// The per-runtime activation stack the frames live in.
     stack: FrameStack,
     /// The base address of each in-flight interpreted call's frame, innermost
@@ -191,28 +188,21 @@ pub struct Runtime {
 struct CompilerCx {
     /// The lowering table (`Core::lower`). Must outlive the runtime.
     lower: *const crate::compile::LowerTable,
-    /// The core handles compilation resolves types against.
+    /// The core handles compilation resolves logos against.
     types: crate::parse::CoreTypes,
 }
 
 impl Runtime {
-    /// The `struct` keyword identity — the type every struct type node is
-    /// typed by, needed to exclude struct types before a record-tag read
-    /// (see [`crate::identities::numtype::is_scalar_place_type`]).
-    pub(crate) fn struct_type(&self) -> DyadPtr {
-        self.struct_
-    }
-
-    /// A runtime recognizing functions by `fn_type` and struct instances by
-    /// `struct_`, molding `rational` leaves on read, with an empty activation
-    /// stack (its first chunk is claimed lazily, at the first call that needs
-    /// a frame). Everything executable is reached through the graph. No
-    /// compiler is attached; see [`Runtime::with_compiler`].
-    pub fn new(fn_type: DyadPtr, rational: DyadPtr, struct_: DyadPtr) -> Self {
+    /// A runtime recognizing functions by `fn_type` (record instances are
+    /// recognized by their logos's stored layout record), molding `rational`
+    /// leaves on read, with an empty activation stack (its first chunk is
+    /// claimed lazily, at the first call that needs a frame). Everything
+    /// executable is reached through the graph. No compiler is attached; see
+    /// [`Runtime::with_compiler`].
+    pub fn new(fn_type: SynolonPtr, rational: SynolonPtr) -> Self {
         Runtime {
             fn_type,
             rational,
-            struct_,
             stack: FrameStack::new(),
             activations: Vec::new(),
             compiler: None,
@@ -238,20 +228,20 @@ impl Runtime {
     /// no-op — the code is installed, the call already jumps.
     ///
     /// # Safety
-    /// `fn_node` must be a valid dyad and `code_leaf` a callable value, both
-    /// from the store; the compiler context's table and types must be live.
+    /// `fn_node` must be a valid synolon and `code_leaf` a callable value, both
+    /// from the store; the compiler context's table and logos must be live.
     pub(crate) unsafe fn compile_member(
         &mut self,
-        fn_node: DyadPtr,
-        code_leaf: DyadPtr,
+        fn_node: SynolonPtr,
+        code_leaf: SynolonPtr,
     ) -> Result<(), RunError> {
         let Some(cx) = &self.compiler else {
             return Err(RunError::CompilerUnavailable);
         };
-        if (*fn_node).ty != self.fn_type {
+        if (*fn_node).logos != self.fn_type {
             return Err(RunError::BadValue);
         }
-        let fields = (*fn_node).value as *const DyadPtr;
+        let fields = (*fn_node).hyle as *const SynolonPtr;
         if fields.is_null() {
             return Err(RunError::NotRunnable(fn_node));
         }
@@ -266,54 +256,54 @@ impl Runtime {
     /// global/top-level place, or `frame_base + offset` for a frame-relative
     /// parameter or local of the call in progress (the top frame). This is the
     /// one place the interpreter decodes the frame tag (see
-    /// [`crate::dyad::FRAME_TAG`]); every read, write, and address-of of a
+    /// [`crate::synolon::FRAME_TAG`]); every read, write, and address-of of a
     /// parameter or local goes through it.
     ///
     /// `None` is a frame-relative place with *no call in progress*: its storage
     /// does not exist. Ordinary execution never sees this (a frame place is only
     /// built inside a function, which only runs under a call), but parse-time
-    /// evaluation does — a `-> type` call whose argument touches an enclosing
+    /// evaluation does — a `-> logos` call whose argument touches an enclosing
     /// function's local runs before any activation exists — and every caller maps
     /// it to a clean [`RunError::BadValue`], which the comptime path reports as
     /// not-comptime-known.
     ///
     /// # Safety
     /// `node` must be a valid place node.
-    pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> Option<*mut u8> {
-        match frame_ref((*node).value) {
+    pub(crate) unsafe fn place_addr(&mut self, node: SynolonPtr) -> Option<*mut u8> {
+        match frame_ref((*node).hyle) {
             // Only the offset matters at run time — the place is in the call in
             // progress (the top frame); the depth is a parse-time capture guard.
             Some((_, off)) => {
                 let base = *self.activations.last()?;
                 Some(base.add(off))
             }
-            None => Some((*node).value),
+            None => Some((*node).hyle),
         }
     }
 
-    /// Run `node`: read its operation (its `type`). If the operation is a
-    /// function (its own type is `fn`), apply it — jump to its installed code
+    /// Run `node`: read its operation (its `logos`). If the operation is a
+    /// function (its own logos is `fn`), apply it — jump to its installed code
     /// or walk its `body`. Otherwise consult the node's op slot: a resolved
     /// application jumps to the callable leaf its constructor stored there;
-    /// anything without one is data, read through its type's layout.
+    /// anything without one is data, read through its logos's layout.
     ///
     /// # Safety
-    /// `node` must be a valid dyad from the store (address = id). `run`
+    /// `node` must be a valid synolon from the store (address = id). `run`
     /// dereferences it, its operation, and (for functions) the operands or body
     /// they reach. If the operation has installed code, the compiled artifact
     /// that owns that machine code must still be alive (see
     /// [`crate::compile::compile_fn`]).
-    pub unsafe fn run(&mut self, node: DyadPtr) -> Result<i64, RunError> {
-        let op = (*node).ty;
-        // A bare parameter (`fn (a)`) has no declared type; its frame slot holds
+    pub unsafe fn run(&mut self, node: SynolonPtr) -> Result<i64, RunError> {
+        let op = (*node).logos;
+        // A bare parameter (`fn (a)`) has no declared logos; its frame slot holds
         // the full i64 bit-container the call bound. Checked before anything
-        // reads through the null type.
+        // reads through the null logos.
         if op.is_null() {
             return self.read_container(node);
         }
-        if (*op).ty == self.fn_type {
+        if (*op).logos == self.fn_type {
             // A user function's value is `[input, output, body, bcode, frame]`.
-            let fields = (*op).value as *const DyadPtr;
+            let fields = (*op).hyle as *const SynolonPtr;
             if fields.is_null() {
                 return Err(RunError::NotRunnable(op));
             }
@@ -363,19 +353,18 @@ impl Runtime {
             if op == self.fn_type {
                 return Ok(0);
             }
-            // A type node standing as a value carries its identity AS its value: its
-            // bits are its own address. So a `-> type` function, or an `if` that
-            // yields a type, returns the type it produced (roadmap #30), and `x := i32`
-            // still binds a name to one. The `Type : Type` root is the store's one
-            // self-typed node, so `op == (*op).ty` recognizes every type node (numeric
-            // types, the root, `bool`, `void`, pointer types); `op == self.struct_` is
-            // a struct *type* node — a struct *instance* has `op ==` its struct type,
-            // not `struct_`, and is handled by the lower branch. A frame place
-            // *typed* by a type (`t : type`, a type-valued parameter) is not a
-            // type standing as a value: its slot holds the bound type's address,
-            // read as the container.
-            if op == self.struct_ || op == (*op).ty {
-                if frame_ref((*node).value).is_some() {
+            // A logos node standing as a value carries its identity AS its value: its
+            // bits are its own address. So a `-> logos` function, or an `if` that
+            // yields a logos, returns the logos it produced (roadmap #30), and `x := i32`
+            // still binds a name to one. The `logos : logos` root is the store's one
+            // self-classified node, so `op == (*op).logos` recognizes every logos node
+            // (numeric logos, the root, `bool`, `void`, pointer and record logos — a
+            // record *instance* has `op ==` its record logos, not the root, and is
+            // handled by the lower branch). A frame place *classified* by a logos
+            // (`t : logos`, a logos-valued parameter) is not a logos standing as a
+            // value: its slot holds the bound logos's address, read as the container.
+            if op == (*op).logos {
+                if frame_ref((*node).hyle).is_some() {
                     return self.read_container(node);
                 }
                 return Ok(node as i64);
@@ -383,15 +372,15 @@ impl Runtime {
             // `node` is data or a migrated application. A rational literal is
             // molded to its i32 value (a fraction like 3.14 has none:
             // UncomputableLiteral, not a bad read).
-            if (*node).ty == self.rational {
+            if (*node).logos == self.rational {
                 return crate::identities::rational::mold(node)
                     .map(i64::from)
                     .ok_or(RunError::UncomputableLiteral);
             }
-            // A struct instance is not a scalar (its type's value is a field
-            // list, not a record — it must not reach the op-slot read below);
-            // its fields are read through `.` places.
-            if (*op).ty == self.struct_ {
+            // A record instance is not a scalar; its fields are read through
+            // `.` places, never the whole value, so it must not reach the
+            // op-slot read below.
+            if crate::identities::meta::is_record_type(op) {
                 return Err(RunError::BadValue);
             }
             // The op slot (issue #44): a migrated node's last fixed slot holds
@@ -399,7 +388,7 @@ impl Runtime {
             // with the node. Dispatch flows through the node, not a table; the
             // identity carries only its record.
             if let Some(idx) = crate::identities::meta::op_slot_of(op) {
-                let slots = (*node).value as *const DyadPtr;
+                let slots = (*node).hyle as *const SynolonPtr;
                 if !slots.is_null() {
                     let leaf = *slots.add(idx);
                     if !leaf.is_null() && crate::identities::callable::is_callable(leaf) {
@@ -414,15 +403,15 @@ impl Runtime {
             }
             // Prose is data, invisible to value flow: a comment node forced
             // directly yields unit, off its graph tag (no run entry exists).
-            if crate::identities::numtype::is_comment_type((*node).ty) {
+            if crate::identities::numtype::is_comment_type((*node).logos) {
                 return Ok(0);
             }
             // The text substance (a string node) and unit have no scalar to
             // read; refuse rather than reinterpret their bytes — except a frame
-            // place, a parameter slot of a non-scalar declared type, which
+            // place, a parameter slot of a non-scalar declared logos, which
             // holds the container its call bound.
-            if !crate::identities::numtype::is_scalar_type((*node).ty) {
-                if frame_ref((*node).value).is_some() {
+            if !crate::identities::numtype::is_scalar_type((*node).logos) {
+                if frame_ref((*node).hyle).is_some() {
                     return self.read_container(node);
                 }
                 return Err(RunError::BadValue);
@@ -431,21 +420,21 @@ impl Runtime {
             if slot.is_null() {
                 return Err(RunError::BadValue);
             }
-            // Read the scalar at its type's width into the i64 bit-container.
-            Ok(crate::identities::numtype::read_scalar((*node).ty, slot))
+            // Read the scalar at its logos's width into the i64 bit-container.
+            Ok(crate::identities::numtype::read_scalar((*node).logos, slot))
         }
     }
 
     /// Read a frame place's full 8-byte slot as the raw i64 bit-container — how
-    /// a parameter of no declared scalar width (a bare `name`, a type-valued
+    /// a parameter of no declared scalar width (a bare `name`, a logos-valued
     /// parameter) is stored and read. Not a frame place, or no call in
     /// progress: [`RunError::BadValue`].
     ///
     /// # Safety
-    /// `node` must be a valid dyad from the store; a frame-tagged one must carry
+    /// `node` must be a valid synolon from the store; a frame-tagged one must carry
     /// an offset its function's frame size covers.
-    unsafe fn read_container(&mut self, node: DyadPtr) -> Result<i64, RunError> {
-        if frame_ref((*node).value).is_none() {
+    unsafe fn read_container(&mut self, node: SynolonPtr) -> Result<i64, RunError> {
+        if frame_ref((*node).hyle).is_none() {
             return Err(RunError::BadValue);
         }
         let slot = self.place_addr(node).ok_or(RunError::BadValue)?;
@@ -454,7 +443,7 @@ impl Runtime {
 
     /// Evaluate a compiled call's arguments, in order, in the *current* frame
     /// (the caller's), checking their count against the callee's parameters. The
-    /// parameter and argument arrays are both null-terminated (the input struct
+    /// parameter and argument arrays are both null-terminated (the input record
     /// is `[scope, param0 …, null]`, the call value `[arg0 …, null]` or null).
     /// Returns the bit-container values and the arity; more than the seed's
     /// three compiled arguments is [`RunError::CompiledArity`].
@@ -464,13 +453,13 @@ impl Runtime {
     /// of it, both from the store.
     unsafe fn eval_args_compiled(
         &mut self,
-        fn_node: DyadPtr,
-        call_node: DyadPtr,
+        fn_node: SynolonPtr,
+        call_node: SynolonPtr,
     ) -> Result<([i64; 3], usize), RunError> {
-        let input = *((*fn_node).value as *const DyadPtr).add(FN_INPUT);
+        let input = *((*fn_node).hyle as *const SynolonPtr).add(FN_INPUT);
         let params =
-            crate::identities::array::items(crate::identities::meta::struct_fields_of(input));
-        let args = (*call_node).value as *const DyadPtr; // [arg0 …, null] or null
+            crate::identities::array::items(crate::identities::meta::record_fields_of(input));
+        let args = (*call_node).hyle as *const SynolonPtr; // [arg0 …, null] or null
 
         let mut values = [0i64; 3];
         let mut i = 0usize;
@@ -495,8 +484,8 @@ impl Runtime {
     /// Evaluate an interpreted call's arguments, in order, in the *current*
     /// frame (the caller's), writing each into the callee's parameter slot in
     /// the fresh frame at `base` — the caller's side of the calling convention.
-    /// A scalar-typed parameter stores at its type's width, exactly as a local
-    /// of that type would; any other (a bare `name`, a type-valued parameter)
+    /// A scalar-typed parameter stores at its logos's width, exactly as a local
+    /// of that logos would; any other (a bare `name`, a logos-valued parameter)
     /// stores the full i64 bit-container. Arity is checked against the callee's
     /// parameters as the walk pairs them.
     ///
@@ -506,14 +495,14 @@ impl Runtime {
     /// parser assigned.
     unsafe fn bind_args(
         &mut self,
-        fn_node: DyadPtr,
-        call_node: DyadPtr,
+        fn_node: SynolonPtr,
+        call_node: SynolonPtr,
         base: *mut u8,
     ) -> Result<(), RunError> {
-        let input = *((*fn_node).value as *const DyadPtr).add(FN_INPUT);
+        let input = *((*fn_node).hyle as *const SynolonPtr).add(FN_INPUT);
         let params =
-            crate::identities::array::items(crate::identities::meta::struct_fields_of(input));
-        let args = (*call_node).value as *const DyadPtr; // [arg0 …, null] or null
+            crate::identities::array::items(crate::identities::meta::record_fields_of(input));
+        let args = (*call_node).hyle as *const SynolonPtr; // [arg0 …, null] or null
 
         let mut i = 0usize;
         loop {
@@ -525,13 +514,13 @@ impl Runtime {
                     let bits = self.run(arg)?;
                     // A parameter without a parse-assigned slot is a malformed
                     // function node (the parser always assigns one).
-                    let Some((_, off)) = frame_ref((*param).value) else {
+                    let Some((_, off)) = frame_ref((*param).hyle) else {
                         return Err(RunError::BadValue);
                     };
                     let slot = base.add(off);
-                    let ty = (*param).ty;
-                    if crate::identities::numtype::is_scalar_place_type(self.struct_, ty) {
-                        crate::identities::numtype::write_scalar(ty, slot, bits);
+                    let logos = (*param).logos;
+                    if crate::identities::numtype::is_scalar_place_type(logos) {
+                        crate::identities::numtype::write_scalar(logos, slot, bits);
                     } else {
                         std::ptr::write_unaligned(slot as *mut i64, bits);
                     }

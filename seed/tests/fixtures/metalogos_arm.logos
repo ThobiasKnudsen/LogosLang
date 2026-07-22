@@ -1,0 +1,15 @@
+# the deep arm of the metalogosfn north-star, pinned regardless of the example's
+# current argument: metalogos(3) yields `logos`, so `a` is a LOGOS VARIABLE, and
+# the comptime chain's last arm fills it with i32 — the program's value is a
+# logos, printed by its spelling
+metalogos := fn (i:i32) -> logos (
+    if (i==0) (i32)
+    else if (i==1) (f32)
+    else if (i==2) (f64)
+    else (logos)
+)
+a : metalogos(3)
+if (a.logos == i32) (a=9)
+else if (a.logos == f32 or a.logos == f64) (a=9.9)
+else if (a.logos == logos) (a=i32)
+a

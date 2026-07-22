@@ -12,25 +12,25 @@
 //! signals a corrupt index (see DESIGN ›Name resolution is scope-filtered‹).
 //!
 //! The `scope` stores the *enclosing scope* rather than the declaration node
-//! because a dyad has no parent pointer: keying by scope makes membership an
+//! because a synolon has no parent pointer: keying by scope makes membership an
 //! O(1) test against the set of open scopes during elaboration.
 
-use crate::dyad::DyadPtr;
+use crate::synolon::SynolonPtr;
 
 /// One candidate for a spelling: the identity it denotes and the scope it was
 /// declared in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IdContext {
     /// The declared identity this spelling denotes.
-    pub identity: DyadPtr,
+    pub identity: SynolonPtr,
     /// The enclosing scope the declaration lives in. Whether this scope is open
     /// decides whether the candidate is live.
-    pub scope: DyadPtr,
+    pub scope: SynolonPtr,
 }
 
 impl IdContext {
     /// A new `id_context` pairing `identity` with its declaring `scope`.
-    pub fn new(identity: DyadPtr, scope: DyadPtr) -> Self {
+    pub fn new(identity: SynolonPtr, scope: SynolonPtr) -> Self {
         IdContext { identity, scope }
     }
 }

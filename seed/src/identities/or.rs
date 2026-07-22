@@ -7,7 +7,7 @@
 //! evaluated, so run branches and compile lowers a two-way branch (`if a then true
 //! else b`, [`crate::compile::Lowerer::lower_or`]). It binds loosest of the logical
 //! operators (looser than `and`), just above `=`. One concrete native serves it:
-//! the node is `{ty: or, value: [lhs, rhs, or_native]}` and run jumps through the
+//! the node is `{logos: or, value: [lhs, rhs, or_native]}` and run jumps through the
 //! op slot (issue #44).
 
 use cranelift_codegen::ir::Value;
@@ -15,7 +15,7 @@ use cranelift_codegen::ir::Value;
 use super::callable::{self, Callables};
 use super::{bool_mod, meta, operands, Cx};
 use crate::compile::{CompileError, Lowerer};
-use crate::dyad::DyadPtr;
+use crate::synolon::SynolonPtr;
 use crate::id_context::IdContext;
 use crate::parse::{
     bool_literal_value, is_bool_result, Assoc, CoreTypes, ParseError,
@@ -26,7 +26,7 @@ use crate::store::Store;
 /// Register `or`: spelling and parse precedence (logical, left-associative,
 /// looser than `and`), its lowering, and its short-circuiting native leaf.
 /// Returns `(identity, leaf)`.
-pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (SynolonPtr, SynolonPtr) {
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
@@ -42,22 +42,22 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     (id, leaf)
 }
 
-/// Build `lhs or rhs` as `{ty: or, value: [lhs, rhs, or_native]}`, requiring both
+/// Build `lhs or rhs` as `{logos: or, value: [lhs, rhs, or_native]}`, requiring both
 /// operands to be `bool` ([`ParseError::NonBoolOperands`]).
 fn build(
     store: &mut Store,
     types: &CoreTypes,
-    or: DyadPtr,
-    lhs: DyadPtr,
-    rhs: DyadPtr,
-) -> Result<DyadPtr, ParseError> {
-    // SAFETY: `lhs`/`rhs` are reduced dyads from the store; reading their type is safe.
+    or: SynolonPtr,
+    lhs: SynolonPtr,
+    rhs: SynolonPtr,
+) -> Result<SynolonPtr, ParseError> {
+    // SAFETY: `lhs`/`rhs` are reduced synolons from the store; reading their logos is safe.
     if !unsafe { is_bool_result(types, lhs) && is_bool_result(types, rhs) } {
         return Err(ParseError::NonBoolOperands);
     }
     // Two bool literals fold now (a bare literal is pure, so nothing is lost),
-    // like `==` over rationals or types — what keeps a comptime chain comptime.
-    // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
+    // like `==` over rationals or logos — what keeps a comptime chain comptime.
+    // SAFETY: `lhs`/`rhs` are reduced synolons from the store.
     if let (Some(a), Some(b)) =
         unsafe { (bool_literal_value(types, lhs), bool_literal_value(types, rhs)) }
     {
@@ -69,7 +69,7 @@ fn build(
 
 /// Run: short-circuit — the result is `true` (without running the right operand)
 /// when the left is true, else the right operand's value.
-fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+fn run(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid `or` application; its two operands are valid.
     unsafe {
         let (lhs, rhs) = operands(node);
@@ -82,7 +82,7 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 }
 
 /// Lower: a short-circuiting two-way branch (`if a then true else b`).
-fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+fn lower(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid `or` application; its two operands are valid.
     unsafe {
         let (lhs, rhs) = operands(node);

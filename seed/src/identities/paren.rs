@@ -3,20 +3,20 @@
 
 //! `(` and `)`: the matched-paren scope delimiters. `( )` groups a sub-expression
 //! and (per DESIGN ›A function's surface‹) opens a scope whose value is what its
-//! body returns. These are parse-only markers: they never appear as a node's type
+//! body returns. These are parse-only markers: they never appear as a node's logos
 //! after parsing, so they carry no run or compile behaviour. v1 uses them to
 //! delimit and group; pushing/popping the scope stack for declarations inside
-//! comes with `struct`/`fn`.
+//! comes with `record`/`fn`.
 
 use super::{meta, Cx};
-use crate::dyad::DyadPtr;
+use crate::synolon::SynolonPtr;
 use crate::id_context::IdContext;
 
 /// Register `(` and `)`, returning their handles (the parser's expect-helpers
 /// compare against them). The spellings are escaped (`\(`, `\)`) because
 /// `(`/`)` are regex metacharacters; escaped, they lex as literal single bytes.
-pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
-    // `(` is a *tight extender*: with a completed dyad to its left it is a
+pub(super) fn register(cx: &mut Cx) -> (SynolonPtr, SynolonPtr) {
+    // `(` is a *tight extender*: with a completed synolon to its left it is a
     // call (juxtaposition binds tightest — DESIGN ›the call paren tightest‹),
     // without one its constructor opens a grouping scope.
     let record = meta::record(cx.store, meta::TOKEN_TAG, f64::INFINITY);
