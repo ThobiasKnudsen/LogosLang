@@ -2,91 +2,90 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-language := type ?
-logos := language ?
-
-declare := fn (lang:&mut language, name:string) -> &mut dyad ( ? )
-assign := fn (node:&mut dyad, type:@dyad, value:@void) -> void! ( ? )
-assign(declare(&mut logos, «:»), ?, ?)
-assign(declare(&mut logos, «=»), ?, ?)
-assign(declare(&mut logos, «:=»), ?, ?)
-assign(declare(&mut logos, «rational_number»), type, ?)
-assign(declare(&mut logos, «[0-9]+(?:\.[0-9]+)?»), rational_number, ?)   # unanchored: the lexer longest-matches a prefix of the remaining input, so no ^…$. unsigned: - is always the operator (a-1 must be subtraction); a negative literal is the prefix - folding at parse
-
-dyad := struct (type := @dyad ?, value := @void ?)
-
-type := type (
+logos := logos (
+    # the one classifier: the former type/struct/language, merged (ruled July 2026).
+    # the language IS the root logos — declaring into the language is declaring into
+    # this identity's scope, and every classification chain terminates here (logos : logos).
     shared precedence := f64 2.0
     shared associativity := u8 left_to_right
-    shared constructor := fn (tape : parsing_tape) -> void! ?
-    shared destructor := ? ?
-)
-
-struct := type (
-    shared constructor = fn (tape : parsing_tape) -> void! (
-        if tape[0].type != token
+    shared constructor := fn (tape : parsing_tape) -> void! (
+        if tape[0].logos != token
             error «offset 0 is not a token»
-        if tape[0].value != struct
-            error «token does not denote struct»
-        # build the struct type from the following body scope — TBD
+        if tape[0].hyle != logos
+            error «token does not denote logos»
+        # one constructor, three outcomes: stand as the bare classifier value; consume a
+        # following logos into a value by juxtaposition (logos i32); or build a record
+        # logos from a following body scope (the former struct path) — TBD
     )
-    # field NAMES are not stored here: they enter the shared name index (the
-    # regex trie of id_contexts) like every declaration and resolve by open-
-    # scope filtering. a per-struct names hashtable was rejected.
-    fields : array dyad
+    shared destructor := ? ?
+    # the record case derives fields and size_bytes from the field declarations in the
+    # body scope. field NAMES are not stored here: they enter the shared name index (the
+    # regex trie of id_contexts) like every declaration and resolve by open-scope
+    # filtering. a per-record names hashtable was rejected.
+    fields : array synolon
     size_bytes : u64
 )
 
-id_context := struct (
-    identity := @dyad ?      # the declared identity this spelling denotes
-    scope    := @dyad ?      # the enclosing scope it was declared in; O(1) open-scope membership picks the live one
+declare := fn (lang:&mut logos, name:string) -> &mut synolon ( ? )
+assign := fn (node:&mut synolon, logos:@synolon, hyle:@void) -> void! ( ? )
+assign(declare(&mut logos, «:»), ?, ?)
+assign(declare(&mut logos, «=»), ?, ?)
+assign(declare(&mut logos, «:=»), ?, ?)
+assign(declare(&mut logos, «rational_number»), logos, ?)
+assign(declare(&mut logos, «[0-9]+(?:\.[0-9]+)?»), rational_number, ?)   # unanchored: the lexer longest-matches a prefix of the remaining input, so no ^…$. unsigned: - is always the operator (a-1 must be subtraction); a negative literal is the prefix - folding at parse
+
+synolon := logos (logos := @synolon ?, hyle := @void ?)
+
+id_context := logos (
+    identity := @synolon ?   # the declared identity this spelling denotes
+    scope    := @synolon ?   # the enclosing scope it was declared in; O(1) open-scope membership picks the live one
 )
 
-token := struct (
+token := logos (
     text := string ?         # the matched source span; resolved against the name index to the one id_context live in the open scopes at reduction
 )
 
-parsing_tape := struct (
-    # the working frontier: reduced-but-not-final dyads interleaved with pending tokens (lexed-in-flight
+parsing_tape := logos (
+    # the working frontier: reduced-but-not-final synolons interleaved with pending tokens (lexed-in-flight
     # and lazily lexed-ahead). tape[0] is the token of the identity being constructed; negative offsets
     # reach left into reduced context, positive offsets lazily lex ahead. disposable, rebuilt from source.
-    shared insert := ? ?     # splice tokens/dyads into the frontier (the macro / custom-syntax mechanism)
+    shared insert := ? ?     # splice tokens/synolons into the frontier (the macro / custom-syntax mechanism)
     shared remove := ? ?     # remove from the frontier
 )
 
-array := type (
+array := logos (
     shared constructor = fn (tape : parsing_tape) -> void! (
-        if tape[0].type != token
+        if tape[0].logos != token
             error «offset 0 is not a token»
-        if tape[0].value != array
+        if tape[0].hyle != array
             error «token does not denote array»
-        if tape[1].value@.type != type
-            error «token after array is not a type»
-        # specialize this array type to the element type at offset 1 — TBD
+        if tape[1].hyle@.logos != logos
+            error «token after array is not a logos»
+        # specialize this array logos to the element logos at offset 1 — TBD
     )
-    element := type ?
+    element := logos ?
     size := u64 0
     capacity := u64 0
     content := @void ?
 )
 
-mut := type (
+mut := logos (
     shared constructor = fn (tape : parsing_tape) -> void! (
-        if tape[0].type != token
+        if tape[0].logos != token
             error «offset 0 is not a token»
-        if tape[0].value != mut
+        if tape[0].hyle != mut
             error «token does not denote mut»
-        if tape[1].value@.type != type
-            error «token after mut is not a type»
-        # set the mutability bit on this level's value pointer — TBD
+        if tape[1].hyle@.logos != logos
+            error «token after mut is not a logos»
+        # set the mutability bit on this level's hyle pointer — TBD
     )
 )
 
-fn := type (
+fn := logos (
     shared constructor = fn (tape : parsing_tape) -> void! ( ? )
     shared compile     = fn () -> void! ( ? )       # read own body, lower it to bcode
     shared run         = fn () -> void! ( ? )       # if bcode present jump to it; if bcode is NULL walk body directly. interpretation is run's null-bcode path, not a separate function
-    input  : struct
+    input  : logos
     output : ?
     body   : ?                                       # the reflectable LG body
     bcode  : callable                                # the complete jump info [entry @exec, convention] (NULL until compiled)
@@ -126,24 +125,24 @@ mut : ?
 [ : ?
 ] : ?
 
-string : type
-u8 : type
-u16 : type
-u32 : type
-u64 : type
-i8 : type
-i16 : type
-i32 : type
-i64 : type
-f32 : type
-f64 : type
-bool : type          # a comparison's result type; an if condition must be one
-@void : type
-@exec : type
+string : logos
+u8 : logos
+u16 : logos
+u32 : logos
+u64 : logos
+i8 : logos
+i16 : logos
+i32 : logos
+i64 : logos
+f32 : logos
+f64 : logos
+bool : logos         # a comparison's result logos; an if condition must be one
+@void : logos
+@exec : logos
 
-callable := struct (         # the complete jump info — the ONE representation of jumpable code, never a bare address
+callable := logos (          # the complete jump info — the ONE representation of jumpable code, never a bare address
     entry      : @exec
-    convention : @dyad       # the declared calling-convention identity
+    convention : @synolon    # the declared calling-convention identity
 )
 
 if : ?
@@ -156,84 +155,84 @@ xor : ?
 not : ?
 
 
-a := mut type mut i32 32
+a := mut logos mut i32 32
 a {
-    value --m-> {
-        value -> 32
+    hyle --m-> {
+        hyle -> 32
     }
-    type --m-> {
-        value -> {
-            value -> copy i32.value
+    logos --m-> {
+        hyle -> {
+            hyle -> copy i32.hyle
         }
-        type -> type
+        logos -> logos
     }
 }
 
 i32 {
-    type -> type
-    value -> [what ever fields for i32 is defined as]
+    logos -> logos
+    hyle -> [what ever fields for i32 is defined as]
 }
 
 mut {
-    type -> type
-    value -> [what ever fields for mut is defined as]
+    logos -> logos
+    hyle -> [what ever fields for mut is defined as]
 }
 
-type {
-    type -> type
-    value -> struct { # will not lay out all of type's value in the same format for now
+logos {
+    logos -> logos
+    hyle -> logos { # will not lay out all of logos's hyle in the same format for now
         precedence : f64
         associativity : u8
         constructor : fn (tape : parsing_tape) -> void!
-        fields : struct
+        fields : logos
         destructor : ?
     }
 }
 
 
-type {
-  type -> type
-  value -> {
-    type -> struct
-    value -> {
+logos {
+  logos -> logos
+  hyle -> {
+    logos -> logos
+    hyle -> {
       # member NAMES are id_context entries in the shared name index, not data
-      # stored here (per-struct names hashtable: rejected)
+      # stored here (per-record names hashtable: rejected)
       fields -> {
-        type -> array
-        value -> {
-          element_type -> dyad
-          size -> {type -> u64, value -> ?}
-          capacity -> {type -> u64, value -> ?}
+        logos -> array
+        hyle -> {
+          element -> synolon
+          size -> {logos -> u64, hyle -> ?}
+          capacity -> {logos -> u64, hyle -> ?}
           data -> [
             {
-              type -> f64
-              value -> ?
+              logos -> f64
+              hyle -> ?
             }, {
-              type -> u8
-              value -> ?
+              logos -> u8
+              hyle -> ?
             }, {
-              type -> {
-                type -> fn
-                value -> {
-                  input -> struct (tape : parsing_tape)
+              logos -> {
+                logos -> fn
+                hyle -> {
+                  input -> logos (tape : parsing_tape)
                   output -> void!
                 }
               }
-              value -> ?
+              hyle -> ?
             }, {
-              type -> struct
-              value -> ?
+              logos -> logos
+              hyle -> ?
             }, {
-              type -> ?
-              value -> ?
+              logos -> ?
+              hyle -> ?
             }
 
           ]
         }
       }
       size_bytes -> {
-        type -> u64
-        value -> ?
+        logos -> u64
+        hyle -> ?
       }
     }
   }
@@ -241,20 +240,20 @@ type {
 
 a = a + 1
 {
-    type:@dyad -> =
-    value:@void -> {
-        lhs:@dyad -> a
-        rhs:@dyad -> {
-            type:@dyad -> +
-            value:@void -> {
-                lhs:@dyad -> a
-                rhs:@dyad -> {
-                    type:@dyad -> rational_number
-                    value:@void -> [num 1, den 1]    # a reduced fraction — never text
+    logos:@synolon -> =
+    hyle:@void -> {
+        lhs:@synolon -> a
+        rhs:@synolon -> {
+            logos:@synolon -> +
+            hyle:@void -> {
+                lhs:@synolon -> a
+                rhs:@synolon -> {
+                    logos:@synolon -> rational_number
+                    hyle:@void -> [num 1, den 1]     # a reduced fraction — never text
                 }
-                op:@dyad -> add_i32                  # the resolved concrete operation (the conserved third slot)
+                op:@synolon -> add_i32               # the resolved concrete operation (the conserved third slot)
             }
         }
-        op:@dyad -> store_i32                        # the resolved store at the target's width
+        op:@synolon -> store_i32                     # the resolved store at the target's width
     }
 }
