@@ -74,6 +74,17 @@ pub struct OpLeaves {
     pub(crate) declare_: SynolonPtr,
     /// `compile`'s native (`f.compile()`, the fn logos's shared member).
     pub(crate) compile_: SynolonPtr,
+    /// `alloc`'s native (heap-allocate, write the initializer, yield the pointer).
+    pub(crate) alloc_: SynolonPtr,
+    /// The teardown native (issue #49): `free`'s op leaf AND every owning
+    /// pointer's stored destructor, so `drop` reaches the same code through the slot.
+    pub(crate) teardown_: SynolonPtr,
+    /// `own`'s native (move out of a place: yield the pointer, empty the source).
+    pub(crate) own_: SynolonPtr,
+    /// `drop`'s native (run the place's destructor eagerly, empty the place).
+    pub(crate) drop_: SynolonPtr,
+    /// `defer`'s in-place native — a no-op; the scope machinery runs the inner.
+    pub(crate) defer_: SynolonPtr,
 }
 
 impl OpLeaves {
@@ -236,6 +247,11 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
         scope_: std::ptr::null_mut(),
         declare_: std::ptr::null_mut(),
         compile_: std::ptr::null_mut(),
+        alloc_: std::ptr::null_mut(),
+        teardown_: std::ptr::null_mut(),
+        own_: std::ptr::null_mut(),
+        drop_: std::ptr::null_mut(),
+        defer_: std::ptr::null_mut(),
     }
 }
 

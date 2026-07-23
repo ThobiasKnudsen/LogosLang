@@ -23,9 +23,11 @@
 //! dereference is `{logos: deref, value: [ptr-expr, pointee-logos, offset-node]}` —
 //! the offset folds `p@.x` field access into the same node — and a store-through
 //! is `{logos: storeptr, value: [ptr-expr, rhs, pointee-logos, offset-node]}`, built
-//! by `=` at parse time. Deferred, deliberately: pointer arithmetic, heap
-//! allocation (pointers point at parse-allocated storage), and null-safety
-//! beyond the literal-argument seam.
+//! by `=` at parse time. Deferred, deliberately: pointer arithmetic and
+//! null-safety beyond the literal-argument seam. Heap allocation now exists —
+//! `alloc`/`free` in [`crate::identities::drop_model`] mint owning `@T`
+//! pointers over system-allocated storage — so a pointer no longer only ever
+//! points at parse-allocated storage.
 
 use cranelift_codegen::ir::Value;
 
@@ -162,6 +164,28 @@ fn lower_addr(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError>
 pub(crate) fn make_pointer_type(store: &mut Store, type_: SynolonPtr, pointee: SynolonPtr) -> SynolonPtr {
     let value = super::meta::pointer_record(store, pointee);
     store.alloc_raw(type_, value)
+}
+
+/// Build an *owning* pointer logos node `@pointee` — the same `ADDR_TAG` record
+/// as [`make_pointer_type`], but with `destructor` filled (the drop model's
+/// teardown leaf). This is what `alloc` mints for its result: an ordinary `@T`
+/// whose logos carries a non-null destructor, so `drop`/`own` recognize
+/// owning-ness by reading the slot while a `&x` borrow's pointer stays droppable
+/// by no one (DESIGN ›Explicit heap‹: ownership rides the node `alloc` built,
+/// not `@T` in general). Fresh per use, like every pointer logos.
+///
+/// # Safety
+/// `destructor` must be a callable leaf running the owning pointer's teardown.
+pub(crate) unsafe fn make_owning_pointer_type(
+    store: &mut Store,
+    type_: SynolonPtr,
+    pointee: SynolonPtr,
+    destructor: SynolonPtr,
+) -> SynolonPtr {
+    let value = super::meta::pointer_record(store, pointee);
+    let node = store.alloc_raw(type_, value);
+    super::meta::install_destructor(node, destructor);
+    node
 }
 
 /// Build a dereference node `{logos: deref, value: [ptr-expr, pointee, offset]}`,

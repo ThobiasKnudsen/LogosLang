@@ -28,8 +28,9 @@
 //! Deferred surface the sketch declares that the seed does not yet register —
 //! tracked here so each gap is deliberate, not drift: the operators `^` and
 //! `xor`; ranges as first-class values, and `for`'s multi-variable, `in`-less,
-//! and `gpu` forms (the old prototype has them); pointer arithmetic, heap
-//! allocation, and checked `&mut` references (see `pointer`); record-typed
+//! and `gpu` forms (the old prototype has them); pointer arithmetic and checked
+//! `&mut` references (see `pointer`; scalar heap `alloc`/`free` now exist in
+//! `drop_model`); record-typed
 //! (nested) fields and record parameters/returns; the `string` *name* and operations over
 //! strings (the `«…»` literal exists as an inert value, above all as the comment
 //! substance); `mut` at every level (DESIGN ›Mutability and construction‹); the
@@ -77,6 +78,7 @@ mod comment;
 mod convert;
 pub(crate) mod declare;
 mod divide;
+pub(crate) mod drop_model;
 pub(crate) mod instance;
 pub(crate) mod pointer;
 mod eq;
@@ -182,6 +184,16 @@ pub struct Core {
     /// `addr`, the address-of node prefix `&` builds — resolves its place's
     /// address at run/lower time (per-activation for a frame local).
     pub addr_: SynolonPtr,
+    /// `alloc`, the heap-allocation keyword — yields an owning pointer (issue #49).
+    pub alloc_: SynolonPtr,
+    /// `own`, the ownership-move keyword — yields the pointer, empties the source.
+    pub own_: SynolonPtr,
+    /// `drop`, the eager-teardown keyword — runs the place's destructor, empties it.
+    pub drop_: SynolonPtr,
+    /// `free`, the allocator teardown `alloc` inserts as `defer free <place>`.
+    pub free_: SynolonPtr,
+    /// `defer`, the scope-exit LIFO teardown holder (`defer <expr>`).
+    pub defer_: SynolonPtr,
     /// `array` (of `synolon@`), the seed's first array form: a sequence's
     /// expression list lives behind one of these, never inline in the node.
     pub array_: SynolonPtr,
@@ -367,6 +379,17 @@ impl Core {
         op_leaves.deref_ = deref_leaf;
         op_leaves.storeptr_ = storeptr_leaf;
         op_leaves.addr_ = addr_leaf;
+        // The drop model (issue #49): `alloc`/`own`/`drop`/`free`/`defer`, their
+        // run natives, and the shared teardown leaf (also every owning pointer's
+        // destructor). Registered after pointers — its owning pointer is an `@T`.
+        let dm = drop_model::register(&mut cx, &callables);
+        op_leaves.alloc_ = dm.alloc_leaf;
+        op_leaves.own_ = dm.own_leaf;
+        op_leaves.drop_ = dm.drop_leaf;
+        op_leaves.teardown_ = dm.teardown_leaf;
+        op_leaves.defer_ = dm.defer_leaf;
+        let (alloc_, own_, drop_, free_, defer_) =
+            (dm.alloc_, dm.own_, dm.drop_, dm.free_, dm.defer_);
         // A multi-expression block is a `scope`-typed sequence node; its native
         // leaf and lowering are registered once the callable machinery exists.
         op_leaves.scope_ = scope::register_exec(&mut cx, scope_, &callables);
@@ -432,6 +455,11 @@ impl Core {
             deref_,
             storeptr_,
             addr_,
+            alloc_,
+            own_,
+            drop_,
+            free_,
+            defer_,
             callable_: callables.callable,
             convention_: callables.convention,
             conv_seed_native: callables.seed_native,
@@ -472,6 +500,11 @@ impl Core {
             deref_: self.deref_,
             storeptr_: self.storeptr_,
             addr_: self.addr_,
+            alloc_: self.alloc_,
+            own_: self.own_,
+            drop_: self.drop_,
+            free_: self.free_,
+            defer_: self.defer_,
             construct_: self.construct_,
             string_: self.string_,
             comment_: self.comment_,
@@ -555,6 +588,19 @@ macro_rules! infix_construct {
 }
 pub(crate) use infix_construct;
 
+/// Run a top-level `defer` node's held teardown (issue #49) — the file driver's
+/// program-exit drain of the top level's own bindings. Exposed so the binary
+/// reaches the crate-private drop model without widening the whole module.
+///
+/// # Safety
+/// `defer_node` must be a `defer` node from the store; `rt` its runtime.
+pub unsafe fn run_deferred(
+    rt: &mut crate::run::Runtime,
+    defer_node: SynolonPtr,
+) -> Result<i64, crate::run::RunError> {
+    rt.run(drop_model::deferred_inner_of(defer_node))
+}
+
 /// The two `synolon@` operands of a binary application node.
 ///
 /// # Safety
@@ -630,14 +676,27 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: SynolonPtr) -> Operand 
         return Operand::Concrete(NumType::I32);
     }
     // A `while`/`for` loop, a record construction, a declaration, and a
-    // `f.compile()` are statements yielding unit, never values.
+    // `f.compile()` are statements yielding unit, never values. `drop`/`free`
+    // (teardown) and `defer` (scope-exit holder) join them (issue #49).
     if logos == types.while_
         || logos == types.for_
         || logos == types.construct_
         || logos == types.declare_
         || logos == types.compile_
+        || logos == types.drop_
+        || logos == types.free_
+        || logos == types.defer_
     {
         return Operand::NonNumeric;
+    }
+    // `alloc T v` and `own a` yield a pointer to the pointee they carry (issue
+    // #49): `alloc` at operand 0, `own` at operand 1 — an owning pointer, but
+    // owning-ness rides the *bound place's* logos, not this result classification.
+    if logos == types.alloc_ {
+        return Operand::Pointer(*((*node).hyle as *const SynolonPtr));
+    }
+    if logos == types.own_ {
+        return Operand::Pointer(*((*node).hyle as *const SynolonPtr).add(1));
     }
     // A pointer-typed value (an `&x` literal, a pointer variable, or a pointer
     // field place): carries its pointee. Never arithmetic; passed and stored whole.

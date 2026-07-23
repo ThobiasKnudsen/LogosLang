@@ -22,6 +22,17 @@ fn runs_a_file_top_to_bottom_and_prints_its_value() {
 }
 
 #[test]
+fn the_drop_model_runs_at_file_scope() {
+    // The drop model (issue #49) through the real file driver: a top-level
+    // `alloc`, an `own` move, and a block whose own alloc frees at its exit.
+    // The file driver drains the top level's teardowns at program exit, so the
+    // program prints its tail value (42) and exits clean — no leak, no crash.
+    let out = logos().arg("tests/fixtures/heap.logos").output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
+}
+
+#[test]
 fn a_parse_error_renders_clickable_with_a_caret() {
     let out = logos().arg("tests/fixtures/unknown_name.logos").output().unwrap();
     assert_eq!(out.status.code(), Some(1));

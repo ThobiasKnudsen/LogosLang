@@ -54,7 +54,9 @@ unsafe fn exprs<'a>(node: SynolonPtr) -> &'a [SynolonPtr] {
 }
 
 /// Run: each expression in order, for effect; the trailing one's value is the
-/// sequence's. A scope with no expression array is not runnable data.
+/// sequence's. A `defer` (issue #49) is not run in this pass — it is held and its
+/// inner run LIFO at scope exit, the scope's own teardown machinery (DESIGN
+/// ›Explicit heap‹). A scope with no expression array is not runnable data.
 fn run(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a sequence node whose first slot is its expression
     // array (as `Parser::parse_sequence` builds; it never builds it empty).
@@ -62,13 +64,29 @@ fn run(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
         if (*node).hyle.is_null() {
             return Err(RunError::BadValue);
         }
+        let defer_ty = rt.defer_type();
         let mut last = 0i64;
+        let mut defers: Vec<SynolonPtr> = Vec::new();
         for &expr in exprs(node) {
+            let logos = (*expr).logos;
             // A comment node is prose — reflectable structure invisible to value
             // flow: never run, never the tail.
-            if !super::numtype::is_comment_type((*expr).logos) {
-                last = rt.run(expr)?;
+            if super::numtype::is_comment_type(logos) {
+                continue;
             }
+            // A `defer`: held, not run — its teardown fires at scope exit, LIFO.
+            if logos == defer_ty {
+                defers.push(expr);
+                continue;
+            }
+            last = rt.run(expr)?;
+        }
+        // Scope exit: run the held teardowns in reverse (LIFO), so teardown order
+        // reverses construction order (a `defer free` over an emptied place is
+        // the sanctioned no-op inside its own run). No unwinding in v1: a body
+        // error above skips the teardowns, a known limitation of the seed.
+        for &d in defers.iter().rev() {
+            rt.run(super::drop_model::deferred_inner_of(d))?;
         }
         Ok(last)
     }

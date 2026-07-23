@@ -168,6 +168,15 @@ pub struct Runtime {
     /// `rational_number`: a data leaf of this logos is molded to its `i32` value
     /// when read, rather than read raw through the generic i32 layout.
     rational: SynolonPtr,
+    /// `defer`: a scope body expression of this logos is not run in the value
+    /// pass — [`crate::identities::scope`] holds it for LIFO execution at scope
+    /// exit (issue #49). Held here so the sequence native recognizes it.
+    defer_type: SynolonPtr,
+    /// Live heap allocations (issue #49): `alloc` increments, `free` decrements.
+    /// Not a correctness mechanism — the null-place drop flag prevents double
+    /// frees — but an observable one, so tests assert a program frees what it
+    /// allocates (net zero) rather than leaking.
+    live_allocs: usize,
     /// The per-runtime activation stack the frames live in.
     stack: FrameStack,
     /// The base address of each in-flight interpreted call's frame, innermost
@@ -203,10 +212,45 @@ impl Runtime {
         Runtime {
             fn_type,
             rational,
+            defer_type: std::ptr::null_mut(),
+            live_allocs: 0,
             stack: FrameStack::new(),
             activations: Vec::new(),
             compiler: None,
         }
+    }
+
+    /// Set the `defer` identity, enabling the scope-exit teardown pass (issue
+    /// #49). Left null by [`Runtime::new`] — a null never matches a real node's
+    /// logos, so a runtime that never sees `defer` needs no wiring; the file
+    /// driver and the drop-model tests set it. A builder, like
+    /// [`Runtime::with_compiler`].
+    pub fn with_defer_type(mut self, defer_type: SynolonPtr) -> Self {
+        self.defer_type = defer_type;
+        self
+    }
+
+    /// `defer`, so the sequence native ([`crate::identities::scope`]) can hold a
+    /// `defer` body expression for scope-exit execution instead of running it.
+    pub(crate) fn defer_type(&self) -> SynolonPtr {
+        self.defer_type
+    }
+
+    /// Note a heap allocation (issue #49): `alloc` calls this after allocating.
+    pub(crate) fn note_alloc(&mut self) {
+        self.live_allocs += 1;
+    }
+
+    /// Note a heap free (issue #49): the teardown calls this after freeing a
+    /// non-null pointer (an emptied place is a no-op and never reaches here).
+    pub(crate) fn note_free(&mut self) {
+        self.live_allocs = self.live_allocs.saturating_sub(1);
+    }
+
+    /// Live (allocated-not-yet-freed) heap blocks — zero after a program that
+    /// frees everything it allocates. Tests read it to catch leaks.
+    pub fn live_allocs(&self) -> usize {
+        self.live_allocs
     }
 
     /// Attach the compiler context, enabling `f.compile()` under this runtime.

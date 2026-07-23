@@ -95,7 +95,8 @@ fn run_file(path: &str) -> ExitCode {
     // engine (core + store) outlives the runtime, per `with_compiler`'s
     // contract.
     let mut rt = Runtime::new(engine.core.fn_type, engine.core.rational)
-        .with_compiler(&engine.core.lower, types);
+        .with_compiler(&engine.core.lower, types)
+        .with_defer_type(engine.core.defer_);
     let mut p = Parser::new(&source, &mut engine.store, &mut engine.trie, types, scopes);
 
     // The tail: the last non-comment expression and its value, printed at the
@@ -137,6 +138,18 @@ fn run_file(path: &str) -> ExitCode {
             report::render(path, &source, end, "unexpected `)` — no scope is open here")
         );
         return ExitCode::FAILURE;
+    }
+
+    // The top level's own scope exit (issue #49): run the teardowns top-level
+    // owning bindings inserted, LIFO, at program end. A nested scope ran its own
+    // at its exit; these are the file's, freeing what top-level `alloc`s owned.
+    for defer_node in p.take_pending_defers().into_iter().rev() {
+        // SAFETY: `defer_node` is a `defer` node just built into the store; the
+        // runtime works off raw handles into the store, which is still alive.
+        if let Err(e) = unsafe { seed::identities::run_deferred(&mut rt, defer_node) } {
+            eprintln!("{path}: run error: {}", report::run_message(&e));
+            return ExitCode::FAILURE;
+        }
     }
 
     match last {

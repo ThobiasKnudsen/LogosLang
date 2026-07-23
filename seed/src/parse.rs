@@ -471,6 +471,16 @@ pub struct CoreTypes {
     /// `addr`: the address-of node prefix `&` builds (resolves its place's
     /// address at run/lower time, per-activation for a frame local).
     pub addr_: SynolonPtr,
+    /// `alloc`: the heap-allocation keyword; its node yields an owning pointer (#49).
+    pub alloc_: SynolonPtr,
+    /// `own`: the ownership-move keyword; yields the pointer, empties the source.
+    pub own_: SynolonPtr,
+    /// `drop`: the eager-teardown keyword; runs the place's destructor, empties it.
+    pub drop_: SynolonPtr,
+    /// `free`: the allocator teardown `alloc` inserts as `defer free <place>`.
+    pub free_: SynolonPtr,
+    /// `defer`: the scope-exit LIFO teardown holder (`defer <expr>`).
+    pub defer_: SynolonPtr,
     /// `construct`: the record-construction statement a record-typed call builds.
     pub construct_: SynolonPtr,
     /// `string`: the text-literal logos (`«…»`); inert in the seed, above all the
@@ -889,6 +899,12 @@ pub struct Parser<'a> {
     /// the rebinding would happen once, at the wrong time, and on both runtime
     /// branches. Comptime-taken `if` branches do not count (they run iff parsed).
     runtime_depth: u32,
+    /// The constructor-inserted teardown registry (issue #49), one list per open
+    /// scope. A binding of an owning value (`a := alloc …`) pushes `defer free a`
+    /// onto the top list; [`Parser::parse_sequence`] drains it into the scope's
+    /// body so the defer runs at scope exit as ordinary structure. The base entry
+    /// (index 0) collects top-level bindings, drained by the file driver.
+    pending_defers: Vec<Vec<SynolonPtr>>,
 }
 
 /// One enclosing function body being parsed: the byte-size accumulator its
@@ -924,6 +940,7 @@ impl<'a> Parser<'a> {
             pending_fn: std::ptr::null_mut(),
             frames: Vec::new(),
             runtime_depth: 0,
+            pending_defers: vec![Vec::new()],
         }
     }
 
@@ -1001,6 +1018,18 @@ impl<'a> Parser<'a> {
     /// for trailing input (a stray `)` breaks the sequence loop unconsumed).
     pub fn offset(&self) -> usize {
         self.pos
+    }
+
+    /// Take the top-level scope's pending teardowns (issue #49): the `defer free`
+    /// nodes that top-level owning bindings inserted, which no `parse_sequence`
+    /// drained (the file driver runs top-level items itself). The file driver
+    /// runs their inners LIFO at program exit — the top level's own scope-exit.
+    /// Returns them in insertion order; the caller reverses for LIFO.
+    pub fn take_pending_defers(&mut self) -> Vec<SynolonPtr> {
+        match self.pending_defers.first_mut() {
+            Some(base) => std::mem::take(base),
+            None => Vec::new(),
+        }
     }
 
     /// Recover the scope stack, consuming the parser. The REPL parses each line
@@ -2152,6 +2181,37 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse a place operand for `own`/`drop`/`free` (issue #49): a resolved name
+    /// with an optional `.field` chain, ending at a storage-backed place. Unlike
+    /// [`Parser::parse_address_of`] it yields the *place node itself* (not an
+    /// `addr`), which the teardown builder reads to check owning-ness and reach
+    /// the pointer's storage. A capture (an enclosing frame's local) is rejected.
+    pub(crate) fn parse_place_operand(&mut self) -> Result<SynolonPtr, ParseError> {
+        self.skip_trivia();
+        let source = self.source;
+        if self.pos >= source.len() {
+            return Err(ParseError::MissingOperand);
+        }
+        let r = self
+            .scopes
+            .resolve(self.trie, &source[self.pos..])
+            .map_err(ParseError::Resolve)?;
+        if !matches!(self.classify(r.identity), Class::Operand) {
+            return Err(ParseError::MissingOperand);
+        }
+        self.pos += r.matched;
+        let mut node = r.identity;
+        while self.consume_token(self.types.dot_) {
+            // SAFETY: `node` is a resolved synolon from the store.
+            node = unsafe { self.parse_field_access(node)? };
+        }
+        // SAFETY: `node` is a resolved synolon from the store.
+        unsafe {
+            self.check_capture(node)?;
+        }
+        Ok(node)
+    }
+
     /// Consume an `else` if the next token is one, reporting whether it was.
     fn consume_else(&mut self) -> bool {
         self.consume_token(self.types.else_)
@@ -2272,32 +2332,42 @@ impl<'a> Parser<'a> {
         // sequence is real, the sequence node itself.
         let scope = self.store.alloc_raw(self.types.scope, std::ptr::null_mut());
         self.scopes.push(scope);
+        self.pending_defers.push(Vec::new());
         let mut exprs = Vec::new();
         while let Some(item) = self.parse_next() {
             exprs.push(item?);
+            // A binding of an owning value inserts `defer free <place>` into this
+            // scope's pending list (issue #49); drain it right after the statement
+            // so the defer sits at its source position — the right LIFO rank
+            // among other statements' defers, and `scope::run` runs them all at
+            // scope exit. Nested blocks drained their own before returning.
+            let depth = self.pending_defers.len() - 1;
+            if !self.pending_defers[depth].is_empty() {
+                let drained: Vec<SynolonPtr> = self.pending_defers[depth].drain(..).collect();
+                exprs.extend(drained);
+            }
         }
         self.scopes.pop();
-        // Prose is invisible to value flow: the expression count and the tail are
-        // taken over the non-comment expressions.
+        self.pending_defers.pop();
+        // Prose is invisible to value flow, and so is a `defer` (it runs at exit,
+        // never as the tail): the expression count and the tail below are taken
+        // over the non-comment, non-defer expressions.
         // SAFETY: `exprs` are reduced synolons just parsed/built.
-        let values = exprs
-            .iter()
-            .filter(|&&e| unsafe { !crate::identities::numtype::is_comment_type((*e).logos) })
-            .count();
+        let defer_ = self.types.defer_;
+        let is_value = |e: SynolonPtr| unsafe {
+            !crate::identities::numtype::is_comment_type((*e).logos) && (*e).logos != defer_
+        };
+        let values = exprs.iter().filter(|&&e| is_value(e)).count();
         match (values, exprs.len()) {
             (0, _) => Err(ParseError::Empty),
             (_, 1) => Ok(exprs[0]),
             _ => {
                 // Every non-tail value runs for effect only; the tail is the last
-                // non-comment expression. A `return` anywhere else would run
-                // without exiting (no unwinding yet), so reject it.
+                // value expression (never a comment or a `defer`). A `return`
+                // anywhere else would run without exiting (no unwinding yet), so
+                // reject it.
                 let types = self.types;
-                let tail = exprs
-                    .iter()
-                    .rposition(|&e| unsafe {
-                        !crate::identities::numtype::is_comment_type((*e).logos)
-                    })
-                    .expect("values >= 1");
+                let tail = exprs.iter().rposition(|&e| is_value(e)).expect("values >= 1");
                 for (i, &e) in exprs.iter().enumerate() {
                     // SAFETY: `e` is a reduced synolon just parsed.
                     if i != tail && unsafe { contains_return(&types, e) } {
@@ -2446,6 +2516,47 @@ impl<'a> Parser<'a> {
             } else if (*value).logos == self.types.type_ {
                 self.scopes.rebind(self.trie, name, value);
                 value
+            } else if crate::identities::drop_model::is_owning_value(&self.types, value) {
+                // An owning value (`alloc …`, `own a`, or a block yielding one)
+                // lands in a place here — the one site that knows the name it
+                // binds — so this is where the constructor-inserted teardown
+                // attaches (issue #49, DESIGN ›Explicit heap‹: attachment at the
+                // binding site). Mint an *owning* `@pointee` place (its logos
+                // carries the destructor, so `drop`/`own` on it are legal),
+                // snapshot the value into it like any pointer, then insert
+                // `defer free <place>` into this scope. Ownership landing in a
+                // fresh place is what re-arms teardown after an `own` move: the
+                // moved-from place no-ops, the new place owes the free.
+                let pointee = crate::identities::drop_model::owning_pointee_of(&self.types, value)
+                    .expect("is_owning_value implies a pointee");
+                let owning_ty = crate::identities::pointer::make_owning_pointer_type(
+                    self.store,
+                    self.types.type_,
+                    pointee,
+                    self.types.ops.teardown_,
+                );
+                // A pointer is 8 bytes (U64-wide), whatever it points at.
+                let place = self.alloc_local(owning_ty, 8);
+                let init =
+                    crate::identities::build_scalar_init(self.store, &self.types, place, value)?;
+                self.scopes.rebind(self.trie, name, place);
+                // `place` was just minted with the owning pointer logos (its
+                // destructor set), so the owning check passes; keeping it on
+                // guards against a future caller inserting a free over a borrow.
+                let free_node = crate::identities::drop_model::build_teardown(
+                    self.store,
+                    &self.types,
+                    self.types.free_,
+                    place,
+                    true,
+                )?;
+                let defer_node =
+                    crate::identities::drop_model::build_defer(self.store, &self.types, free_node);
+                self.pending_defers
+                    .last_mut()
+                    .expect("a scope's defer list is open")
+                    .push(defer_node);
+                init
             } else if (*value).logos != self.types.rational
                 && matches!(
                     crate::identities::numtype_of(&self.types, value),

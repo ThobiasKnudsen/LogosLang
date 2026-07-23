@@ -240,6 +240,18 @@ pub(crate) unsafe fn install_constructor(id: SynolonPtr, leaf: SynolonPtr) {
     std::ptr::write_unaligned((*id).hyle.add(CTOR_OFF) as *mut SynolonPtr, leaf);
 }
 
+/// Install `leaf` (a callable value) as `id`'s destructor — the drop model's
+/// writer for the reserved slot (issue #49), run once while the owning pointer
+/// logos is under construction; nothing has read the slot before the fill. Every
+/// other identity leaves it null (the honest undefined).
+///
+/// # Safety
+/// `id` must carry a record and `leaf` must be a callable leaf whose entry runs
+/// the identity's teardown.
+pub(crate) unsafe fn install_destructor(id: SynolonPtr, leaf: SynolonPtr) {
+    std::ptr::write_unaligned((*id).hyle.add(DTOR_OFF) as *mut SynolonPtr, leaf);
+}
+
 /// The record kind of `id`, or `None` for a null hyle slot (a still-unbound
 /// declaration placeholder).
 ///
