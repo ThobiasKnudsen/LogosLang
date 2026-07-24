@@ -1,0 +1,5 @@
+# An owning value handed straight to a call has no name to hang its `free` on,
+# so the drop model refuses it rather than leaking (issue #49). Binding it first
+# (`p := alloc i32 5`) and passing the name is the way to write this today.
+f := fn (p : @i32) -> i32 ( p@ )
+f(alloc i32 5)

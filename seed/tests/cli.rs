@@ -115,6 +115,28 @@ fn the_repl_rolls_back_a_failed_lines_declarations() {
 }
 
 #[test]
+fn the_repl_keeps_an_owning_binding_alive_across_lines() {
+    // A REPL binding lives for the whole session, so its teardown belongs at
+    // session exit, not end of line: `a` is still readable on a later line, and
+    // a block's own allocation is freed at the block's exit as in file mode
+    // (file and REPL are one pass and must agree).
+    let (echoes, stderr) = repl(b"a := alloc i32 5\na@\nr := ( b := alloc i32 20  b@ )\nr\n");
+    assert_eq!(echoes, ["5", "20"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
+fn an_owning_value_that_nothing_can_free_is_refused() {
+    // The fail-closed edge of the drop model: an owning value with no name to
+    // attach its teardown to is refused at parse rather than leaked at run.
+    let out = logos().arg("tests/fixtures/unbound_owning.logos").output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("must be bound to a name"), "stderr: {err}");
+    assert!(out.stdout.is_empty());
+}
+
+#[test]
 fn the_repl_compiles_a_fn_across_lines() {
     // `f.compile()` on one line installs the machine code; the call on the
     // next line jumps to it. The compile itself is a silent statement, so the

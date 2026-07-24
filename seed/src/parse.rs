@@ -756,6 +756,26 @@ pub enum ParseError {
     /// support. Each function's locals and parameters live in its own per-call
     /// activation; reaching an outer one would read the wrong frame at run time.
     CapturedLocal,
+    /// An owning value (`alloc …`, `own x`) stood somewhere no name binds it —
+    /// as a call argument, say. The teardown attaches at the *binding site*
+    /// (DESIGN ›Explicit heap, and no implicit destruction‹, issue #49), so an
+    /// unbound owning value has no place to hang its `defer free` on and would
+    /// leak. Fail-closed until the temporary-attachment rule is ruled, which is
+    /// ownership-gated parameters (issue #53): bind it to a name first.
+    UnboundOwningValue,
+    /// A scope's value is a bare owning place, so ownership would escape the
+    /// scope that frees it — the inserted `defer free` runs at exit and the
+    /// value handed out is already freed. DESIGN ruled `own` as how ownership
+    /// leaves a scope (it "transfers ownership and removes the source
+    /// identity"), so this asks for the explicit `own x`.
+    OwningEscape,
+    /// A function body hands ownership out through its return. A block may do
+    /// this (its binder sees the tail at parse), but a call hides the body
+    /// behind the return logos, and a plain `@T` carries no destructor, so the
+    /// caller could not know it owes a `free`. Fail-closed until a return logos
+    /// can declare that it transfers ownership — the ownership-gate work,
+    /// issue #53.
+    OwnershipAcrossReturn,
 }
 
 /// Build a call node `{logos: callee, value: [args…, null]}`, the application
@@ -1528,6 +1548,16 @@ impl<'a> Parser<'a> {
         self.expect_close()?;
         self.runtime_depth -= 1;
         self.scopes.pop();
+        // Ownership may not cross a function return yet (issue #49). A block can
+        // hand ownership to its binder because the parse sees the block's tail,
+        // but a *call* hides the body behind the return logos, and a plain `@T`
+        // carries no destructor — so the caller could not know it owes a `free`
+        // and would leak. Fail closed until a return logos can declare that it
+        // hands ownership over, which is the ownership-gate work (issue #53).
+        // SAFETY: `body` is the reduced synolon just parsed.
+        if unsafe { crate::identities::drop_model::is_owning_value(&self.types, body) } {
+            return Err(ParseError::OwnershipAcrossReturn);
+        }
         let frame_size = self.frames.pop().expect("parse_fn pushed a frame").size;
 
         // A comptime-rational tail expression commits to the declared return logos here
@@ -2250,6 +2280,16 @@ impl<'a> Parser<'a> {
     pub(crate) fn parse_call(&mut self, callee: SynolonPtr) -> Result<SynolonPtr, ParseError> {
         let args = self.parse_arg_list()?;
         self.expect_close()?;
+        // An owning value handed straight to a call has no name to hang its
+        // `defer free` on, so it would leak (issue #49; DESIGN's open
+        // temporary-attachment point). Fail-closed until ownership-gated
+        // parameters land (issue #53) and the callee can declare that it takes
+        // the value. SAFETY: `args` are reduced synolons just parsed.
+        for &arg in &args {
+            if unsafe { crate::identities::drop_model::is_owning_value(&self.types, arg) } {
+                return Err(ParseError::UnboundOwningValue);
+            }
+        }
         if crate::identities::is_numtype_node(&self.types, callee) {
             // SAFETY: `callee` is a numtype node; `args` are reduced synolons.
             unsafe { crate::identities::build_cast(self.store, &self.types, callee, &args) }
@@ -2334,6 +2374,9 @@ impl<'a> Parser<'a> {
         self.scopes.push(scope);
         self.pending_defers.push(Vec::new());
         let mut exprs = Vec::new();
+        // The places this scope's own teardowns will free — what the escape check
+        // below tests its tail against (issue #49).
+        let mut owned_here: Vec<SynolonPtr> = Vec::new();
         while let Some(item) = self.parse_next() {
             exprs.push(item?);
             // A binding of an owning value inserts `defer free <place>` into this
@@ -2344,6 +2387,13 @@ impl<'a> Parser<'a> {
             let depth = self.pending_defers.len() - 1;
             if !self.pending_defers[depth].is_empty() {
                 let drained: Vec<SynolonPtr> = self.pending_defers[depth].drain(..).collect();
+                for &d in &drained {
+                    // SAFETY: `d` is a `defer free <place>` node the binding site
+                    // just built.
+                    owned_here.push(unsafe {
+                        crate::identities::drop_model::teardown_place_of(d)
+                    });
+                }
                 exprs.extend(drained);
             }
         }
@@ -2373,6 +2423,26 @@ impl<'a> Parser<'a> {
                     if i != tail && unsafe { contains_return(&types, e) } {
                         return Err(ParseError::EarlyReturn);
                     }
+                }
+                // Ownership must not escape as this scope's *value*: the tail is
+                // handed to the enclosing expression, but the teardown this scope
+                // inserted frees the place on the way out, so the value handed out
+                // would already be freed. DESIGN ruled `own` as the way ownership
+                // leaves a scope, so require it. Only places *this* scope frees
+                // are checked — handing out an enclosing scope's owning place is an
+                // ordinary borrow, freed by whoever owns it.
+                // SAFETY: `exprs[tail]` is a reduced synolon just parsed.
+                let tail_value = unsafe {
+                    let t = exprs[tail];
+                    // `return x` yields `x`, so the escape rides its operand.
+                    if (*t).logos == types.return_ && !(*t).hyle.is_null() {
+                        *((*t).hyle as *const SynolonPtr)
+                    } else {
+                        t
+                    }
+                };
+                if owned_here.contains(&tail_value) {
+                    return Err(ParseError::OwningEscape);
                 }
                 // A scope IS an array: the expression list lives behind one
                 // indirection (its own array node), never inline in the scope's

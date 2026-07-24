@@ -113,6 +113,22 @@ pub fn parse_message(e: &ParseError) -> String {
              (no closures yet); pass it in as the nested function's own parameter"
                 .into()
         }
+        ParseError::UnboundOwningValue => {
+            "an owning value must be bound to a name, which is where its `free` \
+             attaches; bind it first (`a := alloc …`) and pass the name"
+                .into()
+        }
+        ParseError::OwningEscape => {
+            "this scope's value is a place it owns, so the value would be freed \
+             on the way out; hand ownership over with `own`"
+                .into()
+        }
+        ParseError::OwnershipAcrossReturn => {
+            "a function cannot hand ownership out through its return yet: the \
+             return logos cannot say it transfers ownership, so the caller would \
+             not know it owes a `free`; allocate in the caller and pass a pointer in"
+                .into()
+        }
     }
 }
 

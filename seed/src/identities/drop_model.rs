@@ -18,6 +18,19 @@
 //! scope exit, by the scope's own machinery ([`crate::identities::scope`]), as
 //! ordinary reflectable body structure, never hidden drop glue.
 //!
+//! **Ownership may not slip out of the machinery that frees it.** Three rules
+//! fail closed rather than leak or hand back freed memory, each guarding a way
+//! out: an owning value must be **bound to a name** (an unbound one, a bare
+//! `alloc` handed to a call, has nothing to attach its teardown to); a scope's
+//! **value** may not be a place that scope owns (the inserted teardown frees it
+//! on the way out, so the value handed back would already be freed — `own` is
+//! how ownership leaves a scope); and ownership may not cross a **function
+//! return** (a block hands ownership to its binder in full view of the parse,
+//! but a call hides its body behind a return logos that cannot yet say it
+//! transfers ownership, so the caller would not know it owes a `free`). The
+//! last lifts once a logos carries its ownership mode — `take`/`drop` as gates
+//! on a reference, the same primitive as `pub`/`mut` (issue #53).
+//!
 //! **Teardown follows the owner.** `own a` is a move: it reads `a`'s pointer,
 //! empties `a`, and yields the pointer; bound to a new name it inserts a *fresh*
 //! `defer free` at that binding, so the teardown migrates with ownership. `drop a`
@@ -272,6 +285,20 @@ pub(crate) unsafe fn deferred_inner_of(node: SynolonPtr) -> SynolonPtr {
     *((*node).hyle as *const SynolonPtr).add(DEFER_INNER)
 }
 
+/// The place an inserted teardown frees: the `defer free <place>` node's inner
+/// free node, read back to its place slot. The binding site pushes these onto
+/// the scope's pending list, so a scope can ask which places *it* will free —
+/// which is what the escape check in [`crate::parse::Parser::parse_sequence`]
+/// compares its tail against.
+///
+/// # Safety
+/// `defer_node` must be a `defer` node over a teardown, as the binding site
+/// builds ([`build_defer`] over [`build_teardown`]).
+pub(crate) unsafe fn teardown_place_of(defer_node: SynolonPtr) -> SynolonPtr {
+    let inner = deferred_inner_of(defer_node);
+    *((*inner).hyle as *const SynolonPtr).add(TEARDOWN_PLACE)
+}
+
 /// The pointee logos of an `alloc`/`own` node — what a bound owning pointer
 /// points at, so the binding site can mint its owning `@pointee` type. `alloc`
 /// stores it at [`ALLOC_POINTEE`], `own` at [`TEARDOWN_POINTEE`]; a scope whose
@@ -436,6 +463,19 @@ mod tests {
         FREE_LOG.with(|l| l.borrow().clone())
     }
 
+    /// Parse `src` as one top-level scope, returning the parse error it raises.
+    /// For the fail-closed paths, where the point is that the source never runs.
+    fn parse_err(src: &str) -> ParseError {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let types = core.types();
+        let mut p = Parser::new(src, &mut store, &mut trie, types, scopes);
+        p.parse_sequence().expect_err("expected a parse error")
+    }
+
     #[test]
     fn alloc_reads_back_and_frees_at_scope_exit() {
         // `a := alloc i32 5` allocates, `a@` reads the 5 back; the inserted
@@ -541,20 +581,115 @@ mod tests {
         scopes.push(core.root_scope);
         let types = core.types();
         let scope = {
-            let mut p = Parser::new("a := alloc i32 5\na", &mut store, &mut trie, types, scopes);
+            // The tail is a deref, not `a` itself: handing the owning place out
+            // as the scope's value is the escape the parser now rejects, so the
+            // place is reached through the inserted teardown instead.
+            let mut p = Parser::new("a := alloc i32 5\na@", &mut store, &mut trie, types, scopes);
             p.parse_sequence().expect("parse")
         };
-        // SAFETY: the scope's tail `a` resolves to the owning place.
+        // SAFETY: the scope body holds the inserted `defer free a`, whose place
+        // slot is the owning place `a`.
         unsafe {
             let arr = *((*scope).hyle as *const SynolonPtr);
             let exprs = crate::identities::array::items(arr);
-            let a = *exprs.last().unwrap();
+            let defer = *exprs
+                .iter()
+                .find(|&&e| (*e).logos == core.defer_)
+                .expect("the binding inserted a defer");
+            let a = teardown_place_of(defer);
             assert!(numtype::is_pointer_type((*a).logos), "a is a pointer place");
             assert!(
                 !meta::destructor_of((*a).logos).is_null(),
                 "an owning pointer's logos carries the destructor"
             );
         }
+    }
+
+    #[test]
+    fn an_unbound_owning_temporary_is_rejected_not_leaked() {
+        // DESIGN attaches the teardown at the binding site, so an owning value
+        // handed straight to a call has no name to hang its `free` on. It must
+        // fail closed rather than leak; ownership-gated parameters (#53) are what
+        // will let a callee declare that it takes the value.
+        assert_eq!(
+            parse_err("f := fn (p : @i32) -> i32 ( p@ )\nf(alloc i32 5)"),
+            ParseError::UnboundOwningValue
+        );
+    }
+
+    #[test]
+    fn ownership_may_not_escape_a_scope_as_its_value() {
+        // Without this check the scope's inserted `defer free` runs on the way
+        // out and the caller receives an already-freed pointer — a use-after-free,
+        // not merely a leak. DESIGN ruled `own` as how ownership leaves a scope.
+        assert_eq!(
+            parse_err("mk := fn () -> @i32 ( p := alloc i32 7  p )\nmk()"),
+            ParseError::OwningEscape
+        );
+        // `return p` yields the same escape through the return's operand.
+        assert_eq!(
+            parse_err("mk := fn () -> @i32 ( p := alloc i32 7  return p )\nmk()"),
+            ParseError::OwningEscape
+        );
+    }
+
+    #[test]
+    fn ownership_may_not_cross_a_function_return_yet() {
+        // A block hands ownership to its binder because the parse sees its tail,
+        // but a call hides the body behind the return logos, which cannot yet say
+        // "I transfer ownership" — so the caller would not know it owes a `free`
+        // and would leak. Fail closed until ownership-gated logos land (#53).
+        assert_eq!(
+            parse_err("mk := fn () -> @i32 ( p := alloc i32 7  own p )\nmk()"),
+            ParseError::OwnershipAcrossReturn
+        );
+        // The same for handing a bare fresh allocation out of a function.
+        assert_eq!(
+            parse_err("mk := fn () -> @i32 ( alloc i32 7 )\nmk()"),
+            ParseError::OwnershipAcrossReturn
+        );
+    }
+
+    #[test]
+    fn own_hands_ownership_to_an_enclosing_binder() {
+        // What `own` *can* do today: escape a block to the binder that encloses
+        // it, which the parse sees. The inner place empties (its teardown
+        // no-ops), the outer binder owns, and the block is freed exactly once.
+        let (v, live) = run("b := ( a := alloc i32 8  own a )\nb@");
+        assert_eq!(v, 8);
+        assert_eq!(live, 0);
+        assert_eq!(free_log(), vec![8], "freed once, by the outer owner");
+    }
+
+    #[test]
+    fn a_borrow_may_still_be_handed_out_as_a_scope_value() {
+        // The escape check must not catch borrows: only places the scope itself
+        // frees are owned. A pointer to an ordinary local carries no destructor,
+        // so passing it out stays legal.
+        let (v, live) = run("x := i32 9\nr := ( &x )\nr@");
+        assert_eq!(v, 9);
+        assert_eq!(live, 0);
+    }
+
+    #[test]
+    fn a_loop_body_frees_every_iteration() {
+        // The body is a scope, so its teardown runs at each iteration's exit
+        // rather than accumulating: three allocations, three frees, none live.
+        let (_v, live) = run("i := i32 0\nwhile (i < 3) ( p := alloc i32 5  i = i + 1 )\ni");
+        assert_eq!(live, 0, "no allocation outlives its iteration");
+        assert_eq!(free_log().len(), 3, "one free per iteration");
+    }
+
+    #[test]
+    fn the_compiled_tier_reads_heap_memory_identically() {
+        // Interpreter/JIT parity over a drop path: the heap block is allocated
+        // and freed by the interpreted tier, while the function reading through
+        // the pointer is compiled. Both tiers must see the same 42.
+        let (v, live) = run(
+            "f := fn (p : @i32) -> i32 ( p@ + 1 )\na := alloc i32 41\nb := f(a)\nf.compile()\nc := f(a)\nb + c",
+        );
+        assert_eq!(v, 84, "interpreted and compiled reads agree");
+        assert_eq!(live, 0);
     }
 
     #[test]

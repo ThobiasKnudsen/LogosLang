@@ -180,6 +180,12 @@ fn repl() -> ExitCode {
 
     let stdin = std::io::stdin();
     let mut lines = stdin.lock().lines();
+    // The session's own teardowns (issue #49): a REPL binding lives for the whole
+    // session, so its `defer free` belongs at session exit — the REPL's top-level
+    // scope exit, the same drain the file driver runs at program end (file mode
+    // and the REPL are one pass and must agree). Each line's parser is fresh, so
+    // its pending teardowns are collected here as the line is accepted.
+    let mut session_defers: Vec<seed::synolon::SynolonPtr> = Vec::new();
     loop {
         print!("» ");
         let _ = std::io::stdout().flush();
@@ -187,6 +193,17 @@ fn repl() -> ExitCode {
             Some(Ok(line)) => line,
             _ => {
                 println!();
+                // Session exit: run the accumulated teardowns, newest first.
+                let mut rt = Runtime::new(engine.core.fn_type, engine.core.rational)
+                    .with_defer_type(engine.core.defer_);
+                for defer_node in session_defers.into_iter().rev() {
+                    // SAFETY: each is a `defer` node in the engine's store, which
+                    // is still alive here.
+                    if let Err(e) = unsafe { seed::identities::run_deferred(&mut rt, defer_node) } {
+                        eprintln!("<repl>: run error: {}", report::run_message(&e));
+                        return ExitCode::FAILURE;
+                    }
+                }
                 return ExitCode::SUCCESS;
             }
         };
@@ -195,11 +212,14 @@ fn repl() -> ExitCode {
         }
 
         let types = engine.core.types();
-        let (parsed, end, scopes_back) = {
+        let (parsed, end, line_defers, scopes_back) = {
             let mut p = Parser::new(&line, &mut engine.store, &mut engine.trie, types, scopes);
             let parsed = p.parse_expression();
             let end = p.offset();
-            (parsed, end, p.into_scopes())
+            // Teardowns this line's bindings inserted; kept only if the line is
+            // accepted, so a failed line leaves no trace here either.
+            let line_defers = p.take_pending_defers();
+            (parsed, end, line_defers, p.into_scopes())
         };
         scopes = scopes_back;
 
@@ -250,9 +270,15 @@ fn repl() -> ExitCode {
         // The compiler rides along so `f.compile()` works across lines: the
         // installed bcode lives in the engine's store and the compiled
         // artifact is process-lived, so a fresh per-line runtime is fine.
+        // The line is accepted, so its bindings' teardowns join the session's,
+        // to run at exit. A teardown over a place whose binding never ran sees a
+        // null place and no-ops, so keeping them is the fail-closed side.
+        session_defers.extend(line_defers);
+
         let mut rt =
             Runtime::new(engine.core.fn_type, engine.core.rational)
-                .with_compiler(&engine.core.lower, types);
+                .with_compiler(&engine.core.lower, types)
+                .with_defer_type(engine.core.defer_);
         // SAFETY: `node` and everything it reaches live in the engine's store,
         // which outlives the loop. Statements still run — for their effect —
         // they just do not echo.
