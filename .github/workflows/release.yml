@@ -92,34 +92,75 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: linux, arch: x86_64, runner: ubuntu-latest, ext: tar.gz }
-          - { os: linux, arch: aarch64, runner: ubuntu-latest, ext: tar.gz }
-          - { os: macos, arch: x86_64, runner: macos-13, ext: tar.gz }
-          - { os: macos, arch: aarch64, runner: macos-14, ext: tar.gz }
-          - { os: windows, arch: x86_64, runner: windows-latest, ext: zip }
+          - { os: linux, arch: x86_64, runner: ubuntu-latest, ext: tar.gz, target: x86_64-unknown-linux-gnu }
+          - { os: linux, arch: aarch64, runner: ubuntu-latest, ext: tar.gz, target: aarch64-unknown-linux-gnu }
+          - { os: macos, arch: x86_64, runner: macos-13, ext: tar.gz, target: x86_64-apple-darwin }
+          - { os: macos, arch: aarch64, runner: macos-14, ext: tar.gz, target: aarch64-apple-darwin }
+          - { os: windows, arch: x86_64, runner: windows-latest, ext: zip, target: x86_64-pc-windows-msvc }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
-      # ── PLACEHOLDER BUILD ────────────────────────────────────────────────────
-      # TODO: replace this stub with the real Logos toolchain build for
-      # ${{ matrix.os }}/${{ matrix.arch }} (compile the Rust seed, then bootstrap
-      # the self-hosting compiler). The stub keeps the release pipeline wired
-      # end-to-end so the website's download page works the moment a real binary
-      # is produced — nothing here pretends to be a working compiler.
-      - name: Build (placeholder — no compiler yet)
+      - name: Add the Rust target
+        shell: bash
+        run: rustup target add ${{ matrix.target }}
+
+      # ubuntu-latest is x86_64, so the aarch64 Linux artifact is cross-compiled and
+      # needs a cross linker. Every other matrix entry builds natively on its runner.
+      - name: Install the cross linker (linux/aarch64)
+        if: matrix.os == 'linux' && matrix.arch == 'aarch64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: seed
+          key: ${{ matrix.target }}
+
+      - name: Build the seed
+        shell: bash
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build --release --locked --manifest-path seed/Cargo.toml --target ${{ matrix.target }}
+
+      # Smoke-test what we are about to ship, everywhere the artifact is native to
+      # its runner. The cross-compiled aarch64 Linux binary cannot run here.
+      - name: Smoke-test the binary
+        if: '!(matrix.os == ''linux'' && matrix.arch == ''aarch64'')'
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="seed/target/${{ matrix.target }}/release/logos"
+          [ "${{ matrix.os }}" = "windows" ] && BIN="${BIN}.exe"
+          "$BIN" --help > /dev/null
+          out="$("$BIN" seed/examples/answer.logos | tail -n1)"
+          [ "$out" = "42" ] || { echo "::error::smoke test: expected 42, got '$out'"; exit 1; }
+          echo "OK: $BIN runs and answer.logos evaluates to 42."
+
+      - name: Stage the archive
         shell: bash
         env:
           TAG: ${{ github.ref_name }}
           OS: ${{ matrix.os }}
           ARCH: ${{ matrix.arch }}
+          TARGET: ${{ matrix.target }}
         run: |
+          set -euo pipefail
           STAGE="logos-${TAG}-${OS}-${ARCH}"
           mkdir -p "$STAGE/bin"
-          if [ "$OS" = "windows" ]; then BIN="$STAGE/bin/logos.cmd"; else BIN="$STAGE/bin/logos"; fi
-          printf 'Logos %s (%s/%s) — pre-alpha placeholder, no compiler yet.\nSee https://logoslang.dev/roadmap/\n' "$TAG" "$OS" "$ARCH" > "$BIN"
-          chmod +x "$BIN" || true
-          printf 'Logos %s (%s/%s)\n\nThis is a PLACEHOLDER build. Logos has no working compiler yet; this\narchive exists only to wire the release pipeline end to end.\n' "$TAG" "$OS" "$ARCH" > "$STAGE/README.txt"
+          # Cargo.toml pins the binary name to `logos`; the download page and the
+          # install docs both promise it at bin/logos.
+          if [ "$OS" = "windows" ]; then
+            cp "seed/target/${TARGET}/release/logos.exe" "$STAGE/bin/logos.exe"
+          else
+            cp "seed/target/${TARGET}/release/logos" "$STAGE/bin/logos"
+            chmod +x "$STAGE/bin/logos"
+          fi
+          # Apache-2.0 section 4 requires these to travel with the binary.
+          cp LICENSE NOTICE TRADEMARK.md "$STAGE/"
+          cp -r seed/examples "$STAGE/examples"
+          printf 'Logos %s (%s/%s)\n\nRun a file:  bin/logos examples/answer.logos\nREPL:        bin/logos\nHelp:        bin/logos --help\n\nThis is the bootstrap seed: it parses source into the Logic Graph,\ninterprets it, and lowers explicitly compiled functions to Cranelift.\nIt is not the finished language. What this release does and does not\nrun is listed at https://logoslang.dev/docs/getting-started/install/\n' "$TAG" "$OS" "$ARCH" > "$STAGE/README.txt"
           echo "STAGE=$STAGE" >> "$GITHUB_ENV"
 
       - name: Package (tar.gz)
@@ -139,29 +180,17 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: gh release upload "$TAG" "${STAGE}.${{ matrix.ext }}" --repo "$GITHUB_REPOSITORY" --clobber
 
-  # The OS/arch-agnostic WebAssembly build that powers the website's playground.
-  build-wasm:
-    needs: create-release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      # ── PLACEHOLDER WASM BUILD ───────────────────────────────────────────────
-      # TODO: replace with the real Logos runtime compiled to WebAssembly — the
-      # module the playground loads and evaluates against. The stub below is a
-      # minimal *valid* empty wasm module (the 8-byte header), so the asset exists
-      # and the naming convention is wired, but it does nothing yet.
-      - name: Build wasm (placeholder — no compiler yet)
-        env:
-          TAG: ${{ github.ref_name }}
-        run: printf '\x00\x61\x73\x6d\x01\x00\x00\x00' > "logos-${TAG}-wasm.wasm"
-      - name: Upload the wasm asset to the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
-        run: gh release upload "$TAG" "logos-${TAG}-wasm.wasm" --repo "$GITHUB_REPOSITORY" --clobber
+  # No `logos-<tag>-wasm.wasm` asset is produced yet. The seed's run tier is a
+  # Cranelift JIT, which emits native code for the host and does not target
+  # wasm32, so there is nothing honest to upload. The website reads the absence
+  # correctly: with no release shipping wasm, the playground shows its
+  # "arrives with the first release that ships a WASM build" state rather than
+  # loading an empty module and appearing broken. Restore a `build-wasm` job
+  # (and add it back to notify-website's `needs`) once an interpreter-only
+  # wasm32 build exists.
 
   notify-website:
-    needs: [build, build-wasm]
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - name: Notify the website (freeze docs + refresh downloads)
