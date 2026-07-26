@@ -100,13 +100,22 @@ jobs:
     needs: create-release
     strategy:
       fail-fast: false
+      # `native: true` means the artifact runs on the runner that built it, which is
+      # the only place the smoke test below can execute it.
+      #
+      # Intel macOS is cross-compiled from an Apple Silicon runner rather than built
+      # on macos-13. In the v0.0.4 release the macos-13 job sat queued for 25+ minutes
+      # while every other job finished in 2-4 and never started, so that release
+      # shipped 4 of 5 archives. macos-13 is the last Intel image and is being wound
+      # down; macos-14's Xcode toolchain targets both arches, so cross-compiling
+      # removes the dependency on a runner pool that may not come back.
       matrix:
         include:
-          - { os: linux, arch: x86_64, runner: ubuntu-latest, ext: tar.gz, target: x86_64-unknown-linux-gnu }
-          - { os: linux, arch: aarch64, runner: ubuntu-latest, ext: tar.gz, target: aarch64-unknown-linux-gnu }
-          - { os: macos, arch: x86_64, runner: macos-13, ext: tar.gz, target: x86_64-apple-darwin }
-          - { os: macos, arch: aarch64, runner: macos-14, ext: tar.gz, target: aarch64-apple-darwin }
-          - { os: windows, arch: x86_64, runner: windows-latest, ext: zip, target: x86_64-pc-windows-msvc }
+          - { os: linux, arch: x86_64, runner: ubuntu-latest, ext: tar.gz, target: x86_64-unknown-linux-gnu, native: true }
+          - { os: linux, arch: aarch64, runner: ubuntu-latest, ext: tar.gz, target: aarch64-unknown-linux-gnu, native: false }
+          - { os: macos, arch: x86_64, runner: macos-14, ext: tar.gz, target: x86_64-apple-darwin, native: false }
+          - { os: macos, arch: aarch64, runner: macos-14, ext: tar.gz, target: aarch64-apple-darwin, native: true }
+          - { os: windows, arch: x86_64, runner: windows-latest, ext: zip, target: x86_64-pc-windows-msvc, native: true }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -134,10 +143,10 @@ jobs:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
         run: cargo build --release --locked --manifest-path seed/Cargo.toml --target ${{ matrix.target }}
 
-      # Smoke-test what we are about to ship, everywhere the artifact is native to
-      # its runner. The cross-compiled aarch64 Linux binary cannot run here.
+      # Smoke-test what we are about to ship, everywhere the artifact is native to its
+      # runner. Cross-compiled artifacts (aarch64 Linux, Intel macOS) cannot run here.
       - name: Smoke-test the binary
-        if: '!(matrix.os == ''linux'' && matrix.arch == ''aarch64'')'
+        if: matrix.native
         shell: bash
         run: |
           set -euo pipefail
