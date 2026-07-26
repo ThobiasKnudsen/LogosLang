@@ -49,11 +49,21 @@ jobs:
             exit 1
           fi
           cur="${TAG#v}"
-          highest="$(git tag --list 'v*.*.*' \
-            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-            | grep -vx "$TAG" \
-            | sed 's/^v//' \
-            | sort -V | tail -n1)"
+          # `|| true` for the same reason docs-check.sh's latest_release_tag has it:
+          # when this tag is the only one (every first release, and any release made
+          # before another tag exists), `grep -vx "$TAG"` filters everything out and
+          # exits 1, which under `set -o pipefail` aborts the assignment and fails the
+          # gate with no error message. An empty `highest` is the correct answer here,
+          # not a failure — it means there is no previous release to be newer than.
+          highest="$(
+            {
+              git tag --list 'v*.*.*' \
+                | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+                | grep -vx "$TAG" \
+                | sed 's/^v//' \
+                | sort -V | tail -n1
+            } || true
+          )"
           if [ -n "$highest" ]; then
             newest="$(printf '%s\n%s\n' "$cur" "$highest" | sort -V | tail -n1)"
             if [ "$newest" = "$highest" ]; then
