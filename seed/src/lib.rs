@@ -1,8 +1,23 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
 //! The Logos bootstrap seed.
 //!
-//! See `V1PLAN.md` for the build order and `DESIGN.md` for the rationale.
-//! The first subsystem built here is the lexer's regex-trie (`lex`), a port of
-//! `regex_trie.zig` / `regex_splitting.zig` from the `zig_pivot` branch.
+//! See `DESIGN.md` and `language_sketch.logos` for what the seed builds toward.
+//! The seed's hand-built core identities live in `identities` (one file each);
+//! the phase engines are the lexing name index (`regex_trie`), `parse`, `run`,
+//! and `compile`, over the `store`.
 
-pub mod dyad;
-pub mod lex;
+pub mod compile;
+pub mod identities;
+pub mod parse;
+pub mod reflect;
+pub mod regex_splitting;
+pub mod regex_trie;
+pub mod report;
+pub mod run;
+pub mod store;
+
+// The node cell and name-resolution pairing are core identities, but the rest of
+// the crate reaches them by these short paths.
+pub use identities::{synolon, id_context, Core};

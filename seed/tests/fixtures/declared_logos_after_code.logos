@@ -1,0 +1,5 @@
+# a `name : logos` declaration works anywhere an expression can start, not only first
+x := i32 1
+a : i32
+a = 9
+x + a

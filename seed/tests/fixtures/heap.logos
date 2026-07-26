@@ -1,0 +1,8 @@
+# The ruled drop model at file scope (issue #49): a top-level owning binding,
+# a move out of it, and a block whose alloc frees at its own exit. The file
+# driver drains the top level's teardowns at program exit, so this runs clean
+# and prints its tail value with no leak or double free.
+a := alloc i32 40
+b := own a
+inner := ( c := alloc i32 100  c@ )
+b@ + inner - 98

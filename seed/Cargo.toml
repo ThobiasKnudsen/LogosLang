@@ -3,6 +3,21 @@ name = "seed"
 version = "0.1.0"
 edition = "2021"
 description = "The Logos bootstrap seed: node model, lexer, parser, interpreter, and Cranelift backend."
+authors = ["Thobias Melfjord Knudsen <thobknu@gmail.com>"]
+license = "Apache-2.0"
+repository = "https://github.com/ThobiasKnudsen/LogosLang"
+
+# The `logos` binary: `logos file.logos` runs a file top to bottom (no main,
+# no build flags — the code itself decides what compiles); bare `logos` is the
+# REPL. The release pipeline stages this exact name at bin/logos.
+[[bin]]
+name = "logos"
+path = "src/main.rs"
 
 [dependencies]
+cranelift-codegen = "0.133.1"
+cranelift-frontend = "0.133.1"
+cranelift-jit = "0.133.1"
+cranelift-module = "0.133.1"
+cranelift-native = "0.133.1"
 regex = "1"

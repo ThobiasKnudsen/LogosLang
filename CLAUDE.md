@@ -5,6 +5,13 @@
 4. **Accelerate cycle time:** Speed up the process.
 5. **Automate:** Only automate the process after the first four steps are done.
 
+# Faithfulness protocol (spec-governed code):
+- DESIGN.md is the ruling document. language_sketch.logos illustrates it; issues, plans, memories, old comments, and existing code are downstream and may be stale. Never implement from a downstream source alone.
+- Before implementing anything spec-governed, quote the exact DESIGN.md passage(s) that license it, in the plan or the commit message. No quote → stop and ask.
+- If any two sources disagree — DESIGN vs sketch, DESIGN vs an issue, one DESIGN section vs another — STOP and surface the conflict as a blocking question, with both quotes. Never silently pick a side, even if one side is newer or was written by Thobias: staleness is invisible from inside a session.
+- When a conflict is ruled on, or a design is rejected in conversation, record it in the same session: in DESIGN.md (the existing pattern: "Recorded as rejected, to stay rejected: …") or, if spec wording must wait, as an explicit pending-spec-edit in the session log AND auto-memory. An unrecorded decision is a future bug.
+- Before starting work in a spec area not touched recently, run /faithfulness-audit.
+
 # Follow logging rules faithfully:
 - At session start create a file under CLAUDE_LOG folder with the name Session_YYYY-MM-DD_HH:mm:ss.md. 
 - What should be said in the start of the file is the session id so that Claude can find the actual session later for more details. Format like this «# Session id: [session id]»

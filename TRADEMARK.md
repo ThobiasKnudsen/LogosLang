@@ -50,10 +50,10 @@ On first or prominent use, please write **LogosLang™** (switch to **®** only 
 
 ## Asking, and reporting misuse
 
-Open an issue in the canonical LogosLang repository, or contact **‹add a trademark contact email›**. If you see the name used in a way that confuses people about what is official, please let us know.
+Open an issue in the canonical LogosLang repository, or contact **thobknu@gmail.com**. If you see the name used in a way that confuses people about what is official, please let us know.
 
 ## Reservation of rights & notes
 
 This policy may change as the project matures (governance, a published logo, a conformance suite, formal registration). It does not reduce any rights granted by Apache-2.0 over the **code**; it governs only the **name and logo**. Nothing here is legal advice.
 
-© 2026 the LogosLang authors. "LogosLang" is a trademark of the LogosLang project.
+© 2026 Thobias Melfjord Knudsen. "LogosLang" is a trademark of Thobias Melfjord Knudsen.

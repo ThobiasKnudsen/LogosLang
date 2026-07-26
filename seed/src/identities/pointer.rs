@@ -1,0 +1,311 @@
+// Copyright 2026 Thobias Melfjord Knudsen
+// SPDX-License-Identifier: Apache-2.0
+
+//! Pointers: `@T` logos, `&x` address-of, `x@` dereference, `p@.x`, and
+//! store-through (`p@ = v`).
+//!
+//! The settled surface (Thobias, July 2026): the pointer logos is **prefix**
+//! `@T` — the pointer is the first thing the user interacts with, and it
+//! composes (`@@i32`, `@point`) — while dereference is **postfix** `x@`, so
+//! chains read left to right: `p@.x`, `p@@`. Because a dereference can never
+//! *start* an expression, `@` after a completed synolon is always deref and `@`
+//! elsewhere is always the logos prefix; no ambiguity exists. `&x` is address-of.
+//! v1 pointers are raw, unchecked addresses (DESIGN's `@`-family); checked
+//! `&T`/`&mut T` references layer on when the borrow checker arrives.
+//!
+//! Representation: a pointer *logos* is `{logos: logos, value -> record}`, its
+//! shared-member record [`ADDR_TAG`]-kinded with the pointee node as payload
+//! (see [`crate::identities::meta`]) — created fresh per use, never interned
+//! (DESIGN: ordinary source nodes are not deduped); equality anywhere compares
+//! *pointees*. A pointer *value* is an ordinary 8-byte scalar (the address in
+//! the i64 bit-container), so variables, parameters, record fields, and the
+//! compiled ABI all carry pointers through the existing width machinery. A
+//! dereference is `{logos: deref, value: [ptr-expr, pointee-logos, offset-node]}` —
+//! the offset folds `p@.x` field access into the same node — and a store-through
+//! is `{logos: storeptr, value: [ptr-expr, rhs, pointee-logos, offset-node]}`, built
+//! by `=` at parse time. Deferred, deliberately: pointer arithmetic and
+//! null-safety beyond the literal-argument seam. Heap allocation now exists —
+//! `alloc`/`free` in [`crate::identities::drop_model`] mint owning `@T`
+//! pointers over system-allocated storage — so a pointer no longer only ever
+//! points at parse-allocated storage.
+
+use cranelift_codegen::ir::Value;
+
+use super::callable::{self, Callables};
+use super::numtype::{self, NumType};
+use super::{commit_if_literal, meta, Cx, Operand};
+use crate::compile::{CompileError, Lowerer};
+use crate::synolon::SynolonPtr;
+use crate::id_context::IdContext;
+use crate::parse::{Assoc, CoreTypes, ParseError};
+use crate::run::{RunError, Runtime};
+use crate::store::Store;
+
+/// Register the pointer machinery: the `@` and `&` tokens (driver-dispatched),
+/// and the `deref` and `storeptr` identities with their native leaves and
+/// lowerings — those two have no spelling; the parser builds deref nodes from
+/// postfix `@` and storeptr nodes from `=` over a deref. Returns the two
+/// identities and their leaves.
+pub(super) fn register(
+    cx: &mut Cx,
+    cs: &Callables,
+) -> (SynolonPtr, SynolonPtr, SynolonPtr, SynolonPtr, SynolonPtr, SynolonPtr, SynolonPtr) {
+    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::INFINITY);
+    let at = cx.store.alloc_raw(cx.type_, record);
+    cx.trie.insert("@", IdContext::new(at, cx.root_scope));
+    // `@`'s constructor reads its own left context (the model's tape[-1]): a
+    // completed synolon makes it a postfix deref, none makes it the pointer-logos
+    // prefix.
+    cx.metas.insert(at, |p, _id, tape| {
+        // The model's `tape[-1]`: a completed operand makes `@` a postfix
+        // deref (the left consumed), none makes it the pointer-logos prefix.
+        match p.left_operand(tape)? {
+            Some(left) => {
+                // SAFETY: `left` is a reduced synolon off the tape.
+                let node = unsafe { p.build_deref(left) }?;
+                tape.remove(-1); // the consumed left
+                tape.place(node);
+            }
+            None => {
+                let node = p.parse_pointer_type()?;
+                tape.place(node);
+            }
+        }
+        Ok(crate::parse::Constructed::Placed)
+    });
+
+    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN);
+    let amp = cx.store.alloc_raw(cx.type_, record);
+    cx.trie.insert("&", IdContext::new(amp, cx.root_scope));
+    cx.metas.insert(amp, |p, _id, tape| {
+        let node = p.parse_address_of()?;
+        tape.place(node);
+        Ok(crate::parse::Constructed::Placed)
+    });
+
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        f64::NAN,
+        Assoc::Left,
+        &["pointer", "pointee", "offset", "op"],
+    );
+    let deref = cx.store.alloc_raw(cx.type_, record);
+    cx.lower.insert(deref, lower_deref);
+    let deref_leaf = callable::mint_native(cx.store, cs.callable, run_deref, cs.seed_native);
+
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        f64::NAN,
+        Assoc::Left,
+        &["pointer", "value", "pointee", "offset", "op"],
+    );
+    let storeptr = cx.store.alloc_raw(cx.type_, record);
+    cx.lower.insert(storeptr, lower_storeptr);
+    let storeptr_leaf =
+        callable::mint_native(cx.store, cs.callable, run_storeptr, cs.seed_native);
+
+    // `addr` (prefix `&`): no spelling of its own beyond the `&` token; the
+    // parser builds these from `parse_address_of`. `[place, pointee, op]`.
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        f64::NAN,
+        Assoc::Left,
+        &["place", "pointee", "op"],
+    );
+    let addr = cx.store.alloc_raw(cx.type_, record);
+    cx.lower.insert(addr, lower_addr);
+    let addr_leaf = callable::mint_native(cx.store, cs.callable, run_addr, cs.seed_native);
+
+    (deref, storeptr, addr, deref_leaf, storeptr_leaf, addr_leaf, at)
+}
+
+/// Build an address-of node `{logos: addr, value: [place, pointee, op]}` over a
+/// storage-backed `place` (a variable, a record field, a pointer variable). The
+/// pointee is the place's logos. Unlike a baked pointer *literal*, this node
+/// resolves the address at run/lower time through `place_addr`, so a
+/// frame-relative local yields a *per-activation* address — `&x` inside a
+/// recursive function is a different address on each call, exactly like C.
+///
+/// # Safety
+/// `place` must be a storage-backed place node from the store.
+pub(crate) unsafe fn build_addr(store: &mut Store, types: &CoreTypes, place: SynolonPtr) -> SynolonPtr {
+    let pointee = (*place).logos;
+    let value = store.alloc_operands(&[place, pointee, types.ops.addr_]);
+    store.alloc_raw(types.addr_, value)
+}
+
+/// Run an address-of: the current machine address of its place — an absolute
+/// pointer for a global, `activation_base + offset` for a frame-relative local
+/// of the call in progress.
+fn run_addr(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an addr node; its first operand is a place.
+    unsafe {
+        let place = *((*node).hyle as *const SynolonPtr);
+        Ok(rt.place_addr(place).ok_or(RunError::BadValue)? as i64)
+    }
+}
+
+/// Lower an address-of: the place's address as an SSA value — a baked `iconst`
+/// for a global, a frame `stack_addr` for a local.
+fn lower_addr(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
+    // SAFETY: `node` is an addr node; its first operand is a place.
+    unsafe {
+        let place = *((*node).hyle as *const SynolonPtr);
+        Ok(lw.place_addr(place))
+    }
+}
+
+/// Build a pointer logos node `@pointee`: `{logos: logos, value -> record}`, the
+/// record [`ADDR_TAG`]-kinded with the pointee as its payload. Fresh per use;
+/// compare pointees, not nodes.
+pub(crate) fn make_pointer_type(store: &mut Store, type_: SynolonPtr, pointee: SynolonPtr) -> SynolonPtr {
+    let value = super::meta::pointer_record(store, pointee);
+    store.alloc_raw(type_, value)
+}
+
+/// Build an *owning* pointer logos node `@pointee` — the same `ADDR_TAG` record
+/// as [`make_pointer_type`], but with `destructor` filled (the drop model's
+/// teardown leaf). This is what `alloc` mints for its result: an ordinary `@T`
+/// whose logos carries a non-null destructor, so `drop`/`own` recognize
+/// owning-ness by reading the slot while a `&x` borrow's pointer stays droppable
+/// by no one (DESIGN ›Explicit heap‹: ownership rides the node `alloc` built,
+/// not `@T` in general). Fresh per use, like every pointer logos.
+///
+/// # Safety
+/// `destructor` must be a callable leaf running the owning pointer's teardown.
+pub(crate) unsafe fn make_owning_pointer_type(
+    store: &mut Store,
+    type_: SynolonPtr,
+    pointee: SynolonPtr,
+    destructor: SynolonPtr,
+) -> SynolonPtr {
+    let value = super::meta::pointer_record(store, pointee);
+    let node = store.alloc_raw(type_, value);
+    super::meta::install_destructor(node, destructor);
+    node
+}
+
+/// Build a dereference node `{logos: deref, value: [ptr-expr, pointee, offset]}`,
+/// the offset carried as a committed u64 literal node so the graph stays
+/// self-describing.
+pub(crate) fn build_deref(
+    store: &mut Store,
+    types: &CoreTypes,
+    ptr_expr: SynolonPtr,
+    pointee: SynolonPtr,
+    offset: usize,
+) -> SynolonPtr {
+    let off_bytes = store.alloc_bytes(&(offset as u64).to_ne_bytes());
+    let off_node = store.alloc_raw(types.numtypes[NumType::U64 as usize], off_bytes);
+    let value = store.alloc_operands(&[ptr_expr, pointee, off_node, types.ops.deref_]);
+    store.alloc_raw(types.deref_, value)
+}
+
+/// The `(ptr-expr, pointee, offset)` of a deref node.
+///
+/// # Safety
+/// `node` must be a deref node as [`build_deref`] lays it out.
+pub(crate) unsafe fn deref_parts(node: SynolonPtr) -> (SynolonPtr, SynolonPtr, u64) {
+    let p = (*node).hyle as *const SynolonPtr;
+    let off = std::ptr::read_unaligned((**p.add(2)).hyle as *const u64);
+    (*p, *p.add(1), off)
+}
+
+/// Build a store-through from `=` over a deref lhs: the pointee must be a
+/// scalar place (numeric or pointer — a whole record cannot be stored,
+/// [`ParseError::BadAssignTarget`]); a literal rhs commits to a numeric pointee
+/// and is rejected for a pointer pointee (it would become a wild address).
+///
+/// # Safety
+/// `deref` must be a deref node; `rhs` a reduced synolon, both from the store.
+pub(crate) unsafe fn build_storeptr(
+    store: &mut Store,
+    types: &CoreTypes,
+    deref: SynolonPtr,
+    rhs: SynolonPtr,
+) -> Result<SynolonPtr, ParseError> {
+    let (ptr_expr, pointee, _) = deref_parts(deref);
+    let off_node = *(((*deref).hyle as *const SynolonPtr).add(2));
+    let pointer_pointee = numtype::is_pointer_type(pointee);
+    if !pointer_pointee && !super::is_numtype_node(types, pointee) {
+        return Err(ParseError::BadAssignTarget);
+    }
+    let rhs = if (*rhs).logos == types.rational {
+        if pointer_pointee {
+            return Err(ParseError::TypeMismatch);
+        }
+        let nt = numtype::of_type_node(pointee);
+        commit_if_literal(store, rhs, &Operand::Literal, pointee, nt)?
+    } else {
+        // A non-literal rhs must already be the pointee's logos — no implicit
+        // coercion ([`super::check_store_type`]).
+        super::check_store_type(types, pointee, rhs)?;
+        rhs
+    };
+    let value = store.alloc_operands(&[ptr_expr, rhs, pointee, off_node, types.ops.storeptr_]);
+    Ok(store.alloc_raw(types.storeptr_, value))
+}
+
+/// Run a deref: evaluate the pointer, add the offset, read the pointee's scalar
+/// at that address. A record pointee has no whole-value read (fields go through
+/// `p@.x`), reported as a clean `BadValue`.
+fn run_deref(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a deref node; its parts are valid synolons.
+    unsafe {
+        let (ptr_expr, pointee, off) = deref_parts(node);
+        if !numtype::is_scalar_place_type(pointee) {
+            return Err(RunError::BadValue);
+        }
+        let addr = (rt.run(ptr_expr)? as u64).wrapping_add(off) as *const u8;
+        Ok(numtype::read_scalar(pointee, addr))
+    }
+}
+
+/// Run a store-through: evaluate the rhs and the pointer, write the pointee's
+/// scalar at address + offset; yields the stored value, like `=`.
+fn run_storeptr(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a storeptr node as [`build_storeptr`] lays it out.
+    unsafe {
+        let p = (*node).hyle as *const SynolonPtr;
+        let (ptr_expr, rhs, pointee) = (*p, *p.add(1), *p.add(2));
+        let off = std::ptr::read_unaligned((**p.add(3)).hyle as *const u64);
+        let bits = rt.run(rhs)?;
+        let addr = (rt.run(ptr_expr)? as u64).wrapping_add(off) as *mut u8;
+        numtype::write_scalar(pointee, addr, bits);
+        Ok(bits)
+    }
+}
+
+/// Lower a deref: the pointer lowers to its i64 address, the pointee loads
+/// through it at the folded offset.
+fn lower_deref(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
+    // SAFETY: `node` is a deref node; its parts are valid synolons.
+    unsafe {
+        let (ptr_expr, pointee, off) = deref_parts(node);
+        if !numtype::is_scalar_place_type(pointee) {
+            return Err(CompileError::BadValue);
+        }
+        let addr = lw.lower(ptr_expr)?;
+        let ct = numtype::of_type_node(pointee).cranelift_type();
+        Ok(lw.load_at(ct, addr, off as i64))
+    }
+}
+
+/// Lower a store-through: rhs and pointer lower, the pointee stores through the
+/// address at the folded offset; yields the stored value.
+fn lower_storeptr(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
+    // SAFETY: `node` is a storeptr node as [`build_storeptr`] lays it out.
+    unsafe {
+        let p = (*node).hyle as *const SynolonPtr;
+        let (ptr_expr, rhs, pointee) = (*p, *p.add(1), *p.add(2));
+        let off = std::ptr::read_unaligned((**p.add(3)).hyle as *const u64);
+        let v = lw.lower(rhs)?;
+        let addr = lw.lower(ptr_expr)?;
+        let ct = numtype::of_type_node(pointee).cranelift_type();
+        lw.store_at(ct, addr, off as i64, v);
+        Ok(v)
+    }
+}
