@@ -44,6 +44,23 @@ The same loop, written the obvious way in each language, measured on one core of
 
 Reading the table: interpreted Logos sits in CPython's class (slightly ahead on this loop) while staying a graph walk over fully reflectable structure, and one `.compile()` call puts the same function within about 1.5x of Rust's scalar code and 3x of vectorized C. The remaining gap to Rust is loop shape (Cranelift does not yet rotate loops) and the gap to C is vectorization: both are backend work, not language overhead. Absolute numbers vary with hardware; the ratios are the point.
 
+## Releasing
+
+Pushing a `vX.Y.Z` tag to `main` builds the per-OS/arch archives, creates the GitHub Release, and freezes `docs/vX.Y.Z/`.
+
+**A version tag is a one-way door.** The `freeze-release-tags` ruleset blocks deletion *and* update on every `refs/tags/v*`, so a tag cannot be moved or removed once pushed. If the release workflow fails after the tag lands, that version number is spent: the tag stays pinned to the broken commit and the next attempt must use a strictly higher version. The abandoned version's `docs/` folder is frozen too, since `docs-check.sh` refuses any change at or below the newest tag, so its replacement has to be a copy under the new version. v0.0.3 was lost this way, and v0.0.4 shipped the identical tree.
+
+So run the gates locally before tagging, never to find out whether they pass:
+
+```
+cargo test --release --manifest-path seed/Cargo.toml
+bash .github/scripts/docs-check.sh validate
+bash .github/scripts/docs-check.sh release vX.Y.Z   # the exact check the gate job runs
+bash .github/scripts/docs-check.test.sh
+```
+
+`main` is protected and takes a PR with required checks, never a direct push.
+
 ## License and credit
 
 LogosLang is free and open source under the **Apache License 2.0**. You may use, modify, build on, and redistribute it, including commercially, as long as you keep the required notices.
