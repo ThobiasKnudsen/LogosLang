@@ -274,43 +274,36 @@ d : ?
 inf := 1 / d       # an actual infinite number: / below accepts an infinitesimal divisor
 ninf := 0 - inf    # spelled as a value because - is always the binary operator
 im : ?             # the imaginary unit, for the oscillating weights
+' : ?              # per-iteration change, postfix: inside a loop over i, e' is
+                   # (e at i + step) - (e at i), so i' is the step itself (= d
+                   # here) and g' is g(i + i') - g(i). both are actual numbers
+                   # at the current i, so g'/i' is honest division and equals
+                   # the slope of g at that position; a new slope each pass is
+                   # what makes the derivative a function. a bare x' outside
+                   # any walk has no step to read, which is why classical
+                   # dy/dx is meaningless without its context: the loop header
+                   # IS that context
 
 # ---- the discrete tier: steps of 1 ----
 
 # sum of f over a..b
-sum := fn (f, a, b) -> ? (
-    total := mut ? 0
-    for i in a..b..1 (
-        total = total + f(i)
-    )
-    total
+for i in a..b..1 (
+    total = total + f(i)
 )
 
 # product of f over a..b
-product := fn (f, a, b) -> ? (
-    total := mut ? 1
-    for i in a..b..1 (
-        total = total * f(i)
-    )
-    total
+for i in a..b..1 (
+    total = total * f(i)
 )
 
 # n! is the product of i itself
-fact := fn (n) -> ? (
-    total := mut ? 1
-    for i in 1..n..1 (
-        total = total * i
-    )
-    total
+for i in 1..n..1 (
+    total = total * i
 )
 
 # a^n is the product of a constant
-pow := fn (a, n) -> ? (
-    total := mut ? 1
-    for i in 1..n..1 (
-        total = total * a
-    )
-    total
+for i in 1..n..1 (
+    total = total * a
 )
 
 # ---- the calculus tier: steps of d ----
@@ -318,12 +311,8 @@ pow := fn (a, n) -> ? (
 # multiplication is the sum of a in slices of d: a*d*(b/d) = a*b at any d.
 # the a*d in the step is the primitive infinitesimal scaling this definition
 # grounds in, not the * being defined
-* := fn (a, b) -> ? (
-    total := mut ? 0
-    for i in 0..b..d (
-        total = total + a*d
-    )
-    total
+for i in 0..b..d (
+    total = total + a*d
 )
 
 # division without dividing: walk 0..a in slices of b*d, count d per slice.
@@ -331,146 +320,85 @@ pow := fn (a, n) -> ? (
 # in the body. because d is an actual number this applies unchanged to
 # infinitesimal divisors, which is what licenses inf := 1/d above and the
 # derivative below
-/ := fn (a, b) -> ? (
-    total := mut ? 0
-    for i in 0..a..(b*d) (
-        total = total + d
-    )
-    total
+for i in 0..a..(b*d) (
+    total = total + d
 )
 
 # e^x is the product of (1 + d): (1 + d)^(x/d) -> e^x. e itself is exp(1)
-exp := fn (x) -> ? (
-    total := mut ? 1
-    for i in 0..x..d (
-        total = total * (1 + d)
-    )
-    total
+for i in 0..x..d (
+    total = total * (1 + d)
 )
 
 # ln is the integral of 1/i, walked from 1
-ln := fn (y) -> ? (
-    total := mut ? 0
-    for i in 1..y..d (
-        total = total + d/i
-    )
-    total
+for i in 1..y..d (
+    total = total + d/i
 )
 
 # pi is the area of the unit circle
-pi := (
-    total := mut ? 0
-    for i in -1..1..d (
-        total = total + 2*(1 - i*i)^0.5*d
-    )
-    total
+for i in -1..1..d (
+    total = total + 2*(1 - i*i)^0.5*d
 )
 
 # the plain integral of f over a..b: the same loop as *, with f(i) varying
-integral := fn (f, a, b) -> ? (
-    total := mut ? 0
-    for i in a..b..d (
-        total = total + f(i)*d
-    )
-    total
+for i in a..b..d (
+    total = total + f(i)*d
 )
 
 # one integration level up: weight (b - i), Cauchy's formula. weight i is
 # wrong for non-constant a: a(i) = i, b = 1 gives 1/3 where the true value
 # is 1/6
-*' := fn (a, b) -> ? (
-    total := mut ? 0
-    for i in 0..b..d (
-        total = total + a*(b - i)*d
-    )
-    total
+for i in 0..b..d (
+    total = total + a*(b - i)*d
 )
 
 # the whole tower in one loop: n nested integrals of f over 0..b. n = 1 is
 # integral, n = 2 is *'. with fact generalized to gamma, n need not be an
 # integer: fractional calculus is this same line
-integral_n := fn (f, b, n) -> ? (
-    total := mut ? 0
-    for i in 0..b..d (
-        total = total + f(i)*pow(b - i, n - 1)/fact(n - 1)*d
-    )
-    total
+for i in 0..b..d (
+    total = total + f(i)*(b-i)^(n-1)/fact(n-1)*d
 )
 
 # the derivative is division in loop form: walk the rise f(x+d) - f(x) in
 # slices of d*d, count d per slice: (f(x+d) - f(x))/d. the result carries an
 # infinitesimal tail (for x^2 it is 2x + d); exactness is d -> 0
-/' := fn (f, x) -> ? (
-    total := mut ? 0
-    for i in 0..(f(x + d) - f(x))..(d*d) (
-        total = total + d
-    )
-    total
-)
-
-# the second derivative: the rise of the rise, in slices of d*d*d
-/'' := fn (f, x) -> ? (
-    total := mut ? 0
-    for i in 0..(f(x + d) - 2*f(x) + f(x - d))..(d*d*d) (
-        total = total + d
-    )
-    total
+for i in 0..(f(x + d) - f(x))..(d*d) (
+    total = total + d
 )
 
 # ---- one loop, many weights: the classical operations are the same walk
 # with a weight dropped into the step ----
 
 # expected value: the weight is a probability density
-E := fn (f, p) -> ? (
-    total := mut ? 0
-    for i in ninf..inf..d (
-        total = total + f(i)*p(i)*d
-    )
-    total
+for i in ninf..inf..d (
+    total = total + f(i)*p(i)*d
 )
 
 # fourier transform: the weight is an oscillation
-fourier := fn (f, w) -> ? (
-    total := mut ? 0
-    for i in ninf..inf..d (
-        total = total + f(i)*exp(0 - im*w*i)*d
-    )
-    total
+for i in ninf..inf..d (
+    total = total + f(i)*exp(0 - im*w*i)*d
 )
 
 # laplace transform: the weight is a decay
-laplace := fn (f, s) -> ? (
-    total := mut ? 0
-    for i in 0..inf..d (
-        total = total + f(i)*exp(0 - s*i)*d
-    )
-    total
+for i in 0..inf..d (
+    total = total + f(i)*exp(0 - s*i)*d
 )
 
 # integration by substitution, the stieltjes integral: the weight is another
-# function's rate. f * g' * x' written out
-stieltjes := fn (f, g, a, b) -> ? (
-    total := mut ? 0
-    for i in a..b..d (
-        total = total + f(g(i)) * /'(g, i) * d
-    )
-    total
+# function's rate. numerator prime: g'/i' divides the CHANGE of g by the
+# change of i (the value g(i)/d would be an infinite number, not a slope).
+# since (g'/i')*d = g', this step equals f(g(i))*g': summing f against the
+# changes of g, which is the stieltjes integral verbatim
+for i in a..b..d (
+    total = total + f(g(i)) * (g'/i') * d
 )
 
 # convolution: the weight is the other function, mirrored and shifted
-convolve := fn (f, g, x) -> ? (
-    total := mut ? 0
-    for i in ninf..inf..d (
-        total = total + f(i)*g(x - i)*d
-    )
-    total
+for i in ninf..inf..d (
+    total = total + f(i)*g(x - i)*d
 )
 
-# arc length of f over a..b: compose the derivative into the step
-arclen := fn (f, a, b) -> ? (
-    total := mut ? 0
-    for i in a..b..d (
-        total = total + (1 + /'(f, i)^2)^0.5*d
-    )
-    total
+# arc length of f over a..b: compose the derivative into the step. this one
+# cannot collapse like stieltjes because the ratio is squared before use
+for i in a..b..d (
+    total = total + (1 + (f'/i')^2)^0.5*d
 )
