@@ -402,3 +402,60 @@ for i in ninf..inf..d (
 for i in a..b..d (
     total = total + (1 + (f'/i')^2)^0.5*d
 )
+
+# ---- several variables: the same walks, through a space instead of along a
+# line. a position p has coordinates; e(k) is the unit step along axis k; on
+# any walk, every expression still has its per-iteration change ' ----
+
+# df needs no new definition: it IS the postfix ' applied to f on a walk
+# through several coordinates, f' = f(next position) - f(here). that it is
+# the linear map describing the surface locally is a theorem, not a
+# definition: f' = (∂f/∂x)*x' + (∂f/∂y)*y' plus an infinitesimal tail, same
+# coefficients whatever step you choose. summing it telescopes exactly,
+# total = f(end) - f(start) whatever path the walk takes: df integrates up
+# globally, which is precisely what δQ below cannot do
+for t in 0..1..d (
+    total = total + f'
+)
+
+# ∂f/∂x is one coefficient of that map: f'/x' on a walk where ONLY x moves
+# (y' = 0, y held). the same division-in-loop-form as the derivative above,
+# with the other coordinates frozen
+for i in 0..(f(x + d, y) - f(x, y))..(d*d) (
+    total = total + d
+)
+
+# ∇f is the same map written as a vector: one coefficient per axis. here the
+# walk is over the AXES, a discrete loop, each pass freezing all axes but k.
+# why it points steepest: on any walk f' is the dot of ∇f with the step
+# vector (df = ∇f · dp), so f' is largest when the step follows ∇f and zero
+# when it runs perpendicular to it (walking a level curve)
+total := []
+for k in 1..n..1 (
+    total = total + [(f(p + d*e(k)) - f(p)) / d]
+)
+
+# ∇_mu is the map when the axes themselves change along the walk (curved
+# space, or curved coordinates on flat space). a vector field's raw change
+# mixes two things: the field really changing, and the axes turning under
+# it. G(c, mu, k) is the axes' own per-step change (how much of unit axis k
+# leaks into direction c when stepping along mu; read off the axes' own
+# primes), so the honest derivative starts from the flat partial and walks
+# the axes adding the correction back. in flat straight coordinates G = 0
+# everywhere and this collapses to ∂/∂x_mu
+total := (v(c, p + d*e(mu)) - v(c, p)) / d
+for k in 1..n..1 (
+    total = total + G(c, mu, k) * v(k, p)
+)
+
+# δQ is a per-step charge with NO function behind it: each step pays
+# qx(x,y)*x' + qy(x,y)*y', but no Q exists whose prime that is. that would
+# need qx and qy to be one function's two partials, the integrability
+# condition ∂qx/∂y = ∂qy/∂x, and they are not. the sum is still real, but
+# it belongs to the WALK, not to the endpoints: two paths between the same
+# points total differently. this is why heat is written δQ and never dQ:
+# there is no heat-content function whose change each step reports, only
+# the payments themselves
+for t in 0..1..d (
+    total = total + qx(x(t), y(t))*x' + qy(x(t), y(t))*y'
+)
