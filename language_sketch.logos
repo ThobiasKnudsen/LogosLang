@@ -257,3 +257,65 @@ a = a + 1
         op:@synolon -> store_i32                     # the resolved store at the target's width
     }
 }
+
+# the infinitesimal-calculus family: *, *', /, /' (sketching the operator
+# identities declared above). d is an infinitesimal: an actual number, greater
+# than 0 and smaller than every machine-representable number. nothing that still
+# contains d lowers to machine code, by the ordinary lowering rule (an operation
+# over a sizeless logos does not lower until resolved), so a build holding a d
+# is symbolic by construction. two ways out: replace d with a small machine
+# number (f64 1e-9) for approximation, or let the proof layer take d -> 0 for
+# the exact value.
+d : ?
+
+# multiplication IS single integration: walk from 0 toward b in slices of d,
+# accumulating a per slice. the range is directed and d is signed with the
+# direction of travel, which is what makes a negative b come out negative
+# (orientation). for constant a the d cancels exactly: a*d*(b/d) = a*b at any
+# d. for a varying a(i) this same body is the integral of a over 0..b. the a*d
+# inside the body is the primitive infinitesimal scaling this definition
+# grounds in, not the * being defined.
+* := fn (a, b) -> ? (
+    sum := mut ? 0
+    for i in 0..b..d (
+        sum = sum + a*d
+    )
+    sum
+)
+
+# one integration level up. the weight is (b - i), not i: weight i agrees only
+# for constant a (both give a*b^2/2), and for a(i) = i, b = 1 it gives 1/3
+# where the true double integral is 1/6. weight (b - i) is Cauchy's formula
+# for repeated integration, and it makes the whole tower one loop: level n
+# uses weight (b - i)^(n-1) / (n-1)!.
+*' := fn (a, b) -> ? (
+    sum := mut ? 0
+    for i in 0..b..d (
+        sum = sum + a*(b - i)*d
+    )
+    sum
+)
+
+# division without dividing: walk from 0 toward a in slices of b*d,
+# accumulating d per slice. the slice count is a/(b*d) and each slice
+# contributes d, so the sum is a/b with no / in the body: the inverse of * by
+# construction rather than by fiat. the step b*d is signed to travel toward a,
+# so d's sign follows and the sum carries the sign of a/b. because d is an
+# actual number, this definition applies unchanged when the divisor is itself
+# infinitesimal, which is what licenses /' below.
+/ := fn (a, b) -> ? (
+    sum := mut ? 0
+    for i in 0..a..(b*d) (
+        sum = sum + d
+    )
+    sum
+)
+
+# the derivative: the one member of the family that is not a weighted sum but
+# the small-step quotient. a must vary for a rate to exist, so here a is a
+# function and /' of a constant is 0. the result carries an infinitesimal tail
+# (for a(x) = x^2 it is 2*b + d); the exact derivative is the proof layer
+# taking d -> 0, the same step that makes *' exact.
+/' := fn (a, b) -> ? (
+    (a(b + d) - a(b)) / d
+)
