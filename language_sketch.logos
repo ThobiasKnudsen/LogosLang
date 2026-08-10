@@ -458,25 +458,55 @@ for t in 0..1..d (
 Englogos (
     # tense is a stack of reference points; the root of the stack is now, the speech time
     la # push a past of the current point
-    o  # push a point simultaneous with the current point
     il # push a future of the current point
-    sa # reset the stack to the root
-    se # pop one point for the rest of the sentence
-    su # pop one point for this word only
+    o  # reset the stack to the root, permanently: a keyframe. a reader joining
+       # mid-stream resyncs at the next o, and a corrupted marker damages at
+       # most the span up to the next o
+    so # reset to the root for this word only, then the stack restores
+    sa # pop one point for the rest of the sentence
+    se # pop one point for this word only
     # markers compound sequentially, read left to right: illa = a past of a future,
     # and each verb marks only its offset from the previous verb's point
-    # a bare verb is underspecified in time; a quantifier like «in all time» binds it
+    # a bare verb is at the current stack top; a quantifier like «in all time» binds it
+    # ? is the unknown time, spoken «que»: «the time ois ?» asks what time it is
+    # when P = P will hold, time unknown; if P = P may never hold; neither moves the stack
     be # assigns or creates; directional, never symmetric
     is # affirms or checks; identity affirmed with is is symmetric
 )
 
 Englogos (
-    # the stack over a whole sentence: su pops for one word only, so a mid-sentence
-    # word can visit another time and return
-    she illawish she susuosay it if she oget dementia.
-    # illawish   [il, la]      wish at a past of a future: will have wished
-    # susuosay   [o]           pop twice for this word, say at the root: said it now
-    # oget       [il, la, o]   the su's restored the stack: dementia at the wish-time
+    # the stack over a whole sentence: so resets for one word only, so a mid-sentence
+    # word can speak from now and return
+    she illawish she sosay it if she get dementia.
+    # illawish   [il, la]   wish at a past of a future: will have wished
+    # sosay      []         reset for this word only, say at the root: said it now
+    # get        [il, la]   the stack restored: dementia at the wish-time
+)
+
+Englogos (
+    # a question with tense: ? spoken is «que»; often is a frequency quantifier
+    # centered on the current stack point, so habit needs no new mechanism
+    the time lailis que when the dog eat before the cat illaeat, because the dog often eat.
+    # lailis     [P1, F1]           at what future-of-a-past time?
+    # eat        [P1, F1]           bare: the dog eats at that asked time
+    # illaeat    [P1, F1, F2, P2]   the cat will have eaten; «before» pins the order
+    # often eat  around P2          the dog often eats around then
+)
+
+Englogos (
+    # the perfect: vantage now, event before it; whether it still holds is said, never implied
+    at I ois lalive here for 10 years, and I olive here.       # and still do
+    at I ois lalive here for 10 years, but I olive here not.   # and no longer do
+)
+
+Englogos (
+    # not scopes over everything after it; focus falls on the word right after.
+    # with names, position moves only the evoked alternative, never true/false;
+    # with quantifier words, position is scope and does change true/false
+    not she get dementia.     # someone else will
+    she get not dementia.     # she gets something else
+    the dog not often eat.    # rarely eats
+    the dog often not eat.    # often skips eating
 )
 
 Englogos (
