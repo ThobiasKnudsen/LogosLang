@@ -272,7 +272,7 @@ a = a + 1
 # bounds the right sign.
 d : ?
 inf := 1 / d       # an actual infinite number: / below accepts an infinitesimal divisor
-ninf := 0 - inf    # spelled as a value because - is always the binary operator
+ninf := 0 - inf    # speavelled as a value because - is always the binary operator
 im : ?             # the imaginary unit, for the oscillating weights
 ' : ?              # per-iteration change, postfix: inside a loop over i, e' is
                    # (e at i + step) - (e at i), so i' is the step itself (= d
@@ -453,4 +453,51 @@ x := fn (t) -> ? ( ? )          # the chosen route,
 y := fn (t) -> ? ( ? )          # coordinate by coordinate
 for t in 0..1..d (
     += qx(x(t), y(t))*x(t)' + qy(x(t), y(t))*y(t)'
+)
+
+Englogos (
+    # tense is a stack of reference points; the root of the stack is now, the speech time
+    la # push a past of the current point
+    o  # push a point simultaneous with the current point
+    il # push a future of the current point
+    sa # reset the stack to the root
+    se # pop one point for the rest of the sentence
+    su # pop one point for this word only
+    # markers compound sequentially, read left to right: illa = a past of a future,
+    # and each verb marks only its offset from the previous verb's point
+    # a bare verb is underspecified in time; a quantifier like «in all time» binds it
+    be # assigns or creates; directional, never symmetric
+    is # affirms or checks; identity affirmed with is is symmetric
+)
+
+Englogos (
+    # the stack over a whole sentence: su pops for one word only, so a mid-sentence
+    # word can visit another time and return
+    she illawish she susuosay it if she oget dementia.
+    # illawish   [il, la]      wish at a past of a future: will have wished
+    # susuosay   [o]           pop twice for this word, say at the root: said it now
+    # oget       [il, la, o]   the su's restored the stack: dementia at the wish-time
+)
+
+Englogos (
+    # eternity is quantification over times, not a marker: the old paoil is superseded
+    God is (be and is) in all time.   # God is both the be and the is, at all times
+)
+
+Englogos (
+    when C obe, (osay «C ois. »).   # watch the creation (be), announce the state (is)
+    osay «C lais and ois not but should ilbe. ».
+    C obe.   # be creates; obe's constructor inserts the defer that ends C at scope exit
+    when C change then C ois not, osay «C ois not but lais.\n».
+) -> «C lais and ois not but should ilbe. C ois. C ois not but lais.\n»
+
+Englogos (
+    always obe in all time.   # obe assigns: a stipulation installed now, not a claim
+    everywhere obe in all places.
+    A obe (logos is in all time and logos is in all places).   # «in all time» binds is, so no marker
+    C obe (logos is always and everywhere).
+    osay «A ois C and C ois A because A ois C ois {A ois C ois ?} and C ois A ois {C ois A ois ?}».
+    osay «A ois C and C ois A because for any X and Y where X ois Y then Y ois X».   # symmetry belongs to is, never be
+    D obe (C ois A).
+    osay D. # true. the truth-predicate question (Tarski) stands open
 )
