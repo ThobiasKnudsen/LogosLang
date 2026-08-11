@@ -468,10 +468,18 @@ Englogos (
     # markers compound sequentially, read left to right: illa = a past of a future,
     # and each verb marks only its offset from the previous verb's point
     # a bare verb is at the current stack top; a quantifier like «in all time» binds it
-    # ? is the unknown time, spoken «que»: «the time ois ?» asks what time it is
+    # ? is the unknown, spoken «que»; it asks whatever slot it fills: a time («when que»),
+    # a thing, a person, or, as the argument of is, the truth of a clause
     # when P = P will hold, time unknown; if P = P may never hold; neither moves the stack
-    be # assigns or creates; directional, never symmetric
-    is # affirms or checks; identity affirmed with is is symmetric
+    # «.» resets nothing: the stack persists across sentences, only o resyncs. o is a
+    # one-way door: keyframe when done with the points below, mid-sentence use so/se
+    # roots never inflect: the marker carries the tense, laleave and never laleft
+    be     # assigns or creates; directional, never symmetric
+    is     # affirms or checks; identity affirmed with is is symmetric
+    # V-ing names the in-progress state and is affirms it: states never entail completion
+    must   # necessity: obligation always met; must is to should as always is to often
+    should # expectation: obligation often unmet
+    almost # proximative: underway or imminent, and did not happen
 )
 
 Englogos (
@@ -530,4 +538,48 @@ Englogos (
     osay «A ois C and C ois A because for any X and Y where X ois Y then Y ois X».   # symmetry belongs to is, never be
     D obe (C ois A).
     osay D. # true. the truth-predicate question (Tarski) stands open
+)
+
+Englogos (
+    # que asks the slot it fills, any slot, not only time
+    she laleave ois que.    # did she leave? the clause is checked now, answer unknown
+    she laeat que.          # what did she eat?
+    que laleave.            # who left?
+    she lalearn it when que, and he lado it when que.
+    # lalearn  [la]         when did she learn it?
+    # lado     [la, la]     and when, before the learning, had he done it?
+    # the second verb rides the first one's stack: the before is carried, not restated
+)
+
+Englogos (
+    # the stack persists across sentences: «.» resets nothing, only o resyncs
+    she olaarrive at dawn. he laleave.
+    # olaarrive  [la]       her arrival, a fresh past
+    # laleave    [la, la]   his leaving rides the arrival point: he had left before dawn
+    # mid-sentence the temporary ops preserve the chain where o would burn it:
+    she lathink he lapromise he ilcome, but he not socome, and she sesedoubt it.
+    # lathink    [la]
+    # lapromise  [la, la]
+    # ilcome     [la, la, il]
+    # socome     []          this word only: he has not come as of now
+    # sesedoubt  [la]        pop two, this word only: the doubt sat at the thinking-time
+)
+
+Englogos (
+    # V-ing names the in-progress state and is affirms it: a state never entails completion
+    he lais crossing the street when the car hit him, but he not cross it.
+    # lais crossing  [la]    the crossing was underway then
+    # hit            [la]    at that same point
+    # not cross      [la]    and no completed crossing at that point. «never» still wants a word
+    he must lais lying.      # necessity now about a past state: he must have been lying
+    he almost lafall.        # the fall was underway or imminent, and did not happen
+)
+
+Englogos (
+    # quoted markers are text, data per the hosting ruling: the outer clause carries the fact
+    he lasay «I ilcome», but he olacome not.
+    # possession is location: the ears at him, at doing the deleted hav's work
+    ears at him turn red when he lie.
+    # open: this when is generic, every lie-time; the ruled when is episodic, one unknown time
+    # open: trailing not here and in the perfect pair vs the ruled rightward scope
 )
