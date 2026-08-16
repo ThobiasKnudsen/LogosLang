@@ -6,9 +6,12 @@ A self-hosting systems language where the compiler, types, proofs, and syntax al
 Builds for macOS, Linux, and Windows are on the [downloads page](https://logoslang.dev/download/) and on [the releases page](https://github.com/ThobiasKnudsen/LogosLang/releases). Each archive unpacks to a `bin/logos` that runs in place; there is nothing to install and there are no build flags.
 
 ```
-logos file.logos    # run a file top to bottom (no main)
-logos               # start the REPL
+logos import ./file.logos                  # run a file top to bottom (no main)
+logos 'import ./file.logos, main(«hi»)'    # …and call one of its pub names
+logos                                      # start the REPL
 ```
+
+Everything after `logos` is one line of Logos source, run by the one pass. `import` loads a file — it runs top to bottom, and the importer reaches only its `pub` names.
 
 This is the bootstrap seed: it parses source into the Logic Graph, interprets it, and lowers explicitly compiled functions to Cranelift. It is not the finished language. [What this release does and does not run](https://logoslang.dev/docs/getting-started/install/) is listed in the docs, alongside the borrow checker, proof layer, rewriting engine, and standard library, which are specified and not yet built.
 

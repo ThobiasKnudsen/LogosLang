@@ -85,6 +85,9 @@ pub struct OpLeaves {
     pub(crate) drop_: SynolonPtr,
     /// `defer`'s in-place native — a no-op; the scope machinery runs the inner.
     pub(crate) defer_: SynolonPtr,
+    /// `import`'s native (#58): re-yield the imported file's tail value — the
+    /// load itself ran in the pass, once per run.
+    pub(crate) import_: SynolonPtr,
 }
 
 impl OpLeaves {
@@ -252,6 +255,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
         own_: std::ptr::null_mut(),
         drop_: std::ptr::null_mut(),
         defer_: std::ptr::null_mut(),
+        import_: std::ptr::null_mut(),
     }
 }
 

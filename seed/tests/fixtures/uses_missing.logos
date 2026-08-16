@@ -1,0 +1,2 @@
+# fresh view: `x` may exist at the import site, but this file cannot see it
+y := x + 1

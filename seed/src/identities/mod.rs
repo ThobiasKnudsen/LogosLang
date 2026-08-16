@@ -80,6 +80,7 @@ pub(crate) mod declare;
 mod divide;
 pub(crate) mod drop_model;
 mod gate;
+pub mod import;
 pub(crate) mod instance;
 pub(crate) mod pointer;
 mod eq;
@@ -198,6 +199,9 @@ pub struct Core {
     /// `pub`, the first gate identity (#33): a prefix word whose constructor
     /// fills the declare node's gate slot.
     pub pub_: SynolonPtr,
+    /// `import`, the one identity that loads a file (#58): its node is the
+    /// reflectable trace of the load; running it re-yields the file's tail.
+    pub import_: SynolonPtr,
     /// `array` (of `synolon@`), the seed's first array form: a sequence's
     /// expression list lives behind one of these, never inline in the node.
     pub array_: SynolonPtr,
@@ -376,6 +380,10 @@ impl Core {
         // `pub` (#33): the first gate — a prefix word over a declaration whose
         // constructor fills the declare node's gate slot.
         let pub_ = gate::register(&mut cx);
+        // `import` (#58): the one identity that loads a file. The load runs in
+        // the pass, once per run, over a DAG (ruled August 2026).
+        let (import_, import_leaf) = import::register(&mut cx, &callables);
+        op_leaves.import_ = import_leaf;
         let (colon_, sep_) = logos_mod::register_syntax(&mut cx);
         // Struct instances: the construction statement and the `.` field access.
         let (construct_, construct_leaf, dot_) = instance::register(&mut cx, &callables);
@@ -468,6 +476,7 @@ impl Core {
             free_,
             defer_,
             pub_,
+            import_,
             callable_: callables.callable,
             convention_: callables.convention,
             conv_seed_native: callables.seed_native,
@@ -514,6 +523,7 @@ impl Core {
             free_: self.free_,
             defer_: self.defer_,
             pub_: self.pub_,
+            import_: self.import_,
             construct_: self.construct_,
             string_: self.string_,
             comment_: self.comment_,

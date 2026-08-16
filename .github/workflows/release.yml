@@ -179,7 +179,7 @@ jobs:
           # Apache-2.0 section 4 requires these to travel with the binary.
           cp LICENSE NOTICE TRADEMARK.md "$STAGE/"
           cp -r seed/examples "$STAGE/examples"
-          printf 'Logos %s (%s/%s)\n\nRun a file:  bin/logos examples/answer.logos\nREPL:        bin/logos\nHelp:        bin/logos --help\n\nThis is the bootstrap seed: it parses source into the Logic Graph,\ninterprets it, and lowers explicitly compiled functions to Cranelift.\nIt is not the finished language. What this release does and does not\nrun is listed at https://logoslang.dev/docs/getting-started/install/\n' "$TAG" "$OS" "$ARCH" > "$STAGE/README.txt"
+          printf 'Logos %s (%s/%s)\n\nRun a file:  bin/logos import examples/answer.logos\nREPL:        bin/logos\nHelp:        bin/logos --help\n\nEverything after `logos` is one line of Logos source, run by the one\npass; `import` loads a file, and the importer reaches only its pub\nnames.\n\nThis is the bootstrap seed: it parses source into the Logic Graph,\ninterprets it, and lowers explicitly compiled functions to Cranelift.\nIt is not the finished language. What this release does and does not\nrun is listed at https://logoslang.dev/docs/getting-started/install/\n' "$TAG" "$OS" "$ARCH" > "$STAGE/README.txt"
           echo "STAGE=$STAGE" >> "$GITHUB_ENV"
 
       - name: Package (tar.gz)

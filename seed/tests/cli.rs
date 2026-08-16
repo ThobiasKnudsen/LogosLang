@@ -15,26 +15,30 @@ fn logos() -> Command {
 }
 
 #[test]
-fn runs_a_file_top_to_bottom_and_prints_its_value() {
-    let out = logos().arg("examples/answer.logos").output().unwrap();
+fn an_import_runs_the_file_and_prints_its_tail() {
+    // #58: the command line is Logos source — `logos import ./file.logos`
+    // runs the file top to bottom, and the line's value is the file's tail.
+    let out = logos().args(["import", "examples/answer.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
 }
 
 #[test]
 fn the_drop_model_runs_at_file_scope() {
-    // The drop model (issue #49) through the real file driver: a top-level
-    // `alloc`, an `own` move, and a block whose own alloc frees at its exit.
-    // The file driver drains the top level's teardowns at program exit, so the
-    // program prints its tail value (42) and exits clean — no leak, no crash.
-    let out = logos().arg("tests/fixtures/heap.logos").output().unwrap();
+    // The drop model (issue #49) through the real driver: a top-level `alloc`,
+    // an `own` move, and a block whose own alloc frees at its exit. The driver
+    // drains the top level's teardowns at program exit, so the program prints
+    // its tail value (42) and exits clean — no leak, no crash.
+    let out = logos().args(["import", "tests/fixtures/heap.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
 }
 
 #[test]
 fn a_parse_error_renders_clickable_with_a_caret() {
-    let out = logos().arg("tests/fixtures/unknown_name.logos").output().unwrap();
+    // The inner report keeps the imported file's own coordinates and caret,
+    // wrapped in the import-failed frame.
+    let out = logos().args(["import", "tests/fixtures/unknown_name.logos"]).output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("unknown_name.logos:2:5: error: unknown name"), "stderr: {err}");
@@ -44,9 +48,103 @@ fn a_parse_error_renders_clickable_with_a_caret() {
 
 #[test]
 fn an_unreadable_path_fails_cleanly() {
-    let out = logos().arg("tests/fixtures/no_such_file.logos").output().unwrap();
+    let out = logos().args(["import", "tests/fixtures/no_such_file.logos"]).output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("cannot read"));
+}
+
+#[test]
+fn an_import_exposes_pub_and_hides_private() {
+    // Pub-only exposure (#58 over #33): the importer reaches `pub double`,
+    // and the unmarked `helper` stays invisible — fail-closed.
+    let out = logos().arg("import tests/fixtures/lib_pub.logos, double(21)").output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
+
+    let out = logos().arg("import tests/fixtures/lib_pub.logos, helper(1)").output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("not in scope"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn importing_a_library_alone_is_silent_and_clean() {
+    // A declaration-tailed file has no value to print; the run still counts.
+    let out = logos().args(["import", "tests/fixtures/lib_pub.logos"]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(out.stdout.is_empty());
+}
+
+#[test]
+fn an_imported_file_cannot_see_the_import_site() {
+    // The fresh view (ruled August 2026): the imported scope resolves ambient
+    // names and its own imports only — never the command line's declarations.
+    let out =
+        logos().arg("x := 5, import tests/fixtures/uses_missing.logos").output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("uses_missing.logos:2:6"), "stderr: {err}");
+    assert!(err.contains("not in scope"), "stderr: {err}");
+}
+
+#[test]
+fn a_relative_import_resolves_against_the_importing_file() {
+    // outer.logos imports ./subdir/inner.logos — relative to ITS folder, not
+    // the working directory (ruled August 2026).
+    let out = logos().args(["import", "tests/fixtures/outer.logos"]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "7\n");
+}
+
+#[test]
+fn an_import_cycle_is_a_checked_error() {
+    // The import graph must be a DAG (ruled August 2026).
+    let out = logos().args(["import", "tests/fixtures/cycle_a.logos"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("cycle"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn a_repeat_import_is_idempotent() {
+    // Once per run: the second import finds the loaded file and republishing
+    // the same identities is not a shadowing error.
+    let out = logos()
+        .arg(
+            "import tests/fixtures/subdir/inner.logos, \
+             import tests/fixtures/subdir/inner.logos, inner_val + 0",
+        )
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "7\n");
+}
+
+#[test]
+fn the_repl_imports_once_per_session_and_keeps_pub_names() {
+    // The REPL threads one import registry across lines (a session is a run):
+    // the answer echoes through the import's tail, the library import is
+    // silent, and its pub fn stays callable on a later line.
+    let (echoes, stderr) = repl(
+        b"import examples/answer.logos\nimport tests/fixtures/lib_pub.logos\ndouble(4)\n",
+    );
+    assert_eq!(echoes, ["42", "8"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
+fn an_import_inside_a_fn_body_is_rejected() {
+    // The load is a comptime effect; inside a fn body parse and run order do
+    // not coincide, so it is rejected like a logos variable's fill.
+    let (_echoes, stderr) =
+        repl(b"g := fn () -> i32 ( import examples/answer.logos 1 )\n");
+    assert!(stderr.contains("loads at parse time"), "stderr: {stderr}");
 }
 
 #[test]
@@ -129,7 +227,7 @@ fn the_repl_keeps_an_owning_binding_alive_across_lines() {
 fn an_owning_value_that_nothing_can_free_is_refused() {
     // The fail-closed edge of the drop model: an owning value with no name to
     // attach its teardown to is refused at parse rather than leaked at run.
-    let out = logos().arg("tests/fixtures/unbound_owning.logos").output().unwrap();
+    let out = logos().args(["import", "tests/fixtures/unbound_owning.logos"]).output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("must be bound to a name"), "stderr: {err}");
@@ -195,7 +293,7 @@ fn logos_is_a_value_reflected_by_dot_logos_and_compared_by_identity() {
 
 #[test]
 fn the_logos_reflection_example_runs() {
-    let out = logos().arg("examples/logos_reflection.logos").output().unwrap();
+    let out = logos().args(["import", "examples/logos_reflection.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "true\n");
 }
@@ -204,7 +302,7 @@ fn the_logos_reflection_example_runs() {
 fn a_logos_value_prints_its_spelling() {
     // A program whose value is a logos prints the logos's name, not the raw bit
     // container (roadmap #30). The value rides out of a scope (comment + expression).
-    let out = logos().arg("tests/fixtures/logos_name.logos").output().unwrap();
+    let out = logos().args(["import", "tests/fixtures/logos_name.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "i32\n");
 }
@@ -223,7 +321,7 @@ fn a_type_returning_function_resolves_at_comptime() {
 
 #[test]
 fn the_logos_returning_fn_example_runs() {
-    let out = logos().arg("examples/logos_returning_fn.logos").output().unwrap();
+    let out = logos().args(["import", "examples/logos_returning_fn.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "true\n");
 }
@@ -235,8 +333,10 @@ fn file_mode_runs_each_expression_as_it_parses() {
     // binding) sees committed state and file mode agrees with the REPL. Before,
     // the file driver parsed everything first and ran afterward, so the call
     // read x's zeroed storage instead of 5 and answered i32 rather than f64.
-    let out =
-        logos().arg("tests/fixtures/comptime_sees_committed_state.logos").output().unwrap();
+    let out = logos()
+        .args(["import", "tests/fixtures/comptime_sees_committed_state.logos"])
+        .output()
+        .unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "true\n");
 }
@@ -277,7 +377,8 @@ fn a_dependent_typed_declaration_takes_a_computed_type() {
 
 #[test]
 fn a_logos_declaration_works_after_other_code() {
-    let out = logos().arg("tests/fixtures/declared_logos_after_code.logos").output().unwrap();
+    let out =
+        logos().args(["import", "tests/fixtures/declared_logos_after_code.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "10\n");
 }
@@ -357,7 +458,7 @@ fn the_metalogosfn_example_runs() {
     // `a.logos`, skipping the untaken branches unparsed. The expected value
     // tracks the file's current argument (2 → f64 → the middle arm assigns 9.9;
     // the deep arm is pinned separately by the metalogos_arm fixture).
-    let out = logos().arg("examples/metalogosfn.logos").output().unwrap();
+    let out = logos().args(["import", "examples/metalogosfn.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "9.9\n");
 }
@@ -367,7 +468,7 @@ fn the_metalogos_arm_fills_a_logos_variable() {
     // The deep arm the example reaches with argument 3: `a : metalogos(3)` is
     // `a : logos` — a logos variable — and the comptime chain's last arm fills it
     // with the logos i32, so the program's value IS a logos and prints `i32`.
-    let out = logos().arg("tests/fixtures/metalogos_arm.logos").output().unwrap();
+    let out = logos().args(["import", "tests/fixtures/metalogos_arm.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "i32\n");
 }
@@ -409,7 +510,7 @@ fn help_prints_usage_and_version() {
     assert!(out.status.success());
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains(env!("CARGO_PKG_VERSION")));
-    assert!(text.contains("logos <file.logos>"));
+    assert!(text.contains("logos import ./file.logos"));
 }
 
 #[test]

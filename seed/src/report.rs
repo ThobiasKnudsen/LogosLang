@@ -85,6 +85,20 @@ pub fn parse_message(e: &ParseError) -> String {
             "`pub` must be followed by a declaration".into()
         }
         ParseError::DoubleGate => "this declaration is already marked `pub`".into(),
+        ParseError::ExpectedPath => "`import` must be followed by a file path".into(),
+        ParseError::ImportInRuntimeBody => {
+            "`import` loads at parse time, so it cannot stand inside a \
+             function body, loop, or runtime branch"
+                .into()
+        }
+        ParseError::ImportRead(detail) => format!("cannot read {detail}"),
+        ParseError::ImportCycle(path) => format!(
+            "importing `{path}` here closes an import cycle — the import graph \
+             must be a DAG"
+        ),
+        ParseError::ImportFailed { path, rendered } => {
+            format!("import of `{path}` failed:\n{rendered}")
+        }
         ParseError::CtorArity => {
             "this construction's argument count does not match the fields".into()
         }

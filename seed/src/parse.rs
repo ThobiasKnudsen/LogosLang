@@ -25,7 +25,8 @@
 //! token-rewriting macros need — the fresh-name declaration path already
 //! works this way) and constructor-driven `insert`/`remove` splicing.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 use crate::synolon::SynolonPtr;
 use crate::id_context::IdContext;
@@ -484,6 +485,9 @@ pub struct CoreTypes {
     /// `pub`: the first gate identity (#33); a declare node's gate slot holds
     /// it when the declaration was written `pub name := …`.
     pub pub_: SynolonPtr,
+    /// `import`: the one identity that loads a file (#58); its node is the
+    /// reflectable trace of the load, and running it re-yields the file's tail.
+    pub import_: SynolonPtr,
     /// `construct`: the record-construction statement a record-typed call builds.
     pub construct_: SynolonPtr,
     /// `string`: the text-literal logos (`«…»`); inert in the seed, above all the
@@ -722,6 +726,25 @@ pub enum ParseError {
     GateNeedsDeclaration,
     /// A declaration was gated twice (`pub pub x := …`).
     DoubleGate,
+    /// An `import` was not followed by a path token.
+    ExpectedPath,
+    /// An `import` inside a deferred-or-repeated body (a fn body, a loop, a
+    /// runtime branch): the load happens once, at parse, so `import` belongs
+    /// where parse order and run order coincide.
+    ImportInRuntimeBody,
+    /// The imported file could not be read: the joined path and the OS error.
+    ImportRead(String),
+    /// An import cycle: the named file is already loading. The import graph
+    /// must be a DAG (ruled August 2026).
+    ImportCycle(String),
+    /// The imported file failed to parse or run; `rendered` is the inner
+    /// report, positioned in the imported file's own source.
+    ImportFailed {
+        /// The path as written at the import site.
+        path: String,
+        /// The fully rendered inner report (file:line:col, caret and all).
+        rendered: String,
+    },
     /// A record construction's argument count did not match its field count.
     CtorArity,
     /// A `for` was not followed by a loop-variable name.
@@ -894,6 +917,28 @@ fn build_call(store: &mut Store, callee: SynolonPtr, args: &[SynolonPtr]) -> Syn
     store.alloc_raw(callee, value)
 }
 
+/// The once-per-run import registry (#58): canonical path → load state. A file
+/// loads once per run — every importer shares the one loaded section and its
+/// identities, so two importers of the same file see the same logos, never two
+/// copies — and the import graph must be a DAG, so a path met again while its
+/// own load is still in progress is a cycle (ruled August 2026). The REPL
+/// threads one registry across its per-line parsers (a session is a run); the
+/// command-line driver's single parser holds one for the whole run.
+#[derive(Debug, Default)]
+pub struct Imports {
+    entries: HashMap<PathBuf, ImportState>,
+}
+
+#[derive(Debug)]
+enum ImportState {
+    /// The file's own pass is in progress: importing it again now is a cycle.
+    Loading,
+    /// Loaded: the `pub` names the file exposes, in declaration order, each
+    /// paired with the identity its spelling resolves to inside the file, and
+    /// the file's tail node (null for a declaration-only file).
+    Loaded { pubs: Vec<(String, SynolonPtr)>, tail: SynolonPtr },
+}
+
 /// The one-pass elaborator: lexes on demand, resolves names against the scope
 /// stack, and reduces the tape by operator precedence, running each identity's
 /// native `Construct`. The scheduling is a deferred-reduction operator
@@ -933,6 +978,16 @@ pub struct Parser<'a> {
     /// body so the defer runs at scope exit as ordinary structure. The base entry
     /// (index 0) collects top-level bindings, drained by the file driver.
     pending_defers: Vec<Vec<SynolonPtr>>,
+    /// The folder relative import paths resolve against — the importing file's
+    /// own folder during a nested import, the working directory when the
+    /// importer is the command line or REPL (ruled August 2026).
+    dir: PathBuf,
+    /// The once-per-run import registry (see [`Imports`]).
+    imports: Imports,
+    /// The lowering table, when the driver attached one: the nested import
+    /// pass hands it to its runtime so `f.compile()` at an imported top level
+    /// works exactly as at the driver's own top level (one pass, one behavior).
+    lower: Option<&'a crate::compile::LowerTable>,
 }
 
 /// One enclosing function body being parsed: the byte-size accumulator its
@@ -969,7 +1024,33 @@ impl<'a> Parser<'a> {
             frames: Vec::new(),
             runtime_depth: 0,
             pending_defers: vec![Vec::new()],
+            dir: PathBuf::from("."),
+            imports: Imports::default(),
+            lower: None,
         }
+    }
+
+    /// Attach the lowering table (`Core::lower`), so an imported file's
+    /// top-level `f.compile()` runs under the nested pass exactly as under the
+    /// driver. The caller keeps the `Core` alive for the parser's life, as it
+    /// already does for the store.
+    pub fn with_lower(mut self, lower: &'a crate::compile::LowerTable) -> Self {
+        self.lower = Some(lower);
+        self
+    }
+
+    /// Thread an existing import registry through this parser. The REPL uses
+    /// this: a session is one run, so its per-line parsers must share one
+    /// registry for once-per-run to hold across lines.
+    pub fn with_imports(mut self, imports: Imports) -> Self {
+        self.imports = imports;
+        self
+    }
+
+    /// Take the import registry back out (the REPL's per-line thread; pairs
+    /// with [`Parser::with_imports`]).
+    pub fn take_imports(&mut self) -> Imports {
+        std::mem::take(&mut self.imports)
     }
 
     /// The source being parsed — how a constructor reads its own token's span
@@ -2680,6 +2761,209 @@ impl<'a> Parser<'a> {
         tape.remove(-1); // the name token, consumed
         tape.place(node);
         Ok(Constructed::Placed)
+    }
+
+    /// `import`'s constructor body (#58): consume the path token — raw text up
+    /// to whitespace or `,`, or a quoted `«…»` string (the licensed token
+    /// consumption, as `#`'s) — load the file through [`Parser::import_file`],
+    /// and place the reflectable import node `{logos: import, value: [path,
+    /// tail, op]}`. The load itself happens here, in the pass, once per run;
+    /// the node's run only re-yields the file's tail value.
+    pub(crate) fn construct_import(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        // The load is a comptime effect: inside a fn body, loop, or runtime
+        // branch, parse order and run order do not coincide, so it is rejected
+        // like a logos variable's fill.
+        if self.runtime_depth != 0 {
+            return Err(ParseError::ImportInRuntimeBody);
+        }
+        self.skip_whitespace();
+        let source = self.source;
+        let start = self.pos;
+        let path_text: String = if source[self.pos..].starts_with('«') {
+            let r = self
+                .scopes
+                .resolve(self.trie, &source[self.pos..])
+                .map_err(ParseError::Resolve)?;
+            let s = self.pos;
+            self.pos += r.matched;
+            let node =
+                self.construct_leaf(r.identity, s, r.matched)?.ok_or(ParseError::ExpectedPath)?;
+            // SAFETY: the leaf just built is a string node.
+            String::from_utf8_lossy(unsafe { crate::identities::string::text(node) }).into_owned()
+        } else {
+            let bytes = source.as_bytes();
+            while self.pos < bytes.len()
+                && !bytes[self.pos].is_ascii_whitespace()
+                && bytes[self.pos] != b','
+            {
+                self.pos += 1;
+            }
+            source[start..self.pos].to_string()
+        };
+        if path_text.is_empty() {
+            self.pos = start;
+            return Err(ParseError::ExpectedPath);
+        }
+        let tail = self.import_file(&path_text)?;
+        let types = self.types;
+        let path_node = crate::identities::string::build_text(
+            self.store,
+            types.string_,
+            path_text.as_bytes(),
+        );
+        let value = self.store.alloc_operands(&[path_node, tail, types.ops.import_]);
+        let node = self.store.alloc_raw(types.import_, value);
+        tape.place(node);
+        Ok(Constructed::Placed)
+    }
+
+    /// Load `path_text` (#58): resolve against [`Parser::dir`] (file-relative;
+    /// the working directory when the importer is the command line or REPL),
+    /// enforce once-per-run and the DAG rule, and on a first load parse and
+    /// run the file top to bottom in its own section — a fresh scope stack of
+    /// the root scope plus a fresh section scope, so the file sees ambient
+    /// names and its own imports only, never the import site's surroundings
+    /// (ruled August 2026: importing is dropping the text there, wrapped in
+    /// its own scope). Afterwards the file's `pub` names are declared into the
+    /// importing scope — pub-only exposure, the ordinary visibility rule.
+    /// Returns the file's tail node (null for a declaration-only file).
+    fn import_file(&mut self, path_text: &str) -> Result<SynolonPtr, ParseError> {
+        let joined = self.dir.join(path_text);
+        let canon = joined
+            .canonicalize()
+            .map_err(|e| ParseError::ImportRead(format!("{}: {e}", joined.display())))?;
+        match self.imports.entries.get(&canon) {
+            Some(ImportState::Loading) => {
+                return Err(ParseError::ImportCycle(path_text.to_string()))
+            }
+            Some(ImportState::Loaded { pubs, tail }) => {
+                let (pubs, tail) = (pubs.clone(), *tail);
+                self.publish(&pubs)?;
+                return Ok(tail);
+            }
+            None => {}
+        }
+        let text = std::fs::read_to_string(&canon)
+            .map_err(|e| ParseError::ImportRead(format!("{}: {e}", joined.display())))?;
+        // Sources are process-lived: every span and every later report indexes
+        // into its file's text, exactly as the driver-held sources it joins.
+        let text: &'static str = Box::leak(text.into_boxed_str());
+        self.imports.entries.insert(canon.clone(), ImportState::Loading);
+
+        // The file's own section: a fresh stack of the root (ambient names)
+        // plus a fresh scope node the file's declarations land in.
+        let root = *self.scopes.open.first().expect("an import site has an open root scope");
+        let section = self.store.alloc_raw(self.types.scope, std::ptr::null_mut());
+        let mut nested = ScopeStack::new();
+        nested.push(root);
+        nested.push(section);
+
+        let saved_source = std::mem::replace(&mut self.source, text);
+        let saved_pos = std::mem::replace(&mut self.pos, 0);
+        let saved_scopes = std::mem::replace(&mut self.scopes, nested);
+        let saved_dir = std::mem::replace(
+            &mut self.dir,
+            canon.parent().map(Into::into).unwrap_or_else(|| PathBuf::from(".")),
+        );
+        let saved_frames = std::mem::take(&mut self.frames);
+        let saved_pending_fn = std::mem::replace(&mut self.pending_fn, std::ptr::null_mut());
+        let saved_runtime_depth = std::mem::replace(&mut self.runtime_depth, 0);
+
+        let inner = self.run_imported();
+        let inner_pos = self.pos;
+
+        self.source = saved_source;
+        self.pos = saved_pos;
+        self.scopes = saved_scopes;
+        self.dir = saved_dir;
+        self.frames = saved_frames;
+        self.pending_fn = saved_pending_fn;
+        self.runtime_depth = saved_runtime_depth;
+
+        match inner {
+            Err(message) => {
+                // Remove the Loading entry so a later attempt (a REPL retry)
+                // reports the real failure again, not a phantom cycle.
+                self.imports.entries.remove(&canon);
+                Err(ParseError::ImportFailed {
+                    path: path_text.to_string(),
+                    rendered: crate::report::render(path_text, text, inner_pos, &message),
+                })
+            }
+            Ok((pubs, tail)) => {
+                self.imports.entries.insert(canon, ImportState::Loaded { pubs: pubs.clone(), tail });
+                self.publish(&pubs)?;
+                Ok(tail)
+            }
+        }
+    }
+
+    /// The nested top-to-bottom pass over an imported file: parse each
+    /// statement and run it — the one pass, under a fresh interpreter working
+    /// off raw handles as [`Parser::eval_type_call`] does — collecting the
+    /// `pub` declarations' (name, identity) pairs and the file's tail node.
+    /// (`f.compile()` at an imported top level is not wired yet: the parser
+    /// carries no lowering table; compiled members keep working inside the
+    /// importing program.) On failure the message is returned with
+    /// [`Parser::offset`] left at the stuck point in the imported source.
+    fn run_imported(&mut self) -> Result<(Vec<(String, SynolonPtr)>, SynolonPtr), String> {
+        let mut pubs = Vec::new();
+        let mut tail = std::ptr::null_mut();
+        let mut rt = crate::run::Runtime::new(self.types.fn_type, self.types.rational)
+            .with_defer_type(self.types.defer_);
+        if let Some(lower) = self.lower {
+            rt = rt.with_compiler(lower, self.types);
+        }
+        while let Some(item) = self.parse_next() {
+            let node = item.map_err(|e| crate::report::parse_message(&e))?;
+            // SAFETY: `node` was just parsed into the store, which outlives
+            // the pass; the runtime works off raw handles.
+            unsafe {
+                rt.run(node).map_err(|e| crate::report::run_message(&e))?;
+                if (*node).logos != self.types.comment_ {
+                    tail = node;
+                }
+                if (*node).logos == self.types.declare_
+                    && crate::identities::declare::gate_of(node) == self.types.pub_
+                {
+                    let name_node = *((*node).hyle as *const SynolonPtr);
+                    let name =
+                        String::from_utf8_lossy(crate::identities::string::text(name_node))
+                            .into_owned();
+                    let identity = self
+                        .scopes
+                        .resolve(self.trie, &name)
+                        .map_err(|_| format!("pub name `{name}` did not stay resolvable"))?
+                        .identity;
+                    pubs.push((name, identity));
+                }
+            }
+        }
+        // A stray `)` ends the loop without being consumed, as in the drivers.
+        if !self.source[self.pos..].trim_start().is_empty() {
+            return Err("unexpected `)` — no scope is open here".to_string());
+        }
+        Ok((pubs, tail))
+    }
+
+    /// Declare an imported file's `pub` names into the current (importing)
+    /// scope — pub-only exposure, the ordinary visibility rule, so a collision
+    /// with a live name is the ordinary shadowing error. Idempotent where the
+    /// name already resolves to the same identity (the same file imported
+    /// twice into one scope).
+    fn publish(&mut self, pubs: &[(String, SynolonPtr)]) -> Result<(), ParseError> {
+        for (name, identity) in pubs {
+            if let Ok(r) = self.scopes.resolve(self.trie, name) {
+                if r.identity == *identity {
+                    continue;
+                }
+            }
+            self.scopes.declare(self.trie, name, *identity).map_err(ParseError::Resolve)?;
+        }
+        Ok(())
     }
 
     /// `:`'s constructor body: the typed declaration `name : logos` — it
