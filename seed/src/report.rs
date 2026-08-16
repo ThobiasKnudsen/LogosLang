@@ -81,6 +81,10 @@ pub fn parse_message(e: &ParseError) -> String {
             "a statement yields no value and cannot stand here".into()
         }
         ParseError::BadAssignTarget => "this is not an assignable place".into(),
+        ParseError::GateNeedsDeclaration => {
+            "`pub` must be followed by a declaration".into()
+        }
+        ParseError::DoubleGate => "this declaration is already marked `pub`".into(),
         ParseError::CtorArity => {
             "this construction's argument count does not match the fields".into()
         }

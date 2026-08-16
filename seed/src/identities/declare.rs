@@ -38,6 +38,13 @@ use crate::store::Store;
 /// declare node's value; the name string node sits at 0.
 const DECL_DECLARED: usize = 1;
 
+/// The index of the gate slot: null for an unmarked declaration (fail-closed —
+/// private, per DESIGN ›Read and write are one mechanism‹), or the gate
+/// identity (`pub`) the declaration was written under. A syntactic deviation
+/// lives in the declaration's structure, never in side-data (DESIGN ›Metadata
+/// has three homes‹), which is why this is an operand slot and not a flag.
+const DECL_GATE: usize = 2;
+
 /// Register the `:=` token (a tight extender whose constructor declares the
 /// name token to its left; the trie longest-matches `:=` over the field-list
 /// `:`) and the `declare` identity its expressions are typed by, with its
@@ -53,7 +60,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (SynolonPtr, SynolonPtr, 
         meta::TUPLE_TAG,
         f64::NAN,
         Assoc::Left,
-        &["name", "declared", "op"],
+        &["name", "declared", "gate", "op"],
     );
     let declare = cx.store.alloc_raw(cx.type_, record);
     cx.lower.insert(declare, lower);
@@ -61,7 +68,10 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (SynolonPtr, SynolonPtr, 
     (declare, leaf, token)
 }
 
-/// Build a declare node `{logos: declare, value: [name, declared, op]}`.
+/// Build a declare node `{logos: declare, value: [name, declared, gate, op]}`.
+/// The gate slot is null at build — every declaration starts unmarked — and a
+/// gate word's constructor ([`super::gate`]) fills it after the declaration
+/// reduces.
 pub(crate) fn build(
     store: &mut Store,
     declare: SynolonPtr,
@@ -69,7 +79,7 @@ pub(crate) fn build(
     name: SynolonPtr,
     declared: SynolonPtr,
 ) -> SynolonPtr {
-    let value = store.alloc_operands(&[name, declared, op]);
+    let value = store.alloc_operands(&[name, declared, std::ptr::null_mut(), op]);
     store.alloc_raw(declare, value)
 }
 
@@ -79,6 +89,27 @@ pub(crate) fn build(
 /// `node` must be a declare node as [`build`] lays it out.
 pub(crate) unsafe fn declared_of(node: SynolonPtr) -> SynolonPtr {
     *((*node).hyle as *const SynolonPtr).add(DECL_DECLARED)
+}
+
+/// The gate slot of a declare node: null (unmarked, private) or the gate
+/// identity it was declared under. The visibility read `import` performs
+/// (#58) is exactly this slot — read off the declaration's structure.
+///
+/// # Safety
+/// As [`declared_of`].
+pub(crate) unsafe fn gate_of(node: SynolonPtr) -> SynolonPtr {
+    *((*node).hyle as *const SynolonPtr).add(DECL_GATE)
+}
+
+/// Fill a declare node's gate slot. The operand blob is a write pointer
+/// ([`Store::alloc_operands`]), so patching the slot in place is the licensed
+/// pattern; the gate word's constructor runs right after the declaration
+/// reduces, before anything reads the slot.
+///
+/// # Safety
+/// As [`declared_of`]; `gate` must be a registered gate identity.
+pub(crate) unsafe fn set_gate(node: SynolonPtr, gate: SynolonPtr) {
+    *((*node).hyle as *mut SynolonPtr).add(DECL_GATE) = gate;
 }
 
 /// Run: evaluate the initializer for its effect (a construction fills its

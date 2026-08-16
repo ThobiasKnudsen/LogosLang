@@ -481,6 +481,9 @@ pub struct CoreTypes {
     pub free_: SynolonPtr,
     /// `defer`: the scope-exit LIFO teardown holder (`defer <expr>`).
     pub defer_: SynolonPtr,
+    /// `pub`: the first gate identity (#33); a declare node's gate slot holds
+    /// it when the declaration was written `pub name := …`.
+    pub pub_: SynolonPtr,
     /// `construct`: the record-construction statement a record-typed call builds.
     pub construct_: SynolonPtr,
     /// `string`: the text-literal logos (`«…»`); inert in the seed, above all the
@@ -714,6 +717,11 @@ pub enum ParseError {
     /// (`:=`-bound rational) binding has no machine storage to write — writing its
     /// hyle slot would corrupt the fraction — and nothing else has storage yet.
     BadAssignTarget,
+    /// A gate word (`pub`) was not followed by a declaration: a gate fills a
+    /// declare node's gate slot, so anything else leaves it nothing to mark.
+    GateNeedsDeclaration,
+    /// A declaration was gated twice (`pub pub x := …`).
+    DoubleGate,
     /// A record construction's argument count did not match its field count.
     CtorArity,
     /// A `for` was not followed by a loop-variable name.

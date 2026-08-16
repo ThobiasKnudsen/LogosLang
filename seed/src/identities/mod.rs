@@ -79,6 +79,7 @@ mod convert;
 pub(crate) mod declare;
 mod divide;
 pub(crate) mod drop_model;
+mod gate;
 pub(crate) mod instance;
 pub(crate) mod pointer;
 mod eq;
@@ -194,6 +195,9 @@ pub struct Core {
     pub free_: SynolonPtr,
     /// `defer`, the scope-exit LIFO teardown holder (`defer <expr>`).
     pub defer_: SynolonPtr,
+    /// `pub`, the first gate identity (#33): a prefix word whose constructor
+    /// fills the declare node's gate slot.
+    pub pub_: SynolonPtr,
     /// `array` (of `synolon@`), the seed's first array form: a sequence's
     /// expression list lives behind one of these, never inline in the node.
     pub array_: SynolonPtr,
@@ -369,6 +373,9 @@ impl Core {
         // declare node — the declaration is graph structure, not parse vapor.
         let (declare_, declare_leaf, declare_tok) = declare::register(&mut cx, &callables);
         op_leaves.declare_ = declare_leaf;
+        // `pub` (#33): the first gate — a prefix word over a declaration whose
+        // constructor fills the declare node's gate slot.
+        let pub_ = gate::register(&mut cx);
         let (colon_, sep_) = logos_mod::register_syntax(&mut cx);
         // Struct instances: the construction statement and the `.` field access.
         let (construct_, construct_leaf, dot_) = instance::register(&mut cx, &callables);
@@ -460,6 +467,7 @@ impl Core {
             drop_,
             free_,
             defer_,
+            pub_,
             callable_: callables.callable,
             convention_: callables.convention,
             conv_seed_native: callables.seed_native,
@@ -505,6 +513,7 @@ impl Core {
             drop_: self.drop_,
             free_: self.free_,
             defer_: self.defer_,
+            pub_: self.pub_,
             construct_: self.construct_,
             string_: self.string_,
             comment_: self.comment_,
@@ -3873,6 +3882,133 @@ mod tests {
             // The declaration itself is a statement: it yields unit.
             assert_eq!(rt.run(decl).unwrap(), 0);
         }
+        // Unmarked is fail-closed: the gate slot of a bare declaration is null.
+        unsafe {
+            assert!(declare::gate_of(decl).is_null());
+        }
+    }
+
+    #[test]
+    fn pub_fills_a_declarations_gate_slot() {
+        // `pub x := 5` (#33): the gate word parses the declaration to its
+        // right and fills the declare node's gate slot with the `pub`
+        // identity — the deviation lives in the declaration's structure,
+        // where #58's import will read it. The binding itself is unchanged.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let decl = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p =
+                Parser::new("pub x := 5", &mut store, &mut trie, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+        // SAFETY: `decl` is the declare node just parsed.
+        unsafe {
+            assert_eq!((*decl).logos, core.declare_);
+            assert_eq!(declare::gate_of(decl), core.pub_);
+            let bound = declare::declared_of(decl);
+            assert_eq!((*bound).logos, core.rational);
+            assert_eq!(rational::mold(bound), Some(5));
+        }
+        // The marked declaration still runs as a statement, and the name
+        // resolves within its own section exactly as unmarked.
+        let x_ref = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new("x + 1", &mut store, &mut trie, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+        let mut rt = Runtime::new(core.fn_type, core.rational);
+        // SAFETY: `decl`/`x_ref` are valid nodes just parsed.
+        unsafe {
+            assert_eq!(rt.run(decl).unwrap(), 0);
+            assert_eq!(rt.run(x_ref).unwrap(), 6);
+        }
+    }
+
+    #[test]
+    fn pub_gates_a_typed_declaration() {
+        // `pub x : i32`: the typed declaration reduces to a declare node too,
+        // so the same gate word marks it.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let decl = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p =
+                Parser::new("pub x : i32", &mut store, &mut trie, core.types(), s);
+            p.parse_expression().unwrap()
+        };
+        // SAFETY: `decl` is the declare node just parsed.
+        unsafe {
+            assert_eq!((*decl).logos, core.declare_);
+            assert_eq!(declare::gate_of(decl), core.pub_);
+        }
+    }
+
+    #[test]
+    fn pub_gates_a_fn_declaration() {
+        // The shape #58 exposes across a section boundary: a pub fn.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let decl = {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(
+                "pub double := fn (x : i32) -> i32 ( x + x )",
+                &mut store,
+                &mut trie,
+                core.types(),
+                s,
+            );
+            p.parse_expression().unwrap()
+        };
+        // SAFETY: `decl` is the declare node just parsed; its binding is the fn.
+        unsafe {
+            assert_eq!((*decl).logos, core.declare_);
+            assert_eq!(declare::gate_of(decl), core.pub_);
+            let f = declare::declared_of(decl);
+            assert_eq!((*f).logos, core.fn_type);
+        }
+    }
+
+    #[test]
+    fn pub_without_a_declaration_is_an_error() {
+        // A gate that marks nothing is a lie in the source, not a no-op.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let mut s = ScopeStack::new();
+        s.push(core.root_scope);
+        let mut p = Parser::new("pub 5", &mut store, &mut trie, core.types(), s);
+        assert!(matches!(
+            p.parse_expression(),
+            Err(crate::parse::ParseError::GateNeedsDeclaration)
+        ));
+    }
+
+    #[test]
+    fn double_pub_is_an_error() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let mut s = ScopeStack::new();
+        s.push(core.root_scope);
+        let mut p =
+            Parser::new("pub pub x := 5", &mut store, &mut trie, core.types(), s);
+        assert!(matches!(
+            p.parse_expression(),
+            Err(crate::parse::ParseError::DoubleGate)
+        ));
     }
 
     #[test]
