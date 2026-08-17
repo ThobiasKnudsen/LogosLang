@@ -1,13 +1,15 @@
 # Copyright 2026 Thobias Melfjord Knudsen
 # SPDX-License-Identifier: Apache-2.0
 
-# Roadmap #30 — `logos` is a first-class value.
-# A value's logos is reached with `.logos`, and logos compare by identity with `==`.
+# Roadmap #30/#52 — `logos` is a first-class value.
+# A value's logos is read through the synolon view — `.` reads only the fields
+# a logos defines, and a value's logos is not one of them, so the view puts the
+# logos into the hyle first. Logos compare by identity with `==`.
 
 x := i32 5
 
-same  := x.logos == i32      # true: x was built as an i32
-cross := x.logos == f64      # false: i32 is not f64
-meta  := i32.logos == logos  # true: a logos's own logos is the `logos` root
+same  := (synolon x).logos == i32        # true: x was built as an i32
+cross := (synolon x).logos == f64        # false: i32 is not f64
+meta  := (synolon i32).logos == logos    # true: a logos's own logos is the `logos` root
 
 same and meta and not (cross)

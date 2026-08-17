@@ -81,6 +81,7 @@ mod divide;
 pub(crate) mod drop_model;
 mod gate;
 pub mod import;
+mod view;
 pub(crate) mod instance;
 pub(crate) mod pointer;
 mod eq;
@@ -202,6 +203,9 @@ pub struct Core {
     /// `import`, the one identity that loads a file (#58): its node is the
     /// reflectable trace of the load; running it re-yields the file's tail.
     pub import_: SynolonPtr,
+    /// `synolon`, the spelled view identity (#52): `(synolon a)` wraps a value
+    /// as its cell; `.` reads the cell.
+    pub synolon_: SynolonPtr,
     /// `array` (of `synolon@`), the seed's first array form: a sequence's
     /// expression list lives behind one of these, never inline in the node.
     pub array_: SynolonPtr,
@@ -384,6 +388,9 @@ impl Core {
         // the pass, once per run, over a DAG (ruled August 2026).
         let (import_, import_leaf) = import::register(&mut cx, &callables);
         op_leaves.import_ = import_leaf;
+        // `synolon` (#52): the spelled view — `(synolon a)` wraps a value as
+        // its cell, and `.` reads the cell (ruled August 2026).
+        let synolon_ = view::register(&mut cx);
         let (colon_, sep_) = logos_mod::register_syntax(&mut cx);
         // Struct instances: the construction statement and the `.` field access.
         let (construct_, construct_leaf, dot_) = instance::register(&mut cx, &callables);
@@ -477,6 +484,7 @@ impl Core {
             defer_,
             pub_,
             import_,
+            synolon_,
             callable_: callables.callable,
             convention_: callables.convention,
             conv_seed_native: callables.seed_native,
@@ -524,6 +532,7 @@ impl Core {
             defer_: self.defer_,
             pub_: self.pub_,
             import_: self.import_,
+            synolon_: self.synolon_,
             construct_: self.construct_,
             string_: self.string_,
             comment_: self.comment_,
@@ -1007,6 +1016,12 @@ pub unsafe fn display_value(types: &CoreTypes, node: SynolonPtr, bits: i64) -> S
     // (roadmap #30) — so a program ending in `i32` prints `i32`, not `0`.
     if is_type_value(types, node) {
         return type_name(types, node);
+    }
+    // A synolon view (#52) shows as the view it is, not its address bits.
+    if !(*node).logos.is_null()
+        && meta::kind_of((*node).logos) == Some(meta::SYNOLON_TAG)
+    {
+        return "synolon".to_string();
     }
     match numtype_of(types, node) {
         Operand::Concrete(nt) => format_scalar(nt, bits),
@@ -3895,6 +3910,56 @@ mod tests {
         // Unmarked is fail-closed: the gate slot of a bare declaration is null.
         unsafe {
             assert!(declare::gate_of(decl).is_null());
+        }
+    }
+
+    #[test]
+    fn the_view_reads_roles_text_and_hyle_at_the_graph_level() {
+        // #52 reads whose values are strings or addresses assert at the graph
+        // level (strings are inert at the surface, so the REPL cannot echo
+        // them): `.logos.role(i)` is the role-name string, `.text` is the
+        // viewed string node itself, and `.hyle` is a u64 address value.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+
+        let mut s = ScopeStack::new();
+        s.push(core.root_scope);
+        let x_val = store.alloc_bytes(&5i32.to_ne_bytes());
+        let x = store.alloc_raw(core.i32_, x_val);
+        s.declare(&mut trie, "x", x).unwrap();
+
+        let mut p = Parser::new(
+            "(synolon (x + x)).logos.role(0)",
+            &mut store,
+            &mut trie,
+            core.types(),
+            s,
+        );
+        let role = p.parse_expression().unwrap();
+        // SAFETY: `role` is the role-name string node the read just yielded.
+        unsafe {
+            assert_eq!(crate::identities::string::text(role), b"lhs");
+        }
+        let mut s = p.into_scopes();
+        s.truncate(1);
+
+        let mut p = Parser::new("(synolon «hi»).text", &mut store, &mut trie, core.types(), s);
+        let text = p.parse_expression().unwrap();
+        // SAFETY: `text` is the viewed string node itself.
+        unsafe {
+            assert_eq!(crate::identities::string::text(text), b"hi");
+        }
+        let mut s = p.into_scopes();
+        s.truncate(1);
+
+        let mut p = Parser::new("(synolon x).hyle", &mut store, &mut trie, core.types(), s);
+        let hyle = p.parse_expression().unwrap();
+        // SAFETY: `hyle` is the u64 value node the read just built.
+        unsafe {
+            assert_eq!((*hyle).logos, core.numtypes[NumType::U64 as usize]);
+            let mut rt = Runtime::new(core.fn_type, core.rational);
+            assert_eq!(rt.run(hyle).unwrap(), x_val as i64);
         }
     }
 

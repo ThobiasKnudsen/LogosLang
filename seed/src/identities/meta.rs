@@ -92,6 +92,11 @@ pub(crate) const ARRAY_TAG: u8 = 22;
 /// record also makes their first value byte an honest kind tag — before this,
 /// it was a node address's low byte, and any tag read on it was garbage.
 pub(crate) const RECORD_TAG: u8 = 23;
+/// Kind: values are synolon *views* (#52) — the hyle IS the viewed node's
+/// address, so `(synolon a)` wraps any value as its cell and `.` then reads
+/// the cell: the one place the logos appears in a hyle, which is what makes
+/// `.logos` a field read like every other `.` (ruled August 2026).
+pub(crate) const SYNOLON_TAG: u8 = 24;
 
 /// Byte offset of the associativity in a record.
 const ASSOC_OFF: usize = 1;

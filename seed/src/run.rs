@@ -413,6 +413,14 @@ impl Runtime {
                 }
                 return Ok(node as i64);
             }
+            // A synolon view (#52) is parse-time data whose hyle IS the viewed
+            // node's address; its run value is that address, mirroring a logos
+            // node standing as a value.
+            if crate::identities::meta::kind_of(op)
+                == Some(crate::identities::meta::SYNOLON_TAG)
+            {
+                return Ok((*node).hyle as i64);
+            }
             // `node` is data or a migrated application. A rational literal is
             // molded to its i32 value (a fraction like 3.14 has none:
             // UncomputableLiteral, not a bad read).

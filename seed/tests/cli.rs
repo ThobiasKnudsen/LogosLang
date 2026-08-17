@@ -139,6 +139,36 @@ fn the_repl_imports_once_per_session_and_keeps_pub_names() {
 }
 
 #[test]
+fn the_synolon_view_reads_the_cell() {
+    // #52: `(synolon a)` wraps a value as its cell; `.` then reads the cell —
+    // the one place a logos sits in a hyle. Reads fold at parse (comptime
+    // reflection) and compose: an operand read yields another view. The
+    // honest cell surface shows the op slot too: `(x + x)` has arity 3, and
+    // operand(2) is the resolved callable leaf, not an i32.
+    let (echoes, stderr) = repl(
+        b"x := i32 5\n(synolon x).logos == i32\n(synolon (x + x)).logos.arity\n\
+          (synolon (x + x)).operand(0).logos == i32\n(synolon (x + x)).operand(2).logos == i32\n",
+    );
+    assert_eq!(echoes, ["true", "3", "true", "false"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
+fn dot_logos_off_the_view_is_a_guided_error() {
+    // `.` reads only the fields a logos defines — about the hyle — so
+    // `x.logos` no longer exists; the error teaches the view spelling.
+    let (_echoes, stderr) = repl(b"x := i32 5\nx.logos\n");
+    assert!(stderr.contains("synolon view"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_reflect_read_that_does_not_fit_is_an_error() {
+    // The ruled checked error: `.operand` on a scalar has nothing to read.
+    let (_echoes, stderr) = repl(b"x := i32 5\n(synolon x).operand(0)\n");
+    assert!(stderr.contains("does not fit"), "stderr: {stderr}");
+}
+
+#[test]
 fn an_import_inside_a_fn_body_is_rejected() {
     // The load is a comptime effect; inside a fn body parse and run order do
     // not coincide, so it is rejected like a logos variable's fill.
@@ -280,8 +310,8 @@ fn logos_is_a_value_reflected_by_dot_logos_and_compared_by_identity() {
     // `==`/`!=` compare logos by identity (logos are interned, so pointer identity is
     // logos identity). Every result is a bool, so it echoes; declarations stay silent.
     let (echoes, stderr) = repl(
-        b"i32 == i32\ni32 == f64\ni32 != f64\ni32.logos == logos\ni32.logos == i32\n\
-          x := i32 5\nx.logos == i32\nx.logos == f64\nt := logos\ni32.logos == t\nlogos.logos == logos\n",
+        b"i32 == i32\ni32 == f64\ni32 != f64\n(synolon i32).logos == logos\n(synolon i32).logos == i32\n\
+          x := i32 5\n(synolon x).logos == i32\n(synolon x).logos == f64\nt := logos\n(synolon i32).logos == t\n(synolon logos).logos == logos\n",
     );
     assert_eq!(
         echoes,
@@ -357,7 +387,7 @@ fn a_logos_declaration_declares_a_place_of_that_type() {
     // `a : i32` introduces the name with its logos slot set and its value
     // undefined (zeroed until phase bits land): the declaration is silent,
     // `.logos` reflects the declared logos, `=` fills the value, reads load it.
-    let (echoes, stderr) = repl(b"a : i32\na.logos == i32\na = 9\na\n");
+    let (echoes, stderr) = repl(b"a : i32\n(synolon a).logos == i32\na = 9\na\n");
     assert_eq!(echoes, ["true", "9"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
@@ -369,7 +399,7 @@ fn a_dependent_typed_declaration_takes_a_computed_type() {
     // declaration is the same declaration, its logos just computed.
     let (echoes, stderr) = repl(
         b"metalogos := fn (i:i32) -> logos (if (i==0)(i32) else (f64))\n\
-          b : metalogos(1)\nb.logos == f64\nb = 7\nb\n",
+          b : metalogos(1)\n(synolon b).logos == f64\nb = 7\nb\n",
     );
     assert_eq!(echoes, ["true", "7.0"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -404,7 +434,7 @@ fn a_logos_variable_declares_fills_once_and_becomes_the_type() {
     // it at parse — comptime rebinding — after which the name is a full
     // spelling of the logos: `==` folds, juxtaposition builds typed values.
     let (echoes, stderr) = repl(
-        b"a : logos\na.logos == logos\na == i32\na = i32\na == i32\ny := a 5\ny\n",
+        b"a : logos\n(synolon a).logos == logos\na == i32\na = i32\na == i32\ny := a 5\ny\n",
     );
     assert_eq!(echoes, ["true", "false", "true", "5"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -429,7 +459,7 @@ fn logical_operators_fold_over_bool_literals() {
     // what keeps a comptime chain comptime; runtime operands still build nodes.
     let (echoes, stderr) = repl(
         b"true or false\ntrue and true\nnot (true)\n\
-          a : logos\nif (a.logos == f32 or a.logos == logos) (a = f64) else (a = i32)\na == f64\n",
+          a : logos\nif ((synolon a).logos == f32 or (synolon a).logos == logos) (a = f64) else (a = i32)\na == f64\n",
     );
     assert_eq!(echoes, ["true", "true", "false", "true"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -437,15 +467,15 @@ fn logical_operators_fold_over_bool_literals() {
 
 #[test]
 fn a_comptime_if_drops_the_untaken_branch_unparsed() {
-    // The condition folds to a bool literal at parse time (`a.logos == i32`), so
+    // The condition folds to a bool literal at parse time (`(synolon a).logos == i32`), so
     // the `if` resolves during parsing and the untaken branch's tokens are
     // dropped unlexed: `a = 9.9` under `a : i32` would be a parse error
     // (UncomputableLiteral) if it were ever parsed — the proof it was skipped
     // is that this runs at all. A comptime-false chain link falls through to
     // the branch whose condition holds.
     let (echoes, stderr) = repl(
-        b"a : i32\nif (a.logos == i32) (a = 9) else (a = 9.9)\na\n\
-          b : f64\nif (b.logos == i32) (b = 1) else if (b.logos == f64) (b = 2.5) else (b = 3)\nb\n",
+        b"a : i32\nif ((synolon a).logos == i32) (a = 9) else (a = 9.9)\na\n\
+          b : f64\nif ((synolon b).logos == i32) (b = 1) else if ((synolon b).logos == f64) (b = 2.5) else (b = 3)\nb\n",
     );
     assert_eq!(echoes, ["9", "2.5"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");

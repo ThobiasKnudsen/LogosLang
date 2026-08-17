@@ -99,6 +99,14 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::ImportFailed { path, rendered } => {
             format!("import of `{path}` failed:\n{rendered}")
         }
+        ParseError::BadReflectRead => {
+            "this read does not fit the node's logos".into()
+        }
+        ParseError::LogosNeedsView => {
+            "a value's logos is not one of its fields — read it through the \
+             synolon view: (synolon x).logos"
+                .into()
+        }
         ParseError::CtorArity => {
             "this construction's argument count does not match the fields".into()
         }

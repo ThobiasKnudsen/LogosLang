@@ -488,6 +488,9 @@ pub struct CoreTypes {
     /// `import`: the one identity that loads a file (#58); its node is the
     /// reflectable trace of the load, and running it re-yields the file's tail.
     pub import_: SynolonPtr,
+    /// `synolon`: the spelled view identity (#52) — `(synolon a)` wraps a
+    /// value as its cell, and `.` reads the cell.
+    pub synolon_: SynolonPtr,
     /// `construct`: the record-construction statement a record-typed call builds.
     pub construct_: SynolonPtr,
     /// `string`: the text-literal logos (`«…»`); inert in the seed, above all the
@@ -745,6 +748,17 @@ pub enum ParseError {
         /// The fully rendered inner report (file:line:col, caret and all).
         rendered: String,
     },
+    /// A reflection read that does not fit the node's logos (`.operand` on a
+    /// scalar, an index past the arity, `.fields` of a non-record logos), an
+    /// unknown member on a view or logos, or a read whose answer is the honest
+    /// undefined (a null constructor slot). Answering `?` instead waits for
+    /// the `?` identity (#38).
+    BadReflectRead,
+    /// `.logos` on something that is not a synolon view: `.` reads only the
+    /// fields a logos defines, which are about the hyle — a value's logos is
+    /// never one of its own fields (ruled August 2026). The view puts the
+    /// logos into the hyle: `(synolon x).logos`.
+    LogosNeedsView,
     /// A record construction's argument count did not match its field count.
     CtorArity,
     /// A `for` was not followed by a loop-variable name.
@@ -2054,23 +2068,27 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `lhs` must be a valid synolon from the store.
     pub(crate) unsafe fn parse_field_access(&mut self, lhs: SynolonPtr) -> Result<SynolonPtr, ParseError> {
-        // `.logos` is reflection, not a record field: it yields the lhs's own logos as
-        // a first-class value (an interned logos node), so it works on ANY node, not
-        // only record instances (roadmap #30; the sketch's `tape[0].logos`). `logos` is
-        // reserved for this — a record member literally named `logos` is not honored.
-        // Peek the field name and rewind if it is not `logos`, so an ordinary field
-        // falls through to the resolution below unchanged.
+        // `.` does exactly one job (ruled August 2026): reading fields the
+        // logos defines, which are always about the hyle. A value's logos is
+        // never one of its own fields — the retired universal `.logos`
+        // metaproperty did a second job here — so reading a logos takes the
+        // synolon view, `(synolon x).logos`, where the logos IS in the hyle.
+        // Peek the member name: a view or a logos-standing lhs dispatches to
+        // the #52 read surface; an ordinary field falls through unchanged.
         let save = self.pos;
         if let Some((nstart, nlen)) = self.lex_identifier() {
-            if &self.source[nstart..nstart + nlen] == "logos" {
-                // A deref's logical logos is its pointee (held in the node, not in its
-                // `.logos`); every other node's logos is its `.logos` pointer, already an
-                // interned logos node ready to use as a value.
-                if (*lhs).logos == self.types.deref_ {
-                    let (_, pointee, _) = crate::identities::pointer::deref_parts(lhs);
-                    return Ok(pointee);
-                }
-                return Ok((*lhs).logos);
+            // `source` is `&'a str` (Copy), independent of the `&mut self` the
+            // member reads then need.
+            let source = self.source;
+            let name = &source[nstart..nstart + nlen];
+            if (*lhs).logos == self.types.synolon_ {
+                return self.view_member(lhs, name);
+            }
+            if crate::identities::is_type_value(&self.types, lhs) {
+                return self.logos_member(lhs, name);
+            }
+            if name == "logos" {
+                return Err(ParseError::LogosNeedsView);
             }
             // `.compile` on an fn-typed value is the fn logos's shared member
             // (DESIGN ›Execution is function application‹: "The `fn` logos
@@ -2964,6 +2982,190 @@ impl<'a> Parser<'a> {
             self.scopes.declare(self.trie, name, *identity).map_err(ParseError::Resolve)?;
         }
         Ok(())
+    }
+
+    /// `synolon`'s constructor body (#52): view the expression to the right.
+    /// The view value is `{logos: synolon, hyle: <the viewed node's address>}`
+    /// — the one place a logos sits in a hyle, which is what makes `.logos` on
+    /// it an ordinary field read (ruled August 2026).
+    pub(crate) fn construct_view(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        let inner = self.parse_expression()?;
+        let types = self.types;
+        let node = self.store.alloc_raw(types.synolon_, inner as *mut u8);
+        tape.place(node);
+        Ok(Constructed::Placed)
+    }
+
+    /// A member read on a synolon view (#52, ›The synolon's read surface‹):
+    /// the cell's own fields (`.logos`, `.hyle`) and the hyle-decoding reads
+    /// (`.operand(i)`, `.text`). Every read folds at parse — comptime
+    /// reflection — and a read that does not fit the viewed node's logos is
+    /// the ruled checked error. Read-only by construction: nothing here
+    /// writes.
+    ///
+    /// # Safety
+    /// `view` must be a view node as [`Parser::construct_view`] builds it.
+    unsafe fn view_member(
+        &mut self,
+        view: SynolonPtr,
+        name: &str,
+    ) -> Result<SynolonPtr, ParseError> {
+        use crate::identities::meta;
+        let viewed = (*view).hyle as SynolonPtr;
+        if viewed.is_null() {
+            return Err(ParseError::BadReflectRead);
+        }
+        match name {
+            "logos" => Ok((*viewed).logos),
+            // v1: the raw address as a u64 value; the `@void` spelling waits
+            // for pointer-value plumbing.
+            "hyle" => Ok(self.scalar_value(
+                crate::identities::numtype::NumType::U64,
+                (*viewed).hyle as usize as i64,
+            )),
+            "operand" => {
+                let i = self.member_index()?;
+                let logos = (*viewed).logos;
+                if logos.is_null()
+                    || !matches!(
+                        meta::kind_of(logos),
+                        Some(meta::TUPLE_TAG | meta::LIST_TAG)
+                    )
+                    || i >= meta::arity_of(logos)
+                    || (*viewed).hyle.is_null()
+                {
+                    return Err(ParseError::BadReflectRead);
+                }
+                let ops = (*viewed).hyle as *const SynolonPtr;
+                Ok(self.store.alloc_raw(self.types.synolon_, *ops.add(i) as *mut u8))
+            }
+            "text" => {
+                if (*viewed).logos != self.types.string_ {
+                    return Err(ParseError::BadReflectRead);
+                }
+                Ok(viewed)
+            }
+            _ => Err(ParseError::BadReflectRead),
+        }
+    }
+
+    /// A member read on a node standing as a logos (#52): the shared metadata
+    /// this crate stores once per logos — `.arity`, `.role(i)`,
+    /// `.precedence`, `.associativity`, `.constructor`, `.destructor`, and the
+    /// record layout `.fields`, `.size_bytes`, `.scope`. Typically reached as
+    /// `(synolon a).logos.arity`. A null constructor/destructor slot is the
+    /// honest undefined and errors until `?` exists.
+    ///
+    /// # Safety
+    /// `logos` must be a logos identity node from the store.
+    unsafe fn logos_member(
+        &mut self,
+        logos: SynolonPtr,
+        name: &str,
+    ) -> Result<SynolonPtr, ParseError> {
+        use crate::identities::meta;
+        use crate::identities::numtype::NumType;
+        if meta::kind_of(logos).is_none() {
+            return Err(ParseError::BadReflectRead);
+        }
+        let operand_kind =
+            matches!(meta::kind_of(logos), Some(meta::TUPLE_TAG | meta::LIST_TAG));
+        match name {
+            "arity" if operand_kind => {
+                Ok(self.scalar_value(NumType::I64, meta::arity_of(logos) as i64))
+            }
+            "role" if operand_kind => {
+                let i = self.member_index()?;
+                if i >= meta::arity_of(logos) {
+                    return Err(ParseError::BadReflectRead);
+                }
+                Ok(meta::role_of(logos, i))
+            }
+            "precedence" => Ok(self.scalar_value(
+                NumType::F64,
+                meta::precedence_of(logos).to_bits() as i64,
+            )),
+            "associativity" => Ok(self.scalar_value(
+                NumType::I64,
+                match meta::assoc_of(logos) {
+                    Assoc::Left => 0,
+                    Assoc::Right => 1,
+                },
+            )),
+            "constructor" => {
+                let c = meta::constructor_of(logos);
+                if c.is_null() {
+                    return Err(ParseError::BadReflectRead);
+                }
+                Ok(self.store.alloc_raw(self.types.synolon_, c as *mut u8))
+            }
+            "destructor" => {
+                let d = meta::destructor_of(logos);
+                if d.is_null() {
+                    return Err(ParseError::BadReflectRead);
+                }
+                Ok(self.store.alloc_raw(self.types.synolon_, d as *mut u8))
+            }
+            "fields" if meta::is_record_type(logos) => {
+                Ok(self
+                    .store
+                    .alloc_raw(self.types.synolon_, meta::record_fields_of(logos) as *mut u8))
+            }
+            "size_bytes" if meta::is_record_type(logos) => {
+                Ok(self.scalar_value(NumType::I64, meta::record_size_of(logos) as i64))
+            }
+            "scope" if meta::is_record_type(logos) => {
+                Ok(self
+                    .store
+                    .alloc_raw(self.types.synolon_, meta::record_scope_of(logos) as *mut u8))
+            }
+            "logos" => Err(ParseError::LogosNeedsView),
+            _ => Err(ParseError::BadReflectRead),
+        }
+    }
+
+    /// Parse a member call's comptime index — `(N)` after `.operand` /
+    /// `.role` — a non-negative rational literal, folded now (comptime
+    /// reflection; runtime indices arrive with the runtime view machinery).
+    fn member_index(&mut self) -> Result<usize, ParseError> {
+        self.expect_open()?;
+        self.skip_trivia();
+        let source = self.source;
+        let r = self
+            .scopes
+            .resolve(self.trie, &source[self.pos..])
+            .map_err(ParseError::Resolve)?;
+        if r.identity != self.types.rational {
+            return Err(ParseError::BadReflectRead);
+        }
+        let start = self.pos;
+        self.pos += r.matched;
+        let lit =
+            self.construct_leaf(r.identity, start, r.matched)?.ok_or(ParseError::BadLiteral)?;
+        let i = crate::identities::rational::mold(lit).ok_or(ParseError::BadReflectRead)?;
+        if i < 0 {
+            return Err(ParseError::BadReflectRead);
+        }
+        self.expect_close()?;
+        Ok(i as usize)
+    }
+
+    /// Build a typed scalar value node: fresh storage holding `bits` at `nt`'s
+    /// width. The reflection counts (`.arity`, `.size_bytes`) and measures
+    /// (`.precedence`) are ordinary typed values, comparable with literals.
+    fn scalar_value(
+        &mut self,
+        nt: crate::identities::numtype::NumType,
+        bits: i64,
+    ) -> SynolonPtr {
+        let ty = self.types.numtypes[nt as usize];
+        let width = nt.bytes();
+        let bytes = bits.to_ne_bytes();
+        let storage = self.store.alloc_bytes(&bytes[..width]);
+        self.store.alloc_raw(ty, storage)
     }
 
     /// `:`'s constructor body: the typed declaration `name : logos` — it

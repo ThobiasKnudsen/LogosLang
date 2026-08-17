@@ -9,7 +9,7 @@ metalogos := fn (i:i32) -> logos (
     else (logos)
 )
 a : metalogos(3)
-if (a.logos == i32) (a=9)
-else if (a.logos == f32 or a.logos == f64) (a=9.9)
-else if (a.logos == logos) (a=i32)
+if ((synolon a).logos == i32) (a=9)
+else if ((synolon a).logos == f32 or (synolon a).logos == f64) (a=9.9)
+else if ((synolon a).logos == logos) (a=i32)
 a
