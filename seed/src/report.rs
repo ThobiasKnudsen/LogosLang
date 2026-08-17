@@ -102,6 +102,9 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::BadReflectRead => {
             "this read does not fit the node's logos".into()
         }
+        ParseError::ExpectedIndexBracket => {
+            "expected `[index]` — element access is `[…]`, `(…)` is application".into()
+        }
         ParseError::LogosNeedsView => {
             "a value's logos is not one of its fields — read it through the \
              synolon view: (synolon x).logos"

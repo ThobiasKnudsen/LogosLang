@@ -754,6 +754,10 @@ pub enum ParseError {
     /// undefined (a null constructor slot). Answering `?` instead waits for
     /// the `?` identity (#38).
     BadReflectRead,
+    /// A collection member (`.operands`, `.roles`) without its `[index]` —
+    /// element access is `[…]` (ruled August 2026), and the bare collection
+    /// as a first-class value waits for the array logos (#47).
+    ExpectedIndexBracket,
     /// `.logos` on something that is not a synolon view: `.` reads only the
     /// fields a logos defines, which are about the hyle — a value's logos is
     /// never one of its own fields (ruled August 2026). The view puts the
@@ -2091,11 +2095,12 @@ impl<'a> Parser<'a> {
                 return Err(ParseError::LogosNeedsView);
             }
             // An operator node's slots are the fields its own logos defines
-            // (#52, corrected August 2026): `.operand(i)` is ordinary field
-            // access on any operand-kinded value — `(x + x).operand(0)` — no
-            // view involved, exactly as `p.x` reads a record field. A null
-            // slot (an absent optional) is the ruled checked error until `?`.
-            if name == "operand"
+            // (#52, corrected August 2026): `.operands` is the collection
+            // that logos defines, and `[i]` fetches an element from it —
+            // `(x + x).operands[0]` — no view involved, exactly as `p.x`
+            // reads a record field. A null slot (an absent optional) is the
+            // ruled checked error until `?`.
+            if name == "operands"
                 && !(*lhs).logos.is_null()
                 && matches!(
                     crate::identities::meta::kind_of((*lhs).logos),
@@ -3058,7 +3063,7 @@ impl<'a> Parser<'a> {
     }
 
     /// A member read on a node standing as a logos (#52): the shared metadata
-    /// this crate stores once per logos — `.arity`, `.role(i)`,
+    /// this crate stores once per logos — `.arity`, `.roles[i]`,
     /// `.precedence`, `.associativity`, `.constructor`, `.destructor`, and the
     /// record layout `.fields`, `.size_bytes`, `.scope`. Typically reached as
     /// `(synolon a).logos.arity`. A null constructor/destructor slot is the
@@ -3082,7 +3087,7 @@ impl<'a> Parser<'a> {
             "arity" if operand_kind => {
                 Ok(self.scalar_value(NumType::I64, meta::arity_of(logos) as i64))
             }
-            "role" if operand_kind => {
+            "roles" if operand_kind => {
                 let i = self.member_index()?;
                 if i >= meta::arity_of(logos) {
                     return Err(ParseError::BadReflectRead);
@@ -3132,11 +3137,19 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse a member call's comptime index — `(N)` after `.operand` /
-    /// `.role` — a non-negative rational literal, folded now (comptime
-    /// reflection; runtime indices arrive with the runtime view machinery).
+    /// Parse a collection index — `[N]` after `.operands` / `.roles` — a
+    /// non-negative rational literal, folded now (comptime reflection;
+    /// runtime indices arrive with the runtime view machinery). Element
+    /// access is `[…]` across every collection while `(…)` stays application
+    /// (ruled August 2026); the brackets are consumed as raw tokens here —
+    /// the licensed token consumption — until general indexing lands with
+    /// the array logos (#47).
     fn member_index(&mut self) -> Result<usize, ParseError> {
-        self.expect_open()?;
+        self.skip_trivia();
+        if self.source.as_bytes().get(self.pos) != Some(&b'[') {
+            return Err(ParseError::ExpectedIndexBracket);
+        }
+        self.pos += 1;
         self.skip_trivia();
         let source = self.source;
         let r = self
@@ -3154,7 +3167,11 @@ impl<'a> Parser<'a> {
         if i < 0 {
             return Err(ParseError::BadReflectRead);
         }
-        self.expect_close()?;
+        self.skip_trivia();
+        if self.source.as_bytes().get(self.pos) != Some(&b']') {
+            return Err(ParseError::ExpectedIndexBracket);
+        }
+        self.pos += 1;
         Ok(i as usize)
     }
 

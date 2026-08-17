@@ -142,18 +142,27 @@ fn the_repl_imports_once_per_session_and_keeps_pub_names() {
 fn the_view_reads_the_cell_and_operands_are_ordinary_fields() {
     // #52: the view exposes exactly the cell's two fields (`.logos`, `.hyle`)
     // — the synolon logos defines nothing else — while an operator node's
-    // slots are fields ITS logos defines, so `.operand(i)` is ordinary access
-    // on the value itself: `(x + x).operand(0)`, no view involved. Reads fold
-    // at parse (comptime reflection). The honest cell surface shows the op
-    // slot too: `(x + x)` has arity 3, and operand(2) is the resolved
-    // callable leaf, not an i32.
+    // slots are fields ITS logos defines: `.operands` is that collection and
+    // `[i]` fetches an element from it (element access is `[…]`, application
+    // is `(…)`): `(x + x).operands[0]`, no view involved. Reads fold at
+    // parse (comptime reflection). The honest cell surface shows the op slot
+    // too: `(x + x)` has arity 3, and operands[2] is the resolved callable
+    // leaf, not an i32.
     let (echoes, stderr) = repl(
         b"x := i32 5\n(synolon x).logos == i32\n(synolon (x + x)).logos.arity\n\
-          (synolon (x + x).operand(0)).logos == i32\n(synolon (x + x).operand(2)).logos == i32\n\
-          (x + x).operand(0)\n",
+          (synolon (x + x).operands[0]).logos == i32\n(synolon (x + x).operands[2]).logos == i32\n\
+          (x + x).operands[0]\n",
     );
     assert_eq!(echoes, ["true", "3", "true", "false", "5"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
+fn a_collection_member_demands_its_index_brackets() {
+    // Element access is `[…]`; the call form is refused with a teaching
+    // message, and the bare collection as a value waits for the array logos.
+    let (_echoes, stderr) = repl(b"x := i32 5\n(x + x).operands(0)\n");
+    assert!(stderr.contains("element access is `[…]`"), "stderr: {stderr}");
 }
 
 #[test]
@@ -166,8 +175,9 @@ fn dot_logos_off_the_view_is_a_guided_error() {
 
 #[test]
 fn a_reflect_read_that_does_not_fit_is_an_error() {
-    // The ruled checked error: `.operand` on a scalar has nothing to read.
-    let (_echoes, stderr) = repl(b"x := i32 5\n(synolon x).operand(0)\n");
+    // The ruled checked error: the view has no member beyond the two cell
+    // fields, so `.operands` through it has nothing to read.
+    let (_echoes, stderr) = repl(b"x := i32 5\n(synolon x).operands[0]\n");
     assert!(stderr.contains("does not fit"), "stderr: {stderr}");
 }
 

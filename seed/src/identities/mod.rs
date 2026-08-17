@@ -3917,7 +3917,7 @@ mod tests {
     fn the_view_reads_roles_and_hyle_at_the_graph_level() {
         // #52 reads whose values are strings or addresses assert at the graph
         // level (strings are inert at the surface, so the REPL cannot echo
-        // them): `.logos.role(i)` is the role-name string, and `.hyle` is a
+        // them): `.logos.roles[i]` is the role-name string, and `.hyle` is a
         // u64 address value.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
@@ -3930,7 +3930,7 @@ mod tests {
         s.declare(&mut trie, "x", x).unwrap();
 
         let mut p = Parser::new(
-            "(synolon (x + x)).logos.role(0)",
+            "(synolon (x + x)).logos.roles[0]",
             &mut store,
             &mut trie,
             core.types(),
