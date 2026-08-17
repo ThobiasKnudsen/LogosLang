@@ -139,17 +139,20 @@ fn the_repl_imports_once_per_session_and_keeps_pub_names() {
 }
 
 #[test]
-fn the_synolon_view_reads_the_cell() {
-    // #52: `(synolon a)` wraps a value as its cell; `.` then reads the cell —
-    // the one place a logos sits in a hyle. Reads fold at parse (comptime
-    // reflection) and compose: an operand read yields another view. The
-    // honest cell surface shows the op slot too: `(x + x)` has arity 3, and
-    // operand(2) is the resolved callable leaf, not an i32.
+fn the_view_reads_the_cell_and_operands_are_ordinary_fields() {
+    // #52: the view exposes exactly the cell's two fields (`.logos`, `.hyle`)
+    // — the synolon logos defines nothing else — while an operator node's
+    // slots are fields ITS logos defines, so `.operand(i)` is ordinary access
+    // on the value itself: `(x + x).operand(0)`, no view involved. Reads fold
+    // at parse (comptime reflection). The honest cell surface shows the op
+    // slot too: `(x + x)` has arity 3, and operand(2) is the resolved
+    // callable leaf, not an i32.
     let (echoes, stderr) = repl(
         b"x := i32 5\n(synolon x).logos == i32\n(synolon (x + x)).logos.arity\n\
-          (synolon (x + x)).operand(0).logos == i32\n(synolon (x + x)).operand(2).logos == i32\n",
+          (synolon (x + x).operand(0)).logos == i32\n(synolon (x + x).operand(2)).logos == i32\n\
+          (x + x).operand(0)\n",
     );
-    assert_eq!(echoes, ["true", "3", "true", "false"], "stderr: {stderr}");
+    assert_eq!(echoes, ["true", "3", "true", "false", "5"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
 

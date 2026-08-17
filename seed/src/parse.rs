@@ -2090,6 +2090,34 @@ impl<'a> Parser<'a> {
             if name == "logos" {
                 return Err(ParseError::LogosNeedsView);
             }
+            // An operator node's slots are the fields its own logos defines
+            // (#52, corrected August 2026): `.operand(i)` is ordinary field
+            // access on any operand-kinded value — `(x + x).operand(0)` — no
+            // view involved, exactly as `p.x` reads a record field. A null
+            // slot (an absent optional) is the ruled checked error until `?`.
+            if name == "operand"
+                && !(*lhs).logos.is_null()
+                && matches!(
+                    crate::identities::meta::kind_of((*lhs).logos),
+                    Some(
+                        crate::identities::meta::TUPLE_TAG
+                            | crate::identities::meta::LIST_TAG
+                    )
+                )
+            {
+                let i = self.member_index()?;
+                if i >= crate::identities::meta::arity_of((*lhs).logos)
+                    || (*lhs).hyle.is_null()
+                {
+                    return Err(ParseError::BadReflectRead);
+                }
+                let ops = (*lhs).hyle as *const SynolonPtr;
+                let operand = *ops.add(i);
+                if operand.is_null() {
+                    return Err(ParseError::BadReflectRead);
+                }
+                return Ok(operand);
+            }
             // `.compile` on an fn-typed value is the fn logos's shared member
             // (DESIGN ›Execution is function application‹: "The `fn` logos
             // carries two shared functions: `compile` … and `run`"; `run` is
@@ -3000,11 +3028,11 @@ impl<'a> Parser<'a> {
     }
 
     /// A member read on a synolon view (#52, ›The synolon's read surface‹):
-    /// the cell's own fields (`.logos`, `.hyle`) and the hyle-decoding reads
-    /// (`.operand(i)`, `.text`). Every read folds at parse — comptime
-    /// reflection — and a read that does not fit the viewed node's logos is
-    /// the ruled checked error. Read-only by construction: nothing here
-    /// writes.
+    /// exactly the cell's two fields, `.logos` and `.hyle` — the synolon logos
+    /// defines nothing else, so nothing else reads through the view. The
+    /// hyle-decoding reads (`.operand(i)`) are ordinary `.` on the value
+    /// itself, through its own logos (corrected August 2026). Read-only by
+    /// construction: nothing here writes.
     ///
     /// # Safety
     /// `view` must be a view node as [`Parser::construct_view`] builds it.
@@ -3013,7 +3041,6 @@ impl<'a> Parser<'a> {
         view: SynolonPtr,
         name: &str,
     ) -> Result<SynolonPtr, ParseError> {
-        use crate::identities::meta;
         let viewed = (*view).hyle as SynolonPtr;
         if viewed.is_null() {
             return Err(ParseError::BadReflectRead);
@@ -3026,28 +3053,6 @@ impl<'a> Parser<'a> {
                 crate::identities::numtype::NumType::U64,
                 (*viewed).hyle as usize as i64,
             )),
-            "operand" => {
-                let i = self.member_index()?;
-                let logos = (*viewed).logos;
-                if logos.is_null()
-                    || !matches!(
-                        meta::kind_of(logos),
-                        Some(meta::TUPLE_TAG | meta::LIST_TAG)
-                    )
-                    || i >= meta::arity_of(logos)
-                    || (*viewed).hyle.is_null()
-                {
-                    return Err(ParseError::BadReflectRead);
-                }
-                let ops = (*viewed).hyle as *const SynolonPtr;
-                Ok(self.store.alloc_raw(self.types.synolon_, *ops.add(i) as *mut u8))
-            }
-            "text" => {
-                if (*viewed).logos != self.types.string_ {
-                    return Err(ParseError::BadReflectRead);
-                }
-                Ok(viewed)
-            }
             _ => Err(ParseError::BadReflectRead),
         }
     }

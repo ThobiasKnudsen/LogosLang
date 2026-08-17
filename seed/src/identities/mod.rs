@@ -3914,11 +3914,11 @@ mod tests {
     }
 
     #[test]
-    fn the_view_reads_roles_text_and_hyle_at_the_graph_level() {
+    fn the_view_reads_roles_and_hyle_at_the_graph_level() {
         // #52 reads whose values are strings or addresses assert at the graph
         // level (strings are inert at the surface, so the REPL cannot echo
-        // them): `.logos.role(i)` is the role-name string, `.text` is the
-        // viewed string node itself, and `.hyle` is a u64 address value.
+        // them): `.logos.role(i)` is the role-name string, and `.hyle` is a
+        // u64 address value.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
@@ -3940,15 +3940,6 @@ mod tests {
         // SAFETY: `role` is the role-name string node the read just yielded.
         unsafe {
             assert_eq!(crate::identities::string::text(role), b"lhs");
-        }
-        let mut s = p.into_scopes();
-        s.truncate(1);
-
-        let mut p = Parser::new("(synolon «hi»).text", &mut store, &mut trie, core.types(), s);
-        let text = p.parse_expression().unwrap();
-        // SAFETY: `text` is the viewed string node itself.
-        unsafe {
-            assert_eq!(crate::identities::string::text(text), b"hi");
         }
         let mut s = p.into_scopes();
         s.truncate(1);
