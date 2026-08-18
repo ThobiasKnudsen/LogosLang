@@ -62,7 +62,7 @@ use crate::id_context::IdContext;
 use crate::parse::{Assoc, CoreTypes, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
-use crate::synolon::SynolonPtr;
+use crate::dyad::DyadPtr;
 
 /// Operand index of the pointee logos in an `alloc` node (`[pointee, init, op]`).
 const ALLOC_POINTEE: usize = 0;
@@ -77,17 +77,17 @@ const DEFER_INNER: usize = 0;
 
 /// The identities and natives the drop model registers, returned to `Core::build`.
 pub(super) struct DropModel {
-    pub alloc_: SynolonPtr,
-    pub own_: SynolonPtr,
-    pub drop_: SynolonPtr,
-    pub free_: SynolonPtr,
-    pub defer_: SynolonPtr,
+    pub alloc_: DyadPtr,
+    pub own_: DyadPtr,
+    pub drop_: DyadPtr,
+    pub free_: DyadPtr,
+    pub defer_: DyadPtr,
     /// `free`'s run native, also the owning pointer's stored destructor.
-    pub teardown_leaf: SynolonPtr,
-    pub own_leaf: SynolonPtr,
-    pub drop_leaf: SynolonPtr,
-    pub alloc_leaf: SynolonPtr,
-    pub defer_leaf: SynolonPtr,
+    pub teardown_leaf: DyadPtr,
+    pub own_leaf: DyadPtr,
+    pub drop_leaf: DyadPtr,
+    pub alloc_leaf: DyadPtr,
+    pub defer_leaf: DyadPtr,
 }
 
 /// Register all five identities: their spellings, operand records, and run
@@ -177,7 +177,7 @@ fn keyword(
     spelling: &str,
     roles: &[&str],
     construct: crate::parse::ConstructFn,
-) -> SynolonPtr {
+) -> DyadPtr {
     let record = meta::operand_record(cx, meta::TUPLE_TAG, f64::NAN, Assoc::Left, roles);
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(spelling, IdContext::new(id, cx.root_scope));
@@ -213,7 +213,7 @@ unsafe fn heap_free(ptr: *mut u8, width: usize) {
 ///
 /// # Safety
 /// `pointee` must be a scalar or pointer logos node.
-unsafe fn pointee_width(pointee: SynolonPtr) -> usize {
+unsafe fn pointee_width(pointee: DyadPtr) -> usize {
     numtype::numtype_of_type(pointee).bytes()
 }
 
@@ -224,9 +224,9 @@ unsafe fn pointee_width(pointee: SynolonPtr) -> usize {
 pub(super) fn build_alloc(
     store: &mut Store,
     types: &CoreTypes,
-    init: SynolonPtr,
-) -> Result<SynolonPtr, ParseError> {
-    // SAFETY: `init` is a reduced synolon just parsed.
+    init: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
+    // SAFETY: `init` is a reduced dyad just parsed.
     let pointee = match unsafe { crate::identities::numtype_of(types, init) } {
         crate::identities::Operand::Concrete(_) | crate::identities::Operand::Pointer(_) => {
             unsafe { crate::identities::scalar_binding_type(store, types, init).0 }
@@ -242,16 +242,16 @@ pub(super) fn build_alloc(
 /// pointer) — a borrow (`&x`) or a plain value cannot be moved or dropped.
 ///
 /// # Safety-free at the call boundary; reads `place`'s logos, which must be a
-/// reduced synolon from the store.
+/// reduced dyad from the store.
 pub(crate) fn build_teardown(
     store: &mut Store,
     types: &CoreTypes,
-    op_id: SynolonPtr,
-    place: SynolonPtr,
+    op_id: DyadPtr,
+    place: DyadPtr,
     require_owning: bool,
-) -> Result<SynolonPtr, ParseError> {
-    // SAFETY: `place` is a reduced synolon; its logos is a valid logos node.
-    let logos = unsafe { (*place).logos };
+) -> Result<DyadPtr, ParseError> {
+    // SAFETY: `place` is a reduced dyad; its logos is a valid logos node.
+    let logos = unsafe { (*place).ty };
     if unsafe { !numtype::is_pointer_type(logos) } {
         return Err(ParseError::BadAssignTarget);
     }
@@ -272,7 +272,7 @@ pub(crate) fn build_teardown(
 }
 
 /// Build a `defer <inner>` node `[inner, op]`.
-pub(crate) fn build_defer(store: &mut Store, types: &CoreTypes, inner: SynolonPtr) -> SynolonPtr {
+pub(crate) fn build_defer(store: &mut Store, types: &CoreTypes, inner: DyadPtr) -> DyadPtr {
     let value = store.alloc_operands(&[inner, types.ops.defer_]);
     store.alloc_raw(types.defer_, value)
 }
@@ -281,8 +281,8 @@ pub(crate) fn build_defer(store: &mut Store, types: &CoreTypes, inner: SynolonPt
 ///
 /// # Safety
 /// `node` must be a `defer` node as [`build_defer`] lays it out.
-pub(crate) unsafe fn deferred_inner_of(node: SynolonPtr) -> SynolonPtr {
-    *((*node).hyle as *const SynolonPtr).add(DEFER_INNER)
+pub(crate) unsafe fn deferred_inner_of(node: DyadPtr) -> DyadPtr {
+    *((*node).value as *const DyadPtr).add(DEFER_INNER)
 }
 
 /// The place an inserted teardown frees: the `defer free <place>` node's inner
@@ -294,9 +294,9 @@ pub(crate) unsafe fn deferred_inner_of(node: SynolonPtr) -> SynolonPtr {
 /// # Safety
 /// `defer_node` must be a `defer` node over a teardown, as the binding site
 /// builds ([`build_defer`] over [`build_teardown`]).
-pub(crate) unsafe fn teardown_place_of(defer_node: SynolonPtr) -> SynolonPtr {
+pub(crate) unsafe fn teardown_place_of(defer_node: DyadPtr) -> DyadPtr {
     let inner = deferred_inner_of(defer_node);
-    *((*inner).hyle as *const SynolonPtr).add(TEARDOWN_PLACE)
+    *((*inner).value as *const DyadPtr).add(TEARDOWN_PLACE)
 }
 
 /// The pointee logos of an `alloc`/`own` node — what a bound owning pointer
@@ -305,13 +305,13 @@ pub(crate) unsafe fn teardown_place_of(defer_node: SynolonPtr) -> SynolonPtr {
 /// tail is one propagates through (an owning value moved out of a block).
 ///
 /// # Safety
-/// `node` must be a valid synolon from the store.
-pub(crate) unsafe fn owning_pointee_of(types: &CoreTypes, node: SynolonPtr) -> Option<SynolonPtr> {
-    let logos = (*node).logos;
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn owning_pointee_of(types: &CoreTypes, node: DyadPtr) -> Option<DyadPtr> {
+    let logos = (*node).ty;
     if logos == types.alloc_ {
-        Some(*((*node).hyle as *const SynolonPtr).add(ALLOC_POINTEE))
+        Some(*((*node).value as *const DyadPtr).add(ALLOC_POINTEE))
     } else if logos == types.own_ {
-        Some(*((*node).hyle as *const SynolonPtr).add(TEARDOWN_POINTEE))
+        Some(*((*node).value as *const DyadPtr).add(TEARDOWN_POINTEE))
     } else if logos == types.scope {
         // A block that yields an owning value moves ownership to the binder.
         crate::parse::last_sequence_expr(node).and_then(|tail| owning_pointee_of(types, tail))
@@ -325,17 +325,17 @@ pub(crate) unsafe fn owning_pointee_of(types: &CoreTypes, node: SynolonPtr) -> O
 ///
 /// # Safety
 /// As [`owning_pointee_of`].
-pub(crate) unsafe fn is_owning_value(types: &CoreTypes, node: SynolonPtr) -> bool {
+pub(crate) unsafe fn is_owning_value(types: &CoreTypes, node: DyadPtr) -> bool {
     owning_pointee_of(types, node).is_some()
 }
 
 /// Run `alloc`: evaluate the initializer, heap-allocate the pointee's width,
 /// write the value in, and yield the block's address (the owning pointer). The
 /// runtime notes the live allocation so leaks and double-frees are observable.
-fn run_alloc(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
+fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an `alloc` node `[pointee, init, op]` from the store.
     unsafe {
-        let slots = (*node).hyle as *const SynolonPtr;
+        let slots = (*node).value as *const DyadPtr;
         let pointee = *slots.add(ALLOC_POINTEE);
         let init = *slots.add(ALLOC_INIT);
         let bits = rt.run(init)?;
@@ -354,10 +354,10 @@ fn run_alloc(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
 /// place's pointer; if it is null (an emptied place) do nothing — the sanctioned
 /// no-op — otherwise free the block, note the free, and null the place so a
 /// second teardown over it also no-ops.
-fn run_teardown(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
+fn run_teardown(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `[place, pointee, op]` teardown node from the store.
     unsafe {
-        let slots = (*node).hyle as *const SynolonPtr;
+        let slots = (*node).value as *const DyadPtr;
         let place = *slots.add(TEARDOWN_PLACE);
         let pointee = *slots.add(TEARDOWN_POINTEE);
         let slot = rt.place_addr(place).ok_or(RunError::BadValue)?;
@@ -382,13 +382,13 @@ fn run_teardown(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
 /// teardown genuinely flows through the reserved `destructor` slot. Rejecting a
 /// null destructor cannot happen here — `build_teardown` demanded an owning place
 /// at parse — so a null slot is a malformed node.
-fn run_drop(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
+fn run_drop(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `drop` node; its place's logos carries the destructor
     // (owning-ness checked at parse), whose entry is a `RunFn` reading the same
     // `[place, pointee, op]` layout this node has.
     unsafe {
-        let place = *((*node).hyle as *const SynolonPtr).add(TEARDOWN_PLACE);
-        let dtor = meta::destructor_of((*place).logos);
+        let place = *((*node).value as *const DyadPtr).add(TEARDOWN_PLACE);
+        let dtor = meta::destructor_of((*place).ty);
         if dtor.is_null() || !callable::is_callable(dtor) {
             return Err(RunError::BadValue);
         }
@@ -399,10 +399,10 @@ fn run_drop(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
 
 /// Run `own`: read the place's pointer, empty the place (write null), and yield
 /// the pointer — a move. The moved-from place's pending `defer free` then no-ops.
-fn run_own(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
+fn run_own(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an `own` node `[place, pointee, op]` from the store.
     unsafe {
-        let place = *((*node).hyle as *const SynolonPtr).add(TEARDOWN_PLACE);
+        let place = *((*node).value as *const DyadPtr).add(TEARDOWN_PLACE);
         let slot = rt.place_addr(place).ok_or(RunError::BadValue)?;
         if slot.is_null() {
             return Err(RunError::BadValue);
@@ -417,7 +417,7 @@ fn run_own(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
 /// execution; the scope machinery ([`crate::identities::scope`]) and the
 /// top-level drain run the inner, never this node, so reaching it directly means
 /// a defer stood outside any scope — harmless unit.
-fn run_defer_noop(_rt: &mut Runtime, _node: SynolonPtr) -> Result<i64, RunError> {
+fn run_defer_noop(_rt: &mut Runtime, _node: DyadPtr) -> Result<i64, RunError> {
     Ok(0)
 }
 
@@ -558,12 +558,12 @@ mod tests {
         };
         // SAFETY: `scope` is a sequence node; its body is an array of exprs.
         unsafe {
-            let arr = *((*scope).hyle as *const SynolonPtr);
+            let arr = *((*scope).value as *const DyadPtr);
             let exprs = crate::identities::array::items(arr);
-            let defer = exprs.iter().find(|&&e| (*e).logos == core.defer_);
+            let defer = exprs.iter().find(|&&e| (*e).ty == core.defer_);
             assert!(defer.is_some(), "an inserted defer node is in the scope body");
             let inner = deferred_inner_of(*defer.unwrap());
-            assert_eq!((*inner).logos, core.free_, "it defers a free");
+            assert_eq!((*inner).ty, core.free_, "it defers a free");
             // It describes without panicking — reflectable like any node.
             let _ = crate::reflect::describe(&types, *defer.unwrap());
         }
@@ -590,16 +590,16 @@ mod tests {
         // SAFETY: the scope body holds the inserted `defer free a`, whose place
         // slot is the owning place `a`.
         unsafe {
-            let arr = *((*scope).hyle as *const SynolonPtr);
+            let arr = *((*scope).value as *const DyadPtr);
             let exprs = crate::identities::array::items(arr);
             let defer = *exprs
                 .iter()
-                .find(|&&e| (*e).logos == core.defer_)
+                .find(|&&e| (*e).ty == core.defer_)
                 .expect("the binding inserted a defer");
             let a = teardown_place_of(defer);
-            assert!(numtype::is_pointer_type((*a).logos), "a is a pointer place");
+            assert!(numtype::is_pointer_type((*a).ty), "a is a pointer place");
             assert!(
-                !meta::destructor_of((*a).logos).is_null(),
+                !meta::destructor_of((*a).ty).is_null(),
                 "an owning pointer's logos carries the destructor"
             );
         }

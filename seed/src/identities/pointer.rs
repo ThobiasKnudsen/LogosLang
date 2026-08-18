@@ -8,21 +8,21 @@
 //! `@T` — the pointer is the first thing the user interacts with, and it
 //! composes (`@@i32`, `@point`) — while dereference is **postfix** `x@`, so
 //! chains read left to right: `p@.x`, `p@@`. Because a dereference can never
-//! *start* an expression, `@` after a completed synolon is always deref and `@`
+//! *start* an expression, `@` after a completed dyad is always deref and `@`
 //! elsewhere is always the logos prefix; no ambiguity exists. `&x` is address-of.
 //! v1 pointers are raw, unchecked addresses (DESIGN's `@`-family); checked
 //! `&T`/`&mut T` references layer on when the borrow checker arrives.
 //!
-//! Representation: a pointer *logos* is `{logos: logos, value -> record}`, its
+//! Representation: a pointer *logos* is `{type: logos, value -> record}`, its
 //! shared-member record [`ADDR_TAG`]-kinded with the pointee node as payload
 //! (see [`crate::identities::meta`]) — created fresh per use, never interned
 //! (DESIGN: ordinary source nodes are not deduped); equality anywhere compares
 //! *pointees*. A pointer *value* is an ordinary 8-byte scalar (the address in
 //! the i64 bit-container), so variables, parameters, record fields, and the
 //! compiled ABI all carry pointers through the existing width machinery. A
-//! dereference is `{logos: deref, value: [ptr-expr, pointee-logos, offset-node]}` —
+//! dereference is `{type: deref, value: [ptr-expr, pointee-logos, offset-node]}` —
 //! the offset folds `p@.x` field access into the same node — and a store-through
-//! is `{logos: storeptr, value: [ptr-expr, rhs, pointee-logos, offset-node]}`, built
+//! is `{type: storeptr, value: [ptr-expr, rhs, pointee-logos, offset-node]}`, built
 //! by `=` at parse time. Deferred, deliberately: pointer arithmetic and
 //! null-safety beyond the literal-argument seam. Heap allocation now exists —
 //! `alloc`/`free` in [`crate::identities::drop_model`] mint owning `@T`
@@ -35,7 +35,7 @@ use super::callable::{self, Callables};
 use super::numtype::{self, NumType};
 use super::{commit_if_literal, meta, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
-use crate::synolon::SynolonPtr;
+use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::parse::{Assoc, CoreTypes, ParseError};
 use crate::run::{RunError, Runtime};
@@ -49,19 +49,19 @@ use crate::store::Store;
 pub(super) fn register(
     cx: &mut Cx,
     cs: &Callables,
-) -> (SynolonPtr, SynolonPtr, SynolonPtr, SynolonPtr, SynolonPtr, SynolonPtr, SynolonPtr) {
+) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::record(cx.store, meta::TOKEN_TAG, f64::INFINITY);
     let at = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("@", IdContext::new(at, cx.root_scope));
     // `@`'s constructor reads its own left context (the model's tape[-1]): a
-    // completed synolon makes it a postfix deref, none makes it the pointer-logos
+    // completed dyad makes it a postfix deref, none makes it the pointer-logos
     // prefix.
     cx.metas.insert(at, |p, _id, tape| {
         // The model's `tape[-1]`: a completed operand makes `@` a postfix
         // deref (the left consumed), none makes it the pointer-logos prefix.
         match p.left_operand(tape)? {
             Some(left) => {
-                // SAFETY: `left` is a reduced synolon off the tape.
+                // SAFETY: `left` is a reduced dyad off the tape.
                 let node = unsafe { p.build_deref(left) }?;
                 tape.remove(-1); // the consumed left
                 tape.place(node);
@@ -122,7 +122,7 @@ pub(super) fn register(
     (deref, storeptr, addr, deref_leaf, storeptr_leaf, addr_leaf, at)
 }
 
-/// Build an address-of node `{logos: addr, value: [place, pointee, op]}` over a
+/// Build an address-of node `{type: addr, value: [place, pointee, op]}` over a
 /// storage-backed `place` (a variable, a record field, a pointer variable). The
 /// pointee is the place's logos. Unlike a baked pointer *literal*, this node
 /// resolves the address at run/lower time through `place_addr`, so a
@@ -131,8 +131,8 @@ pub(super) fn register(
 ///
 /// # Safety
 /// `place` must be a storage-backed place node from the store.
-pub(crate) unsafe fn build_addr(store: &mut Store, types: &CoreTypes, place: SynolonPtr) -> SynolonPtr {
-    let pointee = (*place).logos;
+pub(crate) unsafe fn build_addr(store: &mut Store, types: &CoreTypes, place: DyadPtr) -> DyadPtr {
+    let pointee = (*place).ty;
     let value = store.alloc_operands(&[place, pointee, types.ops.addr_]);
     store.alloc_raw(types.addr_, value)
 }
@@ -140,28 +140,28 @@ pub(crate) unsafe fn build_addr(store: &mut Store, types: &CoreTypes, place: Syn
 /// Run an address-of: the current machine address of its place — an absolute
 /// pointer for a global, `activation_base + offset` for a frame-relative local
 /// of the call in progress.
-fn run_addr(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
+fn run_addr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an addr node; its first operand is a place.
     unsafe {
-        let place = *((*node).hyle as *const SynolonPtr);
+        let place = *((*node).value as *const DyadPtr);
         Ok(rt.place_addr(place).ok_or(RunError::BadValue)? as i64)
     }
 }
 
 /// Lower an address-of: the place's address as an SSA value — a baked `iconst`
 /// for a global, a frame `stack_addr` for a local.
-fn lower_addr(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
+fn lower_addr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is an addr node; its first operand is a place.
     unsafe {
-        let place = *((*node).hyle as *const SynolonPtr);
+        let place = *((*node).value as *const DyadPtr);
         Ok(lw.place_addr(place))
     }
 }
 
-/// Build a pointer logos node `@pointee`: `{logos: logos, value -> record}`, the
+/// Build a pointer logos node `@pointee`: `{type: logos, value -> record}`, the
 /// record [`ADDR_TAG`]-kinded with the pointee as its payload. Fresh per use;
 /// compare pointees, not nodes.
-pub(crate) fn make_pointer_type(store: &mut Store, type_: SynolonPtr, pointee: SynolonPtr) -> SynolonPtr {
+pub(crate) fn make_pointer_type(store: &mut Store, type_: DyadPtr, pointee: DyadPtr) -> DyadPtr {
     let value = super::meta::pointer_record(store, pointee);
     store.alloc_raw(type_, value)
 }
@@ -178,26 +178,26 @@ pub(crate) fn make_pointer_type(store: &mut Store, type_: SynolonPtr, pointee: S
 /// `destructor` must be a callable leaf running the owning pointer's teardown.
 pub(crate) unsafe fn make_owning_pointer_type(
     store: &mut Store,
-    type_: SynolonPtr,
-    pointee: SynolonPtr,
-    destructor: SynolonPtr,
-) -> SynolonPtr {
+    type_: DyadPtr,
+    pointee: DyadPtr,
+    destructor: DyadPtr,
+) -> DyadPtr {
     let value = super::meta::pointer_record(store, pointee);
     let node = store.alloc_raw(type_, value);
     super::meta::install_destructor(node, destructor);
     node
 }
 
-/// Build a dereference node `{logos: deref, value: [ptr-expr, pointee, offset]}`,
+/// Build a dereference node `{type: deref, value: [ptr-expr, pointee, offset]}`,
 /// the offset carried as a committed u64 literal node so the graph stays
 /// self-describing.
 pub(crate) fn build_deref(
     store: &mut Store,
     types: &CoreTypes,
-    ptr_expr: SynolonPtr,
-    pointee: SynolonPtr,
+    ptr_expr: DyadPtr,
+    pointee: DyadPtr,
     offset: usize,
-) -> SynolonPtr {
+) -> DyadPtr {
     let off_bytes = store.alloc_bytes(&(offset as u64).to_ne_bytes());
     let off_node = store.alloc_raw(types.numtypes[NumType::U64 as usize], off_bytes);
     let value = store.alloc_operands(&[ptr_expr, pointee, off_node, types.ops.deref_]);
@@ -208,9 +208,9 @@ pub(crate) fn build_deref(
 ///
 /// # Safety
 /// `node` must be a deref node as [`build_deref`] lays it out.
-pub(crate) unsafe fn deref_parts(node: SynolonPtr) -> (SynolonPtr, SynolonPtr, u64) {
-    let p = (*node).hyle as *const SynolonPtr;
-    let off = std::ptr::read_unaligned((**p.add(2)).hyle as *const u64);
+pub(crate) unsafe fn deref_parts(node: DyadPtr) -> (DyadPtr, DyadPtr, u64) {
+    let p = (*node).value as *const DyadPtr;
+    let off = std::ptr::read_unaligned((**p.add(2)).value as *const u64);
     (*p, *p.add(1), off)
 }
 
@@ -220,20 +220,20 @@ pub(crate) unsafe fn deref_parts(node: SynolonPtr) -> (SynolonPtr, SynolonPtr, u
 /// and is rejected for a pointer pointee (it would become a wild address).
 ///
 /// # Safety
-/// `deref` must be a deref node; `rhs` a reduced synolon, both from the store.
+/// `deref` must be a deref node; `rhs` a reduced dyad, both from the store.
 pub(crate) unsafe fn build_storeptr(
     store: &mut Store,
     types: &CoreTypes,
-    deref: SynolonPtr,
-    rhs: SynolonPtr,
-) -> Result<SynolonPtr, ParseError> {
+    deref: DyadPtr,
+    rhs: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
     let (ptr_expr, pointee, _) = deref_parts(deref);
-    let off_node = *(((*deref).hyle as *const SynolonPtr).add(2));
+    let off_node = *(((*deref).value as *const DyadPtr).add(2));
     let pointer_pointee = numtype::is_pointer_type(pointee);
     if !pointer_pointee && !super::is_numtype_node(types, pointee) {
         return Err(ParseError::BadAssignTarget);
     }
-    let rhs = if (*rhs).logos == types.rational {
+    let rhs = if (*rhs).ty == types.rational {
         if pointer_pointee {
             return Err(ParseError::TypeMismatch);
         }
@@ -252,8 +252,8 @@ pub(crate) unsafe fn build_storeptr(
 /// Run a deref: evaluate the pointer, add the offset, read the pointee's scalar
 /// at that address. A record pointee has no whole-value read (fields go through
 /// `p@.x`), reported as a clean `BadValue`.
-fn run_deref(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a deref node; its parts are valid synolons.
+fn run_deref(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a deref node; its parts are valid dyads.
     unsafe {
         let (ptr_expr, pointee, off) = deref_parts(node);
         if !numtype::is_scalar_place_type(pointee) {
@@ -266,12 +266,12 @@ fn run_deref(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
 
 /// Run a store-through: evaluate the rhs and the pointer, write the pointee's
 /// scalar at address + offset; yields the stored value, like `=`.
-fn run_storeptr(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
+fn run_storeptr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a storeptr node as [`build_storeptr`] lays it out.
     unsafe {
-        let p = (*node).hyle as *const SynolonPtr;
+        let p = (*node).value as *const DyadPtr;
         let (ptr_expr, rhs, pointee) = (*p, *p.add(1), *p.add(2));
-        let off = std::ptr::read_unaligned((**p.add(3)).hyle as *const u64);
+        let off = std::ptr::read_unaligned((**p.add(3)).value as *const u64);
         let bits = rt.run(rhs)?;
         let addr = (rt.run(ptr_expr)? as u64).wrapping_add(off) as *mut u8;
         numtype::write_scalar(pointee, addr, bits);
@@ -281,8 +281,8 @@ fn run_storeptr(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
 
 /// Lower a deref: the pointer lowers to its i64 address, the pointee loads
 /// through it at the folded offset.
-fn lower_deref(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a deref node; its parts are valid synolons.
+fn lower_deref(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: `node` is a deref node; its parts are valid dyads.
     unsafe {
         let (ptr_expr, pointee, off) = deref_parts(node);
         if !numtype::is_scalar_place_type(pointee) {
@@ -296,12 +296,12 @@ fn lower_deref(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError
 
 /// Lower a store-through: rhs and pointer lower, the pointee stores through the
 /// address at the folded offset; yields the stored value.
-fn lower_storeptr(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
+fn lower_storeptr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a storeptr node as [`build_storeptr`] lays it out.
     unsafe {
-        let p = (*node).hyle as *const SynolonPtr;
+        let p = (*node).value as *const DyadPtr;
         let (ptr_expr, rhs, pointee) = (*p, *p.add(1), *p.add(2));
-        let off = std::ptr::read_unaligned((**p.add(3)).hyle as *const u64);
+        let off = std::ptr::read_unaligned((**p.add(3)).value as *const u64);
         let v = lw.lower(rhs)?;
         let addr = lw.lower(ptr_expr)?;
         let ct = numtype::of_type_node(pointee).cranelift_type();

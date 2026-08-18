@@ -10,7 +10,7 @@
 //! [`crate::parse::Parser::parse_expression`], performs it when it sees a fresh
 //! name followed by `:=`), but the declaration is *real graph structure*, not a
 //! parse-time vapor: the expression becomes
-//! `{logos: declare, value: [name, declared, op]}` — the spelling as a string node
+//! `{type: declare, value: [name, declared, op]}` — the spelling as a string node
 //! (the human-stable half of the nominal identity; DESIGN ›A declaration has a
 //! stable identity across edits‹), the declared binding, and the native leaf.
 //! Anything downstream — the sequence runner, the REPL's echo policy, a
@@ -28,7 +28,7 @@ use cranelift_codegen::ir::Value;
 use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
-use crate::synolon::SynolonPtr;
+use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::parse::{Assoc};
 use crate::run::{RunError, Runtime};
@@ -49,7 +49,7 @@ const DECL_GATE: usize = 2;
 /// name token to its left; the trie longest-matches `:=` over the field-list
 /// `:`) and the `declare` identity its expressions are typed by, with its
 /// native leaf and lowering. Returns `(declare identity, leaf, := token)`.
-pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (SynolonPtr, SynolonPtr, SynolonPtr) {
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::record(cx.store, meta::TOKEN_TAG, f64::INFINITY);
     let token = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(":=", IdContext::new(token, cx.root_scope));
@@ -68,17 +68,17 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (SynolonPtr, SynolonPtr, 
     (declare, leaf, token)
 }
 
-/// Build a declare node `{logos: declare, value: [name, declared, gate, op]}`.
+/// Build a declare node `{type: declare, value: [name, declared, gate, op]}`.
 /// The gate slot is null at build — every declaration starts unmarked — and a
 /// gate word's constructor ([`super::gate`]) fills it after the declaration
 /// reduces.
 pub(crate) fn build(
     store: &mut Store,
-    declare: SynolonPtr,
-    op: SynolonPtr,
-    name: SynolonPtr,
-    declared: SynolonPtr,
-) -> SynolonPtr {
+    declare: DyadPtr,
+    op: DyadPtr,
+    name: DyadPtr,
+    declared: DyadPtr,
+) -> DyadPtr {
     let value = store.alloc_operands(&[name, declared, std::ptr::null_mut(), op]);
     store.alloc_raw(declare, value)
 }
@@ -87,8 +87,8 @@ pub(crate) fn build(
 ///
 /// # Safety
 /// `node` must be a declare node as [`build`] lays it out.
-pub(crate) unsafe fn declared_of(node: SynolonPtr) -> SynolonPtr {
-    *((*node).hyle as *const SynolonPtr).add(DECL_DECLARED)
+pub(crate) unsafe fn declared_of(node: DyadPtr) -> DyadPtr {
+    *((*node).value as *const DyadPtr).add(DECL_DECLARED)
 }
 
 /// The gate slot of a declare node: null (unmarked, private) or the gate
@@ -97,8 +97,8 @@ pub(crate) unsafe fn declared_of(node: SynolonPtr) -> SynolonPtr {
 ///
 /// # Safety
 /// As [`declared_of`].
-pub(crate) unsafe fn gate_of(node: SynolonPtr) -> SynolonPtr {
-    *((*node).hyle as *const SynolonPtr).add(DECL_GATE)
+pub(crate) unsafe fn gate_of(node: DyadPtr) -> DyadPtr {
+    *((*node).value as *const DyadPtr).add(DECL_GATE)
 }
 
 /// Fill a declare node's gate slot. The operand blob is a write pointer
@@ -108,15 +108,15 @@ pub(crate) unsafe fn gate_of(node: SynolonPtr) -> SynolonPtr {
 ///
 /// # Safety
 /// As [`declared_of`]; `gate` must be a registered gate identity.
-pub(crate) unsafe fn set_gate(node: SynolonPtr, gate: SynolonPtr) {
-    *((*node).hyle as *mut SynolonPtr).add(DECL_GATE) = gate;
+pub(crate) unsafe fn set_gate(node: DyadPtr, gate: DyadPtr) {
+    *((*node).value as *mut DyadPtr).add(DECL_GATE) = gate;
 }
 
 /// Run: evaluate the initializer for its effect (a construction fills its
 /// instance; a plain binding's read is harmless; a fn or record is inert) and
 /// yield unit — a declaration is a statement.
-fn run(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a valid declare node; its declared slot is a valid synolon.
+fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a valid declare node; its declared slot is a valid dyad.
     unsafe {
         rt.run(declared_of(node))?;
     }
@@ -125,7 +125,7 @@ fn run(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
 
 /// Lower: the initializer lowers for its effect (a construction emits its
 /// stores; a dead load is cleaned up by the backend), yielding unit.
-fn lower(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
+fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: as [`run`].
     unsafe {
         lw.lower(declared_of(node))?;

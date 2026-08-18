@@ -3,7 +3,7 @@
 
 //! The parsing tape: the working frontier the constructors drive.
 //!
-//! The tape holds both the synolons reduced so far but not yet final and the tokens
+//! The tape holds both the dyads reduced so far but not yet final and the tokens
 //! still to consume (see DESIGN ›Elaboration is deferred-reduction operator
 //! precedence‹). Indexing is relative to the `cursor`, the cell of the identity
 //! currently being constructed: offset 0 is the cursor, negative offsets reach
@@ -28,14 +28,14 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use crate::synolon::SynolonPtr;
+use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::regex_trie::{RegexTrie, RegexTrieError};
 use crate::store::Store;
 
 /// A pending, not-yet-reduced token: the source span it was lexed from and the
 /// identity it denotes. A token's identity is not fixed until it is consumed
-/// into a synolon — a reduced [`Cell::Synolon`] is frozen against rewriting, a token
+/// into a dyad — a reduced [`Cell::Dyad`] is frozen against rewriting, a token
 /// is not. The driver resolves names eagerly at scan where it can (the
 /// identity set on push) and pushes a *fresh* name as the null-until-consumed
 /// form ([`Token::new`]): a following `:=`/`:` declares it at reduction, and
@@ -50,7 +50,7 @@ pub struct Token {
     pub len: usize,
     /// The identity this token denotes, or null until consumed (a fresh name
     /// awaiting its declaration or its resolution error).
-    pub identity: SynolonPtr,
+    pub identity: DyadPtr,
 }
 
 impl Token {
@@ -65,15 +65,15 @@ impl Token {
 pub enum Cell {
     /// A pending token, still rewritable until reduced.
     Token(Token),
-    /// A synolon already reduced from earlier cells, frozen against rewriting.
-    Synolon(SynolonPtr),
+    /// A dyad already reduced from earlier cells, frozen against rewriting.
+    Dyad(DyadPtr),
 }
 
 impl Cell {
-    /// The reduced synolon, if this cell is one.
-    pub fn as_dyad(&self) -> Option<SynolonPtr> {
+    /// The reduced dyad, if this cell is one.
+    pub fn as_dyad(&self) -> Option<DyadPtr> {
         match self {
-            Cell::Synolon(d) => Some(*d),
+            Cell::Dyad(d) => Some(*d),
             Cell::Token(_) => None,
         }
     }
@@ -82,12 +82,12 @@ impl Cell {
     pub fn as_token(&self) -> Option<&Token> {
         match self {
             Cell::Token(t) => Some(t),
-            Cell::Synolon(_) => None,
+            Cell::Dyad(_) => None,
         }
     }
 }
 
-/// The working frontier of a scope: reduced synolons interleaved with pending
+/// The working frontier of a scope: reduced dyads interleaved with pending
 /// tokens, indexed relative to the `cursor`.
 #[derive(Debug, Default)]
 pub struct ParsingTape {
@@ -201,13 +201,13 @@ impl ParsingTape {
     }
 
     /// Reduce a binary operator: replace the three cells at `i - 1`, `i`, `i + 1`
-    /// with a single reduced `synolon`. Returns false if `i` is not flanked by two
+    /// with a single reduced `dyad`. Returns false if `i` is not flanked by two
     /// cells. The cursor is clamped to the shortened tape.
-    pub fn reduce_binary(&mut self, i: usize, synolon: SynolonPtr) -> bool {
+    pub fn reduce_binary(&mut self, i: usize, dyad: DyadPtr) -> bool {
         if i == 0 || i + 1 >= self.cells.len() {
             return false;
         }
-        self.cells.splice(i - 1..=i + 1, [Cell::Synolon(synolon)]);
+        self.cells.splice(i - 1..=i + 1, [Cell::Dyad(dyad)]);
         self.cursor = self.cursor.min(self.cells.len().saturating_sub(1));
         true
     }
@@ -218,21 +218,21 @@ impl ParsingTape {
         self.at(0).and_then(Cell::as_token).copied()
     }
 
-    /// Replace the cursor cell — the construct's own token — with the synolon it
+    /// Replace the cursor cell — the construct's own token — with the dyad it
     /// built: the in-place edit nearly every constructor ends with. (A
     /// constructor may equally leave a *token* here via [`ParsingTape::at_mut`],
     /// or splice cells anywhere with `insert`/`remove`; this is only the
     /// common case.)
-    pub fn place(&mut self, synolon: SynolonPtr) {
-        *self.at_mut(0).expect("the construct's token cell is at the cursor") = Cell::Synolon(synolon);
+    pub fn place(&mut self, dyad: DyadPtr) {
+        *self.at_mut(0).expect("the construct's token cell is at the cursor") = Cell::Dyad(dyad);
     }
 
     /// Reduce the triple around the cursor — `tape[-1]`, the construct's own
-    /// token, `tape[+1]` — to the single `synolon`: an infix constructor's
+    /// token, `tape[+1]` — to the single `dyad`: an infix constructor's
     /// in-place splice at reduction.
-    pub fn reduce_here(&mut self, synolon: SynolonPtr) {
+    pub fn reduce_here(&mut self, dyad: DyadPtr) {
         let i = self.cursor;
-        assert!(self.reduce_binary(i, synolon), "an infix reduces between two operands");
+        assert!(self.reduce_binary(i, dyad), "an infix reduces between two operands");
     }
 }
 
@@ -243,10 +243,10 @@ pub struct Resolved {
     /// Bytes consumed from the start of the input.
     pub matched: usize,
     /// The identity live in the open scopes.
-    pub identity: SynolonPtr,
+    pub identity: DyadPtr,
     /// The scope the winning declaration was made in (an open ancestor) — what
     /// a rebind that completes that declaration must target.
-    pub scope: SynolonPtr,
+    pub scope: DyadPtr,
 }
 
 /// Why a name could not be resolved or declared.
@@ -268,18 +268,18 @@ pub enum ResolveError {
 
 /// The parse-time scope stack: the chain of open scopes with an O(1) membership
 /// set. This is the parser's own spine (the graph's ancestor chain during
-/// elaboration); a scope is identified by its synolon address. Resolution filters a
+/// elaboration); a scope is identified by its dyad address. Resolution filters a
 /// spelling's candidates in the name index down to the one whose declaring scope
 /// is open, and declaration enforces no-shadowing against it.
 #[derive(Debug, Default)]
 pub struct ScopeStack {
-    open: Vec<SynolonPtr>,
-    set: HashSet<SynolonPtr>,
+    open: Vec<DyadPtr>,
+    set: HashSet<DyadPtr>,
     /// Every `(spelling, scope)` declared since the last [`ScopeStack::commit`].
     /// The REPL's undo log: a failed line rolls its declarations back out of the
     /// name index ([`ScopeStack::rollback`]), so a typo never burns a name for
     /// the rest of the session.
-    journal: Vec<(String, SynolonPtr)>,
+    journal: Vec<(String, DyadPtr)>,
 }
 
 impl ScopeStack {
@@ -289,25 +289,25 @@ impl ScopeStack {
     }
 
     /// Enter `scope`.
-    pub fn push(&mut self, scope: SynolonPtr) {
+    pub fn push(&mut self, scope: DyadPtr) {
         self.open.push(scope);
         self.set.insert(scope);
     }
 
     /// Leave the innermost scope, returning it.
-    pub fn pop(&mut self) -> Option<SynolonPtr> {
+    pub fn pop(&mut self) -> Option<DyadPtr> {
         let s = self.open.pop()?;
         self.set.remove(&s);
         Some(s)
     }
 
     /// The innermost open scope.
-    pub fn current(&self) -> Option<SynolonPtr> {
+    pub fn current(&self) -> Option<DyadPtr> {
         self.open.last().copied()
     }
 
     /// Whether `scope` is currently open. O(1).
-    pub fn is_open(&self, scope: SynolonPtr) -> bool {
+    pub fn is_open(&self, scope: DyadPtr) -> bool {
         self.set.contains(&scope)
     }
 
@@ -386,7 +386,7 @@ impl ScopeStack {
         &mut self,
         trie: &mut RegexTrie,
         name: &str,
-        identity: SynolonPtr,
+        identity: DyadPtr,
     ) -> Result<(), ResolveError> {
         let scope = self.current().expect("declare needs an open scope");
         match self.resolve(trie, name) {
@@ -407,7 +407,7 @@ impl ScopeStack {
     /// existing identity (a logos): the name becomes another spelling of that
     /// node, so pointer-identity checks (`is_numtype_node`, logos equality) see
     /// the original. The journal entry from the declare still covers it.
-    pub fn rebind(&mut self, trie: &mut RegexTrie, name: &str, identity: SynolonPtr) {
+    pub fn rebind(&mut self, trie: &mut RegexTrie, name: &str, identity: DyadPtr) {
         let scope = self.current().expect("rebind needs an open scope");
         let _ = trie.remove(name, scope);
         trie.insert(name, IdContext::new(identity, scope));
@@ -418,7 +418,7 @@ impl ScopeStack {
     /// target is the *declaring* scope, not the current one: a logos variable's
     /// fill inside a comptime-taken branch completes the outer declaration,
     /// rather than binding a block-local spelling that dies with the branch.
-    pub fn rebind_at(trie: &mut RegexTrie, name: &str, identity: SynolonPtr, scope: SynolonPtr) {
+    pub fn rebind_at(trie: &mut RegexTrie, name: &str, identity: DyadPtr, scope: DyadPtr) {
         let _ = trie.remove(name, scope);
         trie.insert(name, IdContext::new(identity, scope));
     }
@@ -438,133 +438,133 @@ pub enum Assoc {
 #[derive(Debug, Clone, Copy)]
 pub struct CoreTypes {
     /// `scope`: the logos of each scope the parser opens.
-    pub scope: SynolonPtr,
-    /// `array` (of `synolon@`): a sequence's expression list rides behind one.
-    pub array_: SynolonPtr,
+    pub scope: DyadPtr,
+    /// `array` (of `dyad@`): a sequence's expression list rides behind one.
+    pub array_: DyadPtr,
     /// `fn`: the logos of a function; a call whose callee is `fn`-typed yields a
     /// value (which the arithmetic operators' `is_numeric` check treats as numeric).
-    pub fn_type: SynolonPtr,
+    pub fn_type: DyadPtr,
     /// `i32`: an alias for `numtypes[I32]`, the seed's default numeric logos.
-    pub i32_: SynolonPtr,
+    pub i32_: DyadPtr,
     /// The numeric primitive logos nodes, indexed by `NumType` (null if unregistered).
-    /// A resolved operator stores the relevant one in its hyle slot.
-    pub numtypes: [SynolonPtr; 10],
+    /// A resolved operator stores the relevant one in its value slot.
+    pub numtypes: [DyadPtr; 10],
     /// `bool`: the logos a comparison produces and an `if` condition must be.
-    pub bool_: SynolonPtr,
+    pub bool_: DyadPtr,
     /// `rational_number`: a numeric literal, molds to a concrete numeric logos.
-    pub rational: SynolonPtr,
+    pub rational: DyadPtr,
     /// `return`: the optional early yield; used to commit a `return`-wrapped rational
     /// tail to the function's declared return logos.
-    pub return_: SynolonPtr,
+    pub return_: DyadPtr,
     /// `if`: the value-producing conditional; used to commit a rational in either branch
     /// (a tail position) to the function's declared return logos.
-    pub if_: SynolonPtr,
+    pub if_: DyadPtr,
     /// `while`: the loop statement; unit-valued, so value positions reject it.
-    pub while_: SynolonPtr,
+    pub while_: DyadPtr,
     /// `for`: the counted-loop statement; unit-valued like `while`.
-    pub for_: SynolonPtr,
+    pub for_: DyadPtr,
     /// The `logos : logos` root; pointer logos nodes are typed by it.
-    pub type_: SynolonPtr,
+    pub type_: DyadPtr,
     /// `deref`: the dereference node postfix `@` builds.
-    pub deref_: SynolonPtr,
+    pub deref_: DyadPtr,
     /// `storeptr`: the store-through node `=` builds over a deref lhs.
-    pub storeptr_: SynolonPtr,
+    pub storeptr_: DyadPtr,
     /// `addr`: the address-of node prefix `&` builds (resolves its place's
     /// address at run/lower time, per-activation for a frame local).
-    pub addr_: SynolonPtr,
+    pub addr_: DyadPtr,
     /// `alloc`: the heap-allocation keyword; its node yields an owning pointer (#49).
-    pub alloc_: SynolonPtr,
+    pub alloc_: DyadPtr,
     /// `own`: the ownership-move keyword; yields the pointer, empties the source.
-    pub own_: SynolonPtr,
+    pub own_: DyadPtr,
     /// `drop`: the eager-teardown keyword; runs the place's destructor, empties it.
-    pub drop_: SynolonPtr,
+    pub drop_: DyadPtr,
     /// `free`: the allocator teardown `alloc` inserts as `defer free <place>`.
-    pub free_: SynolonPtr,
+    pub free_: DyadPtr,
     /// `defer`: the scope-exit LIFO teardown holder (`defer <expr>`).
-    pub defer_: SynolonPtr,
+    pub defer_: DyadPtr,
     /// `pub`: the first gate identity (#33); a declare node's gate slot holds
     /// it when the declaration was written `pub name := …`.
-    pub pub_: SynolonPtr,
+    pub pub_: DyadPtr,
     /// `import`: the one identity that loads a file (#58); its node is the
     /// reflectable trace of the load, and running it re-yields the file's tail.
-    pub import_: SynolonPtr,
-    /// `synolon`: the spelled view identity (#52) — `(synolon a)` wraps a
+    pub import_: DyadPtr,
+    /// `dyad`: the spelled view identity (#52) — `(dyad a)` wraps a
     /// value as its cell, and `.` reads the cell.
-    pub synolon_: SynolonPtr,
+    pub dyad_: DyadPtr,
     /// `construct`: the record-construction statement a record-typed call builds.
-    pub construct_: SynolonPtr,
+    pub construct_: DyadPtr,
     /// `string`: the text-literal logos (`«…»`); inert in the seed, above all the
     /// comment substance.
-    pub string_: SynolonPtr,
+    pub string_: DyadPtr,
     /// `comment`: the prose-node logos a statement-level `#` builds; reflectable
     /// graph structure, invisible to value flow.
-    pub comment_: SynolonPtr,
+    pub comment_: DyadPtr,
     /// `convert`: the shared scalar numeric conversion; a conversion node's result logos
     /// is its target (recognized as a numeric-producing operand).
-    pub convert: SynolonPtr,
+    pub convert: DyadPtr,
     /// `+` (addition); recognized as a numeric-producing operand.
-    pub plus: SynolonPtr,
+    pub plus: DyadPtr,
     /// `-` (subtraction); recognized as a numeric-producing operand.
-    pub minus: SynolonPtr,
+    pub minus: DyadPtr,
     /// `*` (multiplication); recognized as a numeric-producing operand.
-    pub times: SynolonPtr,
+    pub times: DyadPtr,
     /// `/` (division); recognized as a numeric-producing operand.
-    pub div_: SynolonPtr,
+    pub div_: DyadPtr,
     /// `%` (remainder); recognized as a numeric-producing operand.
-    pub rem_: SynolonPtr,
+    pub rem_: DyadPtr,
     /// `<` (less-than); its result is `bool` (an `if` condition).
-    pub lt: SynolonPtr,
+    pub lt: DyadPtr,
     /// `>` (greater-than); its result is `bool`.
-    pub gt: SynolonPtr,
+    pub gt: DyadPtr,
     /// `==` (equality); its result is `bool`.
-    pub eq: SynolonPtr,
+    pub eq: DyadPtr,
     /// `<=` (less-than-or-equal); its result is `bool`.
-    pub le: SynolonPtr,
+    pub le: DyadPtr,
     /// `>=` (greater-than-or-equal); its result is `bool`.
-    pub ge: SynolonPtr,
+    pub ge: DyadPtr,
     /// `!=` (inequality); its result is `bool`.
-    pub ne: SynolonPtr,
+    pub ne: DyadPtr,
     /// `and` (short-circuiting logical conjunction); its result is `bool`.
-    pub and_: SynolonPtr,
+    pub and_: DyadPtr,
     /// `or` (short-circuiting logical disjunction); its result is `bool`.
-    pub or_: SynolonPtr,
+    pub or_: DyadPtr,
     /// `not` (logical negation); its result is `bool`.
-    pub not_: SynolonPtr,
+    pub not_: DyadPtr,
     /// `=` (assignment); its applications yield the stored value.
-    pub assign: SynolonPtr,
+    pub assign: DyadPtr,
     /// `declare`: the logos of the declaration node `name := value` builds; a
     /// statement yielding unit.
-    pub declare_: SynolonPtr,
+    pub declare_: DyadPtr,
     /// `compile`: the fn logos's shared member (`f.compile()`); a statement
     /// yielding unit, so value positions reject it.
-    pub compile_: SynolonPtr,
+    pub compile_: DyadPtr,
     /// `callable`: the logos of every exec leaf and of a compiled fn's code
     /// (`[entry: @exec, convention]`).
-    pub callable_: SynolonPtr,
+    pub callable_: DyadPtr,
     /// `container-i64`: the convention compiled artifacts are minted under.
-    pub conv_container: SynolonPtr,
+    pub conv_container: DyadPtr,
     /// `(` — the opening paren/call token; the expect-helpers compare against it.
-    pub open_: SynolonPtr,
+    pub open_: DyadPtr,
     /// `)` — the closing paren token.
-    pub close_: SynolonPtr,
+    pub close_: DyadPtr,
     /// `:` — the typed-declaration / field-list token.
-    pub colon_: SynolonPtr,
+    pub colon_: DyadPtr,
     /// `,` — the one explicit separator.
-    pub sep_: SynolonPtr,
+    pub sep_: DyadPtr,
     /// `->` — the return-logos arrow.
-    pub arrow_: SynolonPtr,
+    pub arrow_: DyadPtr,
     /// `else` — the branch token `if`'s constructor consumes.
-    pub else_: SynolonPtr,
+    pub else_: DyadPtr,
     /// `in` — the loop-range token `for`'s constructor consumes.
-    pub in_: SynolonPtr,
+    pub in_: DyadPtr,
     /// `..` — the range token `for`'s constructor consumes.
-    pub dotdot_: SynolonPtr,
+    pub dotdot_: DyadPtr,
     /// `.` — the field-access token (its constructor consumes `tape[-1]`).
-    pub dot_: SynolonPtr,
+    pub dot_: DyadPtr,
     /// `@` — the pointer token (postfix deref / pointer-logos prefix).
-    pub at_: SynolonPtr,
+    pub at_: DyadPtr,
     /// `:=` — the declaration token.
-    pub declare_tok: SynolonPtr,
+    pub declare_tok: DyadPtr,
     /// The concrete-op leaves (`add_i32`, `lt_f64`, `store_u8`, …): the
     /// parse-time resolver's `(family, operand logos) → leaf` table. A builder
     /// resolves an application to one leaf and stores it in the node's op slot;
@@ -603,19 +603,19 @@ pub const FN_FRAME: usize = 4;
 /// # Safety
 /// `fn_node` must be a function node whose value is `[input, output, body,
 /// bcode, frame]` as [`Parser::parse_fn`] builds it.
-pub unsafe fn fn_frame_size(fn_node: SynolonPtr) -> usize {
-    let frame = *((*fn_node).hyle as *const SynolonPtr).add(FN_FRAME);
+pub unsafe fn fn_frame_size(fn_node: DyadPtr) -> usize {
+    let frame = *((*fn_node).value as *const DyadPtr).add(FN_FRAME);
     if frame.is_null() {
         0
     } else {
-        std::ptr::read_unaligned((*frame).hyle as *const u64) as usize
+        std::ptr::read_unaligned((*frame).value as *const u64) as usize
     }
 }
 
 
 /// Whether a constructor applied. A constructor never hands a result to a
 /// scheduling driver: it edits the tape *in place* — usually replacing its own
-/// token with the synolon it built ([`ParsingTape::place`]), splicing out the
+/// token with the dyad it built ([`ParsingTape::place`]), splicing out the
 /// neighbours it consumed, and sometimes leaving another *token*, or inserting
 /// tokens elsewhere on the frontier (the macro mechanism: DESIGN ›a
 /// constructor may splice tokens in or drop upcoming ones before they lex‹).
@@ -664,11 +664,11 @@ enum Class {
 /// left context from `tape.at(-1)` (the model's `tape[-1]`), its right operand
 /// from `tape.at(1)` (an infix, invoked at reduction), and any further tokens
 /// by consuming source forward — and it edits the tape *in place*: what it
-/// consumed it splices out, what it built it leaves at the cursor (a synolon, or
+/// consumed it splices out, what it built it leaves at the cursor (a dyad, or
 /// another token). The driver decides only *when* constructors run — the
 /// precedence decision — never what they leave.
 pub type ConstructFn =
-    fn(&mut Parser, SynolonPtr, &mut ParsingTape) -> Result<Constructed, ParseError>;
+    fn(&mut Parser, DyadPtr, &mut ParsingTape) -> Result<Constructed, ParseError>;
 
 /// Why elaboration failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -677,7 +677,7 @@ pub enum ParseError {
     Resolve(ResolveError),
     /// An operator lacked a reduced operand on one side.
     MissingOperand,
-    /// The tape did not reduce to a single synolon (a dangling operator or operand).
+    /// The tape did not reduce to a single dyad (a dangling operator or operand).
     Trailing,
     /// The input held no expression.
     Empty,
@@ -722,7 +722,7 @@ pub enum ParseError {
     StatementAsValue,
     /// An assignment target that is not a typed numeric variable. A comptime
     /// (`:=`-bound rational) binding has no machine storage to write — writing its
-    /// hyle slot would corrupt the fraction — and nothing else has storage yet.
+    /// value slot would corrupt the fraction — and nothing else has storage yet.
     BadAssignTarget,
     /// A gate word (`pub`) was not followed by a declaration: a gate fills a
     /// declare node's gate slot, so anything else leaves it nothing to mark.
@@ -758,11 +758,11 @@ pub enum ParseError {
     /// element access is `[…]` (ruled August 2026), and the bare collection
     /// as a first-class value waits for the array logos (#47).
     ExpectedIndexBracket,
-    /// `.logos` on something that is not a synolon view: `.` reads only the
-    /// fields a logos defines, which are about the hyle — a value's logos is
+    /// `.logos` on something that is not a dyad view: `.` reads only the
+    /// fields a logos defines, which are about the value — a value's logos is
     /// never one of its own fields (ruled August 2026). The view puts the
-    /// logos into the hyle: `(synolon x).logos`.
-    LogosNeedsView,
+    /// logos into the value: `(dyad x).ty`.
+    TypeNeedsView,
     /// A record construction's argument count did not match its field count.
     CtorArity,
     /// A `for` was not followed by a loop-variable name.
@@ -827,8 +827,8 @@ pub enum ParseError {
     OwnershipAcrossReturn,
 }
 
-/// Build a call node `{logos: callee, value: [args…, null]}`, the application
-/// `callee(args)`. Like a binary operator's `{logos: op, value: [lhs, rhs]}`, a call's
+/// Build a call node `{type: callee, value: [args…, null]}`, the application
+/// `callee(args)`. Like a binary operator's `{type: op, value: [lhs, rhs]}`, a call's
 /// value is the operand array of its arguments (null-terminated so `run` can count
 /// them); a nullary call carries a null value. The callee's logos decides how the
 /// call runs, exactly as an operator's does.
@@ -837,9 +837,9 @@ pub enum ParseError {
 /// a logical operator's operands must be one; arithmetic and other values are not.
 ///
 /// # Safety
-/// `node` must be a valid synolon from the store.
-pub(crate) unsafe fn is_bool_result(types: &CoreTypes, node: SynolonPtr) -> bool {
-    let logos = (*node).logos;
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn is_bool_result(types: &CoreTypes, node: DyadPtr) -> bool {
+    let logos = (*node).ty;
     // A sequence's value is its trailing expression's.
     if logos == types.scope {
         return match last_sequence_expr(node) {
@@ -859,38 +859,38 @@ pub(crate) unsafe fn is_bool_result(types: &CoreTypes, node: SynolonPtr) -> bool
         || logos == types.not_
 }
 
-/// The parse-time truth of a bool literal — `{logos: bool, value -> i32 0/1}`, the
+/// The parse-time truth of a bool literal — `{type: bool, value -> i32 0/1}`, the
 /// shape the `true`/`false` keywords and every comptime fold produce — or `None`
 /// for anything else. Deliberately no scope unwrapping: a sequence-valued
 /// condition may carry effectful non-tail expressions that a fold would silently
 /// drop, so only a bare literal (pure by construction) counts as comptime.
 ///
 /// # Safety
-/// `node` must be a valid synolon from the store.
-pub(crate) unsafe fn bool_literal_value(types: &CoreTypes, node: SynolonPtr) -> Option<bool> {
-    if (*node).logos != types.bool_ || (*node).hyle.is_null() {
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn bool_literal_value(types: &CoreTypes, node: DyadPtr) -> Option<bool> {
+    if (*node).ty != types.bool_ || (*node).value.is_null() {
         return None;
     }
-    Some(std::ptr::read_unaligned((*node).hyle as *const i32) != 0)
+    Some(std::ptr::read_unaligned((*node).value as *const i32) != 0)
 }
 
 /// The trailing *value* expression of a sequence node
-/// `{logos: scope, value: [exprs, op]}` — trailing comment nodes are prose, not
+/// `{type: scope, value: [exprs, op]}` — trailing comment nodes are prose, not
 /// the tail — or `None` for a scope with no expression array (a
 /// record/parameter-list scope).
 ///
 /// # Safety
-/// `node` must be a valid synolon from the store; a non-null value must be the
+/// `node` must be a valid dyad from the store; a non-null value must be the
 /// `[exprs, op]` pair as built by [`Parser::parse_sequence`].
-pub(crate) unsafe fn last_sequence_expr(node: SynolonPtr) -> Option<SynolonPtr> {
-    if (*node).hyle.is_null() {
+pub(crate) unsafe fn last_sequence_expr(node: DyadPtr) -> Option<DyadPtr> {
+    if (*node).value.is_null() {
         return None;
     }
-    let arr = *((*node).hyle as *const SynolonPtr);
+    let arr = *((*node).value as *const DyadPtr);
     crate::identities::array::items(arr)
         .iter()
         .rev()
-        .find(|&&e| !crate::identities::numtype::is_comment_type((*e).logos))
+        .find(|&&e| !crate::identities::numtype::is_comment_type((*e).ty))
         .copied()
 }
 
@@ -900,23 +900,23 @@ pub(crate) unsafe fn last_sequence_expr(node: SynolonPtr) -> Option<SynolonPtr> 
 /// non-tail sequence position, where it would run without exiting.
 ///
 /// # Safety
-/// `node` must be a valid synolon from the store, with the value shapes its logos
+/// `node` must be a valid dyad from the store, with the value shapes its logos
 /// implies (as the parser builds them).
-unsafe fn contains_return(types: &CoreTypes, node: SynolonPtr) -> bool {
-    let logos = (*node).logos;
+unsafe fn contains_return(types: &CoreTypes, node: DyadPtr) -> bool {
+    let logos = (*node).ty;
     if logos == types.return_ {
         return true;
     }
     if logos == types.if_ {
-        let p = (*node).hyle as *const SynolonPtr;
+        let p = (*node).value as *const DyadPtr;
         let (then, els) = (*p.add(1), *p.add(2));
         return contains_return(types, then) || (!els.is_null() && contains_return(types, els));
     }
     if logos == types.scope {
-        if (*node).hyle.is_null() {
+        if (*node).value.is_null() {
             return false;
         }
-        let arr = *((*node).hyle as *const SynolonPtr);
+        let arr = *((*node).value as *const DyadPtr);
         return crate::identities::array::items(arr)
             .iter()
             .any(|&e| contains_return(types, e));
@@ -924,7 +924,7 @@ unsafe fn contains_return(types: &CoreTypes, node: SynolonPtr) -> bool {
     false
 }
 
-fn build_call(store: &mut Store, callee: SynolonPtr, args: &[SynolonPtr]) -> SynolonPtr {
+fn build_call(store: &mut Store, callee: DyadPtr, args: &[DyadPtr]) -> DyadPtr {
     let value = if args.is_empty() {
         std::ptr::null_mut()
     } else {
@@ -954,7 +954,7 @@ enum ImportState {
     /// Loaded: the `pub` names the file exposes, in declaration order, each
     /// paired with the identity its spelling resolves to inside the file, and
     /// the file's tail node (null for a declaration-only file).
-    Loaded { pubs: Vec<(String, SynolonPtr)>, tail: SynolonPtr },
+    Loaded { pubs: Vec<(String, DyadPtr)>, tail: DyadPtr },
 }
 
 /// The one-pass elaborator: lexes on demand, resolves names against the scope
@@ -974,7 +974,7 @@ pub struct Parser<'a> {
     /// When the value opens with a `fn` literal, [`Parser::parse_fn`] publishes the
     /// signature onto it before the body parses, so a recursive self-call resolves
     /// its parameter and return logos instead of the unbound-placeholder defaults.
-    pending_fn: SynolonPtr,
+    pending_fn: DyadPtr,
     /// A stack of open function frames, one per enclosing function body being
     /// parsed. Empty at top level, where declarations get absolute global storage
     /// that persists across REPL lines; non-empty inside a function, where each
@@ -995,7 +995,7 @@ pub struct Parser<'a> {
     /// onto the top list; [`Parser::parse_sequence`] drains it into the scope's
     /// body so the defer runs at scope exit as ordinary structure. The base entry
     /// (index 0) collects top-level bindings, drained by the file driver.
-    pending_defers: Vec<Vec<SynolonPtr>>,
+    pending_defers: Vec<Vec<DyadPtr>>,
     /// The folder relative import paths resolve against — the importing file's
     /// own folder during a nested import, the working directory when the
     /// importer is the command line or REPL (ruled August 2026).
@@ -1094,9 +1094,9 @@ impl<'a> Parser<'a> {
     /// the parameters, which claimed the frame's first offsets at the signature
     /// — and its storage is per-call: the interpreter's frame on its activation
     /// stack, the JIT's stack slot. At top level it is an absolute global blob,
-    /// exactly as before. The node is `{logos: ty_node, value: <place>}`, its value
-    /// an [`crate::synolon::FRAME_TAG`] offset or a real address respectively.
-    fn alloc_local(&mut self, ty_node: SynolonPtr, width: usize) -> SynolonPtr {
+    /// exactly as before. The node is `{type: ty_node, value: <place>}`, its value
+    /// an [`crate::dyad::FRAME_TAG`] offset or a real address respectively.
+    fn alloc_local(&mut self, ty_node: DyadPtr, width: usize) -> DyadPtr {
         let place = if self.frames.is_empty() {
             self.store.alloc_bytes(&vec![0u8; width])
         } else {
@@ -1104,7 +1104,7 @@ impl<'a> Parser<'a> {
             let frame = self.frames.last_mut().unwrap();
             let offset = frame.size;
             frame.size += width;
-            crate::synolon::frame_place(depth, offset)
+            crate::dyad::frame_place(depth, offset)
         };
         self.store.alloc_raw(ty_node, place)
     }
@@ -1117,9 +1117,9 @@ impl<'a> Parser<'a> {
     /// and every absolute (global) place, pass.
     ///
     /// # Safety
-    /// `node` must be a resolved synolon from the store.
-    unsafe fn check_capture(&self, node: SynolonPtr) -> Result<(), ParseError> {
-        if let Some((depth, _)) = crate::synolon::frame_ref((*node).hyle) {
+    /// `node` must be a resolved dyad from the store.
+    unsafe fn check_capture(&self, node: DyadPtr) -> Result<(), ParseError> {
+        if let Some((depth, _)) = crate::dyad::frame_ref((*node).value) {
             if depth != self.frames.len() {
                 return Err(ParseError::CapturedLocal);
             }
@@ -1152,7 +1152,7 @@ impl<'a> Parser<'a> {
     /// drained (the file driver runs top-level items itself). The file driver
     /// runs their inners LIFO at program exit — the top level's own scope-exit.
     /// Returns them in insertion order; the caller reverses for LIFO.
-    pub fn take_pending_defers(&mut self) -> Vec<SynolonPtr> {
+    pub fn take_pending_defers(&mut self) -> Vec<DyadPtr> {
         match self.pending_defers.first_mut() {
             Some(base) => std::mem::take(base),
             None => Vec::new(),
@@ -1214,15 +1214,15 @@ impl<'a> Parser<'a> {
     /// presence, the precedence field, and the record kind; no schedule table
     /// (DESIGN ›it lexes the next token, reads its `precedence`, and shifts or
     /// reduces the frontier accordingly‹). Only a logos identity carries a
-    /// record in its hyle slot (its `logos` is the `logos : logos` root);
+    /// record in its value slot (its `logos` is the `logos : logos` root);
     /// everything else a name can resolve to — a user binding, a fn value, a
     /// record logos, a logos variable — is a plain operand.
-    fn classify(&self, id: SynolonPtr) -> Class {
-        // SAFETY: `id` is a resolved synolon from the store; the record read is
+    fn classify(&self, id: DyadPtr) -> Class {
+        // SAFETY: `id` is a resolved dyad from the store; the record read is
         // gated on it being a logos identity whose registration built the record.
         unsafe {
             if id.is_null()
-                || (*id).logos != self.types.type_
+                || (*id).ty != self.types.type_
                 || crate::identities::meta::kind_of(id).is_none()
             {
                 return Class::Operand;
@@ -1250,10 +1250,10 @@ impl<'a> Parser<'a> {
     /// literal). `Ok(None)` when `id` has no constructor or it declined.
     fn construct_leaf(
         &mut self,
-        id: SynolonPtr,
+        id: DyadPtr,
         start: usize,
         len: usize,
-    ) -> Result<Option<SynolonPtr>, ParseError> {
+    ) -> Result<Option<DyadPtr>, ParseError> {
         let Some(construct) = self.construct_of(id) else {
             return Ok(None);
         };
@@ -1269,7 +1269,7 @@ impl<'a> Parser<'a> {
     /// parse-time analogue of `run`'s op-slot jump: dispatch flows through the
     /// graph, no table anywhere. `None` for an undefined constructor (a
     /// delimiter token, a data logos).
-    fn construct_of(&self, id: SynolonPtr) -> Option<ConstructFn> {
+    fn construct_of(&self, id: DyadPtr) -> Option<ConstructFn> {
         // SAFETY: `id` is a resolved identity; every constructor leaf is
         // minted from a `ConstructFn` at registration (`Core::build`) — one
         // convention, one signature, so the transmute is exact.
@@ -1286,24 +1286,24 @@ impl<'a> Parser<'a> {
     /// Take the pending declaration placeholder (see [`Parser::pending_fn`]):
     /// `fn`'s constructor claims it so a recursive self-call inside the body
     /// resolves the published signature.
-    pub(crate) fn take_pending_fn(&mut self) -> SynolonPtr {
+    pub(crate) fn take_pending_fn(&mut self) -> DyadPtr {
         std::mem::replace(&mut self.pending_fn, std::ptr::null_mut())
     }
 
     /// Put a taken placeholder back — `fn`'s constructor suppresses the
     /// handoff around a literal that does not open its (sub-)expression, so a
     /// grouped literal deeper in the same declaration can still claim it.
-    pub(crate) fn restore_pending_fn(&mut self, pending: SynolonPtr) {
+    pub(crate) fn restore_pending_fn(&mut self, pending: DyadPtr) {
         self.pending_fn = pending;
     }
 
     /// True when `cell` stands as a completed operand at the frontier: a
-    /// reduced synolon, or a token that does not extend — a resolved operand or a
+    /// reduced dyad, or a token that does not extend — a resolved operand or a
     /// fresh name in waiting (null identity). A pending extender token is not
     /// an operand.
     fn is_operand_cell(&self, cell: &Cell) -> bool {
         match cell {
-            Cell::Synolon(_) => true,
+            Cell::Dyad(_) => true,
             Cell::Token(t) => {
                 t.identity.is_null()
                     || !matches!(
@@ -1314,15 +1314,15 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Convert an operand cell to its synolon at consumption — the one seam every
-    /// reader goes through. A reduced synolon passes; a resolved token yields its
+    /// Convert an operand cell to its dyad at consumption — the one seam every
+    /// reader goes through. A reduced dyad passes; a resolved token yields its
     /// identity (rejecting a capture, as the old scan-time push did); a
     /// fresh-name token re-resolves its span for the precise error, reported
     /// at the token's own start — the same message and position the eager
     /// driver produced at scan.
-    fn as_operand(&mut self, cell: Cell) -> Result<SynolonPtr, ParseError> {
+    fn as_operand(&mut self, cell: Cell) -> Result<DyadPtr, ParseError> {
         match cell {
-            Cell::Synolon(d) => Ok(d),
+            Cell::Dyad(d) => Ok(d),
             Cell::Token(t) => {
                 let id = if t.identity.is_null() {
                     let source = self.source;
@@ -1336,7 +1336,7 @@ impl<'a> Parser<'a> {
                 } else {
                     t.identity
                 };
-                // SAFETY: `id` is a resolved synolon from the store.
+                // SAFETY: `id` is a resolved dyad from the store.
                 unsafe { self.check_capture(id)? };
                 Ok(id)
             }
@@ -1349,7 +1349,7 @@ impl<'a> Parser<'a> {
     pub(crate) fn left_operand(
         &mut self,
         tape: &ParsingTape,
-    ) -> Result<Option<SynolonPtr>, ParseError> {
+    ) -> Result<Option<DyadPtr>, ParseError> {
         match tape.at(-1) {
             Some(&cell) if self.is_operand_cell(&cell) => self.as_operand(cell).map(Some),
             _ => Ok(None),
@@ -1364,7 +1364,7 @@ impl<'a> Parser<'a> {
     pub(crate) fn binary_operands(
         &mut self,
         tape: &ParsingTape,
-    ) -> Result<Option<(SynolonPtr, SynolonPtr)>, ParseError> {
+    ) -> Result<Option<(DyadPtr, DyadPtr)>, ParseError> {
         let (Some(&l), Some(&r)) = (tape.at(-1), tape.at(1)) else {
             return Ok(None);
         };
@@ -1378,7 +1378,7 @@ impl<'a> Parser<'a> {
     /// graph, not a schedule table, is what the callers compare against
     /// (`id == self.logos.else_`). `None` at end of input or when nothing
     /// resolves.
-    fn peek_token(&mut self) -> Option<(SynolonPtr, usize)> {
+    fn peek_token(&mut self) -> Option<(DyadPtr, usize)> {
         self.skip_trivia();
         let source = self.source;
         if self.pos >= source.len() {
@@ -1392,7 +1392,7 @@ impl<'a> Parser<'a> {
     /// `None` (nothing consumed) when the next token is anything else. A
     /// constructor service: the numeric logos' juxtaposition (`i32 3`) and
     /// `-`'s negated literal read their operand through this.
-    pub(crate) fn consume_rational(&mut self) -> Result<Option<SynolonPtr>, ParseError> {
+    pub(crate) fn consume_rational(&mut self) -> Result<Option<DyadPtr>, ParseError> {
         let Some((lit, matched)) = self.peek_token() else {
             return Ok(None);
         };
@@ -1409,7 +1409,7 @@ impl<'a> Parser<'a> {
     /// unsigned; the negative literal is the prefix `-` negating at parse), or
     /// nothing — the two-token peek restores the position when no literal
     /// follows the `-`.
-    pub(crate) fn consume_negated_rational(&mut self) -> Result<Option<SynolonPtr>, ParseError> {
+    pub(crate) fn consume_negated_rational(&mut self) -> Result<Option<DyadPtr>, ParseError> {
         let save = self.pos;
         if !self.consume_token(self.types.minus) {
             return Ok(None);
@@ -1428,7 +1428,7 @@ impl<'a> Parser<'a> {
 
     /// Consume the next token if it is the identity `id`, reporting whether it
     /// was.
-    fn consume_token(&mut self, id: SynolonPtr) -> bool {
+    fn consume_token(&mut self, id: DyadPtr) -> bool {
         match self.peek_token() {
             Some((t, matched)) if t == id => {
                 self.pos += matched;
@@ -1496,7 +1496,7 @@ impl<'a> Parser<'a> {
     /// Parse a `( field-list )` into a record node. `record_logos` is the identity
     /// that introduced it (`record`, or later `fn`'s parameter list). Fields are
     /// `name : logos` or a bare `name`, separated by `,`; each becomes a `:`
-    /// declaration synolon `{logos: field-logos, value: undefined}` whose name is declared
+    /// declaration dyad `{type: field-logos, value: undefined}` whose name is declared
     /// in the record's own scope. The node's value is a [`RECORD_TAG`] record
     /// storing the layout the definition derives — the scope, the `fields`
     /// array node, and the packed `size_bytes` — filled here, where the logos's
@@ -1507,7 +1507,7 @@ impl<'a> Parser<'a> {
     /// the generic driver.
     ///
     /// [`RECORD_TAG`]: crate::identities::meta::RECORD_TAG
-    pub fn parse_record(&mut self, record_logos: SynolonPtr) -> Result<SynolonPtr, ParseError> {
+    pub fn parse_record(&mut self, record_logos: DyadPtr) -> Result<DyadPtr, ParseError> {
         self.expect_open()?;
         // The record's own scope: a `scope`-typed node keyed by address for
         // open-scope membership. Field names are declared into it.
@@ -1553,8 +1553,8 @@ impl<'a> Parser<'a> {
         let size_bytes: u64 = fields
             .iter()
             .map(|&f| {
-                // SAFETY: `f` is the field synolon just built.
-                let logos = unsafe { (*f).logos };
+                // SAFETY: `f` is the field dyad just built.
+                let logos = unsafe { (*f).ty };
                 if unsafe {
                     crate::identities::numtype::is_scalar_place_type(logos)
                 } {
@@ -1575,7 +1575,7 @@ impl<'a> Parser<'a> {
     /// parameter list is a `record` (the step-2 field list); the return logos after
     /// `->` is a single logos identity; the body is a `( )` scope parsed with the
     /// parameter scope reopened, so parameters resolve inside it. The node is
-    /// `{logos: fn, value -> [input, output, body, bcode]}` — the params record, the
+    /// `{type: fn, value -> [input, output, body, bcode]}` — the params record, the
     /// return logos, the reflectable body, and the compiled `bcode` (null until
     /// [`crate::compile::compile_fn`] installs it).
     ///
@@ -1588,7 +1588,7 @@ impl<'a> Parser<'a> {
     /// the declaration's placeholder: the signature publishes onto it — body and
     /// bcode still null — before the body parses, so a recursive self-call inside
     /// the body reads real parameter and return logos.
-    pub fn parse_fn(&mut self, fn_type: SynolonPtr, declared: SynolonPtr) -> Result<SynolonPtr, ParseError> {
+    pub fn parse_fn(&mut self, fn_type: DyadPtr, declared: DyadPtr) -> Result<DyadPtr, ParseError> {
         // The parameter list is a record; parse_record opens and closes its scope.
         let input = self.parse_record(self.types.type_)?;
         self.expect_arrow()?;
@@ -1608,12 +1608,12 @@ impl<'a> Parser<'a> {
         self.frames.push(OpenFn { size: 0 });
         let depth = self.frames.len();
         // SAFETY: `input` is the record just built; its record stores the
-        // fields array, and each parameter's hyle slot is still the null
+        // fields array, and each parameter's value slot is still the null
         // parse_record left there.
         unsafe {
             let fields = crate::identities::meta::record_fields_of(input);
             for &param in crate::identities::array::items(fields) {
-                let logos = (*param).logos;
+                let logos = (*param).ty;
                 let width = if crate::identities::numtype::is_scalar_place_type(logos) {
                     crate::identities::numtype::numtype_of_type(logos).bytes()
                 } else {
@@ -1622,7 +1622,7 @@ impl<'a> Parser<'a> {
                 let frame = self.frames.last_mut().expect("parse_fn just pushed a frame");
                 let offset = frame.size;
                 frame.size += width;
-                (*param).hyle = crate::synolon::frame_place(depth, offset);
+                (*param).value = crate::dyad::frame_place(depth, offset);
             }
         }
 
@@ -1638,7 +1638,7 @@ impl<'a> Parser<'a> {
             // a value from it yet, and the fixpoint overwrites it when the value
             // completes.
             unsafe {
-                (*declared).hyle = early;
+                (*declared).value = early;
             }
         }
 
@@ -1661,7 +1661,7 @@ impl<'a> Parser<'a> {
         // carries no destructor — so the caller could not know it owes a `free`
         // and would leak. Fail closed until a return logos can declare that it
         // hands ownership over, which is the ownership-gate work (issue #53).
-        // SAFETY: `body` is the reduced synolon just parsed.
+        // SAFETY: `body` is the reduced dyad just parsed.
         if unsafe { crate::identities::drop_model::is_owning_value(&self.types, body) } {
             return Err(ParseError::OwnershipAcrossReturn);
         }
@@ -1670,7 +1670,7 @@ impl<'a> Parser<'a> {
         // A comptime-rational tail expression commits to the declared return logos here
         // (the typed slot), so `fn () -> i64 ( 2000000000 + 2000000000 )` returns i64
         // rather than molding to the i32 default.
-        // SAFETY: `body`/`output` are valid synolons just built.
+        // SAFETY: `body`/`output` are valid dyads just built.
         let body = unsafe { crate::identities::commit_fn_body(self.store, &self.types, body, output)? };
 
         // `bcode` starts null; `compile_fn` installs the exec@ into that slot.
@@ -1691,7 +1691,7 @@ impl<'a> Parser<'a> {
     /// Parse a conditional `if ( cond ) ( then )` with an optional `else ( else )`
     /// (given the resolved `if` identity). Each part is a parenthesized expression,
     /// and the condition must be a `bool` ([`ParseError::NonBoolCondition`]). The
-    /// node is `{logos: if, value: [cond, then, else]}`, the else slot null when the
+    /// node is `{type: if, value: [cond, then, else]}`, the else slot null when the
     /// `else` is absent: run takes the branch the condition selects, compile emits a
     /// two-way branch. An else-less `if` is a statement — it yields unit — so value
     /// positions reject it ([`ParseError::MissingElse`]); and because branches are
@@ -1699,13 +1699,13 @@ impl<'a> Parser<'a> {
     /// dangling else). `else if ( cond ) ( then ) …` is sugar for a nested `if` in
     /// the else slot, so chains parse right-associatively without `else ( if … )`.
     /// Unlike `fn`, `if` opens no new scope — its parts resolve in the enclosing one.
-    pub fn parse_if(&mut self, if_type: SynolonPtr) -> Result<SynolonPtr, ParseError> {
+    pub fn parse_if(&mut self, if_type: DyadPtr) -> Result<DyadPtr, ParseError> {
         // Condition: a parenthesized expression, required to be a bool.
         self.expect_open()?;
         let cond = self.parse_sequence()?;
         self.expect_close()?;
         let types = self.types;
-        // SAFETY: `cond` is the reduced synolon just parsed.
+        // SAFETY: `cond` is the reduced dyad just parsed.
         if !unsafe { is_bool_result(&types, cond) } {
             return Err(ParseError::NonBoolCondition);
         }
@@ -1717,7 +1717,7 @@ impl<'a> Parser<'a> {
         // dropped unlexed, so nothing inside it is resolved, committed, or
         // declared. This is what lets branches for *other* comptime logos
         // coexist (`a=9.9` under `a : i32` parses only in the world where it is
-        // taken). SAFETY: `cond` is the reduced synolon just parsed.
+        // taken). SAFETY: `cond` is the reduced dyad just parsed.
         if let Some(truth) = unsafe { bool_literal_value(&types, cond) } {
             return self.parse_comptime_if(if_type, cond, truth);
         }
@@ -1766,10 +1766,10 @@ impl<'a> Parser<'a> {
     /// condition doubles as a harmless never-run then-slot dummy).
     fn parse_comptime_if(
         &mut self,
-        if_type: SynolonPtr,
-        cond: SynolonPtr,
+        if_type: DyadPtr,
+        cond: DyadPtr,
         truth: bool,
-    ) -> Result<SynolonPtr, ParseError> {
+    ) -> Result<DyadPtr, ParseError> {
         if truth {
             self.expect_open()?;
             let then = self.parse_sequence()?;
@@ -1888,19 +1888,19 @@ impl<'a> Parser<'a> {
     /// Parse a logical negation `not ( operand )` (given the resolved `not`
     /// identity). The operand is parenthesized (like an `if` condition), which keeps
     /// the binding unambiguous, and must be a `bool` ([`ParseError::NonBoolOperands`]).
-    /// The node is `{logos: not, value: operand}`.
-    pub fn parse_not(&mut self, not_id: SynolonPtr) -> Result<SynolonPtr, ParseError> {
+    /// The node is `{type: not, value: operand}`.
+    pub fn parse_not(&mut self, not_id: DyadPtr) -> Result<DyadPtr, ParseError> {
         self.expect_open()?;
         let operand = self.parse_sequence()?;
         self.expect_close()?;
         let types = self.types;
-        // SAFETY: `operand` is the reduced synolon just parsed.
+        // SAFETY: `operand` is the reduced dyad just parsed.
         if !unsafe { is_bool_result(&types, operand) } {
             return Err(ParseError::NonBoolOperands);
         }
         // A bool-literal operand folds now (pure, nothing lost), like the
         // `==`/`and`/`or` folds — what keeps a comptime chain comptime.
-        // SAFETY: `operand` is the reduced synolon just parsed.
+        // SAFETY: `operand` is the reduced dyad just parsed.
         if let Some(v) = unsafe { bool_literal_value(&types, operand) } {
             return Ok(crate::identities::bool_mod::literal_node(
                 self.store,
@@ -1916,16 +1916,16 @@ impl<'a> Parser<'a> {
     /// Both parts are parenthesized; the condition must be a `bool`
     /// ([`ParseError::NonBoolCondition`]) and is re-evaluated before each iteration;
     /// the body runs for effect, its value discarded (DESIGN ›a loop body's is
-    /// thrown away‹). The node is `{logos: while, value: [cond, body]}`, a statement
+    /// thrown away‹). The node is `{type: while, value: [cond, body]}`, a statement
     /// yielding unit: value positions reject it ([`ParseError::StatementAsValue`]),
     /// and a `return` in the body is rejected ([`ParseError::EarlyReturn`]) since v1
     /// has no unwinding to exit the loop with.
-    pub fn parse_while(&mut self, while_id: SynolonPtr) -> Result<SynolonPtr, ParseError> {
+    pub fn parse_while(&mut self, while_id: DyadPtr) -> Result<DyadPtr, ParseError> {
         self.expect_open()?;
         let cond = self.parse_sequence()?;
         self.expect_close()?;
         let types = self.types;
-        // SAFETY: `cond` is the reduced synolon just parsed.
+        // SAFETY: `cond` is the reduced dyad just parsed.
         if !unsafe { is_bool_result(&types, cond) } {
             return Err(ParseError::NonBoolCondition);
         }
@@ -1935,7 +1935,7 @@ impl<'a> Parser<'a> {
         let body = self.parse_sequence()?;
         self.expect_close()?;
         self.runtime_depth -= 1;
-        // SAFETY: `body` is the reduced synolon just parsed.
+        // SAFETY: `body` is the reduced dyad just parsed.
         if unsafe { contains_return(&types, body) } {
             return Err(ParseError::EarlyReturn);
         }
@@ -1951,7 +1951,7 @@ impl<'a> Parser<'a> {
     /// literal step must be positive ([`ParseError::BadStep`]); the loop is a
     /// statement yielding unit, and a `return` in the body is rejected
     /// ([`ParseError::EarlyReturn`], no unwinding to exit with).
-    pub fn parse_for(&mut self, for_id: SynolonPtr) -> Result<SynolonPtr, ParseError> {
+    pub fn parse_for(&mut self, for_id: DyadPtr) -> Result<DyadPtr, ParseError> {
         let (nstart, nlen) = self.lex_identifier().ok_or(ParseError::ExpectedLoopVar)?;
         let source = self.source;
         let name = &source[nstart..nstart + nlen];
@@ -1972,14 +1972,14 @@ impl<'a> Parser<'a> {
         // Resolve the loop logos across the range parts (concrete logos must
         // match, literals commit, all-literals default to i32).
         let types = self.types;
-        // SAFETY: `step` is the reduced synolon just parsed.
+        // SAFETY: `step` is the reduced dyad just parsed.
         let step_was_literal =
-            step.is_some_and(|s| unsafe { (*s).logos } == types.rational);
+            step.is_some_and(|s| unsafe { (*s).ty } == types.rational);
         let mut parts = vec![start, end];
         if let Some(s) = step {
             parts.push(s);
         }
-        // SAFETY: `parts` are reduced synolons just parsed.
+        // SAFETY: `parts` are reduced dyads just parsed.
         let logos = unsafe { crate::identities::resolve_loop_parts(self.store, &types, &mut parts)? };
         let (start, end) = (parts[0], parts[1]);
         let step = parts.get(2).copied().unwrap_or(std::ptr::null_mut());
@@ -1987,7 +1987,7 @@ impl<'a> Parser<'a> {
             use crate::identities::numtype;
             // SAFETY: `step` is the committed literal just built; `logos` a numtype node.
             let (bits, nt) = unsafe {
-                (numtype::read_scalar((*step).logos, (*step).hyle), numtype::of_type_node(logos))
+                (numtype::read_scalar((*step).ty, (*step).value), numtype::of_type_node(logos))
             };
             if numtype::apply_compare(numtype::CmpOp::Gt, nt, bits, 0) == 0 {
                 return Err(ParseError::BadStep);
@@ -2009,7 +2009,7 @@ impl<'a> Parser<'a> {
         self.expect_close()?;
         self.runtime_depth -= 1;
         self.scopes.pop();
-        // SAFETY: `body` is the reduced synolon just parsed.
+        // SAFETY: `body` is the reduced dyad just parsed.
         if unsafe { contains_return(&types, body) } {
             return Err(ParseError::EarlyReturn);
         }
@@ -2023,7 +2023,7 @@ impl<'a> Parser<'a> {
     /// optional `.field` chain, or an explicit `( … )` scope. Bounded because
     /// the range is followed by the body's `( … )`, which a full expression
     /// parse would consume as a call on the endpoint.
-    fn parse_range_operand(&mut self) -> Result<SynolonPtr, ParseError> {
+    fn parse_range_operand(&mut self) -> Result<DyadPtr, ParseError> {
         self.skip_trivia();
         let source = self.source;
         if self.pos >= source.len() {
@@ -2053,7 +2053,7 @@ impl<'a> Parser<'a> {
             self.pos += r.matched;
             let mut node = id;
             while self.consume_token(self.types.dot_) {
-                // SAFETY: `node` is a resolved synolon from the store.
+                // SAFETY: `node` is a resolved dyad from the store.
                 node = unsafe { self.parse_field_access(node)? };
             }
             Ok(node)
@@ -2065,18 +2065,18 @@ impl<'a> Parser<'a> {
     /// Resolve a field access `lhs.name` to a *place*: an ordinary numeric node
     /// over the instance's storage at the field's byte offset (DESIGN ›Resolution
     /// is one rule‹ — the declaration found decides, and a field declaration is
-    /// the offset inside the hyle area). The field name resolves in the record
+    /// the offset inside the value area). The field name resolves in the record
     /// logos's own scope, alone (never against the enclosing scopes). The `.` has
     /// already been consumed.
     ///
     /// # Safety
-    /// `lhs` must be a valid synolon from the store.
-    pub(crate) unsafe fn parse_field_access(&mut self, lhs: SynolonPtr) -> Result<SynolonPtr, ParseError> {
+    /// `lhs` must be a valid dyad from the store.
+    pub(crate) unsafe fn parse_field_access(&mut self, lhs: DyadPtr) -> Result<DyadPtr, ParseError> {
         // `.` does exactly one job (ruled August 2026): reading fields the
-        // logos defines, which are always about the hyle. A value's logos is
+        // logos defines, which are always about the value. A value's logos is
         // never one of its own fields — the retired universal `.logos`
         // metaproperty did a second job here — so reading a logos takes the
-        // synolon view, `(synolon x).logos`, where the logos IS in the hyle.
+        // dyad view, `(dyad x).ty`, where the logos IS in the value.
         // Peek the member name: a view or a logos-standing lhs dispatches to
         // the #52 read surface; an ordinary field falls through unchanged.
         let save = self.pos;
@@ -2085,14 +2085,14 @@ impl<'a> Parser<'a> {
             // member reads then need.
             let source = self.source;
             let name = &source[nstart..nstart + nlen];
-            if (*lhs).logos == self.types.synolon_ {
+            if (*lhs).ty == self.types.dyad_ {
                 return self.view_member(lhs, name);
             }
             if crate::identities::is_type_value(&self.types, lhs) {
                 return self.logos_member(lhs, name);
             }
-            if name == "logos" {
-                return Err(ParseError::LogosNeedsView);
+            if name == "type" {
+                return Err(ParseError::TypeNeedsView);
             }
             // An operator node's slots are the fields its own logos defines
             // (#52, corrected August 2026): `.operands` is the collection
@@ -2101,9 +2101,9 @@ impl<'a> Parser<'a> {
             // reads a record field. A null slot (an absent optional) is the
             // ruled checked error until `?`.
             if name == "operands"
-                && !(*lhs).logos.is_null()
+                && !(*lhs).ty.is_null()
                 && matches!(
-                    crate::identities::meta::kind_of((*lhs).logos),
+                    crate::identities::meta::kind_of((*lhs).ty),
                     Some(
                         crate::identities::meta::TUPLE_TAG
                             | crate::identities::meta::LIST_TAG
@@ -2111,12 +2111,12 @@ impl<'a> Parser<'a> {
                 )
             {
                 let i = self.member_index()?;
-                if i >= crate::identities::meta::arity_of((*lhs).logos)
-                    || (*lhs).hyle.is_null()
+                if i >= crate::identities::meta::arity_of((*lhs).ty)
+                    || (*lhs).value.is_null()
                 {
                     return Err(ParseError::BadReflectRead);
                 }
-                let ops = (*lhs).hyle as *const SynolonPtr;
+                let ops = (*lhs).value as *const DyadPtr;
                 let operand = *ops.add(i);
                 if operand.is_null() {
                     return Err(ParseError::BadReflectRead);
@@ -2138,7 +2138,7 @@ impl<'a> Parser<'a> {
             // minting needs the store the parser holds; the run patches the
             // finalized entry in.
             if &self.source[nstart..nstart + nlen] == "compile"
-                && (*lhs).logos == self.types.fn_type
+                && (*lhs).ty == self.types.fn_type
             {
                 self.expect_open()?;
                 self.expect_close()?;
@@ -2156,7 +2156,7 @@ impl<'a> Parser<'a> {
         self.pos = save;
         // Through a record pointer, `p@.x` folds the field offset into the deref
         // (the address is runtime; the offset and the field's logos are not).
-        if (*lhs).logos == self.types.deref_ {
+        if (*lhs).ty == self.types.deref_ {
             let (ptr_expr, pointee, base_off) =
                 crate::identities::pointer::deref_parts(lhs);
             if pointee.is_null() || !crate::identities::meta::is_record_type(pointee) {
@@ -2168,7 +2168,7 @@ impl<'a> Parser<'a> {
                 self.store,
                 &types,
                 ptr_expr,
-                (*field).logos,
+                (*field).ty,
                 base_off as usize + offset,
             ));
         }
@@ -2177,16 +2177,16 @@ impl<'a> Parser<'a> {
         // now. `wrapping_add` keeps a frame-tagged instance value a valid tagged
         // offset (`FRAME_TAG | (base + field)`); for an absolute instance it is
         // ordinary pointer arithmetic. `place_addr` resolves it at run/lower time.
-        let record_logos = (*lhs).logos;
+        let record_logos = (*lhs).ty;
         if record_logos.is_null()
             || !crate::identities::meta::is_record_type(record_logos)
-            || (*lhs).hyle.is_null()
+            || (*lhs).value.is_null()
         {
             return Err(ParseError::UnsupportedOperands);
         }
         let (field, offset) = self.resolve_field(record_logos)?;
-        let addr = (*lhs).hyle.wrapping_add(offset);
-        Ok(self.store.alloc_raw((*field).logos, addr))
+        let addr = (*lhs).value.wrapping_add(offset);
+        Ok(self.store.alloc_raw((*field).ty, addr))
     }
 
     /// Resolve the field name at the cursor against `record_logos`'s own scope
@@ -2197,8 +2197,8 @@ impl<'a> Parser<'a> {
     /// `record_logos` must be a record logos node from the store.
     unsafe fn resolve_field(
         &mut self,
-        record_logos: SynolonPtr,
-    ) -> Result<(SynolonPtr, usize), ParseError> {
+        record_logos: DyadPtr,
+    ) -> Result<(DyadPtr, usize), ParseError> {
         let (nstart, nlen) = self.lex_identifier().ok_or(ParseError::ExpectedField)?;
         let source = self.source;
         let name = &source[nstart..nstart + nlen];
@@ -2219,12 +2219,12 @@ impl<'a> Parser<'a> {
     /// it yields a logos, resolved at comptime (roadmap #30).
     ///
     /// # Safety
-    /// `callee` must be a resolved synolon from the store.
-    unsafe fn returns_type(&self, callee: SynolonPtr) -> bool {
-        if callee.is_null() || (*callee).logos != self.types.fn_type {
+    /// `callee` must be a resolved dyad from the store.
+    unsafe fn returns_type(&self, callee: DyadPtr) -> bool {
+        if callee.is_null() || (*callee).ty != self.types.fn_type {
             return false;
         }
-        let fields = (*callee).hyle as *const SynolonPtr;
+        let fields = (*callee).value as *const DyadPtr;
         !fields.is_null() && *fields.add(FN_OUTPUT) == self.types.type_
     }
 
@@ -2238,10 +2238,10 @@ impl<'a> Parser<'a> {
     ///
     /// # Safety
     /// `call` must be a reduced call node from the store.
-    unsafe fn eval_type_call(&mut self, call: SynolonPtr) -> Result<SynolonPtr, ParseError> {
+    unsafe fn eval_type_call(&mut self, call: DyadPtr) -> Result<DyadPtr, ParseError> {
         let mut rt = crate::run::Runtime::new(self.types.fn_type, self.types.rational);
         let bits = rt.run(call).map_err(|_| ParseError::NonComptimeTypeCall)?;
-        let node = bits as usize as SynolonPtr;
+        let node = bits as usize as DyadPtr;
         if crate::identities::is_type_value(&self.types, node) {
             Ok(node)
         } else {
@@ -2254,12 +2254,12 @@ impl<'a> Parser<'a> {
     /// field place, or another deref whose pointee is a pointer (`p@@`).
     ///
     /// # Safety
-    /// `lhs` must be a reduced synolon from the store.
-    pub(crate) unsafe fn build_deref(&mut self, lhs: SynolonPtr) -> Result<SynolonPtr, ParseError> {
-        let ptr_ty = if (*lhs).logos == self.types.deref_ {
+    /// `lhs` must be a reduced dyad from the store.
+    pub(crate) unsafe fn build_deref(&mut self, lhs: DyadPtr) -> Result<DyadPtr, ParseError> {
+        let ptr_ty = if (*lhs).ty == self.types.deref_ {
             crate::identities::pointer::deref_parts(lhs).1
         } else {
-            (*lhs).logos
+            (*lhs).ty
         };
         if ptr_ty.is_null() || !crate::identities::numtype::is_pointer_type(ptr_ty) {
             return Err(ParseError::UnsupportedOperands);
@@ -2273,7 +2273,7 @@ impl<'a> Parser<'a> {
     /// further `@`s deepen it (`@@i32`), then a resolved logos name — a numeric
     /// logos or a record logos — closes it. Fresh nodes per use; pointees carry
     /// the identity.
-    pub(crate) fn parse_pointer_type(&mut self) -> Result<SynolonPtr, ParseError> {
+    pub(crate) fn parse_pointer_type(&mut self) -> Result<DyadPtr, ParseError> {
         let mut depth = 1usize;
         while self.consume_token(self.types.at_) {
             depth += 1;
@@ -2288,7 +2288,7 @@ impl<'a> Parser<'a> {
             .resolve(self.trie, &source[self.pos..])
             .map_err(ParseError::Resolve)?;
         let base = r.identity;
-        // SAFETY: `base` is a resolved synolon from the store.
+        // SAFETY: `base` is a resolved dyad from the store.
         let is_type = crate::identities::is_numtype_node(&self.types, base)
             || unsafe { crate::identities::meta::is_record_type(base) };
         if !is_type {
@@ -2304,12 +2304,12 @@ impl<'a> Parser<'a> {
 
     /// Parse an address-of after its `&` (already consumed): a resolved name
     /// with an optional `.field` chain, ending at a storage-backed place — a
-    /// numeric, pointer, or record-typed node with a hyle slot. Yields an
+    /// numeric, pointer, or record-typed node with a value slot. Yields an
     /// `addr` node (see [`crate::identities::pointer::build_addr`]) that resolves
     /// the place's address at run/lower time, so a frame-relative local or
     /// parameter yields a per-activation address. A comptime binding has no
     /// storage and is [`ParseError::BadAddressOf`].
-    pub(crate) fn parse_address_of(&mut self) -> Result<SynolonPtr, ParseError> {
+    pub(crate) fn parse_address_of(&mut self) -> Result<DyadPtr, ParseError> {
         self.skip_trivia();
         let source = self.source;
         if self.pos >= source.len() {
@@ -2326,16 +2326,16 @@ impl<'a> Parser<'a> {
         self.pos += r.matched;
         let mut node = r.identity;
         while self.consume_token(self.types.dot_) {
-            // SAFETY: `node` is a resolved synolon from the store.
+            // SAFETY: `node` is a resolved dyad from the store.
             node = unsafe { self.parse_field_access(node)? };
         }
-        // SAFETY: `node` is a resolved synolon from the store.
+        // SAFETY: `node` is a resolved dyad from the store.
         unsafe {
-            let logos = (*node).logos;
+            let logos = (*node).ty;
             let is_place = crate::identities::is_numtype_node(&self.types, logos)
                 || crate::identities::numtype::is_pointer_type(logos)
                 || crate::identities::meta::is_record_type(logos);
-            if !is_place || (*node).hyle.is_null() {
+            if !is_place || (*node).value.is_null() {
                 // Comptime bindings have no storage.
                 return Err(ParseError::BadAddressOf);
             }
@@ -2356,7 +2356,7 @@ impl<'a> Parser<'a> {
     /// [`Parser::parse_address_of`] it yields the *place node itself* (not an
     /// `addr`), which the teardown builder reads to check owning-ness and reach
     /// the pointer's storage. A capture (an enclosing frame's local) is rejected.
-    pub(crate) fn parse_place_operand(&mut self) -> Result<SynolonPtr, ParseError> {
+    pub(crate) fn parse_place_operand(&mut self) -> Result<DyadPtr, ParseError> {
         self.skip_trivia();
         let source = self.source;
         if self.pos >= source.len() {
@@ -2372,10 +2372,10 @@ impl<'a> Parser<'a> {
         self.pos += r.matched;
         let mut node = r.identity;
         while self.consume_token(self.types.dot_) {
-            // SAFETY: `node` is a resolved synolon from the store.
+            // SAFETY: `node` is a resolved dyad from the store.
             node = unsafe { self.parse_field_access(node)? };
         }
-        // SAFETY: `node` is a resolved synolon from the store.
+        // SAFETY: `node` is a resolved dyad from the store.
         unsafe {
             self.check_capture(node)?;
         }
@@ -2398,7 +2398,7 @@ impl<'a> Parser<'a> {
 
     /// Parse a fn's return logos: a single resolved logos identity (`i32`, …) or a
     /// pointer logos (`@i32`). Compound logos expressions arrive later.
-    fn parse_return_type(&mut self) -> Result<SynolonPtr, ParseError> {
+    fn parse_return_type(&mut self) -> Result<DyadPtr, ParseError> {
         if self.consume_token(self.types.at_) {
             return self.parse_pointer_type();
         }
@@ -2413,31 +2413,31 @@ impl<'a> Parser<'a> {
     }
 
     /// Build a call `callee ( args )`, the `(` already consumed — the service
-    /// `(`'s constructor re-enters when a completed synolon stands to its left
+    /// `(`'s constructor re-enters when a completed dyad stands to its left
     /// (juxtaposition binds tightest). A numeric logos callee is a conversion
     /// (`i32(a)`), a record logos constructs an instance, a logos-returning
     /// callee resolves NOW at comptime; any other callee is an ordinary call.
-    pub(crate) fn parse_call(&mut self, callee: SynolonPtr) -> Result<SynolonPtr, ParseError> {
+    pub(crate) fn parse_call(&mut self, callee: DyadPtr) -> Result<DyadPtr, ParseError> {
         let args = self.parse_arg_list()?;
         self.expect_close()?;
         // An owning value handed straight to a call has no name to hang its
         // `defer free` on, so it would leak (issue #49; DESIGN's open
         // temporary-attachment point). Fail-closed until ownership-gated
         // parameters land (issue #53) and the callee can declare that it takes
-        // the value. SAFETY: `args` are reduced synolons just parsed.
+        // the value. SAFETY: `args` are reduced dyads just parsed.
         for &arg in &args {
             if unsafe { crate::identities::drop_model::is_owning_value(&self.types, arg) } {
                 return Err(ParseError::UnboundOwningValue);
             }
         }
         if crate::identities::is_numtype_node(&self.types, callee) {
-            // SAFETY: `callee` is a numtype node; `args` are reduced synolons.
+            // SAFETY: `callee` is a numtype node; `args` are reduced dyads.
             unsafe { crate::identities::build_cast(self.store, &self.types, callee, &args) }
         } else if unsafe { crate::identities::meta::is_record_type(callee) } {
             // A record logos applied to its field values constructs an
             // instance — the constructor doctrine, like `i32(a)`.
             let types = self.types;
-            // SAFETY: `callee` is a record logos node; `args` are reduced synolons
+            // SAFETY: `callee` is a record logos node; `args` are reduced dyads
             // from the store.
             unsafe {
                 // The instance is a per-call local (a frame slot inside a
@@ -2460,7 +2460,7 @@ impl<'a> Parser<'a> {
             // signature yet and commits nothing.
             let types = self.types;
             let mut args = args;
-            // SAFETY: `callee` and `args` are reduced synolons from the store.
+            // SAFETY: `callee` and `args` are reduced dyads from the store.
             unsafe {
                 crate::identities::commit_call_args(self.store, &types, callee, &mut args)?;
             }
@@ -2469,7 +2469,7 @@ impl<'a> Parser<'a> {
             // run it and substitute the concrete logos it produces (roadmap
             // #30), so the result flows as an ordinary logos value through
             // `==`, `:=`, `.logos`, and display. SAFETY: `callee`/`call` are
-            // reduced synolons.
+            // reduced dyads.
             if unsafe { self.returns_type(callee) } {
                 unsafe { self.eval_type_call(call) }
             } else {
@@ -2482,7 +2482,7 @@ impl<'a> Parser<'a> {
     /// closing `)` (left unconsumed for the caller's [`Parser::expect_close`]). The
     /// opening `(` has already been consumed. Unlike a field list, arguments are
     /// ordinary expressions, not `name : logos` declarations.
-    fn parse_arg_list(&mut self) -> Result<Vec<SynolonPtr>, ParseError> {
+    fn parse_arg_list(&mut self) -> Result<Vec<DyadPtr>, ParseError> {
         let mut args = Vec::new();
         loop {
             if self.at_close() {
@@ -2500,14 +2500,14 @@ impl<'a> Parser<'a> {
     /// the end of input), consuming an optional `,` between them (DESIGN
     /// ›Expressions are self-delimiting; `,` is the one explicit separator‹). A
     /// single expression is returned as itself; several become a sequence node
-    /// `{logos: scope, value: [expr0 … exprN, null]}` that runs its expressions in
+    /// `{type: scope, value: [expr0 … exprN, null]}` that runs its expressions in
     /// order and yields the trailing one (DESIGN ›A scope's value is what it
     /// evaluates to‹). Declarations inside are block-local: the sequence node is
     /// itself the scope they are declared in, pushed while the body parses. A
     /// `return` in a non-tail position is rejected ([`ParseError::EarlyReturn`]):
     /// v1 `return` is the tail yield, and running one without exiting would be
     /// silently wrong.
-    pub fn parse_sequence(&mut self) -> Result<SynolonPtr, ParseError> {
+    pub fn parse_sequence(&mut self) -> Result<DyadPtr, ParseError> {
         // The block's scope node: the membership key while parsing and, when the
         // sequence is real, the sequence node itself.
         let scope = self.store.alloc_raw(self.types.scope, std::ptr::null_mut());
@@ -2516,7 +2516,7 @@ impl<'a> Parser<'a> {
         let mut exprs = Vec::new();
         // The places this scope's own teardowns will free — what the escape check
         // below tests its tail against (issue #49).
-        let mut owned_here: Vec<SynolonPtr> = Vec::new();
+        let mut owned_here: Vec<DyadPtr> = Vec::new();
         while let Some(item) = self.parse_next() {
             exprs.push(item?);
             // A binding of an owning value inserts `defer free <place>` into this
@@ -2526,7 +2526,7 @@ impl<'a> Parser<'a> {
             // scope exit. Nested blocks drained their own before returning.
             let depth = self.pending_defers.len() - 1;
             if !self.pending_defers[depth].is_empty() {
-                let drained: Vec<SynolonPtr> = self.pending_defers[depth].drain(..).collect();
+                let drained: Vec<DyadPtr> = self.pending_defers[depth].drain(..).collect();
                 for &d in &drained {
                     // SAFETY: `d` is a `defer free <place>` node the binding site
                     // just built.
@@ -2542,10 +2542,10 @@ impl<'a> Parser<'a> {
         // Prose is invisible to value flow, and so is a `defer` (it runs at exit,
         // never as the tail): the expression count and the tail below are taken
         // over the non-comment, non-defer expressions.
-        // SAFETY: `exprs` are reduced synolons just parsed/built.
+        // SAFETY: `exprs` are reduced dyads just parsed/built.
         let defer_ = self.types.defer_;
-        let is_value = |e: SynolonPtr| unsafe {
-            !crate::identities::numtype::is_comment_type((*e).logos) && (*e).logos != defer_
+        let is_value = |e: DyadPtr| unsafe {
+            !crate::identities::numtype::is_comment_type((*e).ty) && (*e).ty != defer_
         };
         let values = exprs.iter().filter(|&&e| is_value(e)).count();
         match (values, exprs.len()) {
@@ -2559,7 +2559,7 @@ impl<'a> Parser<'a> {
                 let types = self.types;
                 let tail = exprs.iter().rposition(|&e| is_value(e)).expect("values >= 1");
                 for (i, &e) in exprs.iter().enumerate() {
-                    // SAFETY: `e` is a reduced synolon just parsed.
+                    // SAFETY: `e` is a reduced dyad just parsed.
                     if i != tail && unsafe { contains_return(&types, e) } {
                         return Err(ParseError::EarlyReturn);
                     }
@@ -2571,12 +2571,12 @@ impl<'a> Parser<'a> {
                 // leaves a scope, so require it. Only places *this* scope frees
                 // are checked — handing out an enclosing scope's owning place is an
                 // ordinary borrow, freed by whoever owns it.
-                // SAFETY: `exprs[tail]` is a reduced synolon just parsed.
+                // SAFETY: `exprs[tail]` is a reduced dyad just parsed.
                 let tail_value = unsafe {
                     let t = exprs[tail];
                     // `return x` yields `x`, so the escape rides its operand.
-                    if (*t).logos == types.return_ && !(*t).hyle.is_null() {
-                        *((*t).hyle as *const SynolonPtr)
+                    if (*t).ty == types.return_ && !(*t).value.is_null() {
+                        *((*t).value as *const DyadPtr)
                     } else {
                         t
                     }
@@ -2592,7 +2592,7 @@ impl<'a> Parser<'a> {
                 let value = self.store.alloc_operands(&[arr, self.types.ops.scope_]);
                 // SAFETY: `scope` was just allocated and is unaliased.
                 unsafe {
-                    (*scope).hyle = value;
+                    (*scope).value = value;
                 }
                 Ok(scope)
             }
@@ -2607,7 +2607,7 @@ impl<'a> Parser<'a> {
     /// [`Parser::parse_sequence`] (which collects a whole block) and the file
     /// driver (which runs each top-level item as it is parsed — build and run
     /// are one pass, so parse-time evaluation sees every earlier item's effect).
-    pub fn parse_next(&mut self) -> Option<Result<SynolonPtr, ParseError>> {
+    pub fn parse_next(&mut self) -> Option<Result<DyadPtr, ParseError>> {
         self.skip_whitespace();
         if self.pos >= self.source.len() {
             return None;
@@ -2637,10 +2637,10 @@ impl<'a> Parser<'a> {
 
     /// Parse a statement-level comment: `#` followed by a `«…»` string or raw
     /// text to the end of the line (the line form is sugar for the string form).
-    /// Builds the reflectable comment node `{logos: comment, value -> string node}`
+    /// Builds the reflectable comment node `{type: comment, value -> string node}`
     /// the settled design specifies (DESIGN ›Text literals are plain values; `#`
     /// is the one comment constructor‹).
-    fn parse_comment(&mut self) -> Result<SynolonPtr, ParseError> {
+    fn parse_comment(&mut self) -> Result<DyadPtr, ParseError> {
         self.pos += 1; // the `#`
         let bytes = self.source.as_bytes();
         // Spaces (not the newline) may separate `#` from its text.
@@ -2714,16 +2714,16 @@ impl<'a> Parser<'a> {
         // node itself instead — the name becomes another spelling of
         // that logos, so the pointer-identity checks (`is_numtype_node`,
         // cross-logos mismatch, record-logos equality) see the original.
-        // SAFETY: `placeholder`/`value` are valid synolons just built.
+        // SAFETY: `placeholder`/`value` are valid dyads just built.
         let declared = unsafe {
-            if (*value).logos == self.types.construct_ {
-                let ops = (*value).hyle as *mut SynolonPtr;
+            if (*value).ty == self.types.construct_ {
+                let ops = (*value).value as *mut DyadPtr;
                 let instance = *ops;
-                (*placeholder).logos = (*instance).logos;
-                (*placeholder).hyle = (*instance).hyle;
+                (*placeholder).ty = (*instance).ty;
+                (*placeholder).value = (*instance).value;
                 *ops = placeholder;
                 value
-            } else if (*value).logos == self.types.type_ {
+            } else if (*value).ty == self.types.type_ {
                 self.scopes.rebind(self.trie, name, value);
                 value
             } else if crate::identities::drop_model::is_owning_value(&self.types, value) {
@@ -2767,7 +2767,7 @@ impl<'a> Parser<'a> {
                     .expect("a scope's defer list is open")
                     .push(defer_node);
                 init
-            } else if (*value).logos != self.types.rational
+            } else if (*value).ty != self.types.rational
                 && matches!(
                     crate::identities::numtype_of(&self.types, value),
                     crate::identities::Operand::Concrete(_)
@@ -2792,8 +2792,8 @@ impl<'a> Parser<'a> {
                 self.scopes.rebind(self.trie, name, place);
                 init
             } else {
-                (*placeholder).logos = (*value).logos;
-                (*placeholder).hyle = (*value).hyle;
+                (*placeholder).ty = (*value).ty;
+                (*placeholder).value = (*value).value;
                 placeholder
             }
         };
@@ -2817,7 +2817,7 @@ impl<'a> Parser<'a> {
     /// `import`'s constructor body (#58): consume the path token — raw text up
     /// to whitespace or `,`, or a quoted `«…»` string (the licensed token
     /// consumption, as `#`'s) — load the file through [`Parser::import_file`],
-    /// and place the reflectable import node `{logos: import, value: [path,
+    /// and place the reflectable import node `{type: import, value: [path,
     /// tail, op]}`. The load itself happens here, in the pass, once per run;
     /// the node's run only re-yields the file's tail value.
     pub(crate) fn construct_import(
@@ -2881,7 +2881,7 @@ impl<'a> Parser<'a> {
     /// its own scope). Afterwards the file's `pub` names are declared into the
     /// importing scope — pub-only exposure, the ordinary visibility rule.
     /// Returns the file's tail node (null for a declaration-only file).
-    fn import_file(&mut self, path_text: &str) -> Result<SynolonPtr, ParseError> {
+    fn import_file(&mut self, path_text: &str) -> Result<DyadPtr, ParseError> {
         let joined = self.dir.join(path_text);
         let canon = joined
             .canonicalize()
@@ -2960,7 +2960,7 @@ impl<'a> Parser<'a> {
     /// carries no lowering table; compiled members keep working inside the
     /// importing program.) On failure the message is returned with
     /// [`Parser::offset`] left at the stuck point in the imported source.
-    fn run_imported(&mut self) -> Result<(Vec<(String, SynolonPtr)>, SynolonPtr), String> {
+    fn run_imported(&mut self) -> Result<(Vec<(String, DyadPtr)>, DyadPtr), String> {
         let mut pubs = Vec::new();
         let mut tail = std::ptr::null_mut();
         let mut rt = crate::run::Runtime::new(self.types.fn_type, self.types.rational)
@@ -2974,13 +2974,13 @@ impl<'a> Parser<'a> {
             // the pass; the runtime works off raw handles.
             unsafe {
                 rt.run(node).map_err(|e| crate::report::run_message(&e))?;
-                if (*node).logos != self.types.comment_ {
+                if (*node).ty != self.types.comment_ {
                     tail = node;
                 }
-                if (*node).logos == self.types.declare_
+                if (*node).ty == self.types.declare_
                     && crate::identities::declare::gate_of(node) == self.types.pub_
                 {
-                    let name_node = *((*node).hyle as *const SynolonPtr);
+                    let name_node = *((*node).value as *const DyadPtr);
                     let name =
                         String::from_utf8_lossy(crate::identities::string::text(name_node))
                             .into_owned();
@@ -3005,7 +3005,7 @@ impl<'a> Parser<'a> {
     /// with a live name is the ordinary shadowing error. Idempotent where the
     /// name already resolves to the same identity (the same file imported
     /// twice into one scope).
-    fn publish(&mut self, pubs: &[(String, SynolonPtr)]) -> Result<(), ParseError> {
+    fn publish(&mut self, pubs: &[(String, DyadPtr)]) -> Result<(), ParseError> {
         for (name, identity) in pubs {
             if let Ok(r) = self.scopes.resolve(self.trie, name) {
                 if r.identity == *identity {
@@ -3017,9 +3017,9 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// `synolon`'s constructor body (#52): view the expression to the right.
-    /// The view value is `{logos: synolon, hyle: <the viewed node's address>}`
-    /// — the one place a logos sits in a hyle, which is what makes `.logos` on
+    /// `dyad`'s constructor body (#52): view the expression to the right.
+    /// The view value is `{type: dyad, value: <the viewed node's address>}`
+    /// — the one place a logos sits in a value, which is what makes `.logos` on
     /// it an ordinary field read (ruled August 2026).
     pub(crate) fn construct_view(
         &mut self,
@@ -3027,15 +3027,15 @@ impl<'a> Parser<'a> {
     ) -> Result<Constructed, ParseError> {
         let inner = self.parse_expression()?;
         let types = self.types;
-        let node = self.store.alloc_raw(types.synolon_, inner as *mut u8);
+        let node = self.store.alloc_raw(types.dyad_, inner as *mut u8);
         tape.place(node);
         Ok(Constructed::Placed)
     }
 
-    /// A member read on a synolon view (#52, ›The synolon's read surface‹):
-    /// exactly the cell's two fields, `.logos` and `.hyle` — the synolon logos
+    /// A member read on a dyad view (#52, ›The dyad's read surface‹):
+    /// exactly the cell's two fields, `.logos` and `.value` — the dyad logos
     /// defines nothing else, so nothing else reads through the view. The
-    /// hyle-decoding reads (`.operand(i)`) are ordinary `.` on the value
+    /// value-decoding reads (`.operand(i)`) are ordinary `.` on the value
     /// itself, through its own logos (corrected August 2026). Read-only by
     /// construction: nothing here writes.
     ///
@@ -3043,20 +3043,20 @@ impl<'a> Parser<'a> {
     /// `view` must be a view node as [`Parser::construct_view`] builds it.
     unsafe fn view_member(
         &mut self,
-        view: SynolonPtr,
+        view: DyadPtr,
         name: &str,
-    ) -> Result<SynolonPtr, ParseError> {
-        let viewed = (*view).hyle as SynolonPtr;
+    ) -> Result<DyadPtr, ParseError> {
+        let viewed = (*view).value as DyadPtr;
         if viewed.is_null() {
             return Err(ParseError::BadReflectRead);
         }
         match name {
-            "logos" => Ok((*viewed).logos),
+            "type" => Ok((*viewed).ty),
             // v1: the raw address as a u64 value; the `@void` spelling waits
             // for pointer-value plumbing.
-            "hyle" => Ok(self.scalar_value(
+            "value" => Ok(self.scalar_value(
                 crate::identities::numtype::NumType::U64,
-                (*viewed).hyle as usize as i64,
+                (*viewed).value as usize as i64,
             )),
             _ => Err(ParseError::BadReflectRead),
         }
@@ -3066,16 +3066,16 @@ impl<'a> Parser<'a> {
     /// this crate stores once per logos — `.arity`, `.roles[i]`,
     /// `.precedence`, `.associativity`, `.constructor`, `.destructor`, and the
     /// record layout `.fields`, `.size_bytes`, `.scope`. Typically reached as
-    /// `(synolon a).logos.arity`. A null constructor/destructor slot is the
+    /// `(dyad a).ty.arity`. A null constructor/destructor slot is the
     /// honest undefined and errors until `?` exists.
     ///
     /// # Safety
     /// `logos` must be a logos identity node from the store.
     unsafe fn logos_member(
         &mut self,
-        logos: SynolonPtr,
+        logos: DyadPtr,
         name: &str,
-    ) -> Result<SynolonPtr, ParseError> {
+    ) -> Result<DyadPtr, ParseError> {
         use crate::identities::meta;
         use crate::identities::numtype::NumType;
         if meta::kind_of(logos).is_none() {
@@ -3110,19 +3110,19 @@ impl<'a> Parser<'a> {
                 if c.is_null() {
                     return Err(ParseError::BadReflectRead);
                 }
-                Ok(self.store.alloc_raw(self.types.synolon_, c as *mut u8))
+                Ok(self.store.alloc_raw(self.types.dyad_, c as *mut u8))
             }
             "destructor" => {
                 let d = meta::destructor_of(logos);
                 if d.is_null() {
                     return Err(ParseError::BadReflectRead);
                 }
-                Ok(self.store.alloc_raw(self.types.synolon_, d as *mut u8))
+                Ok(self.store.alloc_raw(self.types.dyad_, d as *mut u8))
             }
             "fields" if meta::is_record_type(logos) => {
                 Ok(self
                     .store
-                    .alloc_raw(self.types.synolon_, meta::record_fields_of(logos) as *mut u8))
+                    .alloc_raw(self.types.dyad_, meta::record_fields_of(logos) as *mut u8))
             }
             "size_bytes" if meta::is_record_type(logos) => {
                 Ok(self.scalar_value(NumType::I64, meta::record_size_of(logos) as i64))
@@ -3130,9 +3130,9 @@ impl<'a> Parser<'a> {
             "scope" if meta::is_record_type(logos) => {
                 Ok(self
                     .store
-                    .alloc_raw(self.types.synolon_, meta::record_scope_of(logos) as *mut u8))
+                    .alloc_raw(self.types.dyad_, meta::record_scope_of(logos) as *mut u8))
             }
-            "logos" => Err(ParseError::LogosNeedsView),
+            "type" => Err(ParseError::TypeNeedsView),
             _ => Err(ParseError::BadReflectRead),
         }
     }
@@ -3182,7 +3182,7 @@ impl<'a> Parser<'a> {
         &mut self,
         nt: crate::identities::numtype::NumType,
         bits: i64,
-    ) -> SynolonPtr {
+    ) -> DyadPtr {
         let ty = self.types.numtypes[nt as usize];
         let width = nt.bytes();
         let bytes = bits.to_ne_bytes();
@@ -3218,7 +3218,7 @@ impl<'a> Parser<'a> {
         // comptime-known logos value, and the name is not yet bound
         // while its own logos parses (`a : a` fails resolution cleanly).
         let t = self.parse_expression()?;
-        // SAFETY: `t` is the reduced synolon just parsed.
+        // SAFETY: `t` is the reduced dyad just parsed.
         if !unsafe { crate::identities::is_type_value(&self.types, t) } {
             self.pos = nstart;
             return Err(ParseError::BadDeclaredType);
@@ -3281,7 +3281,7 @@ impl<'a> Parser<'a> {
     pub(crate) fn try_type_fill(
         &mut self,
         tape: &ParsingTape,
-    ) -> Result<Option<SynolonPtr>, ParseError> {
+    ) -> Result<Option<DyadPtr>, ParseError> {
         let Some(tok) = tape.at(-1).and_then(Cell::as_token).copied() else {
             return Ok(None);
         };
@@ -3289,8 +3289,8 @@ impl<'a> Parser<'a> {
         if binding.is_null() {
             return Ok(None);
         }
-        // SAFETY: `binding` is a resolved synolon from the store.
-        if unsafe { !((*binding).logos == self.types.type_ && (*binding).hyle.is_null()) } {
+        // SAFETY: `binding` is a resolved dyad from the store.
+        if unsafe { !((*binding).ty == self.types.type_ && (*binding).value.is_null()) } {
             return Ok(None);
         }
         if self.runtime_depth > 0 {
@@ -3299,7 +3299,7 @@ impl<'a> Parser<'a> {
         }
         let rhs = tape.at(1).copied().ok_or(ParseError::MissingOperand)?;
         let t = self.as_operand(rhs)?;
-        // SAFETY: `t` is a reduced synolon off the tape.
+        // SAFETY: `t` is a reduced dyad off the tape.
         if !unsafe { crate::identities::is_type_value(&self.types, t) } {
             self.pos = tok.start;
             return Err(ParseError::BadDeclaredType);
@@ -3323,13 +3323,13 @@ impl<'a> Parser<'a> {
         Ok(Some(node))
     }
 
-    /// Parse one expression to a single synolon, consuming source from the current
+    /// Parse one expression to a single dyad, consuming source from the current
     /// position. Each call drives its own tape, so a prefix constructor can parse
     /// its operand by calling this again (the parser is a service the constructors
     /// re-enter, per the sealed "constructors drive" model). An expression is
     /// self-delimiting: a token that would start a new operand after a completed
     /// operand ends it (left unconsumed for [`Parser::parse_sequence`]).
-    pub fn parse_expression(&mut self) -> Result<SynolonPtr, ParseError> {
+    pub fn parse_expression(&mut self) -> Result<DyadPtr, ParseError> {
         let mut tape = ParsingTape::new();
         loop {
             // A `#` after a completed operand ends the expression: it is the
@@ -3568,22 +3568,22 @@ mod tests {
     use super::*;
 
     /// A distinct sentinel address per tag (never dereferenced).
-    fn synolon(tag: usize) -> SynolonPtr {
+    fn dyad(tag: usize) -> DyadPtr {
         std::ptr::without_provenance_mut(tag)
     }
 
     fn dyad_cells(tags: &[usize]) -> Vec<Cell> {
-        tags.iter().map(|&t| Cell::Synolon(synolon(t))).collect()
+        tags.iter().map(|&t| Cell::Dyad(dyad(t))).collect()
     }
 
     #[test]
     fn offset_indexing_is_cursor_relative() {
         let mut t = ParsingTape::from_cells(dyad_cells(&[10, 11, 12, 13]));
-        t.set_cursor(2); // points at synolon(12)
-        assert_eq!(t.at(0).unwrap().as_dyad(), Some(synolon(12)));
-        assert_eq!(t.at(-1).unwrap().as_dyad(), Some(synolon(11)));
-        assert_eq!(t.at(1).unwrap().as_dyad(), Some(synolon(13)));
-        assert_eq!(t.at(-2).unwrap().as_dyad(), Some(synolon(10)));
+        t.set_cursor(2); // points at dyad(12)
+        assert_eq!(t.at(0).unwrap().as_dyad(), Some(dyad(12)));
+        assert_eq!(t.at(-1).unwrap().as_dyad(), Some(dyad(11)));
+        assert_eq!(t.at(1).unwrap().as_dyad(), Some(dyad(13)));
+        assert_eq!(t.at(-2).unwrap().as_dyad(), Some(dyad(10)));
         assert!(t.at(2).is_none()); // past the end
         assert!(t.at(-3).is_none()); // before the start
     }
@@ -3591,43 +3591,43 @@ mod tests {
     #[test]
     fn insert_left_keeps_cursor_on_same_cell() {
         let mut t = ParsingTape::from_cells(dyad_cells(&[10, 11, 12]));
-        t.set_cursor(1); // synolon(11)
-        t.insert(0, Cell::Synolon(synolon(99))); // splice just left of the cursor
-        assert_eq!(t.at(0).unwrap().as_dyad(), Some(synolon(11)));
-        assert_eq!(t.at(-1).unwrap().as_dyad(), Some(synolon(99)));
+        t.set_cursor(1); // dyad(11)
+        t.insert(0, Cell::Dyad(dyad(99))); // splice just left of the cursor
+        assert_eq!(t.at(0).unwrap().as_dyad(), Some(dyad(11)));
+        assert_eq!(t.at(-1).unwrap().as_dyad(), Some(dyad(99)));
         assert_eq!(t.len(), 4);
     }
 
     #[test]
     fn insert_right_leaves_cursor() {
         let mut t = ParsingTape::from_cells(dyad_cells(&[10, 11, 12]));
-        t.set_cursor(1); // synolon(11)
-        t.insert(1, Cell::Synolon(synolon(99)));
-        assert_eq!(t.at(0).unwrap().as_dyad(), Some(synolon(11)));
-        assert_eq!(t.at(1).unwrap().as_dyad(), Some(synolon(99)));
-        assert_eq!(t.at(2).unwrap().as_dyad(), Some(synolon(12)));
+        t.set_cursor(1); // dyad(11)
+        t.insert(1, Cell::Dyad(dyad(99)));
+        assert_eq!(t.at(0).unwrap().as_dyad(), Some(dyad(11)));
+        assert_eq!(t.at(1).unwrap().as_dyad(), Some(dyad(99)));
+        assert_eq!(t.at(2).unwrap().as_dyad(), Some(dyad(12)));
     }
 
     #[test]
     fn remove_left_keeps_cursor_on_same_cell() {
         let mut t = ParsingTape::from_cells(dyad_cells(&[10, 11, 12]));
-        t.set_cursor(2); // synolon(12)
-        let gone = t.remove(-1); // remove synolon(11)
-        assert_eq!(gone.unwrap().as_dyad(), Some(synolon(11)));
-        assert_eq!(t.at(0).unwrap().as_dyad(), Some(synolon(12)));
-        assert_eq!(t.at(-1).unwrap().as_dyad(), Some(synolon(10)));
+        t.set_cursor(2); // dyad(12)
+        let gone = t.remove(-1); // remove dyad(11)
+        assert_eq!(gone.unwrap().as_dyad(), Some(dyad(11)));
+        assert_eq!(t.at(0).unwrap().as_dyad(), Some(dyad(12)));
+        assert_eq!(t.at(-1).unwrap().as_dyad(), Some(dyad(10)));
         assert_eq!(t.len(), 2);
     }
 
     #[test]
     fn token_and_dyad_cells_coexist() {
-        // The tape's defining property: pending tokens and reduced synolons on one
+        // The tape's defining property: pending tokens and reduced dyads on one
         // frontier.
         let mut t = ParsingTape::new();
         t.insert(0, Cell::Token(Token::new(0, 3)));
-        t.insert(1, Cell::Synolon(synolon(7)));
+        t.insert(1, Cell::Dyad(dyad(7)));
         assert!(t.at(0).unwrap().as_token().is_some());
-        assert_eq!(t.at(1).unwrap().as_dyad(), Some(synolon(7)));
+        assert_eq!(t.at(1).unwrap().as_dyad(), Some(dyad(7)));
         assert_eq!(t.len(), 2);
     }
 
@@ -3648,8 +3648,8 @@ mod tests {
     fn resolves_a_name_declared_in_an_open_scope() {
         let mut trie = RegexTrie::new();
         let mut scopes = ScopeStack::new();
-        scopes.push(synolon(100));
-        let id = synolon(1);
+        scopes.push(dyad(100));
+        let id = dyad(1);
         scopes.declare(&mut trie, "a", id).unwrap();
         assert_eq!(scopes.resolve(&trie, "a").unwrap().identity, id);
     }
@@ -3660,27 +3660,27 @@ mod tests {
         // open scope decides which identity a use resolves to.
         let mut trie = RegexTrie::new();
         let mut scopes = ScopeStack::new();
-        let (outer, inner) = (synolon(100), synolon(101));
+        let (outer, inner) = (dyad(100), dyad(101));
 
         scopes.push(outer);
-        scopes.declare(&mut trie, "x", synolon(1)).unwrap();
+        scopes.declare(&mut trie, "x", dyad(1)).unwrap();
         scopes.pop(); // close outer
 
         scopes.push(inner);
-        scopes.declare(&mut trie, "x", synolon(2)).unwrap();
-        assert_eq!(scopes.resolve(&trie, "x").unwrap().identity, synolon(2));
+        scopes.declare(&mut trie, "x", dyad(2)).unwrap();
+        assert_eq!(scopes.resolve(&trie, "x").unwrap().identity, dyad(2));
 
         scopes.pop();
         scopes.push(outer); // reopen outer instead
-        assert_eq!(scopes.resolve(&trie, "x").unwrap().identity, synolon(1));
+        assert_eq!(scopes.resolve(&trie, "x").unwrap().identity, dyad(1));
     }
 
     #[test]
     fn out_of_scope_is_distinct_from_unknown() {
         let mut trie = RegexTrie::new();
         let mut scopes = ScopeStack::new();
-        scopes.push(synolon(100));
-        scopes.declare(&mut trie, "y", synolon(1)).unwrap();
+        scopes.push(dyad(100));
+        scopes.declare(&mut trie, "y", dyad(1)).unwrap();
         scopes.pop(); // close the scope
 
         assert_eq!(scopes.resolve(&trie, "y"), Err(ResolveError::OutOfScope));
@@ -3691,42 +3691,42 @@ mod tests {
     fn shadowing_is_rejected() {
         let mut trie = RegexTrie::new();
         let mut scopes = ScopeStack::new();
-        let (outer, inner) = (synolon(100), synolon(101));
+        let (outer, inner) = (dyad(100), dyad(101));
 
         scopes.push(outer);
-        scopes.declare(&mut trie, "a", synolon(1)).unwrap();
+        scopes.declare(&mut trie, "a", dyad(1)).unwrap();
         // Same scope: redeclaration rejected.
-        assert_eq!(scopes.declare(&mut trie, "a", synolon(2)), Err(ResolveError::Shadowed));
+        assert_eq!(scopes.declare(&mut trie, "a", dyad(2)), Err(ResolveError::Shadowed));
         // Nested scope while the outer declaration is live: still rejected.
         scopes.push(inner);
-        assert_eq!(scopes.declare(&mut trie, "a", synolon(3)), Err(ResolveError::Shadowed));
+        assert_eq!(scopes.declare(&mut trie, "a", dyad(3)), Err(ResolveError::Shadowed));
     }
 
     #[test]
     fn rollback_undoes_journalled_declarations() {
         let mut trie = RegexTrie::new();
         let mut scopes = ScopeStack::new();
-        scopes.push(synolon(100));
-        scopes.declare(&mut trie, "keep", synolon(1)).unwrap();
+        scopes.push(dyad(100));
+        scopes.declare(&mut trie, "keep", dyad(1)).unwrap();
         scopes.commit(); // committed declarations survive a rollback
-        scopes.declare(&mut trie, "gone", synolon(2)).unwrap();
+        scopes.declare(&mut trie, "gone", dyad(2)).unwrap();
 
         scopes.rollback(&mut trie);
-        assert_eq!(scopes.resolve(&trie, "keep").unwrap().identity, synolon(1));
+        assert_eq!(scopes.resolve(&trie, "keep").unwrap().identity, dyad(1));
         assert_eq!(scopes.resolve(&trie, "gone"), Err(ResolveError::Unknown));
         // The rolled-back name is free again — no permanent "shadowed".
-        scopes.declare(&mut trie, "gone", synolon(3)).unwrap();
-        assert_eq!(scopes.resolve(&trie, "gone").unwrap().identity, synolon(3));
+        scopes.declare(&mut trie, "gone", dyad(3)).unwrap();
+        assert_eq!(scopes.resolve(&trie, "gone").unwrap().identity, dyad(3));
     }
 
     #[test]
     fn rebind_points_a_spelling_at_the_original_identity() {
         let mut trie = RegexTrie::new();
         let mut scopes = ScopeStack::new();
-        scopes.push(synolon(100));
-        scopes.declare(&mut trie, "alias", synolon(1)).unwrap();
-        scopes.rebind(&mut trie, "alias", synolon(2));
-        assert_eq!(scopes.resolve(&trie, "alias").unwrap().identity, synolon(2));
+        scopes.push(dyad(100));
+        scopes.declare(&mut trie, "alias", dyad(1)).unwrap();
+        scopes.rebind(&mut trie, "alias", dyad(2));
+        assert_eq!(scopes.resolve(&trie, "alias").unwrap().identity, dyad(2));
         // The declare's journal entry still covers the rebound binding.
         scopes.rollback(&mut trie);
         assert_eq!(scopes.resolve(&trie, "alias"), Err(ResolveError::Unknown));
@@ -3735,13 +3735,13 @@ mod tests {
     #[test]
     fn truncate_restores_a_known_depth() {
         let mut scopes = ScopeStack::new();
-        scopes.push(synolon(100));
-        scopes.push(synolon(101)); // left open by an error mid-nesting
-        scopes.push(synolon(102));
+        scopes.push(dyad(100));
+        scopes.push(dyad(101)); // left open by an error mid-nesting
+        scopes.push(dyad(102));
         scopes.truncate(1);
         assert_eq!(scopes.depth(), 1);
-        assert_eq!(scopes.current(), Some(synolon(100)));
-        assert!(!scopes.is_open(synolon(101)));
+        assert_eq!(scopes.current(), Some(dyad(100)));
+        assert!(!scopes.is_open(dyad(101)));
     }
 
     #[test]
@@ -3749,9 +3749,9 @@ mod tests {
         // No-shadowing prevents this via declare, so inject straight into the
         // index to prove resolve reports corruption.
         let mut trie = RegexTrie::new();
-        let (a, b) = (synolon(100), synolon(101));
-        trie.insert("z", IdContext::new(synolon(1), a));
-        trie.insert("z", IdContext::new(synolon(2), b));
+        let (a, b) = (dyad(100), dyad(101));
+        trie.insert("z", IdContext::new(dyad(1), a));
+        trie.insert("z", IdContext::new(dyad(2), b));
 
         let mut scopes = ScopeStack::new();
         scopes.push(a);

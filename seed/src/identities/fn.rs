@@ -21,7 +21,7 @@
 
 use super::callable::{self, Callables};
 use super::{meta, Cx};
-use crate::synolon::SynolonPtr;
+use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::parse::{Assoc};
 use crate::run::{RunError, Runtime};
@@ -29,14 +29,14 @@ use crate::store::Store;
 
 /// Create the `fn` logos (its own logos is `logos`) and return it. Called before the
 /// build context exists, since `=`/`+` reference `fn` as their logos.
-pub(super) fn register(store: &mut Store, type_: SynolonPtr) -> SynolonPtr {
+pub(super) fn register(store: &mut Store, type_: DyadPtr) -> DyadPtr {
     store.alloc_raw(type_, std::ptr::null_mut())
 }
 
 /// Register `fn`'s surface syntax: the `fn` spelling and its `Fn` construct, plus
 /// the `->` return arrow, whose handle is returned. Done after the build context
 /// exists so it can add to the parser's table.
-pub(super) fn register_syntax(cx: &mut Cx) -> SynolonPtr {
+pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
     cx.trie.insert("fn", IdContext::new(cx.fn_type, cx.root_scope));
     // `fn`'s constructor claims the pending declaration placeholder (the driver
     // suppresses it when the literal does not open a (sub-)expression), so a
@@ -73,9 +73,9 @@ pub(super) fn register_syntax(cx: &mut Cx) -> SynolonPtr {
         &["input", "output", "body", "bcode", "frame"],
     );
     // SAFETY: `fn_type` was allocated by [`register`] and nothing has read its
-    // (previously null) hyle slot.
+    // (previously null) value slot.
     unsafe {
-        (*cx.fn_type).hyle = record;
+        (*cx.fn_type).value = record;
     }
 
     // `->` separates a fn's parameter list from its return logos.
@@ -95,11 +95,11 @@ pub(super) fn register_syntax(cx: &mut Cx) -> SynolonPtr {
 /// the seed's stand-in for shared-member resolution through the logos's scope.
 /// A statement yielding unit, like `while`; value positions reject it.
 ///
-/// The node is `{logos: compile, value -> [function, code, op]}`: the target fn,
+/// The node is `{type: compile, value -> [function, code, op]}`: the target fn,
 /// the callable leaf pre-minted (entry zero) at parse for the compile to patch
 /// (minting needs the store, which run does not hold), and the run leaf.
 /// Returns `(identity, leaf)`.
-pub(super) fn register_compile(cx: &mut Cx, cs: &Callables) -> (SynolonPtr, SynolonPtr) {
+pub(super) fn register_compile(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
@@ -117,14 +117,14 @@ pub(super) fn register_compile(cx: &mut Cx, cs: &Callables) -> (SynolonPtr, Syno
 /// # Safety
 /// `node` must be a compile node as `parse_field_access` builds it, with a
 /// `[function, code, op]` value.
-unsafe fn parts(node: SynolonPtr) -> (SynolonPtr, SynolonPtr) {
-    let p = (*node).hyle as *const SynolonPtr;
+unsafe fn parts(node: DyadPtr) -> (DyadPtr, DyadPtr) {
+    let p = (*node).value as *const DyadPtr;
     (*p, *p.add(1))
 }
 
 /// Run: compile the target function's body and install the entry into the
 /// pre-minted leaf, through the runtime's compiler context; yield unit.
-fn compile_run(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
+fn compile_run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid compile node with `[function, code]` operands.
     unsafe {
         let (fn_node, code_leaf) = parts(node);

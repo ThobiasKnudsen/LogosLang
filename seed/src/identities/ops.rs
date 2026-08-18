@@ -19,7 +19,7 @@
 //! Float remainder mints no leaf: `%` over floats is rejected at parse
 //! (Cranelift has no float remainder), so a node referencing it cannot exist.
 
-use crate::synolon::SynolonPtr;
+use crate::dyad::DyadPtr;
 use crate::run::{RunError, RunFn, Runtime};
 
 use super::callable::{self, Callables};
@@ -34,75 +34,75 @@ use super::{operands, Cx};
 #[derive(Clone, Copy, Debug)]
 pub struct OpLeaves {
     /// `[ArithOp][NumType]` → leaf; null only for the unmintable float remainders.
-    pub(crate) arith: [[SynolonPtr; 10]; 5],
+    pub(crate) arith: [[DyadPtr; 10]; 5],
     /// `[CmpOp][NumType]` → leaf.
-    pub(crate) cmp: [[SynolonPtr; 10]; 6],
+    pub(crate) cmp: [[DyadPtr; 10]; 6],
     /// `[NumType]` → the `=` store leaf writing at that width (a pointer target
     /// stores as its 8-byte address, `U64`, per `numtype::of_type_node`).
-    pub(crate) store: [SynolonPtr; 10],
+    pub(crate) store: [DyadPtr; 10],
     /// `and`'s short-circuiting native — a single leaf (bool has one width),
     /// minted by [`super::and::register`].
-    pub(crate) and_: SynolonPtr,
+    pub(crate) and_: DyadPtr,
     /// `or`'s short-circuiting native, minted by [`super::or::register`].
-    pub(crate) or_: SynolonPtr,
+    pub(crate) or_: DyadPtr,
     /// `convert`'s native — a single leaf; its from/to pair rides the node as
     /// graph data. Minted by [`super::convert::register`].
-    pub(crate) convert_: SynolonPtr,
+    pub(crate) convert_: DyadPtr,
     /// The statement natives, one leaf each, minted by their identities'
     /// registrations: control flow branches on graph structure, so no
     /// per-machine-logos variants exist.
-    pub(crate) if_: SynolonPtr,
+    pub(crate) if_: DyadPtr,
     /// `while`'s native.
-    pub(crate) while_: SynolonPtr,
+    pub(crate) while_: DyadPtr,
     /// `for`'s native.
-    pub(crate) for_: SynolonPtr,
+    pub(crate) for_: DyadPtr,
     /// `return`'s native.
-    pub(crate) return_: SynolonPtr,
+    pub(crate) return_: DyadPtr,
     /// `not`'s native.
-    pub(crate) not_: SynolonPtr,
+    pub(crate) not_: DyadPtr,
     /// `construct`'s native (record construction).
-    pub(crate) construct_: SynolonPtr,
+    pub(crate) construct_: DyadPtr,
     /// `deref`'s native (postfix `@`).
-    pub(crate) deref_: SynolonPtr,
+    pub(crate) deref_: DyadPtr,
     /// `storeptr`'s native (`=` through a deref).
-    pub(crate) storeptr_: SynolonPtr,
+    pub(crate) storeptr_: DyadPtr,
     /// `addr`'s native (prefix `&`): resolves a place's address at run time.
-    pub(crate) addr_: SynolonPtr,
+    pub(crate) addr_: DyadPtr,
     /// `scope`'s sequence native (run the array in order, yield the tail).
-    pub(crate) scope_: SynolonPtr,
+    pub(crate) scope_: DyadPtr,
     /// `declare`'s native (run the initializer for effect, yield unit).
-    pub(crate) declare_: SynolonPtr,
+    pub(crate) declare_: DyadPtr,
     /// `compile`'s native (`f.compile()`, the fn logos's shared member).
-    pub(crate) compile_: SynolonPtr,
+    pub(crate) compile_: DyadPtr,
     /// `alloc`'s native (heap-allocate, write the initializer, yield the pointer).
-    pub(crate) alloc_: SynolonPtr,
+    pub(crate) alloc_: DyadPtr,
     /// The teardown native (issue #49): `free`'s op leaf AND every owning
     /// pointer's stored destructor, so `drop` reaches the same code through the slot.
-    pub(crate) teardown_: SynolonPtr,
+    pub(crate) teardown_: DyadPtr,
     /// `own`'s native (move out of a place: yield the pointer, empty the source).
-    pub(crate) own_: SynolonPtr,
+    pub(crate) own_: DyadPtr,
     /// `drop`'s native (run the place's destructor eagerly, empty the place).
-    pub(crate) drop_: SynolonPtr,
+    pub(crate) drop_: DyadPtr,
     /// `defer`'s in-place native — a no-op; the scope machinery runs the inner.
-    pub(crate) defer_: SynolonPtr,
+    pub(crate) defer_: DyadPtr,
     /// `import`'s native (#58): re-yield the imported file's tail value — the
     /// load itself ran in the pass, once per run.
-    pub(crate) import_: SynolonPtr,
+    pub(crate) import_: DyadPtr,
 }
 
 impl OpLeaves {
     /// The arithmetic leaf for `op` over `nt`.
-    pub(crate) fn arith_leaf(&self, op: ArithOp, nt: NumType) -> SynolonPtr {
+    pub(crate) fn arith_leaf(&self, op: ArithOp, nt: NumType) -> DyadPtr {
         self.arith[op as usize][nt as usize]
     }
 
     /// The comparison leaf for `op` over `nt`.
-    pub(crate) fn cmp_leaf(&self, op: CmpOp, nt: NumType) -> SynolonPtr {
+    pub(crate) fn cmp_leaf(&self, op: CmpOp, nt: NumType) -> DyadPtr {
         self.cmp[op as usize][nt as usize]
     }
 
     /// The store leaf writing at `nt`'s width.
-    pub(crate) fn store_leaf(&self, nt: NumType) -> SynolonPtr {
+    pub(crate) fn store_leaf(&self, nt: NumType) -> DyadPtr {
         self.store[nt as usize]
     }
 }
@@ -112,7 +112,7 @@ impl OpLeaves {
 /// reads a logos from the node — its logos *is* this instantiation.
 fn arith_run<const OP: u8, const NT: u8>(
     rt: &mut Runtime,
-    node: SynolonPtr,
+    node: DyadPtr,
 ) -> Result<i64, RunError> {
     // SAFETY: `node` is a resolved binary operator application whose first two
     // slots are its operands, as the family builders construct.
@@ -126,7 +126,7 @@ fn arith_run<const OP: u8, const NT: u8>(
 
 /// Run a binary comparison node with the (operation, logos) pair baked in; the
 /// result is the i32 0/1 bool.
-fn cmp_run<const OP: u8, const NT: u8>(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
+fn cmp_run<const OP: u8, const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: as [`arith_run`].
     unsafe {
         let (lhs, rhs) = operands(node);
@@ -138,7 +138,7 @@ fn cmp_run<const OP: u8, const NT: u8>(rt: &mut Runtime, node: SynolonPtr) -> Re
 
 /// Run an assignment node with the target width baked in: evaluate the right
 /// operand, write it into the left operand's storage, yield the value.
-fn store_run<const NT: u8>(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
+fn store_run<const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an assignment application `[lhs, rhs, op]`; `lhs` is a
     // typed variable whose storage the builder checked assignable.
     unsafe {
@@ -288,7 +288,7 @@ mod tests {
                 assert!(leaf.is_null(), "float remainder must not exist");
                 continue;
             }
-            // SAFETY: every minted leaf is a valid synolon from the store.
+            // SAFETY: every minted leaf is a valid dyad from the store.
             unsafe {
                 assert!(callable::is_callable(leaf));
                 assert_eq!(callable::convention_of(leaf), core.conv_seed_native);

@@ -21,7 +21,7 @@
 //! remains table-keyed Rust — so [`Shape`] tells you how a node is *built*,
 //! never what it computes.
 
-use crate::synolon::SynolonPtr;
+use crate::dyad::DyadPtr;
 use crate::identities::instance;
 use crate::identities::meta;
 use crate::identities::numtype::{
@@ -36,9 +36,9 @@ use crate::parse::CoreTypes;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Slot {
     /// The role-name string node.
-    pub role: SynolonPtr,
+    pub role: DyadPtr,
     /// The operand in this slot, or null when absent.
-    pub node: SynolonPtr,
+    pub node: DyadPtr,
 }
 
 /// A node's structure, read from the graph alone.
@@ -54,7 +54,7 @@ pub enum Shape {
     /// A comment: prose whose substance is the punned string node.
     Prose {
         /// The string node holding the comment's text.
-        text: SynolonPtr,
+        text: DyadPtr,
     },
     /// An uncommitted comptime rational `[num: i64, den: i64]`.
     Fraction,
@@ -62,7 +62,7 @@ pub enum Shape {
     /// pointer logos's record.
     Pointer {
         /// The pointee logos node (`@T` → `T`).
-        pointee: SynolonPtr,
+        pointee: DyadPtr,
     },
     /// An application/value of fixed named operand slots: an operator or
     /// statement node (`[lhs, rhs, logos]`, `[condition, then, else]`, …) or an
@@ -77,48 +77,48 @@ pub enum Shape {
         /// The fixed, named prefix.
         head: Vec<Slot>,
         /// The variadic tail.
-        tail: Vec<SynolonPtr>,
+        tail: Vec<DyadPtr>,
     },
     /// A record *logos* definition: the stored layout its definition derived
     /// and locked (issue #47) — the field-name scope, the field declarations
     /// (behind the stored `fields` array node), and the packed byte size.
     RecordLogos {
         /// The scope its field names are declared in.
-        scope: SynolonPtr,
+        scope: DyadPtr,
         /// The field declaration nodes, in order.
-        fields: Vec<SynolonPtr>,
+        fields: Vec<DyadPtr>,
         /// The packed byte size instances occupy.
         size_bytes: u64,
     },
-    /// An array of `synolon@`: the elements live behind the node's `[len, data]`
+    /// An array of `dyad@`: the elements live behind the node's `[len, data]`
     /// value (a sequence's expression list rides in one of these).
     Array {
         /// The elements, in order.
-        items: Vec<SynolonPtr>,
+        items: Vec<DyadPtr>,
     },
     /// A callable leaf: the complete jump information — an opaque `@exec` entry
     /// (machine code is the reflection boundary; one invokes it, never reads
     /// into it) under a declared convention.
     Callable {
         /// The convention identity the jump follows.
-        convention: SynolonPtr,
+        convention: DyadPtr,
     },
     /// A calling-convention identity, named by its string node.
     Convention {
         /// The convention's name string node.
-        name: SynolonPtr,
+        name: DyadPtr,
     },
     /// A call: the callee is the node's logos, the arguments its value.
     Call {
         /// The user function being applied.
-        callee: SynolonPtr,
+        callee: DyadPtr,
         /// The arguments, in order.
-        args: Vec<SynolonPtr>,
+        args: Vec<DyadPtr>,
     },
     /// An instance of a record logos: fields at derived offsets.
     Instance {
         /// Each field's declaration node, machine logos, and byte offset.
-        fields: Vec<(SynolonPtr, NumType, usize)>,
+        fields: Vec<(DyadPtr, NumType, usize)>,
         /// The instance storage's total size in bytes.
         size: usize,
     },
@@ -135,10 +135,10 @@ pub enum Shape {
         /// The constructor: a callable leaf (`seed-parse` convention, a
         /// `native` body — invoked, never read into), or null: undefined, for
         /// a pure delimiter or a data logos with no parse role of its own.
-        constructor: SynolonPtr,
+        constructor: DyadPtr,
         /// The destructor: null on every seed identity — the honest undefined
         /// until drop semantics exist.
-        destructor: SynolonPtr,
+        destructor: DyadPtr,
     },
     /// Declared but not (yet) defined: a null logos, a null value where operands
     /// would be, or a layout that cannot be derived.
@@ -150,11 +150,11 @@ pub enum Shape {
 /// layout decision comes from the records.
 ///
 /// # Safety
-/// `node` must be a valid synolon from the store, in the shapes the parser and
+/// `node` must be a valid dyad from the store, in the shapes the parser and
 /// [`crate::identities::Core::build`] produce (every identity in logos position
 /// carries its record).
-pub unsafe fn describe(types: &CoreTypes, node: SynolonPtr) -> Shape {
-    let logos = (*node).logos;
+pub unsafe fn describe(types: &CoreTypes, node: DyadPtr) -> Shape {
+    let logos = (*node).ty;
     if logos.is_null() {
         return Shape::Undefined;
     }
@@ -178,8 +178,8 @@ pub unsafe fn describe(types: &CoreTypes, node: SynolonPtr) -> Shape {
     }
     // A value of a function is an application — a call (the operators are
     // plain logos since #44; their applications read below, per their records).
-    if (*logos).logos == types.fn_type {
-        return Shape::Call { callee: logos, args: scan_null_terminated((*node).hyle) };
+    if (*logos).ty == types.fn_type {
+        return Shape::Call { callee: logos, args: scan_null_terminated((*node).value) };
     }
     // Data: read the node through its logos's record, grounding at logos : logos.
     let Some(kind) = meta::kind_of(logos) else {
@@ -189,7 +189,7 @@ pub unsafe fn describe(types: &CoreTypes, node: SynolonPtr) -> Shape {
         k if k < VOID_TAG => Shape::Scalar(numtype::of_type_node(logos)),
         VOID_TAG => Shape::Unit,
         STRING_TAG => Shape::Text,
-        COMMENT_TAG => Shape::Prose { text: (*node).hyle.cast() },
+        COMMENT_TAG => Shape::Prose { text: (*node).value.cast() },
         ADDR_TAG => Shape::Pointer { pointee: numtype::pointee_of(logos) },
         meta::ARRAY_TAG => Shape::Array {
             items: crate::identities::array::items(node).to_vec(),
@@ -197,7 +197,7 @@ pub unsafe fn describe(types: &CoreTypes, node: SynolonPtr) -> Shape {
         meta::CALLABLE_TAG => Shape::Callable {
             convention: crate::identities::callable::convention_of(node),
         },
-        meta::CONVENTION_TAG => Shape::Convention { name: (*node).hyle.cast() },
+        meta::CONVENTION_TAG => Shape::Convention { name: (*node).value.cast() },
         meta::FRACTION_TAG => Shape::Fraction,
         meta::TYPEREC_TAG => Shape::LogosNode {
             kind: meta::kind_of(node).unwrap_or(meta::TOKEN_TAG),
@@ -214,9 +214,9 @@ pub unsafe fn describe(types: &CoreTypes, node: SynolonPtr) -> Shape {
 /// a list's fixed head plus null-terminated tail.
 ///
 /// # Safety
-/// `logos` carries an operand record; `node.hyle` has the shape it declares.
-unsafe fn operands_of(logos: SynolonPtr, node: SynolonPtr) -> Shape {
-    let value = (*node).hyle as *const SynolonPtr;
+/// `logos` carries an operand record; `node.value` has the shape it declares.
+unsafe fn operands_of(logos: DyadPtr, node: DyadPtr) -> Shape {
+    let value = (*node).value as *const DyadPtr;
     if value.is_null() {
         return Shape::Undefined; // declared, no operands yet
     }
@@ -229,18 +229,18 @@ unsafe fn operands_of(logos: SynolonPtr, node: SynolonPtr) -> Shape {
         meta::TUPLE_TAG => Shape::Tuple { slots },
         meta::LIST_TAG => Shape::List {
             head: slots,
-            tail: scan_null_terminated((*node).hyle.add(arity * std::mem::size_of::<SynolonPtr>())),
+            tail: scan_null_terminated((*node).value.add(arity * std::mem::size_of::<DyadPtr>())),
         },
         _ => unreachable!("operand records are tuple or list"),
     }
 }
 
-/// The nodes of a null-terminated `synolon@` array (empty for a null array).
+/// The nodes of a null-terminated `dyad@` array (empty for a null array).
 ///
 /// # Safety
-/// A non-null `value` must point at a null-terminated `synolon@` array.
-unsafe fn scan_null_terminated(value: *mut u8) -> Vec<SynolonPtr> {
-    let p = value as *const SynolonPtr;
+/// A non-null `value` must point at a null-terminated `dyad@` array.
+unsafe fn scan_null_terminated(value: *mut u8) -> Vec<DyadPtr> {
+    let p = value as *const DyadPtr;
     let mut out = Vec::new();
     if p.is_null() {
         return out;
@@ -257,9 +257,9 @@ unsafe fn scan_null_terminated(value: *mut u8) -> Vec<SynolonPtr> {
 /// reading a [`Slot`]'s role name or a [`Shape::Prose`]'s substance.
 ///
 /// # Safety
-/// `node` must be a string node (`{logos: string, value -> [len, bytes]}`) whose
+/// `node` must be a string node (`{type: string, value -> [len, bytes]}`) whose
 /// store outlives the returned slice.
-pub unsafe fn text_of<'a>(node: SynolonPtr) -> &'a [u8] {
+pub unsafe fn text_of<'a>(node: DyadPtr) -> &'a [u8] {
     crate::identities::string::text(node)
 }
 
@@ -272,7 +272,7 @@ mod tests {
     use crate::store::Store;
 
     /// One store/trie/core/scope setup, parsing each source expression in turn.
-    fn parse_all(sources: &[&str]) -> (Store, Core, Vec<SynolonPtr>) {
+    fn parse_all(sources: &[&str]) -> (Store, Core, Vec<DyadPtr>) {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
@@ -704,7 +704,7 @@ mod tests {
 
         let mut counts = std::collections::HashMap::new();
         for node in store.iter() {
-            // SAFETY: `iter` yields every allocated synolon; describe only reads.
+            // SAFETY: `iter` yields every allocated dyad; describe only reads.
             let shape = unsafe { describe(&types, node) };
             let name = match shape {
                 Shape::Scalar(_) => "scalar",

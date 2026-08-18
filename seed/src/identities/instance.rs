@@ -5,15 +5,15 @@
 //! values — the same constructor doctrine casts use) and field resolution
 //! (`p.x`).
 //!
-//! An instance is `{logos: point, value -> bytes}` — parse-allocated storage laid
+//! An instance is `{type: point, value -> bytes}` — parse-allocated storage laid
 //! out from the field declarations in order, exactly a numeric variable grown
 //! wide. Construction is the runtime half: a `construct` node
-//! `{logos: construct, value: [instance, arg0 … argN, null]}` that evaluates each
+//! `{type: construct, value: [instance, arg0 … argN, null]}` that evaluates each
 //! argument and writes it to its field's offset, yielding unit (a statement).
 //! Field access is the parse-time half, per DESIGN ›Resolution is one rule‹: the
 //! declaration found decides — a field resolves to a *place*, the byte offset
-//! inside the instance's hyle area — so `p.x` becomes an ordinary numeric node
-//! `{logos: i32, value -> blob + offset}` and every existing read, write, and
+//! inside the instance's value area — so `p.x` becomes an ordinary numeric node
+//! `{type: i32, value -> blob + offset}` and every existing read, write, and
 //! lowering path just works. Fields are numeric-only in v1 (nested records
 //! arrive with the richer layout) and writable by default, like today's
 //! variables; the immutable-by-default flip arrives with `mut` for both at once.
@@ -24,7 +24,7 @@ use super::callable::{self, Callables};
 use super::numtype::{self, NumType};
 use super::{commit_if_literal, meta, numtype_of, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
-use crate::synolon::SynolonPtr;
+use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::parse::{CoreTypes, ParseError};
 use crate::run::{RunError, Runtime};
@@ -34,7 +34,7 @@ use crate::store::Store;
 /// parser builds these from a record-typed callee) with its native leaf and
 /// lowering, and the `.` field-access token (parse-only; access nodes are plain
 /// data). Returns `(identity, leaf, . token)`.
-pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (SynolonPtr, SynolonPtr, SynolonPtr) {
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::operand_record(
         cx,
         meta::LIST_TAG,
@@ -55,7 +55,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (SynolonPtr, SynolonPtr, 
         let Some(left) = p.left_operand(tape)? else {
             return Err(crate::parse::ParseError::MissingOperand);
         };
-        // SAFETY: `left` is a reduced synolon off the tape.
+        // SAFETY: `left` is a reduced dyad off the tape.
         let node = unsafe { p.parse_field_access(left) }?;
         tape.remove(-1); // the consumed left
         tape.place(node);
@@ -77,18 +77,18 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (SynolonPtr, SynolonPtr, 
 /// `record_logos` must be a record logos node from the store (its value a
 /// [`meta::RECORD_TAG`] record).
 pub(crate) unsafe fn layout(
-    record_logos: SynolonPtr,
-) -> Result<(Vec<(SynolonPtr, NumType, usize)>, usize), ParseError> {
+    record_logos: DyadPtr,
+) -> Result<(Vec<(DyadPtr, NumType, usize)>, usize), ParseError> {
     // A field's logos must be a *logos node* (its own logos is `logos`, reachable as
     // the record logos's logos's logos — the fixed point): that excludes a nested
     // record definition and a value node standing in logos position, whose value
     // bytes would otherwise be misread as a width tag.
-    let type_root = (*(*record_logos).logos).logos;
+    let type_root = (*(*record_logos).ty).ty;
     let mut fields = Vec::new();
     let mut offset = 0usize;
     for &field in super::array::items(meta::record_fields_of(record_logos)) {
-        let fty = (*field).logos;
-        if fty.is_null() || (*fty).logos != type_root || !numtype::is_scalar_type(fty) {
+        let fty = (*field).ty;
+        if fty.is_null() || (*fty).ty != type_root || !numtype::is_scalar_type(fty) {
             return Err(ParseError::UnsupportedOperands);
         }
         let nt = numtype::of_type_node(fty);
@@ -114,15 +114,15 @@ pub(crate) unsafe fn layout(
 ///
 /// # Safety
 /// `record_logos` must be a record logos node, `instance` a place of that logos
-/// sized to [`layout`], and `args` reduced synolons, all from the store.
+/// sized to [`layout`], and `args` reduced dyads, all from the store.
 pub(crate) unsafe fn build_ctor(
     store: &mut Store,
     types: &CoreTypes,
-    construct: SynolonPtr,
-    record_logos: SynolonPtr,
-    instance: SynolonPtr,
-    args: &[SynolonPtr],
-) -> Result<SynolonPtr, ParseError> {
+    construct: DyadPtr,
+    record_logos: DyadPtr,
+    instance: DyadPtr,
+    args: &[DyadPtr],
+) -> Result<DyadPtr, ParseError> {
     let (fields, _) = layout(record_logos)?;
     if args.len() != fields.len() {
         return Err(ParseError::CtorArity);
@@ -131,7 +131,7 @@ pub(crate) unsafe fn build_ctor(
     ops.push(instance);
     ops.push(types.ops.construct_);
     for (&arg, &(field, nt, _)) in args.iter().zip(&fields) {
-        let fty = (*field).logos;
+        let fty = (*field).ty;
         let field_ptr = numtype::is_pointer_type(fty);
         let arg = match numtype_of(types, arg) {
             Operand::Literal => {
@@ -160,29 +160,29 @@ pub(crate) unsafe fn build_ctor(
 
 /// Run: evaluate each argument and write it to its field's offset in the
 /// instance's storage; construction is a statement and yields unit.
-fn run(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
+fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a construct node as [`build_ctor`] lays it out.
     unsafe {
-        let ops = (*node).hyle as *const SynolonPtr;
+        let ops = (*node).value as *const DyadPtr;
         let instance = *ops;
-        let (fields, _) = layout((*instance).logos).map_err(|_| RunError::BadValue)?;
+        let (fields, _) = layout((*instance).ty).map_err(|_| RunError::BadValue)?;
         // The arguments follow the two fixed head slots (instance, op).
         for (i, &(field, _, offset)) in fields.iter().enumerate() {
             let bits = rt.run(*ops.add(i + 2))?;
             let blob = rt.place_addr(instance).ok_or(RunError::BadValue)?;
-            numtype::write_scalar((*field).logos, blob.add(offset), bits);
+            numtype::write_scalar((*field).ty, blob.add(offset), bits);
         }
         Ok(0)
     }
 }
 
 /// Lower: each argument stores to its field's baked address; yields unit.
-fn lower(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
+fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a construct node as [`build_ctor`] lays it out.
     unsafe {
-        let ops = (*node).hyle as *const SynolonPtr;
+        let ops = (*node).value as *const DyadPtr;
         let instance = *ops;
-        let (fields, _) = layout((*instance).logos).map_err(|_| CompileError::BadValue)?;
+        let (fields, _) = layout((*instance).ty).map_err(|_| CompileError::BadValue)?;
         // The instance's base address, resolved once (baked absolute, or a frame
         // `stack_addr`); each field stores at its byte offset from it.
         let base = lw.place_addr(instance);

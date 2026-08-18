@@ -3,7 +3,7 @@
 
 //! `%`: remainder. Like `*`, a parse-time constructor owning no code: it
 //! resolves each application to a concrete remainder and stores the leaf in the
-//! op slot `{logos: %, value: [lhs, rhs, rem_<logos>]}`; binds like `*`,
+//! op slot `{type: %, value: [lhs, rhs, rem_<logos>]}`; binds like `*`,
 //! left-associative. Integer remainder is TOTAL (settled): `x % 0` yields the
 //! logos's MAX — the same loud sentinel as `/` — and a signed `x % -1` is the
 //! well-defined 0. Float `%` is rejected at parse (Cranelift has no float
@@ -17,14 +17,14 @@ use cranelift_codegen::ir::Value;
 use super::numtype::ArithOp;
 use super::{meta, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, Lowerer};
-use crate::synolon::SynolonPtr;
+use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::parse::{Assoc, CoreTypes, ParseError};
 use crate::store::Store;
 
 /// Register `%`: spelling, precedence (binding like `*`, left-associative), and
 /// its lowering.
-pub(super) fn register(cx: &mut Cx) -> SynolonPtr {
+pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
@@ -45,14 +45,14 @@ pub(super) fn register(cx: &mut Cx) -> SynolonPtr {
 fn build(
     store: &mut Store,
     types: &CoreTypes,
-    rem: SynolonPtr,
-    lhs: SynolonPtr,
-    rhs: SynolonPtr,
-) -> Result<SynolonPtr, ParseError> {
+    rem: DyadPtr,
+    lhs: DyadPtr,
+    rhs: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
     if let Some(folded) = rational::fold_arith(store, types.rational, ArithOp::Rem, lhs, rhs)? {
         return Ok(folded);
     }
-    // SAFETY: `lhs`/`rhs` are reduced synolons from the store.
+    // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let ([lhs, rhs], nt) = unsafe { resolve_binary(store, types, lhs, rhs) }?;
     if nt.is_float() {
         return Err(ParseError::UnsupportedOperands);
@@ -62,7 +62,7 @@ fn build(
 }
 
 /// Lower: emit the checked machine remainder for the resolved operand logos.
-fn lower(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
+fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid `%` application `[lhs, rhs, op]`.
     unsafe { lw.lower_arith(node, ArithOp::Rem) }
 }

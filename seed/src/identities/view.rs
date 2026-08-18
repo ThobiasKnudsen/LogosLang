@@ -1,16 +1,16 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `synolon`, the spelled view identity (#52; DESIGN ›The synolon's read
-//! surface‹). `(synolon a)` wraps any value as its cell — a view value whose
-//! hyle is the viewed node's address — and `.` then reads the cell: `.logos`,
-//! `.hyle`, `.operand(i)`, `.text` on the view, and the logos members
+//! `dyad`, the spelled view identity (#52; DESIGN ›The dyad's read
+//! surface‹). `(dyad a)` wraps any value as its cell — a view value whose
+//! value is the viewed node's address — and `.` then reads the cell: `.logos`,
+//! `.value`, `.operand(i)`, `.text` on the view, and the logos members
 //! (`.arity`, `.role(i)`, `.precedence`, …) on the logos `.logos` yields.
 //!
 //! The ruling this realizes (August 2026): `.` does exactly one job — reading
-//! fields the logos defines, which are always about the hyle. A value's logos
+//! fields the logos defines, which are always about the value. A value's logos
 //! is never one of its own fields, so `x.logos` does not exist; the view puts
-//! the logos *into* the hyle, and only there does `.logos` read it. The reads
+//! the logos *into* the value, and only there does `.logos` read it. The reads
 //! live in [`crate::parse::Parser::view_member`] / [`Parser::logos_member`]
 //! and fold at parse time — comptime reflection, the regime a Logos-written
 //! constructor runs in. Read-only: writing stays with constructors and the
@@ -20,14 +20,14 @@
 
 use super::{meta, Cx};
 use crate::id_context::IdContext;
-use crate::synolon::SynolonPtr;
+use crate::dyad::DyadPtr;
 
-/// Register `synolon`: a fresh-start word whose constructor views the
+/// Register `dyad`: a fresh-start word whose constructor views the
 /// expression to its right ([`crate::parse::Parser::construct_view`]).
-pub(super) fn register(cx: &mut Cx) -> SynolonPtr {
-    let record = meta::record(cx.store, meta::SYNOLON_TAG, f64::NAN);
+pub(super) fn register(cx: &mut Cx) -> DyadPtr {
+    let record = meta::record(cx.store, meta::DYAD_TAG, f64::NAN);
     let id = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert("synolon", IdContext::new(id, cx.root_scope));
+    cx.trie.insert("dyad", IdContext::new(id, cx.root_scope));
     cx.metas.insert(id, |p, _id, tape| p.construct_view(tape));
     id
 }

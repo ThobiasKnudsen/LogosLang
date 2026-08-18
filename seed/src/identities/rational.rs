@@ -24,14 +24,14 @@ use cranelift_codegen::ir::Value;
 use super::numtype::{ArithOp, CmpOp, NumType};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
-use crate::synolon::SynolonPtr;
+use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::parse::{Constructed, ParseError, ParsingTape, Parser};
 use crate::store::Store;
 
 /// Register `rational_number`: its spelling (integers or decimals), literal
 /// constructor, and lowering.
-pub(super) fn register(cx: &mut Cx) -> SynolonPtr {
+pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, meta::FRACTION_TAG, f64::NAN);
     let id = cx.store.alloc_raw(cx.type_, record);
     // Digits and an optional fractional part. Unanchored: the lexer longest-matches
@@ -46,7 +46,7 @@ pub(super) fn register(cx: &mut Cx) -> SynolonPtr {
 
 /// The literal's constructor: read the matched span off the cursor token,
 /// build the leaf, and place it over its own token.
-fn construct(p: &mut Parser, id: SynolonPtr, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
+fn construct(p: &mut Parser, id: DyadPtr, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
     let t = tape.own_token().ok_or(ParseError::BadLiteral)?;
     let span = &p.source()[t.start..t.start + t.len];
     let node = build(p.store(), id, span)?;
@@ -54,19 +54,19 @@ fn construct(p: &mut Parser, id: SynolonPtr, tape: &mut ParsingTape) -> Result<C
     Ok(Constructed::Placed)
 }
 
-/// Build a rational literal `{logos: rational, value: [num, den]}` from its span,
+/// Build a rational literal `{type: rational, value: [num, den]}` from its span,
 /// parsing the decimal text into a reduced fraction. A malformed or out-of-`i64`
 /// -range span is a [`ParseError::BadLiteral`]; a well-formed decimal always builds
 /// (whether it can later be computed as an `i32` is a use-site question). Also the
 /// parser's direct path for the negated-literal and range-endpoint services.
-pub(crate) fn build(store: &mut Store, rational: SynolonPtr, span: &str) -> Result<SynolonPtr, ParseError> {
+pub(crate) fn build(store: &mut Store, rational: DyadPtr, span: &str) -> Result<DyadPtr, ParseError> {
     let (num, den) = parse_fraction(span).ok_or(ParseError::BadLiteral)?;
     Ok(build_literal(store, rational, num, den))
 }
 
-/// Build a rational literal node `{logos: rational, value: [num, den]}` from an already
+/// Build a rational literal node `{type: rational, value: [num, den]}` from an already
 /// reduced fraction (`den > 0`).
-fn build_literal(store: &mut Store, rational: SynolonPtr, num: i64, den: i64) -> SynolonPtr {
+fn build_literal(store: &mut Store, rational: DyadPtr, num: i64, den: i64) -> DyadPtr {
     let mut bytes = [0u8; 16];
     bytes[..8].copy_from_slice(&num.to_ne_bytes());
     bytes[8..].copy_from_slice(&den.to_ne_bytes());
@@ -82,14 +82,14 @@ fn build_literal(store: &mut Store, rational: SynolonPtr, num: i64, den: i64) ->
 /// num/den (its rationals are `i64` fractions; arbitrary precision is later work).
 pub(crate) fn fold_arith(
     store: &mut Store,
-    rational: SynolonPtr,
+    rational: DyadPtr,
     op: ArithOp,
-    lhs: SynolonPtr,
-    rhs: SynolonPtr,
-) -> Result<Option<SynolonPtr>, ParseError> {
-    // SAFETY: `lhs`/`rhs` are valid synolons; a rational-typed one holds a `[num, den]` blob.
+    lhs: DyadPtr,
+    rhs: DyadPtr,
+) -> Result<Option<DyadPtr>, ParseError> {
+    // SAFETY: `lhs`/`rhs` are valid dyads; a rational-typed one holds a `[num, den]` blob.
     unsafe {
-        if (*lhs).logos != rational || (*rhs).logos != rational {
+        if (*lhs).ty != rational || (*rhs).ty != rational {
             return Ok(None);
         }
         let (n1, d1) = read_fraction(lhs);
@@ -141,14 +141,14 @@ pub(crate) fn fold_arith(
 /// operand is not a rational literal. Cross-multiplies (`den > 0` keeps the direction);
 /// the products fit `i128`, so this never overflows.
 pub(crate) fn compare_literals(
-    rational: SynolonPtr,
+    rational: DyadPtr,
     op: CmpOp,
-    lhs: SynolonPtr,
-    rhs: SynolonPtr,
+    lhs: DyadPtr,
+    rhs: DyadPtr,
 ) -> Option<bool> {
-    // SAFETY: `lhs`/`rhs` are valid synolons; a rational-typed one holds a `[num, den]` blob.
+    // SAFETY: `lhs`/`rhs` are valid dyads; a rational-typed one holds a `[num, den]` blob.
     unsafe {
-        if (*lhs).logos != rational || (*rhs).logos != rational {
+        if (*lhs).ty != rational || (*rhs).ty != rational {
             return None;
         }
         let (n1, d1) = read_fraction(lhs);
@@ -192,7 +192,7 @@ fn gcd128(mut a: u128, mut b: u128) -> u128 {
 /// Lower a rational literal to an `i32` immediate, or fail if it has no exact `i32`
 /// value (a fraction or an out-of-range integer) — the same outcome the
 /// interpreter reaches, so compiled and interpreted agree.
-fn lower(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
+fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     match mold(node) {
         Some(v) => Ok(lw.const_i32(v)),
         None => Err(CompileError::UncomputableLiteral),
@@ -236,7 +236,7 @@ fn parse_fraction(span: &str) -> Option<(i64, i64)> {
 /// # Safety
 /// `node` must be a rational literal from the store (its value the `[num, den]`
 /// blob).
-pub(crate) unsafe fn negate(store: &mut Store, rational: SynolonPtr, node: SynolonPtr) -> SynolonPtr {
+pub(crate) unsafe fn negate(store: &mut Store, rational: DyadPtr, node: DyadPtr) -> DyadPtr {
     let (num, den) = read_fraction(node);
     build_literal(store, rational, -num, den)
 }
@@ -256,8 +256,8 @@ fn gcd(mut a: u64, mut b: u64) -> u64 {
 /// # Safety
 /// `node` must be a rational literal built by [`build`]: its `value` points at the
 /// 16-byte `[num, den]` blob.
-unsafe fn read_fraction(node: SynolonPtr) -> (i64, i64) {
-    let p = (*node).hyle;
+unsafe fn read_fraction(node: DyadPtr) -> (i64, i64) {
+    let p = (*node).value;
     let num = std::ptr::read_unaligned(p as *const i64);
     let den = std::ptr::read_unaligned(p.add(8) as *const i64);
     (num, den)
@@ -268,10 +268,10 @@ unsafe fn read_fraction(node: SynolonPtr) -> (i64, i64) {
 /// in range; float logos take `num/den` as the float's bits. Returns `None` if there
 /// is no exact value (a decimal to an int, or an out-of-range integer) — which the
 /// run/compile paths turn into `UncomputableLiteral`, and which parse-time committing
-/// turns into a literal-does-not-fit error. A null hyle slot also yields `None`.
-pub(crate) fn mold_to(node: SynolonPtr, nt: NumType) -> Option<i64> {
+/// turns into a literal-does-not-fit error. A null value slot also yields `None`.
+pub(crate) fn mold_to(node: DyadPtr, nt: NumType) -> Option<i64> {
     // SAFETY: called only on rational-typed nodes, whose value is the [num, den] blob.
-    let p = unsafe { (*node).hyle };
+    let p = unsafe { (*node).value };
     if p.is_null() {
         return None;
     }
@@ -307,7 +307,7 @@ pub(crate) fn mold_to(node: SynolonPtr, nt: NumType) -> Option<i64> {
 
 /// Mold a rational literal to a concrete `i32`, if it has one. The `i32`-typed shim
 /// over [`mold_to`], kept for the bare-literal run/compile paths.
-pub(crate) fn mold(node: SynolonPtr) -> Option<i32> {
+pub(crate) fn mold(node: DyadPtr) -> Option<i32> {
     mold_to(node, NumType::I32).map(|b| b as i32)
 }
 
@@ -316,9 +316,9 @@ pub(crate) fn mold(node: SynolonPtr) -> Option<i32> {
 /// constructor. An integer target takes the fraction's truncated-toward-zero integer
 /// part, then wraps to width; a float target takes `num/den`. Returns the value's `i64`
 /// bit-container, or `None` for a malformed rational (null or zero denominator).
-pub(crate) fn cast_to(node: SynolonPtr, nt: NumType) -> Option<i64> {
+pub(crate) fn cast_to(node: DyadPtr, nt: NumType) -> Option<i64> {
     // SAFETY: called only on rational-typed nodes, whose value is the [num, den] blob.
-    let p = unsafe { (*node).hyle };
+    let p = unsafe { (*node).value };
     if p.is_null() {
         return None;
     }

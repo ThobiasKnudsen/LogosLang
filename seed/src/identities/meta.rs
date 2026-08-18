@@ -1,7 +1,7 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The shared-member record every core identity carries in its hyle slot — the
+//! The shared-member record every core identity carries in its value slot — the
 //! seed's realization of the sealed `logos` model (DESIGN ›A logos's metadata is
 //! shared by its values‹, issue #30) and of layout-as-graph-data (issue #42).
 //!
@@ -33,8 +33,8 @@
 //!                 one `ConstructFn` signature), or 0: undefined
 //! [18..26]   u64  destructor  (0: undefined until drop semantics exist)
 //! [26..]     payload, per kind:
-//!              ADDR              pointee logos node (`synolon@`)
-//!              TUPLE/LIST         u8 arity, then arity × `synolon@` role-name strings
+//!              ADDR              pointee logos node (`dyad@`)
+//!              TUPLE/LIST         u8 arity, then arity × `dyad@` role-name strings
 //! ```
 //!
 //! The kind byte continues [`numtype`](super::numtype)'s tag space (`NumType`
@@ -45,19 +45,19 @@
 //! whole value, and the code its applications run lives on the callable
 //! leaves their op slots reference.
 
-use crate::synolon::SynolonPtr;
+use crate::dyad::DyadPtr;
 use crate::parse::{Assoc};
 use crate::store::Store;
 
 use super::numtype::ADDR_TAG;
 use super::{string, Cx};
 
-/// Kind: values are applications of `arity` fixed `synolon@` operand slots, each
+/// Kind: values are applications of `arity` fixed `dyad@` operand slots, each
 /// named by a role string (a null slot is an absent optional, like an else-less
 /// `if`'s third operand). Also the shape of an fn value's
 /// `[input, output, body, bcode]`.
 pub(crate) const TUPLE_TAG: u8 = 14;
-/// Kind: values are `arity` fixed named `synolon@` slots followed by a
+/// Kind: values are `arity` fixed named `dyad@` slots followed by a
 /// null-terminated variadic tail — a sequence (`arity` 0), a construction
 /// (`[instance, arg…, null]`). (A record *definition*'s value is a
 /// [`RECORD_TAG`] record, not a list.)
@@ -78,7 +78,7 @@ pub(crate) const CALLABLE_TAG: u8 = 20;
 /// renders per target; decisive at the FFI boundary). A convention value's slot
 /// holds its name string node.
 pub(crate) const CONVENTION_TAG: u8 = 21;
-/// Kind: values are arrays of `synolon@` — `[len: u64][data: @synolon]`, 16 bytes,
+/// Kind: values are arrays of `dyad@` — `[len: u64][data: @dyad]`, 16 bytes,
 /// the list itself behind one indirection (settled: a growable thing never
 /// lives inline in a node's value). The seed's first array form; element-typed
 /// arrays and surface syntax arrive with the `array` logos proper.
@@ -87,16 +87,16 @@ pub(crate) const ARRAY_TAG: u8 = 22;
 /// constructor derives at definition (DESIGN ›a logos whose constructor derives
 /// the layout automatically — reading the field declarations in its scope and
 /// filling `fields` and `size_bytes`‹), locked before first instantiation. The
-/// payload is `[scope: @synolon][fields: @synolon (an array node over the field
+/// payload is `[scope: @dyad][fields: @dyad (an array node over the field
 /// declarations)][size_bytes: u64]`, 24 bytes. Giving record logos a real
 /// record also makes their first value byte an honest kind tag — before this,
 /// it was a node address's low byte, and any tag read on it was garbage.
 pub(crate) const RECORD_TAG: u8 = 23;
-/// Kind: values are synolon *views* (#52) — the hyle IS the viewed node's
-/// address, so `(synolon a)` wraps any value as its cell and `.` then reads
-/// the cell: the one place the logos appears in a hyle, which is what makes
+/// Kind: values are dyad *views* (#52) — the value IS the viewed node's
+/// address, so `(dyad a)` wraps any value as its cell and `.` then reads
+/// the cell: the one place the logos appears in a value, which is what makes
 /// `.logos` a field read like every other `.` (ruled August 2026).
-pub(crate) const SYNOLON_TAG: u8 = 24;
+pub(crate) const DYAD_TAG: u8 = 24;
 
 /// Byte offset of the associativity in a record.
 const ASSOC_OFF: usize = 1;
@@ -145,7 +145,7 @@ pub(crate) fn operand_record(
 
 /// Build a pointer logos's record: kind [`ADDR_TAG`], the pointee node as the
 /// payload. Pointer logos are created fresh per use and carry no parse members.
-pub(crate) fn pointer_record(store: &mut Store, pointee: SynolonPtr) -> *mut u8 {
+pub(crate) fn pointer_record(store: &mut Store, pointee: DyadPtr) -> *mut u8 {
     let mut blob = header(ADDR_TAG, Assoc::Left, f64::NAN).to_vec();
     blob.extend_from_slice(&(pointee as usize).to_ne_bytes());
     store.alloc_bytes(&blob)
@@ -158,8 +158,8 @@ pub(crate) fn pointer_record(store: &mut Store, pointee: SynolonPtr) -> *mut u8 
 /// be defined and frozen before its first instantiation‹).
 pub(crate) fn record_layout(
     store: &mut Store,
-    scope: SynolonPtr,
-    fields: SynolonPtr,
+    scope: DyadPtr,
+    fields: DyadPtr,
     size_bytes: u64,
 ) -> *mut u8 {
     let mut blob = header(RECORD_TAG, Assoc::Left, f64::NAN).to_vec();
@@ -173,18 +173,18 @@ pub(crate) fn record_layout(
 ///
 /// # Safety
 /// `id` must carry a [`RECORD_TAG`] record ([`record_layout`]).
-pub(crate) unsafe fn record_scope_of(id: SynolonPtr) -> SynolonPtr {
-    std::ptr::read_unaligned((*id).hyle.add(PAYLOAD_OFF) as *const SynolonPtr)
+pub(crate) unsafe fn record_scope_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF) as *const DyadPtr)
 }
 
 /// The stored `fields` array node of a record logos node — the field
 /// declarations, in order, behind one indirection (the system's first
-/// element-typed array in spirit: an array of `synolon`).
+/// element-typed array in spirit: an array of `dyad`).
 ///
 /// # Safety
 /// As [`record_scope_of`].
-pub(crate) unsafe fn record_fields_of(id: SynolonPtr) -> SynolonPtr {
-    std::ptr::read_unaligned((*id).hyle.add(PAYLOAD_OFF + 8) as *const SynolonPtr)
+pub(crate) unsafe fn record_fields_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF + 8) as *const DyadPtr)
 }
 
 /// The stored `size_bytes` of a record logos node — the packed byte size its
@@ -192,8 +192,8 @@ pub(crate) unsafe fn record_fields_of(id: SynolonPtr) -> SynolonPtr {
 ///
 /// # Safety
 /// As [`record_scope_of`].
-pub(crate) unsafe fn record_size_of(id: SynolonPtr) -> u64 {
-    std::ptr::read_unaligned((*id).hyle.add(PAYLOAD_OFF + 16) as *const u64)
+pub(crate) unsafe fn record_size_of(id: DyadPtr) -> u64 {
+    std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF + 16) as *const u64)
 }
 
 /// The fixed head of every record: kind, associativity, precedence, and the
@@ -220,8 +220,8 @@ fn header(kind: u8, assoc: Assoc, precedence: f64) -> [u8; PAYLOAD_OFF] {
 ///
 /// # Safety
 /// As [`precedence_of`].
-pub(crate) unsafe fn constructor_of(id: SynolonPtr) -> SynolonPtr {
-    std::ptr::read_unaligned((*id).hyle.add(CTOR_OFF) as *const SynolonPtr)
+pub(crate) unsafe fn constructor_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned((*id).value.add(CTOR_OFF) as *const DyadPtr)
 }
 
 /// The destructor stored in `id`'s record — null for every seed identity: the
@@ -230,8 +230,8 @@ pub(crate) unsafe fn constructor_of(id: SynolonPtr) -> SynolonPtr {
 ///
 /// # Safety
 /// As [`precedence_of`].
-pub(crate) unsafe fn destructor_of(id: SynolonPtr) -> SynolonPtr {
-    std::ptr::read_unaligned((*id).hyle.add(DTOR_OFF) as *const SynolonPtr)
+pub(crate) unsafe fn destructor_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned((*id).value.add(DTOR_OFF) as *const DyadPtr)
 }
 
 /// Install `leaf` (a callable value) as `id`'s constructor — the registration
@@ -241,8 +241,8 @@ pub(crate) unsafe fn destructor_of(id: SynolonPtr) -> SynolonPtr {
 /// # Safety
 /// `id` must carry a record and `leaf` must be a callable leaf whose entry is
 /// a [`crate::parse::ConstructFn`].
-pub(crate) unsafe fn install_constructor(id: SynolonPtr, leaf: SynolonPtr) {
-    std::ptr::write_unaligned((*id).hyle.add(CTOR_OFF) as *mut SynolonPtr, leaf);
+pub(crate) unsafe fn install_constructor(id: DyadPtr, leaf: DyadPtr) {
+    std::ptr::write_unaligned((*id).value.add(CTOR_OFF) as *mut DyadPtr, leaf);
 }
 
 /// Install `leaf` (a callable value) as `id`'s destructor — the drop model's
@@ -253,17 +253,17 @@ pub(crate) unsafe fn install_constructor(id: SynolonPtr, leaf: SynolonPtr) {
 /// # Safety
 /// `id` must carry a record and `leaf` must be a callable leaf whose entry runs
 /// the identity's teardown.
-pub(crate) unsafe fn install_destructor(id: SynolonPtr, leaf: SynolonPtr) {
-    std::ptr::write_unaligned((*id).hyle.add(DTOR_OFF) as *mut SynolonPtr, leaf);
+pub(crate) unsafe fn install_destructor(id: DyadPtr, leaf: DyadPtr) {
+    std::ptr::write_unaligned((*id).value.add(DTOR_OFF) as *mut DyadPtr, leaf);
 }
 
-/// The record kind of `id`, or `None` for a null hyle slot (a still-unbound
+/// The record kind of `id`, or `None` for a null value slot (a still-unbound
 /// declaration placeholder).
 ///
 /// # Safety
-/// `id` must be a valid synolon from the store whose non-null value is a record.
-pub(crate) unsafe fn kind_of(id: SynolonPtr) -> Option<u8> {
-    let v = (*id).hyle;
+/// `id` must be a valid dyad from the store whose non-null value is a record.
+pub(crate) unsafe fn kind_of(id: DyadPtr) -> Option<u8> {
+    let v = (*id).value;
     if v.is_null() {
         None
     } else {
@@ -272,21 +272,21 @@ pub(crate) unsafe fn kind_of(id: SynolonPtr) -> Option<u8> {
 }
 
 /// Whether `id` is a record logos — a definition built by the record path,
-/// its hyle a [`RECORD_TAG`] layout record. This replaces the retired
+/// its value a [`RECORD_TAG`] layout record. This replaces the retired
 /// `logos == struct_` classifier test: since the `logos`/`record` merge every
 /// logos's own classifier is the root, and the stored layout record is what
 /// marks the record case. The tag read is guarded so the test is safe on ANY
 /// node, as the identity compare it replaces was: only a node classified by
-/// the self-classified root (a logos at all) whose hyle is not a tagged frame
+/// the self-classified root (a logos at all) whose value is not a tagged frame
 /// place (a logos-valued parameter's slot) has its record tag consulted.
 ///
 /// # Safety
-/// `id` must be null or a valid synolon from the store.
-pub(crate) unsafe fn is_record_type(id: SynolonPtr) -> bool {
+/// `id` must be null or a valid dyad from the store.
+pub(crate) unsafe fn is_record_type(id: DyadPtr) -> bool {
     !id.is_null()
-        && !(*id).logos.is_null()
-        && (*id).logos == (*(*id).logos).logos
-        && crate::synolon::frame_ref((*id).hyle).is_none()
+        && !(*id).ty.is_null()
+        && (*id).ty == (*(*id).ty).ty
+        && crate::dyad::frame_ref((*id).value).is_none()
         && kind_of(id) == Some(RECORD_TAG)
 }
 
@@ -296,8 +296,8 @@ pub(crate) unsafe fn is_record_type(id: SynolonPtr) -> bool {
 /// kinds without fixed slots (any data logos).
 ///
 /// # Safety
-/// `id` must be a valid synolon from the store whose non-null value is a record.
-pub(crate) unsafe fn op_slot_of(id: SynolonPtr) -> Option<usize> {
+/// `id` must be a valid dyad from the store whose non-null value is a record.
+pub(crate) unsafe fn op_slot_of(id: DyadPtr) -> Option<usize> {
     match kind_of(id) {
         Some(TUPLE_TAG | LIST_TAG) => {
             let arity = arity_of(id);
@@ -311,8 +311,8 @@ pub(crate) unsafe fn op_slot_of(id: SynolonPtr) -> Option<usize> {
 ///
 /// # Safety
 /// `id` must carry a record ([`kind_of`] is `Some`).
-pub(crate) unsafe fn precedence_of(id: SynolonPtr) -> f64 {
-    let v = (*id).hyle;
+pub(crate) unsafe fn precedence_of(id: DyadPtr) -> f64 {
+    let v = (*id).value;
     f64::from_ne_bytes(std::ptr::read_unaligned(v.add(PREC_OFF) as *const [u8; 8]))
 }
 
@@ -320,8 +320,8 @@ pub(crate) unsafe fn precedence_of(id: SynolonPtr) -> f64 {
 ///
 /// # Safety
 /// As [`precedence_of`].
-pub(crate) unsafe fn assoc_of(id: SynolonPtr) -> Assoc {
-    if *(*id).hyle.add(ASSOC_OFF) == 0 {
+pub(crate) unsafe fn assoc_of(id: DyadPtr) -> Assoc {
+    if *(*id).value.add(ASSOC_OFF) == 0 {
         Assoc::Left
     } else {
         Assoc::Right
@@ -332,15 +332,15 @@ pub(crate) unsafe fn assoc_of(id: SynolonPtr) -> Assoc {
 ///
 /// # Safety
 /// `id` must carry an operand record (a [`TUPLE_TAG`] or [`LIST_TAG`] kind).
-pub(crate) unsafe fn arity_of(id: SynolonPtr) -> usize {
-    *(*id).hyle.add(PAYLOAD_OFF) as usize
+pub(crate) unsafe fn arity_of(id: DyadPtr) -> usize {
+    *(*id).value.add(PAYLOAD_OFF) as usize
 }
 
 /// The `i`-th operand's role-name string node in `id`'s operand record.
 ///
 /// # Safety
 /// As [`arity_of`], with `i < arity_of(id)`.
-pub(crate) unsafe fn role_of(id: SynolonPtr, i: usize) -> SynolonPtr {
-    let p = (*id).hyle.add(PAYLOAD_OFF + 1 + i * std::mem::size_of::<SynolonPtr>());
-    std::ptr::read_unaligned(p as *const SynolonPtr)
+pub(crate) unsafe fn role_of(id: DyadPtr, i: usize) -> DyadPtr {
+    let p = (*id).value.add(PAYLOAD_OFF + 1 + i * std::mem::size_of::<DyadPtr>());
+    std::ptr::read_unaligned(p as *const DyadPtr)
 }

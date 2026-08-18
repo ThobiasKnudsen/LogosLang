@@ -23,9 +23,9 @@
 //! and `container-i64` (compiled artifacts taking uniform `i64` bit-containers,
 //! as `run::call_compiled` jumps to).
 //!
-//! Value layout (16 bytes, native-endian): `[entry: usize][convention: synolon@]`.
+//! Value layout (16 bytes, native-endian): `[entry: usize][convention: dyad@]`.
 
-use crate::synolon::SynolonPtr;
+use crate::dyad::DyadPtr;
 use crate::run::RunFn;
 use crate::store::Store;
 
@@ -40,17 +40,17 @@ const CONVENTION_OFF: usize = 8;
 /// logos, and the conventions the seed mints values under.
 pub(crate) struct Callables {
     /// The `callable` logos; every exec leaf's `logos`.
-    pub callable: SynolonPtr,
+    pub callable: DyadPtr,
     /// The `convention` logos; the identities below are its values.
-    pub convention: SynolonPtr,
-    /// `seed-native`: a Rust shim `fn(&mut Runtime, SynolonPtr) -> Result<i64, RunError>`.
-    pub seed_native: SynolonPtr,
+    pub convention: DyadPtr,
+    /// `seed-native`: a Rust shim `fn(&mut Runtime, DyadPtr) -> Result<i64, RunError>`.
+    pub seed_native: DyadPtr,
     /// `container-i64`: compiled code taking uniform `i64` bit-containers.
-    pub container_i64: SynolonPtr,
+    pub container_i64: DyadPtr,
     /// `seed-parse`: the one constructor signature
     /// ([`crate::parse::ConstructFn`]) — the convention of every constructor
     /// slot's leaf until self-hosting ports constructors to Logos source.
-    pub seed_parse: SynolonPtr,
+    pub seed_parse: DyadPtr,
 }
 
 /// Register the `callable` and `convention` logos and the two seed conventions.
@@ -70,22 +70,22 @@ pub(super) fn register(cx: &mut Cx) -> Callables {
     Callables { callable, convention, seed_native, container_i64, seed_parse }
 }
 
-/// Mint a convention identity: `{logos: convention, value -> name string node}`.
-fn mint_convention(cx: &mut Cx, convention: SynolonPtr, name: &[u8]) -> SynolonPtr {
+/// Mint a convention identity: `{type: convention, value -> name string node}`.
+fn mint_convention(cx: &mut Cx, convention: DyadPtr, name: &[u8]) -> DyadPtr {
     let text = string::build_text(cx.store, cx.string_, name);
     cx.store.alloc_raw(convention, text.cast())
 }
 
-/// Mint a callable leaf: `{logos: callable, value -> [entry, convention]}`. The one
+/// Mint a callable leaf: `{type: callable, value -> [entry, convention]}`. The one
 /// licensed mint in the seed — `entry` must be the address of code the given
 /// convention can actually jump to (a Rust `RunFn` shim under `seed-native`, a
 /// finalized JIT function under `container-i64`).
 pub(crate) fn mint(
     store: &mut Store,
-    callable: SynolonPtr,
+    callable: DyadPtr,
     entry: usize,
-    convention: SynolonPtr,
-) -> SynolonPtr {
+    convention: DyadPtr,
+) -> DyadPtr {
     let mut bytes = [0u8; 16];
     bytes[ENTRY_OFF..CONVENTION_OFF].copy_from_slice(&entry.to_ne_bytes());
     bytes[CONVENTION_OFF..].copy_from_slice(&(convention as usize).to_ne_bytes());
@@ -97,10 +97,10 @@ pub(crate) fn mint(
 /// done once, honestly, at the one place addresses enter the graph.
 pub(crate) fn mint_native(
     store: &mut Store,
-    callable: SynolonPtr,
+    callable: DyadPtr,
     entry: RunFn,
-    convention: SynolonPtr,
-) -> SynolonPtr {
+    convention: DyadPtr,
+) -> DyadPtr {
     mint(store, callable, entry as usize, convention)
 }
 
@@ -112,17 +112,17 @@ pub(crate) fn mint_native(
 ///
 /// # Safety
 /// `leaf` must be a callable value ([`is_callable`]) from the store.
-pub(crate) unsafe fn install_entry(leaf: SynolonPtr, entry: usize) {
-    std::ptr::write_unaligned((*leaf).hyle.add(ENTRY_OFF) as *mut usize, entry);
+pub(crate) unsafe fn install_entry(leaf: DyadPtr, entry: usize) {
+    std::ptr::write_unaligned((*leaf).value.add(ENTRY_OFF) as *mut usize, entry);
 }
 
 /// Whether `node` is a callable leaf, read from the graph alone: its logos's
 /// record kind is [`meta::CALLABLE_TAG`].
 ///
 /// # Safety
-/// `node` must be a valid synolon from the store.
-pub(crate) unsafe fn is_callable(node: SynolonPtr) -> bool {
-    let logos = (*node).logos;
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn is_callable(node: DyadPtr) -> bool {
+    let logos = (*node).ty;
     !logos.is_null() && meta::kind_of(logos) == Some(meta::CALLABLE_TAG)
 }
 
@@ -130,16 +130,16 @@ pub(crate) unsafe fn is_callable(node: SynolonPtr) -> bool {
 ///
 /// # Safety
 /// `leaf` must be a callable value ([`is_callable`]).
-pub(crate) unsafe fn entry_of(leaf: SynolonPtr) -> usize {
-    std::ptr::read_unaligned((*leaf).hyle.add(ENTRY_OFF) as *const usize)
+pub(crate) unsafe fn entry_of(leaf: DyadPtr) -> usize {
+    std::ptr::read_unaligned((*leaf).value.add(ENTRY_OFF) as *const usize)
 }
 
 /// The convention identity of a callable leaf.
 ///
 /// # Safety
 /// As [`entry_of`].
-pub(crate) unsafe fn convention_of(leaf: SynolonPtr) -> SynolonPtr {
-    std::ptr::read_unaligned((*leaf).hyle.add(CONVENTION_OFF) as *const SynolonPtr)
+pub(crate) unsafe fn convention_of(leaf: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned((*leaf).value.add(CONVENTION_OFF) as *const DyadPtr)
 }
 
 #[cfg(test)]
@@ -173,14 +173,14 @@ mod tests {
 
         // SAFETY: the handles are identities Core::build just allocated.
         unsafe {
-            assert_eq!((*core.conv_seed_native).logos, core.convention_);
-            assert_eq!((*core.conv_container_i64).logos, core.convention_);
+            assert_eq!((*core.conv_seed_native).ty, core.convention_);
+            assert_eq!((*core.conv_container_i64).ty, core.convention_);
             assert_eq!(
-                crate::reflect::text_of((*core.conv_seed_native).hyle.cast()),
+                crate::reflect::text_of((*core.conv_seed_native).value.cast()),
                 b"seed-native"
             );
             assert_eq!(
-                crate::reflect::text_of((*core.conv_container_i64).hyle.cast()),
+                crate::reflect::text_of((*core.conv_container_i64).value.cast()),
                 b"container-i64"
             );
             // The logos carry their record kinds, readable from the graph alone.

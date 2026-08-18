@@ -10,14 +10,14 @@ use cranelift_codegen::ir::Value;
 use super::numtype::CmpOp;
 use super::{bool_mod, meta, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, Lowerer};
-use crate::synolon::SynolonPtr;
+use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::parse::{Assoc, CoreTypes, ParseError};
 use crate::store::Store;
 
 /// Register `>`: spelling, precedence (relational, left-associative), and its
 /// lowering.
-pub(super) fn register(cx: &mut Cx) -> SynolonPtr {
+pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
@@ -37,22 +37,22 @@ pub(super) fn register(cx: &mut Cx) -> SynolonPtr {
 fn build(
     store: &mut Store,
     types: &CoreTypes,
-    gt: SynolonPtr,
-    lhs: SynolonPtr,
-    rhs: SynolonPtr,
-) -> Result<SynolonPtr, ParseError> {
+    gt: DyadPtr,
+    lhs: DyadPtr,
+    rhs: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
     // Two comptime rationals fold now to a `bool` literal; otherwise resolve and build.
     if let Some(v) = rational::compare_literals(types.rational, CmpOp::Gt, lhs, rhs) {
         return Ok(bool_mod::literal_node(store, types.bool_, v));
     }
-    // SAFETY: `lhs`/`rhs` are reduced synolons from the store.
+    // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let ([lhs, rhs], nt) = unsafe { resolve_binary(store, types, lhs, rhs) }?;
     let value = store.alloc_operands(&[lhs, rhs, types.ops.cmp_leaf(CmpOp::Gt, nt)]);
     Ok(store.alloc_raw(gt, value))
 }
 
 /// Lower: emit the machine comparison for the resolved operand logos.
-fn lower(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
+fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid `>` application `[lhs, rhs, op]`.
     unsafe { lw.lower_compare(node, CmpOp::Gt) }
 }

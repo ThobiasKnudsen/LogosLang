@@ -25,20 +25,20 @@ use cranelift_codegen::ir::Value;
 use super::callable::{self, Callables};
 use super::{array, Cx};
 use crate::compile::{CompileError, Lowerer};
-use crate::synolon::SynolonPtr;
+use crate::dyad::DyadPtr;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
 /// Create the `scope` logos (its own logos is `logos`) and return it. Called before
 /// the build context exists, since the root scope is itself typed `scope`.
-pub(super) fn register(store: &mut Store, type_: SynolonPtr) -> SynolonPtr {
+pub(super) fn register(store: &mut Store, type_: DyadPtr) -> DyadPtr {
     store.alloc_raw(type_, std::ptr::null_mut())
 }
 
 /// Register `scope`'s executable behaviour: the sequence native as a callable
 /// leaf (a sequence node references it from its op slot) and the lowering.
 /// Done after the build context exists. Returns the leaf.
-pub(super) fn register_exec(cx: &mut Cx, scope_: SynolonPtr, cs: &Callables) -> SynolonPtr {
+pub(super) fn register_exec(cx: &mut Cx, scope_: DyadPtr, cs: &Callables) -> DyadPtr {
     cx.lower.insert(scope_, lower);
     callable::mint_native(cx.store, cs.callable, run, cs.seed_native)
 }
@@ -48,8 +48,8 @@ pub(super) fn register_exec(cx: &mut Cx, scope_: SynolonPtr, cs: &Callables) -> 
 /// # Safety
 /// `node` must be a sequence node as `Parser::parse_sequence` builds it, with a
 /// non-null value; the store must outlive the returned slice.
-unsafe fn exprs<'a>(node: SynolonPtr) -> &'a [SynolonPtr] {
-    let arr = *((*node).hyle as *const SynolonPtr);
+unsafe fn exprs<'a>(node: DyadPtr) -> &'a [DyadPtr] {
+    let arr = *((*node).value as *const DyadPtr);
     array::items(arr)
 }
 
@@ -57,18 +57,18 @@ unsafe fn exprs<'a>(node: SynolonPtr) -> &'a [SynolonPtr] {
 /// sequence's. A `defer` (issue #49) is not run in this pass — it is held and its
 /// inner run LIFO at scope exit, the scope's own teardown machinery (DESIGN
 /// ›Explicit heap‹). A scope with no expression array is not runnable data.
-fn run(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
+fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a sequence node whose first slot is its expression
     // array (as `Parser::parse_sequence` builds; it never builds it empty).
     unsafe {
-        if (*node).hyle.is_null() {
+        if (*node).value.is_null() {
             return Err(RunError::BadValue);
         }
         let defer_ty = rt.defer_type();
         let mut last = 0i64;
-        let mut defers: Vec<SynolonPtr> = Vec::new();
+        let mut defers: Vec<DyadPtr> = Vec::new();
         for &expr in exprs(node) {
-            let logos = (*expr).logos;
+            let logos = (*expr).ty;
             // A comment node is prose — reflectable structure invisible to value
             // flow: never run, never the tail.
             if super::numtype::is_comment_type(logos) {
@@ -94,16 +94,16 @@ fn run(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
 
 /// Lower: each expression in order (non-tail values fall dead; effects remain),
 /// yielding the trailing expression's value.
-fn lower(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
+fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: as [`run`].
     unsafe {
-        if (*node).hyle.is_null() {
+        if (*node).value.is_null() {
             return Err(CompileError::BadValue);
         }
         let mut last = None;
         for &expr in exprs(node) {
             // Prose is not lowered; see [`run`].
-            if !super::numtype::is_comment_type((*expr).logos) {
+            if !super::numtype::is_comment_type((*expr).ty) {
                 last = Some(lw.lower(expr)?);
             }
         }

@@ -12,7 +12,7 @@
 //! [`crate::parse::Parser::construct_import`]; this file registers the
 //! identity and its run native.
 //!
-//! The import node `{logos: import, value: [path, tail, op]}` is the
+//! The import node `{type: import, value: [path, tail, op]}` is the
 //! reflectable trace of the load. Running it does NOT run the file again —
 //! that happened in the pass, once — it re-yields the file's tail value by
 //! running the tail node, the same stable read a bare name's re-run performs
@@ -23,7 +23,7 @@ use super::{meta, Cx};
 use crate::id_context::IdContext;
 use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
-use crate::synolon::SynolonPtr;
+use crate::dyad::DyadPtr;
 
 /// The index of the tail slot in an import node's value; the path string node
 /// sits at 0.
@@ -31,7 +31,7 @@ const IMPORT_TAIL: usize = 1;
 
 /// Register `import`: the spelling, the operand record, the constructor hook,
 /// and the run native. Returns `(import identity, run leaf)`.
-pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (SynolonPtr, SynolonPtr) {
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
@@ -52,14 +52,14 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (SynolonPtr, SynolonPtr) 
 ///
 /// # Safety
 /// `node` must be an import node as `construct_import` lays it out.
-pub unsafe fn tail_of(node: SynolonPtr) -> SynolonPtr {
-    *((*node).hyle as *const SynolonPtr).add(IMPORT_TAIL)
+pub unsafe fn tail_of(node: DyadPtr) -> DyadPtr {
+    *((*node).value as *const DyadPtr).add(IMPORT_TAIL)
 }
 
 /// Run: re-yield the imported file's tail value (see the module doc); a
 /// declaration-only file's import yields unit.
-fn run(rt: &mut Runtime, node: SynolonPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a valid import node; a non-null tail is a valid synolon.
+fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a valid import node; a non-null tail is a valid dyad.
     unsafe {
         let tail = tail_of(node);
         if tail.is_null() {

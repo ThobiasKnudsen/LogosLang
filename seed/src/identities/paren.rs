@@ -9,14 +9,14 @@
 //! comes with `record`/`fn`.
 
 use super::{meta, Cx};
-use crate::synolon::SynolonPtr;
+use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 
 /// Register `(` and `)`, returning their handles (the parser's expect-helpers
 /// compare against them). The spellings are escaped (`\(`, `\)`) because
 /// `(`/`)` are regex metacharacters; escaped, they lex as literal single bytes.
-pub(super) fn register(cx: &mut Cx) -> (SynolonPtr, SynolonPtr) {
-    // `(` is a *tight extender*: with a completed synolon to its left it is a
+pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
+    // `(` is a *tight extender*: with a completed dyad to its left it is a
     // call (juxtaposition binds tightest — DESIGN ›the call paren tightest‹),
     // without one its constructor opens a grouping scope.
     let record = meta::record(cx.store, meta::TOKEN_TAG, f64::INFINITY);

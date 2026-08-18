@@ -58,8 +58,8 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::UnclosedBracket => "this `(` is never closed".into(),
         ParseError::ExpectedOpen => "expected a `(` here".into(),
         ParseError::ExpectedField => "expected a field name here".into(),
-        ParseError::ExpectedArrow => "expected `->` before the return logos".into(),
-        ParseError::ExpectedReturnType => "expected a return logos after `->`".into(),
+        ParseError::ExpectedArrow => "expected `->` before the return type".into(),
+        ParseError::ExpectedReturnType => "expected a return type after `->`".into(),
         ParseError::UnsupportedOperands => {
             "this operator cannot compute over these operands".into()
         }
@@ -69,10 +69,10 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::NonBoolOperands => "these operands must be bools".into(),
         ParseError::TypeMismatch => {
-            "these logos do not match (crossing logos needs an explicit cast)".into()
+            "these types do not match (crossing types needs an explicit cast)".into()
         }
         ParseError::UncomputableLiteral => {
-            "this literal has no exact value in the logos it lands in".into()
+            "this literal has no exact value in the type it lands in".into()
         }
         ParseError::EarlyReturn => {
             "`return` must be the last expression of its scope".into()
@@ -100,14 +100,14 @@ pub fn parse_message(e: &ParseError) -> String {
             format!("import of `{path}` failed:\n{rendered}")
         }
         ParseError::BadReflectRead => {
-            "this read does not fit the node's logos".into()
+            "this read does not fit the node's type".into()
         }
         ParseError::ExpectedIndexBracket => {
             "expected `[index]` — element access is `[…]`, `(…)` is application".into()
         }
-        ParseError::LogosNeedsView => {
-            "a value's logos is not one of its fields — read it through the \
-             synolon view: (synolon x).logos"
+        ParseError::TypeNeedsView => {
+            "a value's type is not one of its fields — read it through the \
+             dyad view: (dyad x).type"
                 .into()
         }
         ParseError::CtorArity => {
@@ -120,16 +120,16 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::BadAddressOf => "`&` needs a variable to take the address of".into(),
         ParseError::BadCast => "a conversion takes exactly one numeric value".into(),
         ParseError::BadDeclaredType => {
-            "the declared or assigned logos must be a logos value"
+            "the declared or assigned type must be a type value"
                 .into()
         }
         ParseError::NonComptimeTypeAssign => {
-            "a logos variable can only be assigned where parsing and running \
+            "a type variable can only be assigned where parsing and running \
              coincide — not inside a function body, loop, or runtime branch"
                 .into()
         }
         ParseError::NonNumericDeclaredType => {
-            "declarations of non-numeric logos are not in the seed yet"
+            "declarations of non-numeric types are not in the seed yet"
                 .into()
         }
         ParseError::NonComptimeTypeCall => {

@@ -3,7 +3,7 @@
 
 //! `=`: assignment. A parse-time constructor, right-associative, binding
 //! loosest. Its builder resolves the target's width to a concrete store op —
-//! `{logos: =, value: [lhs, rhs, store_<logos>]}` — so run jumps through the op
+//! `{type: =, value: [lhs, rhs, store_<logos>]}` — so run jumps through the op
 //! slot and writes at the baked width (issue #44); compile lowers it to a
 //! store. The stored value is yielded.
 
@@ -12,14 +12,14 @@ use cranelift_codegen::ir::Value;
 use super::numtype::{is_pointer_type, numtype_of_type, of_type_node};
 use super::{commit_if_literal, is_numtype_node, meta, operands, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
-use crate::synolon::SynolonPtr;
+use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::parse::{Assoc, CoreTypes, ParseError};
 use crate::store::Store;
 
 /// Register `=`: spelling, parse precedence, and lowering. The run natives are
 /// the per-width store leaves ([`crate::identities::ops`]).
-pub(super) fn register(cx: &mut Cx) -> SynolonPtr {
+pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
@@ -41,7 +41,7 @@ pub(super) fn register(cx: &mut Cx) -> SynolonPtr {
 /// driver shifts it as a pending operator.
 fn construct(
     p: &mut crate::parse::Parser,
-    id: SynolonPtr,
+    id: DyadPtr,
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, ParseError> {
     if let Some(node) = p.try_type_fill(tape)? {
@@ -71,29 +71,29 @@ fn construct(
 pub(super) fn build(
     store: &mut Store,
     types: &CoreTypes,
-    op: SynolonPtr,
-    lhs: SynolonPtr,
-    rhs: SynolonPtr,
-) -> Result<SynolonPtr, ParseError> {
+    op: DyadPtr,
+    lhs: DyadPtr,
+    rhs: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
     // A store through a pointer — `p@ = v`, `p@.x = v` — rebuilds as a storeptr
     // node with its own run/lower, resolved here at parse time.
-    // SAFETY: `lhs`/`rhs` are reduced synolons from the store.
-    if unsafe { (*lhs).logos } == types.deref_ {
+    // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
+    if unsafe { (*lhs).ty } == types.deref_ {
         return unsafe { super::pointer::build_storeptr(store, types, lhs, rhs) };
     }
     // The assignable places in v1 are typed numeric and pointer variables. A
     // comptime (`:=`-bound rational) binding has no machine storage — writing
-    // its hyle slot would corrupt the fraction — and nothing else has storage.
+    // its value slot would corrupt the fraction — and nothing else has storage.
     // SAFETY: as above.
     let (lhs_numeric, lhs_pointer) = unsafe {
-        (is_numtype_node(types, (*lhs).logos), is_pointer_type((*lhs).logos))
+        (is_numtype_node(types, (*lhs).ty), is_pointer_type((*lhs).ty))
     };
     if !lhs_numeric && !lhs_pointer {
         return Err(ParseError::BadAssignTarget);
     }
     // A literal into a pointer would become a wild address.
     // SAFETY: as above.
-    if lhs_pointer && unsafe { (*rhs).logos } == types.rational {
+    if lhs_pointer && unsafe { (*rhs).ty } == types.rational {
         return Err(ParseError::TypeMismatch);
     }
     // A literal right side commits to the target's logos (the typed slot); a
@@ -101,16 +101,16 @@ pub(super) fn build(
     // ([`super::check_store_type`]).
     // SAFETY: as above.
     let rhs = unsafe {
-        if (*rhs).logos == types.rational {
-            let nt = of_type_node((*lhs).logos);
-            commit_if_literal(store, rhs, &Operand::Literal, (*lhs).logos, nt)?
+        if (*rhs).ty == types.rational {
+            let nt = of_type_node((*lhs).ty);
+            commit_if_literal(store, rhs, &Operand::Literal, (*lhs).ty, nt)?
         } else {
-            super::check_store_type(types, (*lhs).logos, rhs)?;
+            super::check_store_type(types, (*lhs).ty, rhs)?;
             rhs
         }
     };
     // SAFETY: `lhs` is a typed variable checked assignable above.
-    let nt = unsafe { of_type_node((*lhs).logos) };
+    let nt = unsafe { of_type_node((*lhs).ty) };
     let value = store.alloc_operands(&[lhs, rhs, types.ops.store_leaf(nt)]);
     Ok(store.alloc_raw(op, value))
 }
@@ -121,15 +121,15 @@ pub(super) fn build(
 /// `BadValue` — without it the compiler would bake a store to address 0 and
 /// SIGSEGV at call time where the interpreter cleanly errors, breaking
 /// interpreter/JIT parity.
-fn lower(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a valid application synolon, so its operands are valid nodes.
+fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: `node` is a valid application dyad, so its operands are valid nodes.
     unsafe {
         let (lhs, rhs) = operands(node);
-        if (*lhs).hyle.is_null() {
+        if (*lhs).value.is_null() {
             return Err(CompileError::BadValue);
         }
         let v = lw.lower(rhs)?;
-        let ct = numtype_of_type((*lhs).logos).cranelift_type();
+        let ct = numtype_of_type((*lhs).ty).cranelift_type();
         lw.write_place(lhs, ct, v);
         Ok(v)
     }

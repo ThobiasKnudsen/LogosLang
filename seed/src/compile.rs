@@ -1,7 +1,7 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `compile`: lower a synolon tree to native code with Cranelift.
+//! `compile`: lower a dyad tree to native code with Cranelift.
 //!
 //! `compile` is `run`'s sibling: where `run` walks the graph and computes,
 //! `compile` walks it and *emits* machine code, one IR node per graph node, then
@@ -31,7 +31,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{default_libcall_names, FuncId, Linkage, Module};
 
-use crate::synolon::{frame_ref, SynolonPtr};
+use crate::dyad::{frame_ref, DyadPtr};
 use crate::identities::numtype::{
     is_void_type, numtype_of_type, of_type_node, ArithOp, CmpOp, NumType,
 };
@@ -40,7 +40,7 @@ use crate::parse::{fn_frame_size, CoreTypes, FN_BCODE, FN_BODY, FN_INPUT, FN_OUT
 
 /// A lowering rule: emit the IR for a node and return the SSA value it computes,
 /// recursing on operands via [`Lowerer::lower`].
-pub type LowerFn = fn(&mut Lowerer, SynolonPtr) -> Result<Value, CompileError>;
+pub type LowerFn = fn(&mut Lowerer, DyadPtr) -> Result<Value, CompileError>;
 
 /// What the register-promotion analysis pass records about a function's frame
 /// places (DESIGN ›Operands travel on the stack‹: compiled code has "locals
@@ -99,13 +99,13 @@ impl PlaceStats {
 }
 
 /// Lowering rules keyed by operation identity (a primitive's compiled form).
-pub type LowerTable = HashMap<SynolonPtr, LowerFn>;
+pub type LowerTable = HashMap<DyadPtr, LowerFn>;
 
 /// Why compilation failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompileError {
     /// No lowering rule is registered for this node's operation.
-    NotLowerable(SynolonPtr),
+    NotLowerable(DyadPtr),
     /// A node's storage address is null: a declared-but-uninitialised variable or
     /// assignment target. The interpreter returns `RunError::BadValue` for the same
     /// node; the compiler refuses rather than baking a load/store to address 0.
@@ -122,7 +122,7 @@ pub enum CompileError {
     /// A call targets a function that is neither the one being compiled nor already
     /// compiled, so there is no machine address to call. The enclosing function stays
     /// interpreted rather than baking a call to nothing.
-    UncompiledCallee(SynolonPtr),
+    UncompiledCallee(DyadPtr),
     /// A call's argument count did not match the callee's parameter count — the
     /// compile-time mirror of `RunError::ArityMismatch`, refused instead of baking a
     /// call with the wrong signature.
@@ -159,7 +159,7 @@ pub struct Lowerer<'a, 'f> {
     types: CoreTypes,
     /// The function node being compiled (null for a bare expression), so a call to it
     /// is recognized as self-recursion rather than a call to other machine code.
-    self_fn: SynolonPtr,
+    self_fn: DyadPtr,
     /// The Cranelift stack slot backing this call's activation record — the
     /// compiled analogue of the interpreter's frame, holding the function's
     /// parameters (spilled from the block params on entry) and frame-relative
@@ -183,14 +183,14 @@ impl Lowerer<'_, '_> {
     /// reads its frame slot through the same place machinery as a local.
     ///
     /// # Safety
-    /// `node` must be a valid synolon from the store; lowering dereferences it and
+    /// `node` must be a valid dyad from the store; lowering dereferences it and
     /// its operands to read baked constants and structure.
-    pub unsafe fn lower(&mut self, node: SynolonPtr) -> Result<Value, CompileError> {
-        let op = (*node).logos;
+    pub unsafe fn lower(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
+        let op = (*node).ty;
         // A bare parameter (`fn (a)`) has no declared logos; its frame slot holds
         // the full i64 bit-container the call passed.
         if op.is_null() {
-            if frame_ref((*node).hyle).is_some() {
+            if frame_ref((*node).value).is_some() {
                 let addr = self.place_addr(node);
                 return Ok(self.load_at(types::I64, addr, 0));
             }
@@ -214,8 +214,8 @@ impl Lowerer<'_, '_> {
         // *typed* by a logos (`t : logos`, a logos-valued parameter) is not a
         // logos standing as a value: its slot holds the bound logos's address,
         // read as the container.
-        if op == (*op).logos {
-            if frame_ref((*node).hyle).is_some() {
+        if op == (*op).ty {
+            if frame_ref((*node).value).is_some() {
                 return Ok(self.read_place(node, types::I64));
             }
             return Ok(self.builder.ins().iconst(types::I64, node as i64));
@@ -223,7 +223,7 @@ impl Lowerer<'_, '_> {
         // A node whose operation is a user function is a call: `op` is the
         // callee. The operator identities are plain logos with lowering rules
         // above; only real functions are fn-typed.
-        if !op.is_null() && (*op).logos == self.types.fn_type {
+        if !op.is_null() && (*op).ty == self.types.fn_type {
             return self.lower_call(node);
         }
         // A pointer-typed leaf (an `&x` literal or a pointer variable): pointer
@@ -252,10 +252,10 @@ impl Lowerer<'_, '_> {
     /// # Safety
     /// `node` must be a valid place node; a frame-relative one only appears in a
     /// function whose [`compile_body`] created a `frame_slot`.
-    pub(crate) unsafe fn place_addr(&mut self, node: SynolonPtr) -> Value {
+    pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> Value {
         if let Some(stats) = self.collect.as_deref_mut() {
-            if let Some((_, off)) = frame_ref((*node).hyle) {
-                let logos = (*node).logos;
+            if let Some((_, off)) = frame_ref((*node).value) {
+                let logos = (*node).ty;
                 if crate::identities::numtype::is_scalar_place_type(logos) {
                     stats.dirty.push((off, numtype_of_type(logos).bytes()));
                 } else {
@@ -267,7 +267,7 @@ impl Lowerer<'_, '_> {
             }
         }
         debug_assert!(
-            frame_ref((*node).hyle)
+            frame_ref((*node).value)
                 .is_none_or(|(_, off)| !self.promoted.contains_key(&off)),
             "a promoted place's address must never be taken (the analysis pass keeps them apart)"
         );
@@ -276,15 +276,15 @@ impl Lowerer<'_, '_> {
 
     /// [`Self::place_addr`] without the analysis bookkeeping — the address
     /// materialization itself. The one place the compiler decodes the frame
-    /// tag (see [`crate::synolon::FRAME_TAG`]); the depth is a parse-time capture
+    /// tag (see [`crate::dyad::FRAME_TAG`]); the depth is a parse-time capture
     /// guard, only the offset into this call's stack slot matters here.
-    unsafe fn place_addr_raw(&mut self, node: SynolonPtr) -> Value {
-        match frame_ref((*node).hyle) {
+    unsafe fn place_addr_raw(&mut self, node: DyadPtr) -> Value {
+        match frame_ref((*node).value) {
             Some((_, off)) => {
                 let slot = self.frame_slot.expect("a frame-relative place needs a frame slot");
                 self.builder.ins().stack_addr(self.ptr_ty, slot, off as i32)
             }
-            None => self.builder.ins().iconst(self.ptr_ty, (*node).hyle as usize as i64),
+            None => self.builder.ins().iconst(self.ptr_ty, (*node).value as usize as i64),
         }
     }
 
@@ -294,8 +294,8 @@ impl Lowerer<'_, '_> {
     ///
     /// # Safety
     /// `node` must be a valid place node holding a `ct`-typed scalar.
-    pub(crate) unsafe fn read_place(&mut self, node: SynolonPtr, ct: types::Type) -> Value {
-        if let Some((_, off)) = frame_ref((*node).hyle) {
+    pub(crate) unsafe fn read_place(&mut self, node: DyadPtr, ct: types::Type) -> Value {
+        if let Some((_, off)) = frame_ref((*node).value) {
             if let Some(&(var, vct)) = self.promoted.get(&off) {
                 debug_assert_eq!(vct, ct, "a promoted place is used at one type");
                 return self.builder.use_var(var);
@@ -314,8 +314,8 @@ impl Lowerer<'_, '_> {
     ///
     /// # Safety
     /// As [`Self::read_place`].
-    pub(crate) unsafe fn write_place(&mut self, node: SynolonPtr, ct: types::Type, v: Value) {
-        if let Some((_, off)) = frame_ref((*node).hyle) {
+    pub(crate) unsafe fn write_place(&mut self, node: DyadPtr, ct: types::Type, v: Value) {
+        if let Some((_, off)) = frame_ref((*node).value) {
             if let Some(&(var, vct)) = self.promoted.get(&off) {
                 debug_assert_eq!(vct, ct, "a promoted place is used at one type");
                 self.builder.def_var(var, v);
@@ -376,7 +376,7 @@ impl Lowerer<'_, '_> {
     /// `node` must be a resolved binary numeric operator node `[lhs, rhs, op]`.
     pub(crate) unsafe fn lower_arith(
         &mut self,
-        node: SynolonPtr,
+        node: DyadPtr,
         op: ArithOp,
     ) -> Result<Value, CompileError> {
         let (lhs, rhs) = operands(node);
@@ -474,7 +474,7 @@ impl Lowerer<'_, '_> {
     /// `node` must be a resolved binary numeric operator node `[lhs, rhs, op]`.
     pub(crate) unsafe fn lower_compare(
         &mut self,
-        node: SynolonPtr,
+        node: DyadPtr,
         op: CmpOp,
     ) -> Result<Value, CompileError> {
         let (lhs, rhs) = operands(node);
@@ -613,12 +613,12 @@ impl Lowerer<'_, '_> {
     /// `if`'s value. See [`Lowerer::branch`].
     ///
     /// # Safety
-    /// `cond`/`then`/`els` must be valid synolons from the store.
+    /// `cond`/`then`/`els` must be valid dyads from the store.
     pub unsafe fn lower_if(
         &mut self,
-        cond: SynolonPtr,
-        then: SynolonPtr,
-        els: SynolonPtr,
+        cond: DyadPtr,
+        then: DyadPtr,
+        els: DyadPtr,
     ) -> Result<Value, CompileError> {
         let c = self.lower(cond)?;
         self.branch(c, |s| unsafe { s.lower(then) }, |s| unsafe { s.lower(els) })
@@ -630,11 +630,11 @@ impl Lowerer<'_, '_> {
     /// header seals only after the body's back-edge exists. Yields unit (0).
     ///
     /// # Safety
-    /// `cond`/`body` must be valid synolons from the store.
+    /// `cond`/`body` must be valid dyads from the store.
     pub unsafe fn lower_while(
         &mut self,
-        cond: SynolonPtr,
-        body: SynolonPtr,
+        cond: DyadPtr,
+        body: DyadPtr,
     ) -> Result<Value, CompileError> {
         let header = self.builder.create_block();
         let body_b = self.builder.create_block();
@@ -665,17 +665,17 @@ impl Lowerer<'_, '_> {
     /// discipline as [`Lowerer::lower_while`].
     ///
     /// # Safety
-    /// The parts must be valid synolons from the store, as `Parser::parse_for`
+    /// The parts must be valid dyads from the store, as `Parser::parse_for`
     /// builds them (`step` may be null for the default).
     pub unsafe fn lower_for(
         &mut self,
-        var: SynolonPtr,
-        start: SynolonPtr,
-        end: SynolonPtr,
-        step: SynolonPtr,
-        body: SynolonPtr,
+        var: DyadPtr,
+        start: DyadPtr,
+        end: DyadPtr,
+        step: DyadPtr,
+        body: DyadPtr,
     ) -> Result<Value, CompileError> {
-        let nt = of_type_node((*var).logos);
+        let nt = of_type_node((*var).ty);
         let ct = nt.cranelift_type();
 
         let s = self.lower(start)?;
@@ -752,11 +752,11 @@ impl Lowerer<'_, '_> {
     /// merge always agrees. See [`Lowerer::branch`].
     ///
     /// # Safety
-    /// `cond`/`then` must be valid synolons from the store.
+    /// `cond`/`then` must be valid dyads from the store.
     pub unsafe fn lower_if_stmt(
         &mut self,
-        cond: SynolonPtr,
-        then: SynolonPtr,
+        cond: DyadPtr,
+        then: DyadPtr,
     ) -> Result<Value, CompileError> {
         let c = self.lower(cond)?;
         self.branch(
@@ -773,8 +773,8 @@ impl Lowerer<'_, '_> {
     /// is not evaluated; otherwise the result is `b`.
     ///
     /// # Safety
-    /// `a`/`b` must be valid synolons from the store.
-    pub unsafe fn lower_and(&mut self, a: SynolonPtr, b: SynolonPtr) -> Result<Value, CompileError> {
+    /// `a`/`b` must be valid dyads from the store.
+    pub unsafe fn lower_and(&mut self, a: DyadPtr, b: DyadPtr) -> Result<Value, CompileError> {
         let va = self.lower(a)?;
         self.branch(va, |s| unsafe { s.lower(b) }, |s| Ok(s.const_i32(0)))
     }
@@ -783,8 +783,8 @@ impl Lowerer<'_, '_> {
     /// not evaluated; otherwise the result is `b`.
     ///
     /// # Safety
-    /// `a`/`b` must be valid synolons from the store.
-    pub unsafe fn lower_or(&mut self, a: SynolonPtr, b: SynolonPtr) -> Result<Value, CompileError> {
+    /// `a`/`b` must be valid dyads from the store.
+    pub unsafe fn lower_or(&mut self, a: DyadPtr, b: DyadPtr) -> Result<Value, CompileError> {
         let va = self.lower(a)?;
         self.branch(va, |s| Ok(s.const_i32(1)), |s| unsafe { s.lower(b) })
     }
@@ -806,9 +806,9 @@ impl Lowerer<'_, '_> {
     ///
     /// # Safety
     /// `node` must be a call node from the store whose `logos` is a user function.
-    unsafe fn lower_call(&mut self, node: SynolonPtr) -> Result<Value, CompileError> {
-        let callee = (*node).logos;
-        let fields = (*callee).hyle as *const SynolonPtr;
+    unsafe fn lower_call(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
+        let callee = (*node).ty;
+        let fields = (*callee).value as *const DyadPtr;
         if fields.is_null() {
             return Err(CompileError::UncompiledCallee(callee));
         }
@@ -831,7 +831,7 @@ impl Lowerer<'_, '_> {
         };
 
         // Lower each argument and widen it into its i64 bit-container.
-        let args = (*node).hyle as *const SynolonPtr; // [arg0 …, null] or null
+        let args = (*node).value as *const DyadPtr; // [arg0 …, null] or null
         let mut args64 = Vec::new();
         if !args.is_null() {
             let mut i = 0;
@@ -925,14 +925,14 @@ impl Compiled {
 /// with deoptimization.
 ///
 /// # Safety
-/// `fn_node` must be a valid function node (`{logos: fn, value -> [input, output,
+/// `fn_node` must be a valid function node (`{type: fn, value -> [input, output,
 /// body, bcode]}`) from the store, and any storage its body references must outlive
 /// every call to the returned [`Compiled`].
 pub unsafe fn compile_fn(
     store: &mut crate::store::Store,
     lower: &LowerTable,
     types: CoreTypes,
-    fn_node: SynolonPtr,
+    fn_node: DyadPtr,
 ) -> Result<Compiled, CompileError> {
     let compiled = compile_fn_body(lower, types, fn_node)?;
     // Mint the callable — the finalized entry plus its convention — and install
@@ -943,7 +943,7 @@ pub unsafe fn compile_fn(
         compiled.ptr as usize,
         types.conv_container,
     );
-    let bcode_slot = ((*fn_node).hyle as *mut SynolonPtr).add(FN_BCODE);
+    let bcode_slot = ((*fn_node).value as *mut DyadPtr).add(FN_BCODE);
     *bcode_slot = code;
     Ok(compiled)
 }
@@ -957,16 +957,16 @@ pub unsafe fn compile_fn(
 unsafe fn compile_fn_body(
     lower: &LowerTable,
     types: CoreTypes,
-    fn_node: SynolonPtr,
+    fn_node: DyadPtr,
 ) -> Result<Compiled, CompileError> {
-    let fields = (*fn_node).hyle as *const SynolonPtr;
+    let fields = (*fn_node).value as *const DyadPtr;
     if fields.is_null() {
         return Err(CompileError::NotLowerable(fn_node));
     }
     // The parameter nodes, from the input record's stored fields array (see
     // `Parser::parse_record`).
     let input = *fields.add(FN_INPUT);
-    let params: Vec<SynolonPtr> =
+    let params: Vec<DyadPtr> =
         crate::identities::array::items(crate::identities::meta::record_fields_of(input)).to_vec();
     let body = *fields.add(FN_BODY);
     // A `-> void` function yields unit (compiled to `return 0`); a `-> logos`
@@ -1010,12 +1010,12 @@ unsafe fn compile_fn_body(
 pub(crate) unsafe fn compile_into(
     lower: &LowerTable,
     types: CoreTypes,
-    fn_node: SynolonPtr,
-    code_leaf: SynolonPtr,
+    fn_node: DyadPtr,
+    code_leaf: DyadPtr,
 ) -> Result<(), CompileError> {
     let compiled = compile_fn_body(lower, types, fn_node)?;
     crate::identities::callable::install_entry(code_leaf, compiled.ptr as usize);
-    let bcode_slot = ((*fn_node).hyle as *mut SynolonPtr).add(FN_BCODE);
+    let bcode_slot = ((*fn_node).value as *mut DyadPtr).add(FN_BCODE);
     *bcode_slot = code_leaf;
     std::mem::forget(compiled);
     Ok(())
@@ -1029,7 +1029,7 @@ pub(crate) unsafe fn compile_into(
 pub unsafe fn compile_nullary_i32(
     lower: &LowerTable,
     types: CoreTypes,
-    root: SynolonPtr,
+    root: DyadPtr,
 ) -> Result<Compiled, CompileError> {
     // A bare expression is not a function, so there is no self to recurse into; v1
     // bare expressions are i32 (or bool, physically i32).
@@ -1046,15 +1046,15 @@ pub unsafe fn compile_nullary_i32(
 /// usual.
 ///
 /// # Safety
-/// `root` must be a valid synolon tree from the store, and any variable storage its
+/// `root` must be a valid dyad tree from the store, and any variable storage its
 /// leaves reference must outlive every call to the returned [`Compiled`] (the
 /// addresses are baked into the code).
 pub(crate) unsafe fn compile_body(
     lower: &LowerTable,
     types: CoreTypes,
-    self_fn: SynolonPtr,
-    root: SynolonPtr,
-    params: &[SynolonPtr],
+    self_fn: DyadPtr,
+    root: DyadPtr,
+    params: &[DyadPtr],
     ret: Option<NumType>,
 ) -> Result<Compiled, CompileError> {
     // Fail fast on arities the compiled calling convention cannot call, so the
@@ -1091,9 +1091,9 @@ pub(crate) unsafe fn compile_body(
 unsafe fn build_pass(
     lower: &LowerTable,
     types: CoreTypes,
-    self_fn: SynolonPtr,
-    root: SynolonPtr,
-    params: &[SynolonPtr],
+    self_fn: DyadPtr,
+    root: DyadPtr,
+    params: &[DyadPtr],
     ret: Option<NumType>,
     mut collect: Option<&mut PlaceStats>,
     promote: &[(usize, types::Type)],
@@ -1160,7 +1160,7 @@ unsafe fn build_pass(
         // form of the zeroed frame, so a typed declaration's first read sees
         // the same zeroed "undefined" on both tiers.
         let param_offs: Vec<Option<usize>> =
-            params.iter().map(|&p| frame_ref((*p).hyle).map(|(_, off)| off)).collect();
+            params.iter().map(|&p| frame_ref((*p).value).map(|(_, off)| off)).collect();
         let mut promoted: HashMap<usize, (Variable, types::Type)> = HashMap::new();
         for &(off, ct) in promote {
             let var = builder.declare_var(ct);
@@ -1187,10 +1187,10 @@ unsafe fn build_pass(
         for (&p, &v) in params.iter().zip(block_params.iter()) {
             // A parameter always has a parse-assigned slot; a function node
             // without one is malformed and cannot be compiled.
-            let Some((_, off)) = frame_ref((*p).hyle) else {
+            let Some((_, off)) = frame_ref((*p).value) else {
                 return Err(CompileError::NotLowerable(p));
             };
-            let logos = (*p).logos;
+            let logos = (*p).ty;
             let scalar = crate::identities::numtype::is_scalar_place_type(logos);
             if let Some(&(var, _)) = promoted.get(&off) {
                 // A promoted container parameter (a logos-valued `t : logos`,

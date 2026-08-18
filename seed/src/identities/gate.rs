@@ -18,7 +18,7 @@
 //! them is #58's.
 
 use super::{meta, Cx};
-use crate::synolon::SynolonPtr;
+use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::parse::{Constructed, ParseError};
 
@@ -26,7 +26,7 @@ use crate::parse::{Constructed, ParseError};
 /// never extends left, so the driver invokes the constructor immediately).
 /// No node is ever typed by `pub`; its identity exists to be named in a
 /// declare node's gate slot.
-pub(super) fn register(cx: &mut Cx) -> SynolonPtr {
+pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN);
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("pub", IdContext::new(id, cx.root_scope));
@@ -40,14 +40,14 @@ pub(super) fn register(cx: &mut Cx) -> SynolonPtr {
 /// marked nothing would be a lie in the source.
 fn construct(
     p: &mut crate::parse::Parser,
-    _id: SynolonPtr,
+    _id: DyadPtr,
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<Constructed, ParseError> {
     let inner = p.parse_expression()?;
     let types = p.types();
-    // SAFETY: `inner` is a reduced synolon just parsed.
+    // SAFETY: `inner` is a reduced dyad just parsed.
     unsafe {
-        if (*inner).logos != types.declare_ {
+        if (*inner).ty != types.declare_ {
             return Err(ParseError::GateNeedsDeclaration);
         }
         if !super::declare::gate_of(inner).is_null() {

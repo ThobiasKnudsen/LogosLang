@@ -19,19 +19,19 @@
 //! bit-container, read and written at their logos's width (see
 //! `crate::identities::numtype`).
 
-use crate::synolon::{frame_ref, SynolonPtr};
+use crate::dyad::{frame_ref, DyadPtr};
 use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
 
 /// The signature of a seed-native shim — what a `seed-native` callable's entry
 /// points at. Takes the application node and returns its scalar result,
 /// recursing on operands via [`Runtime::run`].
-pub type RunFn = fn(&mut Runtime, SynolonPtr) -> Result<i64, RunError>;
+pub type RunFn = fn(&mut Runtime, DyadPtr) -> Result<i64, RunError>;
 
 /// Why a run failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunError {
     /// The operation is a function with neither `bcode` nor a `body` to walk.
-    NotRunnable(SynolonPtr),
+    NotRunnable(DyadPtr),
     /// A data node had no storage to read.
     BadValue,
     /// A numeric literal has no exact `i32` value to compute — a non-integer
@@ -164,14 +164,14 @@ impl FrameStack {
 /// in-flight interpreted call's frame — its parameters and locals at their
 /// parse-assigned byte offsets.
 pub struct Runtime {
-    fn_type: SynolonPtr,
+    fn_type: DyadPtr,
     /// `rational_number`: a data leaf of this logos is molded to its `i32` value
     /// when read, rather than read raw through the generic i32 layout.
-    rational: SynolonPtr,
+    rational: DyadPtr,
     /// `defer`: a scope body expression of this logos is not run in the value
     /// pass — [`crate::identities::scope`] holds it for LIFO execution at scope
     /// exit (issue #49). Held here so the sequence native recognizes it.
-    defer_type: SynolonPtr,
+    defer_type: DyadPtr,
     /// Live heap allocations (issue #49): `alloc` increments, `free` decrements.
     /// Not a correctness mechanism — the null-place drop flag prevents double
     /// frees — but an observable one, so tests assert a program frees what it
@@ -208,7 +208,7 @@ impl Runtime {
     /// claimed lazily, at the first call that needs a frame). Everything
     /// executable is reached through the graph. No compiler is attached; see
     /// [`Runtime::with_compiler`].
-    pub fn new(fn_type: SynolonPtr, rational: SynolonPtr) -> Self {
+    pub fn new(fn_type: DyadPtr, rational: DyadPtr) -> Self {
         Runtime {
             fn_type,
             rational,
@@ -225,14 +225,14 @@ impl Runtime {
     /// logos, so a runtime that never sees `defer` needs no wiring; the file
     /// driver and the drop-model tests set it. A builder, like
     /// [`Runtime::with_compiler`].
-    pub fn with_defer_type(mut self, defer_type: SynolonPtr) -> Self {
+    pub fn with_defer_type(mut self, defer_type: DyadPtr) -> Self {
         self.defer_type = defer_type;
         self
     }
 
     /// `defer`, so the sequence native ([`crate::identities::scope`]) can hold a
     /// `defer` body expression for scope-exit execution instead of running it.
-    pub(crate) fn defer_type(&self) -> SynolonPtr {
+    pub(crate) fn defer_type(&self) -> DyadPtr {
         self.defer_type
     }
 
@@ -272,20 +272,20 @@ impl Runtime {
     /// no-op — the code is installed, the call already jumps.
     ///
     /// # Safety
-    /// `fn_node` must be a valid synolon and `code_leaf` a callable value, both
+    /// `fn_node` must be a valid dyad and `code_leaf` a callable value, both
     /// from the store; the compiler context's table and logos must be live.
     pub(crate) unsafe fn compile_member(
         &mut self,
-        fn_node: SynolonPtr,
-        code_leaf: SynolonPtr,
+        fn_node: DyadPtr,
+        code_leaf: DyadPtr,
     ) -> Result<(), RunError> {
         let Some(cx) = &self.compiler else {
             return Err(RunError::CompilerUnavailable);
         };
-        if (*fn_node).logos != self.fn_type {
+        if (*fn_node).ty != self.fn_type {
             return Err(RunError::BadValue);
         }
-        let fields = (*fn_node).hyle as *const SynolonPtr;
+        let fields = (*fn_node).value as *const DyadPtr;
         if fields.is_null() {
             return Err(RunError::NotRunnable(fn_node));
         }
@@ -300,7 +300,7 @@ impl Runtime {
     /// global/top-level place, or `frame_base + offset` for a frame-relative
     /// parameter or local of the call in progress (the top frame). This is the
     /// one place the interpreter decodes the frame tag (see
-    /// [`crate::synolon::FRAME_TAG`]); every read, write, and address-of of a
+    /// [`crate::dyad::FRAME_TAG`]); every read, write, and address-of of a
     /// parameter or local goes through it.
     ///
     /// `None` is a frame-relative place with *no call in progress*: its storage
@@ -313,15 +313,15 @@ impl Runtime {
     ///
     /// # Safety
     /// `node` must be a valid place node.
-    pub(crate) unsafe fn place_addr(&mut self, node: SynolonPtr) -> Option<*mut u8> {
-        match frame_ref((*node).hyle) {
+    pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> Option<*mut u8> {
+        match frame_ref((*node).value) {
             // Only the offset matters at run time — the place is in the call in
             // progress (the top frame); the depth is a parse-time capture guard.
             Some((_, off)) => {
                 let base = *self.activations.last()?;
                 Some(base.add(off))
             }
-            None => Some((*node).hyle),
+            None => Some((*node).value),
         }
     }
 
@@ -332,22 +332,22 @@ impl Runtime {
     /// anything without one is data, read through its logos's layout.
     ///
     /// # Safety
-    /// `node` must be a valid synolon from the store (address = id). `run`
+    /// `node` must be a valid dyad from the store (address = id). `run`
     /// dereferences it, its operation, and (for functions) the operands or body
     /// they reach. If the operation has installed code, the compiled artifact
     /// that owns that machine code must still be alive (see
     /// [`crate::compile::compile_fn`]).
-    pub unsafe fn run(&mut self, node: SynolonPtr) -> Result<i64, RunError> {
-        let op = (*node).logos;
+    pub unsafe fn run(&mut self, node: DyadPtr) -> Result<i64, RunError> {
+        let op = (*node).ty;
         // A bare parameter (`fn (a)`) has no declared logos; its frame slot holds
         // the full i64 bit-container the call bound. Checked before anything
         // reads through the null logos.
         if op.is_null() {
             return self.read_container(node);
         }
-        if (*op).logos == self.fn_type {
+        if (*op).ty == self.fn_type {
             // A user function's value is `[input, output, body, bcode, frame]`.
-            let fields = (*op).hyle as *const SynolonPtr;
+            let fields = (*op).value as *const DyadPtr;
             if fields.is_null() {
                 return Err(RunError::NotRunnable(op));
             }
@@ -401,30 +401,30 @@ impl Runtime {
             // bits are its own address. So a `-> logos` function, or an `if` that
             // yields a logos, returns the logos it produced (roadmap #30), and `x := i32`
             // still binds a name to one. The `logos : logos` root is the store's one
-            // self-classified node, so `op == (*op).logos` recognizes every logos node
+            // self-classified node, so `op == (*op).ty` recognizes every logos node
             // (numeric logos, the root, `bool`, `void`, pointer and record logos — a
             // record *instance* has `op ==` its record logos, not the root, and is
             // handled by the lower branch). A frame place *classified* by a logos
             // (`t : logos`, a logos-valued parameter) is not a logos standing as a
             // value: its slot holds the bound logos's address, read as the container.
-            if op == (*op).logos {
-                if frame_ref((*node).hyle).is_some() {
+            if op == (*op).ty {
+                if frame_ref((*node).value).is_some() {
                     return self.read_container(node);
                 }
                 return Ok(node as i64);
             }
-            // A synolon view (#52) is parse-time data whose hyle IS the viewed
+            // A dyad view (#52) is parse-time data whose value IS the viewed
             // node's address; its run value is that address, mirroring a logos
             // node standing as a value.
             if crate::identities::meta::kind_of(op)
-                == Some(crate::identities::meta::SYNOLON_TAG)
+                == Some(crate::identities::meta::DYAD_TAG)
             {
-                return Ok((*node).hyle as i64);
+                return Ok((*node).value as i64);
             }
             // `node` is data or a migrated application. A rational literal is
             // molded to its i32 value (a fraction like 3.14 has none:
             // UncomputableLiteral, not a bad read).
-            if (*node).logos == self.rational {
+            if (*node).ty == self.rational {
                 return crate::identities::rational::mold(node)
                     .map(i64::from)
                     .ok_or(RunError::UncomputableLiteral);
@@ -440,7 +440,7 @@ impl Runtime {
             // with the node. Dispatch flows through the node, not a table; the
             // identity carries only its record.
             if let Some(idx) = crate::identities::meta::op_slot_of(op) {
-                let slots = (*node).hyle as *const SynolonPtr;
+                let slots = (*node).value as *const DyadPtr;
                 if !slots.is_null() {
                     let leaf = *slots.add(idx);
                     if !leaf.is_null() && crate::identities::callable::is_callable(leaf) {
@@ -455,15 +455,15 @@ impl Runtime {
             }
             // Prose is data, invisible to value flow: a comment node forced
             // directly yields unit, off its graph tag (no run entry exists).
-            if crate::identities::numtype::is_comment_type((*node).logos) {
+            if crate::identities::numtype::is_comment_type((*node).ty) {
                 return Ok(0);
             }
             // The text substance (a string node) and unit have no scalar to
             // read; refuse rather than reinterpret their bytes — except a frame
             // place, a parameter slot of a non-scalar declared logos, which
             // holds the container its call bound.
-            if !crate::identities::numtype::is_scalar_type((*node).logos) {
-                if frame_ref((*node).hyle).is_some() {
+            if !crate::identities::numtype::is_scalar_type((*node).ty) {
+                if frame_ref((*node).value).is_some() {
                     return self.read_container(node);
                 }
                 return Err(RunError::BadValue);
@@ -473,7 +473,7 @@ impl Runtime {
                 return Err(RunError::BadValue);
             }
             // Read the scalar at its logos's width into the i64 bit-container.
-            Ok(crate::identities::numtype::read_scalar((*node).logos, slot))
+            Ok(crate::identities::numtype::read_scalar((*node).ty, slot))
         }
     }
 
@@ -483,10 +483,10 @@ impl Runtime {
     /// progress: [`RunError::BadValue`].
     ///
     /// # Safety
-    /// `node` must be a valid synolon from the store; a frame-tagged one must carry
+    /// `node` must be a valid dyad from the store; a frame-tagged one must carry
     /// an offset its function's frame size covers.
-    unsafe fn read_container(&mut self, node: SynolonPtr) -> Result<i64, RunError> {
-        if frame_ref((*node).hyle).is_none() {
+    unsafe fn read_container(&mut self, node: DyadPtr) -> Result<i64, RunError> {
+        if frame_ref((*node).value).is_none() {
             return Err(RunError::BadValue);
         }
         let slot = self.place_addr(node).ok_or(RunError::BadValue)?;
@@ -505,13 +505,13 @@ impl Runtime {
     /// of it, both from the store.
     unsafe fn eval_args_compiled(
         &mut self,
-        fn_node: SynolonPtr,
-        call_node: SynolonPtr,
+        fn_node: DyadPtr,
+        call_node: DyadPtr,
     ) -> Result<([i64; 3], usize), RunError> {
-        let input = *((*fn_node).hyle as *const SynolonPtr).add(FN_INPUT);
+        let input = *((*fn_node).value as *const DyadPtr).add(FN_INPUT);
         let params =
             crate::identities::array::items(crate::identities::meta::record_fields_of(input));
-        let args = (*call_node).hyle as *const SynolonPtr; // [arg0 …, null] or null
+        let args = (*call_node).value as *const DyadPtr; // [arg0 …, null] or null
 
         let mut values = [0i64; 3];
         let mut i = 0usize;
@@ -547,14 +547,14 @@ impl Runtime {
     /// parser assigned.
     unsafe fn bind_args(
         &mut self,
-        fn_node: SynolonPtr,
-        call_node: SynolonPtr,
+        fn_node: DyadPtr,
+        call_node: DyadPtr,
         base: *mut u8,
     ) -> Result<(), RunError> {
-        let input = *((*fn_node).hyle as *const SynolonPtr).add(FN_INPUT);
+        let input = *((*fn_node).value as *const DyadPtr).add(FN_INPUT);
         let params =
             crate::identities::array::items(crate::identities::meta::record_fields_of(input));
-        let args = (*call_node).hyle as *const SynolonPtr; // [arg0 …, null] or null
+        let args = (*call_node).value as *const DyadPtr; // [arg0 …, null] or null
 
         let mut i = 0usize;
         loop {
@@ -566,11 +566,11 @@ impl Runtime {
                     let bits = self.run(arg)?;
                     // A parameter without a parse-assigned slot is a malformed
                     // function node (the parser always assigns one).
-                    let Some((_, off)) = frame_ref((*param).hyle) else {
+                    let Some((_, off)) = frame_ref((*param).value) else {
                         return Err(RunError::BadValue);
                     };
                     let slot = base.add(off);
-                    let logos = (*param).logos;
+                    let logos = (*param).ty;
                     if crate::identities::numtype::is_scalar_place_type(logos) {
                         crate::identities::numtype::write_scalar(logos, slot, bits);
                     } else {

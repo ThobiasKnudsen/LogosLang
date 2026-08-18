@@ -4,7 +4,7 @@
 //! `<`: less-than. A comparison is a parse-time constructor owning no code
 //! (issue #44): it resolves each application from its *operand* logos to a
 //! concrete comparison and stores the leaf in the op slot
-//! `{logos: <, value: [lhs, rhs, lt_<logos>]}` (its result is `bool`, an i32 0/1) —
+//! `{type: <, value: [lhs, rhs, lt_<logos>]}` (its result is `bool`, an i32 0/1) —
 //! signed vs unsigned vs float is the leaf's baked logos. `<` binds between `=`
 //! and arithmetic.
 
@@ -13,14 +13,14 @@ use cranelift_codegen::ir::Value;
 use super::numtype::CmpOp;
 use super::{bool_mod, meta, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, Lowerer};
-use crate::synolon::SynolonPtr;
+use crate::dyad::DyadPtr;
 use crate::id_context::IdContext;
 use crate::parse::{Assoc, CoreTypes, ParseError};
 use crate::store::Store;
 
 /// Register `<`: spelling, precedence (relational, left-associative), and its
 /// lowering.
-pub(super) fn register(cx: &mut Cx) -> SynolonPtr {
+pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
@@ -40,22 +40,22 @@ pub(super) fn register(cx: &mut Cx) -> SynolonPtr {
 fn build(
     store: &mut Store,
     types: &CoreTypes,
-    lt: SynolonPtr,
-    lhs: SynolonPtr,
-    rhs: SynolonPtr,
-) -> Result<SynolonPtr, ParseError> {
+    lt: DyadPtr,
+    lhs: DyadPtr,
+    rhs: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
     // Two comptime rationals fold now to a `bool` literal; otherwise resolve and build.
     if let Some(v) = rational::compare_literals(types.rational, CmpOp::Lt, lhs, rhs) {
         return Ok(bool_mod::literal_node(store, types.bool_, v));
     }
-    // SAFETY: `lhs`/`rhs` are reduced synolons from the store.
+    // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let ([lhs, rhs], nt) = unsafe { resolve_binary(store, types, lhs, rhs) }?;
     let value = store.alloc_operands(&[lhs, rhs, types.ops.cmp_leaf(CmpOp::Lt, nt)]);
     Ok(store.alloc_raw(lt, value))
 }
 
 /// Lower: emit the machine comparison for the resolved operand logos.
-fn lower(lw: &mut Lowerer, node: SynolonPtr) -> Result<Value, CompileError> {
+fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid `<` application `[lhs, rhs, op]`.
     unsafe { lw.lower_compare(node, CmpOp::Lt) }
 }

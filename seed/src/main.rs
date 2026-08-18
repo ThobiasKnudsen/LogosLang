@@ -47,9 +47,9 @@ impl Engine {
 /// an assignment, a bare fn/logos, a compile, or an import: silent.
 ///
 /// # Safety
-/// `node` must be a valid synolon.
-unsafe fn is_statement_node(core: &Core, node: seed::synolon::SynolonPtr) -> bool {
-    let logos = (*node).logos;
+/// `node` must be a valid dyad.
+unsafe fn is_statement_node(core: &Core, node: seed::dyad::DyadPtr) -> bool {
+    let logos = (*node).ty;
     logos == core.declare_
         || logos == core.assign
         || logos == core.storeptr_
@@ -65,9 +65,9 @@ unsafe fn is_statement_node(core: &Core, node: seed::synolon::SynolonPtr) -> boo
 /// printed it.
 ///
 /// # Safety
-/// `node` must be a valid synolon.
-unsafe fn is_silent_tail(core: &Core, node: seed::synolon::SynolonPtr) -> bool {
-    let logos = (*node).logos;
+/// `node` must be a valid dyad.
+unsafe fn is_silent_tail(core: &Core, node: seed::dyad::DyadPtr) -> bool {
+    let logos = (*node).ty;
     logos == core.declare_
         || logos == core.assign
         || logos == core.storeptr_
@@ -162,9 +162,9 @@ fn run_line(source: &str) -> ExitCode {
         // off raw handles, so running interleaves with the open parse.
         match unsafe { rt.run(node) } {
             Ok(bits) => {
-                // SAFETY: `node` is the valid synolon just parsed.
+                // SAFETY: `node` is the valid dyad just parsed.
                 unsafe {
-                    if (*node).logos == engine.core.import_ {
+                    if (*node).ty == engine.core.import_ {
                         ran_something = true;
                         // A value tail is the import's value; a statement tail
                         // (a library ending in a declaration) shows nothing.
@@ -172,7 +172,7 @@ fn run_line(source: &str) -> ExitCode {
                         if !tail.is_null() && !is_silent_tail(&engine.core, tail) {
                             last = Some((tail, bits));
                         }
-                    } else if (*node).logos != types.comment_ {
+                    } else if (*node).ty != types.comment_ {
                         ran_something = true;
                         last = Some((node, bits));
                     }
@@ -208,7 +208,7 @@ fn run_line(source: &str) -> ExitCode {
 
     match last {
         Some((node, bits)) => {
-            // SAFETY: `node` is the parsed synolon whose value `bits` is.
+            // SAFETY: `node` is the parsed dyad whose value `bits` is.
             println!("{}", unsafe { seed::identities::display_value(&types, node, bits) });
             ExitCode::SUCCESS
         }
@@ -245,7 +245,7 @@ fn repl() -> ExitCode {
     // scope exit, the same drain the file driver runs at program end (file mode
     // and the REPL are one pass and must agree). Each line's parser is fresh, so
     // its pending teardowns are collected here as the line is accepted.
-    let mut session_defers: Vec<seed::synolon::SynolonPtr> = Vec::new();
+    let mut session_defers: Vec<seed::dyad::DyadPtr> = Vec::new();
     // A session is one run, so once-per-run imports must hold across lines:
     // the one registry threads through each line's fresh parser.
     let mut imports = Imports::default();
@@ -325,9 +325,9 @@ fn repl() -> ExitCode {
         // node, a bare fn, record, or logos a declaration statement. An import
         // echoes through the imported file's tail (its value), so a
         // declaration-tailed or declaration-only import stays silent.
-        // SAFETY: `node` is the valid synolon just parsed.
+        // SAFETY: `node` is the valid dyad just parsed.
         let display_node = unsafe {
-            if (*node).logos == engine.core.import_ {
+            if (*node).ty == engine.core.import_ {
                 let tail = seed::identities::import::tail_of(node);
                 if tail.is_null() {
                     node
@@ -338,7 +338,7 @@ fn repl() -> ExitCode {
                 node
             }
         };
-        // SAFETY: `display_node` is a valid synolon (the node or its import tail).
+        // SAFETY: `display_node` is a valid dyad (the node or its import tail).
         let is_statement = unsafe { is_statement_node(&engine.core, display_node) };
 
         // The compiler rides along so `f.compile()` works across lines: the
@@ -357,7 +357,7 @@ fn repl() -> ExitCode {
         // which outlives the loop. Statements still run — for their effect —
         // they just do not echo.
         match unsafe { rt.run(node) } {
-            // SAFETY: `display_node` is a valid synolon whose value `bits` is
+            // SAFETY: `display_node` is a valid dyad whose value `bits` is
             // (an import's run yields its tail's bits).
             Ok(bits) if !is_statement => {
                 println!("{}", unsafe {
