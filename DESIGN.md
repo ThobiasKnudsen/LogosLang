@@ -266,6 +266,8 @@ It includes: collections and the iterator protocol `for` desugars onto; Unicode-
 
 The cultural commitment matches the technical one: **single canonical solutions, opinions formed, batteries included, idioms documented.** Competing libraries exist, but the standard library defines what idiomatic Logos looks like, and the language's design is opinionated enough to back it.
 
+**Completeness, not cleanliness, is the anti-fragmentation mechanism.** *(Recorded in discussion, 31 August 2026.)* A minimal core does not protect a surface from dialect sprawl — it causes it: every gap a clean core leaves is filled downstream, and filled differently (Scheme, the cleanest core ever shipped, fragmented worst; Common Lisp and Python, complete and canonical, held together). Cleanliness buys something narrower and real — a coherent base generates no wart-patching extensions — but the load-bearing protection is the batteries-included commitment above: a base so complete there is nothing missing to fill. The trap to keep in view is the beautiful minimal core whose gaps invite a thousand well-intentioned fillings.
+
 ## Tooling philosophy
 
 - **LSP-first.** A Logos-written LSP server delivers highlighting, errors, autocomplete, go-to-definition, hover, and refactoring to any LSP editor, so users keep the editors they already have. Because so much information is already in the Logic Graph, the server is richer than equivalents in other languages.
