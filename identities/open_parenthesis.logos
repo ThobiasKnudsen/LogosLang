@@ -1,0 +1,21 @@
+
+
+
+( := logos (
+    constructor = fn (tape := parsing_tape ?) -> void (
+
+        new_scope := mut scope
+        max_tokens_range := u32 10_000
+        for i in 1..max_tokens_range (
+            if tape[i] == lex «)»
+                if tape[0].is_constructed
+                    error «corresponding «)» to the «(» being constructed is already constructed»
+                break
+
+        )
+
+        tape[0].value = new_scope
+        tape[0].is_constructed = true
+
+    )
+)

@@ -1,0 +1,8 @@
+scope := logos (
+    constructor = fn (tape := parsing_tape ?) -> void (
+
+    )
+    instance (
+        self := array dyad ()
+    )
+)

@@ -1,0 +1,22 @@
+proof := logos (
+    constructor = fn (tape := parsing_tape ?) -> void (
+        # parses: proof ( holes…, premises…, pattern ) -> replacement ( derivation )
+        # fn and proof share the -> spelling: each type's own constructor decides what may
+        # follow its arrow. fn demands a type there; proof accepts any shape, or true.
+        ?
+    )
+    instance (
+        holes := array dyad ()    # the typed identities the rule quantifies over (a := generic_number ?)
+        premises := array dyad ()    # shapes that must rewrite to true where the rule is applied
+        pattern := dyad ?           # the input shape (a + a): matching binds the holes, calling in reverse.
+                                       # the same hole twice means the same dyad in both slots, by address
+        replacement := dyad ?           # the output shape (2 * a), or true
+        derivation := ?                # the body: a chain from pattern to replacement where every step cites an
+                                       # already accepted proof or axiom. checked ONCE by the trusted core at
+                                       # acceptance (totality demanded). empty derivation = axiom (asserted)
+        world := array @proof ()  # the axioms this proof transitively rests on: computed at acceptance as
+                                       # the union of the DIRECT citations' stored worlds (an axiom's world is
+                                       # itself), then stored. a border check unions stored worlds and tests the
+                                       # union's consistency: bodies are never rescanned
+    )
+)

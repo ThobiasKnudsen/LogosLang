@@ -1,238 +1,172 @@
 # Copyright 2026 Thobias Melfjord Knudsen
 # SPDX-License-Identifier: Apache-2.0
 
-
-logos := logos (
-    # the one classifier: the former type/struct/language, merged (ruled July 2026).
-    # the language IS the root logos — declaring into the language is declaring into
-    # this identity's scope, and every classification chain terminates here (logos : logos).
-    shared precedence := f64 2.0
-    shared associativity := u8 left_to_right
-    shared constructor := fn (tape : parsing_tape) -> void! (
-        if tape[0].logos != token
-            error «offset 0 is not a token»
-        if tape[0].hyle != logos
-            error «token does not denote logos»
-        # one constructor, three outcomes: stand as the bare classifier value; consume a
-        # following logos into a value by juxtaposition (logos i32); or build a record
-        # logos from a following body scope (the former struct path) — TBD
-    )
-    shared destructor := ? ?
-    # the record case derives fields and size_bytes from the field declarations in the
-    # body scope. field NAMES are not stored here: they enter the shared name index (the
-    # regex trie of id_contexts) like every declaration and resolve by open-scope
-    # filtering. a per-record names hashtable was rejected.
-    fields : array synolon
-    size_bytes : u64
-)
-
-declare := fn (lang:&mut logos, name:string) -> &mut synolon ( ? )
-assign := fn (node:&mut synolon, logos:@synolon, hyle:@void) -> void! ( ? )
-assign(declare(&mut logos, «:»), ?, ?)
+declare := fn (lang:&mut logos, name:string) -> &mut dyad ( ? )
+assign := fn (node:&mut dyad, type:@dyad, value:@void) -> void ( ? )
 assign(declare(&mut logos, «=»), ?, ?)
 assign(declare(&mut logos, «:=»), ?, ?)
 assign(declare(&mut logos, «rational_number»), logos, ?)
 assign(declare(&mut logos, «[0-9]+(?:\.[0-9]+)?»), rational_number, ?)   # unanchored: the lexer longest-matches a prefix of the remaining input, so no ^…$. unsigned: - is always the operator (a-1 must be subtraction); a negative literal is the prefix - folding at parse
 
-synolon := logos (logos := @synolon ?, hyle := @void ?)
-
-id_context := logos (
-    identity := @synolon ?   # the declared identity this spelling denotes
-    scope    := @synolon ?   # the enclosing scope it was declared in; O(1) open-scope membership picks the live one
-)
-
-token := logos (
-    text := string ?         # the matched source span; resolved against the name index to the one id_context live in the open scopes at reduction
-)
-
 parsing_tape := logos (
-    # the working frontier: reduced-but-not-final synolons interleaved with pending tokens (lexed-in-flight
+    # the working frontier: reduced-but-not-final dyads interleaved with pending tokens (lexed-in-flight
     # and lazily lexed-ahead). tape[0] is the token of the identity being constructed; negative offsets
     # reach left into reduced context, positive offsets lazily lex ahead. disposable, rebuilt from source.
-    shared insert := ? ?     # splice tokens/synolons into the frontier (the macro / custom-syntax mechanism)
+    shared insert := ? ?     # splice tokens/dyads into the frontier (the macro / custom-syntax mechanism)
     shared remove := ? ?     # remove from the frontier
 )
 
-array := logos (
-    shared constructor = fn (tape : parsing_tape) -> void! (
-        if tape[0].logos != token
-            error «offset 0 is not a token»
-        if tape[0].hyle != array
-            error «token does not denote array»
-        if tape[1].hyle@.logos != logos
-            error «token after array is not a logos»
-        # specialize this array logos to the element logos at offset 1 — TBD
-    )
-    element := logos ?
-    size := u64 0
-    capacity := u64 0
-    content := @void ?
+# parsing_tape[n].type
+# parsing_tape[n].value
+# parsing_tape[n].is_constructed
+# type and value is stored besi/cdes each others but is_constructed is stored in a separate array
+#
+
+parsing_tape := logos (
+    shared constructor = fn (tape := parsing_tape ?) -> void (...)
+
+    code := string ?       # The code to parse
+    code_offset := u64 ?   # the char to continue parsing from later
+
+    dyads := doublylinkedlist dyad ()
+    dyads_is_constructed := array bool ()
+    dyad_offset := u64 0
 )
 
 mut := logos (
-    shared constructor = fn (tape : parsing_tape) -> void! (
-        if tape[0].logos != token
-            error «offset 0 is not a token»
-        if tape[0].hyle != mut
-            error «token does not denote mut»
-        if tape[1].hyle@.logos != logos
+    shared constructor = fn (tape := parsing_tape ?) -> void (
+        if tape[1].value@.type != logos
             error «token after mut is not a logos»
-        # set the mutability bit on this level's hyle pointer — TBD
+        # set the mutability bit on this level's value pointer — TBD
     )
 )
 
-fn := logos (
-    shared constructor = fn (tape : parsing_tape) -> void! ( ? )
-    shared compile     = fn () -> void! ( ? )       # read own body, lower it to bcode
-    shared run         = fn () -> void! ( ? )       # if bcode present jump to it; if bcode is NULL walk body directly. interpretation is run's null-bcode path, not a separate function
-    input  : logos
-    output : ?
-    body   : ?                                       # the reflectable LG body
-    bcode  : callable                                # the complete jump info [entry @exec, convention] (NULL until compiled)
-    frame  : u64                                     # the activation-record byte size (per-call locals), NULL when none
-)
+p1 := proof (a := generic_number ?, a + a) -> (2 * a) ( ? )        # value rule: licenses rewriting a+a into 2*a
+p2 := proof (a := generic_number ?, a + a == 2 * a) -> true ( ? )  # truth rule: the primitive form, states any proposition
+p3 := proof (a := generic_number ?, a != 0, a / a) -> 1 ( ? )      # with a premise: an input shape that must rewrite to true at the site
 
-@ : ?
--> : ?
+@ := ?
+-> := ?
 
-\\ : ?
-\« : ?
-\» : ?
-\# : ?   # the one comment constructor: takes a «…» string or raw text to end of line; builds a reflectable, void-valued comment node
+lex «\«» := ?
+lex «\»» := ?
+lex «#» := ?   # the one comment constructor: takes a «…» string or raw text to end of line; builds a reflectable, void-valued comment node
 
-\: : ?
-\= : ?
-\:\= : ?
+lex «=» := ?
+lex «:=» := ?
 
-. : ?
+. := ?
 
-+ : ?
-- : ?
-* : ?
-/ : ?
-% : ?
-^ : ?
-< : ?
-> : ?
-== : ?
-<= : ?
->= : ?
-!= : ?
-& : ?
-mut : ?
-( : ?
-) : ?
-[ : ?
-] : ?
++ := ?
+- := ?
+* := ?
+/ := ?
+% := ?
+^ := ?
+< := ?
+> := ?
+== := ?
+<= := ?
+>= := ?
+!= := ?
+& := ?
+mut := ?
+( := ?
+) := ?
+[ := ?
+] := ?
 
-string : logos
-u8 : logos
-u16 : logos
-u32 : logos
-u64 : logos
-i8 : logos
-i16 : logos
-i32 : logos
-i64 : logos
-f32 : logos
-f64 : logos
-bool : logos         # a comparison's result logos; an if condition must be one
-@void : logos
-@exec : logos
+string := logos ?
+u8 := logos ?
+u16 := logos ?
+u32 := logos ?
+u64 := logos ?
+i8 := logos ?
+i16 := logos ?
+i32 := logos ?
+i64 := logos ?
+f32 := logos ?
+f64 := logos ?
+bool := logos ?         # a comparison's result logos; an if condition must be one
+@void := logos ?
+@exec := logos ?
 
 callable := logos (          # the complete jump info — the ONE representation of jumpable code, never a bare address
-    entry      : @exec
-    convention : @synolon    # the declared calling-convention identity
+    entry := @exec ?
+    convention := @dyad ?    # the declared calling-convention identity
 )
 
-if : ?
-else : ?
-for : ?
-while : ?
-and : ?
-or : ?
-xor : ?
-not : ?
+if := ?
+else := ?
+for := ?
+while := ?
+and := ?
+or := ?
+xor := ?
+not := ?
 
 
 a := mut logos mut i32 32
 a {
-    hyle --m-> {
-        hyle -> 32
+    value --m-> {
+        value -> 32
     }
-    logos --m-> {
-        hyle -> {
-            hyle -> copy i32.hyle
+    type --m-> {
+        value -> {
+            value -> copy i32.value
         }
-        logos -> logos
+        type -> logos
     }
 }
 
 i32 {
-    logos -> logos
-    hyle -> [what ever fields for i32 is defined as]
-}
-
-mut {
-    logos -> logos
-    hyle -> [what ever fields for mut is defined as]
+    type -> logos
+    value -> [what ever fields for i32 is defined as]
 }
 
 logos {
-    logos -> logos
-    hyle -> logos { # will not lay out all of logos's hyle in the same format for now
-        precedence : f64
-        associativity : u8
-        constructor : fn (tape : parsing_tape) -> void!
-        fields : logos
-        destructor : ?
-    }
-}
-
-
-logos {
-  logos -> logos
-  hyle -> {
-    logos -> logos
-    hyle -> {
+  type -> logos
+  value -> {
+    type -> logos
+    value -> {
       # member NAMES are id_context entries in the shared name index, not data
       # stored here (per-record names hashtable: rejected)
       fields -> {
-        logos -> array
-        hyle -> {
-          element -> synolon
-          size -> {logos -> u64, hyle -> ?}
-          capacity -> {logos -> u64, hyle -> ?}
+        type -> array
+        value -> {
+          element -> dyad
+          size -> {type -> u64, value -> ?}
+          capacity -> {type -> u64, value -> ?}
           data -> [
             {
-              logos -> f64
-              hyle -> ?
+              type -> f64
+              value -> ?
             }, {
-              logos -> u8
-              hyle -> ?
+              type -> u8
+              value -> ?
             }, {
-              logos -> {
-                logos -> fn
-                hyle -> {
-                  input -> logos (tape : parsing_tape)
-                  output -> void!
+              type -> {
+                type -> fn
+                value -> {
+                  input -> logos (tape := parsing_tape ?)
+                  output -> void
                 }
               }
-              hyle -> ?
+              value -> ?
             }, {
-              logos -> logos
-              hyle -> ?
+              type -> logos
+              value -> ?
             }, {
-              logos -> ?
-              hyle -> ?
+              type -> ?
+              value -> ?
             }
 
           ]
         }
       }
       size_bytes -> {
-        logos -> u64
-        hyle -> ?
+        type -> u64
+        value -> ?
       }
     }
   }
@@ -240,21 +174,21 @@ logos {
 
 a = a + 1
 {
-    logos:@synolon -> =
-    hyle:@void -> {
-        lhs:@synolon -> a
-        rhs:@synolon -> {
-            logos:@synolon -> +
-            hyle:@void -> {
-                lhs:@synolon -> a
-                rhs:@synolon -> {
-                    logos:@synolon -> rational_number
-                    hyle:@void -> [num 1, den 1]     # a reduced fraction — never text
+    type:@dyad -> =
+    value:@void -> {
+        lhs:@dyad -> a
+        rhs:@dyad -> {
+            type:@dyad -> +
+            value:@void -> {
+                lhs:@dyad -> a
+                rhs:@dyad -> {
+                    type:@dyad -> rational_number
+                    value:@void -> [num 1, den 1]     # a reduced fraction — never text
                 }
-                op:@synolon -> add_i32               # the resolved concrete operation (the conserved third slot)
+                op:@dyad -> add_i32               # the resolved concrete operation (the conserved third slot)
             }
         }
-        op:@synolon -> store_i32                     # the resolved store at the target's width
+        op:@dyad -> store_i32                     # the resolved store at the target's width
     }
 }
 
@@ -270,11 +204,11 @@ a = a + 1
 # take d -> 0 for the exact value. every range is directed (start toward bound),
 # the step signed with the direction of travel, which is what gives negative
 # bounds the right sign.
-d : ?
+d := ?
 inf := 1 / d       # an actual infinite number: / below accepts an infinitesimal divisor
 ninf := 0 - inf    # speavelled as a value because - is always the binary operator
-im : ?             # the imaginary unit, for the oscillating weights
-' : ?              # per-iteration change, postfix: inside a loop over i, e' is
+im := ?             # the imaginary unit, for the oscillating weights
+' := ?              # per-iteration change, postfix: inside a loop over i, e' is
                    # (e at i + step) - (e at i), so i' is the step itself (= d
                    # here) and g' is g(i + i') - g(i). both are actual numbers
                    # at the current i, so g'/i' is honest division and equals
@@ -417,16 +351,16 @@ for t in 0..1..d (
 
 # ∂f/∂x: f'/x' with only x moving. the derivative loop with y frozen
 f := fn (x, y) -> ? ( ? )      # the surface, spelled per coordinate
-x : ?                          # the coordinate that moves
-y : ?                          # the coordinate held still (y' = 0)
+x := ?                          # the coordinate that moves
+y := ?                          # the coordinate held still (y' = 0)
 for i in 0..(f(x + d, y) - f(x, y))..(d*d) (
     += d
 )
 
 # ∇f: one such coefficient per axis, collected by walking the AXES. on any
 # walk f' = ∇f · step, so f' is largest along ∇f and zero perpendicular
-n : ?                          # how many axes the space has
-p : ?                          # the position ∇f is taken at
+n := ?                          # how many axes the space has
+p := ?                          # the position ∇f is taken at
 e := fn (k) -> ? ( ? )         # the unit step along axis k
 f := fn (p) -> ? ( ? )         # the surface, over n coordinates
 for k in 1..n (
@@ -435,8 +369,8 @@ for k in 1..n (
 
 # ∇_mu: the flat partial plus a correction, because here the axes themselves
 # turn as you move. straight axes: G = 0 and only the partial remains
-mu : ?                          # the axis stepped along
-c : ?                           # the component being differentiated
+mu := ?                          # the axis stepped along
+c := ?                           # the component being differentiated
 v := fn (k, p) -> ? ( ? )       # a vector field: component k at position p
 G := fn (c, mu, k) -> ? ( ? )   # how much of axis k tilts into direction c
                                 # per step along mu: the axes' own primes
@@ -485,7 +419,7 @@ Englogos (
 Englogos (
     # the stack over a whole sentence: so resets for one word only, so a mid-sentence
     # word can speak from now and return
-    she illawish she sosay it if she get dementia.
+    she illa wish she so say it if she get dementia.
     # illawish   [il, la]   wish at a past of a future: will have wished
     # sosay      []         reset for this word only, say at the root: said it now
     # get        [il, la]   the stack restored: dementia at the wish-time
@@ -503,8 +437,8 @@ Englogos (
 
 Englogos (
     # the perfect: vantage now, event before it; whether it still holds is said, never implied
-    at I ois lalive here for 10 years, and I olive here.       # and still do
-    at I ois lalive here for 10 years, but I olive here not.   # and no longer do
+    I ola live here for 10 years, and I o live here.       # and still do
+    I ola live here for 10 years, but I not o live here.   # and no longer do
 )
 
 Englogos (
@@ -530,7 +464,7 @@ Englogos (
 ) -> «C lais and ois not but should ilbe. C ois. C ois not but lais.\n»
 
 Englogos (
-    always obe in all time.   # obe assigns: a stipulation installed now, not a claim
+    always o be at all time.   # obe assigns: a stipulation installed now, not a claim
     everywhere obe in all places.
     A obe (logos is in all time and logos is in all places).   # «in all time» binds is, so no marker
     C obe (logos is always and everywhere).
@@ -582,4 +516,26 @@ Englogos (
     ears at him turn red when he lie.
     # open: this when is generic, every lie-time; the ruled when is episodic, one unknown time
     # open: trailing not here and in the perfect pair vs the ruled rightward scope
+)
+
+struct1 := struct (
+    instance (
+        x := f32 ?
+        y := f32 ?
+        z := f32 ?
+        w := f32 ?
+    )
+)
+
+type1 := type (
+    precedence := …
+    associativity := …
+    constructor := …
+)
+
+language1 := language (
+    + := …
+    - := …
+    * := …
+    / := …
 )

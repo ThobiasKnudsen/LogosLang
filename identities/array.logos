@@ -1,0 +1,55 @@
+
+
+array := logos (
+    constructor = fn (tape := parsing_tape ?) -> void (
+
+        if not tape[1].is_constructed
+            error «id after the array being constructed is not constructed which is not valid for array.constructor»
+        if tape[1].type != logos
+            error «id after array does not have the type logos»
+
+        if not tape[2].is_constructed
+            error «second id after the array being constructed is not constructed, which is not valid for array.constructor»
+        if tape[2].type != scope
+            error «second id after array does not have the type scope»
+
+        (Check if all elements in the scope is convertable to the tape[1] type)
+
+        tape[0].type = array
+        tape[0].value(
+            element_type = tape[1]
+            size = tape[2].value.size
+            capacity = (2^n where n := u8 ? and 2^(n-1) < size <= 2^n)
+            data = alloc(element_type.value.size * capacity)
+            for i in 0..tape[2].size
+                (@element_type(data) + i)@ = tape[2].elements[i]
+        )
+        tape[0].is_constructed = true
+
+        tape[1..3].remove
+    )
+    instance := logos (
+        element_type := logos ?
+        size := u64 0
+        capacity := u64 0
+        data := @void ?
+
+        shared constructor = fn (tape := mut parsing_tape ?) -> void (
+
+            if tape[1].type == square_brackets (
+                if not tape[1].is_constructed
+                    error «id after an array-instance is square_brackets but is not constructed which is invalid and should be impossible because you never get square_brackets before «[» and «]» is constructed»
+                if not tape[1].type.index ⊆ tape[0].type.size
+                    error «type of index in square_brackets is not a subset of equal to the type of the size of the array instance, meaning the index could be out of range in the array»
+                # since the value of index and size ofthe array cannot be determined statically we have to return a codeblock that rather run when these values are known
+                tape[0] = scope (
+                    if tape[1].value >= tape[0].value.size
+                        error «type of index in square_brackets is not a subset of equal to the type of the size of the array instance, meaning the index could be out of range in the array»
+                    # instead of writing tape[0].value three times we can write it only once here. last @ is dereferencing
+                    tape[0].value(pointer + size * element_type.size_bytes)@
+                )
+                tape[1].remove
+            )
+        )
+    )
+)
