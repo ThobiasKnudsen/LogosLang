@@ -262,30 +262,81 @@ pub enum ResolveError {
     Ambiguous,
     /// A declaration would shadow a name already live in an open scope.
     Shadowed,
+    /// The spelling is declared in an open scope, but an `own` or `drop` above
+    /// made it dead: a read, a write, or a pass is refused, and only `:=` may
+    /// follow (DESIGN ›Name resolution is scope-filtered‹, ruled 3 September
+    /// 2026).
+    Dead,
     /// The name index itself rejected the lookup (e.g. a bad regex pattern).
     Index(RegexTrieError),
+}
+
+/// One act on the name index since the last [`ScopeStack::commit`], undone
+/// newest-first by [`ScopeStack::rollback`].
+#[derive(Debug)]
+enum Journal {
+    /// `name` was declared in `scope`: rollback removes its live entry.
+    Declared { name: String, scope: DyadPtr },
+    /// `name`'s entry for `identity` in `scope` was made dead by an `own` or
+    /// `drop`: rollback restores the `end` it had before.
+    Ended { name: String, scope: DyadPtr, identity: DyadPtr, prev_end: DyadPtr },
+}
+
+/// Which endpoint of an entry's range a [`Pending`] settles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Endpoint {
+    Start,
+    End,
+}
+
+/// A range endpoint waiting for the body item that carries it: the declaring
+/// or ending line is still being parsed, so the entry holds a provisional
+/// value (null for `start`, the `own`/`drop` node for `end`) until the
+/// declaring scope appends the finished item ([`ScopeStack::settle_item`]).
+#[derive(Debug)]
+struct Pending {
+    name: String,
+    scope: DyadPtr,
+    identity: DyadPtr,
+    endpoint: Endpoint,
 }
 
 /// The parse-time scope stack: the chain of open scopes with an O(1) membership
 /// set. This is the parser's own spine (the graph's ancestor chain during
 /// elaboration); a scope is identified by its dyad address. Resolution filters a
 /// spelling's candidates in the name index down to the one whose declaring scope
-/// is open, and declaration enforces no-shadowing against it.
+/// is open and whose range covers the frontier (DESIGN ›Name resolution is
+/// scope-filtered‹: live = declared, scope open, not yet made dead by `own` or
+/// `drop`), and declaration enforces no-shadowing against it.
 #[derive(Debug, Default)]
 pub struct ScopeStack {
     open: Vec<DyadPtr>,
     set: HashSet<DyadPtr>,
-    /// Every `(spelling, scope)` declared since the last [`ScopeStack::commit`].
-    /// The REPL's undo log: a failed line rolls its declarations back out of the
-    /// name index ([`ScopeStack::rollback`]), so a typo never burns a name for
-    /// the rest of the session.
-    journal: Vec<(String, DyadPtr)>,
+    /// Every declaration and every dead mark since the last
+    /// [`ScopeStack::commit`]. The REPL's undo log: a failed line rolls them
+    /// back ([`ScopeStack::rollback`]), so a typo never burns a name for the
+    /// rest of the session and never leaves a moved name dead.
+    journal: Vec<Journal>,
+    /// Range endpoints awaiting their body item ([`ScopeStack::settle_item`]).
+    pending: Vec<Pending>,
+    /// Stack depths at which a body that runs again or later begins — a loop
+    /// body or a `fn` body. An `own`/`drop` of a name declared below such a
+    /// depth is the checked error of DESIGN ›Memory and concurrency‹ (*Bodies
+    /// that run again or later*): the loop would read a dead name on its next
+    /// pass, and a function may own only what its parameters hand it.
+    barriers: Vec<usize>,
 }
 
 impl ScopeStack {
     /// An empty scope stack.
     pub fn new() -> Self {
-        ScopeStack { open: Vec::new(), set: HashSet::new(), journal: Vec::new() }
+        ScopeStack {
+            open: Vec::new(),
+            set: HashSet::new(),
+            journal: Vec::new(),
+            pending: Vec::new(),
+            barriers: Vec::new(),
+        }
     }
 
     /// Enter `scope`.
@@ -294,11 +345,35 @@ impl ScopeStack {
         self.set.insert(scope);
     }
 
-    /// Leave the innermost scope, returning it.
+    /// Leave the innermost scope, returning it. Endpoints still pending for it
+    /// can no longer settle (a record or parameter scope has no item loop) and
+    /// are dropped.
     pub fn pop(&mut self) -> Option<DyadPtr> {
         let s = self.open.pop()?;
         self.set.remove(&s);
+        self.pending.retain(|p| p.scope != s);
         Some(s)
+    }
+
+    /// Mark that a body which runs again or later — a loop body, a `fn` body —
+    /// begins with the next scope pushed. Paired with [`ScopeStack::pop_barrier`].
+    pub fn push_barrier(&mut self) {
+        self.barriers.push(self.open.len());
+    }
+
+    /// Leave the innermost such body.
+    pub fn pop_barrier(&mut self) {
+        self.barriers.pop();
+    }
+
+    /// Whether a name declared in `scope` (an open ancestor) lies outside a
+    /// body that runs again or later — i.e. a barrier began after `scope` was
+    /// pushed — so that `own`/`drop` of it here is refused.
+    pub fn crosses_barrier(&self, scope: DyadPtr) -> bool {
+        let Some(idx) = self.open.iter().position(|&s| s == scope) else {
+            return false;
+        };
+        self.barriers.iter().any(|&b| b > idx)
     }
 
     /// The innermost open scope.
@@ -325,29 +400,48 @@ impl ScopeStack {
         }
     }
 
-    /// Accept the journalled declarations: they are permanent, the undo log
-    /// can be dropped.
+    /// Accept the journalled acts: they are permanent, the undo log can be
+    /// dropped. Endpoints still pending belong to a top level that has no body
+    /// array to settle against (the REPL session, the command line) and are
+    /// dropped with it.
     pub fn commit(&mut self) {
         self.journal.clear();
+        self.pending.clear();
     }
 
-    /// Undo every declaration journalled since the last [`ScopeStack::commit`],
-    /// removing each from the name index (newest first). Removal is by
-    /// spelling *and* declaring scope, so outer declarations of the same
-    /// spelling are untouched.
+    /// Undo every act journalled since the last [`ScopeStack::commit`], newest
+    /// first: a declaration is removed from the name index (by spelling *and*
+    /// declaring scope, so outer declarations of the same spelling are
+    /// untouched), and a dead mark is lifted, the entry's `end` restored.
     pub fn rollback(&mut self, trie: &mut RegexTrie) {
-        while let Some((name, scope)) = self.journal.pop() {
-            // The entry was inserted by this journal's own declare; a failed
-            // removal means it was already pruned, which is fine.
-            let _ = trie.remove(&name, scope);
+        while let Some(act) = self.journal.pop() {
+            match act {
+                Journal::Declared { name, scope } => {
+                    // The entry was inserted by this journal's own declare; a
+                    // failed removal means it was already pruned, which is fine.
+                    let _ = trie.remove(&name, scope);
+                }
+                Journal::Ended { name, scope, identity, prev_end } => {
+                    trie.update(&name, |c| {
+                        if c.scope == scope && c.identity == identity {
+                            c.end = prev_end;
+                            true
+                        } else {
+                            false
+                        }
+                    });
+                }
+            }
         }
+        self.pending.clear();
     }
 
     /// Resolve `name` against `trie` to the single identity live in the open
     /// scopes: [`ResolveError::Unknown`] if the spelling is not indexed,
-    /// [`ResolveError::OutOfScope`] if it is but no declaration is open, and
-    /// [`ResolveError::Ambiguous`] if more than one is (a corrupt index, which
-    /// no-shadowing otherwise makes impossible).
+    /// [`ResolveError::OutOfScope`] if it is but no declaration is open,
+    /// [`ResolveError::Dead`] if the open declarations were all made dead by an
+    /// `own` or `drop`, and [`ResolveError::Ambiguous`] if more than one is
+    /// live (a corrupt index, which no-shadowing otherwise makes impossible).
     pub fn resolve(&self, trie: &RegexTrie, name: &str) -> Result<Resolved, ResolveError> {
         let m = match trie.get(name) {
             Ok(m) => m,
@@ -367,9 +461,18 @@ impl ScopeStack {
         {
             return Err(ResolveError::Unknown);
         }
-        let mut live = m.contexts.iter().filter(|c| self.is_open(c.scope));
+        // During elaboration the point of use is the frontier, so "range covers
+        // the point" is exactly "not yet made dead" (DESIGN ›Name resolution is
+        // scope-filtered‹, ruled 3 September 2026).
+        let mut live = m.contexts.iter().filter(|c| self.is_open(c.scope) && !c.is_dead());
         match (live.next(), live.next()) {
-            (None, _) => Err(ResolveError::OutOfScope),
+            (None, _) => {
+                if m.contexts.iter().any(|c| self.is_open(c.scope)) {
+                    Err(ResolveError::Dead)
+                } else {
+                    Err(ResolveError::OutOfScope)
+                }
+            }
             (Some(c), None) => {
                 Ok(Resolved { matched: m.matched, identity: c.identity, scope: c.scope })
             }
@@ -379,9 +482,11 @@ impl ScopeStack {
 
     /// Declare `name` denoting `identity` in the current scope, enforcing
     /// no-shadowing: [`ResolveError::Shadowed`] if `name` already resolves to a
-    /// live candidate in the open scopes. A known-but-out-of-scope or unknown
-    /// name is free to (re)declare here. Requires a current scope. The
-    /// declaration is journalled for [`ScopeStack::rollback`].
+    /// live candidate in the open scopes. A known-but-out-of-scope, unknown, or
+    /// dead name is free to (re)declare here — the dead case being the one
+    /// thing that may follow an `own`/`drop`, a fresh entry beside the dead one.
+    /// Requires a current scope. The declaration is journalled for
+    /// [`ScopeStack::rollback`], and its `start` awaits the finished body item.
     pub fn declare(
         &mut self,
         trie: &mut RegexTrie,
@@ -392,25 +497,90 @@ impl ScopeStack {
         match self.resolve(trie, name) {
             // Already live in an open scope: shadowing is disallowed.
             Ok(_) => return Err(ResolveError::Shadowed),
-            // Known but closed, or unknown: both fine to declare here.
-            Err(ResolveError::OutOfScope | ResolveError::Unknown) => {}
+            // Known but closed, unknown, or dead: all fine to declare here.
+            Err(ResolveError::OutOfScope | ResolveError::Unknown | ResolveError::Dead) => {}
             // Ambiguous or an index error: surface it rather than declaring atop.
             Err(e) => return Err(e),
         }
         trie.insert(name, IdContext::new(identity, scope));
-        self.journal.push((name.to_string(), scope));
+        self.journal.push(Journal::Declared { name: name.to_string(), scope });
+        self.pending.push(Pending {
+            name: name.to_string(),
+            scope,
+            identity,
+            endpoint: Endpoint::Start,
+        });
         Ok(())
+    }
+
+    /// Make `name`'s entry for `identity` in `scope` dead from here on: an
+    /// `own` or `drop` (`node`) emptied its place, so every later use is
+    /// refused until a `:=` redeclares the spelling (DESIGN ›Memory and
+    /// concurrency‹, *`own` and `drop` are static*). `node` is the provisional
+    /// `end`; [`ScopeStack::settle_item`] replaces it with the body item once
+    /// the line is complete. Journalled for [`ScopeStack::rollback`].
+    pub fn mark_dead(
+        &mut self,
+        trie: &mut RegexTrie,
+        name: &str,
+        scope: DyadPtr,
+        identity: DyadPtr,
+        node: DyadPtr,
+    ) {
+        let mut prev_end = std::ptr::null_mut();
+        trie.update(name, |c| {
+            if c.scope == scope && c.identity == identity {
+                prev_end = c.end;
+                c.end = node;
+                true
+            } else {
+                false
+            }
+        });
+        self.journal.push(Journal::Ended { name: name.to_string(), scope, identity, prev_end });
+        self.pending.push(Pending {
+            name: name.to_string(),
+            scope,
+            identity,
+            endpoint: Endpoint::End,
+        });
+    }
+
+    /// `scope` just appended `item` to its body: every range endpoint pending
+    /// for that scope now points at the item, the declaring or ending line
+    /// as a whole (an `own` inside an `if` body ends the outer name at the
+    /// `if`, DESIGN ›Name resolution is scope-filtered‹).
+    pub fn settle_item(&mut self, trie: &mut RegexTrie, scope: DyadPtr, item: DyadPtr) {
+        let mut i = 0;
+        while i < self.pending.len() {
+            if self.pending[i].scope != scope {
+                i += 1;
+                continue;
+            }
+            let p = self.pending.swap_remove(i);
+            trie.update(&p.name, |c| {
+                if c.scope == p.scope && c.identity == p.identity {
+                    match p.endpoint {
+                        Endpoint::Start => c.start = item,
+                        Endpoint::End => c.end = item,
+                    }
+                    true
+                } else {
+                    false
+                }
+            });
+        }
     }
 
     /// Re-point the just-declared `name` in the current scope at `identity`.
     /// Used by the declaration fixpoint when the value turns out to *be* an
     /// existing identity (a logos): the name becomes another spelling of that
     /// node, so pointer-identity checks (`is_numtype_node`, logos equality) see
-    /// the original. The journal entry from the declare still covers it.
+    /// the original. The journal entry from the declare still covers it, and
+    /// the entry's range is kept.
     pub fn rebind(&mut self, trie: &mut RegexTrie, name: &str, identity: DyadPtr) {
         let scope = self.current().expect("rebind needs an open scope");
-        let _ = trie.remove(name, scope);
-        trie.insert(name, IdContext::new(identity, scope));
+        self.rebind_at(trie, name, identity, scope);
     }
 
     /// Re-point `name`, declared in `scope` (an open ancestor, from
@@ -418,9 +588,24 @@ impl ScopeStack {
     /// target is the *declaring* scope, not the current one: a logos variable's
     /// fill inside a comptime-taken branch completes the outer declaration,
     /// rather than binding a block-local spelling that dies with the branch.
-    pub fn rebind_at(trie: &mut RegexTrie, name: &str, identity: DyadPtr, scope: DyadPtr) {
-        let _ = trie.remove(name, scope);
-        trie.insert(name, IdContext::new(identity, scope));
+    /// The live entry is changed in place, so its range survives; a pending
+    /// endpoint follows the identity.
+    pub fn rebind_at(&mut self, trie: &mut RegexTrie, name: &str, identity: DyadPtr, scope: DyadPtr) {
+        let mut old = std::ptr::null_mut();
+        trie.update(name, |c| {
+            if c.scope == scope && !c.is_dead() {
+                old = c.identity;
+                c.identity = identity;
+                true
+            } else {
+                false
+            }
+        });
+        for p in &mut self.pending {
+            if p.scope == scope && p.identity == old && p.name == name {
+                p.identity = identity;
+            }
+        }
     }
 }
 
@@ -2518,7 +2703,12 @@ impl<'a> Parser<'a> {
         // below tests its tail against (issue #49).
         let mut owned_here: Vec<DyadPtr> = Vec::new();
         while let Some(item) = self.parse_next() {
-            exprs.push(item?);
+            let item = item?;
+            exprs.push(item);
+            // The item is complete: the ranges of the names it declared or ended
+            // in this scope now point at it (DESIGN ›Name resolution is
+            // scope-filtered‹: the range runs between body items).
+            self.scopes.settle_item(self.trie, scope, item);
             // A binding of an owning value inserts `defer free <place>` into this
             // scope's pending list (issue #49); drain it right after the statement
             // so the defer sits at its source position — the right LIFO rank
@@ -3308,7 +3498,7 @@ impl<'a> Parser<'a> {
         let name = &source[tok.start..tok.start + tok.len];
         let decl_scope =
             self.scopes.resolve(self.trie, name).map_err(ParseError::Resolve)?.scope;
-        ScopeStack::rebind_at(self.trie, name, t, decl_scope);
+        self.scopes.rebind_at(self.trie, name, t, decl_scope);
         // The fill IS the definition completing the declaration: a declare
         // node, a silent statement.
         let name_node =
@@ -3742,6 +3932,96 @@ mod tests {
         assert_eq!(scopes.depth(), 1);
         assert_eq!(scopes.current(), Some(dyad(100)));
         assert!(!scopes.is_open(dyad(101)));
+    }
+
+    #[test]
+    fn a_dead_name_resolves_as_dead_and_may_be_redeclared() {
+        // DESIGN ›Name resolution is scope-filtered‹ (3 September 2026): an
+        // `own`/`drop` makes the name dead — distinct from out-of-scope and
+        // unknown — and only `:=` may follow, a fresh entry beside the dead one.
+        let mut trie = RegexTrie::new();
+        let mut scopes = ScopeStack::new();
+        let scope = dyad(100);
+        scopes.push(scope);
+        scopes.declare(&mut trie, "a", dyad(1)).unwrap();
+        scopes.mark_dead(&mut trie, "a", scope, dyad(1), dyad(50));
+
+        assert_eq!(scopes.resolve(&trie, "a"), Err(ResolveError::Dead));
+        scopes.declare(&mut trie, "a", dyad(2)).unwrap();
+        assert_eq!(scopes.resolve(&trie, "a").unwrap().identity, dyad(2));
+        // The dead entry is still indexed: its range is what reflection reads.
+        let m = trie.get("a").unwrap();
+        assert_eq!(m.contexts.len(), 2);
+        assert!(m.contexts.iter().any(|c| c.identity == dyad(1) && c.end == dyad(50)));
+    }
+
+    #[test]
+    fn rollback_restores_a_dead_mark() {
+        // A REPL line that moves a name and then fails must leave the name
+        // alive, exactly as a failed declaration leaves the spelling free.
+        let mut trie = RegexTrie::new();
+        let mut scopes = ScopeStack::new();
+        let scope = dyad(100);
+        scopes.push(scope);
+        scopes.declare(&mut trie, "a", dyad(1)).unwrap();
+        scopes.commit();
+
+        scopes.mark_dead(&mut trie, "a", scope, dyad(1), dyad(50));
+        scopes.declare(&mut trie, "a", dyad(2)).unwrap();
+        scopes.rollback(&mut trie);
+
+        assert_eq!(scopes.resolve(&trie, "a").unwrap().identity, dyad(1));
+        assert_eq!(trie.get("a").unwrap().contexts.len(), 1);
+    }
+
+    #[test]
+    fn settle_patches_start_and_end_to_the_body_item() {
+        // The range runs between body items: the declaring line, and the line
+        // holding the `own`/`drop` (the node itself only while that line parses).
+        let mut trie = RegexTrie::new();
+        let mut scopes = ScopeStack::new();
+        let scope = dyad(100);
+        scopes.push(scope);
+        scopes.declare(&mut trie, "a", dyad(1)).unwrap();
+        let ctx = |trie: &RegexTrie| trie.get("a").unwrap().contexts[0];
+        assert!(ctx(&trie).start.is_null());
+
+        scopes.settle_item(&mut trie, scope, dyad(10));
+        assert_eq!(ctx(&trie).start, dyad(10));
+        assert!(ctx(&trie).end.is_null());
+
+        scopes.mark_dead(&mut trie, "a", scope, dyad(1), dyad(50));
+        assert_eq!(ctx(&trie).end, dyad(50), "provisional: the own/drop node");
+        scopes.settle_item(&mut trie, scope, dyad(11));
+        assert_eq!(ctx(&trie).end, dyad(11), "settled: the body item");
+        assert_eq!(ctx(&trie).start, dyad(10), "start untouched by the end's settle");
+
+        // A rebind keeps the range and moves the pending endpoint with it.
+        scopes.declare(&mut trie, "b", dyad(3)).unwrap();
+        scopes.rebind(&mut trie, "b", dyad(4));
+        scopes.settle_item(&mut trie, scope, dyad(12));
+        let b = trie.get("b").unwrap().contexts[0];
+        assert_eq!((b.identity, b.start), (dyad(4), dyad(12)));
+    }
+
+    #[test]
+    fn a_barrier_between_a_name_and_the_current_scope_is_detected() {
+        // A loop or fn body begins a barrier: names declared outside it may not
+        // be moved or dropped inside (DESIGN ›Memory and concurrency‹, *Bodies
+        // that run again or later*); names declared at or inside it may.
+        let mut scopes = ScopeStack::new();
+        let (outer, body, inner) = (dyad(100), dyad(101), dyad(102));
+        scopes.push(outer);
+        scopes.push_barrier();
+        scopes.push(body);
+        scopes.push(inner);
+        assert!(scopes.crosses_barrier(outer));
+        assert!(!scopes.crosses_barrier(body));
+        assert!(!scopes.crosses_barrier(inner));
+        scopes.pop();
+        scopes.pop();
+        scopes.pop_barrier();
+        assert!(!scopes.crosses_barrier(outer));
     }
 
     #[test]

@@ -168,6 +168,7 @@ fn resolve_message(e: &ResolveError) -> String {
         ResolveError::OutOfScope => "this name is not in scope here".into(),
         ResolveError::Ambiguous => "this name is ambiguous here".into(),
         ResolveError::Shadowed => "this name is shadowed here".into(),
+        ResolveError::Dead => "this name is dead here: it was moved or dropped above".into(),
         ResolveError::Index(RegexTrieError::NodeNotFound) => {
             "unknown name".into()
         }

@@ -29,7 +29,9 @@
 //!   compile; [`RegexTrieError::BadPattern`] surfaces that instead of panicking.
 //! - Because a context is a `Copy` value the trie does not own, the Zig's
 //!   shared-value/`freed`-flag bookkeeping collapses to copying the context to
-//!   each alternation path; `remove` matches on the declaring scope.
+//!   each alternation path; `remove` matches on the declaring scope (its live
+//!   context: a dead one, ended by `own`/`drop`, stays for reflection), and
+//!   `update` visits every path's copy so the copies never disagree.
 //! - Each regex branch owns a lazily-compiled anchored matcher behind a `RefCell`
 //!   (so `get` stays `&self`) and is matched independently. Matching branches
 //!   separately, rather than as one combined `(?:a|b|…)` alternation, is what lets
@@ -247,6 +249,35 @@ impl RegexTrie {
         Some(current)
     }
 
+    /// [`RegexTrie::locate`], mutably: the node an existing path ends at, for
+    /// an in-place change of its stored contexts ([`RegexTrie::update`]).
+    fn locate_mut(&mut self, path: &[Segment]) -> Option<&mut RegexTrie> {
+        let mut current = self;
+        for seg in path {
+            if seg.is_lit {
+                for &c in seg.str.as_bytes() {
+                    if c == 0 {
+                        return None;
+                    }
+                    let idx = current.child_indices[c as usize];
+                    if idx == NONE {
+                        return None;
+                    }
+                    match current.children[idx as usize].as_deref_mut() {
+                        Some(child) => current = child,
+                        None => return None,
+                    }
+                }
+            } else {
+                match current.regexes.iter().position(|e| e.pattern == seg.str) {
+                    Some(i) => current = &mut current.regexes[i].node,
+                    None => return None,
+                }
+            }
+        }
+        Some(current)
+    }
+
     // --- insert -------------------------------------------------------------
 
     /// Add `ctx` under `key` (a literal or regex pattern). A spelling may carry
@@ -378,24 +409,53 @@ impl RegexTrie {
 
     // --- remove -------------------------------------------------------------
 
-    /// Remove the `id_context` declared in `scope` for `regex_key` and return the
-    /// identity it denoted. This is the structural-deletion path: only that one
-    /// scope's context is dropped, and a leaf is pruned only when its last
-    /// context goes (siblings and outer declarations of the same spelling stay).
-    /// Errors with [`RegexTrieError::NodeNotFound`] if any of the key's paths
-    /// lacks a context in `scope`, or they do not all denote the same identity.
+    /// Visit every `id_context` stored under `regex_key` — on every alternation
+    /// path, so the copies one `insert` spread stay identical — and let `f`
+    /// change it in place. `f` returns whether it applied; the count of contexts
+    /// it applied to is returned. Which context to touch (a scope, an identity,
+    /// the live one) is the caller's filter, inside `f`: the trie stays the pure
+    /// index. A key that is not indexed is simply zero applications.
+    pub fn update(&mut self, regex_key: &str, mut f: impl FnMut(&mut IdContext) -> bool) -> usize {
+        debug_assert!(!regex_key.is_empty());
+        let mut applied = 0;
+        for path in &regex_splitting(regex_key) {
+            let Some(node) = self.locate_mut(path) else { continue };
+            if !node.check_eow() {
+                continue;
+            }
+            if let Some(leaf) = node.leaf_value.as_mut() {
+                if leaf.regex_key == regex_key {
+                    for c in leaf.contexts.iter_mut() {
+                        if f(c) {
+                            applied += 1;
+                        }
+                    }
+                }
+            }
+        }
+        applied
+    }
+
+    /// Remove the *live* `id_context` declared in `scope` for `regex_key` and
+    /// return the identity it denoted. This is the structural-deletion path:
+    /// only that one context is dropped — a dead one (ended by `own`/`drop`,
+    /// see [`IdContext::is_dead`]) in the same scope stays, its range being what
+    /// reflection reads — and a leaf is pruned only when its last context goes
+    /// (siblings and outer declarations of the same spelling stay). Errors with
+    /// [`RegexTrieError::NodeNotFound`] if any of the key's paths lacks a live
+    /// context in `scope`, or they do not all denote the same identity.
     pub fn remove(&mut self, regex_key: &str, scope: DyadPtr) -> Result<DyadPtr, RegexTrieError> {
         debug_assert!(!regex_key.is_empty());
         let paths = regex_splitting(regex_key);
 
-        // Verify every path holds this scope's context and they agree on the
-        // identity before mutating anything.
+        // Verify every path holds this scope's live context and they agree on
+        // the identity before mutating anything.
         let mut held: Option<DyadPtr> = None;
         for path in &paths {
             let node = self.locate(path).filter(|n| n.check_eow());
             let ident = match node.and_then(|n| n.leaf_value.as_ref()) {
                 Some(v) if v.regex_key == regex_key => {
-                    match v.contexts.iter().find(|c| c.scope == scope) {
+                    match v.contexts.iter().find(|c| c.scope == scope && !c.is_dead()) {
                         Some(c) => c.identity,
                         None => return Err(RegexTrieError::NodeNotFound),
                     }
@@ -409,8 +469,8 @@ impl RegexTrie {
             }
         }
 
-        // Drop this scope's context at each path's leaf and prune leaves that
-        // lose their last context.
+        // Drop this scope's live context at each path's leaf and prune leaves
+        // that lose their last context.
         for path in &paths {
             let steps = flatten(path);
             Self::prune_remove(self, &steps, 0, scope);
@@ -426,7 +486,7 @@ impl RegexTrie {
     fn prune_remove(node: &mut RegexTrie, steps: &[Step], i: usize, scope: DyadPtr) -> bool {
         if i == steps.len() {
             if let Some(leaf) = &mut node.leaf_value {
-                leaf.contexts.retain(|c| c.scope != scope);
+                leaf.contexts.retain(|c| c.scope != scope || c.is_dead());
                 if leaf.contexts.is_empty() {
                     node.leaf_value = None;
                     let eow = node.child_indices[EOW];
@@ -739,6 +799,55 @@ mod tests {
         let m = t.get("x").unwrap();
         assert_eq!(m.contexts.len(), 1);
         assert_eq!(m.contexts[0].identity, id_outer);
+    }
+
+    #[test]
+    fn update_reaches_every_alternation_path() {
+        // One insert spreads a copy of the context over each alternation path;
+        // an in-place change must land on all of them, or a lookup through the
+        // other branch would see a stale copy.
+        let root = dummy(100);
+        let mut t = RegexTrie::new();
+        let (d, ender) = (dummy(7), dummy(8));
+        t.insert("ab|cd", ic(d, root));
+        let applied = t.update("ab|cd", |c| {
+            if c.identity == d {
+                c.end = ender;
+                true
+            } else {
+                false
+            }
+        });
+        assert_eq!(applied, 2, "one application per path");
+        assert_eq!(t.get("ab").unwrap().contexts[0].end, ender);
+        assert_eq!(t.get("cd").unwrap().contexts[0].end, ender);
+        // A key that is not indexed applies to nothing.
+        assert_eq!(t.update("zz", |_| true), 0);
+    }
+
+    #[test]
+    fn remove_takes_only_the_live_context() {
+        // A name ended by `own`/`drop` and then redeclared in the same scope has
+        // two contexts there: the dead one (its range kept for reflection) and
+        // the live one. Structural deletion by scope removes the live one only.
+        let root = dummy(100);
+        let mut t = RegexTrie::new();
+        let (old, new, ender) = (dummy(1), dummy(2), dummy(9));
+        t.insert("x", ic(old, root));
+        t.update("x", |c| {
+            c.end = ender;
+            true
+        });
+        t.insert("x", ic(new, root));
+        assert_eq!(t.get("x").unwrap().contexts.len(), 2);
+
+        assert_eq!(t.remove("x", root).unwrap(), new);
+        let m = t.get("x").unwrap();
+        assert_eq!(m.contexts.len(), 1);
+        assert_eq!(m.contexts[0].identity, old);
+        assert!(m.contexts[0].is_dead());
+        // With no live context left in the scope, a second remove is an error.
+        assert_eq!(t.remove("x", root), Err(RegexTrieError::NodeNotFound));
     }
 
     #[test]
