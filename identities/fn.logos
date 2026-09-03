@@ -1,8 +1,8 @@
-fn := logos (
+fn := type (
     shared constructor = fn (tape := parsing_tape ?) -> void ( ? )
     shared compile     = fn () -> void ( ? )       # read own body, lower it to bcode
     shared run         = fn () -> void ( ? )       # if bcode present jump to it; if bcode is NULL walk body directly. interpretation is run's null-bcode path, not a separate function
-    input := logos ?
+    input := type ?
     output := ?
     body := ?                                       # the reflectable LG body
     bcode := callable ?                                # the complete jump info [entry @exec, convention] (NULL until compiled)

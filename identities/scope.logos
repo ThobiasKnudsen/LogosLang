@@ -1,4 +1,4 @@
-scope := logos (
+scope := type (
     constructor = fn (tape := parsing_tape ?) -> void (
 
     )

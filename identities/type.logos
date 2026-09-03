@@ -1,7 +1,7 @@
 
 
 
-logos := logos (
+type := type (
     precedence := f64 2.0
     associativity := left_to_right
     constructor := fn (tape := parsing_tape ?) -> void (

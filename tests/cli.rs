@@ -359,8 +359,8 @@ fn logos_is_a_value_reflected_by_dot_logos_and_compared_by_identity() {
 }
 
 #[test]
-fn the_logos_reflection_example_runs() {
-    let out = logos().args(["import", "examples/logos_reflection.logos"]).output().unwrap();
+fn the_type_reflection_example_runs() {
+    let out = logos().args(["import", "examples/type_reflection.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "true\n");
 }
@@ -387,8 +387,8 @@ fn a_type_returning_function_resolves_at_comptime() {
 }
 
 #[test]
-fn the_logos_returning_fn_example_runs() {
-    let out = logos().args(["import", "examples/logos_returning_fn.logos"]).output().unwrap();
+fn the_type_returning_fn_example_runs() {
+    let out = logos().args(["import", "examples/type_returning_fn.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "true\n");
 }
@@ -519,13 +519,13 @@ fn a_comptime_if_drops_the_untaken_branch_unparsed() {
 }
 
 #[test]
-fn the_metalogosfn_example_runs() {
+fn the_metatypefn_example_runs() {
     // The station #30 north-star, end to end: a `-> logos` fn computes the logos,
     // `a : metalogos(…)` declares with it, and a comptime `if` dispatches on
     // `a.logos`, skipping the untaken branches unparsed. The expected value
     // tracks the file's current argument (2 → f64 → the middle arm assigns 9.9;
     // the deep arm is pinned separately by the metalogos_arm fixture).
-    let out = logos().args(["import", "examples/metalogosfn.logos"]).output().unwrap();
+    let out = logos().args(["import", "examples/metatypefn.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "9.9\n");
 }

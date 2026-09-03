@@ -1,4 +1,4 @@
-proof := logos (
+proof := type (
     constructor = fn (tape := parsing_tape ?) -> void (
         # parses: proof ( holes…, premises…, pattern ) -> replacement ( derivation )
         # fn and proof share the -> spelling: each type's own constructor decides what may

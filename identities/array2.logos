@@ -4,8 +4,8 @@ array_type := ? (
 
         if not tape[1].is_constructed
             error «id after the array being constructed is not constructed which is not valid for array.constructor»
-        if tape[1].type != logos
-            error «id after array does not have the type logos»
+        if tape[1].type != type
+            error «id after array is not a type»
 
         if not tape[2].is_constructed
             error «second id after the array being constructed is not constructed, which is not valid for array.constructor»
@@ -30,8 +30,8 @@ array_type := ? (
 )
 
 array := array_type (
-    instance := logos (
-        element_type := logos ?
+    instance := type (
+        element_type := type ?
         size := mut u64 0
         capacity := mut u64 0
         data := mut @void ?

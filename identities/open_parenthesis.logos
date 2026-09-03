@@ -1,7 +1,7 @@
 
 
 
-( := logos (
+( := type (
     constructor = fn (tape := parsing_tape ?) -> void (
 
         new_scope := mut scope

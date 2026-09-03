@@ -41,9 +41,14 @@ pub(super) fn register_root(store: &mut Store) -> DyadPtr {
 /// punctuation (`:`, `,`) the record path consumes, returning the two
 /// punctuation handles.
 pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
-    // The spelling: `logos` resolves to the root as a first-class value. The
-    // insert waits until here, because `register_root` builds the fixed point
-    // before the trie and `root_scope` exist.
+    // The spelling: `type` resolves to the root as a first-class value (DESIGN
+    // ›Substrate vocabulary‹, ruled 4 September 2026: `type` is the ground and
+    // the definition keyword, `logos` names the language). `logos` stays a
+    // transitional alias of the same identity until the `language` identity
+    // exists and can give `logos (…)` its ruled meaning. The inserts wait
+    // until here, because `register_root` builds the fixed point before the
+    // trie and `root_scope` exist.
+    cx.trie.insert("type", IdContext::new(cx.type_, cx.root_scope));
     cx.trie.insert("logos", IdContext::new(cx.type_, cx.root_scope));
     // The merged constructor: a following `( field-list )` builds a record
     // logos; anything else declines the right and the constructor "yields its

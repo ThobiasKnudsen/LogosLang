@@ -1,12 +1,12 @@
 
 
-array := logos (
+array := type (
     constructor = fn (tape := parsing_tape ?) -> void (
 
         if not tape[1].is_constructed
             error «id after the array being constructed is not constructed which is not valid for array.constructor»
-        if tape[1].type != logos
-            error «id after array does not have the type logos»
+        if tape[1].type != type
+            error «id after array is not a type»
 
         if not tape[2].is_constructed
             error «second id after the array being constructed is not constructed, which is not valid for array.constructor»
@@ -28,8 +28,8 @@ array := logos (
 
         tape[1..3].remove
     )
-    instance := logos (
-        element_type := logos ?
+    instance := type (
+        element_type := type ?
         size := u64 0
         capacity := u64 0
         data := @void ?

@@ -879,16 +879,16 @@ pub(crate) unsafe fn is_type_value(types: &CoreTypes, node: DyadPtr) -> bool {
     !node.is_null() && (*node).ty == types.type_
 }
 
-/// The display spelling of a logos-value (`i32`, `bool`, `logos`, …). Numeric
+/// The display spelling of a logos-value (`i32`, `bool`, `type`, …). Numeric
 /// logos and `void` read their name from the record tag; the root and `bool`
 /// are recognized by identity; other logos-values (record logos, pointers,
-/// text) fall back to the generic `logos`.
+/// text) fall back to the generic `type` (the root's ruled spelling).
 ///
 /// # Safety
 /// `node` must satisfy [`is_type_value`].
 unsafe fn type_name(types: &CoreTypes, node: DyadPtr) -> String {
     if node == types.type_ {
-        return "logos".to_string();
+        return "type".to_string();
     }
     if node == types.bool_ {
         return "bool".to_string();
@@ -896,7 +896,7 @@ unsafe fn type_name(types: &CoreTypes, node: DyadPtr) -> String {
     match meta::kind_of(node) {
         Some(t) if t <= NumType::F64 as u8 => NumType::from_tag(t).spelling().to_string(),
         Some(numtype::VOID_TAG) => "void".to_string(),
-        _ => "logos".to_string(),
+        _ => "type".to_string(),
     }
 }
 

@@ -1,14 +1,14 @@
 # Copyright 2026 Thobias Melfjord Knudsen
 # SPDX-License-Identifier: Apache-2.0
 
-declare := fn (lang:&mut logos, name:string) -> &mut dyad ( ? )
-assign := fn (node:&mut dyad, type:@dyad, value:@void) -> void ( ? )
+declare := fn (lang := &mut language ?, name := string ?) -> &mut dyad ( ? )
+assign := fn (node := &mut dyad ?, type := @dyad ?, value := @void ?) -> void ( ? )
 assign(declare(&mut logos, «=»), ?, ?)
 assign(declare(&mut logos, «:=»), ?, ?)
-assign(declare(&mut logos, «rational_number»), logos, ?)
+assign(declare(&mut logos, «rational_number»), type, ?)
 assign(declare(&mut logos, «[0-9]+(?:\.[0-9]+)?»), rational_number, ?)   # unanchored: the lexer longest-matches a prefix of the remaining input, so no ^…$. unsigned: - is always the operator (a-1 must be subtraction); a negative literal is the prefix - folding at parse
 
-parsing_tape := logos (
+parsing_tape := type (
     # the working frontier: reduced-but-not-final dyads interleaved with pending tokens (lexed-in-flight
     # and lazily lexed-ahead). tape[0] is the token of the identity being constructed; negative offsets
     # reach left into reduced context, positive offsets lazily lex ahead. disposable, rebuilt from source.
@@ -22,7 +22,7 @@ parsing_tape := logos (
 # type and value is stored besi/cdes each others but is_constructed is stored in a separate array
 #
 
-parsing_tape := logos (
+parsing_tape := type (
     shared constructor = fn (tape := parsing_tape ?) -> void (...)
 
     code := string ?       # The code to parse
@@ -33,10 +33,10 @@ parsing_tape := logos (
     dyad_offset := u64 0
 )
 
-mut := logos (
+mut := type (
     shared constructor = fn (tape := parsing_tape ?) -> void (
-        if tape[1].value@.type != logos
-            error «token after mut is not a logos»
+        if tape[1].value@.type != type
+            error «token after mut is not a type»
         # set the mutability bit on this level's value pointer — TBD
     )
 )
@@ -76,22 +76,22 @@ mut := ?
 [ := ?
 ] := ?
 
-string := logos ?
-u8 := logos ?
-u16 := logos ?
-u32 := logos ?
-u64 := logos ?
-i8 := logos ?
-i16 := logos ?
-i32 := logos ?
-i64 := logos ?
-f32 := logos ?
-f64 := logos ?
-bool := logos ?         # a comparison's result logos; an if condition must be one
-@void := logos ?
-@exec := logos ?
+string := type ?
+u8 := type ?
+u16 := type ?
+u32 := type ?
+u64 := type ?
+i8 := type ?
+i16 := type ?
+i32 := type ?
+i64 := type ?
+f32 := type ?
+f64 := type ?
+bool := type ?         # a comparison's result type; an if condition must be one
+@void := type ?
+@exec := type ?
 
-callable := logos (          # the complete jump info — the ONE representation of jumpable code, never a bare address
+callable := type (          # the complete jump info — the ONE representation of jumpable code, never a bare address
     entry := @exec ?
     convention := @dyad ?    # the declared calling-convention identity
 )
@@ -106,7 +106,7 @@ xor := ?
 not := ?
 
 
-a := mut logos mut i32 32
+a := mut type mut i32 32
 a {
     value --m-> {
         value -> 32
@@ -115,19 +115,19 @@ a {
         value -> {
             value -> copy i32.value
         }
-        type -> logos
+        type -> type
     }
 }
 
 i32 {
-    type -> logos
+    type -> type
     value -> [what ever fields for i32 is defined as]
 }
 
-logos {
-  type -> logos
+type {
+  type -> type
   value -> {
-    type -> logos
+    type -> type
     value -> {
       # member NAMES are id_context entries in the shared name index, not data
       # stored here (per-record names hashtable: rejected)
@@ -148,13 +148,13 @@ logos {
               type -> {
                 type -> fn
                 value -> {
-                  input -> logos (tape := parsing_tape ?)
+                  input -> type (tape := parsing_tape ?)
                   output -> void
                 }
               }
               value -> ?
             }, {
-              type -> logos
+              type -> type
               value -> ?
             }, {
               type -> ?
@@ -199,7 +199,7 @@ a = a + 1
 # the discrete tier walks in steps of 1; the calculus tier walks in steps of d.
 # d is an infinitesimal: an actual number, greater than 0 and smaller than every
 # machine-representable number. nothing containing d lowers to machine code (an
-# operation over a sizeless logos does not lower until resolved): replace d with
+# operation over a sizeless type does not lower until resolved): replace d with
 # a small machine number (f64 1e-9) for approximation, or let the proof layer
 # take d -> 0 for the exact value. every range is directed (start toward bound),
 # the step signed with the direction of travel, which is what gives negative

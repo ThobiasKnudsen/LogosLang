@@ -10,6 +10,6 @@ x := i32 5
 
 same  := (dyad x).type == i32        # true: x was built as an i32
 cross := (dyad x).type == f64        # false: i32 is not f64
-meta  := (dyad i32).type == logos    # true: a type's own type is the `logos` root
+meta  := (dyad i32).type == type     # true: a type's own type is the `type` root
 
 same and meta and not (cross)

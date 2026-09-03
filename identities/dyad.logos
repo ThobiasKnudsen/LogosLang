@@ -1,1 +1,1 @@
-dyad := logos (type := @dyad ?, value := @void ?)
+dyad := type (type := @dyad ?, value := @void ?)
