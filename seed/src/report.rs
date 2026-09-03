@@ -158,6 +158,12 @@ pub fn parse_message(e: &ParseError) -> String {
              not know it owes a `free`; allocate in the caller and pass a pointer in"
                 .into()
         }
+        ParseError::OwnOfOuterName => {
+            "own or drop of a name declared outside this loop or function body: \
+             the next pass or call would find it dead; move or drop it outside, \
+             or hand it in as a parameter"
+                .into()
+        }
     }
 }
 

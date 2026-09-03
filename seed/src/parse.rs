@@ -301,6 +301,16 @@ struct Pending {
     endpoint: Endpoint,
 }
 
+/// A bare name an `own` or `drop` is about to make dead: what
+/// [`Parser::parse_place_operand`] hands back so the keyword's constructor can
+/// call [`Parser::mark_dead`] with the node it built.
+#[derive(Debug)]
+pub(crate) struct Ended {
+    pub(crate) name: String,
+    pub(crate) scope: DyadPtr,
+    pub(crate) identity: DyadPtr,
+}
+
 /// The parse-time scope stack: the chain of open scopes with an O(1) membership
 /// set. This is the parser's own spine (the graph's ancestor chain during
 /// elaboration); a scope is identified by its dyad address. Resolution filters a
@@ -1010,6 +1020,12 @@ pub enum ParseError {
     /// can declare that it transfers ownership — the ownership-gate work,
     /// issue #53.
     OwnershipAcrossReturn,
+    /// An `own` or `drop` inside a loop body or a `fn` body names a place
+    /// declared outside it. The loop would read a dead name on its next pass,
+    /// and a function may own only what its parameters hand it (DESIGN ›Memory
+    /// and concurrency‹, *Bodies that run again or later*, ruled 3 September
+    /// 2026).
+    OwnOfOuterName,
 }
 
 /// Build a call node `{type: callee, value: [args…, null]}`, the application
@@ -1833,6 +1849,11 @@ impl<'a> Parser<'a> {
         // off inside.
         // SAFETY: `input` is the record just built; its record stores its scope.
         let scope = unsafe { crate::identities::meta::record_scope_of(input) };
+        // The body runs later: names declared outside it may not be moved or
+        // dropped inside (the parameters, declared in the scope pushed next,
+        // may — a parameter is same-level with the body, DESIGN ›A function's
+        // surface‹).
+        self.scopes.push_barrier();
         self.scopes.push(scope);
         self.runtime_depth += 1;
         self.expect_open()?;
@@ -1840,6 +1861,7 @@ impl<'a> Parser<'a> {
         self.expect_close()?;
         self.runtime_depth -= 1;
         self.scopes.pop();
+        self.scopes.pop_barrier();
         // Ownership may not cross a function return yet (issue #49). A block can
         // hand ownership to its binder because the parse sees the block's tail,
         // but a *call* hides the body behind the return logos, and a plain `@T`
@@ -2114,11 +2136,14 @@ impl<'a> Parser<'a> {
         if !unsafe { is_bool_result(&types, cond) } {
             return Err(ParseError::NonBoolCondition);
         }
-        // A repeated body: parse-time rebinding is off inside it.
+        // A repeated body: parse-time rebinding is off inside it, and a name
+        // declared outside it may not be moved or dropped inside.
         self.runtime_depth += 1;
+        self.scopes.push_barrier();
         self.expect_open()?;
         let body = self.parse_sequence()?;
         self.expect_close()?;
+        self.scopes.pop_barrier();
         self.runtime_depth -= 1;
         // SAFETY: `body` is the reduced dyad just parsed.
         if unsafe { contains_return(&types, body) } {
@@ -2185,15 +2210,20 @@ impl<'a> Parser<'a> {
         let width = unsafe { crate::identities::numtype::of_type_node(logos) }.bytes();
         let var = self.alloc_local(logos, width);
         let scope = self.store.alloc_raw(types.scope, std::ptr::null_mut());
+        // A repeated body: a name declared outside it may not be moved or
+        // dropped inside; the loop variable, declared in the scope pushed next,
+        // is inside.
+        self.scopes.push_barrier();
         self.scopes.push(scope);
         self.scopes.declare(self.trie, name, var).map_err(ParseError::Resolve)?;
-        // A repeated body: parse-time rebinding is off inside it.
+        // Parse-time rebinding is off inside a repeated body.
         self.runtime_depth += 1;
         self.expect_open()?;
         let body = self.parse_sequence()?;
         self.expect_close()?;
         self.runtime_depth -= 1;
         self.scopes.pop();
+        self.scopes.pop_barrier();
         // SAFETY: `body` is the reduced dyad just parsed.
         if unsafe { contains_return(&types, body) } {
             return Err(ParseError::EarlyReturn);
@@ -2541,30 +2571,61 @@ impl<'a> Parser<'a> {
     /// [`Parser::parse_address_of`] it yields the *place node itself* (not an
     /// `addr`), which the teardown builder reads to check owning-ness and reach
     /// the pointer's storage. A capture (an enclosing frame's local) is rejected.
-    pub(crate) fn parse_place_operand(&mut self) -> Result<DyadPtr, ParseError> {
+    ///
+    /// With `ends_name`, the operand is one that makes its name dead (`own`,
+    /// `drop`; never `free`, the raw teardown): a bare name — not a `.field`
+    /// chain, which empties a field and leaves the name — comes back as the
+    /// [`Ended`] the caller hands to [`Parser::mark_dead`] once its node exists,
+    /// and a name declared outside a loop or `fn` body the operand sits in is
+    /// refused ([`ParseError::OwnOfOuterName`], DESIGN ›Memory and concurrency‹,
+    /// *Bodies that run again or later*).
+    pub(crate) fn parse_place_operand(
+        &mut self,
+        ends_name: bool,
+    ) -> Result<(DyadPtr, Option<Ended>), ParseError> {
         self.skip_trivia();
         let source = self.source;
         if self.pos >= source.len() {
             return Err(ParseError::MissingOperand);
         }
+        let start = self.pos;
         let r = self
             .scopes
-            .resolve(self.trie, &source[self.pos..])
+            .resolve(self.trie, &source[start..])
             .map_err(ParseError::Resolve)?;
         if !matches!(self.classify(r.identity), Class::Operand) {
             return Err(ParseError::MissingOperand);
         }
         self.pos += r.matched;
         let mut node = r.identity;
+        let mut chained = false;
         while self.consume_token(self.types.dot_) {
             // SAFETY: `node` is a resolved dyad from the store.
             node = unsafe { self.parse_field_access(node)? };
+            chained = true;
         }
+        let ended = if ends_name && !chained {
+            if self.scopes.crosses_barrier(r.scope) {
+                self.pos = start;
+                return Err(ParseError::OwnOfOuterName);
+            }
+            let name = source[start..start + r.matched].to_string();
+            Some(Ended { name, scope: r.scope, identity: r.identity })
+        } else {
+            None
+        };
         // SAFETY: `node` is a resolved dyad from the store.
         unsafe {
             self.check_capture(node)?;
         }
-        Ok(node)
+        Ok((node, ended))
+    }
+
+    /// The `own`/`drop` node `node` has emptied `ended`'s place: its name is dead
+    /// from here on (DESIGN ›Memory and concurrency‹, *`own` and `drop` are
+    /// static*). See [`ScopeStack::mark_dead`].
+    pub(crate) fn mark_dead(&mut self, ended: Ended, node: DyadPtr) {
+        self.scopes.mark_dead(self.trie, &ended.name, ended.scope, ended.identity, node);
     }
 
     /// Consume an `else` if the next token is one, reporting whether it was.

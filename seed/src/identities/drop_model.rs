@@ -112,21 +112,30 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     let alloc_leaf = callable::mint_native(cx.store, cs.callable, run_alloc, cs.seed_native);
 
     // `own a`: move out of a place; yields the pointer, empties the source.
+    // `own a`: move the pointer out, emptying the source; `a` is dead from here
+    // (DESIGN ›Memory and concurrency‹, *`own` and `drop` are static*).
     let own_ = keyword(cx, "own", &["place", "pointee", "op"], |p, _id, tape| {
-        let place = p.parse_place_operand()?;
+        let (place, ended) = p.parse_place_operand(true)?;
         let types = p.types();
         let node = build_teardown(p.store(), &types, types.own_, place, true)?;
         tape.place(node);
+        if let Some(ended) = ended {
+            p.mark_dead(ended, node);
+        }
         Ok(crate::parse::Constructed::Placed)
     });
     let own_leaf = callable::mint_native(cx.store, cs.callable, run_own, cs.seed_native);
 
-    // `drop a`: run the place's destructor eagerly and empty it.
+    // `drop a`: run the place's destructor eagerly and empty it; `a` is dead
+    // from here.
     let drop_ = keyword(cx, "drop", &["place", "pointee", "op"], |p, _id, tape| {
-        let place = p.parse_place_operand()?;
+        let (place, ended) = p.parse_place_operand(true)?;
         let types = p.types();
         let node = build_teardown(p.store(), &types, types.drop_, place, true)?;
         tape.place(node);
+        if let Some(ended) = ended {
+            p.mark_dead(ended, node);
+        }
         Ok(crate::parse::Constructed::Placed)
     });
     let drop_leaf = callable::mint_native(cx.store, cs.callable, run_drop, cs.seed_native);
@@ -136,7 +145,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     // points at heap the allocator can free; freeing a borrow (`&x`) would hand
     // a stack/global address to the allocator.
     let free_ = keyword(cx, "free", &["place", "pointee", "op"], |p, _id, tape| {
-        let place = p.parse_place_operand()?;
+        // The raw teardown verb leaves the name alive: only `own`/`drop` end it.
+        let (place, _) = p.parse_place_operand(false)?;
         let types = p.types();
         let node = build_teardown(p.store(), &types, types.free_, place, true)?;
         tape.place(node);
@@ -432,7 +442,7 @@ thread_local! {
 mod tests {
     use super::*;
     use crate::identities::Core;
-    use crate::parse::{Parser, ScopeStack};
+    use crate::parse::{Parser, ResolveError, ScopeStack};
     use crate::regex_trie::RegexTrie;
 
     /// Parse `src` as one top-level scope and run it with the drop model wired
@@ -533,13 +543,103 @@ mod tests {
     }
 
     #[test]
-    fn a_dropped_place_frees_only_once_even_with_a_later_free() {
-        // `drop a` then a manual `free a`: the drop empties the place, so the
-        // explicit `free` no-ops — and the scope's own `defer free a` no-ops too.
-        let (v, live) = run("a := alloc i32 4\ndrop a\nfree a\n1");
-        assert_eq!(v, 1);
+    fn a_dropped_name_takes_no_later_free() {
+        // `drop a` makes `a` dead at parse (DESIGN ›Memory and concurrency‹,
+        // *`own` and `drop` are static*): a later `free a` is a use of a dead
+        // name, refused before anything runs — the run-time flag that once made
+        // it a no-op is still there for the scope's own `defer free a`.
+        assert_eq!(
+            parse_err("a := alloc i32 4\ndrop a\nfree a\n1"),
+            ParseError::Resolve(ResolveError::Dead)
+        );
+    }
+
+    #[test]
+    fn a_dead_name_may_be_redeclared_after_own() {
+        // The two-line shape the ruling keeps: move out, then `:=` the same
+        // spelling into a fresh place. The old place's deferred free no-ops on
+        // its null, `b` frees the moved block, the new `a` frees its own — LIFO,
+        // so the new `a` (9) goes before `b` (7).
+        let (v, live) = run("a := alloc i32 7\nb := own a\na := alloc i32 9\na@ + b@");
+        assert_eq!(v, 16);
         assert_eq!(live, 0);
-        assert_eq!(free_log(), vec![4], "one free across drop + free + defer");
+        assert_eq!(free_log(), vec![9, 7], "fresh place, old teardown a no-op");
+    }
+
+    #[test]
+    fn a_read_after_own_is_refused() {
+        assert_eq!(
+            parse_err("a := alloc i32 7\nb := own a\na@"),
+            ParseError::Resolve(ResolveError::Dead)
+        );
+    }
+
+    #[test]
+    fn a_write_after_own_is_refused() {
+        // Refilling a moved-from place with `=` is declined, to stay declined:
+        // a dead name takes no writes either, only `:=`.
+        assert_eq!(
+            parse_err("a := alloc i32 7\nb := own a\na = b"),
+            ParseError::Resolve(ResolveError::Dead)
+        );
+    }
+
+    #[test]
+    fn a_pass_after_drop_is_refused_in_the_same_line() {
+        // While the line is still parsing the entry's `end` is the `drop` node
+        // itself, so the second argument already sees a dead name.
+        assert_eq!(
+            parse_err("h := fn (x : i32, p : @i32) -> i32 ( x )\na := alloc i32 1\nh(drop a, a)"),
+            ParseError::Resolve(ResolveError::Dead)
+        );
+    }
+
+    #[test]
+    fn a_move_inside_a_nested_block_ends_the_outer_name_after_the_block() {
+        // *Nested block*: maybe-moved is moved for the name. After the `if`
+        // the outer `a` is dead whichever branch ran; the run-time null decides
+        // whether its teardown fires. A redeclaration after the block is fine.
+        assert_eq!(
+            parse_err("a := alloc i32 7\nc := i32 1\nif (c == 1) ( b := own a  b@ )\na@"),
+            ParseError::Resolve(ResolveError::Dead)
+        );
+        let (v, live) =
+            run("a := alloc i32 7\nc := i32 1\nif (c == 1) ( b := own a  b@ )\na := alloc i32 9\na@");
+        assert_eq!(v, 9);
+        assert_eq!(live, 0);
+        assert_eq!(free_log(), vec![7, 9], "b frees at the if's exit, the new a at the end");
+    }
+
+    #[test]
+    fn a_move_of_an_outer_name_inside_a_loop_body_is_refused() {
+        // *Bodies that run again or later*: the next pass would read a dead name.
+        assert_eq!(
+            parse_err("a := alloc i32 7\nc := i32 1\nwhile (c == 1) ( b := own a  c = 0 )"),
+            ParseError::OwnOfOuterName
+        );
+        assert_eq!(
+            parse_err("a := alloc i32 7\nfor i in 0..2 ( b := own a )"),
+            ParseError::OwnOfOuterName
+        );
+        assert_eq!(
+            parse_err("a := alloc i32 7\nfor i in 0..2 ( drop a )"),
+            ParseError::OwnOfOuterName
+        );
+    }
+
+    #[test]
+    fn a_move_of_an_outer_name_inside_a_fn_body_is_refused() {
+        // A function may own only what its parameters hand it.
+        assert_eq!(
+            parse_err("a := alloc i32 7\nf := fn () -> i32 ( b := own a  b@ )"),
+            ParseError::OwnOfOuterName
+        );
+        // A name declared inside the body is inside the barrier: still the
+        // ownership-across-return error, not this one.
+        assert_eq!(
+            parse_err("mk := fn () -> @i32 ( p := alloc i32 7  own p )\nmk()"),
+            ParseError::OwnershipAcrossReturn
+        );
     }
 
     #[test]
