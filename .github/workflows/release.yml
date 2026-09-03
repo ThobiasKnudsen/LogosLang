@@ -134,14 +134,13 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: seed
           key: ${{ matrix.target }}
 
       - name: Build the seed
         shell: bash
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-        run: cargo build --release --locked --manifest-path seed/Cargo.toml --target ${{ matrix.target }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       # Smoke-test what we are about to ship, everywhere the artifact is native to its
       # runner. Cross-compiled artifacts (aarch64 Linux, Intel macOS) cannot run here.
@@ -150,10 +149,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BIN="seed/target/${{ matrix.target }}/release/logos"
+          BIN="target/${{ matrix.target }}/release/logos"
           [ "${{ matrix.os }}" = "windows" ] && BIN="${BIN}.exe"
           "$BIN" --help > /dev/null
-          out="$("$BIN" seed/examples/answer.logos | tail -n1)"
+          out="$("$BIN" examples/answer.logos | tail -n1)"
           [ "$out" = "42" ] || { echo "::error::smoke test: expected 42, got '$out'"; exit 1; }
           echo "OK: $BIN runs and answer.logos evaluates to 42."
 
@@ -171,14 +170,14 @@ jobs:
           # Cargo.toml pins the binary name to `logos`; the download page and the
           # install docs both promise it at bin/logos.
           if [ "$OS" = "windows" ]; then
-            cp "seed/target/${TARGET}/release/logos.exe" "$STAGE/bin/logos.exe"
+            cp "target/${TARGET}/release/logos.exe" "$STAGE/bin/logos.exe"
           else
-            cp "seed/target/${TARGET}/release/logos" "$STAGE/bin/logos"
+            cp "target/${TARGET}/release/logos" "$STAGE/bin/logos"
             chmod +x "$STAGE/bin/logos"
           fi
           # Apache-2.0 section 4 requires these to travel with the binary.
           cp LICENSE NOTICE TRADEMARK.md "$STAGE/"
-          cp -r seed/examples "$STAGE/examples"
+          cp -r examples "$STAGE/examples"
           printf 'Logos %s (%s/%s)\n\nRun a file:  bin/logos import examples/answer.logos\nREPL:        bin/logos\nHelp:        bin/logos --help\n\nEverything after `logos` is one line of Logos source, run by the one\npass; `import` loads a file, and the importer reaches only its pub\nnames.\n\nThis is the bootstrap seed: it parses source into the Logic Graph,\ninterprets it, and lowers explicitly compiled functions to Cranelift.\nIt is not the finished language. What this release does and does not\nrun is listed at https://logoslang.dev/docs/getting-started/install/\n' "$TAG" "$OS" "$ARCH" > "$STAGE/README.txt"
           echo "STAGE=$STAGE" >> "$GITHUB_ENV"
 

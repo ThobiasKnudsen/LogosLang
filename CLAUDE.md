@@ -22,7 +22,7 @@ A spent version also freezes its docs. `docs-check.sh validate` treats any `docs
 
 Before pushing any version tag:
 
-1. `cargo test --release --manifest-path seed/Cargo.toml` is green.
+1. `cargo test --release` is green.
 2. `bash .github/scripts/docs-check.sh validate` passes.
 3. `bash .github/scripts/docs-check.sh release vX.Y.Z` passes — this is the exact check the `gate` job runs, and the in-progress `docs/vX.Y.Z/` folder must be named for the version being released.
 4. `bash .github/scripts/docs-check.test.sh` passes (the guard's own self-test).

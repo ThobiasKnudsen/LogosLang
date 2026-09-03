@@ -56,7 +56,7 @@ Pushing a `vX.Y.Z` tag to `main` builds the per-OS/arch archives, creates the Gi
 So run the gates locally before tagging, never to find out whether they pass:
 
 ```
-cargo test --release --manifest-path seed/Cargo.toml
+cargo test --release
 bash .github/scripts/docs-check.sh validate
 bash .github/scripts/docs-check.sh release vX.Y.Z   # the exact check the gate job runs
 bash .github/scripts/docs-check.test.sh
