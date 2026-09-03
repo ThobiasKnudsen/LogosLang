@@ -267,6 +267,30 @@ fn the_repl_keeps_an_owning_binding_alive_across_lines() {
 }
 
 #[test]
+fn the_repl_reuses_a_name_after_drop() {
+    // DESIGN ›Name resolution is scope-filtered‹ (3 September 2026): a session
+    // name is recycled by `drop n` then `n := …`, and between the two the dead
+    // name refuses a read instead of reporting "shadowed" forever.
+    let (echoes, stderr) = repl(b"n := i32 5\ndrop n\nn\nn := i32 6\nn\n");
+    assert_eq!(echoes, ["6"], "stderr: {stderr}");
+    assert!(
+        stderr.contains("<repl>:1:1: error: this name is dead here"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn a_failed_repl_line_restores_a_moved_name() {
+    // A line that moves `a` out and then fails is rolled back whole: the dead
+    // mark lifts with the line's declarations, so `a` reads on the next line
+    // as if the line had never been typed.
+    let (echoes, stderr) = repl(b"a := alloc i32 5\nr := ( b := own a  b@ ) + nosuch\na@\n");
+    assert_eq!(echoes, ["5"], "stderr: {stderr}");
+    assert!(stderr.contains("unknown name"), "stderr: {stderr}");
+    assert!(!stderr.contains("dead"), "stderr: {stderr}");
+}
+
+#[test]
 fn an_owning_value_that_nothing_can_free_is_refused() {
     // The fail-closed edge of the drop model: an owning value with no name to
     // attach its teardown to is refused at parse rather than leaked at run.
