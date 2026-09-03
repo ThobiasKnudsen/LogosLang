@@ -55,9 +55,12 @@
 //! declines to compile and stays interpreted (the sanctioned deopt, Q4 ruling),
 //! so heap paths run on the body-walk in both tiers.
 
+use cranelift_codegen::ir::Value;
+
 use super::callable::{self, Callables};
 use super::numtype;
 use super::{meta, Cx};
+use crate::compile::{CompileError, Lowerer};
 use crate::id_context::IdContext;
 use crate::parse::{Assoc, CoreTypes, ParseError};
 use crate::run::{RunError, Runtime};
@@ -127,17 +130,27 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     let own_leaf = callable::mint_native(cx.store, cs.callable, run_own, cs.seed_native);
 
     // `drop a`: run the place's destructor eagerly and empty it; `a` is dead
-    // from here.
+    // from here. Any identity may be dropped (DESIGN ›Memory and concurrency‹:
+    // "drop x applies to any identity, running its destructor where one is set
+    // and emptying the place either way, so one verb releases a name whatever
+    // its type"): an owning place gets the teardown node, anything else an
+    // inert `drop` node — the emptying is the parse-time dead mark, and the
+    // run-time write is not needed, since no later use can observe the place.
     let drop_ = keyword(cx, "drop", &["place", "pointee", "op"], |p, _id, tape| {
         let (place, ended) = p.parse_place_operand(true)?;
         let types = p.types();
-        let node = build_teardown(p.store(), &types, types.drop_, place, true)?;
+        let node = if is_owning_place(place) {
+            build_teardown(p.store(), &types, types.drop_, place, true)?
+        } else {
+            build_inert_drop(p.store(), &types, place)
+        };
         tape.place(node);
         if let Some(ended) = ended {
             p.mark_dead(ended, node);
         }
         Ok(crate::parse::Constructed::Placed)
     });
+    cx.lower.insert(drop_, lower_drop);
     let drop_leaf = callable::mint_native(cx.store, cs.callable, run_drop, cs.seed_native);
 
     // `free a`: the teardown the binding site inserts; user-writable too. Like
@@ -281,6 +294,43 @@ pub(crate) fn build_teardown(
     Ok(store.alloc_raw(op_id, value))
 }
 
+/// Whether `place`'s logos is an owning pointer: a pointer type whose
+/// `destructor` slot is set (the node `alloc` built, or an `own`-bound place),
+/// as opposed to a borrow or a plain value.
+///
+/// # Safety-free at the call boundary; reads `place`'s logos, which must be a
+/// reduced dyad from the store.
+fn is_owning_place(place: DyadPtr) -> bool {
+    // SAFETY: `place` is a reduced dyad; its logos is a valid logos node.
+    unsafe {
+        let logos = (*place).ty;
+        numtype::is_pointer_type(logos) && !meta::destructor_of(logos).is_null()
+    }
+}
+
+/// Build the `drop` node for a non-owning place: `[place, null, op]`, the
+/// null pointee marking that there is no destructor to run and nothing to
+/// free. It runs and lowers to unit; its work is done at parse, where the
+/// name became dead. It still stands in the body as the emptying node
+/// reflection reads (DESIGN ›Name resolution is scope-filtered‹).
+fn build_inert_drop(store: &mut Store, types: &CoreTypes, place: DyadPtr) -> DyadPtr {
+    let value = store.alloc_operands(&[place, std::ptr::null_mut(), types.ops.drop_]);
+    store.alloc_raw(types.drop_, value)
+}
+
+/// Lower a `drop` node: the inert form (null pointee) is unit; the owning form
+/// has no lowering, like `alloc`/`free`, so the function declines to compile
+/// and stays interpreted (the sanctioned deopt).
+fn lower_drop(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: `node` is a `drop` node `[place, pointee, op]` from the store.
+    let pointee = unsafe { *((*node).value as *const DyadPtr).add(TEARDOWN_POINTEE) };
+    if pointee.is_null() {
+        Ok(lw.const_i32(0))
+    } else {
+        Err(CompileError::NotLowerable(node))
+    }
+}
+
 /// Build a `defer <inner>` node `[inner, op]`.
 pub(crate) fn build_defer(store: &mut Store, types: &CoreTypes, inner: DyadPtr) -> DyadPtr {
     let value = store.alloc_operands(&[inner, types.ops.defer_]);
@@ -389,15 +439,20 @@ fn run_teardown(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 }
 
 /// Run `drop`: read the destructor off the place's logos and invoke it, so the
-/// teardown genuinely flows through the reserved `destructor` slot. Rejecting a
-/// null destructor cannot happen here — `build_teardown` demanded an owning place
-/// at parse — so a null slot is a malformed node.
+/// teardown genuinely flows through the reserved `destructor` slot. The inert
+/// form (a null pointee: a non-owning place, dropped only to end its name) is
+/// unit. Otherwise a null destructor cannot happen here — `build_teardown`
+/// demanded an owning place at parse — so a null slot is a malformed node.
 fn run_drop(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a `drop` node; its place's logos carries the destructor
-    // (owning-ness checked at parse), whose entry is a `RunFn` reading the same
-    // `[place, pointee, op]` layout this node has.
+    // SAFETY: `node` is a `drop` node; in the owning form its place's logos
+    // carries the destructor (owning-ness checked at parse), whose entry is a
+    // `RunFn` reading the same `[place, pointee, op]` layout this node has.
     unsafe {
-        let place = *((*node).value as *const DyadPtr).add(TEARDOWN_PLACE);
+        let slots = (*node).value as *const DyadPtr;
+        if (*slots.add(TEARDOWN_POINTEE)).is_null() {
+            return Ok(0);
+        }
+        let place = *slots.add(TEARDOWN_PLACE);
         let dtor = meta::destructor_of((*place).ty);
         if dtor.is_null() || !callable::is_callable(dtor) {
             return Err(RunError::BadValue);
@@ -625,6 +680,30 @@ mod tests {
             parse_err("a := alloc i32 7\nfor i in 0..2 ( drop a )"),
             ParseError::OwnOfOuterName
         );
+    }
+
+    #[test]
+    fn drop_frees_the_name_of_a_plain_value() {
+        // One verb releases a name whatever its type: `drop n` on an i32 ends
+        // `n` at parse and runs to unit, and the spelling is free for `:=`.
+        let (v, live) = run("n := i32 5\ndrop n\nn := i32 6\nn");
+        assert_eq!(v, 6);
+        assert_eq!(live, 0);
+        assert_eq!(
+            parse_err("n := i32 5\ndrop n\nn + 1"),
+            ParseError::Resolve(ResolveError::Dead)
+        );
+    }
+
+    #[test]
+    fn a_dropped_parameter_is_reusable_in_its_body_and_still_compiles() {
+        // A parameter is same-level with the body (DESIGN ›A function's
+        // surface‹): `drop n` ends it from that line, the redeclaration gets a
+        // fresh frame slot, and the inert drop lowers to unit, so the function
+        // compiles rather than declining like a heap path would.
+        let (v, live) = run("f := fn (n : i32) -> i32 ( drop n  n := i32 4  n )\nf.compile()\nf(1)");
+        assert_eq!(v, 4);
+        assert_eq!(live, 0);
     }
 
     #[test]

@@ -57,6 +57,7 @@ unsafe fn is_statement_node(core: &Core, node: seed::dyad::DyadPtr) -> bool {
         || logos == core.compile_
         || logos == core.import_
         || logos == core.type_
+        || logos == core.drop_
 }
 
 /// Whether an imported file's tail is a true statement, with no value worth
