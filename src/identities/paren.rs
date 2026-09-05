@@ -16,28 +16,19 @@ use crate::id_context::IdContext;
 /// compare against them). The spellings are escaped (`\(`, `\)`) because
 /// `(`/`)` are regex metacharacters; escaped, they lex as literal single bytes.
 pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
-    // `(` is a *tight extender*: with a completed dyad to its left it is a
-    // call (juxtaposition binds tightest — DESIGN ›the call paren tightest‹),
-    // without one its constructor opens a grouping scope.
+    // `(` is one identity at the discovery threshold and it builds a group,
+    // never a call: `X (…)` is X's constructor's decision (DESIGN ›The scope's
+    // constructor is the driver‹, ruled 3 September 2026; #59 step 2) — a
+    // function value, a record logos, and a numeric logos each consume the
+    // bracket to their right themselves. Two operands left side by side, as
+    // in `(1 + 2) (3)`, are the checked error, not a call.
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::OPEN);
     let open = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(r"\(", IdContext::new(open, cx.root_scope));
     cx.metas.insert(open, |p, _id, tape| {
-        // The model's `tape[-1]`: a completed operand makes this a call on it
-        // (`f(x)`, `i32(x)`, `point(3, 4)`), the callee consumed; none opens a
-        // grouping scope whose value is its body.
-        match p.left_operand(tape)? {
-            Some(callee) => {
-                let node = p.parse_call(callee)?;
-                tape.remove(-1); // the consumed callee
-                tape.place(node);
-            }
-            None => {
-                let body = p.parse_sequence()?;
-                p.expect_close()?;
-                tape.place(body);
-            }
-        }
+        let body = p.parse_sequence()?;
+        p.expect_close()?;
+        tape.place(body);
         Ok(crate::parse::Constructed::Placed)
     });
 

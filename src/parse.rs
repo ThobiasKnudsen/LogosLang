@@ -851,6 +851,16 @@ enum Class {
     Delimiter,
 }
 
+/// The application constructor as a [`ConstructFn`] (see
+/// [`Parser::construct_application`]).
+fn application(
+    p: &mut Parser,
+    id: DyadPtr,
+    tape: &mut ParsingTape,
+) -> Result<Constructed, ParseError> {
+    p.construct_application(id, tape)
+}
+
 /// Every identity's parse-time constructor — the one `seed-parse` entry
 /// signature its constructor-slot leaf carries. The constructor receives the
 /// parser (a service it re-enters for `parse_expression`, the expect-helpers,
@@ -1422,11 +1432,24 @@ impl<'a> Parser<'a> {
         // SAFETY: `id` is a resolved dyad from the store; the record read is
         // gated on it being a logos identity whose registration built the record.
         unsafe {
-            if id.is_null()
-                || (*id).ty != self.types.type_
-                || crate::identities::meta::kind_of(id).is_none()
-            {
+            if id.is_null() {
                 return Class::Operand;
+            }
+            // An instance of `fn` — a function value, or the declaration
+            // placeholder a recursive self-call resolves — runs its type's
+            // shared constructor, application (#59 step 2; DESIGN ›a call
+            // `f(a)` is that same cell consumed by the callee's own
+            // constructor‹).
+            if (*id).ty == self.types.fn_type {
+                return Class::Construct(application);
+            }
+            if (*id).ty != self.types.type_ || crate::identities::meta::kind_of(id).is_none() {
+                return Class::Operand;
+            }
+            // A record logos applied to its field values constructs an instance:
+            // the same shared constructor, on the logos itself.
+            if crate::identities::meta::is_record_type(id) {
+                return Class::Construct(application);
             }
             let Some(c) = self.construct_of(id) else {
                 return if crate::identities::meta::kind_of(id)
@@ -1457,6 +1480,28 @@ impl<'a> Parser<'a> {
             }
             Class::Construct(c)
         }
+    }
+
+    /// Application — the constructor an instance of `fn`, a record logos, or
+    /// (through its own constructor) a numeric logos runs for the bracket to
+    /// its right: DESIGN ›`X (…)` is one spelling, and X's constructor decides
+    /// what the bracket is‹ — a call, an instance construction, a conversion —
+    /// never `(`'s decision, which builds a group and nothing else (#59 step
+    /// 2). Without a `(` directly ahead the identity stands as its own value
+    /// (`f(i32, 3)` passes the logos; `g := f` names the function).
+    pub(crate) fn construct_application(
+        &mut self,
+        id: DyadPtr,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        if self.at_open() {
+            self.expect_open()?;
+            let node = self.parse_call(id)?;
+            tape.place(node);
+        } else {
+            tape.place(id);
+        }
+        Ok(Constructed::Placed)
     }
 
     /// Invoke `id`'s constructor over a fresh single-token tape — the
@@ -1654,7 +1699,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Consume the `(` that opens a field list, or fail.
-    fn expect_open(&mut self) -> Result<(), ParseError> {
+    pub(crate) fn expect_open(&mut self) -> Result<(), ParseError> {
         if self.consume_token(self.types.open_) {
             Ok(())
         } else {
@@ -3725,6 +3770,19 @@ impl<'a> Parser<'a> {
                 // Handled by the delimiter break above.
                 Class::Delimiter => {
                     unreachable!("a delimiter ends the loop")
+                }
+            }
+        }
+        // A spelling nobody declared is the first thing to report — at its
+        // own position — before any reduction over the cells around it
+        // (`helper(1)` on a name the importer cannot see): the boundary rule
+        // of DESIGN ›The scope's constructor is the driver‹, an unconstructed
+        // cell being the checked error.
+        if tape.len() > 1 {
+            for i in 0..tape.len() {
+                let cell = *tape.cell(i).expect("in range");
+                if matches!(cell, Cell::Token(t) if t.identity.is_null()) {
+                    self.as_operand(cell)?;
                 }
             }
         }

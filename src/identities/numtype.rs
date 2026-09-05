@@ -159,10 +159,11 @@ pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr
 /// value is written by juxtaposition — `i32 32`, the logos preceding the
 /// value‹): consume a directly following rational literal (or `- <rational>`,
 /// the negated literal) and commit it exactly to this logos, an anonymous typed
-/// value with real storage. Anything else — `,`, an operator, a name, `(` —
-/// declines the right, and the constructor "yields its own dyad as-is — the
-/// logos as a value" (DESIGN ›Expressions are self-delimiting‹): the logos node
-/// itself, so `i32(x)` casts and `f(i32, 3)` passes the logos.
+/// value with real storage; a directly following `(` is the conversion
+/// `i32(x)`. Anything else — `,`, an operator, a name — declines the right,
+/// and the constructor "yields its own dyad as-is — the logos as a value"
+/// (DESIGN ›Expressions are self-delimiting‹): the logos node itself, so
+/// `f(i32, 3)` passes the logos.
 fn construct(
     p: &mut crate::parse::Parser,
     id: DyadPtr,
@@ -176,6 +177,13 @@ fn construct(
         // SAFETY: `l` is the literal just built; `id` is this numeric logos's
         // registered node.
         Some(l) => unsafe { super::commit_literal_to(p.store(), l, id) }?,
+        // `i32(x)`: the bracket is this logos's to read — a conversion (DESIGN
+        // ›a numeric type applied to a value is the conversion, per-constructor
+        // rather than a uniform cast syntax‹), never `(`'s call (#59 step 2).
+        None if p.at_open() => {
+            p.expect_open()?;
+            p.parse_call(id)?
+        }
         None => id,
     };
     tape.place(node);
