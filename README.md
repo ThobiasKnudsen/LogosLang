@@ -20,16 +20,16 @@ This is the bootstrap seed: it parses source into the Logic Graph, interprets it
 Logos runs source by interpreting the Logic Graph. Calling `.compile()` on a function lowers its body to machine code (Cranelift) and installs it, so the next call jumps instead of walking the body. Compilation is directed in source, never by compiler flags.
 
 ```
-sum_to := fn (n : i64) -> i64 (
-    i := i64 0
-    s := i64 0
-    while (i < n) (
-        s = s + i
+sum_to := fn (n := i64 ?) -> i64 (
+    i := i64 0,
+    s := i64 0,
+    while i < n (
+        s = s + i,
         i = i + 1
-    )
+    ),
     s
-)
-sum_to.compile()
+),
+sum_to.compile(),
 sum_to(1000000000)
 ```
 

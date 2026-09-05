@@ -1,29 +1,35 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The parsing tape: the working frontier the constructors drive.
+//! The parsing tape and the driver: the scope's constructor lexing and
+//! constructing its segments (DESIGN ›The scope's constructor is the driver‹,
+//! the eager-segment model ruled 30 August 2026; converged here in #59).
 //!
-//! The tape holds both the dyads reduced so far but not yet final and the tokens
-//! still to consume (see DESIGN ›Elaboration is deferred-reduction operator
-//! precedence‹). Indexing is relative to the `cursor`, the cell of the identity
-//! currently being constructed: offset 0 is the cursor, negative offsets reach
-//! left into reduced context, positive offsets reach right into pending tokens.
-//! `insert`/`remove` splice the frontier and keep the cursor pointing at the
-//! same cell, which is the whole macro / custom-syntax mechanism.
+//! The tape is a segment's working frontier — the cells lexed since the last
+//! boundary, each a pending token, a constructed dyad, or a bracket — indexed
+//! relative to the `cursor`, the cell of the identity being constructed:
+//! offset 0 is the cursor, negative offsets reach left, positive right.
+//! `insert`/`remove` splice the frontier and keep the cursor on the same cell,
+//! which is the whole macro / custom-syntax mechanism.
 //!
-//! This module holds the parser's own state: the tape substrate (above), the
-//! scope stack, and name resolution over it. The parser owns resolution; the
-//! trie ([`crate::regex_trie`]) is only the name index. The driver is the
-//! minimal deferred-reduction loop DESIGN describes — lex the next token,
-//! classify it from its record alone ([`Parser::classify`]: constructor
-//! presence, the precedence field, the record kind), shift or reduce — and
-//! each identity's `constructor` ([`ConstructFn`]) does the actual
-//! consumption: operands and fresh names ride the tape as token cells,
-//! converted at consumption, and a construct reads its left context back off
-//! the tape and its operands forward from source. Still to come: deferred
-//! *resolution* (a resolved token's identity fixed only at reduction, which
-//! token-rewriting macros need — the fresh-name declaration path already
-//! works this way) and constructor-driven `insert`/`remove` splicing.
+//! The driver ([`Parser::lex_segment`], [`Parser::construct_segment`]) lexes
+//! one token at a time, constructing at discovery every identity at or above
+//! `(` on the one precedence axis ([`crate::identities::meta::prec`]) — the
+//! brackets, the literals, `#`, `import`, `:=`, and the identities that read
+//! their own bracket or right side — and, at the segment boundary (`,`, the
+//! closer, the end of input), constructs the rest highest precedence first,
+//! associativity breaking ties, each constructor taking what its syntax needs
+//! from the fully lexed segment, left or right, with no lookahead. A leftover
+//! cell is the checked error; prose is lifted out beside the segment's
+//! expression. Each identity's `constructor` ([`ConstructFn`]) edits the tape
+//! in place and reports applied or declined; the driver decides only *when*.
+//!
+//! This module also holds the scope stack and name resolution over it. The
+//! parser owns resolution; the trie ([`crate::regex_trie`]) is only the name
+//! index. Still to come: the tape's four affordances as Logos-reachable
+//! identities and a cell as a bare dyad pointer with `is_constructed` beside
+//! it (#60), constructors written in Logos and a precedence spelled relative
+//! to another's (#61), `lex «…»` (#62).
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
