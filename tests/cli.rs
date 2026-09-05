@@ -202,7 +202,7 @@ fn the_repl_echoes_values_but_not_declarations_or_assignments() {
         .stdin
         .as_mut()
         .unwrap()
-        .write_all(b"x := i32 5\nx = 40\ndouble := fn (a : i32) -> i32 ( a + a )\nzz\ndouble(x) + 2\n")
+        .write_all(b"x := i32 5\nx = 40\ndouble := fn (a := i32 ?) -> i32 ( a + a )\nzz\ndouble(x) + 2\n")
         .unwrap();
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success());
@@ -247,7 +247,7 @@ fn the_repl_rolls_back_a_failed_lines_declarations() {
     // same spelling declares cleanly on the next line instead of reporting
     // "shadowed" for the rest of the session.
     let (echoes, stderr) = repl(
-        b"b := )\nb := 5\nf := fn (v : i32) -> i32 ( v )\ng := f(1,2)\ng := f(3)\ng + b\n",
+        b"b := )\nb := 5\nf := fn (v := i32 ?) -> i32 ( v )\ng := f(1,2)\ng := f(3)\ng + b\n",
     );
     assert_eq!(echoes, ["8"], "stderr: {stderr}");
     assert!(stderr.contains("nothing to evaluate here"), "stderr: {stderr}");
@@ -307,7 +307,7 @@ fn the_repl_compiles_a_fn_across_lines() {
     // next line jumps to it. The compile itself is a silent statement, so the
     // only echo is the call's value.
     let (echoes, stderr) = repl(
-        b"double := fn (x : i64) -> i64 ( x + x )\ndouble.compile()\ndouble(21)\n",
+        b"double := fn (x := i64 ?) -> i64 ( x + x )\ndouble.compile()\ndouble(21)\n",
     );
     assert_eq!(echoes, ["42"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -335,7 +335,7 @@ fn the_repl_binds_a_name_to_a_type() {
     // logos): it works by juxtaposition, as a conversion, and in a fn
     // signature; declaring it and echoing the bare logos are silent.
     let (echoes, stderr) = repl(
-        b"t := i32\nx := t 7\nt(9)\nf := fn (v : t) -> t ( v + v )\nt\nf(x)\n",
+        b"t := i32\nx := t 7\nt(9)\nf := fn (v := t ?) -> t ( v + v )\nt\nf(x)\n",
     );
     assert_eq!(echoes, ["9", "14"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -379,7 +379,7 @@ fn a_type_returning_function_resolves_at_comptime() {
     // Roadmap #30 Phase 2: a `-> logos` call is run during parsing and becomes the
     // concrete logos it yields, so it flows through `==` and `:=` like any logos.
     let (echoes, stderr) = repl(
-        b"pick := fn (i:i32) -> logos (if (i==0)(i32) else (f64))\n\
+        b"pick := fn (i := i32 ?) -> logos (if (i==0)(i32) else (f64))\n\
           pick(0) == i32\npick(1) == f64\npick(0) == f64\nt := pick(0)\nt == i32\n",
     );
     assert_eq!(echoes, ["true", "true", "false", "true"], "stderr: {stderr}");
@@ -413,30 +413,30 @@ fn a_type_call_with_a_runtime_argument_is_rejected() {
     // A `-> logos` call is comptime-only; an argument not known at parse time (here a
     // function parameter) is reported, not silently mis-evaluated.
     let (_echoes, stderr) = repl(
-        b"pick := fn (i:i32) -> logos (if (i==0)(i32) else (f64))\n\
-          g := fn (n:i32) -> i32 ( a := pick(n), 1 )\n",
+        b"pick := fn (i := i32 ?) -> logos (if (i==0)(i32) else (f64))\n\
+          g := fn (n := i32 ?) -> i32 ( a := pick(n), 1 )\n",
     );
     assert!(stderr.contains("must be evaluable at parse time"), "stderr: {stderr}");
 }
 
 #[test]
 fn a_logos_declaration_declares_a_place_of_that_type() {
-    // `a : i32` introduces the name with its logos slot set and its value
+    // `a := i32 ?` introduces the name with its logos slot set and its value
     // undefined (zeroed until phase bits land): the declaration is silent,
     // `.logos` reflects the declared logos, `=` fills the value, reads load it.
-    let (echoes, stderr) = repl(b"a : i32\n(dyad a).type == i32\na = 9\na\n");
+    let (echoes, stderr) = repl(b"a := i32 ?\n(dyad a).type == i32\na = 9\na\n");
     assert_eq!(echoes, ["true", "9"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
 
 #[test]
 fn a_dependent_typed_declaration_takes_a_computed_type() {
-    // `b : metalogos(1)` — the declared logos is the result of running a
+    // `b := metalogos(1) ?` — the declared logos is the result of running a
     // `-> logos` function at parse time (roadmap #30): the dependent
     // declaration is the same declaration, its logos just computed.
     let (echoes, stderr) = repl(
-        b"metalogos := fn (i:i32) -> logos (if (i==0)(i32) else (f64))\n\
-          b : metalogos(1)\n(dyad b).type == f64\nb = 7\nb\n",
+        b"metalogos := fn (i := i32 ?) -> logos (if (i==0)(i32) else (f64))\n\
+          b := metalogos(1) ?\n(dyad b).type == f64\nb = 7\nb\n",
     );
     assert_eq!(echoes, ["true", "7.0"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -452,26 +452,28 @@ fn a_logos_declaration_works_after_other_code() {
 
 #[test]
 fn a_logos_declaration_rejects_a_non_type() {
-    let (_echoes, stderr) = repl(b"a : 5\n");
-    assert!(stderr.contains("must be a type value"), "stderr: {stderr}");
+    // `5 ?`: a hole after a value is no declared type — two cells where one
+    // must stand, the leftover error.
+    let (_echoes, stderr) = repl(b"a := 5 ?\n");
+    assert!(stderr.contains("expected one expression, found more"), "stderr: {stderr}");
 }
 
 #[test]
 fn a_logos_declaration_names_the_non_numeric_gap() {
-    // Storage for `a : bool` (and struct/pointer/void declarations) is not in
-    // the seed yet; the error names the gap instead of mis-storing. (`a : logos`
+    // Storage for `a := bool ?` (and struct/pointer/void declarations) is not in
+    // the seed yet; the error names the gap instead of mis-storing. (`a := logos ?`
     // is no longer a gap — it declares a logos variable.)
-    let (_echoes, stderr) = repl(b"a : bool\n");
+    let (_echoes, stderr) = repl(b"a := bool ?\n");
     assert!(stderr.contains("non-numeric types are not in the seed yet"), "stderr: {stderr}");
 }
 
 #[test]
 fn a_logos_variable_declares_fills_once_and_becomes_the_type() {
-    // `a : logos` declares a logos variable (an undefined logos); `a = i32` fills
+    // `a := logos ?` declares a logos variable (an undefined logos); `a = i32` fills
     // it at parse — comptime rebinding — after which the name is a full
     // spelling of the logos: `==` folds, juxtaposition builds typed values.
     let (echoes, stderr) = repl(
-        b"a : logos\n(dyad a).type == logos\na == i32\na = i32\na == i32\ny := a 5\ny\n",
+        b"a := logos ?\n(dyad a).type == logos\na == i32\na = i32\na == i32\ny := a 5\ny\n",
     );
     assert_eq!(echoes, ["true", "false", "true", "5"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -482,11 +484,11 @@ fn a_logos_variable_fill_is_define_once_and_comptime_only() {
     // A second fill finds a real logos, not the placeholder, and is an ordinary
     // (rejected) assignment; a fill inside a fn body is rejected explicitly —
     // it would rebind at parse, where parse and run do not coincide.
-    let (_e1, stderr1) = repl(b"a : logos\na = i32\na = f64\n");
+    let (_e1, stderr1) = repl(b"a := logos ?\na = i32\na = f64\n");
     assert!(stderr1.contains("not an assignable place"), "stderr: {stderr1}");
-    let (_e2, stderr2) = repl(b"a : logos\ng := fn () -> i32 ( a = i32, 1 )\n");
+    let (_e2, stderr2) = repl(b"a := logos ?\ng := fn () -> i32 ( a = i32, 1 )\n");
     assert!(stderr2.contains("where parsing and running coincide"), "stderr: {stderr2}");
-    let (_e3, stderr3) = repl(b"a : logos\na = 5\n");
+    let (_e3, stderr3) = repl(b"a := logos ?\na = 5\n");
     assert!(stderr3.contains("must be a type value"), "stderr: {stderr3}");
 }
 
@@ -496,7 +498,7 @@ fn logical_operators_fold_over_bool_literals() {
     // what keeps a comptime chain comptime; runtime operands still build nodes.
     let (echoes, stderr) = repl(
         b"true or false\ntrue and true\nnot (true)\n\
-          a : logos\nif ((dyad a).type == f32 or (dyad a).type == logos) (a = f64) else (a = i32)\na == f64\n",
+          a := logos ?\nif ((dyad a).type == f32 or (dyad a).type == logos) (a = f64) else (a = i32)\na == f64\n",
     );
     assert_eq!(echoes, ["true", "true", "false", "true"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -506,13 +508,13 @@ fn logical_operators_fold_over_bool_literals() {
 fn a_comptime_if_drops_the_untaken_branch_unparsed() {
     // The condition folds to a bool literal at parse time (`(dyad a).type == i32`), so
     // the `if` resolves during parsing and the untaken branch's tokens are
-    // dropped unlexed: `a = 9.9` under `a : i32` would be a parse error
+    // dropped unlexed: `a = 9.9` under `a := i32 ?` would be a parse error
     // (UncomputableLiteral) if it were ever parsed — the proof it was skipped
     // is that this runs at all. A comptime-false chain link falls through to
     // the branch whose condition holds.
     let (echoes, stderr) = repl(
-        b"a : i32\nif ((dyad a).type == i32) (a = 9) else (a = 9.9)\na\n\
-          b : f64\nif ((dyad b).type == i32) (b = 1) else if ((dyad b).type == f64) (b = 2.5) else (b = 3)\nb\n",
+        b"a := i32 ?\nif ((dyad a).type == i32) (a = 9) else (a = 9.9)\na\n\
+          b := f64 ?\nif ((dyad b).type == i32) (b = 1) else if ((dyad b).type == f64) (b = 2.5) else (b = 3)\nb\n",
     );
     assert_eq!(echoes, ["9", "2.5"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -521,7 +523,7 @@ fn a_comptime_if_drops_the_untaken_branch_unparsed() {
 #[test]
 fn the_metatypefn_example_runs() {
     // The station #30 north-star, end to end: a `-> logos` fn computes the logos,
-    // `a : metalogos(…)` declares with it, and a comptime `if` dispatches on
+    // `a := metalogos(…) ?` declares with it, and a comptime `if` dispatches on
     // `a.logos`, skipping the untaken branches unparsed. The expected value
     // tracks the file's current argument (2 → f64 → the middle arm assigns 9.9;
     // the deep arm is pinned separately by the metalogos_arm fixture).
@@ -532,8 +534,8 @@ fn the_metatypefn_example_runs() {
 
 #[test]
 fn the_metalogos_arm_fills_a_logos_variable() {
-    // The deep arm the example reaches with argument 3: `a : metalogos(3)` is
-    // `a : logos` — a logos variable — and the comptime chain's last arm fills it
+    // The deep arm the example reaches with argument 3: `a := metalogos(3) ?` is
+    // `a := logos ?` — a logos variable — and the comptime chain's last arm fills it
     // with the logos i32, so the program's value IS a logos and prints `i32`.
     let out = logos().args(["import", "tests/fixtures/metalogos_arm.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));

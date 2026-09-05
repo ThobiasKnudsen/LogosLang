@@ -139,6 +139,9 @@ pub(crate) mod prec {
     /// cell — "the tight juxtaposition just below `(`" — above the member and
     /// dereference reads, so `f(x).y` and `f(x)@` read the call's result.
     pub const APPLY: f64 = 88.0;
+    /// `?`: just below application, so `i32 ?` and `@i32 ?` find their type
+    /// standing to the left.
+    pub const HOLE: f64 = 87.0;
     /// `.` and `@`: the member and dereference reads.
     pub const DOT: f64 = 86.0;
     /// `&`.

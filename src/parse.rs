@@ -696,7 +696,7 @@ pub struct CoreTypes {
     pub while_: DyadPtr,
     /// `for`: the counted-loop statement; unit-valued like `while`.
     pub for_: DyadPtr,
-    /// The `logos : logos` root; pointer logos nodes are typed by it.
+    /// The `logos := logos ?` root; pointer logos nodes are typed by it.
     pub type_: DyadPtr,
     /// `deref`: the dereference node postfix `@` builds.
     pub deref_: DyadPtr,
@@ -784,7 +784,6 @@ pub struct CoreTypes {
     /// `)` — the closing paren token.
     pub close_: DyadPtr,
     /// `:` — the typed-declaration / field-list token.
-    pub colon_: DyadPtr,
     /// `,` — the one explicit separator.
     pub sep_: DyadPtr,
     /// `->` — the return-logos arrow.
@@ -1013,7 +1012,7 @@ pub enum ParseError {
     /// body, loop body, or runtime `if` branch). The fill rebinds the name at
     /// parse time, which is only sound where parsing and running coincide.
     NonComptimeTypeAssign,
-    /// A typed declaration of a non-numeric logos (`a : logos`, a record, a
+    /// A typed declaration of a non-numeric logos (`a := logos ?`, a record, a
     /// pointer, `bool`, `void`) — the declared-logos storage for those is not in
     /// the seed yet, and this names the gap instead of mis-storing the value.
     NonNumericDeclaredType,
@@ -1238,6 +1237,10 @@ pub struct Parser<'a> {
     /// Body items a constructed segment yielded, in source order, not yet
     /// handed out by [`Parser::parse_next`].
     queued: std::collections::VecDeque<DyadPtr>,
+    /// The valueless places `?` built (`i32 ?`, `@T ?`, `point ?`): a `:=`
+    /// binds its name straight to such a place, no snapshot and no initializer
+    /// — the declaration by declared type.
+    holes: HashSet<DyadPtr>,
     /// Whether the constructor now running was woken at discovery — its
     /// token just lexed, the source after it unread — rather than at the
     /// segment boundary. An identity that reads its own bracket (`type`)
@@ -1284,6 +1287,7 @@ impl<'a> Parser<'a> {
             lifted: Vec::new(),
             queued: std::collections::VecDeque::new(),
             discovering: false,
+            holes: HashSet::new(),
             frames: Vec::new(),
             runtime_depth: 0,
             pending_defers: vec![Vec::new()],
@@ -1537,6 +1541,74 @@ impl<'a> Parser<'a> {
         self.discovering
     }
 
+    /// `?`'s constructor (DESIGN ›Declarations are immutable by default‹):
+    /// a fresh dyad with both slots undefined at every appearance — or, with
+    /// a type standing to its left, that type's valueless place, the type
+    /// stamped and the value left undefined: `i32 ?` a zeroed place at the
+    /// width, `@i32 ?` a pointer place, `type ?` a type variable a later
+    /// `name = <type>` fills (a record place by declared type is #47). The type to the left is
+    /// read as it stands — `@`s and then a type name or a constructed type —
+    /// and those cells are consumed.
+    pub(crate) fn construct_hole(&mut self, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
+        let types = self.types;
+        let base = match tape.at(-1).copied() {
+            Some(cell @ (Cell::Dyad(_) | Cell::Scope(_)))
+            | Some(cell @ Cell::Token(Token { identity: _, .. })) => {
+                // A fresh name to the left is not a type; leave it for the
+                // boundary's own report.
+                if matches!(cell, Cell::Token(t) if t.identity.is_null()) {
+                    None
+                } else {
+                    let d = self.as_operand(cell)?;
+                    // SAFETY: `d` is a resolved dyad from the store.
+                    if unsafe { crate::identities::is_type_value(&types, d) } {
+                        Some(d)
+                    } else {
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+        let node = match base {
+            None => self.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut()),
+            Some(mut t) => {
+                let mut depth = 0usize;
+                while matches!(tape.at(-2 - depth as isize), Some(Cell::Token(a)) if a.identity == types.at_) {
+                    depth += 1;
+                }
+                for _ in 0..depth {
+                    t = crate::identities::pointer::make_pointer_type(self.store, types.type_, t);
+                }
+                // SAFETY: `t` is a type node from the store.
+                let place = unsafe {
+                    if t == types.type_ {
+                        // A type variable: the null-valued placeholder — the
+                        // undefined type, the null value being the marker no
+                        // real type node has — filled once by `name = <type>`.
+                        self.store.alloc_raw(types.type_, std::ptr::null_mut())
+                    } else if crate::identities::is_numtype_node(&types, t) {
+                        let nt = crate::identities::numtype::of_type_node(t);
+                        self.alloc_local(t, nt.bytes())
+                    } else if crate::identities::numtype::is_pointer_type(t) {
+                        self.alloc_local(t, 8)
+                    } else {
+                        // A record or bool place by declared type waits for the
+                        // instance machinery to read it (#47).
+                        return Err(ParseError::NonNumericDeclaredType);
+                    }
+                };
+                for _ in 0..(1 + depth) {
+                    tape.remove(-1);
+                }
+                self.holes.insert(place);
+                place
+            }
+        };
+        tape.place(node);
+        Ok(Constructed::Placed)
+    }
+
     /// Take the pending declaration placeholder (see [`Parser::pending_fn`]):
     /// `fn`'s constructor claims it so a recursive self-call inside the body
     /// resolves the published signature.
@@ -1683,11 +1755,6 @@ impl<'a> Parser<'a> {
         matches!(self.peek_token(), Some((id, _)) if id == self.types.open_)
     }
 
-    /// Consume a `:` if the next token is one, reporting whether it was.
-    fn consume_colon(&mut self) -> bool {
-        self.consume_token(self.types.colon_)
-    }
-
     /// Consume a `,` if the next token is one, reporting whether it was.
     fn consume_separator(&mut self) -> bool {
         self.consume_token(self.types.sep_)
@@ -1724,7 +1791,7 @@ impl<'a> Parser<'a> {
 
     /// Parse a `( field-list )` into a record node. `record_logos` is the identity
     /// that introduced it (`record`, or later `fn`'s parameter list). Fields are
-    /// `name : logos` or a bare `name`, separated by `,`; each becomes a `:`
+    /// `name := T ?` or a bare `name`, separated by `,`; each becomes a `:`
     /// declaration dyad `{type: field-logos, value: undefined}` whose name is declared
     /// in the record's own scope. The node's value is a [`RECORD_TAG`] record
     /// storing the layout the definition derives — the scope, the `fields`
@@ -1753,9 +1820,23 @@ impl<'a> Parser<'a> {
             // `&mut self` the reentrant logos-parse and the declaration then need.
             let source = self.source;
             let name = &source[start..start + len];
-            // Optional `: logos`; a bare name leaves the field's logos slot undefined.
-            let logos = if self.consume_colon() {
-                self.parse_expression()?
+            // `name := T ?` declares the field's type through the hole `?`
+            // built (DESIGN ›A function's surface‹: fields written `name :=
+            // T ?`); a bare name leaves the field's type slot undefined.
+            let logos = if self.consume_token(self.types.declare_tok) {
+                let value = self.parse_expression()?;
+                if self.holes.remove(&value) {
+                    // SAFETY: `value` is the place `?` just built.
+                    unsafe { (*value).ty }
+                } else {
+                    // SAFETY: `value` is a reduced dyad just parsed.
+                    if unsafe { (*value).ty }.is_null() {
+                        std::ptr::null_mut() // `name := ?`, the bare hole
+                    } else {
+                        self.pos = start;
+                        return Err(ParseError::BadDeclaredType);
+                    }
+                }
             } else {
                 std::ptr::null_mut()
             };
@@ -1961,7 +2042,7 @@ impl<'a> Parser<'a> {
         // taken branch parses in place and an untaken branch's tokens are
         // dropped unlexed, so nothing inside it is resolved, committed, or
         // declared. This is what lets branches for *other* comptime logos
-        // coexist (`a=9.9` under `a : i32` parses only in the world where it is
+        // coexist (`a=9.9` under `a := i32 ?` parses only in the world where it is
         // taken). SAFETY: `cond` is the reduced dyad just parsed.
         if let Some(truth) = unsafe { bool_literal_value(&types, cond) } {
             return self.parse_comptime_if(if_type, cond, truth);
@@ -3103,7 +3184,13 @@ impl<'a> Parser<'a> {
         // cross-logos mismatch, record-logos equality) see the original.
         // SAFETY: `placeholder`/`value` are valid dyads just built.
         let declared = unsafe {
-            if (*value).ty == self.types.construct_ {
+            if self.holes.remove(&value) {
+                // `x := i32 ?`: the place `?` built, with the declared type
+                // and no value, is what the name binds to — reads are loads,
+                // `=` reassigns, nothing initializes it.
+                self.scopes.rebind(self.trie, name, value);
+                value
+            } else if (*value).ty == self.types.construct_ {
                 let ops = (*value).value as *mut DyadPtr;
                 let instance = *ops;
                 (*placeholder).ty = (*instance).ty;
@@ -3540,81 +3627,11 @@ impl<'a> Parser<'a> {
         self.store.alloc_raw(ty, storage)
     }
 
-    /// `:`'s constructor body: the typed declaration `name : logos` — it
-    /// introduces the name and sets its logos slot, leaving the value undefined
-    /// (DESIGN ›Declarations are immutable by default‹ — `a : i32` and
-    /// `a := i32 ?` will declare the same node once `?` exists; the seed
-    /// approximates undefined as zeroed storage until phase bits land). The
-    /// logos may be computed: the logos expression parses through the ordinary
-    /// machinery, so a `-> logos` call comptime-resolves first. Only a *fresh*
-    /// name declares — a resolved-token left keeps `:` a bare delimiter for
-    /// the field-list parsers, so the construct declines (as it does anywhere
-    /// but opening its expression).
-    pub(crate) fn construct_typed_decl(
-        &mut self,
-        tape: &mut ParsingTape,
-    ) -> Result<Constructed, ParseError> {
-        let Some(tok) = tape.at(-1).and_then(Cell::as_token).copied() else {
-            return Ok(Constructed::Decline);
-        };
-        let nstart = tok.start;
-        // The logos first, the name after: the declared logos must be a
-        // comptime-known logos value, and the name is not yet bound
-        // while its own logos parses (`a : a` fails resolution cleanly).
-        let t = self.parse_expression()?;
-        // SAFETY: `t` is the reduced dyad just parsed.
-        if !unsafe { crate::identities::is_type_value(&self.types, t) } {
-            self.pos = nstart;
-            return Err(ParseError::BadDeclaredType);
-        }
-        // The binding, by declared logos. A numeric logos gets a zeroed
-        // place at its width, the same shape a `:=` snapshot's place
-        // takes — reads are plain loads, `=` reassigns — but with no
-        // initializer to run; per-call (frame-relative) inside a
-        // function, absolute at top level, like every local. The
-        // `logos` root declares a TYPE VARIABLE: a null-valued
-        // placeholder — the undefined logos, the null value being the
-        // marker no real logos node has (every registered logos carries
-        // a record) — filled once by a later `name = <logos>`, which
-        // rebinds the name at parse (logos are comptime; roadmap #30).
-        let place = if t == self.types.type_ {
-            self.store.alloc_raw(self.types.type_, std::ptr::null_mut())
-        } else if crate::identities::is_numtype_node(&self.types, t) {
-            // SAFETY: `t` is a registered numeric logos node.
-            let nt = unsafe { crate::identities::numtype::of_type_node(t) };
-            self.alloc_local(t, nt.bytes())
-        } else {
-            self.pos = nstart;
-            return Err(ParseError::NonNumericDeclaredType);
-        };
-        let source = self.source;
-        let name = &source[nstart..nstart + tok.len];
-        if let Err(e) = self.scopes.declare(self.trie, name, place) {
-            self.pos = nstart;
-            return Err(ParseError::Resolve(e));
-        }
-        // The declaration is graph structure: a declare node carrying
-        // the spelling and the place (its run is a harmless load — a
-        // declaration is a statement, silent and unit-valued).
-        let name_node =
-            crate::identities::string::build_text(self.store, self.types.string_, name.as_bytes());
-        let node = crate::identities::declare::build(
-            self.store,
-            self.types.declare_,
-            self.types.ops.declare_,
-            name_node,
-            place,
-        );
-        tape.remove(-1); // the name token, consumed
-        tape.place(node);
-        Ok(Constructed::Placed)
-    }
-
     /// A logos variable's fill, tried by `=`'s constructor at reduction:
     /// `name = <logos>` where the name token's binding is an unfilled logos
     /// placeholder (`logos == logos`, null value — the marker no real logos node
     /// has). The fill rebinds the name to the logos node at parse, completing
-    /// the `name : logos` declaration — logos are comptime, so the assignment
+    /// the `name := logos ?` declaration — logos are comptime, so the assignment
     /// is elaboration, not a runtime store; from here the name is a full
     /// spelling of the logos (`==` folds, `a 5` juxtaposes, printing reads
     /// it). Only at a comptime execution position: inside a deferred or

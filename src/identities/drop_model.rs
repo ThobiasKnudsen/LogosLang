@@ -595,7 +595,7 @@ mod tests {
         // block (holding 20) frees before the first (holding 10).
         let (_v, live) = run("a := alloc i32 10,\nb := alloc i32 20,\n0");
         assert_eq!(live, 0);
-        assert_eq!(free_log(), vec![20, 10], "LIFO: last allocated frees first");
+        assert_eq!(free_log(), vec![20, 10], "LIFO := last ? allocated frees first");
     }
 
     #[test]
@@ -645,7 +645,7 @@ mod tests {
         // While the line is still parsing the entry's `end` is the `drop` node
         // itself, so the second argument already sees a dead name.
         assert_eq!(
-            parse_err("h := fn (x : i32, p : @i32) -> i32 ( x ),\na := alloc i32 1,\nh(drop a, a)"),
+            parse_err("h := fn (x := i32 ?, p := @i32 ?) -> i32 ( x ),\na := alloc i32 1,\nh(drop a, a)"),
             ParseError::Resolve(ResolveError::Dead)
         );
     }
@@ -702,7 +702,7 @@ mod tests {
         // surface‹): `drop n` ends it from that line, the redeclaration gets a
         // fresh frame slot, and the inert drop lowers to unit, so the function
         // compiles rather than declining like a heap path would.
-        let (v, live) = run("f := fn (n : i32) -> i32 ( drop n, n := i32 4, n ),\nf.compile(),\nf(1)");
+        let (v, live) = run("f := fn (n := i32 ?) -> i32 ( drop n, n := i32 4, n ),\nf.compile(),\nf(1)");
         assert_eq!(v, 4);
         assert_eq!(live, 0);
     }
@@ -792,7 +792,7 @@ mod tests {
         // fail closed rather than leak; ownership-gated parameters (#53) are what
         // will let a callee declare that it takes the value.
         assert_eq!(
-            parse_err("f := fn (p : @i32) -> i32 ( p@ ),\nf(alloc i32 5)"),
+            parse_err("f := fn (p := @i32 ?) -> i32 ( p@ ),\nf(alloc i32 5)"),
             ParseError::UnboundOwningValue
         );
     }
@@ -866,7 +866,7 @@ mod tests {
         // and freed by the interpreted tier, while the function reading through
         // the pointer is compiled. Both tiers must see the same 42.
         let (v, live) = run(
-            "f := fn (p : @i32) -> i32 ( p@ + 1 ),\na := alloc i32 41,\nb := f(a),\nf.compile(),\nc := f(a),\nb + c",
+            "f := fn (p := @i32 ?) -> i32 ( p@ + 1 ),\na := alloc i32 41,\nb := f(a),\nf.compile(),\nc := f(a),\nb + c",
         );
         assert_eq!(v, 84, "interpreted and compiled reads agree");
         assert_eq!(live, 0);

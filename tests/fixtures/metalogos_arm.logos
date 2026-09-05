@@ -2,13 +2,13 @@
 # current argument: metalogos(3) yields `logos`, so `a` is a LOGOS VARIABLE, and
 # the comptime chain's last arm fills it with i32 — the program's value is a
 # logos, printed by its spelling
-metalogos := fn (i:i32) -> logos (
+metalogos := fn (i := i32 ?) -> logos (
     if (i==0) (i32)
     else if (i==1) (f32)
     else if (i==2) (f64)
     else (logos)
 ),
-a : metalogos(3),
+a := metalogos(3) ?,
 if ((dyad a).type == i32) (a=9)
 else if ((dyad a).type == f32 or (dyad a).type == f64) (a=9.9)
 else if ((dyad a).type == logos) (a=i32),

@@ -82,6 +82,7 @@ pub(crate) mod drop_model;
 mod gate;
 pub mod import;
 mod view;
+mod hole;
 pub(crate) mod instance;
 pub(crate) mod pointer;
 mod eq;
@@ -106,7 +107,7 @@ mod times;
 
 /// The core identities and the per-phase tables that drive them.
 pub struct Core {
-    /// The `logos : logos` self-loop, the one node whose logos is itself.
+    /// The `logos := logos ?` self-loop, the one node whose logos is itself.
     pub type_: DyadPtr,
     /// `scope`, the logos of a scope node (the graph's spine). Each scope the parser
     /// opens is typed with this.
@@ -228,7 +229,6 @@ pub struct Core {
     /// `)` — the closing paren token (parse-only).
     pub close_: DyadPtr,
     /// `:` — the typed-declaration / field-list token (parse-only).
-    pub colon_: DyadPtr,
     /// `,` — the one explicit separator (parse-only).
     pub sep_: DyadPtr,
     /// `->` — the return-logos arrow (parse-only).
@@ -393,7 +393,8 @@ impl Core {
         // `dyad` (#52): the spelled view — `(dyad a)` wraps a value as
         // its cell, and `.` reads the cell (ruled August 2026).
         let dyad_ = view::register(&mut cx);
-        let (colon_, sep_) = logos_mod::register_syntax(&mut cx);
+        hole::register(&mut cx);
+        let sep_ = logos_mod::register_syntax(&mut cx);
         // Struct instances: the construction statement and the `.` field access.
         let (construct_, construct_leaf, dot_, index_) = instance::register(&mut cx, &callables);
         op_leaves.construct_ = construct_leaf;
@@ -495,7 +496,6 @@ impl Core {
             conv_seed_parse: callables.seed_parse,
             open_,
             close_,
-            colon_,
             sep_,
             arrow_,
             else_,
@@ -562,7 +562,6 @@ impl Core {
             conv_container: self.conv_container_i64,
             open_: self.open_,
             close_: self.close_,
-            colon_: self.colon_,
             sep_: self.sep_,
             arrow_: self.arrow_,
             else_: self.else_,
@@ -871,7 +870,7 @@ pub(crate) fn is_numtype_node(types: &CoreTypes, node: DyadPtr) -> bool {
     types.numtypes.iter().any(|&t| !t.is_null() && t == node)
 }
 
-/// Whether `node` is a logos-value: a node classified by the `logos : logos`
+/// Whether `node` is a logos-value: a node classified by the `logos := logos ?`
 /// root — a numeric logos, the root itself, `bool`, a pointer or record logos.
 /// Logos identities are interned, so pointer identity *is* logos identity, which
 /// is what lets `==`/`!=` fold a comparison of two logos-values at parse time and
@@ -1539,7 +1538,7 @@ mod tests {
 
         let func = {
             let mut p = Parser::new(
-                "fn (x : i32) -> i32 ( return x )",
+                "fn (x := i32 ?) -> i32 ( return x )",
                 &mut store,
                 &mut trie,
                 
@@ -1577,7 +1576,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn (x : i32, y : i32) -> i32 ( return x + y )",
+                "fn (x := i32 ?, y := i32 ?) -> i32 ( return x + y )",
                 &mut store,
                 &mut trie,
                 
@@ -1644,7 +1643,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn (x : i32, y : i32) -> i32 ( return x + y )",
+                "fn (x := i32 ?, y := i32 ?) -> i32 ( return x + y )",
                 &mut store,
                 &mut trie,
                 
@@ -1685,7 +1684,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn (x : i32, y : i32) -> i32 ( return x + y )",
+                "fn (x := i32 ?, y := i32 ?) -> i32 ( return x + y )",
                 &mut store,
                 &mut trie,
                 
@@ -1769,7 +1768,7 @@ mod tests {
 
         let node = {
             let mut p =
-                Parser::new("logos (x : i32, y : i32)", &mut store, &mut trie, core.types(), scopes);
+                Parser::new("logos (x := i32 ?, y := i32 ?)", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
@@ -1862,7 +1861,7 @@ mod tests {
         scopes.push(core.root_scope);
         let node = {
             let mut p =
-                Parser::new("logos (x : i32)", &mut store, &mut trie, core.types(), scopes);
+                Parser::new("logos (x := i32 ?)", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
         unsafe {
@@ -1910,7 +1909,7 @@ mod tests {
     #[test]
     fn assign_to_a_wide_variable_stores_at_full_width_both_tiers() {
         // A STORED variable wider than i32 must be written at its full width, not
-        // truncated to i32. `a : i64` starts at 0; `a = a + 5_000_000_000` must leave
+        // truncated to i32. `a := i64 ?` starts at 0; `a = a + 5_000_000_000` must leave
         // the full 5e9 (0x1_2A05F200) — a 4-byte store would drop the high word and
         // leave 705_032_704. This is the case params (frame-bound i64) never exercised:
         // real backing storage assigned through.
@@ -2080,7 +2079,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn (a : i32, b : i32, c : i32, d : i32) -> i32 ( return a + b + c + d )",
+                "fn (a := i32 ?, b := i32 ?, c := i32 ?, d := i32 ?) -> i32 ( return a + b + c + d )",
                 &mut store,
                 &mut trie,
                 
@@ -2198,7 +2197,7 @@ mod tests {
         scopes.push(core.root_scope);
         let root = {
             let mut p = Parser::new(
-                "double := fn (x : i32) -> i32 ( x + x ),\npoint := logos (a : i32),\ndouble(21)",
+                "double := fn (x := i32 ?) -> i32 ( x + x ),\npoint := logos (a := i32 ?),\ndouble(21)",
                 &mut store,
                 &mut trie,
                 
@@ -2301,7 +2300,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn (a : i32) -> i32 ( a - a * 3 )",
+                "fn (a := i32 ?) -> i32 ( a - a * 3 )",
                 &mut store,
                 &mut trie,
                 
@@ -2354,7 +2353,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn (a : i32) -> i32 ( a < 5 )",
+                "fn (a := i32 ?) -> i32 ( a < 5 )",
                 &mut store,
                 &mut trie,
                 
@@ -2419,11 +2418,11 @@ mod tests {
         // A concrete operand (`a`) keeps each a node; two literals would fold to a bool.
         use numtype::CmpOp;
         let cases: [(&str, DyadPtr, DyadPtr); 5] = [
-            ("fn (a : i32) -> i32 ( a > 2 )", core.gt, core.ops.cmp_leaf(CmpOp::Gt, NumType::I32)),
-            ("fn (a : i32) -> i32 ( a == 2 )", core.eq, core.ops.cmp_leaf(CmpOp::Eq, NumType::I32)),
-            ("fn (a : i32) -> i32 ( a <= 2 )", core.le, core.ops.cmp_leaf(CmpOp::Le, NumType::I32)),
-            ("fn (a : i32) -> i32 ( a >= 2 )", core.ge, core.ops.cmp_leaf(CmpOp::Ge, NumType::I32)),
-            ("fn (a : i32) -> i32 ( a != 2 )", core.ne, core.ops.cmp_leaf(CmpOp::Ne, NumType::I32)),
+            ("fn (a := i32 ?) -> i32 ( a > 2 )", core.gt, core.ops.cmp_leaf(CmpOp::Gt, NumType::I32)),
+            ("fn (a := i32 ?) -> i32 ( a == 2 )", core.eq, core.ops.cmp_leaf(CmpOp::Eq, NumType::I32)),
+            ("fn (a := i32 ?) -> i32 ( a <= 2 )", core.le, core.ops.cmp_leaf(CmpOp::Le, NumType::I32)),
+            ("fn (a := i32 ?) -> i32 ( a >= 2 )", core.ge, core.ops.cmp_leaf(CmpOp::Ge, NumType::I32)),
+            ("fn (a := i32 ?) -> i32 ( a != 2 )", core.ne, core.ops.cmp_leaf(CmpOp::Ne, NumType::I32)),
         ];
         for (src, abstract_op, concrete) in cases {
             let func = {
@@ -2577,7 +2576,7 @@ mod tests {
                 let mut s = ScopeStack::new();
                 s.push(core.root_scope);
                 let mut p = Parser::new(
-                    "fn (n : i32) -> i32 ( if (n < 1) (100) else (200) )",
+                    "fn (n := i32 ?) -> i32 ( if (n < 1) (100) else (200) )",
                     &mut store,
                     &mut trie,
                     
@@ -2683,8 +2682,8 @@ mod tests {
     #[test]
     fn else_less_if_in_a_void_fn_yields_unit_both_tiers() {
         // Taken or not, an else-less `if` yields unit through a `-> void` fn.
-        diff_typed_call("fn (c : i32) -> void ( if (c < 1) (42) )", "f(0)", 0);
-        diff_typed_call("fn (c : i32) -> void ( if (c < 1) (42) )", "f(5)", 0);
+        diff_typed_call("fn (c := i32 ?) -> void ( if (c < 1) (42) )", "f(0)", 0);
+        diff_typed_call("fn (c := i32 ?) -> void ( if (c < 1) (42) )", "f(5)", 0);
     }
 
     #[test]
@@ -2765,7 +2764,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn (x : i64, y : i64) -> i64 ( x * y )",
+                "fn (x := i64 ?, y := i64 ?) -> i64 ( x * y )",
                 &mut store,
                 &mut trie,
                 
@@ -2820,7 +2819,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn (x : f64) -> f64 ( x + 0.5 )",
+                "fn (x := f64 ?) -> f64 ( x + 0.5 )",
                 &mut store,
                 &mut trie,
                 
@@ -2868,7 +2867,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "s := fn (n : i64) -> i64 ( if (n < 1) (2000000000 + 2000000000) else (s(n - 1)) )",
+                "s := fn (n := i64 ?) -> i64 ( if (n < 1) (2000000000 + 2000000000) else (s(n - 1)) )",
                 &mut store,
                 &mut trie,
                 
@@ -2911,7 +2910,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn (x : i32, y : i32) -> i32 ( x + y )",
+                "fn (x := i32 ?, y := i32 ?) -> i32 ( x + y )",
                 &mut store,
                 &mut trie,
                 
@@ -2946,8 +2945,8 @@ mod tests {
         // An argument literal lands in the parameter's typed slot: an i64 parameter
         // takes a value past i32 exactly, and a float parameter takes a decimal —
         // neither squeezes through an i32 default.
-        diff_typed_call("fn (x : i64) -> i64 ( x )", "f(3000000000)", 3_000_000_000);
-        diff_typed_call("fn (x : f64) -> f64 ( x + 0.5 )", "f(2.5)", 3.0f64.to_bits() as i64);
+        diff_typed_call("fn (x := i64 ?) -> i64 ( x )", "f(3000000000)", 3_000_000_000);
+        diff_typed_call("fn (x := f64 ?) -> f64 ( x + 0.5 )", "f(2.5)", 3.0f64.to_bits() as i64);
     }
 
     #[test]
@@ -2961,7 +2960,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn (x : i32) -> i32 ( x )",
+                "fn (x := i32 ?) -> i32 ( x )",
                 &mut store,
                 &mut trie,
                 
@@ -2990,7 +2989,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fact := fn (n : i64) -> i64 ( if (n < 1) (1) else (n * fact(n - 1)) )",
+                "fact := fn (n := i64 ?) -> i64 ( if (n < 1) (1) else (n * fact(n - 1)) )",
                 &mut store,
                 &mut trie,
                 
@@ -3071,7 +3070,7 @@ mod tests {
         // i64 endpoints past i32's range: the loop variable is i64 and the sum
         // crosses i32. 5e9..5e9+3 sums to 15e9 + 3.
         diff_typed_call(
-            "fn (n : i64) -> i64 ( s := i64 0, s = 0, for i in n..(n + 3) ( s = s + i ), s )",
+            "fn (n := i64 ?) -> i64 ( s := i64 0, s = 0, for i in n..(n + 3) ( s = s + i ), s )",
             "f(5000000000)",
             15_000_000_003,
         );
@@ -3082,7 +3081,7 @@ mod tests {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(
-            "fn (a : i32, b : i64) -> void ( for i in a..b ( a = 0 ) )",
+            "fn (a := i32 ?, b := i64 ?) -> void ( for i in a..b ( a = 0 ) )",
             &mut store,
             &mut trie,
             
@@ -3097,7 +3096,7 @@ mod tests {
         // The step guard both tiers emit: a runtime step of 0 (or negative) skips
         // the loop instead of wrapping forever.
         diff_typed_call(
-            "fn (d : i32) -> i32 ( s := i32 3, s = 3, for i in 0..10..d ( s = 0 ), s )",
+            "fn (d := i32 ?) -> i32 ( s := i32 3, s = 3, for i in 0..10..d ( s = 0 ), s )",
             "f(0)",
             3,
         );
@@ -3151,18 +3150,18 @@ mod tests {
         assert_eq!(parse_err("i32 3.5"), ParseError::UncomputableLiteral);
         // The settled separator doctrine: `f(i32 3)` is ONE argument (the typed
         // value), where `f(i32, 3)` would be two.
-        diff_typed_call("fn (x : i32) -> i32 ( x + 1 )", "f(i32 3)", 4);
+        diff_typed_call("fn (x := i32 ?) -> i32 ( x + 1 )", "f(i32 3)", 4);
     }
 
     #[test]
     fn division_and_remainder_match_between_tiers() {
-        diff_typed_call("fn (x : i32, y : i32) -> i32 ( x / y )", "f(10, 3)", 3);
+        diff_typed_call("fn (x := i32 ?, y := i32 ?) -> i32 ( x / y )", "f(10, 3)", 3);
         // Truncates toward zero, matching the interpreter and Rust.
-        diff_typed_call("fn (x : i32, y : i32) -> i32 ( x / y )", "f(-10, 3)", -3);
-        diff_typed_call("fn (x : i32, y : i32) -> i32 ( x % y )", "f(10, 3)", 1);
-        diff_typed_call("fn (x : i32, y : i32) -> i32 ( x % y )", "f(-10, 3)", -1);
+        diff_typed_call("fn (x := i32 ?, y := i32 ?) -> i32 ( x / y )", "f(-10, 3)", -3);
+        diff_typed_call("fn (x := i32 ?, y := i32 ?) -> i32 ( x % y )", "f(10, 3)", 1);
+        diff_typed_call("fn (x := i32 ?, y := i32 ?) -> i32 ( x % y )", "f(-10, 3)", -1);
         // `/` binds like `*`: 10 - 4/2 = 8 (the literal quotient folds exactly).
-        diff_typed_call("fn (x : i32) -> i32 ( x - 4 / 2 )", "f(10)", 8);
+        diff_typed_call("fn (x := i32 ?) -> i32 ( x - 4 / 2 )", "f(10)", 8);
     }
 
     #[test]
@@ -3170,32 +3169,32 @@ mod tests {
         // Settled: a zero divisor yields the logos's MAX — a loud sentinel, easier
         // to discover than 0 — and signed MIN/-1, the other impossible quotient,
         // saturates to MAX too. MIN % -1 is the well-defined 0.
-        diff_typed_call("fn (x : i32, y : i32) -> i32 ( x / y )", "f(10, 0)", i64::from(i32::MAX));
-        diff_typed_call("fn (x : i32, y : i32) -> i32 ( x % y )", "f(10, 0)", i64::from(i32::MAX));
-        diff_typed_call("fn (x : u8, y : u8) -> u8 ( x / y )", "f(7, 0)", 255);
+        diff_typed_call("fn (x := i32 ?, y := i32 ?) -> i32 ( x / y )", "f(10, 0)", i64::from(i32::MAX));
+        diff_typed_call("fn (x := i32 ?, y := i32 ?) -> i32 ( x % y )", "f(10, 0)", i64::from(i32::MAX));
+        diff_typed_call("fn (x := u8 ?, y := u8 ?) -> u8 ( x / y )", "f(7, 0)", 255);
         diff_typed_call(
-            "fn (x : i32, y : i32) -> i32 ( x / y )",
+            "fn (x := i32 ?, y := i32 ?) -> i32 ( x / y )",
             "f(-2147483648, -1)",
             i64::from(i32::MAX),
         );
-        diff_typed_call("fn (x : i32, y : i32) -> i32 ( x % y )", "f(-2147483648, -1)", 0);
+        diff_typed_call("fn (x := i32 ?, y := i32 ?) -> i32 ( x % y )", "f(-2147483648, -1)", 0);
     }
 
     #[test]
     fn float_division_is_ieee_and_float_remainder_is_rejected() {
         diff_typed_call(
-            "fn (x : f64, y : f64) -> f64 ( x / y )",
+            "fn (x := f64 ?, y := f64 ?) -> f64 ( x / y )",
             "f(1.0, 2.0)",
             0.5f64.to_bits() as i64,
         );
         // IEEE: x / 0.0 is inf, in both tiers, no sentinel needed.
         diff_typed_call(
-            "fn (x : f64, y : f64) -> f64 ( x / y )",
+            "fn (x := f64 ?, y := f64 ?) -> f64 ( x / y )",
             "f(1.0, 0.0)",
             f64::INFINITY.to_bits() as i64,
         );
         // No Cranelift float remainder; `%` over floats is rejected at parse.
-        assert_eq!(parse_err("fn (x : f64) -> f64 ( x % 2.0 )"), ParseError::UnsupportedOperands);
+        assert_eq!(parse_err("fn (x := f64 ?) -> f64 ( x % 2.0 )"), ParseError::UnsupportedOperands);
     }
 
     #[test]
@@ -3320,7 +3319,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "incr := fn (p : @i32) -> void ( p@ = p@ + 1 )",
+                "incr := fn (p := @i32 ?) -> void ( p@ = p@ + 1 )",
                 &mut store,
                 &mut trie,
                 
@@ -3416,7 +3415,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "holder := logos (r : @i32)",
+                "holder := logos (r := @i32 ?)",
                 &mut store,
                 &mut trie,
                 
@@ -3470,9 +3469,9 @@ mod tests {
         // A parameter is a frame place — a field of the call's activation
         // record — so `&a` yields its per-call address and `q@` reads the
         // argument back through it, on both tiers alike.
-        diff_typed_call("fn (a : i32) -> i32 ( q := &a, q@ )", "f(7)", 7);
+        diff_typed_call("fn (a := i32 ?) -> i32 ( q := &a, q@ )", "f(7)", 7);
         // Writing through the pointer writes the parameter's slot.
-        diff_typed_call("fn (a : i32) -> i32 ( q := &a, q@ = 5, a )", "f(7)", 5);
+        diff_typed_call("fn (a := i32 ?) -> i32 ( q := &a, q@ = 5, a )", "f(7)", 5);
     }
 
     #[test]
@@ -3481,7 +3480,7 @@ mod tests {
         // ordinary storage, agreed on by interpreter and JIT. (Before
         // parameters had frame slots, this was a runtime error interpreted and
         // a wild store compiled.)
-        diff_typed_call("fn (a : i32) -> i32 ( a = a + 1, a )", "f(41)", 42);
+        diff_typed_call("fn (a := i32 ?) -> i32 ( a = a + 1, a )", "f(41)", 42);
     }
 
     /// Parse `src` as a whole script (a top-level sequence) and run it with the
@@ -3513,7 +3512,7 @@ mod tests {
         // activation stack, with the parameter and the local at distinct
         // per-call slots. The sum 1..=500 = 125250 is right only if no call's
         // frame aliases another's — 500 live frames stacked at once.
-        let src = "f := fn (n : i64) -> i64 ( m := i64 0, m = n, if (n == 0) (0) else (m + f(n - 1)) ),\nf(500)";
+        let src = "f := fn (n := i64 ?) -> i64 ( m := i64 0, m = n, if (n == 0) (0) else (m + f(n - 1)) ),\nf(500)";
         assert_eq!(run_script(src), 125_250);
     }
 
@@ -3523,7 +3522,7 @@ mod tests {
         // before the arguments evaluate, the inner calls claim and release
         // theirs above it, and the outer frame is still intact when its
         // parameters are written. g(3) = 6 and g(4) = 8, so f sees 14.
-        let src = "g := fn (x : i64) -> i64 ( x + x ),\nf := fn (a : i64, b : i64) -> i64 ( a + b ),\nf(g(3), g(4) + g(0))";
+        let src = "g := fn (x := i64 ?) -> i64 ( x + x ),\nf := fn (a := i64 ?, b := i64 ?) -> i64 ( a + b ),\nf(g(3), g(4) + g(0))";
         assert_eq!(run_script(src), 14);
     }
 
@@ -3541,13 +3540,13 @@ mod tests {
         // `compile` … and `run`"): write the body, compile, and the next call
         // runs the machine code — same answer the body walk gives.
         assert_eq!(
-            run_script("double := fn (x : i64) -> i64 ( x + x ),\ndouble.compile(),\ndouble(21)"),
+            run_script("double := fn (x := i64 ?) -> i64 ( x + x ),\ndouble.compile(),\ndouble(21)"),
             42
         );
         // Compiled recursion through the member: the self-call jumps too.
         assert_eq!(
             run_script(
-                "fact := fn (n : i64) -> i64 ( if (n < 2) (1) else (n * fact(n - 1)) ),\nfact.compile(),\nfact(20)"
+                "fact := fn (n := i64 ?) -> i64 ( if (n < 2) (1) else (n * fact(n - 1)) ),\nfact.compile(),\nfact(20)"
             ),
             2_432_902_008_176_640_000
         );
@@ -3559,7 +3558,7 @@ mod tests {
         // answers in one script, summed: 42 + 42.
         assert_eq!(
             run_script(
-                "double := fn (x : i64) -> i64 ( x + x ),\na := double(21),\ndouble.compile(),\na + double(21)"
+                "double := fn (x := i64 ?) -> i64 ( x + x ),\na := double(21),\ndouble.compile(),\na + double(21)"
             ),
             84
         );
@@ -3571,7 +3570,7 @@ mod tests {
         // nothing.
         assert_eq!(
             run_script(
-                "double := fn (x : i64) -> i64 ( x + x ),\ndouble.compile(),\ndouble.compile(),\ndouble(21)"
+                "double := fn (x := i64 ?) -> i64 ( x + x ),\ndouble.compile(),\ndouble.compile(),\ndouble(21)"
             ),
             42
         );
@@ -3594,7 +3593,7 @@ mod tests {
         // used to panic on the logos root's record tag.
         assert_eq!(
             run_script(
-                "metatype := fn (i : i32) -> logos ( if (i == 0) (i32) else (f64) ),\nmetatype.compile(),\nsame := metatype(0) == i32,\nother := metatype(1) == f64,\nif (same and other) (i64 1) else (i64 0)"
+                "metatype := fn (i := i32 ?) -> logos ( if (i == 0) (i32) else (f64) ),\nmetatype.compile(),\nsame := metatype(0) == i32,\nother := metatype(1) == f64,\nif (same and other) (i64 1) else (i64 0)"
             ),
             1
         );
@@ -3606,7 +3605,7 @@ mod tests {
         // `.compile()` on a wider fn is a clean run error, and the function
         // stays interpreted.
         let e = run_script_result(
-            "f := fn (a : i64, b : i64, c : i64, d : i64) -> i64 ( a + b + c + d ),\nf.compile()",
+            "f := fn (a := i64 ?, b := i64 ?, c := i64 ?, d := i64 ?) -> i64 ( a + b + c + d ),\nf.compile()",
         )
         .unwrap_err();
         assert!(matches!(e, crate::run::RunError::CompileFailed(_)), "got {e:?}");
@@ -3619,7 +3618,7 @@ mod tests {
         // of `a` must see it on both tiers. A promoted `a` would return the
         // stale 5.
         diff_typed_call(
-            "fn (x : i64) -> i64 ( a := i64 5, p := &a, p@ = 7, a + x )",
+            "fn (x := i64 ?) -> i64 ( a := i64 5, p := &a, p@ = 7, a + x )",
             "f(1)",
             8,
         );
@@ -3632,7 +3631,7 @@ mod tests {
         // registers — and the value still matches the interpreted walk.
         assert_eq!(
             run_script(
-                "sum_to := fn (n : i64) -> i64 ( i := i64 0, s := i64 0, while (i < n) ( s = s + i, i = i + 1 ), s ),\nbefore := sum_to(1000),\nsum_to.compile(),\nbefore + sum_to(1000)"
+                "sum_to := fn (n := i64 ?) -> i64 ( i := i64 0, s := i64 0, while (i < n) ( s = s + i, i = i + 1 ), s ),\nbefore := sum_to(1000),\nsum_to.compile(),\nbefore + sum_to(1000)"
             ),
             999_000
         );
@@ -3644,7 +3643,7 @@ mod tests {
         // the member intercept fires only when the lhs is fn-typed, so the
         // spelling is not globally reserved (unlike `.logos`).
         assert_eq!(
-            run_script("point := logos (compile : i32),\np := point(7),\np.compile"),
+            run_script("point := logos (compile := i32 ?),\np := point(7),\np.compile"),
             7
         );
     }
@@ -3660,7 +3659,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "f := fn (p : @i32) -> void ( p@ = 1 )",
+                "f := fn (p := @i32 ?) -> void ( p@ = 1 )",
                 &mut store,
                 &mut trie,
                 
@@ -3680,7 +3679,7 @@ mod tests {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(
-            "point := logos (x : i32, y : i32)",
+            "point := logos (x := i32 ?, y := i32 ?)",
             store,
             trie,
             
@@ -3737,7 +3736,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "cell := logos (a : u8, b : i64, c : i32)",
+                "cell := logos (a := u8 ?, b := i64 ?, c := i32 ?)",
                 &mut store,
                 &mut trie,
                 
@@ -3750,7 +3749,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn (n : i64) -> i64 ( q := cell(200, n, 7), q.b + i64(q.a) + i64(q.c) )",
+                "fn (n := i64 ?) -> i64 ( q := cell(200, n, 7), q.b + i64(q.a) + i64(q.c) )",
                 &mut store,
                 &mut trie,
                 
@@ -3889,7 +3888,7 @@ mod tests {
     fn negative_literals_via_prefix_minus() {
         // A `-` with no left operand negates the following numeric literal at
         // parse time: as an argument, under a cast, and doubled (0 - -3 = 3).
-        diff_typed_call("fn (x : i32) -> i32 ( x )", "f(-1)", -1);
+        diff_typed_call("fn (x := i32 ?) -> i32 ( x )", "f(-1)", -1);
         diff_nullary_fn("fn () -> i32 ( i32(-5) )", -5);
         diff_nullary_fn("fn () -> i32 ( 0 - -3 )", 3);
     }
@@ -4036,7 +4035,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p =
-                Parser::new("pub x : i32", &mut store, &mut trie, core.types(), s);
+                Parser::new("pub x := i32 ?", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         // SAFETY: `decl` is the declare node just parsed.
@@ -4057,7 +4056,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "pub double := fn (x : i32) -> i32 ( x + x )",
+                "pub double := fn (x := i32 ?) -> i32 ( x + x )",
                 &mut store,
                 &mut trie,
                 core.types(),
@@ -4143,7 +4142,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fact := fn (n : i32) -> i32 ( if (n < 1) (1) else (n * fact(n - 1)) )",
+                "fact := fn (n := i32 ?) -> i32 ( if (n < 1) (1) else (n * fact(n - 1)) )",
                 &mut store,
                 &mut trie,
                 
@@ -4182,7 +4181,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fact := fn (n : i32) -> i32 ( if (n < 1) (1) else (n * fact(n - 1)) )",
+                "fact := fn (n := i32 ?) -> i32 ( if (n < 1) (1) else (n * fact(n - 1)) )",
                 &mut store,
                 &mut trie,
                 
@@ -4291,7 +4290,7 @@ mod tests {
         // SAFETY: a self-contained recursive definition and literal calls.
         unsafe {
             assert_recursion_both_tiers(
-                &["f := fn (n : i32) -> i32 ( x := n, if (n < 1) (0) else (f(n - 1), x) )"],
+                &["f := fn (n := i32 ?) -> i32 ( x := n, if (n < 1) (0) else (f(n - 1), x) )"],
                 "f",
                 &[(0, 0), (1, 1), (3, 3), (5, 5)],
             );
@@ -4306,7 +4305,7 @@ mod tests {
         // SAFETY: as above; `&x`/`p@` over a per-call local.
         unsafe {
             assert_recursion_both_tiers(
-                &["g := fn (n : i32) -> i32 ( x := n, p := &x, if (n < 1) (0) else (g(n - 1), p@) )"],
+                &["g := fn (n := i32 ?) -> i32 ( x := n, p := &x, if (n < 1) (0) else (g(n - 1), p@) )"],
                 "g",
                 &[(0, 0), (1, 1), (4, 4)],
             );
@@ -4321,8 +4320,8 @@ mod tests {
         unsafe {
             assert_recursion_both_tiers(
                 &[
-                    "point := logos ( x : i32, y : i32 )",
-                    "h := fn (n : i32) -> i32 ( pt := point(n, 0), if (n < 1) (0) else (h(n - 1), pt.x) )",
+                    "point := logos ( x := i32 ?, y := i32 ? )",
+                    "h := fn (n := i32 ?) -> i32 ( pt := point(n, 0), if (n < 1) (0) else (h(n - 1), pt.x) )",
                 ],
                 "h",
                 &[(0, 0), (2, 2), (5, 5)],
@@ -4338,7 +4337,7 @@ mod tests {
         // SAFETY: a self-contained recursive definition and literal calls.
         unsafe {
             assert_recursion_both_tiers(
-                &["fact := fn (n : i32) -> i32 ( acc := i32 1, if (n < 1) (acc) else (acc = n * fact(n - 1), acc) )"],
+                &["fact := fn (n := i32 ?) -> i32 ( acc := i32 1, if (n < 1) (acc) else (acc = n * fact(n - 1), acc) )"],
                 "fact",
                 &[(0, 1), (1, 1), (5, 120), (7, 5040)],
             );
@@ -4347,7 +4346,7 @@ mod tests {
 
     #[test]
     fn recursion_with_a_typed_declaration_local_both_tiers() {
-        // A typed declaration (`a : i32`, no initializer) is a per-call local
+        // A typed declaration (`a := i32 ?`, no initializer) is a per-call local
         // too: it reads zero on entry — the undefined approximation, identical
         // on both tiers because the JIT zeroes the frame slot exactly as the
         // interpreter zeroes its activation buffer — and each activation then
@@ -4355,7 +4354,7 @@ mod tests {
         // SAFETY: a self-contained recursive definition and literal calls.
         unsafe {
             assert_recursion_both_tiers(
-                &["f := fn (n : i32) -> i32 ( a : i32, a = a + n, if (n < 1) (a) else (f(n - 1), a) )"],
+                &["f := fn (n := i32 ?) -> i32 ( a := i32 ?, a = a + n, if (n < 1) (a) else (f(n - 1), a) )"],
                 "f",
                 &[(0, 0), (1, 1), (5, 5)],
             );
@@ -4369,13 +4368,13 @@ mod tests {
         // read of some other frame at run time.
         assert_eq!(
             parse_err(
-                "outer := fn (a : i32) -> i32 ( x := a, inner := fn () -> i32 ( x ), inner() )"
+                "outer := fn (a := i32 ?) -> i32 ( x := a, inner := fn () -> i32 ( x ), inner() )"
             ),
             ParseError::CapturedLocal,
         );
         assert_eq!(
             parse_err(
-                "outer := fn (a : i32) -> i32 ( x := a, in2 := fn () -> i32 ( p := &x, p@ ), in2() )"
+                "outer := fn (a := i32 ?) -> i32 ( x := a, in2 := fn () -> i32 ( p := &x, p@ ), in2() )"
             ),
             ParseError::CapturedLocal,
         );
@@ -4394,7 +4393,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "outer := fn (a : i32) -> i32 ( inner := fn (b : i32) -> i32 ( y := b, y + b ), inner(a) + 1 )",
+                "outer := fn (a := i32 ?) -> i32 ( inner := fn (b := i32 ?) -> i32 ( y := b, y + b ), inner(a) + 1 )",
                 &mut store,
                 &mut trie,
                 
@@ -4423,13 +4422,13 @@ mod tests {
         // an unrelated no-storage error at run time.
         assert_eq!(
             parse_err(
-                "outer := fn (a : i32) -> i32 ( inner := fn () -> i32 ( a ), inner() )"
+                "outer := fn (a := i32 ?) -> i32 ( inner := fn () -> i32 ( a ), inner() )"
             ),
             ParseError::CapturedLocal,
         );
         assert_eq!(
             parse_err(
-                "outer := fn (a : i32) -> i32 ( in2 := fn () -> i32 ( p := &a, p@ ), in2() )"
+                "outer := fn (a := i32 ?) -> i32 ( in2 := fn () -> i32 ( p := &a, p@ ), in2() )"
             ),
             ParseError::CapturedLocal,
         );
@@ -4508,7 +4507,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn (x : i32, y : i32) -> i32 ( x + y )",
+                "fn (x := i32 ?, y := i32 ?) -> i32 ( x + y )",
                 &mut store,
                 &mut trie,
                 
@@ -4584,15 +4583,15 @@ mod tests {
     #[test]
     fn integer_width_arithmetic_matches_between_tiers() {
         // i64 multiplication that overflows i32 (10^10) but fits i64 — proves the width.
-        diff_typed_call("fn (x : i64, y : i64) -> i64 ( x * y )", "f(100000, 100000)", 10_000_000_000);
-        diff_typed_call("fn (x : i64, y : i64) -> i64 ( x + y )", "f(1000000, 2000000)", 3_000_000);
+        diff_typed_call("fn (x := i64 ?, y := i64 ?) -> i64 ( x * y )", "f(100000, 100000)", 10_000_000_000);
+        diff_typed_call("fn (x := i64 ?, y := i64 ?) -> i64 ( x + y )", "f(1000000, 2000000)", 3_000_000);
         // u8 addition wraps at 256: 200 + 100 = 44.
-        diff_typed_call("fn (x : u8, y : u8) -> u8 ( x + y )", "f(200, 100)", 44);
+        diff_typed_call("fn (x := u8 ?, y := u8 ?) -> u8 ( x + y )", "f(200, 100)", 44);
         // i16 subtraction, signed negative result.
-        diff_typed_call("fn (x : i16, y : i16) -> i16 ( x - y )", "f(3, 10)", -7);
+        diff_typed_call("fn (x := i16 ?, y := i16 ?) -> i16 ( x - y )", "f(3, 10)", -7);
         // u32 sum above i32's range (3e9) stays positive (zero-extended), unlike i32.
         diff_typed_call(
-            "fn (x : u32, y : u32) -> u32 ( x + y )",
+            "fn (x := u32 ?, y := u32 ?) -> u32 ( x + y )",
             "f(1000000000, 2000000000)",
             3_000_000_000,
         );
@@ -4602,8 +4601,8 @@ mod tests {
     fn signed_vs_unsigned_comparison_matches_between_tiers() {
         // The same byte 0xFF compares differently as i8 (-1) and u8 (255). 255 has
         // no exact i8, so the i8 side takes it through the explicit wrapping cast.
-        diff_typed_call("fn (x : i8) -> i32 ( if (x < 1) (100) else (200) )", "f(i8(255))", 100);
-        diff_typed_call("fn (x : u8) -> i32 ( if (x < 1) (100) else (200) )", "f(255)", 200);
+        diff_typed_call("fn (x := i8 ?) -> i32 ( if (x < 1) (100) else (200) )", "f(i8(255))", 100);
+        diff_typed_call("fn (x := u8 ?) -> i32 ( if (x < 1) (100) else (200) )", "f(255)", 200);
     }
 
     /// Diff a nullary `fn () -> ... ( body )` between the interpreter and the JIT, where
@@ -4677,10 +4676,10 @@ mod tests {
         // is the negative reading); a same-logos cast is the operand unchanged. 255
         // has no exact i8, so reaching an i8 parameter takes an explicit `i8(255)`
         // (the wrapping cast), never a bare literal.
-        diff_typed_call("fn (x : i8) -> i32 ( i32(x) )", "f(i8(255))", -1);
-        diff_typed_call("fn (x : i32) -> i8 ( i8(x) )", "f(300)", 44);
-        diff_typed_call("fn (x : i8) -> u8 ( u8(x) )", "f(i8(255))", 255);
-        diff_typed_call("fn (x : i32) -> i32 ( i32(x) )", "f(42)", 42);
+        diff_typed_call("fn (x := i8 ?) -> i32 ( i32(x) )", "f(i8(255))", -1);
+        diff_typed_call("fn (x := i32 ?) -> i8 ( i8(x) )", "f(300)", 44);
+        diff_typed_call("fn (x := i8 ?) -> u8 ( u8(x) )", "f(i8(255))", 255);
+        diff_typed_call("fn (x := i32 ?) -> i32 ( i32(x) )", "f(42)", 42);
         // u32 3e9 reinterpreted as i32: 3_000_000_000 - 2^32.
         diff_var_fn(NumType::U32, 3_000_000_000, "fn () -> i32 ( i32(a) )", 3_000_000_000i64 - 4_294_967_296);
         // u64 300 -> u8 wraps to 44.
@@ -4691,7 +4690,7 @@ mod tests {
     fn casts_between_int_and_float_match_between_tiers() {
         // int -> float is exact for small values; float -> int truncates toward zero and
         // *saturates* out of range (matching Rust `as`, so both tiers agree).
-        diff_typed_call("fn (x : i32) -> f64 ( f64(x) )", "f(3)", 3.0f64.to_bits() as i64);
+        diff_typed_call("fn (x := i32 ?) -> f64 ( f64(x) )", "f(3)", 3.0f64.to_bits() as i64);
         diff_var_fn(NumType::F64, 3.7f64.to_bits() as i64, "fn () -> i32 ( i32(a) )", 3);
         diff_var_fn(NumType::F64, (-3.7f64).to_bits() as i64, "fn () -> i32 ( i32(a) )", -3);
         diff_var_fn(NumType::F64, 1e20f64.to_bits() as i64, "fn () -> i32 ( i32(a) )", i64::from(i32::MAX));
@@ -4815,11 +4814,11 @@ mod tests {
         // An `if` in tail position is a value slot too: a large comptime rational in
         // either branch commits to the i64 return logos (it would otherwise fail the i32
         // mold shim). This also exercises the width-general `if` lowering (i64 branches).
-        let fn_src = "fn (c : i32) -> i64 ( if (c < 1) (2000000000 + 2000000000) else (0) )";
+        let fn_src = "fn (c := i32 ?) -> i64 ( if (c < 1) (2000000000 + 2000000000) else (0) )";
         diff_typed_call(fn_src, "f(0)", 4_000_000_000); // then-branch taken
         diff_typed_call(fn_src, "f(5)", 0); // else-branch taken
         // The else-branch commits too.
-        let fn_src = "fn (c : i32) -> i64 ( if (c < 1) (0) else (2000000000 + 2000000000) )";
+        let fn_src = "fn (c := i32 ?) -> i64 ( if (c < 1) (0) else (2000000000 + 2000000000) )";
         diff_typed_call(fn_src, "f(5)", 4_000_000_000);
     }
 
@@ -4832,7 +4831,7 @@ mod tests {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(
-            "fn (x : i32, y : i64) -> i64 ( x + y )",
+            "fn (x := i32 ?, y := i64 ?) -> i64 ( x + y )",
             &mut store,
             &mut trie,
             
@@ -4851,7 +4850,7 @@ mod tests {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(
-            "fn (x : i32) -> i32 ( x + 1.5 )",
+            "fn (x := i32 ?) -> i32 ( x + 1.5 )",
             &mut store,
             &mut trie,
             

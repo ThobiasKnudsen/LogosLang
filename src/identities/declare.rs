@@ -118,7 +118,12 @@ pub(crate) unsafe fn set_gate(node: DyadPtr, gate: DyadPtr) {
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid declare node; its declared slot is a valid dyad.
     unsafe {
-        rt.run(declared_of(node))?;
+        let declared = declared_of(node);
+        // A bare hole (`x := ?`) declares a dyad with nothing to read yet;
+        // reading it later is the checked error, declaring it is silent.
+        if !(*declared).ty.is_null() {
+            rt.run(declared)?;
+        }
     }
     Ok(0)
 }

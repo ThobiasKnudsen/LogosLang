@@ -11,7 +11,7 @@
 # VARIABLE the last arm fills with i32 at parse, and the program's value is a
 # type (prints i32). Currently metatype(2): prints 9.9.
 
-metatype := fn (i:i32) -> type (
+metatype := fn (i := i32 ?) -> type (
     if (i==0) (i32)
     else if (i==1) (f32)
     else if (i==2) (f64)
@@ -22,7 +22,7 @@ metatype := fn (i:i32) -> type (
 # metatype(2) call below jumps to the installed machine code.
 metatype.compile(),
 b := type,
-a:metatype(2),
+a := metatype(2) ?,
 if ((dyad a).type == i32) (a=9)
 else if ((dyad a).type == f32 or (dyad a).type == f64) (a=9.9)
 else if ((dyad a).type == type) (a=i32),

@@ -11,7 +11,7 @@
 //! node's logos; a value of a record logos is an instance, a value of a function
 //! is an application (its operands per the function's record, or a call), and
 //! everything else is data read through its logos's record — grounding out at
-//! the `logos : logos` fixed point. The only handles it takes are the same three
+//! the `logos := logos ?` fixed point. The only handles it takes are the same three
 //! fixed points the interpreter holds (`logos`, `fn`, `record`); everything else
 //! comes from records.
 //!
@@ -335,8 +335,7 @@ mod tests {
             (".", prec::DOT, true),
             ("@", prec::DOT, true),
             ("(", prec::OPEN, true),
-            // The declaration operators: above `(`, declaring before the value.
-            (":", prec::DECLARE, true),
+            // The declaration operator: above `(`, declaring before the value.
             (":=", prec::DECLARE, true),
             // Inert delimiters: constructor undefined; `,` above `(` as the
             // segment boundary, `..` the range infix `for` reads.
@@ -391,7 +390,7 @@ mod tests {
         scopes.push(core.root_scope);
         let node = {
             let mut p = Parser::new(
-                "logos (alpha : i32, beta : i32)",
+                "logos (alpha := i32 ?, beta := i32 ?)",
                 &mut store,
                 &mut trie,
                 core.types(),
@@ -423,7 +422,7 @@ mod tests {
         // byte size) joined in the activation-records work, and a generic
         // walker reads slots off the record — a stale four-role record would
         // hide the fifth slot from reflection.
-        let (_store, core, roots) = parse_all(&["fn (n : i32) -> i32 ( x := n, x )"]);
+        let (_store, core, roots) = parse_all(&["fn (n := i32 ?) -> i32 ( x := n, x )"]);
         // SAFETY: the root is the fn value just parsed, from the store.
         let Shape::Tuple { slots } = (unsafe { describe(&core.types(), roots[0]) }) else {
             panic!("an fn value reads as its fixed slots");
@@ -522,7 +521,7 @@ mod tests {
     fn describe_reads_a_program_from_the_graph_alone() {
         let (_store, core, roots) = parse_all(&[
             "x := i32 41",
-            "point := logos (a : i32, b : i64)",
+            "point := logos (a := i32 ?, b := i64 ?)",
             "pt := point(3, 4)",
             "x = x + 1",
             // A runtime condition (`x` is a place): a comptime-known one would
@@ -530,7 +529,7 @@ mod tests {
             "if (x < 2) ( 3 ) else ( 4 )",
             "for i in 0..10 ( x = x + 1 )",
             "( 5, # prose\n 6 )",
-            "inc := fn (p : @i32) -> void ( p@ = p@ + 1 )",
+            "inc := fn (p := @i32 ?) -> void ( p@ = p@ + 1 )",
         ]);
         let types = core.types();
 
@@ -628,7 +627,7 @@ mod tests {
             assert_eq!(text_of(text), b"prose");
 
             // The fn value, behind its declaration: [input, output, body, bcode];
-            // `p : @i32` describes as a pointer to i32.
+            // `p := @i32 ?` describes as a pointer to i32.
             let Shape::Tuple { slots: decl } = describe(&types, roots[7]) else {
                 panic!("a declaration should be a tuple");
             };
@@ -683,10 +682,10 @@ mod tests {
     #[test]
     fn the_whole_store_describes() {
         let (store, core, _roots) = parse_all(&[
-            "point := logos (a : i32, b : i64)",
+            "point := logos (a := i32 ?, b := i64 ?)",
             "pt := point(3, 4)",
             "q := &pt",
-            "f := fn (v : i64) -> i64 ( if (v < 2) ( 1 ) else ( v * 2 ) )",
+            "f := fn (v := i64 ?) -> i64 ( if (v < 2) ( 1 ) else ( v * 2 ) )",
             "y := i64 1",
             "y = f(21)",
             "for i in 0..10 ( y = y + 1 )",

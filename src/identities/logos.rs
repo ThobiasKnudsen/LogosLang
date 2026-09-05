@@ -40,7 +40,7 @@ pub(super) fn register_root(store: &mut Store) -> DyadPtr {
 /// Spell the root, attach its merged constructor, and register the field-list
 /// punctuation (`:`, `,`) the record path consumes, returning the two
 /// punctuation handles.
-pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
+pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
     // The spelling: `type` resolves to the root as a first-class value (DESIGN
     // ›Substrate vocabulary‹, ruled 4 September 2026: `type` is the ground and
     // the definition keyword, `logos` names the language). `logos` stays a
@@ -68,17 +68,12 @@ pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
         Ok(crate::parse::Constructed::Placed)
     });
 
-    // `:` is a tight extender: its constructor declares a fresh name token to
-    // its left (`name : logos`) and declines anywhere else, staying a bare
-    // delimiter for the field lists the record parse consumes itself.
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::DECLARE);
-    let colon = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert(":", IdContext::new(colon, cx.root_scope));
-    cx.metas.insert(colon, |p, _id, tape| p.construct_typed_decl(tape));
-
+    // `:` is no declaration operator (DESIGN ›Declarations are immutable by
+    // default‹, ruled 2 September 2026): `key := T ?` is the valueless form,
+    // and the seed's `:` stood in only until the driver converged (#59).
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::COMMA);
     let comma = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(",", IdContext::new(comma, cx.root_scope));
 
-    (colon, comma)
+    comma
 }
