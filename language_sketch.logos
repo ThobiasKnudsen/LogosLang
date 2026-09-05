@@ -518,7 +518,7 @@ Englogos (
     # open: trailing not here and in the perfect pair vs the ruled rightward scope
 )
 
-struct1 := struct (
+struct1 := type (
     instance (
         x := f32 ?
         y := f32 ?
@@ -528,9 +528,9 @@ struct1 := struct (
 )
 
 type1 := type (
-    precedence := …
-    associativity := …
-    constructor := …
+    precedence = …
+    associativity = …
+    constructor = …
 )
 
 language1 := language (

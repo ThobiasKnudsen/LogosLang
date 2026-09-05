@@ -1,10 +1,16 @@
-
-
-
 type := type (
-    precedence := f64 2.0
-    associativity := left_to_right
-    constructor := fn (tape := parsing_tape ?) -> void (
+    # what every type carries: declared here, a slot per type, filled by each type's own body with =
+    instance (
+        precedence := f64 ?
+        associativity := ?          # left or right
+        constructor := fn (tape := parsing_tape ?) -> void ?
+        destructor := ?
+    )
+
+    # what type itself is: the same slots, filled
+    precedence = f64 2.0
+    associativity = left
+    constructor = fn (tape := parsing_tape ?) -> void (
 
         if tape[1].type != scope
             error «tape[1].type is not scope»
