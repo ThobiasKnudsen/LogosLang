@@ -55,7 +55,11 @@ pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
     // own dyad as-is" — the classifier as a value (DESIGN ›Expressions are
     // self-delimiting‹), exactly the numeric logos' shape.
     cx.metas.insert(cx.type_, |p, id, tape| {
-        if p.at_open() {
+        // The definition bracket is read at discovery only (DESIGN: `type`
+        // "reads its own bracket … constructed at discovery, before the
+        // bracket is lexed"); woken at a boundary — the `-> type` of a return
+        // logos — the classifier stands as its own value.
+        if p.discovering() && p.at_open() {
             let node = p.parse_record(id)?;
             tape.place(node);
             return Ok(crate::parse::Constructed::Placed);

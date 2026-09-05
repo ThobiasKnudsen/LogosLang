@@ -135,13 +135,14 @@ pub(crate) mod prec {
     pub const READER: f64 = 92.0;
     /// `(`: the discovery threshold.
     pub const OPEN: f64 = 90.0;
-    /// `.` and `@`: the tightest boundary-time binders.
+    /// Application and juxtaposition: a callable or a type before its argument
+    /// cell — "the tight juxtaposition just below `(`" — above the member and
+    /// dereference reads, so `f(x).y` and `f(x)@` read the call's result.
+    pub const APPLY: f64 = 88.0;
+    /// `.` and `@`: the member and dereference reads.
     pub const DOT: f64 = 86.0;
     /// `&`.
     pub const ADDRESS: f64 = 85.0;
-    /// Application and juxtaposition: a callable or a type before its argument
-    /// cell — "the tight juxtaposition just below `(`".
-    pub const APPLY: f64 = 84.0;
     /// `dyad`, the view: just below application, so `dyad i32` and `dyad f`
     /// read the identity standing as its own value.
     pub const VIEW: f64 = 83.0;

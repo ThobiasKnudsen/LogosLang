@@ -1238,6 +1238,12 @@ pub struct Parser<'a> {
     /// Body items a constructed segment yielded, in source order, not yet
     /// handed out by [`Parser::parse_next`].
     queued: std::collections::VecDeque<DyadPtr>,
+    /// Whether the constructor now running was woken at discovery — its
+    /// token just lexed, the source after it unread — rather than at the
+    /// segment boundary. An identity that reads its own bracket (`type`)
+    /// reads source only at discovery; at a boundary its bracket, had it one,
+    /// would already stand on the tape as a cell.
+    discovering: bool,
     /// The lowering table, when the driver attached one: the nested import
     /// pass hands it to its runtime so `f.compile()` at an imported top level
     /// works exactly as at the driver's own top level (one pass, one behavior).
@@ -1277,6 +1283,7 @@ impl<'a> Parser<'a> {
             pending_fn: std::ptr::null_mut(),
             lifted: Vec::new(),
             queued: std::collections::VecDeque::new(),
+            discovering: false,
             frames: Vec::new(),
             runtime_depth: 0,
             pending_defers: vec![Vec::new()],
@@ -1524,6 +1531,12 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Whether the running constructor was woken at discovery (see the
+    /// `discovering` field): the one moment a bracket reader may read source.
+    pub(crate) fn discovering(&self) -> bool {
+        self.discovering
+    }
+
     /// Take the pending declaration placeholder (see [`Parser::pending_fn`]):
     /// `fn`'s constructor claims it so a recursive self-call inside the body
     /// resolves the published signature.
@@ -1546,8 +1559,25 @@ impl<'a> Parser<'a> {
         match cell {
             Cell::Dyad(_) | Cell::Scope(_) => true,
             // A fresh name resolves at consumption; a resolved token stands as
-            // an operand only when nothing would construct it.
-            Cell::Token(t) => t.identity.is_null() || self.ctor_of(t.identity).is_none(),
+            // an operand only when nothing would construct it and it is not a
+            // bare delimiter (`..`, `->`, `else`, `in`), which no operator
+            // takes as an operand.
+            Cell::Token(t) => {
+                t.identity.is_null()
+                    || (self.ctor_of(t.identity).is_none() && !self.is_delimiter(t.identity))
+            }
+        }
+    }
+
+    /// Whether `id` is a bare delimiter token — an identity whose record is a
+    /// parse-only token with no constructor (`)`, `,`, `->`, `else`, `in`,
+    /// `..`): read by the constructs that spell them, never an operand.
+    fn is_delimiter(&self, id: DyadPtr) -> bool {
+        // SAFETY: as [`Parser::ctor_of`].
+        unsafe {
+            !id.is_null()
+                && (*id).ty == self.types.type_
+                && crate::identities::meta::kind_of(id) == Some(crate::identities::meta::TOKEN_TAG)
         }
     }
 
@@ -1623,44 +1653,6 @@ impl<'a> Parser<'a> {
         }
         let r = self.scopes.resolve(self.trie, &source[self.pos..]).ok()?;
         Some((r.identity, r.matched))
-    }
-
-    /// Consume a directly following rational literal, building its node;
-    /// `None` (nothing consumed) when the next token is anything else. A
-    /// constructor service: the numeric logos' juxtaposition (`i32 3`) and
-    /// `-`'s negated literal read their operand through this.
-    pub(crate) fn consume_rational(&mut self) -> Result<Option<DyadPtr>, ParseError> {
-        let Some((lit, matched)) = self.peek_token() else {
-            return Ok(None);
-        };
-        if lit != self.types.rational {
-            return Ok(None);
-        }
-        let start = self.pos;
-        self.pos += matched;
-        let span = &self.source[start..start + matched];
-        crate::identities::rational::build(self.store, lit, span).map(Some)
-    }
-
-    /// Consume `- <rational>` as a negated literal (the literal regex is
-    /// unsigned; the negative literal is the prefix `-` negating at parse), or
-    /// nothing — the two-token peek restores the position when no literal
-    /// follows the `-`.
-    pub(crate) fn consume_negated_rational(&mut self) -> Result<Option<DyadPtr>, ParseError> {
-        let save = self.pos;
-        if !self.consume_token(self.types.minus) {
-            return Ok(None);
-        }
-        match self.consume_rational()? {
-            // SAFETY: the literal was just built by `consume_rational`.
-            Some(lit) => Ok(Some(unsafe {
-                crate::identities::rational::negate(self.store, self.types.rational, lit)
-            })),
-            None => {
-                self.pos = save;
-                Ok(None)
-            }
-        }
     }
 
     /// Consume the next token if it is the identity `id`, reporting whether it
@@ -1829,7 +1821,15 @@ impl<'a> Parser<'a> {
         // The parameter list is a record; parse_record opens and closes its scope.
         let input = self.parse_record(self.types.type_)?;
         self.expect_arrow()?;
-        let output = self.parse_return_type()?;
+        // The return logos: the cells up to the body bracket, constructed to
+        // one (`i32`, `@i32`, later `array i32`).
+        let output = {
+            let items = self.drive_until_open(RightSide::ReturnType)?;
+            self.one_of(items).map_err(|e| match e {
+                ParseError::Empty => ParseError::ExpectedReturnType,
+                e => e,
+            })?
+        };
 
         // Open this function's frame and give the parameters its first per-call
         // byte offsets — a call frame is an instance of its function, so a
@@ -1931,9 +1931,10 @@ impl<'a> Parser<'a> {
         Ok(self.store.alloc_raw(fn_type, value))
     }
 
-    /// Parse a conditional `if ( cond ) ( then )` with an optional `else ( else )`
-    /// (given the resolved `if` identity). Each part is a parenthesized expression,
-    /// and the condition must be a `bool` ([`ParseError::NonBoolCondition`]). The
+    /// Parse a conditional `if cond ( then )` with an optional `else ( else )`
+    /// (given the resolved `if` identity). The condition is whatever stands
+    /// before the body bracket, a `( cond )` group included; the bodies are
+    /// brackets; and the condition must be a `bool` ([`ParseError::NonBoolCondition`]). The
     /// node is `{type: if, value: [cond, then, else]}`, the else slot null when the
     /// `else` is absent: run takes the branch the condition selects, compile emits a
     /// two-way branch. An else-less `if` is a statement — it yields unit — so value
@@ -1943,10 +1944,11 @@ impl<'a> Parser<'a> {
     /// the else slot, so chains parse right-associatively without `else ( if … )`.
     /// Unlike `fn`, `if` opens no new scope — its parts resolve in the enclosing one.
     pub fn parse_if(&mut self, if_type: DyadPtr) -> Result<DyadPtr, ParseError> {
-        // Condition: a parenthesized expression, required to be a bool.
-        self.expect_open()?;
-        let cond = self.parse_sequence()?;
-        self.expect_close()?;
+        // The condition: the cells up to the body bracket, constructed to one
+        // — a `(…)` group, a bare bool name, `not x`, `x == 1` alike (ruled 5
+        // September 2026) — required to be a bool.
+        let items = self.drive_until_open(RightSide::Condition)?;
+        let cond = self.one_of(items)?;
         let types = self.types;
         // SAFETY: `cond` is the reduced dyad just parsed.
         if !unsafe { is_bool_result(&types, cond) } {
@@ -2166,9 +2168,9 @@ impl<'a> Parser<'a> {
     /// and a `return` in the body is rejected ([`ParseError::EarlyReturn`]) since v1
     /// has no unwinding to exit the loop with.
     pub fn parse_while(&mut self, while_id: DyadPtr) -> Result<DyadPtr, ParseError> {
-        self.expect_open()?;
-        let cond = self.parse_sequence()?;
-        self.expect_close()?;
+        // The condition: the cells up to the body bracket (as `if`'s).
+        let items = self.drive_until_open(RightSide::Condition)?;
+        let cond = self.one_of(items)?;
         let types = self.types;
         // SAFETY: `cond` is the reduced dyad just parsed.
         if !unsafe { is_bool_result(&types, cond) } {
@@ -2206,15 +2208,17 @@ impl<'a> Parser<'a> {
         if !self.consume_token(self.types.in_) {
             return Err(ParseError::ExpectedIn);
         }
-        let start = self.parse_range_operand()?;
-        if !self.consume_token(self.types.dotdot_) {
-            return Err(ParseError::ExpectedRange);
-        }
-        let end = self.parse_range_operand()?;
-        let step = if self.consume_token(self.types.dotdot_) {
-            Some(self.parse_range_operand()?)
-        } else {
-            None
+        // The range: the cells up to the body bracket — `start .. end` or
+        // `start .. end .. step` — constructed by precedence, the `..` cells
+        // inert delimiters read by position.
+        let parts = self.drive_until_open(RightSide::Condition)?;
+        let dotdot = self.types.dotdot_;
+        let (start, end, step) = match parts.as_slice() {
+            [(s, _), (d, _), (e, _)] if *d == dotdot => (*s, *e, None),
+            [(s, _), (d, _), (e, _), (d2, _), (st, _)] if *d == dotdot && *d2 == dotdot => {
+                (*s, *e, Some(*st))
+            }
+            _ => return Err(ParseError::ExpectedRange),
         };
 
         // Resolve the loop logos across the range parts (concrete logos must
@@ -2269,51 +2273,6 @@ impl<'a> Parser<'a> {
 
         let value = self.store.alloc_operands(&[var, start, end, step, body, self.types.ops.for_]);
         Ok(self.store.alloc_raw(for_id, value))
-    }
-
-    /// Parse one bounded range part for `for` — a *primary*, never a full
-    /// expression: a literal (optionally negated), a resolved name with an
-    /// optional `.field` chain, or an explicit `( … )` scope. Bounded because
-    /// the range is followed by the body's `( … )`, which a full expression
-    /// parse would consume as a call on the endpoint.
-    fn parse_range_operand(&mut self) -> Result<DyadPtr, ParseError> {
-        self.skip_trivia();
-        let source = self.source;
-        if self.pos >= source.len() {
-            return Err(ParseError::ExpectedRange);
-        }
-        let r = self
-            .scopes
-            .resolve(self.trie, &source[self.pos..])
-            .map_err(ParseError::Resolve)?;
-        let id = r.identity;
-        if id == self.types.open_ {
-            // An explicit parenthesized expression.
-            self.pos += r.matched;
-            let e = self.parse_sequence()?;
-            self.expect_close()?;
-            Ok(e)
-        } else if id == self.types.rational || id == self.types.string_ {
-            // A literal.
-            let start = self.pos;
-            self.pos += r.matched;
-            self.construct_leaf(id, start, r.matched)?.ok_or(ParseError::ExpectedRange)
-        } else if id == self.types.minus {
-            // A negated literal (`-` then a rational), as in `-`'s constructor.
-            self.consume_negated_rational()?.ok_or(ParseError::ExpectedRange)
-        } else if self.ctor_of(id).is_none() {
-            // A plain resolved name, with an optional `.field` chain.
-            self.pos += r.matched;
-            let mut node = id;
-            while self.consume_token(self.types.dot_) {
-                let (nstart, nlen) = self.lex_identifier().ok_or(ParseError::ExpectedField)?;
-                // SAFETY: `node` is a resolved dyad from the store.
-                node = unsafe { self.field_access(node, nstart, nlen, None, false)?.0 };
-            }
-            Ok(node)
-        } else {
-            Err(ParseError::ExpectedRange)
-        }
     }
 
     /// Resolve a field access `lhs.name` to a *place*: an ordinary numeric node
@@ -2645,39 +2604,6 @@ impl<'a> Parser<'a> {
         Ok(crate::identities::pointer::build_deref(self.store, &types, lhs, pointee, 0))
     }
 
-    /// Parse a pointer logos after its opening `@` (already consumed): any
-    /// further `@`s deepen it (`@@i32`), then a resolved logos name — a numeric
-    /// logos or a record logos — closes it. Fresh nodes per use; pointees carry
-    /// the identity.
-    pub(crate) fn parse_pointer_type(&mut self) -> Result<DyadPtr, ParseError> {
-        let mut depth = 1usize;
-        while self.consume_token(self.types.at_) {
-            depth += 1;
-        }
-        self.skip_trivia();
-        let source = self.source;
-        if self.pos >= source.len() {
-            return Err(ParseError::UnsupportedOperands);
-        }
-        let r = self
-            .scopes
-            .resolve(self.trie, &source[self.pos..])
-            .map_err(ParseError::Resolve)?;
-        let base = r.identity;
-        // SAFETY: `base` is a resolved dyad from the store.
-        let is_type = crate::identities::is_numtype_node(&self.types, base)
-            || unsafe { crate::identities::meta::is_record_type(base) };
-        if !is_type {
-            return Err(ParseError::UnsupportedOperands);
-        }
-        self.pos += r.matched;
-        let mut logos = base;
-        for _ in 0..depth {
-            logos = crate::identities::pointer::make_pointer_type(self.store, self.types.type_, logos);
-        }
-        Ok(logos)
-    }
-
     /// `&`'s constructor: the address of the place to its right — a name, or
     /// a `.field` chain already constructed (`.` binds tighter) — a numeric,
     /// pointer, or record-typed node with a value slot. Yields an `addr` node
@@ -2848,22 +2774,6 @@ impl<'a> Parser<'a> {
         }
         tape.place(logos);
         Ok(Constructed::Placed)
-    }
-
-    /// Parse a fn's return logos: a single resolved logos identity (`i32`, …) or a
-    /// pointer logos (`@i32`). Compound logos expressions arrive later.
-    fn parse_return_type(&mut self) -> Result<DyadPtr, ParseError> {
-        if self.consume_token(self.types.at_) {
-            return self.parse_pointer_type();
-        }
-        self.skip_trivia();
-        let source = self.source;
-        if self.pos >= source.len() {
-            return Err(ParseError::ExpectedReturnType);
-        }
-        let r = self.scopes.resolve(self.trie, &source[self.pos..]).map_err(ParseError::Resolve)?;
-        self.pos += r.matched;
-        Ok(r.identity)
     }
 
     /// Build a call `callee ( args )` over the arguments its bracket cell
@@ -3855,9 +3765,13 @@ impl<'a> Parser<'a> {
         construct: ConstructFn,
         id: DyadPtr,
         tape: &mut ParsingTape,
+        discovery: bool,
     ) -> Result<(), ParseError> {
         let start = tape.start_of(tape.cursor());
-        let outcome = construct(self, id, tape)?;
+        let was = std::mem::replace(&mut self.discovering, discovery);
+        let outcome = construct(self, id, tape);
+        self.discovering = was;
+        let outcome = outcome?;
         // The same token, at the same offset: a splice that moved the cursor
         // onto a later cell of the same identity (`5 + 20 + 12`) is not it.
         let standing = matches!(tape.at(0), Some(Cell::Token(t)) if t.identity == id)
@@ -3878,6 +3792,17 @@ impl<'a> Parser<'a> {
     /// discovery, before the next token is lexed … every other token is
     /// placed on the tape unconstructed").
     fn lex_segment(&mut self, tape: &mut ParsingTape) -> Result<Boundary, ParseError> {
+        self.lex_segment_until(tape, None)
+    }
+
+    /// [`Parser::lex_segment`], optionally stopping before a `(` that follows
+    /// at least one cell — the right side an identity reads up to its body
+    /// bracket ([`Parser::drive_until_open`]), in one of two modes.
+    fn lex_segment_until(
+        &mut self,
+        tape: &mut ParsingTape,
+        stop_at_open: Option<RightSide>,
+    ) -> Result<Boundary, ParseError> {
         loop {
             let Some((cell, start)) = self.lex_cell()? else {
                 return Ok(Boundary::Eof);
@@ -3891,12 +3816,40 @@ impl<'a> Parser<'a> {
                     self.pos = start;
                     return Ok(Boundary::Close);
                 }
+                if let Some(mode) = stop_at_open {
+                    if t.identity == self.types.open_ && !tape.is_empty() {
+                        // In a condition the bracket is the caller's only when
+                        // nothing before it would read it: a `(` after an
+                        // unconstructed identity with a constructor is that
+                        // identity's — `f(x)`'s arguments, `not (c)`'s operand,
+                        // `==`'s right operand — never the body (DESIGN ›`X (…)`
+                        // is one spelling, and X's constructor decides‹). A
+                        // return logos takes no bracket, so there the first
+                        // `(` is the body: `fn () -> i32 ( body )` "is taken by
+                        // `fn` before `i32`'s juxtaposition could read a
+                        // conversion".
+                        let owner_pending = mode == RightSide::Condition
+                            && matches!(tape.last(), Some(l) if !self.is_operand_cell(l));
+                        if !owner_pending {
+                            self.pos = start;
+                            return Ok(Boundary::Open);
+                        }
+                    }
+                }
             }
             tape.push(cell, start);
             if let Cell::Token(t) = cell {
                 if let Some(construct) = self.ctor_of(t.identity) {
-                    if self.precedence_of_cell(t.identity) >= crate::identities::meta::prec::OPEN {
-                        self.run_ctor(construct, t.identity, tape)?;
+                    let prec = self.precedence_of_cell(t.identity);
+                    // A right-side read stops before its caller's bracket, so
+                    // an identity that reads its own bracket (`type`, `fn`) is
+                    // not woken there: `-> type ( body )` names the classifier
+                    // and leaves the body to `fn`.
+                    let reader = prec == crate::identities::meta::prec::READER
+                        || prec == crate::identities::meta::prec::DECLARE;
+                    let asleep = stop_at_open == Some(RightSide::ReturnType) && reader;
+                    if prec >= crate::identities::meta::prec::OPEN && !asleep {
+                        self.run_ctor(construct, t.identity, tape, true)?;
                     }
                 }
             }
@@ -3945,7 +3898,7 @@ impl<'a> Parser<'a> {
             }
             let Some((i, _, construct, id)) = best else { break };
             tape.set_cursor(i);
-            self.run_ctor(construct, id, tape)?;
+            self.run_ctor(construct, id, tape, false)?;
         }
         let mut items = Vec::with_capacity(tape.len());
         for i in 0..tape.len() {
@@ -3954,6 +3907,21 @@ impl<'a> Parser<'a> {
             items.push((self.as_operand(cell)?, start));
         }
         Ok(items)
+    }
+
+    /// Lex and construct the cells up to the next `(` — the right side an
+    /// identity reads before its bracket: an `if`'s or `while`'s condition,
+    /// a `for`'s range, a `fn`'s return logos (DESIGN ›The scope's
+    /// constructor is the driver‹, ruled 5 September 2026: "its condition is
+    /// the cells up to the body bracket, constructed to one cell"). A `(`
+    /// standing first is part of the read (`if (c) (body)`); a later one is
+    /// the bracket, left for the caller — so a bracket inside the read after
+    /// its first cell wants the whole read parenthesized. A `,`, `)`, or the
+    /// end of input stops the read too.
+    fn drive_until_open(&mut self, mode: RightSide) -> Result<Vec<(DyadPtr, usize)>, ParseError> {
+        let mut tape = ParsingTape::new();
+        self.lex_segment_until(&mut tape, Some(mode))?;
+        self.construct_segment(&mut tape)
     }
 
     /// Parse one expression: one segment, lexed to the next `,`, `)`, or end
@@ -3988,6 +3956,20 @@ enum Boundary {
     Comma,
     Close,
     Eof,
+    /// The `(` a right-side read stops before (its caller's bracket).
+    Open,
+}
+
+/// What a right-side read is for, which decides whose a `(` inside it is
+/// (see [`Parser::lex_segment_until`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RightSide {
+    /// An `if`'s or `while`'s condition, a `for`'s range: a bracket after a
+    /// pending identity is that identity's.
+    Condition,
+    /// A `fn`'s return logos: the first bracket is the body, and an identity
+    /// that reads its own bracket is not woken.
+    ReturnType,
 }
 
 #[cfg(test)]
