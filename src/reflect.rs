@@ -201,7 +201,7 @@ pub unsafe fn describe(types: &CoreTypes, node: DyadPtr) -> Shape {
         meta::FRACTION_TAG => Shape::Fraction,
         meta::TYPEREC_TAG => Shape::LogosNode {
             kind: meta::kind_of(node).unwrap_or(meta::TOKEN_TAG),
-            precedence: Some(meta::precedence_of(node)).filter(|p| !p.is_nan()),
+            precedence: Some(meta::precedence_of(node)),
             constructor: meta::constructor_of(node),
             destructor: meta::destructor_of(node),
         },
@@ -303,71 +303,63 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
 
-        const INF: f64 = f64::INFINITY;
-        let cases: &[(&str, Option<f64>, bool)] = &[
-            // Operators: finite precedence, constructor invoked at reduction.
-            ("+", Some(2.0), true),
-            ("-", Some(2.0), true),
-            ("*", Some(3.0), true),
-            ("/", Some(3.0), true),
-            ("%", Some(3.0), true),
-            ("<", Some(1.5), true),
-            (">", Some(1.5), true),
-            ("<=", Some(1.5), true),
-            (">=", Some(1.5), true),
-            ("==", Some(1.4), true),
-            ("!=", Some(1.4), true),
-            ("and", Some(1.2), true),
-            ("or", Some(1.1), true),
-            ("=", Some(1.0), true),
-            // Literals and the prefix keyword: fresh-start constructors.
-            ("42", None, true),
-            ("«t»", None, true),
-            ("return", None, true),
-            // Keyword constructors: fresh-start.
-            ("logos", None, true),
-            ("fn", None, true),
-            ("if", None, true),
-            ("not", None, true),
-            ("while", None, true),
-            ("for", None, true),
-            ("&", None, true),
-            // Tight extenders: constructor invoked immediately over tape[-1].
-            (".", Some(INF), true),
-            ("@", Some(INF), true),
-            ("(", Some(INF), true),
-            // The declaration operators are tight extenders over the name
-            // token to their left, declining anywhere else.
-            (":", Some(INF), true),
-            (":=", Some(INF), true),
-            // Pure delimiters: never extend, constructor undefined.
-            (")", None, false),
-            (",", None, false),
-            ("->", None, false),
-            ("else", None, false),
-            ("in", None, false),
-            ("..", None, false),
+        use crate::identities::meta::prec;
+        let cases: &[(&str, f64, bool)] = &[
+            // Operators: constructed at the boundary, tightest first.
+            ("+", prec::ADDITIVE, true),
+            ("-", prec::ADDITIVE, true),
+            ("*", prec::MULTIPLICATIVE, true),
+            ("/", prec::MULTIPLICATIVE, true),
+            ("%", prec::MULTIPLICATIVE, true),
+            ("<", prec::COMPARE, true),
+            (">", prec::COMPARE, true),
+            ("<=", prec::COMPARE, true),
+            (">=", prec::COMPARE, true),
+            ("==", prec::EQUALITY, true),
+            ("!=", prec::EQUALITY, true),
+            ("and", prec::AND, true),
+            ("or", prec::OR, true),
+            ("=", prec::ASSIGN, true),
+            // Literals: constructed the moment they are lexed.
+            ("42", prec::LITERAL, true),
+            ("«t»", prec::LITERAL, true),
+            ("return", prec::RETURN, true),
+            // The identities that read their own bracket or right side.
+            ("logos", prec::READER, true),
+            ("fn", prec::READER, true),
+            ("if", prec::READER, true),
+            ("not", prec::NOT, true),
+            ("while", prec::READER, true),
+            ("for", prec::READER, true),
+            ("&", prec::ADDRESS, true),
+            (".", prec::DOT, true),
+            ("@", prec::DOT, true),
+            ("(", prec::OPEN, true),
+            // The declaration operators: above `(`, declaring before the value.
+            (":", prec::DECLARE, true),
+            (":=", prec::DECLARE, true),
+            // Inert delimiters: constructor undefined; `,` above `(` as the
+            // segment boundary, `..` the range infix `for` reads.
+            (")", prec::INERT, false),
+            (",", prec::COMMA, false),
+            ("->", prec::INERT, false),
+            ("else", prec::INERT, false),
+            ("in", prec::INERT, false),
+            ("..", prec::RANGE, false),
             // Numeric logos carry the juxtaposition constructor (`i32 3`, the
             // anonymous typed value; declining the right yields the logos as a
             // value).
-            ("i32", None, true),
-            ("f64", None, true),
-            // Data logos: plain operands, constructor undefined. (The root
-            // `logos` itself sits in the keyword group above: its merged
-            // constructor serves the record path and yields the classifier
-            // otherwise.)
-            ("bool", None, false),
-            ("void", None, false),
+            ("i32", prec::APPLY, true),
+            ("f64", prec::APPLY, true),
+            // Data logos: plain operands, constructor undefined.
+            ("bool", prec::INERT, false),
+            ("void", prec::INERT, false),
         ];
         for &(spelling, precedence, has_ctor) in cases {
             let id = scopes.resolve(&trie, spelling).unwrap().identity;
             // SAFETY: every resolved identity carries its registration-built record.
             unsafe {
-                let p = meta::precedence_of(id);
-                match precedence {
-                    Some(want) => assert_eq!(p, want, "precedence of {spelling}"),
-                    None => assert!(p.is_nan(), "precedence sentinel of {spelling}"),
-                }
+                assert_eq!(meta::precedence_of(id), precedence, "precedence of {spelling}");
                 let ctor = meta::constructor_of(id);
                 assert_eq!(!ctor.is_null(), has_ctor, "constructor of {spelling}");
                 if has_ctor {
@@ -506,13 +498,14 @@ mod tests {
 
         // SAFETY: the handles are identities with records; roles are string nodes.
         unsafe {
-            assert_eq!(meta::precedence_of(core.plus), 2.0);
+            use crate::identities::meta::prec;
+            assert_eq!(meta::precedence_of(core.plus), prec::ADDITIVE);
             assert_eq!(meta::assoc_of(core.plus), Assoc::Left);
-            assert_eq!(meta::precedence_of(core.times), 3.0);
-            assert_eq!(meta::precedence_of(core.assign), 1.0);
+            assert_eq!(meta::precedence_of(core.times), prec::MULTIPLICATIVE);
+            assert_eq!(meta::precedence_of(core.assign), prec::ASSIGN);
             assert_eq!(meta::assoc_of(core.assign), Assoc::Right);
-            assert_eq!(meta::precedence_of(core.lt), 1.5);
-            assert_eq!(meta::precedence_of(core.eq), 1.4);
+            assert_eq!(meta::precedence_of(core.lt), prec::COMPARE);
+            assert_eq!(meta::precedence_of(core.eq), prec::EQUALITY);
 
             let roles: Vec<&[u8]> =
                 (0..meta::arity_of(core.for_)).map(|i| text_of(meta::role_of(core.for_, i))).collect();
@@ -660,25 +653,24 @@ mod tests {
             else {
                 panic!("an identity self-describes");
             };
-            assert_eq!((kind, precedence), (meta::TUPLE_TAG, Some(2.0)));
+            assert_eq!((kind, precedence), (meta::TUPLE_TAG, Some(meta::prec::ADDITIVE)));
             assert!(!constructor.is_null() && destructor.is_null());
             let Shape::LogosNode { kind, precedence, constructor, destructor } =
                 describe(&types, core.i32_)
             else {
                 panic!("an identity self-describes");
             };
-            // A non-extender's precedence surfaces as None (the NaN sentinel:
-            // it never extends an expression to its left, and the driver
-            // classifies by exactly this field — there is no schedule byte). A
-            // numeric logos carries the juxtaposition constructor (`i32 3`).
-            assert_eq!((kind, precedence), (NumType::I32 as u8, None));
+            // Every identity has a place on the one axis (no NaN sentinel,
+            // ruled 30 August 2026): a numeric logos sits at application, the
+            // juxtaposition constructor it carries (`i32 3`).
+            assert_eq!((kind, precedence), (NumType::I32 as u8, Some(meta::prec::APPLY)));
             assert!(!constructor.is_null() && destructor.is_null());
             let Shape::LogosNode { kind, precedence, constructor, destructor } =
                 describe(&types, core.type_)
             else {
                 panic!("an identity self-describes");
             };
-            assert_eq!((kind, precedence), (meta::TYPEREC_TAG, None));
+            assert_eq!((kind, precedence), (meta::TYPEREC_TAG, Some(meta::prec::READER)));
             // The root carries the merged constructor (record path / bare
             // classifier); its destructor stays the honest undefined.
             assert!(!constructor.is_null() && destructor.is_null());

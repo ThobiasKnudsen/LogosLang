@@ -26,7 +26,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
-        2.0,
+        meta::prec::ADDITIVE,
         Assoc::Left,
         &["lhs", "rhs", "op"],
     );

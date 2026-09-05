@@ -318,7 +318,7 @@ impl Core {
         // fixed point); a `scope`'s value is `[exprs, op]` — its expression
         // array and its sequence native (a scope IS an array; the list is
         // never inline in the node).
-        let record = meta::record(cx.store, meta::TYPEREC_TAG, f64::NAN);
+        let record = meta::record(cx.store, meta::TYPEREC_TAG, meta::prec::READER);
         // SAFETY: `type_`/`scope_` were allocated above with null value slots
         // nothing has read yet.
         unsafe {
@@ -330,7 +330,7 @@ impl Core {
         let record = meta::operand_record(
             &mut cx,
             meta::TUPLE_TAG,
-            f64::NAN,
+            meta::prec::INERT,
             Assoc::Left,
             &["exprs", "op"],
         );

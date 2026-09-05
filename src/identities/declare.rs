@@ -50,7 +50,7 @@ const DECL_GATE: usize = 2;
 /// `:`) and the `declare` identity its expressions are typed by, with its
 /// native leaf and lowering. Returns `(declare identity, leaf, := token)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr) {
-    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::INFINITY);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::DECLARE);
     let token = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(":=", IdContext::new(token, cx.root_scope));
     cx.metas.insert(token, |p, _id, tape| p.construct_decl(tape));
@@ -58,7 +58,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
-        f64::NAN,
+        meta::prec::INERT,
         Assoc::Left,
         &["name", "declared", "gate", "op"],
     );

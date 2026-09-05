@@ -105,7 +105,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
 
     // `alloc T v`: a fresh-start keyword constructor (NaN precedence → the driver
     // invokes it immediately). Its constructor parses the following typed value.
-    let alloc_ = keyword(cx, "alloc", &["pointee", "init", "op"], |p, _id, tape| {
+    let alloc_ = keyword(cx, "alloc", meta::prec::PREFIX, &["pointee", "init", "op"], |p, _id, tape| {
         let init = p.parse_expression()?;
         let types = p.types();
         let node = build_alloc(p.store(), &types, init)?;
@@ -117,7 +117,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     // `own a`: move out of a place; yields the pointer, empties the source.
     // `own a`: move the pointer out, emptying the source; `a` is dead from here
     // (DESIGN ›Memory and concurrency‹, *`own` and `drop` are static*).
-    let own_ = keyword(cx, "own", &["place", "pointee", "op"], |p, _id, tape| {
+    let own_ = keyword(cx, "own", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
         let (place, ended) = p.parse_place_operand(true)?;
         let types = p.types();
         let node = build_teardown(p.store(), &types, types.own_, place, true)?;
@@ -136,7 +136,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     // its type"): an owning place gets the teardown node, anything else an
     // inert `drop` node — the emptying is the parse-time dead mark, and the
     // run-time write is not needed, since no later use can observe the place.
-    let drop_ = keyword(cx, "drop", &["place", "pointee", "op"], |p, _id, tape| {
+    let drop_ = keyword(cx, "drop", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
         let (place, ended) = p.parse_place_operand(true)?;
         let types = p.types();
         let node = if is_owning_place(place) {
@@ -157,7 +157,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     // `own`/`drop` it demands an owning place — only an `alloc`-minted pointer
     // points at heap the allocator can free; freeing a borrow (`&x`) would hand
     // a stack/global address to the allocator.
-    let free_ = keyword(cx, "free", &["place", "pointee", "op"], |p, _id, tape| {
+    let free_ = keyword(cx, "free", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
         // The raw teardown verb leaves the name alive: only `own`/`drop` end it.
         let (place, _) = p.parse_place_operand(false)?;
         let types = p.types();
@@ -168,7 +168,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
 
     // `defer <expr>`: hold `<expr>` for LIFO execution at scope exit. Its own run
     // native is a no-op — the scope machinery runs the inner, never the defer node.
-    let defer_ = keyword(cx, "defer", &["inner", "op"], |p, _id, tape| {
+    let defer_ = keyword(cx, "defer", meta::prec::READER, &["inner", "op"], |p, _id, tape| {
         let inner = p.parse_expression()?;
         let types = p.types();
         let node = build_defer(p.store(), &types, inner);
@@ -192,16 +192,17 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
 }
 
 /// Register a fresh-start keyword identity: `spelling` in the trie, an operand
-/// record (`TUPLE`, NaN precedence — never extends left, so the driver invokes
-/// its constructor immediately), and `construct` in the `metas` table. Returns
+/// record (`TUPLE`, at `precedence` on the one axis), and `construct` in the
+/// `metas` table. Returns
 /// the identity node.
 fn keyword(
     cx: &mut Cx,
     spelling: &str,
+    precedence: f64,
     roles: &[&str],
     construct: crate::parse::ConstructFn,
 ) -> DyadPtr {
-    let record = meta::operand_record(cx, meta::TUPLE_TAG, f64::NAN, Assoc::Left, roles);
+    let record = meta::operand_record(cx, meta::TUPLE_TAG, precedence, Assoc::Left, roles);
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(spelling, IdContext::new(id, cx.root_scope));
     cx.metas.insert(id, construct);

@@ -110,12 +110,59 @@ const DTOR_OFF: usize = 18;
 /// operand record's arity + roles).
 pub(crate) const PAYLOAD_OFF: usize = 26;
 
+/// The one precedence axis every identity is placed on (DESIGN ›The scope's
+/// constructor is the driver‹, ruled 30 August 2026: "Every identity nameable
+/// in text has a precedence — there is no NaN and no ±infinity class").
+/// Higher binds tighter. A constructor at or above [`prec::OPEN`] runs at
+/// discovery, the moment its token is lexed; one below runs at the segment
+/// boundary, highest first, associativity breaking ties. The values are the
+/// seed's own placement of the core identities — DESIGN fixes the order and
+/// the threshold, never the numbers — spaced so a user operator can slot
+/// between any two (`^` at `*.precedence + 1`, #61).
+pub(crate) mod prec {
+    /// The separator `,`: above `(`, so it acts at discovery as a segment boundary.
+    pub const COMMA: f64 = 100.0;
+    /// A literal — a number, `«…»`, `true`/`false` — and `#`: constructed the
+    /// moment it is lexed.
+    pub const LITERAL: f64 = 96.0;
+    /// `import`: consumes its raw path token at discovery.
+    pub const IMPORT: f64 = 95.0;
+    /// `:=` (and `:` until it retires): declares its name before its value is
+    /// constructed (ruled 5 September 2026).
+    pub const DECLARE: f64 = 93.0;
+    /// The identities that read their own bracket or right side: `fn`, `for`,
+    /// `while`, `defer`, `type`, `if` (ruled 3 and 5 September 2026).
+    pub const READER: f64 = 92.0;
+    /// `(`: the discovery threshold.
+    pub const OPEN: f64 = 90.0;
+    /// `.` and `@`: the tightest boundary-time binders.
+    pub const DOT: f64 = 86.0;
+    /// `&`.
+    pub const ADDRESS: f64 = 85.0;
+    /// Application and juxtaposition: a callable or a type before its argument
+    /// cell — "the tight juxtaposition just below `(`".
+    pub const APPLY: f64 = 84.0;
+    /// The prefix words over a place: `own`, `drop`, `free`, `alloc`, `pub`.
+    pub const PREFIX: f64 = 82.0;
+    pub const MULTIPLICATIVE: f64 = 70.0;
+    pub const ADDITIVE: f64 = 60.0;
+    /// `..`, the range infix `for` reads.
+    pub const RANGE: f64 = 55.0;
+    pub const COMPARE: f64 = 50.0;
+    pub const EQUALITY: f64 = 40.0;
+    pub const AND: f64 = 30.0;
+    pub const NOT: f64 = 26.0;
+    pub const OR: f64 = 20.0;
+    pub const RETURN: f64 = 10.0;
+    pub const ASSIGN: f64 = 5.0;
+    /// An identity with no constructor — a delimiter (`)`, `->`, `else`, `in`),
+    /// a data type, a node record: inert, never constructed by the driver.
+    pub const INERT: f64 = 0.0;
+}
+
 /// Build a plain record: `kind` and `precedence`, no payload. The scalar
 /// logos, the text substance, the foundations, and the parse-only tokens.
-/// `precedence` is the extender signal the driver classifies by: NaN for a
-/// token that never extends an expression to its left, `+inf` for a tight
-/// extender (`(` as call, postfix `.`/`@`), finite only on the infix
-/// operators (which carry operand records instead).
+/// `precedence` is the identity's place on the one axis ([`prec`]).
 pub(crate) fn record(store: &mut Store, kind: u8, precedence: f64) -> *mut u8 {
     let blob = header(kind, Assoc::Left, precedence);
     store.alloc_bytes(&blob)
@@ -146,7 +193,7 @@ pub(crate) fn operand_record(
 /// Build a pointer logos's record: kind [`ADDR_TAG`], the pointee node as the
 /// payload. Pointer logos are created fresh per use and carry no parse members.
 pub(crate) fn pointer_record(store: &mut Store, pointee: DyadPtr) -> *mut u8 {
-    let mut blob = header(ADDR_TAG, Assoc::Left, f64::NAN).to_vec();
+    let mut blob = header(ADDR_TAG, Assoc::Left, prec::INERT).to_vec();
     blob.extend_from_slice(&(pointee as usize).to_ne_bytes());
     store.alloc_bytes(&blob)
 }
@@ -162,7 +209,7 @@ pub(crate) fn record_layout(
     fields: DyadPtr,
     size_bytes: u64,
 ) -> *mut u8 {
-    let mut blob = header(RECORD_TAG, Assoc::Left, f64::NAN).to_vec();
+    let mut blob = header(RECORD_TAG, Assoc::Left, prec::INERT).to_vec();
     blob.extend_from_slice(&(scope as usize).to_ne_bytes());
     blob.extend_from_slice(&(fields as usize).to_ne_bytes());
     blob.extend_from_slice(&size_bytes.to_ne_bytes());
@@ -196,10 +243,8 @@ pub(crate) unsafe fn record_size_of(id: DyadPtr) -> u64 {
     std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF + 16) as *const u64)
 }
 
-/// The fixed head of every record: kind, associativity, precedence, and the
-/// two reserved slots. Precedence doubles as the extender signal: NaN (never
-/// extends left) / finite (infix, shift-reduce) / +inf (tight extender,
-/// constructor invoked immediately over its left).
+/// The fixed head of every record: kind, associativity, precedence (the
+/// identity's place on the one axis, [`prec`]), and the two reserved slots.
 fn header(kind: u8, assoc: Assoc, precedence: f64) -> [u8; PAYLOAD_OFF] {
     let mut h = [0u8; PAYLOAD_OFF];
     h[0] = kind;

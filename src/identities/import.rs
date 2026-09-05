@@ -35,7 +35,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
-        f64::NAN,
+        meta::prec::IMPORT,
         Assoc::Left,
         &["path", "tail", "op"],
     );

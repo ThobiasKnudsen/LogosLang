@@ -67,12 +67,12 @@ pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
     // `:` is a tight extender: its constructor declares a fresh name token to
     // its left (`name : logos`) and declines anywhere else, staying a bare
     // delimiter for the field lists the record parse consumes itself.
-    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::INFINITY);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::DECLARE);
     let colon = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(":", IdContext::new(colon, cx.root_scope));
     cx.metas.insert(colon, |p, _id, tape| p.construct_typed_decl(tape));
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::COMMA);
     let comma = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(",", IdContext::new(comma, cx.root_scope));
 

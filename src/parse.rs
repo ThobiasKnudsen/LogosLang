@@ -1428,20 +1428,34 @@ impl<'a> Parser<'a> {
             {
                 return Class::Operand;
             }
-            let prec = crate::identities::meta::precedence_of(id);
-            match self.construct_of(id) {
-                Some(c) if prec == f64::INFINITY => Class::Tight(c),
-                Some(_) if prec.is_finite() => {
-                    Class::Extender(prec, crate::identities::meta::assoc_of(id))
-                }
-                Some(c) => Class::Construct(c),
-                None if crate::identities::meta::kind_of(id)
-                    == Some(crate::identities::meta::TOKEN_TAG) =>
+            let Some(c) = self.construct_of(id) else {
+                return if crate::identities::meta::kind_of(id)
+                    == Some(crate::identities::meta::TOKEN_TAG)
                 {
                     Class::Delimiter
-                }
-                None => Class::Operand,
+                } else {
+                    Class::Operand
+                };
+            };
+            // Bridge (#59, step 1): the old loop's three timings, keyed by
+            // identity while it still runs. The eager-segment driver (step 3)
+            // reads only the precedence axis and deletes `Class` with it.
+            let t = &self.types;
+            if [t.open_, t.dot_, t.at_, t.colon_, t.declare_tok].contains(&id) {
+                return Class::Tight(c);
             }
+            if [
+                t.assign, t.plus, t.minus, t.times, t.div_, t.rem_, t.lt, t.gt, t.eq, t.le,
+                t.ge, t.ne, t.and_, t.or_,
+            ]
+            .contains(&id)
+            {
+                return Class::Extender(
+                    crate::identities::meta::precedence_of(id),
+                    crate::identities::meta::assoc_of(id),
+                );
+            }
+            Class::Construct(c)
         }
     }
 

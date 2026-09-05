@@ -19,7 +19,7 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
     // `(` is a *tight extender*: with a completed dyad to its left it is a
     // call (juxtaposition binds tightest — DESIGN ›the call paren tightest‹),
     // without one its constructor opens a grouping scope.
-    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::INFINITY);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::OPEN);
     let open = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(r"\(", IdContext::new(open, cx.root_scope));
     cx.metas.insert(open, |p, _id, tape| {
@@ -41,7 +41,7 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
         Ok(crate::parse::Constructed::Placed)
     });
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG, f64::NAN);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
     let close = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(r"\)", IdContext::new(close, cx.root_scope));
 
