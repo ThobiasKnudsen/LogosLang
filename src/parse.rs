@@ -67,13 +67,19 @@ pub enum Cell {
     Token(Token),
     /// A dyad already reduced from earlier cells, frozen against rewriting.
     Dyad(DyadPtr),
+    /// A bracket, constructed at discovery: the finished scope cell `(`'s
+    /// constructor leaves (DESIGN ›The scope's constructor is the driver‹).
+    /// Told apart from a plain dyad because `X (…)` is X's decision — a
+    /// callable reads the bracket to its right as its arguments, a numeric
+    /// logos as its conversion — while `f 3` is not a call.
+    Scope(DyadPtr),
 }
 
 impl Cell {
-    /// The reduced dyad, if this cell is one.
+    /// The reduced dyad, if this cell is one (a bracket's scope included).
     pub fn as_dyad(&self) -> Option<DyadPtr> {
         match self {
-            Cell::Dyad(d) => Some(*d),
+            Cell::Dyad(d) | Cell::Scope(d) => Some(*d),
             Cell::Token(_) => None,
         }
     }
@@ -82,7 +88,15 @@ impl Cell {
     pub fn as_token(&self) -> Option<&Token> {
         match self {
             Cell::Token(t) => Some(t),
-            Cell::Dyad(_) => None,
+            Cell::Dyad(_) | Cell::Scope(_) => None,
+        }
+    }
+
+    /// The bracket's scope, if this cell is one.
+    pub fn as_scope(&self) -> Option<DyadPtr> {
+        match self {
+            Cell::Scope(d) => Some(*d),
+            _ => None,
         }
     }
 }
@@ -92,18 +106,28 @@ impl Cell {
 #[derive(Debug, Default)]
 pub struct ParsingTape {
     cells: Vec<Cell>,
+    /// The source offset each cell was lexed at — the derived source map's
+    /// seed-side stand-in, kept beside the cells so an error over a cell
+    /// (a leftover one, an undeclared name) points at where it stood.
+    starts: Vec<usize>,
     cursor: usize,
 }
 
 impl ParsingTape {
     /// An empty tape.
     pub fn new() -> Self {
-        ParsingTape { cells: Vec::new(), cursor: 0 }
+        ParsingTape { cells: Vec::new(), starts: Vec::new(), cursor: 0 }
     }
 
-    /// A tape over `cells`, cursor at index 0.
+    /// A tape over `cells`, cursor at index 0 (positions unknown).
     pub fn from_cells(cells: Vec<Cell>) -> Self {
-        ParsingTape { cells, cursor: 0 }
+        let starts = vec![0; cells.len()];
+        ParsingTape { cells, starts, cursor: 0 }
+    }
+
+    /// The source offset the cell at absolute index `i` was lexed at.
+    pub fn start_of(&self, i: usize) -> usize {
+        self.starts.get(i).copied().unwrap_or(0)
     }
 
     /// Number of cells currently on the tape.
@@ -155,7 +179,9 @@ impl ParsingTape {
     pub fn insert(&mut self, offset: isize, cell: Cell) {
         let old_len = self.cells.len();
         let i = (self.cursor as isize + offset).clamp(0, old_len as isize) as usize;
+        let start = self.start_of(self.cursor);
         self.cells.insert(i, cell);
+        self.starts.insert(i, start);
         // The cell previously at `cursor` shifts right only if it exists and sits
         // at or after the insertion point; follow it so `at(0)` is unchanged.
         if i <= self.cursor && self.cursor < old_len {
@@ -169,16 +195,18 @@ impl ParsingTape {
     pub fn remove(&mut self, offset: isize) -> Option<Cell> {
         let i = self.abs(offset)?;
         let cell = self.cells.remove(i);
+        self.starts.remove(i);
         if i < self.cursor {
             self.cursor -= 1;
         }
         Some(cell)
     }
 
-    /// Append `cell` at the end and move the cursor to it. Used by the driver as
-    /// it shifts operands and operators onto the frontier.
-    pub fn push(&mut self, cell: Cell) {
+    /// Append `cell`, lexed at source offset `start`, and move the cursor to
+    /// it. Used by the driver as it lexes a segment onto the frontier.
+    pub fn push(&mut self, cell: Cell, start: usize) {
         self.cells.push(cell);
+        self.starts.push(start);
         self.cursor = self.cells.len() - 1;
     }
 
@@ -196,6 +224,7 @@ impl ParsingTape {
     /// preceding a `(` is popped and replaced by the call node.
     pub fn pop(&mut self) -> Option<Cell> {
         let cell = self.cells.pop();
+        self.starts.pop();
         self.cursor = self.cursor.min(self.cells.len().saturating_sub(1));
         cell
     }
@@ -207,7 +236,9 @@ impl ParsingTape {
         if i == 0 || i + 1 >= self.cells.len() {
             return false;
         }
+        let start = self.starts[i - 1];
         self.cells.splice(i - 1..=i + 1, [Cell::Dyad(dyad)]);
+        self.starts.splice(i - 1..=i + 1, [start]);
         self.cursor = self.cursor.min(self.cells.len().saturating_sub(1));
         true
     }
@@ -225,6 +256,13 @@ impl ParsingTape {
     /// common case.)
     pub fn place(&mut self, dyad: DyadPtr) {
         *self.at_mut(0).expect("the construct's token cell is at the cursor") = Cell::Dyad(dyad);
+    }
+
+    /// Replace the cursor cell — `(`'s own token — with the finished bracket
+    /// cell: the scope its constructor built, marked as a bracket so the
+    /// identity to its left can read it as its argument.
+    pub fn place_scope(&mut self, dyad: DyadPtr) {
+        *self.at_mut(0).expect("the construct's token cell is at the cursor") = Cell::Scope(dyad);
     }
 
     /// Reduce the triple around the cursor — `tape[-1]`, the construct's own
@@ -686,6 +724,9 @@ pub struct CoreTypes {
     /// `dyad`: the spelled view identity (#52) — `(dyad a)` wraps a
     /// value as its cell, and `.` reads the cell.
     pub dyad_: DyadPtr,
+    /// `index`: the passive node a `[i]` cell carries (a comptime literal in
+    /// the seed).
+    pub index_: DyadPtr,
     /// `construct`: the record-construction statement a record-typed call builds.
     pub construct_: DyadPtr,
     /// `string`: the text-literal logos (`«…»`); inert in the seed, above all the
@@ -825,30 +866,6 @@ pub enum Constructed {
     Placed,
     /// The construct does not apply here; nothing was consumed.
     Decline,
-}
-
-/// How the driver treats a resolved identity — computed from its record alone:
-/// constructor presence, the precedence field, and the record kind. This is
-/// the whole of the driver's dispatch; there is no schedule table (DESIGN
-/// ›The driver needs only one token of lookahead: it lexes the next token,
-/// reads its `precedence`, and shifts or reduces the frontier accordingly‹).
-#[derive(Clone, Copy)]
-enum Class {
-    /// A plain operand — a user binding, a data-logos value: pushed.
-    Operand,
-    /// A finite-precedence extender (an infix operator): shifted and reduced
-    /// by precedence; its constructor is invoked at reduction.
-    Extender(f64, Assoc),
-    /// An infinite-precedence (tight) extender — `(` as a call, postfix
-    /// `.`/`@`: its constructor is invoked immediately over the left context.
-    Tight(ConstructFn),
-    /// A fresh-start constructor (keyword opener, literal, `&`): invoked; it
-    /// consumes forward tokens itself.
-    Construct(ConstructFn),
-    /// A bare delimiter token (`)`, `,`, `:`, `->`, `else`, `in`, `..`, `:=`):
-    /// never consumed by the driver — the expression finalizes and the
-    /// enclosing constructor eats it.
-    Delimiter,
 }
 
 /// The application constructor as a [`ConstructFn`] (see
@@ -1213,6 +1230,14 @@ pub struct Parser<'a> {
     dir: PathBuf,
     /// The once-per-run import registry (see [`Imports`]).
     imports: Imports,
+    /// Comment cells lifted out of a segment at its boundary, with the offset
+    /// each was lexed at: prose is reflectable structure interleaved with the
+    /// code, invisible to value flow, and [`Parser::parse_next`] hands them
+    /// out as body items in source order beside the segment's expression.
+    lifted: Vec<(usize, DyadPtr)>,
+    /// Body items a constructed segment yielded, in source order, not yet
+    /// handed out by [`Parser::parse_next`].
+    queued: std::collections::VecDeque<DyadPtr>,
     /// The lowering table, when the driver attached one: the nested import
     /// pass hands it to its runtime so `f.compile()` at an imported top level
     /// works exactly as at the driver's own top level (one pass, one behavior).
@@ -1250,6 +1275,8 @@ impl<'a> Parser<'a> {
             trie,
             types,
             pending_fn: std::ptr::null_mut(),
+            lifted: Vec::new(),
+            queued: std::collections::VecDeque::new(),
             frames: Vec::new(),
             runtime_depth: 0,
             pending_defers: vec![Vec::new()],
@@ -1385,19 +1412,9 @@ impl<'a> Parser<'a> {
     /// design (DESIGN ›Text literals are plain values; `#` is the one comment
     /// constructor‹); the full constructor form arrives at self-hosting.
     fn skip_trivia(&mut self) {
-        let bytes = self.source.as_bytes();
-        loop {
-            while self.pos < bytes.len() && bytes[self.pos].is_ascii_whitespace() {
-                self.pos += 1;
-            }
-            if self.pos < bytes.len() && bytes[self.pos] == b'#' {
-                while self.pos < bytes.len() && bytes[self.pos] != b'\n' {
-                    self.pos += 1;
-                }
-                continue;
-            }
-            break;
-        }
+        // Whitespace only: `#` is an identity the driver lexes into a comment
+        // cell (DESIGN ›`#` is the one comment constructor‹), never trivia.
+        self.skip_whitespace();
     }
 
     /// Consume the closing `)` that matches an opening `(`, or fail if the body
@@ -1421,67 +1438,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Classify a resolved identity from its record alone — constructor
-    /// presence, the precedence field, and the record kind; no schedule table
-    /// (DESIGN ›it lexes the next token, reads its `precedence`, and shifts or
-    /// reduces the frontier accordingly‹). Only a logos identity carries a
-    /// record in its value slot (its `logos` is the `logos : logos` root);
-    /// everything else a name can resolve to — a user binding, a fn value, a
-    /// record logos, a logos variable — is a plain operand.
-    fn classify(&self, id: DyadPtr) -> Class {
-        // SAFETY: `id` is a resolved dyad from the store; the record read is
-        // gated on it being a logos identity whose registration built the record.
-        unsafe {
-            if id.is_null() {
-                return Class::Operand;
-            }
-            // An instance of `fn` — a function value, or the declaration
-            // placeholder a recursive self-call resolves — runs its type's
-            // shared constructor, application (#59 step 2; DESIGN ›a call
-            // `f(a)` is that same cell consumed by the callee's own
-            // constructor‹).
-            if (*id).ty == self.types.fn_type {
-                return Class::Construct(application);
-            }
-            if (*id).ty != self.types.type_ || crate::identities::meta::kind_of(id).is_none() {
-                return Class::Operand;
-            }
-            // A record logos applied to its field values constructs an instance:
-            // the same shared constructor, on the logos itself.
-            if crate::identities::meta::is_record_type(id) {
-                return Class::Construct(application);
-            }
-            let Some(c) = self.construct_of(id) else {
-                return if crate::identities::meta::kind_of(id)
-                    == Some(crate::identities::meta::TOKEN_TAG)
-                {
-                    Class::Delimiter
-                } else {
-                    Class::Operand
-                };
-            };
-            // Bridge (#59, step 1): the old loop's three timings, keyed by
-            // identity while it still runs. The eager-segment driver (step 3)
-            // reads only the precedence axis and deletes `Class` with it.
-            let t = &self.types;
-            if [t.open_, t.dot_, t.at_, t.colon_, t.declare_tok].contains(&id) {
-                return Class::Tight(c);
-            }
-            if [
-                t.assign, t.plus, t.minus, t.times, t.div_, t.rem_, t.lt, t.gt, t.eq, t.le,
-                t.ge, t.ne, t.and_, t.or_,
-            ]
-            .contains(&id)
-            {
-                return Class::Extender(
-                    crate::identities::meta::precedence_of(id),
-                    crate::identities::meta::assoc_of(id),
-                );
-            }
-            Class::Construct(c)
-        }
-    }
-
     /// Application — the constructor an instance of `fn`, a record logos, or
     /// (through its own constructor) a numeric logos runs for the bracket to
     /// its right: DESIGN ›`X (…)` is one spelling, and X's constructor decides
@@ -1494,14 +1450,39 @@ impl<'a> Parser<'a> {
         id: DyadPtr,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        if self.at_open() {
-            self.expect_open()?;
-            let node = self.parse_call(id)?;
+        if let Some(Cell::Scope(scope)) = tape.at(1).copied() {
+            // SAFETY: `scope` is the bracket's node from the store.
+            let args = unsafe { self.args_of(scope) };
+            let node = self.build_call(id, &args)?;
+            tape.remove(1);
             tape.place(node);
         } else {
             tape.place(id);
         }
         Ok(Constructed::Placed)
+    }
+
+    /// The arguments a bracket cell hands a callable: the scope's expressions
+    /// in order (prose and teardown structure aside), a single expression
+    /// standing alone as itself, an empty `()` as none — DESIGN ›A function's
+    /// surface‹: "the caller's positional arguments are the parameter list's
+    /// holes, in order".
+    ///
+    /// # Safety
+    /// `scope` must be a node from the store.
+    pub(crate) unsafe fn args_of(&self, scope: DyadPtr) -> Vec<DyadPtr> {
+        if (*scope).ty != self.types.scope || (*scope).value.is_null() {
+            return vec![scope];
+        }
+        let arr = *((*scope).value as *const DyadPtr);
+        let defer_ = self.types.defer_;
+        crate::identities::array::items(arr)
+            .iter()
+            .copied()
+            .filter(|&e| {
+                !crate::identities::numtype::is_comment_type((*e).ty) && (*e).ty != defer_
+            })
+            .collect()
     }
 
     /// Invoke `id`'s constructor over a fresh single-token tape — the
@@ -1518,7 +1499,7 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
         let mut tape = ParsingTape::new();
-        tape.push(Cell::Token(Token { start, len, identity: id }));
+        tape.push(Cell::Token(Token { start, len, identity: id }), start);
         match construct(self, id, &mut tape)? {
             Constructed::Placed => Ok(tape.cell(0).and_then(Cell::as_dyad)),
             Constructed::Decline => Ok(None),
@@ -1561,16 +1542,12 @@ impl<'a> Parser<'a> {
     /// reduced dyad, or a token that does not extend — a resolved operand or a
     /// fresh name in waiting (null identity). A pending extender token is not
     /// an operand.
-    fn is_operand_cell(&self, cell: &Cell) -> bool {
+    pub(crate) fn is_operand_cell(&self, cell: &Cell) -> bool {
         match cell {
-            Cell::Dyad(_) => true,
-            Cell::Token(t) => {
-                t.identity.is_null()
-                    || !matches!(
-                        self.classify(t.identity),
-                        Class::Extender(..) | Class::Tight(_)
-                    )
-            }
+            Cell::Dyad(_) | Cell::Scope(_) => true,
+            // A fresh name resolves at consumption; a resolved token stands as
+            // an operand only when nothing would construct it.
+            Cell::Token(t) => t.identity.is_null() || self.ctor_of(t.identity).is_none(),
         }
     }
 
@@ -1580,9 +1557,9 @@ impl<'a> Parser<'a> {
     /// fresh-name token re-resolves its span for the precise error, reported
     /// at the token's own start — the same message and position the eager
     /// driver produced at scan.
-    fn as_operand(&mut self, cell: Cell) -> Result<DyadPtr, ParseError> {
+    pub(crate) fn as_operand(&mut self, cell: Cell) -> Result<DyadPtr, ParseError> {
         match cell {
-            Cell::Dyad(d) => Ok(d),
+            Cell::Dyad(d) | Cell::Scope(d) => Ok(d),
             Cell::Token(t) => {
                 let id = if t.identity.is_null() {
                     let source = self.source;
@@ -2151,23 +2128,25 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse a logical negation `not ( operand )` (given the resolved `not`
-    /// identity). The operand is parenthesized (like an `if` condition), which keeps
-    /// the binding unambiguous, and must be a `bool` ([`ParseError::NonBoolOperands`]).
-    /// The node is `{type: not, value: operand}`.
-    pub fn parse_not(&mut self, not_id: DyadPtr) -> Result<DyadPtr, ParseError> {
-        self.expect_open()?;
-        let operand = self.parse_sequence()?;
-        self.expect_close()?;
+    /// Build a logical negation `not operand` (given the resolved `not`
+    /// identity) over the constructed cell to its right, which must be a
+    /// `bool` ([`ParseError::NonBoolOperands`]). The node is `{type: not,
+    /// value: operand}`.
+    ///
+    /// # Safety
+    /// `operand` must be a reduced dyad from the store.
+    pub(crate) unsafe fn build_not(
+        &mut self,
+        not_id: DyadPtr,
+        operand: DyadPtr,
+    ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
-        // SAFETY: `operand` is the reduced dyad just parsed.
-        if !unsafe { is_bool_result(&types, operand) } {
+        if !is_bool_result(&types, operand) {
             return Err(ParseError::NonBoolOperands);
         }
         // A bool-literal operand folds now (pure, nothing lost), like the
         // `==`/`and`/`or` folds — what keeps a comptime chain comptime.
-        // SAFETY: `operand` is the reduced dyad just parsed.
-        if let Some(v) = unsafe { bool_literal_value(&types, operand) } {
+        if let Some(v) = bool_literal_value(&types, operand) {
             return Ok(crate::identities::bool_mod::literal_node(
                 self.store,
                 self.types.bool_,
@@ -2322,13 +2301,14 @@ impl<'a> Parser<'a> {
         } else if id == self.types.minus {
             // A negated literal (`-` then a rational), as in `-`'s constructor.
             self.consume_negated_rational()?.ok_or(ParseError::ExpectedRange)
-        } else if matches!(self.classify(id), Class::Operand) {
+        } else if self.ctor_of(id).is_none() {
             // A plain resolved name, with an optional `.field` chain.
             self.pos += r.matched;
             let mut node = id;
             while self.consume_token(self.types.dot_) {
+                let (nstart, nlen) = self.lex_identifier().ok_or(ParseError::ExpectedField)?;
                 // SAFETY: `node` is a resolved dyad from the store.
-                node = unsafe { self.parse_field_access(node)? };
+                node = unsafe { self.field_access(node, nstart, nlen, None, false)?.0 };
             }
             Ok(node)
         } else {
@@ -2345,25 +2325,35 @@ impl<'a> Parser<'a> {
     ///
     /// # Safety
     /// `lhs` must be a valid dyad from the store.
-    pub(crate) unsafe fn parse_field_access(&mut self, lhs: DyadPtr) -> Result<DyadPtr, ParseError> {
+    pub(crate) unsafe fn field_access(
+        &mut self,
+        lhs: DyadPtr,
+        nstart: usize,
+        nlen: usize,
+        index: Option<usize>,
+        unit_call: bool,
+    ) -> Result<(DyadPtr, usize), ParseError> {
         // `.` does exactly one job (ruled August 2026): reading fields the
         // logos defines, which are always about the value. A value's logos is
         // never one of its own fields — the retired universal `.logos`
         // metaproperty did a second job here — so reading a logos takes the
         // dyad view, `(dyad x).ty`, where the logos IS in the value.
-        // Peek the member name: a view or a logos-standing lhs dispatches to
-        // the #52 read surface; an ordinary field falls through unchanged.
-        let save = self.pos;
-        if let Some((nstart, nlen)) = self.lex_identifier() {
+        // The member name is the cell to the right of `.`, read as its raw
+        // spelling: a field is dot-only, so what the driver resolved it to
+        // against the open scopes is beside the point. A `[i]` cell after it
+        // (`index`) and an empty `()` (`unit_call`) are the reads that take
+        // one more cell; the count consumed to the right is returned.
+        {
             // `source` is `&'a str` (Copy), independent of the `&mut self` the
             // member reads then need.
             let source = self.source;
             let name = &source[nstart..nstart + nlen];
             if (*lhs).ty == self.types.dyad_ {
-                return self.view_member(lhs, name);
+                return self.view_member(lhs, name).map(|n| (n, 0));
             }
             if crate::identities::is_type_value(&self.types, lhs) {
-                return self.logos_member(lhs, name);
+                let n = self.logos_member(lhs, name, index)?;
+                return Ok((n, usize::from(name == "roles")));
             }
             if name == "type" {
                 return Err(ParseError::TypeNeedsView);
@@ -2384,7 +2374,7 @@ impl<'a> Parser<'a> {
                     )
                 )
             {
-                let i = self.member_index()?;
+                let i = index.ok_or(ParseError::ExpectedIndexBracket)?;
                 if i >= crate::identities::meta::arity_of((*lhs).ty)
                     || (*lhs).value.is_null()
                 {
@@ -2395,7 +2385,7 @@ impl<'a> Parser<'a> {
                 if operand.is_null() {
                     return Err(ParseError::BadReflectRead);
                 }
-                return Ok(operand);
+                return Ok((operand, 1));
             }
             // `.compile` on an fn-typed value is the fn logos's shared member
             // (DESIGN ›Execution is function application‹: "The `fn` logos
@@ -2414,8 +2404,9 @@ impl<'a> Parser<'a> {
             if &self.source[nstart..nstart + nlen] == "compile"
                 && (*lhs).ty == self.types.fn_type
             {
-                self.expect_open()?;
-                self.expect_close()?;
+                if !unit_call {
+                    return Err(ParseError::ExpectedOpen);
+                }
                 let code = crate::identities::callable::mint(
                     self.store,
                     self.types.callable_,
@@ -2424,10 +2415,9 @@ impl<'a> Parser<'a> {
                 );
                 let value =
                     self.store.alloc_operands(&[lhs, code, self.types.ops.compile_]);
-                return Ok(self.store.alloc_raw(self.types.compile_, value));
+                return Ok((self.store.alloc_raw(self.types.compile_, value), 1));
             }
         }
-        self.pos = save;
         // Through a record pointer, `p@.x` folds the field offset into the deref
         // (the address is runtime; the offset and the field's logos are not).
         if (*lhs).ty == self.types.deref_ {
@@ -2436,14 +2426,17 @@ impl<'a> Parser<'a> {
             if pointee.is_null() || !crate::identities::meta::is_record_type(pointee) {
                 return Err(ParseError::UnsupportedOperands);
             }
-            let (field, offset) = self.resolve_field(pointee)?;
+            let (field, offset) = self.resolve_field(pointee, nstart, nlen)?;
             let types = self.types;
-            return Ok(crate::identities::pointer::build_deref(
-                self.store,
-                &types,
-                ptr_expr,
-                (*field).ty,
-                base_off as usize + offset,
+            return Ok((
+                crate::identities::pointer::build_deref(
+                    self.store,
+                    &types,
+                    ptr_expr,
+                    (*field).ty,
+                    base_off as usize + offset,
+                ),
+                0,
             ));
         }
         // The direct case: an instance of a record logos, with storage — the
@@ -2458,12 +2451,120 @@ impl<'a> Parser<'a> {
         {
             return Err(ParseError::UnsupportedOperands);
         }
-        let (field, offset) = self.resolve_field(record_logos)?;
+        let (field, offset) = self.resolve_field(record_logos, nstart, nlen)?;
         let addr = (*lhs).value.wrapping_add(offset);
-        Ok(self.store.alloc_raw((*field).ty, addr))
+        Ok((self.store.alloc_raw((*field).ty, addr), 0))
     }
 
-    /// Resolve the field name at the cursor against `record_logos`'s own scope
+    /// `.`'s constructor: the member read of `tape[-1]` named by the cell to
+    /// the right, plus the `[i]` or `()` cell some reads take (see
+    /// [`Parser::field_access`]); every consumed cell is spliced out.
+    pub(crate) fn construct_field_access(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        // The left is read as it stands — an identity's fields are read off
+        // the token before its own constructor wakes (DESIGN ›Text is the
+        // quote‹: `i32.precedence`), so a callable or a logos name to the
+        // left is the identity itself, not a call in waiting.
+        let lhs = match tape.at(-1).copied() {
+            Some(cell) => self.as_operand(cell)?,
+            None => return Err(ParseError::MissingOperand),
+        };
+        // The member is the cell to the right, read by its spelling at the
+        // offset it was lexed at — a keyword there (`.type`) was constructed
+        // at discovery and stands as a dyad, its spelling still in the source.
+        let Some(&_) = tape.at(1) else {
+            return Err(ParseError::ExpectedField);
+        };
+        let mstart = tape.start_of(tape.cursor() + 1);
+        let save = self.pos;
+        self.pos = mstart;
+        let member = self.lex_identifier();
+        self.pos = save;
+        let Some((nstart, nlen)) = member else {
+            return Err(ParseError::ExpectedField);
+        };
+        let m = Token { start: nstart, len: nlen, identity: std::ptr::null_mut() };
+        let index = self.index_at(tape, 2);
+        // SAFETY: a scope cell is a node from the store.
+        let unit_call =
+            matches!(tape.at(2), Some(Cell::Scope(s)) if unsafe { self.is_empty_scope(*s) });
+        // SAFETY: `lhs` is a reduced dyad off the tape.
+        let (node, consumed) =
+            unsafe { self.field_access(lhs, m.start, m.len, index, unit_call)? };
+        for _ in 0..(1 + consumed) {
+            tape.remove(1);
+        }
+        tape.remove(-1);
+        tape.place(node);
+        Ok(Constructed::Placed)
+    }
+
+    /// The comptime index a `[…]` cell carries, if the cell at `offset` is one.
+    fn index_at(&self, tape: &ParsingTape, offset: isize) -> Option<usize> {
+        let d = tape.at(offset)?.as_dyad()?;
+        // SAFETY: a dyad cell is a node from the store; an index node's value
+        // is its literal operand first.
+        unsafe {
+            if (*d).ty != self.types.index_ {
+                return None;
+            }
+            let lit = *((*d).value as *const DyadPtr);
+            let i = crate::identities::rational::mold(lit)?;
+            if i < 0 {
+                None
+            } else {
+                Some(i as usize)
+            }
+        }
+    }
+
+    /// Whether `node` is a scope with nothing in it — the `()` cell.
+    ///
+    /// # Safety
+    /// `node` must be a dyad from the store.
+    unsafe fn is_empty_scope(&self, node: DyadPtr) -> bool {
+        if (*node).ty != self.types.scope || (*node).value.is_null() {
+            return false;
+        }
+        let arr = *((*node).value as *const DyadPtr);
+        crate::identities::array::items(arr).is_empty()
+    }
+
+    /// `[`'s constructor: an index cell — the interior read once, generically
+    /// (DESIGN ›The constructor is a field‹: "`[…]` constructs itself … into a
+    /// passive node carrying the index"), a comptime literal in the seed —
+    /// closed by its `]`, which it consumes itself.
+    pub(crate) fn construct_index(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        self.skip_trivia();
+        let source = self.source;
+        let r = self
+            .scopes
+            .resolve(self.trie, &source[self.pos..])
+            .map_err(ParseError::Resolve)?;
+        if r.identity != self.types.rational {
+            return Err(ParseError::BadReflectRead);
+        }
+        let start = self.pos;
+        self.pos += r.matched;
+        let lit =
+            self.construct_leaf(r.identity, start, r.matched)?.ok_or(ParseError::BadLiteral)?;
+        self.skip_trivia();
+        if self.source.as_bytes().get(self.pos) != Some(&b']') {
+            return Err(ParseError::ExpectedIndexBracket);
+        }
+        self.pos += 1;
+        let value = self.store.alloc_operands(&[lit, std::ptr::null_mut()]);
+        let node = self.store.alloc_raw(self.types.index_, value);
+        tape.place(node);
+        Ok(Constructed::Placed)
+    }
+
+    /// Resolve the field name spelled at `nstart..nstart + nlen` against `record_logos`'s own scope
     /// alone (its value[0] — an enclosing binding of the same spelling can never
     /// shadow or double a field), returning the field node and its byte offset.
     ///
@@ -2472,8 +2573,9 @@ impl<'a> Parser<'a> {
     unsafe fn resolve_field(
         &mut self,
         record_logos: DyadPtr,
+        nstart: usize,
+        nlen: usize,
     ) -> Result<(DyadPtr, usize), ParseError> {
-        let (nstart, nlen) = self.lex_identifier().ok_or(ParseError::ExpectedField)?;
         let source = self.source;
         let name = &source[nstart..nstart + nlen];
         let mut field_scope = ScopeStack::new();
@@ -2576,35 +2678,29 @@ impl<'a> Parser<'a> {
         Ok(logos)
     }
 
-    /// Parse an address-of after its `&` (already consumed): a resolved name
-    /// with an optional `.field` chain, ending at a storage-backed place — a
-    /// numeric, pointer, or record-typed node with a value slot. Yields an
-    /// `addr` node (see [`crate::identities::pointer::build_addr`]) that resolves
-    /// the place's address at run/lower time, so a frame-relative local or
+    /// `&`'s constructor: the address of the place to its right — a name, or
+    /// a `.field` chain already constructed (`.` binds tighter) — a numeric,
+    /// pointer, or record-typed node with a value slot. Yields an `addr` node
+    /// (see [`crate::identities::pointer::build_addr`]) that resolves the
+    /// place's address at run/lower time, so a frame-relative local or
     /// parameter yields a per-activation address. A comptime binding has no
     /// storage and is [`ParseError::BadAddressOf`].
-    pub(crate) fn parse_address_of(&mut self) -> Result<DyadPtr, ParseError> {
-        self.skip_trivia();
-        let source = self.source;
-        if self.pos >= source.len() {
+    pub(crate) fn construct_address_of(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        let Some(&cell) = tape.at(1) else {
             return Err(ParseError::BadAddressOf);
-        }
-        let r = self
-            .scopes
-            .resolve(self.trie, &source[self.pos..])
-            .map_err(ParseError::Resolve)?;
-        if !matches!(self.classify(r.identity), Class::Operand) {
+        };
+        if let Cell::Token(t) = cell {
             // Keywords, operators, literals: not places.
-            return Err(ParseError::BadAddressOf);
+            if !t.identity.is_null() && self.ctor_of(t.identity).is_some() {
+                return Err(ParseError::BadAddressOf);
+            }
         }
-        self.pos += r.matched;
-        let mut node = r.identity;
-        while self.consume_token(self.types.dot_) {
-            // SAFETY: `node` is a resolved dyad from the store.
-            node = unsafe { self.parse_field_access(node)? };
-        }
+        let node = self.as_operand(cell)?;
         // SAFETY: `node` is a resolved dyad from the store.
-        unsafe {
+        let addr = unsafe {
             let logos = (*node).ty;
             let is_place = crate::identities::is_numtype_node(&self.types, logos)
                 || crate::identities::numtype::is_pointer_type(logos)
@@ -2621,63 +2717,84 @@ impl<'a> Parser<'a> {
             // run/lower time, so a frame-relative local or parameter yields a
             // per-activation address — a different one on each recursive call,
             // exactly like C.
-            Ok(crate::identities::pointer::build_addr(self.store, &self.types, node))
-        }
+            crate::identities::pointer::build_addr(self.store, &self.types, node)
+        };
+        tape.remove(1);
+        tape.place(addr);
+        Ok(Constructed::Placed)
     }
 
-    /// Parse a place operand for `own`/`drop`/`free` (issue #49): a resolved name
-    /// with an optional `.field` chain, ending at a storage-backed place. Unlike
-    /// [`Parser::parse_address_of`] it yields the *place node itself* (not an
-    /// `addr`), which the teardown builder reads to check owning-ness and reach
-    /// the pointer's storage. A capture (an enclosing frame's local) is rejected.
+    /// The place operand of `own`/`drop`/`free` (issue #49): the cell to the
+    /// right — a resolved name, or a `.field` chain already constructed (`.`
+    /// binds tighter) — ending at a storage-backed place, yielded as the
+    /// *place node itself* (not an `addr`), which the teardown builder reads
+    /// to check owning-ness and reach the pointer's storage. A capture (an
+    /// enclosing frame's local) is rejected. The cell is consumed.
     ///
     /// With `ends_name`, the operand is one that makes its name dead (`own`,
-    /// `drop`; never `free`, the raw teardown): a bare name — not a `.field`
-    /// chain, which empties a field and leaves the name — comes back as the
-    /// [`Ended`] the caller hands to [`Parser::mark_dead`] once its node exists,
-    /// and a name declared outside a loop or `fn` body the operand sits in is
-    /// refused ([`ParseError::OwnOfOuterName`], DESIGN ›Memory and concurrency‹,
-    /// *Bodies that run again or later*).
-    pub(crate) fn parse_place_operand(
+    /// `drop`; never `free`, the raw teardown): a bare name comes back as the
+    /// [`Ended`] the caller hands to [`Parser::mark_dead`] once its node
+    /// exists, and a name declared outside a loop or `fn` body the operand
+    /// sits in is refused ([`ParseError::OwnOfOuterName`], DESIGN ›Memory and
+    /// concurrency‹, *Bodies that run again or later*). A field path empties
+    /// the field and leaves the name (its own marks are #66).
+    pub(crate) fn place_operand_cell(
         &mut self,
+        tape: &mut ParsingTape,
         ends_name: bool,
     ) -> Result<(DyadPtr, Option<Ended>), ParseError> {
-        self.skip_trivia();
-        let source = self.source;
-        if self.pos >= source.len() {
+        let Some(&cell) = tape.at(1) else {
             return Err(ParseError::MissingOperand);
-        }
-        let start = self.pos;
-        let r = self
-            .scopes
-            .resolve(self.trie, &source[start..])
-            .map_err(ParseError::Resolve)?;
-        if !matches!(self.classify(r.identity), Class::Operand) {
-            return Err(ParseError::MissingOperand);
-        }
-        self.pos += r.matched;
-        let mut node = r.identity;
-        let mut chained = false;
-        while self.consume_token(self.types.dot_) {
-            // SAFETY: `node` is a resolved dyad from the store.
-            node = unsafe { self.parse_field_access(node)? };
-            chained = true;
-        }
-        let ended = if ends_name && !chained {
-            if self.scopes.crosses_barrier(r.scope) {
-                self.pos = start;
-                return Err(ParseError::OwnOfOuterName);
+        };
+        let (node, ended) = match cell {
+            Cell::Token(t) => {
+                let source = self.source;
+                let r = match self.scopes.resolve(self.trie, &source[t.start..]) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        self.pos = t.start;
+                        return Err(ParseError::Resolve(e));
+                    }
+                };
+                if self.ctor_of(r.identity).is_some() {
+                    return Err(ParseError::MissingOperand);
+                }
+                let ended = if ends_name {
+                    if self.scopes.crosses_barrier(r.scope) {
+                        self.pos = t.start;
+                        return Err(ParseError::OwnOfOuterName);
+                    }
+                    let name = source[t.start..t.start + r.matched].to_string();
+                    Some(Ended { name, scope: r.scope, identity: r.identity })
+                } else {
+                    None
+                };
+                (r.identity, ended)
             }
-            let name = source[start..start + r.matched].to_string();
-            Some(Ended { name, scope: r.scope, identity: r.identity })
-        } else {
-            None
+            Cell::Dyad(d) | Cell::Scope(d) => (d, None),
         };
         // SAFETY: `node` is a resolved dyad from the store.
         unsafe {
             self.check_capture(node)?;
         }
+        tape.remove(1);
         Ok((node, ended))
+    }
+
+    /// The operand cell to the right of the cursor, consumed: the one read
+    /// every prefix constructor makes (`return x`, `not x`, `alloc i32 5`,
+    /// `dyad x`, a prefix `-`). [`ParseError::MissingOperand`] when nothing
+    /// constructed stands there.
+    pub(crate) fn take_right(&mut self, tape: &mut ParsingTape) -> Result<DyadPtr, ParseError> {
+        let Some(&cell) = tape.at(1) else {
+            return Err(ParseError::MissingOperand);
+        };
+        if !self.is_operand_cell(&cell) {
+            return Err(ParseError::MissingOperand);
+        }
+        let node = self.as_operand(cell)?;
+        tape.remove(1);
+        Ok(node)
     }
 
     /// The `own`/`drop` node `node` has emptied `ended`'s place: its name is dead
@@ -2701,6 +2818,38 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// The prefix `@` over cells: every further `@` cell to the right, then
+    /// the base logos cell — a resolved logos name (`@i32`, `@@point`) — built
+    /// into the pointer logos; the consumed cells are spliced out.
+    pub(crate) fn construct_pointer_type(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        let mut depth = 1usize;
+        while matches!(tape.at(1), Some(Cell::Token(t)) if t.identity == self.types.at_) {
+            tape.remove(1);
+            depth += 1;
+        }
+        let Some(&cell) = tape.at(1) else {
+            return Err(ParseError::UnsupportedOperands);
+        };
+        let base = self.as_operand(cell)?;
+        // SAFETY: `base` is a resolved dyad from the store.
+        let is_type = crate::identities::is_numtype_node(&self.types, base)
+            || unsafe { crate::identities::meta::is_record_type(base) };
+        if !is_type {
+            return Err(ParseError::UnsupportedOperands);
+        }
+        tape.remove(1);
+        let mut logos = base;
+        for _ in 0..depth {
+            logos =
+                crate::identities::pointer::make_pointer_type(self.store, self.types.type_, logos);
+        }
+        tape.place(logos);
+        Ok(Constructed::Placed)
+    }
+
     /// Parse a fn's return logos: a single resolved logos identity (`i32`, …) or a
     /// pointer logos (`@i32`). Compound logos expressions arrive later.
     fn parse_return_type(&mut self) -> Result<DyadPtr, ParseError> {
@@ -2717,14 +2866,18 @@ impl<'a> Parser<'a> {
         Ok(r.identity)
     }
 
-    /// Build a call `callee ( args )`, the `(` already consumed — the service
-    /// `(`'s constructor re-enters when a completed dyad stands to its left
-    /// (juxtaposition binds tightest). A numeric logos callee is a conversion
-    /// (`i32(a)`), a record logos constructs an instance, a logos-returning
-    /// callee resolves NOW at comptime; any other callee is an ordinary call.
-    pub(crate) fn parse_call(&mut self, callee: DyadPtr) -> Result<DyadPtr, ParseError> {
-        let args = self.parse_arg_list()?;
-        self.expect_close()?;
+    /// Build a call `callee ( args )` over the arguments its bracket cell
+    /// held — the callee's own constructor's work (DESIGN ›`X (…)` is one
+    /// spelling, and X's constructor decides what the bracket is‹). A numeric
+    /// logos callee is a conversion (`i32(a)`), a record logos constructs an
+    /// instance, a logos-returning callee resolves NOW at comptime; any other
+    /// callee is an ordinary call.
+    pub(crate) fn build_call(
+        &mut self,
+        callee: DyadPtr,
+        args: &[DyadPtr],
+    ) -> Result<DyadPtr, ParseError> {
+        let args = args.to_vec();
         // An owning value handed straight to a call has no name to hang its
         // `defer free` on, so it would leak (issue #49; DESIGN's open
         // temporary-attachment point). Fail-closed until ownership-gated
@@ -2781,24 +2934,6 @@ impl<'a> Parser<'a> {
                 Ok(call)
             }
         }
-    }
-
-    /// Parse a call's argument list: comma-separated value expressions up to the
-    /// closing `)` (left unconsumed for the caller's [`Parser::expect_close`]). The
-    /// opening `(` has already been consumed. Unlike a field list, arguments are
-    /// ordinary expressions, not `name : logos` declarations.
-    fn parse_arg_list(&mut self) -> Result<Vec<DyadPtr>, ParseError> {
-        let mut args = Vec::new();
-        loop {
-            if self.at_close() {
-                break;
-            }
-            args.push(self.parse_expression()?);
-            if !self.consume_separator() {
-                break;
-            }
-        }
-        Ok(args)
     }
 
     /// Parse a sequence of expressions up to the enclosing scope's end (a `)`, or
@@ -2859,7 +2994,19 @@ impl<'a> Parser<'a> {
         };
         let values = exprs.iter().filter(|&&e| is_value(e)).count();
         match (values, exprs.len()) {
-            (0, _) => Err(ParseError::Empty),
+            // An empty `( )`, or a bracket holding only prose: the scope node
+            // with nothing to run, yielding unit — `f()`'s argument cell, a
+            // `fn () -> …` with no parameters read by its own parser.
+            (0, _) => {
+                let arr =
+                    crate::identities::array::build(self.store, self.types.array_, &exprs);
+                let value = self.store.alloc_operands(&[arr, self.types.ops.scope_]);
+                // SAFETY: `scope` was just allocated and is unaliased.
+                unsafe {
+                    (*scope).value = value;
+                }
+                Ok(scope)
+            }
             (_, 1) => Ok(exprs[0]),
             _ => {
                 // Every non-tail value runs for effect only; the tail is the last
@@ -2918,31 +3065,42 @@ impl<'a> Parser<'a> {
     /// driver (which runs each top-level item as it is parsed — build and run
     /// are one pass, so parse-time evaluation sees every earlier item's effect).
     pub fn parse_next(&mut self) -> Option<Result<DyadPtr, ParseError>> {
-        self.skip_whitespace();
-        if self.pos >= self.source.len() {
-            return None;
-        }
-        // A statement-level `#` builds a reflectable comment node — prose is
-        // part of the body's structure (DESIGN ›`#` is the one comment
-        // constructor‹). Mid-expression `#`s remain trivia ([`skip_trivia`]).
-        if self.source.as_bytes()[self.pos] == b'#' {
-            return Some(self.parse_comment());
-        }
-        if self.at_close() {
-            return None;
-        }
-        let expr = self.parse_expression();
-        if expr.is_ok() {
-            // A `#` directly after the expression is the next statement-level
-            // comment — the separator peek must not read through it as trivia.
+        loop {
+            // What the last segment yielded — its expression and the prose
+            // lifted out of it, in source order — goes out first.
+            if let Some(item) = self.queued.pop_front() {
+                return Some(Ok(item));
+            }
             self.skip_whitespace();
-            if !(self.pos < self.source.len() && self.source.as_bytes()[self.pos] == b'#') {
-                // The optional `,`: a boundary the expressions already imply,
-                // consumed where written (also purely for readability).
+            if self.pos >= self.source.len() || self.at_close() {
+                return None;
+            }
+            let mut tape = ParsingTape::new();
+            let boundary = match self.lex_segment(&mut tape) {
+                Ok(b) => b,
+                Err(e) => return Some(Err(e)),
+            };
+            let mut items = match self.construct_segment(&mut tape) {
+                Ok(items) => items,
+                Err(e) => return Some(Err(e)),
+            };
+            // The `,` is the step boundary; it is consumed here, once the
+            // segment before it is constructed. A `,` written where nothing
+            // stands (`x,, y`) is purely for the reader.
+            if matches!(boundary, Boundary::Comma) {
                 self.consume_separator();
             }
+            if items.len() > 1 {
+                self.pos = items[1].1;
+                return Some(Err(ParseError::Trailing));
+            }
+            let mut ordered: Vec<(usize, DyadPtr)> = self.lifted.drain(..).collect();
+            if let Some((item, start)) = items.pop() {
+                ordered.push((start, item));
+            }
+            ordered.sort_by_key(|&(start, _)| start);
+            self.queued.extend(ordered.into_iter().map(|(_, n)| n));
         }
-        Some(expr)
     }
 
     /// Parse a statement-level comment: `#` followed by a `«…»` string or raw
@@ -2950,8 +3108,17 @@ impl<'a> Parser<'a> {
     /// Builds the reflectable comment node `{type: comment, value -> string node}`
     /// the settled design specifies (DESIGN ›Text literals are plain values; `#`
     /// is the one comment constructor‹).
-    fn parse_comment(&mut self) -> Result<DyadPtr, ParseError> {
-        self.pos += 1; // the `#`
+    pub(crate) fn construct_comment(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        let node = self.comment_after_hash()?;
+        tape.place(node);
+        Ok(Constructed::Placed)
+    }
+
+    /// The comment node for the text after a `#` the lexer just consumed.
+    fn comment_after_hash(&mut self) -> Result<DyadPtr, ParseError> {
         let bytes = self.source.as_bytes();
         // Spaces (not the newline) may separate `#` from its text.
         while self.pos < bytes.len() && matches!(bytes[self.pos], b' ' | b'\t') {
@@ -2991,9 +3158,9 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        if tape.cursor() != 1 || tape.len() != 2 {
-            return Ok(Constructed::Decline);
-        }
+        // The name is the cell to the left — a spelling, declared or not
+        // (redeclaring a live one is the no-shadowing error below); anything
+        // but a token there (a value, a bracket) declines.
         let Some(tok) = tape.at(-1).and_then(Cell::as_token).copied() else {
             return Ok(Constructed::Decline);
         };
@@ -3335,7 +3502,7 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        let inner = self.parse_expression()?;
+        let inner = self.take_right(tape)?;
         let types = self.types;
         let node = self.store.alloc_raw(types.dyad_, inner as *mut u8);
         tape.place(node);
@@ -3385,6 +3552,7 @@ impl<'a> Parser<'a> {
         &mut self,
         logos: DyadPtr,
         name: &str,
+        index: Option<usize>,
     ) -> Result<DyadPtr, ParseError> {
         use crate::identities::meta;
         use crate::identities::numtype::NumType;
@@ -3398,7 +3566,7 @@ impl<'a> Parser<'a> {
                 Ok(self.scalar_value(NumType::I64, meta::arity_of(logos) as i64))
             }
             "roles" if operand_kind => {
-                let i = self.member_index()?;
+                let i = index.ok_or(ParseError::ExpectedIndexBracket)?;
                 if i >= meta::arity_of(logos) {
                     return Err(ParseError::BadReflectRead);
                 }
@@ -3447,44 +3615,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse a collection index — `[N]` after `.operands` / `.roles` — a
-    /// non-negative rational literal, folded now (comptime reflection;
-    /// runtime indices arrive with the runtime view machinery). Element
-    /// access is `[…]` across every collection while `(…)` stays application
-    /// (ruled August 2026); the brackets are consumed as raw tokens here —
-    /// the licensed token consumption — until general indexing lands with
-    /// the array logos (#47).
-    fn member_index(&mut self) -> Result<usize, ParseError> {
-        self.skip_trivia();
-        if self.source.as_bytes().get(self.pos) != Some(&b'[') {
-            return Err(ParseError::ExpectedIndexBracket);
-        }
-        self.pos += 1;
-        self.skip_trivia();
-        let source = self.source;
-        let r = self
-            .scopes
-            .resolve(self.trie, &source[self.pos..])
-            .map_err(ParseError::Resolve)?;
-        if r.identity != self.types.rational {
-            return Err(ParseError::BadReflectRead);
-        }
-        let start = self.pos;
-        self.pos += r.matched;
-        let lit =
-            self.construct_leaf(r.identity, start, r.matched)?.ok_or(ParseError::BadLiteral)?;
-        let i = crate::identities::rational::mold(lit).ok_or(ParseError::BadReflectRead)?;
-        if i < 0 {
-            return Err(ParseError::BadReflectRead);
-        }
-        self.skip_trivia();
-        if self.source.as_bytes().get(self.pos) != Some(&b']') {
-            return Err(ParseError::ExpectedIndexBracket);
-        }
-        self.pos += 1;
-        Ok(i as usize)
-    }
-
     /// Build a typed scalar value node: fresh storage holding `bits` at `nt`'s
     /// width. The reflection counts (`.arity`, `.size_bytes`) and measures
     /// (`.precedence`) are ordinary typed values, comparable with literals.
@@ -3514,15 +3644,9 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        if tape.cursor() != 1 || tape.len() != 2 {
-            return Ok(Constructed::Decline);
-        }
         let Some(tok) = tape.at(-1).and_then(Cell::as_token).copied() else {
             return Ok(Constructed::Decline);
         };
-        if !tok.identity.is_null() {
-            return Ok(Constructed::Decline);
-        }
         let nstart = tok.start;
         // The logos first, the name after: the declared logos must be a
         // comptime-known logos value, and the name is not yet bound
@@ -3633,257 +3757,237 @@ impl<'a> Parser<'a> {
         Ok(Some(node))
     }
 
-    /// Parse one expression to a single dyad, consuming source from the current
-    /// position. Each call drives its own tape, so a prefix constructor can parse
-    /// its operand by calling this again (the parser is a service the constructors
-    /// re-enter, per the sealed "constructors drive" model). An expression is
-    /// self-delimiting: a token that would start a new operand after a completed
-    /// operand ends it (left unconsumed for [`Parser::parse_sequence`]).
-    pub fn parse_expression(&mut self) -> Result<DyadPtr, ParseError> {
-        let mut tape = ParsingTape::new();
-        loop {
-            // A `#` after a completed operand ends the expression: it is the
-            // next statement-level comment, the sequence parser's to build into
-            // a node ([`Parser::parse_comment`]). Only a genuinely
-            // mid-expression `#` (after a pending operator) is trivia here.
-            self.skip_whitespace();
-            if self.pos < self.source.len()
-                && self.source.as_bytes()[self.pos] == b'#'
-                && tape.last().is_some_and(|c| self.is_operand_cell(c))
-            {
-                break;
-            }
-            self.skip_trivia();
-            if self.pos >= self.source.len() {
-                break;
-            }
-            let source = self.source;
-            let start = self.pos;
-
-            let r = match self.scopes.resolve(self.trie, &source[start..]) {
-                Ok(r) => r,
-                // An unresolvable token after a completed operand starts the
-                // NEXT expression (expressions are self-delimiting): stop
-                // before it — the next expression may legitimately begin with
-                // it, and a genuinely unknown name is reported at the same
-                // position when that expression consumes it. Otherwise a fresh
-                // name rides the tape as a spelling-only token (the
-                // null-until-reduction path): a following `:=` or `:` declares
-                // it at reduction, and any other consumer errors through
-                // [`Parser::as_operand`] at the token's own start.
-                Err(e) => {
-                    if tape.last().is_some_and(|c| self.is_operand_cell(c)) {
-                        self.pos = start;
-                        break;
-                    }
-                    if let Some((nstart, nlen)) = self.lex_identifier() {
-                        tape.push(Cell::Token(Token::new(nstart, nlen)));
-                        continue;
-                    }
-                    return Err(ParseError::Resolve(e));
-                }
-            };
-            let id = r.identity;
-            let class = self.classify(id);
-
-            // A bare delimiter (`)`, `,`, `:`, `->`, `else`, `in`, `..`, `:=`)
-            // ends this (sub-)expression; leave it unconsumed for the enclosing
-            // constructor (the opener that started the scope, the field-list or
-            // fn parser).
-            if matches!(class, Class::Delimiter) {
-                break;
-            }
-            // A fresh start — an operand or a fresh-start constructor — while a
-            // completed operand sits at the tape's tail begins the NEXT
-            // expression (DESIGN ›Expressions are self-delimiting‹): stop
-            // without consuming it. An extender continues the expression (an
-            // `(` after an operand stays a call — juxtaposition binds
-            // tightest), so it is never a boundary. Type-literal juxtaposition
-            // needs no exception here: the numeric *logos's* constructor
-            // consumes its literal forward, so the literal is never scanned at
-            // this level.
-            if matches!(class, Class::Operand | Class::Construct(_))
-                && tape.last().is_some_and(|c| self.is_operand_cell(c))
-            {
-                break;
-            }
-            self.pos = start + r.matched;
-
-            match class {
-                // A plain operand: a token cell referencing the resolved
-                // identity, its span kept — converted at consumption by
-                // [`Parser::as_operand`] (which also rejects a capture).
-                Class::Operand => {
-                    tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
-                }
-                // A constructor that runs NOW — fresh-start (a keyword opener,
-                // a literal, a numeric logos's juxtaposition, `return`) or a
-                // tight extender (`(` as a call, postfix `.`/`@`, the
-                // declarations `:`/`:=`, which read their left context off the
-                // tape, the model's `tape[-1]`): jump it. The constructor
-                // consumes forward tokens itself and edits the tape in place —
-                // the consumed left spliced out, its result at the cursor. On
-                // Decline the driver drops the token, rewinds, and finalizes:
-                // the token starts the next expression.
-                Class::Construct(construct) | Class::Tight(construct) => {
-                    tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
-                    match construct(self, id, &mut tape)? {
-                        Constructed::Placed => {}
-                        Constructed::Decline => {
-                            tape.pop();
-                            self.pos = start;
-                            break;
-                        }
-                    }
-                }
-                // An operator: reduce anything binding tighter to its left, then
-                // shift it onto the tape as a pending token; its constructor is
-                // invoked at reduction, when precedence finalizes the cluster.
-                Class::Extender(precedence, assoc) => {
-                    // With no completed operand to its left an extender opens
-                    // *fresh*, and its constructor decides — `-` consumes a
-                    // following numeric literal into a negated one (`f(-1)`,
-                    // `x := -5`); a Decline shifts the token as a pending
-                    // operator instead (the dangling-operator path: general
-                    // unary minus over non-literals is later work).
-                    if !tape.last().is_some_and(|c| self.is_operand_cell(c)) {
-                        if let Some(construct) = self.construct_of(id) {
-                            tape.push(Cell::Token(Token {
-                                start,
-                                len: r.matched,
-                                identity: id,
-                            }));
-                            match construct(self, id, &mut tape)? {
-                                Constructed::Placed => continue,
-                                Constructed::Decline => {
-                                    tape.pop(); // fall through to the shift
-                                }
-                            }
-                        }
-                    }
-                    // Precedence and associativity came off the operator's own
-                    // record at classification — the graph, not a parser
-                    // table, is their source of truth.
-                    self.reduce_pending(&mut tape, precedence, assoc)?;
-                    tape.push(Cell::Token(Token { start, len: r.matched, identity: id }));
-                }
-                // Handled by the delimiter break above.
-                Class::Delimiter => {
-                    unreachable!("a delimiter ends the loop")
-                }
-            }
+    /// One lex step: the next token as a tape cell with its source offset, or
+    /// `None` at the end of input. Only whitespace is skipped — `#` is an
+    /// identity, constructed at discovery like any literal. A spelling the
+    /// trie does not know becomes a fresh-name cell (null identity, its span
+    /// kept), declared by a following `:=` or reported at the boundary.
+    fn lex_cell(&mut self) -> Result<Option<(Cell, usize)>, ParseError> {
+        self.skip_whitespace();
+        if self.pos >= self.source.len() {
+            return Ok(None);
         }
-        // A spelling nobody declared is the first thing to report — at its
-        // own position — before any reduction over the cells around it
-        // (`helper(1)` on a name the importer cannot see): the boundary rule
-        // of DESIGN ›The scope's constructor is the driver‹, an unconstructed
-        // cell being the checked error.
-        if tape.len() > 1 {
-            for i in 0..tape.len() {
-                let cell = *tape.cell(i).expect("in range");
-                if matches!(cell, Cell::Token(t) if t.identity.is_null()) {
-                    self.as_operand(cell)?;
-                }
+        let source = self.source;
+        let start = self.pos;
+        match self.scopes.resolve(self.trie, &source[start..]) {
+            Ok(r) => {
+                self.pos = start + r.matched;
+                let cell = Cell::Token(Token { start, len: r.matched, identity: r.identity });
+                Ok(Some((cell, start)))
             }
-        }
-        self.reduce_all(&mut tape)?;
-        match tape.len() {
-            0 => Err(ParseError::Empty),
-            1 => {
-                let cell = *tape.cell(0).expect("len checked");
-                if self.is_operand_cell(&cell) {
-                    self.as_operand(cell)
-                } else {
-                    Err(ParseError::MissingOperand)
-                }
-            }
-            _ => Err(ParseError::Trailing),
+            Err(e) => match self.lex_identifier() {
+                Some((nstart, nlen)) => Ok(Some((Cell::Token(Token::new(nstart, nlen)), nstart))),
+                None => Err(ParseError::Resolve(e)),
+            },
         }
     }
 
-    /// Reduce the pending operator at `tape`'s tail while it binds at least as
-    /// tightly as an incoming operator of `prec`/`assoc` (strictly tighter, or
-    /// equal when the incoming one is left-associative).
-    fn reduce_pending(
+    /// The constructor an appearance of `id` runs, or `None` for an inert
+    /// cell (a value, a delimiter). The identity's own slot first; failing
+    /// that, its type's shared instance constructor — application for an
+    /// instance of `fn` and for a record logos (DESIGN ›The constructor is a
+    /// field‹: "whether the name resolves to X's own slot or to the type's
+    /// shared one is ordinary field semantics").
+    fn ctor_of(&self, id: DyadPtr) -> Option<ConstructFn> {
+        // SAFETY: `id` is a resolved dyad from the store.
+        unsafe {
+            if id.is_null() {
+                return None;
+            }
+            if (*id).ty == self.types.fn_type {
+                return Some(application);
+            }
+            if (*id).ty != self.types.type_ || crate::identities::meta::kind_of(id).is_none() {
+                return None;
+            }
+            if crate::identities::meta::is_record_type(id) {
+                return Some(application);
+            }
+            self.construct_of(id)
+        }
+    }
+
+    /// The place of `id` on the one axis (its record's precedence), or
+    /// [`prec::INERT`] for a cell that carries no record.
+    ///
+    /// [`prec::INERT`]: crate::identities::meta::prec::INERT
+    fn precedence_of_cell(&self, id: DyadPtr) -> f64 {
+        // SAFETY: as [`Parser::ctor_of`].
+        unsafe {
+            if id.is_null()
+                || (*id).ty != self.types.type_
+                || crate::identities::meta::kind_of(id).is_none()
+                || crate::identities::meta::is_record_type(id)
+            {
+                crate::identities::meta::prec::APPLY
+            } else {
+                crate::identities::meta::precedence_of(id)
+            }
+        }
+    }
+
+    /// The associativity of `id`'s constructor: its record's, or left for an
+    /// instance running its type's shared constructor (application), which
+    /// carries no record of its own.
+    fn assoc_of_cell(&self, id: DyadPtr) -> Assoc {
+        // SAFETY: as [`Parser::ctor_of`].
+        unsafe {
+            if id.is_null()
+                || (*id).ty != self.types.type_
+                || crate::identities::meta::kind_of(id).is_none()
+                || crate::identities::meta::is_record_type(id)
+            {
+                Assoc::Left
+            } else {
+                crate::identities::meta::assoc_of(id)
+            }
+        }
+    }
+
+    /// Run `construct` for the cell at the tape's cursor and settle the
+    /// outcome on the cell: a Decline, or a Placed that left the token
+    /// standing, makes the cell stand as its own value (DESIGN ›The
+    /// constructor is a field‹: "a constructor that runs and finds nothing to
+    /// consume declines, the frontier untouched" — `i32` before a `,`). There
+    /// is no holding and no re-invocation.
+    fn run_ctor(
+        &mut self,
+        construct: ConstructFn,
+        id: DyadPtr,
+        tape: &mut ParsingTape,
+    ) -> Result<(), ParseError> {
+        let start = tape.start_of(tape.cursor());
+        let outcome = construct(self, id, tape)?;
+        // The same token, at the same offset: a splice that moved the cursor
+        // onto a later cell of the same identity (`5 + 20 + 12`) is not it.
+        let standing = matches!(tape.at(0), Some(Cell::Token(t)) if t.identity == id)
+            && tape.start_of(tape.cursor()) == start;
+        if matches!(outcome, Constructed::Decline) || standing {
+            if let Some(cell) = tape.at_mut(0) {
+                *cell = Cell::Dyad(id);
+            }
+        }
+        Ok(())
+    }
+
+    /// Lex one segment onto `tape`: every cell up to the next `,`, `)`, or
+    /// the end of input — none of which is consumed — constructing at
+    /// discovery each cell whose identity sits at or above `(` on the axis
+    /// (DESIGN ›The scope's constructor is the driver‹: "a token whose
+    /// identity's precedence is at or above `(`'s own is constructed at
+    /// discovery, before the next token is lexed … every other token is
+    /// placed on the tape unconstructed").
+    fn lex_segment(&mut self, tape: &mut ParsingTape) -> Result<Boundary, ParseError> {
+        loop {
+            let Some((cell, start)) = self.lex_cell()? else {
+                return Ok(Boundary::Eof);
+            };
+            if let Cell::Token(t) = cell {
+                if t.identity == self.types.sep_ {
+                    self.pos = start;
+                    return Ok(Boundary::Comma);
+                }
+                if t.identity == self.types.close_ {
+                    self.pos = start;
+                    return Ok(Boundary::Close);
+                }
+            }
+            tape.push(cell, start);
+            if let Cell::Token(t) = cell {
+                if let Some(construct) = self.ctor_of(t.identity) {
+                    if self.precedence_of_cell(t.identity) >= crate::identities::meta::prec::OPEN {
+                        self.run_ctor(construct, t.identity, tape)?;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Construct a lexed segment at its boundary: comment cells are lifted out
+    /// (prose is void-valued and invisible to value flow), then the
+    /// unconstructed cells run highest precedence first, associativity
+    /// breaking ties — left keeps the leftmost first, right the rightmost —
+    /// each constructor taking what its syntax needs from the fully lexed
+    /// segment, left or right, with no lookahead; what remains is read as
+    /// operands, an undeclared spelling being the checked error at its own
+    /// position. Returns the constructed cells in order with their offsets.
+    fn construct_segment(
         &mut self,
         tape: &mut ParsingTape,
-        prec: f64,
-        assoc: Assoc,
-    ) -> Result<(), ParseError> {
-        loop {
-            let n = tape.len();
-            if n < 3 {
-                break;
-            }
-            let op_idx = n - 2;
-            let op_id = match tape.cell(op_idx) {
-                Some(Cell::Token(t)) => t.identity,
-                _ => break,
-            };
-            // Reduce only a token flanked by two completed operands; the
-            // constructor reads them back off the tape (`tape[-1]`, `tape[+1]`).
-            if !tape.cell(op_idx - 1).is_some_and(|c| self.is_operand_cell(c))
-                || !tape.cell(op_idx + 1).is_some_and(|c| self.is_operand_cell(c))
-            {
-                break;
-            }
-            let construct = match self.construct_of(op_id) {
-                Some(c) => c,
-                None => break,
-            };
-            // SAFETY: `op_id` is an operator identity from the store (it matched
-            // `Infix` above), carrying its registration-built record.
-            let prev_prec = unsafe { crate::identities::meta::precedence_of(op_id) };
-            if !(prev_prec > prec || (prev_prec == prec && assoc == Assoc::Left)) {
-                break;
-            }
-            let before = tape.len();
-            tape.set_cursor(op_idx);
-            match construct(self, op_id, tape)? {
-                // The constructor spliced its reduction in place
-                // ([`ParsingTape::reduce_here`]); a Placed that did not shrink
-                // the tape would loop forever, so it ends the reduction run.
-                Constructed::Placed if tape.len() < before => {}
-                Constructed::Placed => break,
-                // An infix that declines at reduction leaves the tape as-is; the
-                // seed's operators never do, but the contract stands.
-                Constructed::Decline => break,
+    ) -> Result<Vec<(DyadPtr, usize)>, ParseError> {
+        let mut i = 0;
+        while i < tape.len() {
+            // SAFETY: a dyad cell is a node from the store.
+            let is_comment = matches!(tape.cell(i), Some(Cell::Dyad(d)) if unsafe { (**d).ty } == self.types.comment_);
+            if is_comment {
+                let d = tape.cell(i).and_then(Cell::as_dyad).expect("matched above");
+                self.lifted.push((tape.start_of(i), d));
+                tape.set_cursor(i);
+                tape.remove(0);
+            } else {
+                i += 1;
             }
         }
-        Ok(())
+        loop {
+            let mut best: Option<(usize, f64, ConstructFn, DyadPtr)> = None;
+            for i in 0..tape.len() {
+                let Some(Cell::Token(t)) = tape.cell(i) else { continue };
+                let Some(construct) = self.ctor_of(t.identity) else { continue };
+                let prec = self.precedence_of_cell(t.identity);
+                let right = self.assoc_of_cell(t.identity) == Assoc::Right;
+                let better = match best {
+                    None => true,
+                    Some((_, bp, _, _)) => prec > bp || (prec == bp && right),
+                };
+                if better {
+                    best = Some((i, prec, construct, t.identity));
+                }
+            }
+            let Some((i, _, construct, id)) = best else { break };
+            tape.set_cursor(i);
+            self.run_ctor(construct, id, tape)?;
+        }
+        let mut items = Vec::with_capacity(tape.len());
+        for i in 0..tape.len() {
+            let cell = *tape.cell(i).expect("in range");
+            let start = tape.start_of(i);
+            items.push((self.as_operand(cell)?, start));
+        }
+        Ok(items)
     }
 
-    /// At end of input, reduce every remaining pending operator on `tape` (right
-    /// to left, as the precedence invariant leaves them).
-    fn reduce_all(&mut self, tape: &mut ParsingTape) -> Result<(), ParseError> {
-        while tape.len() > 1 {
-            let n = tape.len();
-            if n < 3 {
-                return Err(ParseError::Trailing);
-            }
-            let op_idx = n - 2;
-            let op_id = match tape.cell(op_idx) {
-                Some(Cell::Token(t)) => t.identity,
-                _ => return Err(ParseError::Trailing),
-            };
-            if !tape.cell(op_idx - 1).is_some_and(|c| self.is_operand_cell(c))
-                || !tape.cell(op_idx + 1).is_some_and(|c| self.is_operand_cell(c))
-            {
-                return Err(ParseError::MissingOperand);
-            }
-            let construct = match self.construct_of(op_id) {
-                Some(c) => c,
-                None => return Err(ParseError::Trailing),
-            };
-            let before = tape.len();
-            tape.set_cursor(op_idx);
-            match construct(self, op_id, tape)? {
-                Constructed::Placed if tape.len() < before => {}
-                _ => return Err(ParseError::Trailing),
+    /// Parse one expression: one segment, lexed to the next `,`, `)`, or end
+    /// of input (left unconsumed) and constructed to exactly one cell.
+    /// This is the value a discovery-time constructor drives — `:=`'s right
+    /// side, a `defer`'s — and the REPL's line.
+    pub fn parse_expression(&mut self) -> Result<DyadPtr, ParseError> {
+        let mut tape = ParsingTape::new();
+        self.lex_segment(&mut tape)?;
+        let items = self.construct_segment(&mut tape)?;
+        self.one_of(items)
+    }
+
+    /// Exactly one constructed cell, or the checked error: none is an empty
+    /// expression, more than one the leftover cell DESIGN names, reported at
+    /// the second cell.
+    fn one_of(&mut self, items: Vec<(DyadPtr, usize)>) -> Result<DyadPtr, ParseError> {
+        match items.len() {
+            0 => Err(ParseError::Empty),
+            1 => Ok(items[0].0),
+            _ => {
+                self.pos = items[1].1;
+                Err(ParseError::Trailing)
             }
         }
-        Ok(())
     }
+}
+
+/// Where a segment stopped: the separator, the closing bracket, or the end of
+/// input — none consumed by the lexing step.
+enum Boundary {
+    Comma,
+    Close,
+    Eof,
 }
 
 #[cfg(test)]

@@ -106,7 +106,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     // `alloc T v`: a fresh-start keyword constructor (NaN precedence → the driver
     // invokes it immediately). Its constructor parses the following typed value.
     let alloc_ = keyword(cx, "alloc", meta::prec::PREFIX, &["pointee", "init", "op"], |p, _id, tape| {
-        let init = p.parse_expression()?;
+        let init = p.take_right(tape)?;
         let types = p.types();
         let node = build_alloc(p.store(), &types, init)?;
         tape.place(node);
@@ -118,7 +118,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     // `own a`: move the pointer out, emptying the source; `a` is dead from here
     // (DESIGN ›Memory and concurrency‹, *`own` and `drop` are static*).
     let own_ = keyword(cx, "own", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
-        let (place, ended) = p.parse_place_operand(true)?;
+        let (place, ended) = p.place_operand_cell(tape, true)?;
         let types = p.types();
         let node = build_teardown(p.store(), &types, types.own_, place, true)?;
         tape.place(node);
@@ -137,7 +137,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     // inert `drop` node — the emptying is the parse-time dead mark, and the
     // run-time write is not needed, since no later use can observe the place.
     let drop_ = keyword(cx, "drop", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
-        let (place, ended) = p.parse_place_operand(true)?;
+        let (place, ended) = p.place_operand_cell(tape, true)?;
         let types = p.types();
         let node = if is_owning_place(place) {
             build_teardown(p.store(), &types, types.drop_, place, true)?
@@ -159,7 +159,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     // a stack/global address to the allocator.
     let free_ = keyword(cx, "free", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
         // The raw teardown verb leaves the name alive: only `own`/`drop` end it.
-        let (place, _) = p.parse_place_operand(false)?;
+        let (place, _) = p.place_operand_cell(tape, false)?;
         let types = p.types();
         let node = build_teardown(p.store(), &types, types.free_, place, true)?;
         tape.place(node);
@@ -202,7 +202,7 @@ fn keyword(
     roles: &[&str],
     construct: crate::parse::ConstructFn,
 ) -> DyadPtr {
-    let record = meta::operand_record(cx, meta::TUPLE_TAG, precedence, Assoc::Left, roles);
+    let record = meta::operand_record(cx, meta::TUPLE_TAG, precedence, Assoc::Right, roles);
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(spelling, IdContext::new(id, cx.root_scope));
     cx.metas.insert(id, construct);
@@ -546,14 +546,14 @@ mod tests {
     fn alloc_reads_back_and_frees_at_scope_exit() {
         // `a := alloc i32 5` allocates, `a@` reads the 5 back; the inserted
         // `defer free a` frees it at scope exit — nothing left live.
-        let (v, live) = run("a := alloc i32 5\na@");
+        let (v, live) = run("a := alloc i32 5,\na@");
         assert_eq!(v, 5);
         assert_eq!(live, 0, "scope exit frees the allocation");
     }
 
     #[test]
     fn alloc_inside_a_function_frees_when_the_call_returns() {
-        let (v, live) = run("main := fn () -> i32 ( p := alloc i32 42  p@ )\nmain()");
+        let (v, live) = run("main := fn () -> i32 ( p := alloc i32 42, p@ ),\nmain()");
         assert_eq!(v, 42);
         assert_eq!(live, 0, "the call's frame scope frees its alloc");
     }
@@ -562,7 +562,7 @@ mod tests {
     fn early_drop_does_not_double_free() {
         // `drop a` runs the destructor and empties `a`; the scope's pending
         // `defer free a` then no-ops (the emptied place), so the block frees once.
-        let (v, live) = run("a := alloc i32 3\ndrop a\n99");
+        let (v, live) = run("a := alloc i32 3,\ndrop a,\n99");
         assert_eq!(v, 99);
         assert_eq!(live, 0, "drop frees once; the deferred free no-ops");
         assert_eq!(free_log(), vec![3], "exactly one free happened");
@@ -572,7 +572,7 @@ mod tests {
     fn own_moves_ownership_and_the_source_scope_frees_nothing() {
         // `b := own a` empties `a` and takes the pointer; `a`'s deferred free
         // no-ops and `b`'s frees. One free, and the block reads 7 through `b`.
-        let (v, live) = run("a := alloc i32 7\nb := own a\nb@");
+        let (v, live) = run("a := alloc i32 7,\nb := own a,\nb@");
         assert_eq!(v, 7);
         assert_eq!(live, 0, "the moved pointer is freed once, through b");
         assert_eq!(free_log(), vec![7], "own does not double-free the source");
@@ -583,7 +583,7 @@ mod tests {
         // The classic escape: an inner block allocs and `own`s the pointer out;
         // the inner scope frees nothing (its place emptied), the outer binder owns
         // and frees at the outer scope's exit.
-        let (v, live) = run("b := ( a := alloc i32 8  own a )\nb@");
+        let (v, live) = run("b := ( a := alloc i32 8, own a ),\nb@");
         assert_eq!(v, 8);
         assert_eq!(live, 0);
         assert_eq!(free_log(), vec![8], "freed once, at the outer owner");
@@ -593,7 +593,7 @@ mod tests {
     fn teardown_runs_lifo() {
         // Two allocations; teardown reverses construction order, so the second
         // block (holding 20) frees before the first (holding 10).
-        let (_v, live) = run("a := alloc i32 10\nb := alloc i32 20\n0");
+        let (_v, live) = run("a := alloc i32 10,\nb := alloc i32 20,\n0");
         assert_eq!(live, 0);
         assert_eq!(free_log(), vec![20, 10], "LIFO: last allocated frees first");
     }
@@ -605,7 +605,7 @@ mod tests {
         // name, refused before anything runs — the run-time flag that once made
         // it a no-op is still there for the scope's own `defer free a`.
         assert_eq!(
-            parse_err("a := alloc i32 4\ndrop a\nfree a\n1"),
+            parse_err("a := alloc i32 4,\ndrop a,\nfree a,\n1"),
             ParseError::Resolve(ResolveError::Dead)
         );
     }
@@ -616,7 +616,7 @@ mod tests {
         // spelling into a fresh place. The old place's deferred free no-ops on
         // its null, `b` frees the moved block, the new `a` frees its own — LIFO,
         // so the new `a` (9) goes before `b` (7).
-        let (v, live) = run("a := alloc i32 7\nb := own a\na := alloc i32 9\na@ + b@");
+        let (v, live) = run("a := alloc i32 7,\nb := own a,\na := alloc i32 9,\na@ + b@");
         assert_eq!(v, 16);
         assert_eq!(live, 0);
         assert_eq!(free_log(), vec![9, 7], "fresh place, old teardown a no-op");
@@ -625,7 +625,7 @@ mod tests {
     #[test]
     fn a_read_after_own_is_refused() {
         assert_eq!(
-            parse_err("a := alloc i32 7\nb := own a\na@"),
+            parse_err("a := alloc i32 7,\nb := own a,\na@"),
             ParseError::Resolve(ResolveError::Dead)
         );
     }
@@ -635,7 +635,7 @@ mod tests {
         // Refilling a moved-from place with `=` is declined, to stay declined:
         // a dead name takes no writes either, only `:=`.
         assert_eq!(
-            parse_err("a := alloc i32 7\nb := own a\na = b"),
+            parse_err("a := alloc i32 7,\nb := own a,\na = b"),
             ParseError::Resolve(ResolveError::Dead)
         );
     }
@@ -645,7 +645,7 @@ mod tests {
         // While the line is still parsing the entry's `end` is the `drop` node
         // itself, so the second argument already sees a dead name.
         assert_eq!(
-            parse_err("h := fn (x : i32, p : @i32) -> i32 ( x )\na := alloc i32 1\nh(drop a, a)"),
+            parse_err("h := fn (x : i32, p : @i32) -> i32 ( x ),\na := alloc i32 1,\nh(drop a, a)"),
             ParseError::Resolve(ResolveError::Dead)
         );
     }
@@ -656,11 +656,11 @@ mod tests {
         // the outer `a` is dead whichever branch ran; the run-time null decides
         // whether its teardown fires. A redeclaration after the block is fine.
         assert_eq!(
-            parse_err("a := alloc i32 7\nc := i32 1\nif (c == 1) ( b := own a  b@ )\na@"),
+            parse_err("a := alloc i32 7,\nc := i32 1,\nif (c == 1) ( b := own a, b@ ),\na@"),
             ParseError::Resolve(ResolveError::Dead)
         );
         let (v, live) =
-            run("a := alloc i32 7\nc := i32 1\nif (c == 1) ( b := own a  b@ )\na := alloc i32 9\na@");
+            run("a := alloc i32 7,\nc := i32 1,\nif (c == 1) ( b := own a, b@ ),\na := alloc i32 9,\na@");
         assert_eq!(v, 9);
         assert_eq!(live, 0);
         assert_eq!(free_log(), vec![7, 9], "b frees at the if's exit, the new a at the end");
@@ -670,15 +670,15 @@ mod tests {
     fn a_move_of_an_outer_name_inside_a_loop_body_is_refused() {
         // *Bodies that run again or later*: the next pass would read a dead name.
         assert_eq!(
-            parse_err("a := alloc i32 7\nc := i32 1\nwhile (c == 1) ( b := own a  c = 0 )"),
+            parse_err("a := alloc i32 7,\nc := i32 1,\nwhile (c == 1) ( b := own a, c = 0 )"),
             ParseError::OwnOfOuterName
         );
         assert_eq!(
-            parse_err("a := alloc i32 7\nfor i in 0..2 ( b := own a )"),
+            parse_err("a := alloc i32 7,\nfor i in 0..2 ( b := own a )"),
             ParseError::OwnOfOuterName
         );
         assert_eq!(
-            parse_err("a := alloc i32 7\nfor i in 0..2 ( drop a )"),
+            parse_err("a := alloc i32 7,\nfor i in 0..2 ( drop a )"),
             ParseError::OwnOfOuterName
         );
     }
@@ -687,11 +687,11 @@ mod tests {
     fn drop_frees_the_name_of_a_plain_value() {
         // One verb releases a name whatever its type: `drop n` on an i32 ends
         // `n` at parse and runs to unit, and the spelling is free for `:=`.
-        let (v, live) = run("n := i32 5\ndrop n\nn := i32 6\nn");
+        let (v, live) = run("n := i32 5,\ndrop n,\nn := i32 6,\nn");
         assert_eq!(v, 6);
         assert_eq!(live, 0);
         assert_eq!(
-            parse_err("n := i32 5\ndrop n\nn + 1"),
+            parse_err("n := i32 5,\ndrop n,\nn + 1"),
             ParseError::Resolve(ResolveError::Dead)
         );
     }
@@ -702,7 +702,7 @@ mod tests {
         // surface‹): `drop n` ends it from that line, the redeclaration gets a
         // fresh frame slot, and the inert drop lowers to unit, so the function
         // compiles rather than declining like a heap path would.
-        let (v, live) = run("f := fn (n : i32) -> i32 ( drop n  n := i32 4  n )\nf.compile()\nf(1)");
+        let (v, live) = run("f := fn (n : i32) -> i32 ( drop n, n := i32 4, n ),\nf.compile(),\nf(1)");
         assert_eq!(v, 4);
         assert_eq!(live, 0);
     }
@@ -711,13 +711,13 @@ mod tests {
     fn a_move_of_an_outer_name_inside_a_fn_body_is_refused() {
         // A function may own only what its parameters hand it.
         assert_eq!(
-            parse_err("a := alloc i32 7\nf := fn () -> i32 ( b := own a  b@ )"),
+            parse_err("a := alloc i32 7,\nf := fn () -> i32 ( b := own a, b@ )"),
             ParseError::OwnOfOuterName
         );
         // A name declared inside the body is inside the barrier: still the
         // ownership-across-return error, not this one.
         assert_eq!(
-            parse_err("mk := fn () -> @i32 ( p := alloc i32 7  own p )\nmk()"),
+            parse_err("mk := fn () -> @i32 ( p := alloc i32 7, own p ),\nmk()"),
             ParseError::OwnershipAcrossReturn
         );
     }
@@ -733,7 +733,7 @@ mod tests {
         scopes.push(core.root_scope);
         let types = core.types();
         let scope = {
-            let mut p = Parser::new("a := alloc i32 5\n0", &mut store, &mut trie, types, scopes);
+            let mut p = Parser::new("a := alloc i32 5,\n0", &mut store, &mut trie, types, scopes);
             p.parse_sequence().expect("parse")
         };
         // SAFETY: `scope` is a sequence node; its body is an array of exprs.
@@ -764,7 +764,7 @@ mod tests {
             // The tail is a deref, not `a` itself: handing the owning place out
             // as the scope's value is the escape the parser now rejects, so the
             // place is reached through the inserted teardown instead.
-            let mut p = Parser::new("a := alloc i32 5\na@", &mut store, &mut trie, types, scopes);
+            let mut p = Parser::new("a := alloc i32 5,\na@", &mut store, &mut trie, types, scopes);
             p.parse_sequence().expect("parse")
         };
         // SAFETY: the scope body holds the inserted `defer free a`, whose place
@@ -792,7 +792,7 @@ mod tests {
         // fail closed rather than leak; ownership-gated parameters (#53) are what
         // will let a callee declare that it takes the value.
         assert_eq!(
-            parse_err("f := fn (p : @i32) -> i32 ( p@ )\nf(alloc i32 5)"),
+            parse_err("f := fn (p : @i32) -> i32 ( p@ ),\nf(alloc i32 5)"),
             ParseError::UnboundOwningValue
         );
     }
@@ -803,12 +803,12 @@ mod tests {
         // out and the caller receives an already-freed pointer — a use-after-free,
         // not merely a leak. DESIGN ruled `own` as how ownership leaves a scope.
         assert_eq!(
-            parse_err("mk := fn () -> @i32 ( p := alloc i32 7  p )\nmk()"),
+            parse_err("mk := fn () -> @i32 ( p := alloc i32 7, p ),\nmk()"),
             ParseError::OwningEscape
         );
         // `return p` yields the same escape through the return's operand.
         assert_eq!(
-            parse_err("mk := fn () -> @i32 ( p := alloc i32 7  return p )\nmk()"),
+            parse_err("mk := fn () -> @i32 ( p := alloc i32 7, return p ),\nmk()"),
             ParseError::OwningEscape
         );
     }
@@ -820,12 +820,12 @@ mod tests {
         // "I transfer ownership" — so the caller would not know it owes a `free`
         // and would leak. Fail closed until ownership-gated logos land (#53).
         assert_eq!(
-            parse_err("mk := fn () -> @i32 ( p := alloc i32 7  own p )\nmk()"),
+            parse_err("mk := fn () -> @i32 ( p := alloc i32 7, own p ),\nmk()"),
             ParseError::OwnershipAcrossReturn
         );
         // The same for handing a bare fresh allocation out of a function.
         assert_eq!(
-            parse_err("mk := fn () -> @i32 ( alloc i32 7 )\nmk()"),
+            parse_err("mk := fn () -> @i32 ( alloc i32 7 ),\nmk()"),
             ParseError::OwnershipAcrossReturn
         );
     }
@@ -835,7 +835,7 @@ mod tests {
         // What `own` *can* do today: escape a block to the binder that encloses
         // it, which the parse sees. The inner place empties (its teardown
         // no-ops), the outer binder owns, and the block is freed exactly once.
-        let (v, live) = run("b := ( a := alloc i32 8  own a )\nb@");
+        let (v, live) = run("b := ( a := alloc i32 8, own a ),\nb@");
         assert_eq!(v, 8);
         assert_eq!(live, 0);
         assert_eq!(free_log(), vec![8], "freed once, by the outer owner");
@@ -846,7 +846,7 @@ mod tests {
         // The escape check must not catch borrows: only places the scope itself
         // frees are owned. A pointer to an ordinary local carries no destructor,
         // so passing it out stays legal.
-        let (v, live) = run("x := i32 9\nr := ( &x )\nr@");
+        let (v, live) = run("x := i32 9,\nr := ( &x ),\nr@");
         assert_eq!(v, 9);
         assert_eq!(live, 0);
     }
@@ -855,7 +855,7 @@ mod tests {
     fn a_loop_body_frees_every_iteration() {
         // The body is a scope, so its teardown runs at each iteration's exit
         // rather than accumulating: three allocations, three frees, none live.
-        let (_v, live) = run("i := i32 0\nwhile (i < 3) ( p := alloc i32 5  i = i + 1 )\ni");
+        let (_v, live) = run("i := i32 0,\nwhile (i < 3) ( p := alloc i32 5, i = i + 1 ),\ni");
         assert_eq!(live, 0, "no allocation outlives its iteration");
         assert_eq!(free_log().len(), 3, "one free per iteration");
     }
@@ -866,7 +866,7 @@ mod tests {
         // and freed by the interpreted tier, while the function reading through
         // the pointer is compiled. Both tiers must see the same 42.
         let (v, live) = run(
-            "f := fn (p : @i32) -> i32 ( p@ + 1 )\na := alloc i32 41\nb := f(a)\nf.compile()\nc := f(a)\nb + c",
+            "f := fn (p : @i32) -> i32 ( p@ + 1 ),\na := alloc i32 41,\nb := f(a),\nf.compile(),\nc := f(a),\nb + c",
         );
         assert_eq!(v, 84, "interpreted and compiled reads agree");
         assert_eq!(live, 0);
@@ -883,7 +883,7 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
         let types = core.types();
-        let src = "main := fn () -> i32 ( p := alloc i32 5  p@ )\nmain.compile()";
+        let src = "main := fn () -> i32 ( p := alloc i32 5, p@ ),\nmain.compile()";
         let root = {
             let mut p = Parser::new(src, &mut store, &mut trie, types, scopes);
             p.parse_sequence().expect("parse")

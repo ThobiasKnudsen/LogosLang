@@ -34,7 +34,7 @@ use crate::store::Store;
 /// parser builds these from a record-typed callee) with its native leaf and
 /// lowering, and the `.` field-access token (parse-only; access nodes are plain
 /// data). Returns `(identity, leaf, . token)`.
-pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr) {
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::operand_record(
         cx,
         meta::LIST_TAG,
@@ -50,19 +50,27 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::DOT);
     let dot = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert(r"\.", IdContext::new(dot, cx.root_scope));
-    cx.metas.insert(dot, |p, _id, tape| {
-        // The model's `tape[-1]`: the completed operand left of the cursor.
-        let Some(left) = p.left_operand(tape)? else {
-            return Err(crate::parse::ParseError::MissingOperand);
-        };
-        // SAFETY: `left` is a reduced dyad off the tape.
-        let node = unsafe { p.parse_field_access(left) }?;
-        tape.remove(-1); // the consumed left
-        tape.place(node);
-        Ok(crate::parse::Constructed::Placed)
-    });
+    // `.` reads its member's spelling off the cell to its right, and a `[i]`
+    // or `()` cell after that where the read takes one (#59 step 3).
+    cx.metas.insert(dot, |p, _id, tape| p.construct_field_access(tape));
 
-    (construct, leaf, dot)
+    // `[`: constructed at discovery like a literal, it reads its interior to
+    // its own `]` into a passive index cell the reads after `.` consume
+    // (DESIGN ›The constructor is a field‹).
+    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::LITERAL);
+    let open_sq = cx.store.alloc_raw(cx.type_, record);
+    cx.trie.insert(r"\[", IdContext::new(open_sq, cx.root_scope));
+    cx.metas.insert(open_sq, |p, _id, tape| p.construct_index(tape));
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        meta::prec::INERT,
+        crate::parse::Assoc::Left,
+        &["key", "op"],
+    );
+    let index_ = cx.store.alloc_raw(cx.type_, record);
+
+    (construct, leaf, dot, index_)
 }
 
 /// The layout a record logos stores from its field declarations (DESIGN ›a logos

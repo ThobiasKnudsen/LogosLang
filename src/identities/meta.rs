@@ -142,6 +142,9 @@ pub(crate) mod prec {
     /// Application and juxtaposition: a callable or a type before its argument
     /// cell — "the tight juxtaposition just below `(`".
     pub const APPLY: f64 = 84.0;
+    /// `dyad`, the view: just below application, so `dyad i32` and `dyad f`
+    /// read the identity standing as its own value.
+    pub const VIEW: f64 = 83.0;
     /// The prefix words over a place: `own`, `drop`, `free`, `alloc`, `pub`.
     pub const PREFIX: f64 = 82.0;
     pub const MULTIPLICATIVE: f64 = 70.0;
@@ -150,8 +153,10 @@ pub(crate) mod prec {
     pub const RANGE: f64 = 55.0;
     pub const COMPARE: f64 = 50.0;
     pub const EQUALITY: f64 = 40.0;
+    /// `not`: above `and`, so `a and not b` reads as it does in Python, and
+    /// below the comparisons, so `not a == b` negates the comparison.
+    pub const NOT: f64 = 35.0;
     pub const AND: f64 = 30.0;
-    pub const NOT: f64 = 26.0;
     pub const OR: f64 = 20.0;
     pub const RETURN: f64 = 10.0;
     pub const ASSIGN: f64 = 5.0;
@@ -164,7 +169,14 @@ pub(crate) mod prec {
 /// logos, the text substance, the foundations, and the parse-only tokens.
 /// `precedence` is the identity's place on the one axis ([`prec`]).
 pub(crate) fn record(store: &mut Store, kind: u8, precedence: f64) -> *mut u8 {
-    let blob = header(kind, Assoc::Left, precedence);
+    record_assoc(store, kind, precedence, Assoc::Left)
+}
+
+/// [`record`] with an associativity: right for a prefix word, so that in a
+/// chain the rightmost runs first and each finds its operand constructed
+/// (`pub pub x := 5` reports the double gate; `not not x` reads inward).
+pub(crate) fn record_assoc(store: &mut Store, kind: u8, precedence: f64, assoc: Assoc) -> *mut u8 {
+    let blob = header(kind, assoc, precedence);
     store.alloc_bytes(&blob)
 }
 

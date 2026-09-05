@@ -423,7 +423,7 @@ mod tests {
         // byte size) joined in the activation-records work, and a generic
         // walker reads slots off the record — a stale four-role record would
         // hide the fifth slot from reflection.
-        let (_store, core, roots) = parse_all(&["fn (n : i32) -> i32 ( x := n  x )"]);
+        let (_store, core, roots) = parse_all(&["fn (n : i32) -> i32 ( x := n, x )"]);
         // SAFETY: the root is the fn value just parsed, from the store.
         let Shape::Tuple { slots } = (unsafe { describe(&core.types(), roots[0]) }) else {
             panic!("an fn value reads as its fixed slots");

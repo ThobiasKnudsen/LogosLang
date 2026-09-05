@@ -206,6 +206,8 @@ pub struct Core {
     /// `dyad`, the spelled view identity (#52): `(dyad a)` wraps a value
     /// as its cell; `.` reads the cell.
     pub dyad_: DyadPtr,
+    /// `index`, the passive node a `[i]` cell carries.
+    pub index_: DyadPtr,
     /// `array` (of `dyad@`), the seed's first array form: a sequence's
     /// expression list lives behind one of these, never inline in the node.
     pub array_: DyadPtr,
@@ -393,7 +395,7 @@ impl Core {
         let dyad_ = view::register(&mut cx);
         let (colon_, sep_) = logos_mod::register_syntax(&mut cx);
         // Struct instances: the construction statement and the `.` field access.
-        let (construct_, construct_leaf, dot_) = instance::register(&mut cx, &callables);
+        let (construct_, construct_leaf, dot_, index_) = instance::register(&mut cx, &callables);
         op_leaves.construct_ = construct_leaf;
         // Pointers: the `@`/`&` tokens and the deref/storeptr identities.
         let (deref_, storeptr_, addr_, deref_leaf, storeptr_leaf, addr_leaf, at_) =
@@ -485,6 +487,7 @@ impl Core {
             pub_,
             import_,
             dyad_,
+            index_,
             callable_: callables.callable,
             convention_: callables.convention,
             conv_seed_native: callables.seed_native,
@@ -533,6 +536,7 @@ impl Core {
             pub_: self.pub_,
             import_: self.import_,
             dyad_: self.dyad_,
+            index_: self.index_,
             construct_: self.construct_,
             string_: self.string_,
             comment_: self.comment_,
@@ -1835,9 +1839,9 @@ mod tests {
         scopes.push(core.root_scope);
 
         // No `(` after `logos` means no record path: the merged constructor
-        // declines the right and yields the classifier itself, so `40` starts
-        // the next expression (the numeric logos' own juxtaposition shape).
-        let mut p = Parser::new("logos 40", &mut store, &mut trie, core.types(), scopes);
+        // declines the right and yields the classifier itself (a `40` after it
+        // would be a second cell in the segment — the leftover error).
+        let mut p = Parser::new("logos", &mut store, &mut trie, core.types(), scopes);
         assert_eq!(p.parse_expression(), Ok(core.type_));
     }
 
@@ -2194,7 +2198,7 @@ mod tests {
         scopes.push(core.root_scope);
         let root = {
             let mut p = Parser::new(
-                "double := fn (x : i32) -> i32 ( x + x )\npoint := logos (a : i32)\ndouble(21)",
+                "double := fn (x : i32) -> i32 ( x + x ),\npoint := logos (a : i32),\ndouble(21)",
                 &mut store,
                 &mut trie,
                 
@@ -2533,14 +2537,21 @@ mod tests {
     }
 
     #[test]
-    fn not_requires_a_parenthesized_operand() {
+    fn not_takes_a_bare_operand() {
+        // `not x` reads the constructed cell to its right — a bool literal
+        // folds now — and the parenthesized form still works (the seed's old
+        // `not (x)`-only rule was a parsing simplification, not a keep).
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
-        let mut s = ScopeStack::new();
-        s.push(core.root_scope);
-        let mut p = Parser::new("not true", &mut store, &mut trie, core.types(), s);
-        assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::ExpectedOpen));
+        for src in ["not true", "not (true)"] {
+            let mut s = ScopeStack::new();
+            s.push(core.root_scope);
+            let mut p = Parser::new(src, &mut store, &mut trie, core.types(), s);
+            let node = p.parse_expression().unwrap();
+            // SAFETY: `node` is the folded bool literal just built.
+            assert_eq!(unsafe { crate::parse::bool_literal_value(&core.types(), node) }, Some(false), "`{src}`");
+        }
     }
 
     #[test]
@@ -2728,7 +2739,7 @@ mod tests {
     fn assignment_commits_a_literal_to_the_targets_type() {
         // The rhs literal commits to the variable's declared logos at parse time, so
         // an i64 target takes a value past i32 exactly, in both tiers.
-        diff_var_fn(NumType::I64, 0, "fn () -> i64 ( a = 5000000000  a )", 5_000_000_000);
+        diff_var_fn(NumType::I64, 0, "fn () -> i64 ( a = 5000000000, a )", 5_000_000_000);
         // And a literal with no exact value in the target is a parse error.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
@@ -3012,7 +3023,7 @@ mod tests {
     fn hash_comments_are_trivia() {
         // `#` runs to the end of its line, as in the sketch's own files; comments
         // weave through a sequence without separating anything themselves.
-        diff_nullary_fn("fn () -> i32 ( # the answer\n a := 40 # forty\n a + 2 )", 42);
+        diff_nullary_fn("fn () -> i32 ( # the answer\n a := 40, # forty\n a + 2 )", 42);
     }
 
     #[test]
@@ -3023,14 +3034,14 @@ mod tests {
         // initializer), so the interpreted run and the compiled rerun agree from
         // any prior state — no manual re-zeroing needed.
         diff_nullary_fn(
-            "fn () -> i32 ( a := i32 0  i := i32 0  while (i < 5) ( a = a + i  i = i + 1 )  a )",
+            "fn () -> i32 ( a := i32 0, i := i32 0, while (i < 5) ( a = a + i, i = i + 1 ), a )",
             10,
         );
     }
 
     #[test]
     fn while_false_never_runs_its_body() {
-        diff_nullary_fn("fn () -> i32 ( a := i32 7  a = 7  while (a < 0) (a = 0)  a )", 7);
+        diff_nullary_fn("fn () -> i32 ( a := i32 7, a = 7, while (a < 0) (a = 0), a )", 7);
     }
 
     #[test]
@@ -3040,17 +3051,17 @@ mod tests {
         // on each run, so the interpreted and compiled runs agree without a manual
         // reset.
         diff_nullary_fn(
-            "fn () -> i32 ( s := i32 0  for i in 0..10 ( s = s + i )  s )",
+            "fn () -> i32 ( s := i32 0, for i in 0..10 ( s = s + i ), s )",
             45,
         );
         // With a step: 0, 2, 4, 6, 8 sum to 20.
         diff_nullary_fn(
-            "fn () -> i32 ( s := i32 0  for i in 0..10..2 ( s = s + i )  s )",
+            "fn () -> i32 ( s := i32 0, for i in 0..10..2 ( s = s + i ), s )",
             20,
         );
         // An empty range runs zero iterations.
         diff_nullary_fn(
-            "fn () -> i32 ( s := i32 7  for i in 5..5 ( s = 0 )  s )",
+            "fn () -> i32 ( s := i32 7, for i in 5..5 ( s = 0 ), s )",
             7,
         );
     }
@@ -3060,7 +3071,7 @@ mod tests {
         // i64 endpoints past i32's range: the loop variable is i64 and the sum
         // crosses i32. 5e9..5e9+3 sums to 15e9 + 3.
         diff_typed_call(
-            "fn (n : i64) -> i64 ( s := i64 0  s = 0  for i in n..(n + 3) ( s = s + i )  s )",
+            "fn (n : i64) -> i64 ( s := i64 0, s = 0, for i in n..(n + 3) ( s = s + i ), s )",
             "f(5000000000)",
             15_000_000_003,
         );
@@ -3086,7 +3097,7 @@ mod tests {
         // The step guard both tiers emit: a runtime step of 0 (or negative) skips
         // the loop instead of wrapping forever.
         diff_typed_call(
-            "fn (d : i32) -> i32 ( s := i32 3  s = 3  for i in 0..10..d ( s = 0 )  s )",
+            "fn (d : i32) -> i32 ( s := i32 3, s = 3, for i in 0..10..d ( s = 0 ), s )",
             "f(0)",
             3,
         );
@@ -3135,7 +3146,7 @@ mod tests {
     fn juxtaposition_types_a_literal() {
         // `i64 5000000000` is the anonymous typed value (DESIGN ›written by
         // juxtaposition‹): the literal commits exactly to the logos before it.
-        diff_typed_call("fn () -> i64 ( x := i64 5000000000  x )", "f()", 5_000_000_000);
+        diff_typed_call("fn () -> i64 ( x := i64 5000000000, x )", "f()", 5_000_000_000);
         // An exact commit, not a wrapping cast: a decimal into i32 is an error.
         assert_eq!(parse_err("i32 3.5"), ParseError::UncomputableLiteral);
         // The settled separator doctrine: `f(i32 3)` is ONE argument (the typed
@@ -3276,7 +3287,25 @@ mod tests {
 
     #[test]
     fn a_scope_of_only_prose_has_no_value() {
-        assert_eq!(parse_err("( # just a note )"), ParseError::Empty);
+        // A bracket holding only prose is a scope with nothing to run: unit,
+        // the value-less `()` of a call with no arguments — never an error.
+        // (The `#` runs to the end of its line, so the closer sits on the
+        // next one.)
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut s = ScopeStack::new();
+        s.push(core.root_scope);
+        let mut p = Parser::new("( # just a note\n)", &mut store, &mut trie, core.types(), s);
+        let node = p.parse_expression().unwrap();
+        // SAFETY: `node` is the scope just parsed; its value is `[exprs, op]`.
+        unsafe {
+            assert_eq!((*node).ty, core.scope_);
+            let arr = *((*node).value as *const DyadPtr);
+            let exprs = crate::identities::array::items(arr);
+            assert_eq!(exprs.len(), 1, "the prose alone");
+            assert!(numtype::is_comment_type((*exprs[0]).ty));
+        }
     }
 
     #[test]
@@ -3310,7 +3339,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn () -> i32 ( x := i32 41  x = 41  incr(&x)  x )",
+                "fn () -> i32 ( x := i32 41, x = 41, incr(&x), x )",
                 &mut store,
                 &mut trie,
                 
@@ -3338,7 +3367,7 @@ mod tests {
         // The explicit `p = &x` makes the body idempotent (declarations
         // initialize at parse, and the interpreted run leaves p on y).
         diff_nullary_fn(
-            "fn () -> i32 ( x := i32 10  y := i32 20  x = 10  y = 20  p := &x  p = &x  s := i32 0  s = p@  p = &y  s + p@ )",
+            "fn () -> i32 ( x := i32 10, y := i32 20, x = 10, y = 20, p := &x, p = &x, s := i32 0, s = p@, p = &y, s + p@ )",
             30,
         );
     }
@@ -3356,7 +3385,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn () -> i32 ( pt := point(3, 4)  q := &pt  q@.x = q@.x + 10  fp := &pt.y  fp@ = fp@ + 1  pp := &q  pp@@.x + pt.y )",
+                "fn () -> i32 ( pt := point(3, 4), q := &pt, q@.x = q@.x + 10, fp := &pt.y, fp@ = fp@ + 1, pp := &q, pp@@.x + pt.y )",
                 &mut store,
                 &mut trie,
                 
@@ -3400,7 +3429,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn () -> i32 ( x := i32 7  x = 7  h := holder(&x)  h.r@ + 1 )",
+                "fn () -> i32 ( x := i32 7, x = 7, h := holder(&x), h.r@ + 1 )",
                 &mut store,
                 &mut trie,
                 
@@ -3426,14 +3455,14 @@ mod tests {
         // variable; & of a comptime binding; a pointer as a numeric function's
         // tail. (& of a parameter is no longer misuse: a parameter is a frame
         // place with storage, like a local — see `address_of_a_parameter_works`.)
-        assert_eq!(parse_err("( x := i32 1  x@ )"), ParseError::UnsupportedOperands);
+        assert_eq!(parse_err("( x := i32 1, x@ )"), ParseError::UnsupportedOperands);
         assert_eq!(
-            parse_err("( x := i32 1  p := &x  p + 1 )"),
+            parse_err("( x := i32 1, p := &x, p + 1 )"),
             ParseError::UnsupportedOperands
         );
-        assert_eq!(parse_err("( x := i32 1  p := &x  p = 5 )"), ParseError::TypeMismatch);
-        assert_eq!(parse_err("( y := 5  &y )"), ParseError::BadAddressOf);
-        assert_eq!(parse_err("fn () -> i32 ( x := i32 1  x = 1  &x )"), ParseError::TypeMismatch);
+        assert_eq!(parse_err("( x := i32 1, p := &x, p = 5 )"), ParseError::TypeMismatch);
+        assert_eq!(parse_err("( y := 5, &y )"), ParseError::BadAddressOf);
+        assert_eq!(parse_err("fn () -> i32 ( x := i32 1, x = 1, &x )"), ParseError::TypeMismatch);
     }
 
     #[test]
@@ -3441,9 +3470,9 @@ mod tests {
         // A parameter is a frame place — a field of the call's activation
         // record — so `&a` yields its per-call address and `q@` reads the
         // argument back through it, on both tiers alike.
-        diff_typed_call("fn (a : i32) -> i32 ( q := &a  q@ )", "f(7)", 7);
+        diff_typed_call("fn (a : i32) -> i32 ( q := &a, q@ )", "f(7)", 7);
         // Writing through the pointer writes the parameter's slot.
-        diff_typed_call("fn (a : i32) -> i32 ( q := &a  q@ = 5  a )", "f(7)", 5);
+        diff_typed_call("fn (a : i32) -> i32 ( q := &a, q@ = 5, a )", "f(7)", 5);
     }
 
     #[test]
@@ -3452,7 +3481,7 @@ mod tests {
         // ordinary storage, agreed on by interpreter and JIT. (Before
         // parameters had frame slots, this was a runtime error interpreted and
         // a wild store compiled.)
-        diff_typed_call("fn (a : i32) -> i32 ( a = a + 1  a )", "f(41)", 42);
+        diff_typed_call("fn (a : i32) -> i32 ( a = a + 1, a )", "f(41)", 42);
     }
 
     /// Parse `src` as a whole script (a top-level sequence) and run it with the
@@ -3484,7 +3513,7 @@ mod tests {
         // activation stack, with the parameter and the local at distinct
         // per-call slots. The sum 1..=500 = 125250 is right only if no call's
         // frame aliases another's — 500 live frames stacked at once.
-        let src = "f := fn (n : i64) -> i64 ( m := i64 0  m = n  if (n == 0) (0) else (m + f(n - 1)) )\nf(500)";
+        let src = "f := fn (n : i64) -> i64 ( m := i64 0, m = n, if (n == 0) (0) else (m + f(n - 1)) ),\nf(500)";
         assert_eq!(run_script(src), 125_250);
     }
 
@@ -3494,7 +3523,7 @@ mod tests {
         // before the arguments evaluate, the inner calls claim and release
         // theirs above it, and the outer frame is still intact when its
         // parameters are written. g(3) = 6 and g(4) = 8, so f sees 14.
-        let src = "g := fn (x : i64) -> i64 ( x + x )\nf := fn (a : i64, b : i64) -> i64 ( a + b )\nf(g(3), g(4) + g(0))";
+        let src = "g := fn (x : i64) -> i64 ( x + x ),\nf := fn (a : i64, b : i64) -> i64 ( a + b ),\nf(g(3), g(4) + g(0))";
         assert_eq!(run_script(src), 14);
     }
 
@@ -3503,7 +3532,7 @@ mod tests {
         // A bare `name` parameter (DESIGN: accepts any logos-value dyad) has no
         // declared logos; its frame slot carries the full i64 bit-container and
         // a read yields it back.
-        assert_eq!(run_script("f := fn (a) -> i64 ( a )\nf(42)"), 42);
+        assert_eq!(run_script("f := fn (a) -> i64 ( a ),\nf(42)"), 42);
     }
 
     #[test]
@@ -3512,13 +3541,13 @@ mod tests {
         // `compile` … and `run`"): write the body, compile, and the next call
         // runs the machine code — same answer the body walk gives.
         assert_eq!(
-            run_script("double := fn (x : i64) -> i64 ( x + x )\ndouble.compile()\ndouble(21)"),
+            run_script("double := fn (x : i64) -> i64 ( x + x ),\ndouble.compile(),\ndouble(21)"),
             42
         );
         // Compiled recursion through the member: the self-call jumps too.
         assert_eq!(
             run_script(
-                "fact := fn (n : i64) -> i64 ( if (n < 2) (1) else (n * fact(n - 1)) )\nfact.compile()\nfact(20)"
+                "fact := fn (n : i64) -> i64 ( if (n < 2) (1) else (n * fact(n - 1)) ),\nfact.compile(),\nfact(20)"
             ),
             2_432_902_008_176_640_000
         );
@@ -3530,7 +3559,7 @@ mod tests {
         // answers in one script, summed: 42 + 42.
         assert_eq!(
             run_script(
-                "double := fn (x : i64) -> i64 ( x + x )\na := double(21)\ndouble.compile()\na + double(21)"
+                "double := fn (x : i64) -> i64 ( x + x ),\na := double(21),\ndouble.compile(),\na + double(21)"
             ),
             84
         );
@@ -3542,7 +3571,7 @@ mod tests {
         // nothing.
         assert_eq!(
             run_script(
-                "double := fn (x : i64) -> i64 ( x + x )\ndouble.compile()\ndouble.compile()\ndouble(21)"
+                "double := fn (x : i64) -> i64 ( x + x ),\ndouble.compile(),\ndouble.compile(),\ndouble(21)"
             ),
             42
         );
@@ -3551,7 +3580,7 @@ mod tests {
     #[test]
     fn compile_member_is_a_statement_not_a_value() {
         assert_eq!(
-            parse_err("fn () -> i32 ( g := fn () -> i32 ( 1 )  g.compile() )"),
+            parse_err("fn () -> i32 ( g := fn () -> i32 ( 1 ), g.compile() )"),
             ParseError::StatementAsValue
         );
     }
@@ -3565,7 +3594,7 @@ mod tests {
         // used to panic on the logos root's record tag.
         assert_eq!(
             run_script(
-                "metatype := fn (i : i32) -> logos ( if (i == 0) (i32) else (f64) )\nmetatype.compile()\nsame := metatype(0) == i32\nother := metatype(1) == f64\nif (same and other) (i64 1) else (i64 0)"
+                "metatype := fn (i : i32) -> logos ( if (i == 0) (i32) else (f64) ),\nmetatype.compile(),\nsame := metatype(0) == i32,\nother := metatype(1) == f64,\nif (same and other) (i64 1) else (i64 0)"
             ),
             1
         );
@@ -3577,7 +3606,7 @@ mod tests {
         // `.compile()` on a wider fn is a clean run error, and the function
         // stays interpreted.
         let e = run_script_result(
-            "f := fn (a : i64, b : i64, c : i64, d : i64) -> i64 ( a + b + c + d )\nf.compile()",
+            "f := fn (a : i64, b : i64, c : i64, d : i64) -> i64 ( a + b + c + d ),\nf.compile()",
         )
         .unwrap_err();
         assert!(matches!(e, crate::run::RunError::CompileFailed(_)), "got {e:?}");
@@ -3590,7 +3619,7 @@ mod tests {
         // of `a` must see it on both tiers. A promoted `a` would return the
         // stale 5.
         diff_typed_call(
-            "fn (x : i64) -> i64 ( a := i64 5  p := &a  p@ = 7  a + x )",
+            "fn (x : i64) -> i64 ( a := i64 5, p := &a, p@ = 7, a + x )",
             "f(1)",
             8,
         );
@@ -3603,7 +3632,7 @@ mod tests {
         // registers — and the value still matches the interpreted walk.
         assert_eq!(
             run_script(
-                "sum_to := fn (n : i64) -> i64 ( i := i64 0  s := i64 0  while (i < n) ( s = s + i  i = i + 1 )  s )\nbefore := sum_to(1000)\nsum_to.compile()\nbefore + sum_to(1000)"
+                "sum_to := fn (n : i64) -> i64 ( i := i64 0, s := i64 0, while (i < n) ( s = s + i, i = i + 1 ), s ),\nbefore := sum_to(1000),\nsum_to.compile(),\nbefore + sum_to(1000)"
             ),
             999_000
         );
@@ -3615,7 +3644,7 @@ mod tests {
         // the member intercept fires only when the lhs is fn-typed, so the
         // spelling is not globally reserved (unlike `.logos`).
         assert_eq!(
-            run_script("point := logos (compile : i32)\np := point(7)\np.compile"),
+            run_script("point := logos (compile : i32),\np := point(7),\np.compile"),
             7
         );
     }
@@ -3676,7 +3705,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn () -> i32 ( p := point(3, 4)  p.x = p.x + 36  p.x + p.y + 2 )",
+                "fn () -> i32 ( p := point(3, 4), p.x = p.x + 36, p.x + p.y + 2 )",
                 &mut store,
                 &mut trie,
                 
@@ -3721,7 +3750,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn (n : i64) -> i64 ( q := cell(200, n, 7)  q.b + i64(q.a) + i64(q.c) )",
+                "fn (n : i64) -> i64 ( q := cell(200, n, 7), q.b + i64(q.a) + i64(q.c) )",
                 &mut store,
                 &mut trie,
                 
@@ -3774,7 +3803,7 @@ mod tests {
         check("point(1, 2) + 1", ParseError::UnsupportedOperands);
         check("fn () -> i32 ( p := point(1, 2) )", ParseError::StatementAsValue);
         check(
-            "( p := point(1, 2)  p.z )",
+            "( p := point(1, 2), p.z )",
             ParseError::Resolve(crate::parse::ResolveError::Unknown),
         );
     }
@@ -3783,7 +3812,7 @@ mod tests {
     fn assigning_into_a_comptime_binding_is_rejected() {
         // `x := 5` binds a comptime rational (no machine storage); writing its
         // value slot would corrupt the fraction, so `=` demands a typed variable.
-        assert_eq!(parse_err("( x := 5  x = 7 )"), ParseError::BadAssignTarget);
+        assert_eq!(parse_err("( x := 5, x = 7 )"), ParseError::BadAssignTarget);
     }
 
     #[test]
@@ -3791,7 +3820,7 @@ mod tests {
         // A scope's body is a sequence of self-delimiting expressions with no
         // separator; its value is the trailing one. The body assigns first, so the
         // interpreted and compiled runs are both deterministic from any start.
-        diff_var_fn(NumType::I32, 0, "fn () -> i32 ( a = 10  a = a + 1  a + 1 )", 12);
+        diff_var_fn(NumType::I32, 0, "fn () -> i32 ( a = 10, a = a + 1, a + 1 )", 12);
     }
 
     #[test]
@@ -4262,7 +4291,7 @@ mod tests {
         // SAFETY: a self-contained recursive definition and literal calls.
         unsafe {
             assert_recursion_both_tiers(
-                &["f := fn (n : i32) -> i32 ( x := n  if (n < 1) (0) else (f(n - 1)  x) )"],
+                &["f := fn (n : i32) -> i32 ( x := n, if (n < 1) (0) else (f(n - 1), x) )"],
                 "f",
                 &[(0, 0), (1, 1), (3, 3), (5, 5)],
             );
@@ -4277,7 +4306,7 @@ mod tests {
         // SAFETY: as above; `&x`/`p@` over a per-call local.
         unsafe {
             assert_recursion_both_tiers(
-                &["g := fn (n : i32) -> i32 ( x := n  p := &x  if (n < 1) (0) else (g(n - 1)  p@) )"],
+                &["g := fn (n : i32) -> i32 ( x := n, p := &x, if (n < 1) (0) else (g(n - 1), p@) )"],
                 "g",
                 &[(0, 0), (1, 1), (4, 4)],
             );
@@ -4293,7 +4322,7 @@ mod tests {
             assert_recursion_both_tiers(
                 &[
                     "point := logos ( x : i32, y : i32 )",
-                    "h := fn (n : i32) -> i32 ( pt := point(n, 0)  if (n < 1) (0) else (h(n - 1)  pt.x) )",
+                    "h := fn (n : i32) -> i32 ( pt := point(n, 0), if (n < 1) (0) else (h(n - 1), pt.x) )",
                 ],
                 "h",
                 &[(0, 0), (2, 2), (5, 5)],
@@ -4309,7 +4338,7 @@ mod tests {
         // SAFETY: a self-contained recursive definition and literal calls.
         unsafe {
             assert_recursion_both_tiers(
-                &["fact := fn (n : i32) -> i32 ( acc := i32 1  if (n < 1) (acc) else (acc = n * fact(n - 1)  acc) )"],
+                &["fact := fn (n : i32) -> i32 ( acc := i32 1, if (n < 1) (acc) else (acc = n * fact(n - 1), acc) )"],
                 "fact",
                 &[(0, 1), (1, 1), (5, 120), (7, 5040)],
             );
@@ -4326,7 +4355,7 @@ mod tests {
         // SAFETY: a self-contained recursive definition and literal calls.
         unsafe {
             assert_recursion_both_tiers(
-                &["f := fn (n : i32) -> i32 ( a : i32  a = a + n  if (n < 1) (a) else (f(n - 1)  a) )"],
+                &["f := fn (n : i32) -> i32 ( a : i32, a = a + n, if (n < 1) (a) else (f(n - 1), a) )"],
                 "f",
                 &[(0, 0), (1, 1), (5, 5)],
             );
@@ -4340,13 +4369,13 @@ mod tests {
         // read of some other frame at run time.
         assert_eq!(
             parse_err(
-                "outer := fn (a : i32) -> i32 ( x := a  inner := fn () -> i32 ( x )  inner() )"
+                "outer := fn (a : i32) -> i32 ( x := a, inner := fn () -> i32 ( x ), inner() )"
             ),
             ParseError::CapturedLocal,
         );
         assert_eq!(
             parse_err(
-                "outer := fn (a : i32) -> i32 ( x := a  in2 := fn () -> i32 ( p := &x  p@ )  in2() )"
+                "outer := fn (a : i32) -> i32 ( x := a, in2 := fn () -> i32 ( p := &x, p@ ), in2() )"
             ),
             ParseError::CapturedLocal,
         );
@@ -4365,7 +4394,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "outer := fn (a : i32) -> i32 ( inner := fn (b : i32) -> i32 ( y := b  y + b )  inner(a) + 1 )",
+                "outer := fn (a : i32) -> i32 ( inner := fn (b : i32) -> i32 ( y := b, y + b ), inner(a) + 1 )",
                 &mut store,
                 &mut trie,
                 
@@ -4394,13 +4423,13 @@ mod tests {
         // an unrelated no-storage error at run time.
         assert_eq!(
             parse_err(
-                "outer := fn (a : i32) -> i32 ( inner := fn () -> i32 ( a )  inner() )"
+                "outer := fn (a : i32) -> i32 ( inner := fn () -> i32 ( a ), inner() )"
             ),
             ParseError::CapturedLocal,
         );
         assert_eq!(
             parse_err(
-                "outer := fn (a : i32) -> i32 ( in2 := fn () -> i32 ( p := &a  p@ )  in2() )"
+                "outer := fn (a : i32) -> i32 ( in2 := fn () -> i32 ( p := &a, p@ ), in2() )"
             ),
             ParseError::CapturedLocal,
         );

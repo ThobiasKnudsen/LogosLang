@@ -18,6 +18,7 @@ use super::numtype::COMMENT_TAG;
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
+use crate::id_context::IdContext;
 
 /// Register the `comment` logos: its [`COMMENT_TAG`] node — no spelling; the
 /// parser builds comment nodes from `#` — plus a unit-valued lowering as a
@@ -28,6 +29,17 @@ pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, COMMENT_TAG, meta::prec::INERT);
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.lower.insert(id, lower);
+
+    // `#` is the one comment constructor, an identity constructed at
+    // discovery like a literal (DESIGN ›Text literals are plain values; `#`
+    // is the one comment constructor‹): it consumes a following `«…»` or the
+    // raw text to the end of the line and leaves the comment node as its
+    // cell, which the boundary lifts into the body — void-valued, invisible
+    // to value flow (#59 step 3).
+    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::LITERAL);
+    let hash = cx.store.alloc_raw(cx.type_, record);
+    cx.trie.insert("#", IdContext::new(hash, cx.root_scope));
+    cx.metas.insert(hash, |p, _id, tape| p.construct_comment(tape));
     id
 }
 

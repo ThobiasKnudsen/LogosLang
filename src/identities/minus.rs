@@ -37,10 +37,8 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 /// `-`'s constructor. At reduction (two completed operands flanking the
 /// cursor) it is ordinary subtraction. Opening fresh — no left operand — it
 /// prefixes a numeric literal (`f(-1)`, `x := -5`; the literal regex is
-/// unsigned, so the negative literal is this constructor negating at parse);
-/// anything else declines, and the driver shifts the `-` as a pending operator
-/// (general unary minus over non-literals is later work — it still parses as a
-/// dangling operator today).
+/// unsigned; a negative literal is folded at discovery by the literal's own
+/// constructor); anything else to the right is negated as `0 - x`.
 fn construct(
     p: &mut crate::parse::Parser,
     id: DyadPtr,
@@ -52,16 +50,18 @@ fn construct(
         tape.reduce_here(node);
         return Ok(crate::parse::Constructed::Placed);
     }
+    // Prefix: negation of the operand to the right (DESIGN ›Numeric
+    // literals‹, ruled 5 September 2026: one identity whose constructor reads
+    // its left context) — spelled `0 - x`, the sketch's own spelling of a
+    // negative, so it molds to the operand's logos and lowers as a
+    // subtraction. A literal to the right was already folded into a negative
+    // literal at discovery, so this is the non-literal case.
     let types = p.types();
-    match p.consume_rational()? {
-        Some(lit) => {
-            // SAFETY: `lit` is the rational literal just built.
-            let neg = unsafe { rational::negate(p.store(), types.rational, lit) };
-            tape.place(neg);
-            Ok(crate::parse::Constructed::Placed)
-        }
-        None => Ok(crate::parse::Constructed::Decline),
-    }
+    let rhs = p.take_right(tape)?;
+    let zero = rational::build(p.store(), types.rational, "0")?;
+    let node = build(p.store(), &types, id, zero, rhs)?;
+    tape.place(node);
+    Ok(crate::parse::Constructed::Placed)
 }
 
 /// Build `lhs - rhs`: resolve the operand logos and store the concrete

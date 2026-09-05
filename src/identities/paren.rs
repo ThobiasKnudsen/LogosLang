@@ -28,7 +28,7 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
     cx.metas.insert(open, |p, _id, tape| {
         let body = p.parse_sequence()?;
         p.expect_close()?;
-        tape.place(body);
+        tape.place_scope(body);
         Ok(crate::parse::Constructed::Placed)
     });
 

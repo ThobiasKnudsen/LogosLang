@@ -66,22 +66,15 @@ pub(super) fn register(
                 tape.remove(-1); // the consumed left
                 tape.place(node);
             }
-            None => {
-                let node = p.parse_pointer_type()?;
-                tape.place(node);
-            }
+            None => return p.construct_pointer_type(tape),
         }
         Ok(crate::parse::Constructed::Placed)
     });
 
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::ADDRESS);
+    let record = meta::record_assoc(cx.store, meta::TOKEN_TAG, meta::prec::ADDRESS, crate::parse::Assoc::Right);
     let amp = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("&", IdContext::new(amp, cx.root_scope));
-    cx.metas.insert(amp, |p, _id, tape| {
-        let node = p.parse_address_of()?;
-        tape.place(node);
-        Ok(crate::parse::Constructed::Placed)
-    });
+    cx.metas.insert(amp, |p, _id, tape| p.construct_address_of(tape));
 
     let record = meta::operand_record(
         cx,

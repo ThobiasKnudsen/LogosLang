@@ -169,22 +169,26 @@ fn construct(
     id: DyadPtr,
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, crate::parse::ParseError> {
-    let lit = match p.consume_rational()? {
-        Some(l) => Some(l),
-        None => p.consume_negated_rational()?,
-    };
-    let node = match lit {
-        // SAFETY: `l` is the literal just built; `id` is this numeric logos's
-        // registered node.
-        Some(l) => unsafe { super::commit_literal_to(p.store(), l, id) }?,
+    use crate::parse::Cell;
+    let types = p.types();
+    let node = match tape.at(1).copied() {
+        // A rational literal cell (a negative one already folded at
+        // discovery): the anonymous typed value. SAFETY: a dyad cell is a
+        // node from the store; `id` is this numeric logos's registered node.
+        Some(Cell::Dyad(l)) if unsafe { (*l).ty } == types.rational => {
+            tape.remove(1);
+            unsafe { super::commit_literal_to(p.store(), l, id) }?
+        }
         // `i32(x)`: the bracket is this logos's to read — a conversion (DESIGN
         // ›a numeric type applied to a value is the conversion, per-constructor
         // rather than a uniform cast syntax‹), never `(`'s call (#59 step 2).
-        None if p.at_open() => {
-            p.expect_open()?;
-            p.parse_call(id)?
+        Some(Cell::Scope(scope)) => {
+            // SAFETY: `scope` is the bracket's node from the store.
+            let args = unsafe { p.args_of(scope) };
+            tape.remove(1);
+            p.build_call(id, &args)?
         }
-        None => id,
+        _ => id,
     };
     tape.place(node);
     Ok(crate::parse::Constructed::Placed)

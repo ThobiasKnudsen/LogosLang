@@ -261,7 +261,7 @@ fn the_repl_keeps_an_owning_binding_alive_across_lines() {
     // session exit, not end of line: `a` is still readable on a later line, and
     // a block's own allocation is freed at the block's exit as in file mode
     // (file and REPL are one pass and must agree).
-    let (echoes, stderr) = repl(b"a := alloc i32 5\na@\nr := ( b := alloc i32 20  b@ )\nr\n");
+    let (echoes, stderr) = repl(b"a := alloc i32 5\na@\nr := ( b := alloc i32 20, b@ )\nr\n");
     assert_eq!(echoes, ["5", "20"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
@@ -284,7 +284,7 @@ fn a_failed_repl_line_restores_a_moved_name() {
     // A line that moves `a` out and then fails is rolled back whole: the dead
     // mark lifts with the line's declarations, so `a` reads on the next line
     // as if the line had never been typed.
-    let (echoes, stderr) = repl(b"a := alloc i32 5\nr := ( b := own a  b@ ) + nosuch\na@\n");
+    let (echoes, stderr) = repl(b"a := alloc i32 5\nr := ( b := own a, b@ ) + nosuch\na@\n");
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
     assert!(stderr.contains("unknown name"), "stderr: {stderr}");
     assert!(!stderr.contains("dead"), "stderr: {stderr}");
@@ -414,7 +414,7 @@ fn a_type_call_with_a_runtime_argument_is_rejected() {
     // function parameter) is reported, not silently mis-evaluated.
     let (_echoes, stderr) = repl(
         b"pick := fn (i:i32) -> logos (if (i==0)(i32) else (f64))\n\
-          g := fn (n:i32) -> i32 ( a := pick(n)  1 )\n",
+          g := fn (n:i32) -> i32 ( a := pick(n), 1 )\n",
     );
     assert!(stderr.contains("must be evaluable at parse time"), "stderr: {stderr}");
 }
@@ -484,7 +484,7 @@ fn a_logos_variable_fill_is_define_once_and_comptime_only() {
     // it would rebind at parse, where parse and run do not coincide.
     let (_e1, stderr1) = repl(b"a : logos\na = i32\na = f64\n");
     assert!(stderr1.contains("not an assignable place"), "stderr: {stderr1}");
-    let (_e2, stderr2) = repl(b"a : logos\ng := fn () -> i32 ( a = i32  1 )\n");
+    let (_e2, stderr2) = repl(b"a : logos\ng := fn () -> i32 ( a = i32, 1 )\n");
     assert!(stderr2.contains("where parsing and running coincide"), "stderr: {stderr2}");
     let (_e3, stderr3) = repl(b"a : logos\na = 5\n");
     assert!(stderr3.contains("must be a type value"), "stderr: {stderr3}");
@@ -547,7 +547,7 @@ fn a_declaration_snapshots_its_value_and_reads_are_stable() {
     // stays 45 across reads (it was re-running the loop and growing before), and
     // a later mutation of an input does not change the snapshot.
     let (echoes, stderr) = repl(
-        b"c := (sum := i32 0, for i in 0..10 (sum = sum + i) sum)\nc\nc\n\
+        b"c := (sum := i32 0, for i in 0..10 (sum = sum + i), sum)\nc\nc\n\
           a := i32 1\nx := a + a\na = 5\nx\n",
     );
     assert_eq!(echoes, ["45", "45", "2"], "stderr: {stderr}");

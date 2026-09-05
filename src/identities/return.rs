@@ -32,7 +32,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         cx,
         meta::TUPLE_TAG,
         meta::prec::RETURN,
-        Assoc::Left,
+        Assoc::Right,
         &["value", "op"],
     );
     let id = cx.store.alloc_raw(cx.type_, record);
@@ -43,15 +43,15 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     (id, leaf)
 }
 
-/// The prefix constructor: parse the rest of the expression as the operand and
-/// build `return <operand>` as `{type: return, value: [operand, op]}`. (v1 grabs
-/// to the end of the expression; early-return lands with control flow.)
+/// The prefix constructor: the constructed cell to its right is the operand,
+/// and `return <operand>` is `{type: return, value: [operand, op]}`. (Early
+/// return lands with control flow.)
 fn construct(
     p: &mut crate::parse::Parser,
     id: DyadPtr,
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, ParseError> {
-    let operand = p.parse_expression()?;
+    let operand = p.take_right(tape)?;
     let types = p.types();
     let value = p.store().alloc_operands(&[operand, types.ops.return_]);
     let node = p.store().alloc_raw(id, value);

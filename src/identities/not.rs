@@ -29,13 +29,15 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         cx,
         meta::TUPLE_TAG,
         meta::prec::NOT,
-        Assoc::Left,
+        Assoc::Right,
         &["operand", "op"],
     );
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.trie.insert("not", IdContext::new(id, cx.root_scope));
     cx.metas.insert(id, |p, id, tape| {
-        let node = p.parse_not(id)?;
+        let operand = p.take_right(tape)?;
+        // SAFETY: `operand` is the constructed cell just taken off the tape.
+        let node = unsafe { p.build_not(id, operand) }?;
         tape.place(node);
         Ok(crate::parse::Constructed::Placed)
     });
