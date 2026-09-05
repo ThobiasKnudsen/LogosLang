@@ -6,31 +6,26 @@ assign := fn (node := &mut dyad ?, type := @dyad ?, value := @void ?) -> void ( 
 assign(declare(&mut logos, «=»), ?, ?)
 assign(declare(&mut logos, «:=»), ?, ?)
 assign(declare(&mut logos, «rational_number»), type, ?)
-assign(declare(&mut logos, «[0-9]+(?:\.[0-9]+)?»), rational_number, ?)   # unanchored: the lexer longest-matches a prefix of the remaining input, so no ^…$. unsigned: - is always the operator (a-1 must be subtraction); a negative literal is the prefix - folding at parse
+assign(declare(&mut logos, «[0-9]+(?:\.[0-9]+)?»), rational_number, ?)   # unanchored: the lexer longest-matches a prefix of the remaining input, so no ^…$. unsigned: the literal never carries a sign; - before a literal folds at parse, - before any other operand is negation (its constructor reads tape[-1]: a constructed operand there makes it subtraction, so a-1 stays subtraction; ruled 5 September 2026)
 
 parsing_tape := type (
-    # the working frontier: reduced-but-not-final dyads interleaved with pending tokens (lexed-in-flight
-    # and lazily lexed-ahead). tape[0] is the token of the identity being constructed; negative offsets
-    # reach left into reduced context, positive offsets lazily lex ahead. disposable, rebuilt from source.
-    shared insert := ? ?     # splice tokens/dyads into the frontier (the macro / custom-syntax mechanism)
-    shared remove := ? ?     # remove from the frontier
-)
-
-# parsing_tape[n].type
-# parsing_tape[n].value
-# parsing_tape[n].is_constructed
-# type and value is stored besi/cdes each others but is_constructed is stored in a separate array
-#
-
-parsing_tape := type (
-    shared constructor = fn (tape := parsing_tape ?) -> void (...)
-
-    code := string ?       # The code to parse
-    code_offset := u64 ?   # the char to continue parsing from later
-
-    dyads := doublylinkedlist dyad ()
-    dyads_is_constructed := array bool ()
-    dyad_offset := u64 0
+    # the working frontier: Logic Graph with a string extension (DESIGN ›Source becomes runnable‹, ›The scope's
+    # constructor is the driver‹). a cell is a pointer to the dyad of the identity the trie resolved — never a
+    # token wrapper — and is_constructed is the tape's own record, a list parallel to the cells, never a field of
+    # the dyad (ruled 2 September 2026). tape[k] lexes lazily on demand; a constructor is handed a re-centered
+    # view, tape[0] being its own cell, negative offsets its left context, positive its right. the tape runs
+    # nothing and has four affordances: tape[k], is_constructed, insert, remove. disposable, rebuilt from source.
+    constructor = fn (tape := parsing_tape ?) -> void ( ? )
+    instance (
+        code := string ?                              # the source not yet lexed
+        code_offset := u64 ?                          # where lexing continues
+        cells := doublylinkedlist @dyad ()            # pointers to identities' dyads, or the dyads constructed so far
+        is_constructed := doublylinkedlist bool ()    # parallel to cells; the read spelling is open (DESIGN: tape[0].is_constructed
+                                                      # is a . on a dyad with no such field — tape.is_constructed[k] or a cell view)
+        center := u64 0                               # tape[0]
+        insert := fn (k := i64 ?, cells := array @dyad ?) -> void ( ? )   # splice cells in: the macro mechanism
+        remove := fn (k := i64 ?) -> void ( ? )                           # drop a cell before it lexes or after
+    )
 )
 
 mut := type (
@@ -206,7 +201,7 @@ a = a + 1
 # bounds the right sign.
 d := ?
 inf := 1 / d       # an actual infinite number: / below accepts an infinitesimal divisor
-ninf := 0 - inf    # speavelled as a value because - is always the binary operator
+ninf := -inf       # prefix - is negation (ruled 5 September 2026)
 im := ?             # the imaginary unit, for the oscillating weights
 ' := ?              # per-iteration change, postfix: inside a loop over i, e' is
                    # (e at i + step) - (e at i), so i' is the step itself (= d

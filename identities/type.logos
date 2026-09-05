@@ -5,20 +5,22 @@ type := type (
         associativity := ?          # left or right
         constructor := fn (tape := parsing_tape ?) -> void ?
         destructor := ?
+        code := ?                   # a fn, where the type has something to run (DESIGN ›Execution is function application‹)
     )
 
     # what type itself is: the same slots, filled
     precedence = f64 2.0
     associativity = left
     constructor = fn (tape := parsing_tape ?) -> void (
-
-        if tape[1].type != scope
-            error «tape[1].type is not scope»
-        if not tape[1].is_constructed
-            error «tape[1] is scope and not constructed. It should be»
-
-        # assuming scope is somehow constructed.
-        # I dont know exactly how it may automatically be constructed here yet
-
+        # type reads its own bracket (ruled 3 September 2026): constructed at discovery, before the ( after it is
+        # lexed, it opens the definition scope itself — so the body's bare lines fill the new identity's slots and
+        # declare its members, and its instance (…) declares what lives on instances — then drives the bracket's
+        # parse exactly as ( does, with that scope open, and replaces its own cell with the finished type
+        if tape[1] != lex «(»[0]
+            error «type must be followed by (»
+        definition := scope ?                       # the new identity's own scope, open before the bracket is lexed
+        (.constructor(tape.recenter(1))             # the eager-segment loop, run inside definition
+        tape[0] = dyad (type, definition)
+        tape.remove(1)
     )
 )
