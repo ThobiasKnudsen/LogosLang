@@ -10,7 +10,8 @@ assign(declare(&mut logos, «[0-9]+(?:\.[0-9]+)?»), rational_number, ?)   # una
 
 parsing_tape := type (
     # the working frontier: Logic Graph with a string extension (DESIGN ›Source becomes runnable‹, ›The scope's
-    # constructor is the driver‹). a cell is a pointer to the dyad of the identity the trie resolved — never a
+    # constructor is the driver‹). a cell resolved from a spelling is the record the trie returned (tape[1]:scope,
+    # tape[1]:dyad), a constructed cell is its dyad, is_constructed telling which (ruled 7 September 2026) — never a
     # token wrapper — and is_constructed is the tape's own record, a list parallel to the cells, never a field of
     # the dyad (ruled 2 September 2026). tape[k] lexes lazily on demand; a constructor is handed a re-centered
     # view, tape[0] being its own cell, negative offsets its left context, positive its right. the tape runs
@@ -19,7 +20,7 @@ parsing_tape := type (
     instance (
         code := string ?                              # the source not yet lexed
         code_offset := u64 ?                          # where lexing continues
-        cells := doublylinkedlist @dyad ()            # pointers to identities' dyads, or the dyads constructed so far
+        cells := doublylinkedlist @cell ()            # a resolved cell is the record the trie returned, a constructed cell its dyad
         is_constructed := doublylinkedlist bool ()    # parallel to cells; the read spelling is open (DESIGN: tape[0].is_constructed
                                                       # is a . on a dyad with no such field — tape.is_constructed[k] or a cell view)
         center := u64 0                               # tape[0]
@@ -30,15 +31,23 @@ parsing_tape := type (
 
 mut := type (
     shared constructor = fn (tape := parsing_tape ?) -> void (
-        if tape[1].value@.type != type
+        if tape[1]:dyad.type != type
             error «token after mut is not a type»
         # set the mutability bit on this level's value pointer — TBD
     )
 )
 
-p1 := proof (a := generic_number ?, a + a) -> (2 * a) ( ? )        # value rule: licenses rewriting a+a into 2*a
-p2 := proof (a := generic_number ?, a + a == 2 * a) -> true ( ? )  # truth rule: the primitive form, states any proposition
-p3 := proof (a := generic_number ?, a != 0, a / a) -> 1 ( ? )      # with a premise: an input shape that must rewrite to true at the site
+p1 := conjecture ( a + a -> 2 * a ) where ( a:dyad.type == generic_number )           # value rule: licenses rewriting a+a into 2*a; no proof = an assumption where cited, an axiom where a scope registers it
+p2 := conjecture ( a + a == 2 * a -> true ) where ( a:dyad.type == generic_number )   # truth rule: the primitive form, states any proposition
+p3 := conjecture ( a / a -> 1 ) where ( a:dyad.type == generic_number and a != 0 )   # with a premise: where is one boolean, a hole's type a premise like any other
+p4 := conjecture ( (a + a) / a -> 2 ) where ( a:dyad.type == generic_number and a != 0 ) proof (
+    (a + a) / a
+    -> p1(a + a) / a                # the derivation is a chain of -> steps, each call written where it applies
+    -> mul_div_assoc((2 * a) / a)
+    -> 2 * p3(a / a)                # p3's premise a != 0 is p4's own
+    -> mul_one(2 * 1)
+    -> 2
+)
 
 @ := ?
 -> := ?
