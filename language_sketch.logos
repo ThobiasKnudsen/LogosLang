@@ -133,7 +133,7 @@ type {
   value -> {
     type -> type
     value -> {
-      # member NAMES are id_context entries in the shared name index, not data
+      # member NAMES are record entries in the shared name index, not data
       # stored here (per-record names hashtable: rejected)
       fields -> {
         type -> array
