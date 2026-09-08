@@ -20,7 +20,7 @@ parsing_tape := type (
     instance (
         code := string ?                              # the source not yet lexed
         code_offset := u64 ?                          # where lexing continues
-        cells := doublylinkedlist @cell ()            # a resolved cell is the record the trie returned, a constructed cell its dyad
+        cells := doublylinkedlist @dyad ()            # a resolved cell is the record the trie returned (a dyad of type record), a constructed cell its dyad: one pointer type serves both (ruled 8 September 2026)
         is_constructed := doublylinkedlist bool ()    # parallel to cells; the read spelling is open (DESIGN: tape[0].is_constructed
                                                       # is a . on a dyad with no such field — tape.is_constructed[k] or a cell view)
         center := u64 0                               # tape[0]
@@ -186,11 +186,11 @@ a = a + 1
 {
     type:@dyad -> =
     value:@void -> {
-        lhs:@dyad -> a
+        lhs:@dyad -> a                        # a use points at a's RECORD, a dyad of type record whose reading rule reads a's cell; :dyad reaches the cell (ruled 8 September 2026)
         rhs:@dyad -> {
             type:@dyad -> +
             value:@void -> {
-                lhs:@dyad -> a
+                lhs:@dyad -> a                # the same record
                 rhs:@dyad -> {
                     type:@dyad -> rational_number
                     value:@void -> [num 1, den 1]     # a reduced fraction — never text
