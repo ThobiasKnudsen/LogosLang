@@ -810,6 +810,8 @@ pub struct CoreTypes {
     pub record_: DyadPtr,
     /// `:`: the record read (#70).
     pub colon_: DyadPtr,
+    /// `parsing_tape` and the tape's natives (#60).
+    pub tape: crate::identities::tape::TapeIds,
     /// `index`: the passive node a `[i]` cell carries (a comptime literal in
     /// the seed).
     pub index_: DyadPtr,
@@ -1170,6 +1172,7 @@ pub(crate) unsafe fn is_bool_result(types: &CoreTypes, node: DyadPtr) -> bool {
         || logos == types.and_
         || logos == types.or_
         || logos == types.not_
+        || logos == types.tape.is_constructed
 }
 
 /// The parse-time truth of a bool literal — `{type: bool, value -> i32 0/1}`, the
@@ -2591,8 +2594,9 @@ impl<'a> Parser<'a> {
         nstart: usize,
         nlen: usize,
         index: Option<usize>,
-        unit_call: bool,
+        call: Option<Vec<DyadPtr>>,
     ) -> Result<(DyadPtr, usize), ParseError> {
+        let unit_call = matches!(call, Some(ref a) if a.is_empty());
         // `.` does exactly one job (ruled August 2026): reading fields the
         // logos defines, which are always about the value. A value's logos is
         // never one of its own fields — the retired universal `.logos`
@@ -2680,6 +2684,25 @@ impl<'a> Parser<'a> {
         }
         // Through a record pointer, `p@.x` folds the field offset into the deref
         // (the address is runtime; the offset and the field's logos are not).
+        // A tape's natives (#60): a member of `parsing_tape`'s own scope that
+        // is not a laid-out field — `t.remove(k)`, `t.insert(k, cell)`,
+        // `t.recenter(k)`, and the indexed `t.is_constructed[k]` — built as a
+        // call with the receiver's address first.
+        if let Some(recv) = crate::identities::tape::receiver_addr(self.store, &self.types, lhs) {
+            let name = &self.source[nstart..nstart + nlen];
+            if let Some((op, leaf)) = crate::identities::tape::member(&self.types.tape, name) {
+                let types = self.types;
+                if op == types.tape.is_constructed {
+                    let i = index.ok_or(ParseError::ExpectedIndexBracket)?;
+                    let k = self.scalar_value(crate::identities::numtype::NumType::I64, i as i64);
+                    let node = crate::identities::tape::build_member(self.store, &types, recv, op, leaf, &[k])?;
+                    return Ok((node, 1));
+                }
+                let args = call.ok_or(ParseError::ExpectedOpen)?;
+                let node = crate::identities::tape::build_member(self.store, &types, recv, op, leaf, &args)?;
+                return Ok((node, 1));
+            }
+        }
         if (*lhs).ty == self.types.deref_ {
             let (ptr_expr, pointee, base_off) =
                 crate::identities::pointer::deref_parts(lhs);
@@ -2745,15 +2768,18 @@ impl<'a> Parser<'a> {
         let Some((nstart, nlen)) = member else {
             return Err(ParseError::ExpectedField);
         };
-        // The optional `[i]` or `()` after the member: lexed on demand.
+        // The optional `[i]` or `(…)` after the member: lexed on demand. A
+        // bracket is the member's argument list (empty: `f.compile()`).
         self.cell_at(tape, 2)?;
         let index = self.index_at(tape, 2);
         // SAFETY: a bracket cell is a node from the store.
-        let unit_call =
-            matches!(tape.at(2), Some(c) if c.is_bracket() && unsafe { self.is_empty_scope(c.dyad) });
+        let call = match tape.at(2) {
+            Some(c) if c.is_bracket() => Some(unsafe { self.args_of(c.dyad) }),
+            _ => None,
+        };
         // SAFETY: `lhs` is a reduced dyad off the tape.
         let (node, consumed) =
-            unsafe { self.field_access(lhs, nstart, nlen, index, unit_call)? };
+            unsafe { self.field_access(lhs, nstart, nlen, index, call)? };
         for _ in 0..(1 + consumed) {
             tape.remove(1);
         }
@@ -2789,14 +2815,6 @@ impl<'a> Parser<'a> {
     ///
     /// # Safety
     /// `node` must be a dyad from the store.
-    unsafe fn is_empty_scope(&self, node: DyadPtr) -> bool {
-        if (*node).ty != self.types.scope || (*node).value.is_null() {
-            return false;
-        }
-        let arr = *((*node).value as *const DyadPtr);
-        crate::identities::array::items(arr).is_empty()
-    }
-
     /// `[`'s constructor: an index cell — the interior read once, generically
     /// (DESIGN ›The constructor is a field‹: "`[…]` constructs itself … into a
     /// passive node carrying the index"), a comptime literal in the seed —
@@ -2823,6 +2841,26 @@ impl<'a> Parser<'a> {
             return Err(ParseError::ExpectedIndexBracket);
         }
         self.pos += 1;
+        // `t[k]` (#60): an index right after a tape value is the element
+        // read, a slot node the identity to its left owns; after a `.` the
+        // index stays a passive cell for the member read to consume.
+        if let Some(left) = tape.at(-1).copied() {
+            // A fresh spelling to the left is a member name after `.` (or an
+            // unknown name the boundary reports), never a tape.
+            if !left.is_fresh() && self.is_operand_cell(&left) {
+                let lhs = self.operand_dyad(left)?;
+                let types = self.types;
+                // SAFETY: `lhs` is a reduced dyad from the store.
+                if let Some(recv) = unsafe { crate::identities::tape::receiver_addr(self.store, &types, lhs) } {
+                    let i = crate::identities::rational::mold(lit).ok_or(ParseError::BadReflectRead)?;
+                    let k = self.scalar_value(crate::identities::numtype::NumType::I64, i64::from(i));
+                    let node = crate::identities::tape::build_slot(self.store, &types, recv, k);
+                    tape.remove(-1);
+                    tape.place(node);
+                    return Ok(Constructed::Placed);
+                }
+            }
+        }
         let value = self.store.alloc_operands(&[lit, std::ptr::null_mut()]);
         let node = self.store.alloc_raw(self.types.index_, value);
         tape.place(node);
@@ -3834,9 +3872,7 @@ impl<'a> Parser<'a> {
     /// An `@pointee` value holding `addr`: a pointer-typed literal with its own
     /// eight bytes of storage, read at run time like any pointer variable.
     fn address_value(&mut self, pointee: DyadPtr, addr: DyadPtr) -> DyadPtr {
-        let ty = crate::identities::pointer::make_pointer_type(self.store, self.types.type_, pointee);
-        let storage = self.store.alloc_bytes(&(addr as usize as u64).to_ne_bytes());
-        self.store.alloc_raw(ty, storage)
+        crate::identities::pointer::address_value(self.store, &self.types, pointee, addr)
     }
 
     /// A member read on a dyad view (#52, ›The dyad's read surface‹):
@@ -4570,6 +4606,105 @@ mod tests {
         assert_eq!((c.dyad, c.start, c.len), (dyad(9), 0, 6));
         t.recenter(0);
         assert_eq!(t.cursor(), 0);
+    }
+
+    #[test]
+    fn the_tape_affordances_are_reachable_from_logos() {
+        // DESIGN ›The scope's constructor is the driver‹: the tape's four
+        // affordances — `tape[k]`, `is_constructed`, `insert`, `remove` —
+        // and the re-centered view, as identities a Logos function reaches
+        // (#60). A tape over `a + b` lexed by a parser, handed to Logos as a
+        // `parsing_tape` instance named `t`, then edited from Logos.
+        use crate::identities::Core;
+        use crate::record::Record;
+        use crate::regex_trie::RegexTrie;
+        use crate::run::Runtime;
+        use crate::store::Store;
+
+        fn go(
+            src: &str,
+            store: &mut Store,
+            trie: &mut RegexTrie,
+            types: CoreTypes,
+            scopes: ScopeStack,
+        ) -> (i64, ScopeStack) {
+            let mut p = Parser::new(src, store, trie, types, scopes);
+            let node = p.parse_expression().unwrap_or_else(|e| panic!("{src}: {e:?}"));
+            let scopes = p.into_scopes();
+            let mut rt = Runtime::new(types);
+            // SAFETY: `node` was just parsed into the store.
+            let v = unsafe { rt.run(node) }.unwrap_or_else(|e| panic!("{src}: {e:?}"));
+            (v, scopes)
+        }
+
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let types = core.types();
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+
+        let tape = {
+            let mut tape = ParsingTape::new();
+            let mut p = Parser::new("a + b", &mut store, &mut trie, types, scopes);
+            p.lex_segment(&mut tape).unwrap();
+            scopes = p.into_scopes();
+            tape.set_cursor(0);
+            Box::into_raw(Box::new(tape))
+        };
+        // SAFETY: `tape` is a live box; the natives write through the handle
+        // the instance holds, and the checks below read through the same one.
+        unsafe {
+            assert_eq!((*tape).len(), 3);
+            let plus = (*tape).at(1).unwrap().dyad;
+            assert!(!(*tape).at(1).unwrap().constructed, "a lexed cell is unconstructed");
+
+            let storage = store.alloc_bytes(&(tape as usize as u64).to_ne_bytes());
+            let t = store.alloc_raw(core.tape.parsing_tape, storage);
+            let rec = Record::alloc(&mut store, core.record_, Record::new(t, core.root_scope));
+            scopes.declare(&mut trie, "t", rec).unwrap();
+
+            let (v, s) = go("t.is_constructed[1]", &mut store, &mut trie, types, scopes);
+            assert_eq!(v, 0);
+            let (v, s) = go("t.remove(1)", &mut store, &mut trie, types, s);
+            assert_eq!(v as DyadPtr, plus, "remove yields the cell it took");
+            assert_eq!((*tape).len(), 2);
+
+            let (_, s) = go("t[0] = dyad (i32, 7)", &mut store, &mut trie, types, s);
+            let c0 = *(*tape).at(0).unwrap();
+            assert!(c0.constructed, "a written cell is constructed");
+            assert_eq!((*c0.dyad).ty, core.i32_);
+            let (v, s) = go("t[0]", &mut store, &mut trie, types, s);
+            assert_eq!(v as DyadPtr, c0.dyad, "the element read yields the cell");
+            let (v, s) = go("t.is_constructed[0]", &mut store, &mut trie, types, s);
+            assert_eq!(v, 1);
+
+            let (_, s) = go("t.insert(0, dyad (i32, 9))", &mut store, &mut trie, types, s);
+            assert_eq!((*tape).len(), 3);
+            assert_eq!((*tape).at(0).unwrap().dyad, c0.dyad, "the center stays on its cell");
+            let (_, s) = go("t.recenter(-1)", &mut store, &mut trie, types, s);
+            let (v, s) = go("t[0]", &mut store, &mut trie, types, s);
+            assert_eq!((*(v as DyadPtr)).ty, core.i32_, "the inserted cell, now the center");
+            assert_ne!(v as DyadPtr, c0.dyad);
+
+            // A use of a name handed in stays unconstructed: it is its record.
+            let (_, s) = go("t[0] = t", &mut store, &mut trie, types, s);
+            assert!(!(*tape).at(0).unwrap().constructed);
+            assert_eq!((*tape).at(0).unwrap().dyad, rec);
+
+            // Through a function taking the tape as a pointer parameter.
+            let (_, s) = go(
+                "g := fn (p := @parsing_tape ?) -> void ( p@.remove(0) )",
+                &mut store,
+                &mut trie,
+                types,
+                s,
+            );
+            let (_, _s) = go("g(&t)", &mut store, &mut trie, types, s);
+            assert_eq!((*tape).len(), 2);
+
+            drop(Box::from_raw(tape));
+        }
     }
 
     // --- scope stack + name resolution --------------------------------------

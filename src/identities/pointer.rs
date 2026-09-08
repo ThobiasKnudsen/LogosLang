@@ -153,6 +153,15 @@ fn lower_addr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
 /// Build a pointer logos node `@pointee`: `{type: logos, value -> record}`, the
 /// record [`ADDR_TAG`]-kinded with the pointee as its payload. Fresh per use;
 /// compare pointees, not nodes.
+/// An `@pointee` value holding `addr`: a pointer-typed literal with its own
+/// eight bytes of storage, read at run time like any pointer variable. How a
+/// node is handed to a native *by identity* (`:scope`, a tape's cell).
+pub(crate) fn address_value(store: &mut Store, types: &CoreTypes, pointee: DyadPtr, addr: DyadPtr) -> DyadPtr {
+    let ty = make_pointer_type(store, types.type_, pointee);
+    let storage = store.alloc_bytes(&(addr as usize as u64).to_ne_bytes());
+    store.alloc_raw(ty, storage)
+}
+
 pub(crate) fn make_pointer_type(store: &mut Store, type_: DyadPtr, pointee: DyadPtr) -> DyadPtr {
     let value = super::meta::pointer_record(store, pointee);
     store.alloc_raw(type_, value)

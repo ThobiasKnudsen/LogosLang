@@ -323,6 +323,11 @@ impl Runtime {
     ///
     /// # Safety
     /// `p` must be null or a valid dyad from the store.
+    /// The `record` type, for a native telling a use (a record) from a node.
+    pub(crate) fn record_ty(&self) -> DyadPtr {
+        self.record_
+    }
+
     pub(crate) unsafe fn through(&self, p: DyadPtr) -> DyadPtr {
         crate::record::through(self.record_, p)
     }

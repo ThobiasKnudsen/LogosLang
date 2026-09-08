@@ -90,6 +90,10 @@ pub(super) fn build(
     // the reading rule.
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let (lhs_d, rhs_d) = unsafe { (types.through(lhs), types.through(rhs)) };
+    // `t[k] = cell`: a tape slot as the target (#60).
+    if unsafe { (*lhs_d).ty } == types.tape.slot {
+        return Ok(unsafe { super::tape::build_write(store, types, lhs_d, rhs) });
+    }
     if unsafe { (*lhs_d).ty } == types.deref_ {
         return unsafe { super::pointer::build_storeptr(store, types, lhs_d, rhs) };
     }

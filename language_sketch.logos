@@ -21,9 +21,9 @@ parsing_tape := type (
         code := string ?                              # the source not yet lexed
         code_offset := u64 ?                          # where lexing continues
         cells := doublylinkedlist @dyad ()            # a resolved cell is the record the trie returned (a dyad of type record), a constructed cell its dyad: one pointer type serves both (ruled 8 September 2026)
-        is_constructed := doublylinkedlist bool ()    # parallel to cells; the read spelling is open (DESIGN: tape[0].is_constructed
-                                                      # is a . on a dyad with no such field — tape.is_constructed[k] or a cell view)
-        center := u64 0                               # tape[0]
+        is_constructed := doublylinkedlist bool ()    # parallel to cells; read tape.is_constructed[k] (ruled 9 September 2026: the flag is the
+                                                      # tape's own list, so the read is that list's element, never a field of the dyad)
+        center := @dyad ?                             # tape[0]: the center is a node of the list (DESIGN; the seed's list ruled 9 September 2026)
         insert := fn (k := i64 ?, cells := array @dyad ?) -> void ( ? )   # splice cells in: the macro mechanism
         remove := fn (k := i64 ?) -> void ( ? )                           # drop a cell before it lexes or after
     )

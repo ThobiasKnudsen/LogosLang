@@ -83,6 +83,7 @@ pub(crate) mod drop_model;
 mod gate;
 pub mod import;
 mod colon;
+pub mod tape;
 mod hole;
 pub(crate) mod instance;
 pub(crate) mod pointer;
@@ -213,6 +214,8 @@ pub struct Core {
     pub record_: DyadPtr,
     /// `:`, the record read.
     pub colon_: DyadPtr,
+    /// `parsing_tape` and the tape's natives (#60).
+    pub tape: tape::TapeIds,
     /// `index`, the passive node a `[i]` cell carries.
     pub index_: DyadPtr,
     /// `array` (of `dyad@`), the seed's first array form: a sequence's
@@ -433,6 +436,8 @@ impl Core {
         // The `record` type's own definition, last: its fields are `@dyad`
         // places, so it waits for `dyad` and `@` (DESIGN ›The dyad's read
         // surface‹, 8 September 2026).
+        // `parsing_tape` and the four affordances as identities (#60).
+        let tape = tape::register(&mut cx, &callables, scope_, array_, void);
         record::register_type(&mut cx, scope_, array_, dyad_);
         op_leaves.scope_ = scope::register_exec(&mut cx, scope_, &callables);
 
@@ -507,6 +512,7 @@ impl Core {
             dyad_,
             record_,
             colon_,
+            tape,
             index_,
             callable_: callables.callable,
             convention_: callables.convention,
@@ -557,6 +563,7 @@ impl Core {
             dyad_: self.dyad_,
             record_: self.record_,
             colon_: self.colon_,
+            tape: self.tape,
             index_: self.index_,
             construct_: self.construct_,
             string_: self.string_,
