@@ -19,7 +19,13 @@
 //! Precedence: `.`'s, left-associative, so `a:dyad.type` is `(a:dyad).type`
 //! and `x:dyad.type == i32` binds before the comparison — the shape DESIGN's
 //! own examples fix (`f:dyad.value.body[0].rhs`, `b:start.rhs.type`,
-//! `a:dyad.type is number`).
+//! `a:dyad.type is number`). Both reads sit above the identities that read
+//! their own right side (ruled 8 September 2026): a keyword followed by `:`
+//! or `.` is being read, not run, so `if:scope` names `if`'s record and the
+//! keyword's constructor never wakes — in the seed, the driver leaves such a
+//! token asleep and the read takes it at the boundary
+//! ([`crate::parse::Parser::tight_read_takes`]); above the reads stay `:=`,
+//! `=`, `,`, the literals, and the raw-text consumers.
 
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;

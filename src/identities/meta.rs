@@ -127,8 +127,9 @@ pub(crate) mod prec {
     pub const LITERAL: f64 = 96.0;
     /// `import`: consumes its raw path token at discovery.
     pub const IMPORT: f64 = 95.0;
-    /// `:=`: declares its name before its value is constructed (ruled 5
-    /// September 2026).
+    /// `:=` and `=`: the dyad's two writers, constructed at discovery, each
+    /// reading its left and driving its right side to the boundary (`:=`
+    /// ruled 5 September 2026, `=` beside it 8 September 2026).
     pub const DECLARE: f64 = 93.0;
     /// The identities that read their own bracket or right side: `fn`, `for`,
     /// `while`, `defer`, `type`, `if` (ruled 3 and 5 September 2026).
@@ -160,7 +161,6 @@ pub(crate) mod prec {
     pub const AND: f64 = 30.0;
     pub const OR: f64 = 20.0;
     pub const RETURN: f64 = 10.0;
-    pub const ASSIGN: f64 = 5.0;
     /// An identity with no constructor — a delimiter (`)`, `->`, `else`, `in`),
     /// a data type, a node record: inert, never constructed by the driver.
     pub const INERT: f64 = 0.0;

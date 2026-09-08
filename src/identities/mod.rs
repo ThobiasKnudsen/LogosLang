@@ -212,6 +212,8 @@ pub struct Core {
     /// `record`, the type of every name's record: the trie entry, a dyad
     /// whose value is the name's `dyad`, `scope`, `start`, `end`, `gate`.
     pub record_: DyadPtr,
+    /// `:`, the record read.
+    pub colon_: DyadPtr,
     /// `index`, the passive node a `[i]` cell carries.
     pub index_: DyadPtr,
     /// `array` (of `dyad@`), the seed's first array form: a sequence's
@@ -403,7 +405,7 @@ impl Core {
         op_leaves.import_ = import_leaf;
         // `dyad`, the cell type (inert), and `:`, the record read (#70).
         let dyad_ = view::register(&mut cx);
-        colon::register(&mut cx);
+        let colon_ = colon::register(&mut cx);
         hole::register(&mut cx);
         let sep_ = logos_mod::register_syntax(&mut cx);
         // Struct instances: the construction statement and the `.` field access.
@@ -504,6 +506,7 @@ impl Core {
             import_,
             dyad_,
             record_,
+            colon_,
             index_,
             callable_: callables.callable,
             convention_: callables.convention,
@@ -553,6 +556,7 @@ impl Core {
             import_: self.import_,
             dyad_: self.dyad_,
             record_: self.record_,
+            colon_: self.colon_,
             index_: self.index_,
             construct_: self.construct_,
             string_: self.string_,
@@ -712,9 +716,9 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
         let lhs = *((*node).value as *const DyadPtr);
         return numtype_of(types, lhs);
     }
-    // A comparison's or logical operator's result is `bool`, physically an i32;
-    // an assignment yields the stored value, read at the bare i32 default (the
-    // behaviour these applications always had).
+    // A comparison's or logical operator's result is `bool`, physically an
+    // i32. An assignment yields nothing (`=` returns nothing, ruled 8
+    // September 2026), so it falls through to non-numeric.
     if logos == types.lt
         || logos == types.gt
         || logos == types.le
@@ -724,7 +728,6 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
         || logos == types.and_
         || logos == types.or_
         || logos == types.not_
-        || logos == types.assign
         || logos == types.return_
     {
         return Operand::Concrete(NumType::I32);
@@ -1286,12 +1289,15 @@ unsafe fn commit_tail(
         *ops.add(2) = else_c;
         return Ok(node);
     }
-    // A `while`/`for` loop, a construction, a declaration, or a `f.compile()`
-    // yields unit, so none of them can be a numeric function's tail.
+    // A `while`/`for` loop, a construction, a declaration, an assignment, or
+    // a `f.compile()` yields unit, so none of them can be a numeric
+    // function's tail.
     if (*node).ty == types.while_
         || (*node).ty == types.for_
         || (*node).ty == types.construct_
         || (*node).ty == types.declare_
+        || (*node).ty == types.assign
+        || (*node).ty == types.storeptr_
         || (*node).ty == types.compile_
     {
         return Err(ParseError::StatementAsValue);
@@ -1993,7 +1999,7 @@ mod tests {
         // (`compile_fn` reads `FN_OUTPUT`); its body assigns into the enclosing `a`.
         let func = {
             let mut p = Parser::new(
-                "fn () -> i64 ( a = a + 5000000000 )",
+                "fn () -> i64 ( a = a + 5000000000, a )",
                 &mut store,
                 &mut trie,
                 

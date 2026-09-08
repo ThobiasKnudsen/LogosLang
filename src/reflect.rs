@@ -381,7 +381,7 @@ mod tests {
             ("!=", prec::EQUALITY, true),
             ("and", prec::AND, true),
             ("or", prec::OR, true),
-            ("=", prec::ASSIGN, true),
+            ("=", prec::DECLARE, true),
             // Literals: constructed the moment they are lexed.
             ("42", prec::LITERAL, true),
             ("«t»", prec::LITERAL, true),
@@ -563,7 +563,7 @@ mod tests {
             assert_eq!(meta::precedence_of(core.plus), prec::ADDITIVE);
             assert_eq!(meta::assoc_of(core.plus), Assoc::Left);
             assert_eq!(meta::precedence_of(core.times), prec::MULTIPLICATIVE);
-            assert_eq!(meta::precedence_of(core.assign), prec::ASSIGN);
+            assert_eq!(meta::precedence_of(core.assign), prec::DECLARE);
             assert_eq!(meta::assoc_of(core.assign), Assoc::Right);
             assert_eq!(meta::precedence_of(core.lt), prec::COMPARE);
             assert_eq!(meta::precedence_of(core.eq), prec::EQUALITY);

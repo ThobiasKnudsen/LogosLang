@@ -1,11 +1,16 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `=`: assignment. A parse-time constructor, right-associative, binding
-//! loosest. Its builder resolves the target's width to a concrete store op —
-//! `{type: =, value: [lhs, rhs, store_<logos>]}` — so run jumps through the op
-//! slot and writes at the baked width (issue #44); compile lowers it to a
-//! store. The stored value is yielded.
+//! `=`: assignment. Beside `:=` on the axis (DESIGN ›The scope's constructor
+//! is the driver‹, ruled 8 September 2026): constructed at discovery, it reads
+//! the place to its left — the cells since the boundary, constructed to one —
+//! and drives its right side to the boundary. Its builder resolves the
+//! target's width to a concrete store op — `{type: =, value: [lhs, rhs,
+//! store_<logos>]}` — so run jumps through the op slot and writes at the baked
+//! width (issue #44); compile lowers it to a store. **`=` returns nothing**:
+//! an assignment is an act, not a value, so `a = b = c` is the error of
+//! assigning nothing, and an `=` in a value position is the statement-as-value
+//! error.
 
 use cranelift_codegen::ir::Value;
 
@@ -22,7 +27,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
-        meta::prec::ASSIGN,
+        meta::prec::DECLARE,
         Assoc::Right,
         &["lhs", "rhs", "op"],
     );
@@ -33,26 +38,30 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     id
 }
 
-/// `=`'s constructor. At reduction it first tries the logos variable's fill —
-/// `name = <logos>` over an unfilled placeholder rebinds the name at parse
-/// ([`crate::parse::Parser::try_type_fill`]) — and otherwise builds the
-/// ordinary store. Invoked fresh (no flanking operands) it declines, and the
-/// driver shifts it as a pending operator.
+/// `=`'s constructor: at discovery, the place to its left (the cells since
+/// the boundary, constructed to one — [`crate::parse::Parser::construct_left`]),
+/// then its right side driven to the boundary. Over an unfilled type
+/// placeholder, `name = <type>` is the type variable's fill instead
+/// ([`crate::parse::Parser::type_fill`]).
 fn construct(
     p: &mut crate::parse::Parser,
     id: DyadPtr,
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, ParseError> {
-    if let Some(node) = p.try_type_fill(tape)? {
-        tape.reduce_here(node);
-        return Ok(crate::parse::Constructed::Placed);
-    }
-    let Some((lhs, rhs)) = p.binary_operands(tape)? else {
-        return Ok(crate::parse::Constructed::Decline);
+    // The type variable's fill — `name = <type>` over an unfilled placeholder
+    // rebinds the name at parse ([`crate::parse::Parser::type_fill`]).
+    let type_var = p.is_type_variable(tape);
+    let Some(target) = p.construct_left(tape)? else {
+        return Err(ParseError::MissingOperand);
     };
-    let types = p.types();
-    let node = build(p.store(), &types, id, lhs, rhs)?;
-    tape.reduce_here(node);
+    let value = p.parse_expression()?;
+    let node = if let Some(tok) = type_var {
+        p.type_fill(tok, value)?
+    } else {
+        let types = p.types();
+        build(p.store(), &types, id, target, value)?
+    };
+    tape.place(node);
     Ok(crate::parse::Constructed::Placed)
 }
 
@@ -98,6 +107,10 @@ pub(super) fn build(
     // SAFETY: as above.
     if lhs_pointer && unsafe { (*rhs_d).ty } == types.rational {
         return Err(ParseError::TypeMismatch);
+    }
+    // `=` returns nothing: an assignment as the value assigned is the error.
+    if unsafe { (*rhs_d).ty } == types.assign || unsafe { (*rhs_d).ty } == types.storeptr_ {
+        return Err(ParseError::StatementAsValue);
     }
     // A literal right side commits to the target's logos (the typed slot); a
     // non-literal one must already BE that logos — no implicit coercion

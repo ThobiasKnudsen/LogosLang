@@ -636,3 +636,32 @@ fn the_dyad_view_is_spelled_with_the_record_read() {
     let (echoes, stderr) = repl(b"x := i32 5\nx:dyad.type == i32\n");
     assert_eq!(echoes, ["true"], "stderr: {stderr}");
 }
+
+#[test]
+fn a_tight_read_runs_over_a_keyword_before_its_constructor_wakes() {
+    // DESIGN ›Text is the quote‹ and the 8 September 2026 ruling: `:` and `.`
+    // sit above the identities that read their own right side, so `if:scope`
+    // reads the keyword's record and `if.constructor` its field; a keyword
+    // used as a keyword still reads its right side.
+    let (echoes, stderr) = repl(
+        b"x := i32 5\nif:scope\ntype:dyad.type == type\nfn:dyad.type == type\n\
+          f := fn () -> i32 ( if (x < 9) (x = 1) else (x = 2), x )\nf()\n",
+    );
+    assert_eq!(echoes.len(), 4, "stderr: {stderr}");
+    assert_ne!(echoes[0], "0", "if was declared in the session scope");
+    assert_eq!(&echoes[1..], ["true", "true", "1"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
+fn assignment_returns_nothing() {
+    // `=` beside `:=`, driving its right side, and returning nothing (ruled 8
+    // September 2026): `a = b = c` assigns nothing to `a`, an error; an `=`
+    // in a value position is the statement-as-value error.
+    let (_e, stderr) = repl(b"a := i32 1\nb := i32 2\na = b = 3\n");
+    assert!(stderr.contains("yields no value"), "stderr: {stderr}");
+    let (_e, stderr) = repl(b"a := i32 1\ny := (a = 2) + 1\n");
+    assert!(!stderr.is_empty(), "stderr: {stderr}");
+    let (echoes, stderr) = repl(b"p := type (v := i32 ?)\nq := p(1)\nq.v = 3\nq.v\na := i32 1\na = a + 1\na\n");
+    assert_eq!(echoes, ["3", "2"], "stderr: {stderr}");
+}

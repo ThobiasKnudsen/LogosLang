@@ -702,6 +702,8 @@ pub struct CoreTypes {
     /// whose value is the name's `dyad`, `scope`, `start`, `end`, `gate`
     /// (DESIGN ›The dyad's read surface‹, 8 September 2026).
     pub record_: DyadPtr,
+    /// `:`: the record read (#70).
+    pub colon_: DyadPtr,
     /// `index`: the passive node a `[i]` cell carries (a comptime literal in
     /// the seed).
     pub index_: DyadPtr,
@@ -1665,6 +1667,49 @@ impl<'a> Parser<'a> {
                 Ok(if record.is_null() { id } else { record })
             }
         }
+    }
+
+    /// Whether the next token is a tight read of the cell to its left — `:`
+    /// or `.` — that takes a right-side reader's own cell before the reader
+    /// wakes (DESIGN ›Text is the quote‹: "the tight `.` runs over the token
+    /// before its constructor wakes"; `:` beside it, 8 September 2026). The
+    /// readers are the identities at `prec::READER`; the raw-text consumers
+    /// and `:=` sit above the reads and keep their right side.
+    fn tight_read_takes(&mut self, id: DyadPtr) -> bool {
+        if self.precedence_of_cell(id) != crate::identities::meta::prec::READER {
+            return false;
+        }
+        matches!(self.peek_token(), Some((n, _)) if n == self.types.colon_ || n == self.types.dot_)
+    }
+
+    /// Construct the cells to the left of the cursor — the segment since the
+    /// last boundary — to exactly one operand, and remove them from the tape:
+    /// the place `=` reads before it drives its right side (DESIGN ›The
+    /// scope's constructor is the driver‹, `=` beside `:=`, 8 September 2026).
+    /// `None` when nothing stands to the left.
+    pub(crate) fn construct_left(&mut self, tape: &mut ParsingTape) -> Result<Option<DyadPtr>, ParseError> {
+        let n = tape.cursor();
+        if n == 0 {
+            return Ok(None);
+        }
+        let mut left = ParsingTape::new();
+        for i in 0..n {
+            let cell = *tape.cell(i).expect("in range");
+            left.push(cell, tape.start_of(i));
+        }
+        let items = self.construct_segment(&mut left)?;
+        let target = match items.as_slice() {
+            [(one, _)] => *one,
+            [] => return Ok(None),
+            [_, (_, start), ..] => {
+                self.pos = *start;
+                return Err(ParseError::Trailing);
+            }
+        };
+        for _ in 0..n {
+            tape.remove(-1);
+        }
+        Ok(Some(target))
     }
 
     /// What an identity's constructor places when it declines its right and
@@ -3755,27 +3800,36 @@ impl<'a> Parser<'a> {
     /// on both runtime branches ([`ParseError::NonComptimeTypeAssign`]). A
     /// second fill finds a real logos node, never the placeholder, and returns
     /// `None` into ordinary (rejected) assignment: define-once.
-    pub(crate) fn try_type_fill(
-        &mut self,
-        tape: &ParsingTape,
-    ) -> Result<Option<DyadPtr>, ParseError> {
-        let Some(tok) = tape.at(-1).and_then(Cell::as_token).copied() else {
-            return Ok(None);
-        };
+    /// The type variable's fill, first half: exactly one token stands to the
+    /// left of `=`, bound to a null-valued type placeholder (`a := type ?`),
+    /// so `a = <type>` completes that declaration rather than storing.
+    pub(crate) fn is_type_variable(&self, tape: &ParsingTape) -> Option<Token> {
+        if tape.cursor() != 1 {
+            return None;
+        }
+        let tok = tape.at(-1).and_then(Cell::as_token).copied()?;
         let binding = tok.identity;
         if binding.is_null() {
-            return Ok(None);
+            return None;
         }
         // SAFETY: `binding` is a resolved dyad from the store.
         if unsafe { !((*binding).ty == self.types.type_ && (*binding).value.is_null()) } {
-            return Ok(None);
+            return None;
         }
+        Some(tok)
+    }
+
+    /// The type variable's fill, second half: rebind the name at its
+    /// declaring scope to the type `value` names (a comptime-only act: inside
+    /// a repeated body it is refused) and yield the declare node that
+    /// completes the declaration, a silent statement.
+    pub(crate) fn type_fill(&mut self, tok: Token, value: DyadPtr) -> Result<DyadPtr, ParseError> {
         if self.runtime_depth > 0 {
             self.pos = tok.start;
             return Err(ParseError::NonComptimeTypeAssign);
         }
-        let rhs = tape.at(1).copied().ok_or(ParseError::MissingOperand)?;
-        let t = self.operand_dyad(rhs)?;
+        // SAFETY: `value` is a reduced dyad from the store.
+        let t = unsafe { self.types.through(value) };
         // SAFETY: `t` is a reduced dyad off the tape.
         if !unsafe { crate::identities::is_type_value(&self.types, t) } {
             self.pos = tok.start;
@@ -3785,8 +3839,6 @@ impl<'a> Parser<'a> {
         let name = &source[tok.start..tok.start + tok.len];
         let record = self.scopes.resolve(self.trie, name).map_err(ParseError::Resolve)?.record;
         self.scopes.rebind(record, t);
-        // The fill IS the definition completing the declaration: a declare
-        // node, a silent statement.
         let name_node =
             crate::identities::string::build_text(self.store, self.types.string_, name.as_bytes());
         let node = crate::identities::declare::build(
@@ -3796,7 +3848,7 @@ impl<'a> Parser<'a> {
             name_node,
             t,
         );
-        Ok(Some(node))
+        Ok(node)
     }
 
     /// One lex step: the next token as a tape cell with its source offset, or
@@ -3914,8 +3966,11 @@ impl<'a> Parser<'a> {
         let standing = matches!(tape.at(0), Some(Cell::Token(t)) if t.identity == id)
             && tape.start_of(tape.cursor()) == start;
         if matches!(outcome, Constructed::Decline) || standing {
+            // The identity stands as its own value: the use of its name, its
+            // record, when the cell was lexed from a spelling.
+            let value = self.stand_as_value(tape, id);
             if let Some(cell) = tape.at_mut(0) {
-                *cell = Cell::Dyad(id);
+                *cell = Cell::Dyad(value);
             }
         }
         Ok(())
@@ -3984,7 +4039,8 @@ impl<'a> Parser<'a> {
                     // and leaves the body to `fn`.
                     let reader = prec == crate::identities::meta::prec::READER
                         || prec == crate::identities::meta::prec::DECLARE;
-                    let asleep = stop_at_open == Some(RightSide::ReturnType) && reader;
+                    let asleep = (stop_at_open == Some(RightSide::ReturnType) && reader)
+                        || self.tight_read_takes(t.identity);
                     if prec >= crate::identities::meta::prec::OPEN && !asleep {
                         self.run_ctor(construct, t.identity, tape, true)?;
                     }
@@ -4023,6 +4079,12 @@ impl<'a> Parser<'a> {
             for i in 0..tape.len() {
                 let Some(Cell::Token(t)) = tape.cell(i) else { continue };
                 let Some(construct) = self.ctor_of(t.identity) else { continue };
+                // A reader followed by `:` or `.` never wakes: the read takes it.
+                let next_is_tight = matches!(tape.cell(i + 1), Some(Cell::Token(n))
+                    if n.identity == self.types.colon_ || n.identity == self.types.dot_);
+                if next_is_tight && self.precedence_of_cell(t.identity) == crate::identities::meta::prec::READER {
+                    continue;
+                }
                 let prec = self.precedence_of_cell(t.identity);
                 let right = self.assoc_of_cell(t.identity) == Assoc::Right;
                 let better = match best {
