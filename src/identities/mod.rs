@@ -83,6 +83,7 @@ pub(crate) mod drop_model;
 mod gate;
 pub mod import;
 mod view;
+mod colon;
 mod hole;
 pub(crate) mod instance;
 pub(crate) mod pointer;
@@ -205,8 +206,8 @@ pub struct Core {
     /// `import`, the one identity that loads a file (#58): its node is the
     /// reflectable trace of the load; running it re-yields the file's tail.
     pub import_: DyadPtr,
-    /// `dyad`, the spelled view identity (#52): `(dyad a)` wraps a value
-    /// as its cell; `.` reads the cell.
+    /// `dyad`, the cell type: a value of it is the dyad view, `a:dyad`,
+    /// whose `.type` and `.value` read the cell (#52, #70).
     pub dyad_: DyadPtr,
     /// `record`, the type of every name's record: the trie entry, a dyad
     /// whose value is the name's `dyad`, `scope`, `start`, `end`, `gate`.
@@ -232,7 +233,6 @@ pub struct Core {
     pub open_: DyadPtr,
     /// `)` — the closing paren token (parse-only).
     pub close_: DyadPtr,
-    /// `:` — the typed-declaration / field-list token (parse-only).
     /// `,` — the one explicit separator (parse-only).
     pub sep_: DyadPtr,
     /// `->` — the return-logos arrow (parse-only).
@@ -401,9 +401,9 @@ impl Core {
         // the pass, once per run, over a DAG (ruled August 2026).
         let (import_, import_leaf) = import::register(&mut cx, &callables);
         op_leaves.import_ = import_leaf;
-        // `dyad` (#52): the spelled view — `(dyad a)` wraps a value as
-        // its cell, and `.` reads the cell (ruled August 2026).
+        // `dyad`, the cell type (inert), and `:`, the record read (#70).
         let dyad_ = view::register(&mut cx);
+        colon::register(&mut cx);
         hole::register(&mut cx);
         let sep_ = logos_mod::register_syntax(&mut cx);
         // Struct instances: the construction statement and the `.` field access.
@@ -4027,7 +4027,7 @@ mod tests {
         s.declare(&mut trie, "x", test_record(core.record_, x)).unwrap();
 
         let mut p = Parser::new(
-            "(dyad (x + x)).type.roles[0]",
+            "(x + x):dyad.type.roles[0]",
             &mut store,
             &mut trie,
             core.types(),
@@ -4041,7 +4041,7 @@ mod tests {
         let mut s = p.into_scopes();
         s.truncate(1);
 
-        let mut p = Parser::new("(dyad x).value", &mut store, &mut trie, core.types(), s);
+        let mut p = Parser::new("x:dyad.value", &mut store, &mut trie, core.types(), s);
         let value = p.parse_expression().unwrap();
         // SAFETY: `value` is the u64 value node the read just built.
         unsafe {

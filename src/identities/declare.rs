@@ -45,8 +45,8 @@ const DECL_DECLARED: usize = 1;
 const DECL_GATE: usize = 2;
 
 /// Register the `:=` token (a tight extender whose constructor declares the
-/// name token to its left; the trie longest-matches `:=` over the field-list
-/// `:`) and the `declare` identity its expressions are typed by, with its
+/// name token to its left; the trie longest-matches `:=` over the record
+/// read `:`) and the `declare` identity its expressions are typed by, with its
 /// native leaf and lowering. Returns `(declare identity, leaf, := token)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::DECLARE);

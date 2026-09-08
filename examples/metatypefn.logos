@@ -4,7 +4,7 @@
 # The station #30 north-star, and it runs: a `-> type` function computes a
 # type at comptime (resolved inline in the one pass), a declaration takes the
 # computed type (`a : metatype(…)` — the dependent declaration), and a comptime
-# `if` dispatches on `(dyad a).type` (#52: a value's type is read through
+# `if` dispatches on `a:dyad.type` (#52: a value's type is read through
 # the view), dropping the untaken branches unparsed — each arm
 # parses only in the world where it can run. Every argument works: 0 → i32 place,
 # prints 9; 1/2 → f32/f64 place, prints 9.9; 3 → `type`, so `a` is a TYPE
@@ -23,7 +23,7 @@ metatype := fn (i := i32 ?) -> type (
 metatype.compile(),
 b := type,
 a := metatype(2) ?,
-if ((dyad a).type == i32) (a=9)
-else if ((dyad a).type == f32 or (dyad a).type == f64) (a=9.9)
-else if ((dyad a).type == type) (a=i32),
+if (a:dyad.type == i32) (a=9)
+else if (a:dyad.type == f32 or a:dyad.type == f64) (a=9.9)
+else if (a:dyad.type == type) (a=i32),
 a

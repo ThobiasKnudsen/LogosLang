@@ -107,7 +107,7 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::TypeNeedsView => {
             "a value's type is not one of its fields — read it through the \
-             dyad view: (dyad x).type"
+             dyad view: x:dyad.type"
                 .into()
         }
         ParseError::CtorArity => {

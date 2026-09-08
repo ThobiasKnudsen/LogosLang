@@ -93,7 +93,7 @@ pub(crate) const ARRAY_TAG: u8 = 22;
 /// it was a node address's low byte, and any tag read on it was garbage.
 pub(crate) const RECORD_TAG: u8 = 23;
 /// Kind: values are dyad *views* (#52) — the value IS the viewed node's
-/// address, so `(dyad a)` wraps any value as its cell and `.` then reads
+/// address, so `a:dyad` views any value as its cell and `.` then reads
 /// the cell: the one place the logos appears in a value, which is what makes
 /// `.logos` a field read like every other `.` (ruled August 2026).
 pub(crate) const DYAD_TAG: u8 = 24;
@@ -127,8 +127,8 @@ pub(crate) mod prec {
     pub const LITERAL: f64 = 96.0;
     /// `import`: consumes its raw path token at discovery.
     pub const IMPORT: f64 = 95.0;
-    /// `:=` (and `:` until it retires): declares its name before its value is
-    /// constructed (ruled 5 September 2026).
+    /// `:=`: declares its name before its value is constructed (ruled 5
+    /// September 2026).
     pub const DECLARE: f64 = 93.0;
     /// The identities that read their own bracket or right side: `fn`, `for`,
     /// `while`, `defer`, `type`, `if` (ruled 3 and 5 September 2026).
@@ -146,9 +146,6 @@ pub(crate) mod prec {
     pub const DOT: f64 = 86.0;
     /// `&`.
     pub const ADDRESS: f64 = 85.0;
-    /// `dyad`, the view: just below application, so `dyad i32` and `dyad f`
-    /// read the identity standing as its own value.
-    pub const VIEW: f64 = 83.0;
     /// The prefix words over a place: `own`, `drop`, `free`, `alloc`, `pub`.
     pub const PREFIX: f64 = 82.0;
     pub const MULTIPLICATIVE: f64 = 70.0;

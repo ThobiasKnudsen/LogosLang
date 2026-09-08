@@ -1,32 +1,28 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `dyad`, the spelled view identity (#52; DESIGN ›The dyad's read
-//! surface‹). `(dyad a)` wraps any value as its cell — a view value whose
-//! value is the viewed node's address — and `.` then reads the cell: `.logos`,
-//! `.value`, `.operand(i)`, `.text` on the view, and the logos members
-//! (`.arity`, `.role(i)`, `.precedence`, …) on the logos `.logos` yields.
+//! `dyad`, the cell type, spelled (DESIGN ›Substrate vocabulary‹: "The cell
+//! is the `dyad`, its two slots the `.type` and the `.value`"). Inert on the
+//! tape: it has no constructor yet — `dyad (type, value)` construction from
+//! Logos is #60's — and stands as its own value, so `@dyad` can name a
+//! pointer to a cell and a record's fields are typed by it.
 //!
-//! The ruling this realizes (August 2026): `.` does exactly one job — reading
-//! fields the logos defines, which are always about the value. A value's logos
-//! is never one of its own fields, so `x.logos` does not exist; the view puts
-//! the logos *into* the value, and only there does `.logos` read it. The reads
-//! live in [`crate::parse::Parser::view_member`] / [`Parser::logos_member`]
-//! and fold at parse time — comptime reflection, the regime a Logos-written
-//! constructor runs in. Read-only: writing stays with constructors and the
-//! tape ops (#48). The view is ambient for now, like every identity; the
-//! ruled fail-closed default waits on the grant path (logos-typed
-//! parameters), recorded in DESIGN.
+//! The dyad *view* — a value of this type whose value is a cell's address,
+//! on which `.type` and `.value` read the cell's two fields
+//! ([`crate::parse::Parser::view_member`]) — is spelled `a:dyad`, the record
+//! read (DESIGN ›The dyad's read surface‹, 7–8 September 2026: "`:dyad` is
+//! the view, and `(dyad a)` as a second spelling for the same read is
+//! superseded"). The type members (`.arity`, `.roles[i]`, `.precedence`, …)
+//! read the shared record through the type `.type` yields. Reads fold at
+//! parse; writing stays with constructors and the tape ops (#60).
 
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
 
-/// Register `dyad`: a fresh-start word whose constructor views the
-/// expression to its right ([`crate::parse::Parser::construct_view`]).
+/// Register `dyad`, the cell type: a spelled identity with no constructor.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let record = meta::record_assoc(cx.store, meta::DYAD_TAG, meta::prec::VIEW, crate::parse::Assoc::Right);
+    let record = meta::record(cx.store, meta::DYAD_TAG, meta::prec::INERT);
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.declare("dyad", id);
-    cx.metas.insert(id, |p, _id, tape| p.construct_view(tape));
     id
 }

@@ -44,7 +44,7 @@ use crate::store::Store;
 /// into a dyad — a reduced [`Cell::Dyad`] is frozen against rewriting, a token
 /// is not. The driver resolves names eagerly at scan where it can (the
 /// identity set on push) and pushes a *fresh* name as the null-until-consumed
-/// form ([`Token::new`]): a following `:=`/`:` declares it at reduction, and
+/// form ([`Token::new`]): a following `:=` declares it at reduction, and
 /// any other consumer converts it through `as_operand`, which re-resolves the
 /// span. Full deferred resolution for already-resolvable names — what
 /// token-rewriting operators need — rides the same null path later.
@@ -695,8 +695,8 @@ pub struct CoreTypes {
     /// `import`: the one identity that loads a file (#58); its node is the
     /// reflectable trace of the load, and running it re-yields the file's tail.
     pub import_: DyadPtr,
-    /// `dyad`: the spelled view identity (#52) — `(dyad a)` wraps a
-    /// value as its cell, and `.` reads the cell.
+    /// `dyad`: the cell type. A value of it is the dyad view — `a:dyad`,
+    /// whose `.type` and `.value` read the cell (#52, #70).
     pub dyad_: DyadPtr,
     /// `record`: the type of every name's record — the trie entry, a dyad
     /// whose value is the name's `dyad`, `scope`, `start`, `end`, `gate`
@@ -761,7 +761,6 @@ pub struct CoreTypes {
     pub open_: DyadPtr,
     /// `)` — the closing paren token.
     pub close_: DyadPtr,
-    /// `:` — the typed-declaration / field-list token.
     /// `,` — the one explicit separator.
     pub sep_: DyadPtr,
     /// `->` — the return-logos arrow.
@@ -960,7 +959,7 @@ pub enum ParseError {
     /// `.logos` on something that is not a dyad view: `.` reads only the
     /// fields a logos defines, which are about the value — a value's logos is
     /// never one of its own fields (ruled August 2026). The view puts the
-    /// logos into the value: `(dyad x).ty`.
+    /// type into the value: `x:dyad.type`.
     TypeNeedsView,
     /// A record construction's argument count did not match its field count.
     CtorArity,
@@ -2393,7 +2392,7 @@ impl<'a> Parser<'a> {
         // logos defines, which are always about the value. A value's logos is
         // never one of its own fields — the retired universal `.logos`
         // metaproperty did a second job here — so reading a logos takes the
-        // dyad view, `(dyad x).ty`, where the logos IS in the value.
+        // dyad view, `x:dyad.type`, where the type IS in the value.
         // The member name is the cell to the right of `.`, read as its raw
         // spelling: a field is dot-only, so what the driver resolved it to
         // against the open scopes is beside the point. A `[i]` cell after it
@@ -3532,31 +3531,106 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// `dyad`'s constructor body (#52): view the expression to the right.
-    /// The view value is `{type: dyad, value: <the viewed node's address>}`
-    /// — the one place a logos sits in a value, which is what makes `.logos` on
-    /// it an ordinary field read (ruled August 2026).
-    pub(crate) fn construct_view(
+    /// `:`'s constructor (DESIGN ›The dyad's read surface‹, 7–8 September
+    /// 2026): read a field of the record to the left — a use of a name is its
+    /// record, so the cell is taken as it stands, never through the reading
+    /// rule — or, for a constructed node, answer from its path. The member is
+    /// the raw spelling at the cell to the right, exactly as `.` reads its
+    /// member (a keyword there, `x:type`, was constructed at discovery and
+    /// stands as a cell, its spelling still in the source).
+    pub(crate) fn construct_record_read(
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        let types = self.types;
-        // SAFETY: the operand is a reduced dyad from the store.
-        let inner = unsafe { types.through(self.take_right(tape)?) };
-        let node = self.store.alloc_raw(types.dyad_, inner as *mut u8);
+        let lhs = match tape.at(-1).copied() {
+            Some(cell) => self.as_operand(cell)?,
+            None => return Err(ParseError::MissingOperand),
+        };
+        let Some(&_) = tape.at(1) else {
+            return Err(ParseError::ExpectedField);
+        };
+        let mstart = tape.start_of(tape.cursor() + 1);
+        let save = self.pos;
+        self.pos = mstart;
+        let member = self.lex_identifier();
+        self.pos = save;
+        let Some((nstart, nlen)) = member else {
+            return Err(ParseError::ExpectedField);
+        };
+        // SAFETY: `lhs` is a dyad off the tape.
+        let node = unsafe { self.record_read(lhs, nstart, nlen)? };
+        tape.remove(1);
+        tape.remove(-1);
         tape.place(node);
         Ok(Constructed::Placed)
     }
 
+    /// The `:` read. On a record: `dyad` yields the view of the cell it names
+    /// — `{type: dyad, value: <the cell>}`, on which `.type` and `.value` read
+    /// the cell ("`:dyad` is the view") — and every other field is the
+    /// ordinary instance-field read on the record value, resolved against
+    /// `record`'s own scope ([`Parser::resolve_field`]), so a field the record
+    /// has not, `a:type`, is the same unknown-name error as `p.nonexistent`.
+    /// On a constructed node, which has no record, the answers come from the
+    /// path (DESIGN ›Meta-navigation‹): `dyad` is the view of the node itself;
+    /// `scope` the scope open at the read — the innermost enclosing scope on
+    /// every path the seed can write, since the item reads yield address
+    /// values no path continues from; `start` and `end` null — the enclosing
+    /// item is the segment still under construction, which a folded read
+    /// cannot see; `gate` null — v0.1.0 has no gates. The address values are
+    /// `@dyad` literals, read at run time like any pointer.
+    ///
+    /// # Safety
+    /// `lhs` must be a valid dyad from the store.
+    unsafe fn record_read(
+        &mut self,
+        lhs: DyadPtr,
+        nstart: usize,
+        nlen: usize,
+    ) -> Result<DyadPtr, ParseError> {
+        let types = self.types;
+        let source = self.source;
+        let name = &source[nstart..nstart + nlen];
+        if (*lhs).ty == types.record_ {
+            if name == "dyad" {
+                let cell = Record::of(lhs).dyad;
+                return Ok(self.store.alloc_raw(types.dyad_, cell as *mut u8));
+            }
+            let (field, offset) = self.resolve_field(types.record_, nstart, nlen)?;
+            let addr = (*lhs).value.wrapping_add(offset);
+            return Ok(self.store.alloc_raw((*field).ty, addr));
+        }
+        let value = match name {
+            "dyad" => return Ok(self.store.alloc_raw(types.dyad_, lhs as *mut u8)),
+            "scope" => self.scopes.current().unwrap_or(std::ptr::null_mut()),
+            "start" | "end" | "gate" => std::ptr::null_mut(),
+            _ => {
+                // Not a field of a record: the same error a record read gives.
+                self.resolve_field(types.record_, nstart, nlen)?;
+                return Err(ParseError::ExpectedField);
+            }
+        };
+        Ok(self.address_value(types.dyad_, value))
+    }
+
+    /// An `@pointee` value holding `addr`: a pointer-typed literal with its own
+    /// eight bytes of storage, read at run time like any pointer variable.
+    fn address_value(&mut self, pointee: DyadPtr, addr: DyadPtr) -> DyadPtr {
+        let ty = crate::identities::pointer::make_pointer_type(self.store, self.types.type_, pointee);
+        let storage = self.store.alloc_bytes(&(addr as usize as u64).to_ne_bytes());
+        self.store.alloc_raw(ty, storage)
+    }
+
     /// A member read on a dyad view (#52, ›The dyad's read surface‹):
-    /// exactly the cell's two fields, `.logos` and `.value` — the dyad logos
+    /// exactly the cell's two fields, `.type` and `.value` — the dyad type
     /// defines nothing else, so nothing else reads through the view. The
-    /// value-decoding reads (`.operand(i)`) are ordinary `.` on the value
-    /// itself, through its own logos (corrected August 2026). Read-only by
+    /// value-decoding reads (`.operands[i]`) are ordinary `.` on the value
+    /// itself, through its own type (corrected August 2026). Read-only by
     /// construction: nothing here writes.
     ///
     /// # Safety
-    /// `view` must be a view node as [`Parser::construct_view`] builds it.
+    /// `view` must be a view node as `a:dyad` builds it
+    /// ([`Parser::record_read`]).
     unsafe fn view_member(
         &mut self,
         view: DyadPtr,
@@ -3582,7 +3656,7 @@ impl<'a> Parser<'a> {
     /// this crate stores once per logos — `.arity`, `.roles[i]`,
     /// `.precedence`, `.associativity`, `.constructor`, `.destructor`, and the
     /// record layout `.fields`, `.size_bytes`, `.scope`. Typically reached as
-    /// `(dyad a).ty.arity`. A null constructor/destructor slot is the
+    /// `a:dyad.type.arity`. A null constructor/destructor slot is the
     /// honest undefined and errors until `?` exists.
     ///
     /// # Safety
