@@ -42,11 +42,24 @@
 //! 4 September 2026), so `gate` is null on every record until gates land
 //! (issue #33). The slot exists so the one lookup that answers reachable and
 //! live is the one that will answer permitted.
+//!
+//! A record is a value (DESIGN ›The dyad's read surface‹, ruled 8 September
+//! 2026): a dyad of type `record` whose value points at these five fields,
+//! allocated in the store so its address is stable for the run. The trie holds
+//! that dyad's address, a use of the name stores it in its operand slot, `:`
+//! reads its fields, and reading it as a value yields what the dyad it names
+//! yields (the reading rule, applied by the interpreter and the lowering).
+//! Five pointers laid out in declaration order, `#[repr(C)]`, so the `record`
+//! type's field offsets are the struct's.
 
 use crate::dyad::DyadPtr;
+use crate::store::Store;
+
+use super::Cx;
 
 /// One candidate for a spelling: the dyad it denotes, the scope it was
 /// declared in, its range of life within that scope's body, and its gate set.
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Record {
     /// The dyad this name denotes (`a:dyad`).
@@ -82,4 +95,45 @@ impl Record {
     pub fn is_dead(&self) -> bool {
         !self.end.is_null()
     }
+
+    /// Store `rec` and return its dyad: `{type: record, value -> the fields}`,
+    /// the value every trie entry is and every use of the name points at.
+    pub fn alloc(store: &mut Store, record_ty: DyadPtr, rec: Record) -> DyadPtr {
+        let fields = store.alloc_record(rec);
+        store.alloc_raw(record_ty, fields as *mut u8)
+    }
+
+    /// The fields behind a record dyad.
+    ///
+    /// # Safety
+    /// `dyad` must be a record dyad from the store (its type the `record`
+    /// identity, its value from [`Record::alloc`]).
+    pub unsafe fn of<'a>(dyad: DyadPtr) -> &'a mut Record {
+        &mut *((*dyad).value as *mut Record)
+    }
+}
+
+/// Give the `record` type its layout and spelling, at the end of the build:
+/// a field scope holding the five names, each field an `@dyad` place, the
+/// `fields` array, and the `RECORD_TAG` layout with `size_bytes` = the struct's
+/// forty. Every record dyad minted earlier already carries this type; only its
+/// definition waited for `dyad`, `@`, and `array` to exist. The seed's `.` and
+/// `:` field reads then serve a record like any user record (`resolve_field`,
+/// `instance::layout`), which is what makes `a:scope` an ordinary field read.
+pub(super) fn register_type(cx: &mut Cx, scope_ty: DyadPtr, array_ty: DyadPtr, dyad_ty: DyadPtr) {
+    let record_ = cx.record_;
+    let scope = cx.store.alloc_raw(scope_ty, std::ptr::null_mut());
+    let mut fields = Vec::with_capacity(5);
+    for name in ["dyad", "scope", "start", "end", "gate"] {
+        let at_dyad = super::pointer::make_pointer_type(cx.store, cx.type_, dyad_ty);
+        let field = cx.store.alloc_raw(at_dyad, std::ptr::null_mut());
+        cx.declare_in(scope, name, field);
+        fields.push(field);
+    }
+    debug_assert_eq!(fields.len() * 8, std::mem::size_of::<Record>());
+    let fields_arr = super::array::build(cx.store, array_ty, &fields);
+    let layout = super::meta::record_layout(cx.store, scope, fields_arr, (fields.len() * 8) as u64);
+    // SAFETY: `record_` is the type node minted at the head of the build.
+    unsafe { (*record_).value = layout };
+    cx.declare("record", record_);
 }

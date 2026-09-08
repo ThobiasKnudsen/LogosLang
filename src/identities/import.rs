@@ -20,7 +20,6 @@
 
 use super::callable::{self, Callables};
 use super::{meta, Cx};
-use crate::record::Record;
 use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
 use crate::dyad::DyadPtr;
@@ -40,7 +39,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         &["path", "tail", "op"],
     );
     let id = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert("import", Record::new(id, cx.root_scope));
+    cx.declare("import", id);
     cx.metas.insert(id, |p, _id, tape| p.construct_import(tape));
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     (id, leaf)

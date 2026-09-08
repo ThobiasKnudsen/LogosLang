@@ -18,7 +18,6 @@ use super::numtype::COMMENT_TAG;
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::record::Record;
 
 /// Register the `comment` logos: its [`COMMENT_TAG`] node — no spelling; the
 /// parser builds comment nodes from `#` — plus a unit-valued lowering as a
@@ -38,7 +37,7 @@ pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
     // to value flow (#59 step 3).
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::LITERAL);
     let hash = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert("#", Record::new(hash, cx.root_scope));
+    cx.declare("#", hash);
     cx.metas.insert(hash, |p, _id, tape| p.construct_comment(tape));
     id
 }

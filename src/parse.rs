@@ -280,13 +280,16 @@ impl ParsingTape {
     }
 }
 
-/// A resolved name: how many source bytes it matched, the single identity
-/// live in the open scopes, and the scope it was declared in.
+/// A resolved name: how many source bytes it matched, the single record live
+/// in the open scopes, the identity it names, and the scope it was declared in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Resolved {
     /// Bytes consumed from the start of the input.
     pub matched: usize,
-    /// The identity live in the open scopes.
+    /// The name's record (a dyad of type `record`) — what a use of the name
+    /// points at (DESIGN ›The dyad's read surface‹, 8 September 2026).
+    pub record: DyadPtr,
+    /// The identity live in the open scopes: the record's dyad.
     pub identity: DyadPtr,
     /// The scope the winning declaration was made in (an open ancestor) — what
     /// a rebind that completes that declaration must target.
@@ -321,9 +324,9 @@ pub enum ResolveError {
 enum Journal {
     /// `name` was declared in `scope`: rollback removes its live entry.
     Declared { name: String, scope: DyadPtr },
-    /// `name`'s entry for `identity` in `scope` was made dead by an `own` or
-    /// `drop`: rollback restores the `end` it had before.
-    Ended { name: String, scope: DyadPtr, identity: DyadPtr, prev_end: DyadPtr },
+    /// `record` was made dead by an `own` or `drop`: rollback restores the
+    /// `end` it had before.
+    Ended { record: DyadPtr, prev_end: DyadPtr },
 }
 
 /// Which endpoint of an entry's range a [`Pending`] settles.
@@ -339,20 +342,18 @@ enum Endpoint {
 /// declaring scope appends the finished item ([`ScopeStack::settle_item`]).
 #[derive(Debug)]
 struct Pending {
-    name: String,
-    scope: DyadPtr,
-    identity: DyadPtr,
+    /// The record whose range awaits the item; its own `scope` says which
+    /// scope's next item settles it.
+    record: DyadPtr,
     endpoint: Endpoint,
 }
 
-/// A bare name an `own` or `drop` is about to make dead: what
-/// [`Parser::parse_place_operand`] hands back so the keyword's constructor can
+/// A bare name an `own` or `drop` is about to make dead: its record, what
+/// [`Parser::place_operand_cell`] hands back so the keyword's constructor can
 /// call [`Parser::mark_dead`] with the node it built.
 #[derive(Debug)]
 pub(crate) struct Ended {
-    pub(crate) name: String,
-    pub(crate) scope: DyadPtr,
-    pub(crate) identity: DyadPtr,
+    pub(crate) record: DyadPtr,
 }
 
 /// The parse-time scope stack: the chain of open scopes with an O(1) membership
@@ -405,7 +406,8 @@ impl ScopeStack {
     pub fn pop(&mut self) -> Option<DyadPtr> {
         let s = self.open.pop()?;
         self.set.remove(&s);
-        self.pending.retain(|p| p.scope != s);
+        // SAFETY: every pending record is a record dyad from the store.
+        self.pending.retain(|p| unsafe { Record::of(p.record).scope } != s);
         Some(s)
     }
 
@@ -475,15 +477,9 @@ impl ScopeStack {
                     // failed removal means it was already pruned, which is fine.
                     let _ = trie.remove(&name, scope);
                 }
-                Journal::Ended { name, scope, identity, prev_end } => {
-                    trie.update(&name, |c| {
-                        if c.scope == scope && c.dyad == identity {
-                            c.end = prev_end;
-                            true
-                        } else {
-                            false
-                        }
-                    });
+                Journal::Ended { record, prev_end } => {
+                    // SAFETY: a journalled record is a record dyad from the store.
+                    unsafe { Record::of(record).end = prev_end };
                 }
             }
         }
@@ -518,17 +514,24 @@ impl ScopeStack {
         // During elaboration the point of use is the frontier, so "range covers
         // the point" is exactly "not yet made dead" (DESIGN ›Name resolution is
         // scope-filtered‹, ruled 3 September 2026).
-        let mut live = m.records.iter().filter(|c| self.is_open(c.scope) && !c.is_dead());
+        // SAFETY: every pointer the trie stores is a record dyad from the store.
+        let fields = |r: DyadPtr| unsafe { *Record::of(r) };
+        let mut live = m
+            .records
+            .iter()
+            .copied()
+            .filter(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead());
         match (live.next(), live.next()) {
             (None, _) => {
-                if m.records.iter().any(|c| self.is_open(c.scope)) {
+                if m.records.iter().any(|&r| self.is_open(fields(r).scope)) {
                     Err(ResolveError::Dead)
                 } else {
                     Err(ResolveError::OutOfScope)
                 }
             }
-            (Some(c), None) => {
-                Ok(Resolved { matched: m.matched, identity: c.dyad, scope: c.scope })
+            (Some(r), None) => {
+                let f = fields(r);
+                Ok(Resolved { matched: m.matched, record: r, identity: f.dyad, scope: f.scope })
             }
             (Some(_), Some(_)) => Err(ResolveError::Ambiguous),
         }
@@ -545,7 +548,7 @@ impl ScopeStack {
         &mut self,
         trie: &mut RegexTrie,
         name: &str,
-        identity: DyadPtr,
+        record: DyadPtr,
     ) -> Result<(), ResolveError> {
         let scope = self.current().expect("declare needs an open scope");
         match self.resolve(trie, name) {
@@ -556,14 +559,11 @@ impl ScopeStack {
             // Ambiguous or an index error: surface it rather than declaring atop.
             Err(e) => return Err(e),
         }
-        trie.insert(name, Record::new(identity, scope));
+        // SAFETY: `record` is a record dyad from the store, built for this name.
+        unsafe { Record::of(record).scope = scope };
+        trie.insert(name, record);
         self.journal.push(Journal::Declared { name: name.to_string(), scope });
-        self.pending.push(Pending {
-            name: name.to_string(),
-            scope,
-            identity,
-            endpoint: Endpoint::Start,
-        });
+        self.pending.push(Pending { record, endpoint: Endpoint::Start });
         Ok(())
     }
 
@@ -573,93 +573,44 @@ impl ScopeStack {
     /// concurrency‹, *`own` and `drop` are static*). `node` is the provisional
     /// `end`; [`ScopeStack::settle_item`] replaces it with the body item once
     /// the line is complete. Journalled for [`ScopeStack::rollback`].
-    pub fn mark_dead(
-        &mut self,
-        trie: &mut RegexTrie,
-        name: &str,
-        scope: DyadPtr,
-        identity: DyadPtr,
-        node: DyadPtr,
-    ) {
-        let mut prev_end = std::ptr::null_mut();
-        trie.update(name, |c| {
-            if c.scope == scope && c.dyad == identity {
-                prev_end = c.end;
-                c.end = node;
-                true
-            } else {
-                false
-            }
-        });
-        self.journal.push(Journal::Ended { name: name.to_string(), scope, identity, prev_end });
-        self.pending.push(Pending {
-            name: name.to_string(),
-            scope,
-            identity,
-            endpoint: Endpoint::End,
-        });
+    pub fn mark_dead(&mut self, record: DyadPtr, node: DyadPtr) {
+        // SAFETY: `record` is a record dyad the trie returned.
+        let prev_end = unsafe { std::mem::replace(&mut Record::of(record).end, node) };
+        self.journal.push(Journal::Ended { record, prev_end });
+        self.pending.push(Pending { record, endpoint: Endpoint::End });
     }
 
     /// `scope` just appended `item` to its body: every range endpoint pending
     /// for that scope now points at the item, the declaring or ending line
     /// as a whole (an `own` inside an `if` body ends the outer name at the
     /// `if`, DESIGN ›Name resolution is scope-filtered‹).
-    pub fn settle_item(&mut self, trie: &mut RegexTrie, scope: DyadPtr, item: DyadPtr) {
+    pub fn settle_item(&mut self, scope: DyadPtr, item: DyadPtr) {
         let mut i = 0;
         while i < self.pending.len() {
-            if self.pending[i].scope != scope {
+            // SAFETY: every pending record is a record dyad from the store.
+            let f = unsafe { Record::of(self.pending[i].record) };
+            if f.scope != scope {
                 i += 1;
                 continue;
             }
             let p = self.pending.swap_remove(i);
-            trie.update(&p.name, |c| {
-                if c.scope == p.scope && c.dyad == p.identity {
-                    match p.endpoint {
-                        Endpoint::Start => c.start = item,
-                        Endpoint::End => c.end = item,
-                    }
-                    true
-                } else {
-                    false
-                }
-            });
+            match p.endpoint {
+                Endpoint::Start => f.start = item,
+                Endpoint::End => f.end = item,
+            }
         }
     }
 
-    /// Re-point the just-declared `name` in the current scope at `identity`.
-    /// Used by the declaration fixpoint when the value turns out to *be* an
-    /// existing identity (a logos): the name becomes another spelling of that
-    /// node, so pointer-identity checks (`is_numtype_node`, logos equality) see
-    /// the original. The journal entry from the declare still covers it, and
-    /// the entry's range is kept.
-    pub fn rebind(&mut self, trie: &mut RegexTrie, name: &str, identity: DyadPtr) {
-        let scope = self.current().expect("rebind needs an open scope");
-        self.rebind_at(trie, name, identity, scope);
-    }
-
-    /// Re-point `name`, declared in `scope` (an open ancestor, from
-    /// [`Resolved::scope`]), at `identity`. Unlike [`ScopeStack::rebind`] the
-    /// target is the *declaring* scope, not the current one: a logos variable's
-    /// fill inside a comptime-taken branch completes the outer declaration,
-    /// rather than binding a block-local spelling that dies with the branch.
-    /// The live entry is changed in place, so its range survives; a pending
-    /// endpoint follows the identity.
-    pub fn rebind_at(&mut self, trie: &mut RegexTrie, name: &str, identity: DyadPtr, scope: DyadPtr) {
-        let mut old = std::ptr::null_mut();
-        trie.update(name, |c| {
-            if c.scope == scope && !c.is_dead() {
-                old = c.dyad;
-                c.dyad = identity;
-                true
-            } else {
-                false
-            }
-        });
-        for p in &mut self.pending {
-            if p.scope == scope && p.identity == old && p.name == name {
-                p.identity = identity;
-            }
-        }
+    /// Re-point `record` at `identity`. Used by the declaration fixpoint when
+    /// the value turns out to *be* an existing identity (a logos): the name
+    /// becomes another spelling of that node — its own record, one per name,
+    /// pointing at the shared dyad — so pointer-identity checks
+    /// (`is_numtype_node`, logos equality) see the original. The record's
+    /// range and journal entry are untouched; a pending endpoint follows,
+    /// since it holds the record and not the identity.
+    pub fn rebind(&mut self, record: DyadPtr, identity: DyadPtr) {
+        // SAFETY: `record` is a record dyad from the store.
+        unsafe { Record::of(record).dyad = identity };
     }
 }
 
@@ -730,6 +681,10 @@ pub struct CoreTypes {
     /// `dyad`: the spelled view identity (#52) — `(dyad a)` wraps a
     /// value as its cell, and `.` reads the cell.
     pub dyad_: DyadPtr,
+    /// `record`: the type of every name's record — the trie entry, a dyad
+    /// whose value is the name's `dyad`, `scope`, `start`, `end`, `gate`
+    /// (DESIGN ›The dyad's read surface‹, 8 September 2026).
+    pub record_: DyadPtr,
     /// `index`: the passive node a `[i]` cell carries (a comptime literal in
     /// the seed).
     pub index_: DyadPtr,
@@ -1852,7 +1807,7 @@ impl<'a> Parser<'a> {
             // open-scope filtering over that one index (DESIGN ›Name resolution
             // is scope-filtered‹; a per-record names store is recorded as
             // rejected).
-            self.scopes.declare(self.trie, name, field).map_err(ParseError::Resolve)?;
+            self.declare_name(name, field)?;
             fields.push(field);
             if !self.consume_separator() {
                 break;
@@ -2344,7 +2299,7 @@ impl<'a> Parser<'a> {
         // is inside.
         self.scopes.push_barrier();
         self.scopes.push(scope);
-        self.scopes.declare(self.trie, name, var).map_err(ParseError::Resolve)?;
+        self.declare_name(name, var)?;
         // Parse-time rebinding is off inside a repeated body.
         self.runtime_depth += 1;
         self.expect_open()?;
@@ -2777,8 +2732,7 @@ impl<'a> Parser<'a> {
                         self.pos = t.start;
                         return Err(ParseError::OwnOfOuterName);
                     }
-                    let name = source[t.start..t.start + r.matched].to_string();
-                    Some(Ended { name, scope: r.scope, identity: r.identity })
+                    Some(Ended { record: r.record })
                 } else {
                     None
                 };
@@ -2813,8 +2767,19 @@ impl<'a> Parser<'a> {
     /// The `own`/`drop` node `node` has emptied `ended`'s place: its name is dead
     /// from here on (DESIGN ›Memory and concurrency‹, *`own` and `drop` are
     /// static*). See [`ScopeStack::mark_dead`].
+    /// Declare `name` in the current scope as `identity`, minting its record —
+    /// one per declared name, a dyad of type `record` (DESIGN ›`mut` is a gate
+    /// on the record‹) — and return it. Errors are the no-shadowing and index
+    /// errors of [`ScopeStack::declare`].
+    pub(crate) fn declare_name(&mut self, name: &str, identity: DyadPtr) -> Result<DyadPtr, ParseError> {
+        let scope = self.scopes.current().expect("declare needs an open scope");
+        let record = Record::alloc(self.store, self.types.record_, Record::new(identity, scope));
+        self.scopes.declare(self.trie, name, record).map_err(ParseError::Resolve)?;
+        Ok(record)
+    }
+
     pub(crate) fn mark_dead(&mut self, ended: Ended, node: DyadPtr) {
-        self.scopes.mark_dead(self.trie, &ended.name, ended.scope, ended.identity, node);
+        self.scopes.mark_dead(ended.record, node);
     }
 
     /// Consume an `else` if the next token is one, reporting whether it was.
@@ -2960,7 +2925,7 @@ impl<'a> Parser<'a> {
             // The item is complete: the ranges of the names it declared or ended
             // in this scope now point at it (DESIGN ›Name resolution is
             // scope-filtered‹: the range runs between body items).
-            self.scopes.settle_item(self.trie, scope, item);
+            self.scopes.settle_item(scope, item);
             // A binding of an owning value inserts `defer free <place>` into this
             // scope's pending list (issue #49); drain it right after the statement
             // so the defer sits at its source position — the right LIFO rank
@@ -3169,11 +3134,14 @@ impl<'a> Parser<'a> {
         // function-typed callee while the value is still parsing; the
         // fixpoint below overwrites it with the value's real logos.
         let placeholder = self.store.alloc_raw(self.types.fn_type, std::ptr::null_mut());
-        if let Err(e) = self.scopes.declare(self.trie, name, placeholder) {
-            // The stuck point is the name itself (it is what shadows).
-            self.pos = tok.start;
-            return Err(ParseError::Resolve(e));
-        }
+        let record = match self.declare_name(name, placeholder) {
+            Ok(record) => record,
+            Err(e) => {
+                // The stuck point is the name itself (it is what shadows).
+                self.pos = tok.start;
+                return Err(e);
+            }
+        };
         // If the value opens with a `fn` literal, parse_fn publishes its
         // signature onto the placeholder before the body parses.
         self.pending_fn = placeholder;
@@ -3194,7 +3162,7 @@ impl<'a> Parser<'a> {
                 // `x := i32 ?`: the place `?` built, with the declared type
                 // and no value, is what the name binds to — reads are loads,
                 // `=` reassigns, nothing initializes it.
-                self.scopes.rebind(self.trie, name, value);
+                self.scopes.rebind(record, value);
                 value
             } else if (*value).ty == self.types.construct_ {
                 let ops = (*value).value as *mut DyadPtr;
@@ -3204,7 +3172,7 @@ impl<'a> Parser<'a> {
                 *ops = placeholder;
                 value
             } else if (*value).ty == self.types.type_ {
-                self.scopes.rebind(self.trie, name, value);
+                self.scopes.rebind(record, value);
                 value
             } else if crate::identities::drop_model::is_owning_value(&self.types, value) {
                 // An owning value (`alloc …`, `own a`, or a block yielding one)
@@ -3229,7 +3197,7 @@ impl<'a> Parser<'a> {
                 let place = self.alloc_local(owning_ty, 8);
                 let init =
                     crate::identities::build_scalar_init(self.store, &self.types, place, value)?;
-                self.scopes.rebind(self.trie, name, place);
+                self.scopes.rebind(record, place);
                 // `place` was just minted with the owning pointer logos (its
                 // destructor set), so the owning check passes; keeping it on
                 // guards against a future caller inserting a free over a borrow.
@@ -3269,7 +3237,7 @@ impl<'a> Parser<'a> {
                 let place = self.alloc_local(ty_node, width);
                 let init =
                     crate::identities::build_scalar_init(self.store, &self.types, place, value)?;
-                self.scopes.rebind(self.trie, name, place);
+                self.scopes.rebind(record, place);
                 init
             } else {
                 (*placeholder).ty = (*value).ty;
@@ -3492,7 +3460,7 @@ impl<'a> Parser<'a> {
                     continue;
                 }
             }
-            self.scopes.declare(self.trie, name, *identity).map_err(ParseError::Resolve)?;
+            self.declare_name(name, *identity)?;
         }
         Ok(())
     }
@@ -3673,9 +3641,8 @@ impl<'a> Parser<'a> {
         }
         let source = self.source;
         let name = &source[tok.start..tok.start + tok.len];
-        let decl_scope =
-            self.scopes.resolve(self.trie, name).map_err(ParseError::Resolve)?.scope;
-        self.scopes.rebind_at(self.trie, name, t, decl_scope);
+        let record = self.scopes.resolve(self.trie, name).map_err(ParseError::Resolve)?.record;
+        self.scopes.rebind(record, t);
         // The fill IS the definition completing the declaration: a declare
         // node, a silent statement.
         let name_node =
@@ -4000,6 +3967,23 @@ mod tests {
     use super::*;
 
     /// A distinct sentinel address per tag (never dereferenced).
+    /// A record dyad for `identity`, its scope set by `declare`: leaked like
+    /// the dyads below.
+    fn rec(identity: DyadPtr) -> DyadPtr {
+        rec_in(identity, std::ptr::null_mut())
+    }
+
+    fn rec_in(identity: DyadPtr, scope: DyadPtr) -> DyadPtr {
+        let fields = Box::into_raw(Box::new(Record::new(identity, scope)));
+        Box::into_raw(Box::new(crate::dyad::Dyad { ty: std::ptr::null_mut(), value: fields as *mut u8 }))
+    }
+
+    /// The fields behind a record dyad.
+    fn f(record: DyadPtr) -> Record {
+        // SAFETY: only `rec`-built dyads reach the trie in these tests.
+        unsafe { *Record::of(record) }
+    }
+
     fn dyad(tag: usize) -> DyadPtr {
         std::ptr::without_provenance_mut(tag)
     }
@@ -4082,7 +4066,7 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(dyad(100));
         let id = dyad(1);
-        scopes.declare(&mut trie, "a", id).unwrap();
+        scopes.declare(&mut trie, "a", rec(id)).unwrap();
         assert_eq!(scopes.resolve(&trie, "a").unwrap().identity, id);
     }
 
@@ -4095,11 +4079,11 @@ mod tests {
         let (outer, inner) = (dyad(100), dyad(101));
 
         scopes.push(outer);
-        scopes.declare(&mut trie, "x", dyad(1)).unwrap();
+        scopes.declare(&mut trie, "x", rec(dyad(1))).unwrap();
         scopes.pop(); // close outer
 
         scopes.push(inner);
-        scopes.declare(&mut trie, "x", dyad(2)).unwrap();
+        scopes.declare(&mut trie, "x", rec(dyad(2))).unwrap();
         assert_eq!(scopes.resolve(&trie, "x").unwrap().identity, dyad(2));
 
         scopes.pop();
@@ -4112,7 +4096,7 @@ mod tests {
         let mut trie = RegexTrie::new();
         let mut scopes = ScopeStack::new();
         scopes.push(dyad(100));
-        scopes.declare(&mut trie, "y", dyad(1)).unwrap();
+        scopes.declare(&mut trie, "y", rec(dyad(1))).unwrap();
         scopes.pop(); // close the scope
 
         assert_eq!(scopes.resolve(&trie, "y"), Err(ResolveError::OutOfScope));
@@ -4126,12 +4110,12 @@ mod tests {
         let (outer, inner) = (dyad(100), dyad(101));
 
         scopes.push(outer);
-        scopes.declare(&mut trie, "a", dyad(1)).unwrap();
+        scopes.declare(&mut trie, "a", rec(dyad(1))).unwrap();
         // Same scope: redeclaration rejected.
-        assert_eq!(scopes.declare(&mut trie, "a", dyad(2)), Err(ResolveError::Shadowed));
+        assert_eq!(scopes.declare(&mut trie, "a", rec(dyad(2))), Err(ResolveError::Shadowed));
         // Nested scope while the outer declaration is live: still rejected.
         scopes.push(inner);
-        assert_eq!(scopes.declare(&mut trie, "a", dyad(3)), Err(ResolveError::Shadowed));
+        assert_eq!(scopes.declare(&mut trie, "a", rec(dyad(3))), Err(ResolveError::Shadowed));
     }
 
     #[test]
@@ -4139,15 +4123,15 @@ mod tests {
         let mut trie = RegexTrie::new();
         let mut scopes = ScopeStack::new();
         scopes.push(dyad(100));
-        scopes.declare(&mut trie, "keep", dyad(1)).unwrap();
+        scopes.declare(&mut trie, "keep", rec(dyad(1))).unwrap();
         scopes.commit(); // committed declarations survive a rollback
-        scopes.declare(&mut trie, "gone", dyad(2)).unwrap();
+        scopes.declare(&mut trie, "gone", rec(dyad(2))).unwrap();
 
         scopes.rollback(&mut trie);
         assert_eq!(scopes.resolve(&trie, "keep").unwrap().identity, dyad(1));
         assert_eq!(scopes.resolve(&trie, "gone"), Err(ResolveError::Unknown));
         // The rolled-back name is free again — no permanent "shadowed".
-        scopes.declare(&mut trie, "gone", dyad(3)).unwrap();
+        scopes.declare(&mut trie, "gone", rec(dyad(3))).unwrap();
         assert_eq!(scopes.resolve(&trie, "gone").unwrap().identity, dyad(3));
     }
 
@@ -4156,8 +4140,9 @@ mod tests {
         let mut trie = RegexTrie::new();
         let mut scopes = ScopeStack::new();
         scopes.push(dyad(100));
-        scopes.declare(&mut trie, "alias", dyad(1)).unwrap();
-        scopes.rebind(&mut trie, "alias", dyad(2));
+        let alias = rec(dyad(1));
+        scopes.declare(&mut trie, "alias", alias).unwrap();
+        scopes.rebind(alias, dyad(2));
         assert_eq!(scopes.resolve(&trie, "alias").unwrap().identity, dyad(2));
         // The declare's journal entry still covers the rebound binding.
         scopes.rollback(&mut trie);
@@ -4185,16 +4170,17 @@ mod tests {
         let mut scopes = ScopeStack::new();
         let scope = dyad(100);
         scopes.push(scope);
-        scopes.declare(&mut trie, "a", dyad(1)).unwrap();
-        scopes.mark_dead(&mut trie, "a", scope, dyad(1), dyad(50));
+        let a1 = rec(dyad(1));
+        scopes.declare(&mut trie, "a", a1).unwrap();
+        scopes.mark_dead(a1, dyad(50));
 
         assert_eq!(scopes.resolve(&trie, "a"), Err(ResolveError::Dead));
-        scopes.declare(&mut trie, "a", dyad(2)).unwrap();
+        scopes.declare(&mut trie, "a", rec(dyad(2))).unwrap();
         assert_eq!(scopes.resolve(&trie, "a").unwrap().identity, dyad(2));
         // The dead entry is still indexed: its range is what reflection reads.
         let m = trie.get("a").unwrap();
         assert_eq!(m.records.len(), 2);
-        assert!(m.records.iter().any(|c| c.dyad == dyad(1) && c.end == dyad(50)));
+        assert!(m.records.iter().any(|&c| f(c).dyad == dyad(1) && f(c).end == dyad(50)));
     }
 
     #[test]
@@ -4205,11 +4191,12 @@ mod tests {
         let mut scopes = ScopeStack::new();
         let scope = dyad(100);
         scopes.push(scope);
-        scopes.declare(&mut trie, "a", dyad(1)).unwrap();
+        let a1 = rec(dyad(1));
+        scopes.declare(&mut trie, "a", a1).unwrap();
         scopes.commit();
 
-        scopes.mark_dead(&mut trie, "a", scope, dyad(1), dyad(50));
-        scopes.declare(&mut trie, "a", dyad(2)).unwrap();
+        scopes.mark_dead(a1, dyad(50));
+        scopes.declare(&mut trie, "a", rec(dyad(2))).unwrap();
         scopes.rollback(&mut trie);
 
         assert_eq!(scopes.resolve(&trie, "a").unwrap().identity, dyad(1));
@@ -4224,25 +4211,27 @@ mod tests {
         let mut scopes = ScopeStack::new();
         let scope = dyad(100);
         scopes.push(scope);
-        scopes.declare(&mut trie, "a", dyad(1)).unwrap();
-        let rec = |trie: &RegexTrie| trie.get("a").unwrap().records[0];
-        assert!(rec(&trie).start.is_null());
+        let a1 = rec(dyad(1));
+        scopes.declare(&mut trie, "a", a1).unwrap();
+        let a = |trie: &RegexTrie| f(trie.get("a").unwrap().records[0]);
+        assert!(a(&trie).start.is_null());
 
-        scopes.settle_item(&mut trie, scope, dyad(10));
-        assert_eq!(rec(&trie).start, dyad(10));
-        assert!(rec(&trie).end.is_null());
+        scopes.settle_item(scope, dyad(10));
+        assert_eq!(a(&trie).start, dyad(10));
+        assert!(a(&trie).end.is_null());
 
-        scopes.mark_dead(&mut trie, "a", scope, dyad(1), dyad(50));
-        assert_eq!(rec(&trie).end, dyad(50), "provisional: the own/drop node");
-        scopes.settle_item(&mut trie, scope, dyad(11));
-        assert_eq!(rec(&trie).end, dyad(11), "settled: the body item");
-        assert_eq!(rec(&trie).start, dyad(10), "start untouched by the end's settle");
+        scopes.mark_dead(a1, dyad(50));
+        assert_eq!(a(&trie).end, dyad(50), "provisional: the own/drop node");
+        scopes.settle_item(scope, dyad(11));
+        assert_eq!(a(&trie).end, dyad(11), "settled: the body item");
+        assert_eq!(a(&trie).start, dyad(10), "start untouched by the end's settle");
 
-        // A rebind keeps the range and moves the pending endpoint with it.
-        scopes.declare(&mut trie, "b", dyad(3)).unwrap();
-        scopes.rebind(&mut trie, "b", dyad(4));
-        scopes.settle_item(&mut trie, scope, dyad(12));
-        let b = trie.get("b").unwrap().records[0];
+        // A rebind keeps the range, and the pending endpoint holds the record.
+        let b_rec = rec(dyad(3));
+        scopes.declare(&mut trie, "b", b_rec).unwrap();
+        scopes.rebind(b_rec, dyad(4));
+        scopes.settle_item(scope, dyad(12));
+        let b = f(trie.get("b").unwrap().records[0]);
         assert_eq!((b.dyad, b.start), (dyad(4), dyad(12)));
     }
 
@@ -4272,8 +4261,8 @@ mod tests {
         // index to prove resolve reports corruption.
         let mut trie = RegexTrie::new();
         let (a, b) = (dyad(100), dyad(101));
-        trie.insert("z", Record::new(dyad(1), a));
-        trie.insert("z", Record::new(dyad(2), b));
+        trie.insert("z", rec_in(dyad(1), a));
+        trie.insert("z", rec_in(dyad(2), b));
 
         let mut scopes = ScopeStack::new();
         scopes.push(a);

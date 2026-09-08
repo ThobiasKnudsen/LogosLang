@@ -28,6 +28,7 @@ use crate::identities::numtype::{
     self, NumType, ADDR_TAG, COMMENT_TAG, STRING_TAG, VOID_TAG,
 };
 use crate::parse::CoreTypes;
+use crate::record::Record;
 
 /// One operand slot of a [`Shape::Tuple`] or a [`Shape::List`] head: the role
 /// naming it (a string node from the identity's record) and the operand node
@@ -140,6 +141,12 @@ pub enum Shape {
         /// until drop semantics exist.
         destructor: DyadPtr,
     },
+    /// A name's record — the trie entry, a dyad of type `record` (DESIGN ›The
+    /// dyad's read surface‹, 8 September 2026): the dyad it names, the scope it
+    /// was declared in, its range, and its gate set. A use of a name in code
+    /// stores one of these, so a walker reaching a named operand lands here and
+    /// follows `dyad` to the value.
+    Record { dyad: DyadPtr, scope: DyadPtr, start: DyadPtr, end: DyadPtr, gate: DyadPtr },
     /// Declared but not (yet) defined: a null logos, a null value where operands
     /// would be, or a layout that cannot be derived.
     Undefined,
@@ -167,6 +174,12 @@ pub unsafe fn describe(types: &CoreTypes, node: DyadPtr) -> Shape {
             fields: crate::identities::array::items(meta::record_fields_of(node)).to_vec(),
             size_bytes: meta::record_size_of(node),
         };
+    }
+    // A name's record: read as the five pointers it is, before the generic
+    // instance arm below would lay it out as a five-field record value.
+    if logos == types.record_ {
+        let f = Record::of(node);
+        return Shape::Record { dyad: f.dyad, scope: f.scope, start: f.start, end: f.end, gate: f.gate };
     }
     // A value of a record logos is an instance: its layout derives from the
     // definition's field list.
@@ -712,6 +725,7 @@ mod tests {
                 Shape::Call { .. } => "call",
                 Shape::Instance { .. } => "instance",
                 Shape::RecordLogos { .. } => "record-logos",
+                Shape::Record { .. } => "record",
                 Shape::LogosNode { .. } => "logos",
                 Shape::Undefined => "undefined",
             };

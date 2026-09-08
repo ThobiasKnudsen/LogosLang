@@ -19,7 +19,6 @@
 //! parameters), recorded in DESIGN.
 
 use super::{meta, Cx};
-use crate::record::Record;
 use crate::dyad::DyadPtr;
 
 /// Register `dyad`: a fresh-start word whose constructor views the
@@ -27,7 +26,7 @@ use crate::dyad::DyadPtr;
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record_assoc(cx.store, meta::DYAD_TAG, meta::prec::VIEW, crate::parse::Assoc::Right);
     let id = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert("dyad", Record::new(id, cx.root_scope));
+    cx.declare("dyad", id);
     cx.metas.insert(id, |p, _id, tape| p.construct_view(tape));
     id
 }

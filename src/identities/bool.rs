@@ -17,7 +17,6 @@ use super::numtype::NumType;
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::record::Record;
 
 /// Register `bool`: its logos spelling and lowering, plus the `true`/`false`
 /// literal nodes with their spellings. Returns the `bool` logos identity so the
@@ -28,13 +27,13 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     // its bool-ness lives in the identity itself (comparisons point here).
     let record = meta::record(cx.store, NumType::I32 as u8, meta::prec::INERT);
     let bool_ = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert("bool", Record::new(bool_, cx.root_scope));
+    cx.declare("bool", bool_);
     cx.lower.insert(bool_, lower);
 
     let true_ = literal(cx, bool_, 1);
-    cx.trie.insert("true", Record::new(true_, cx.root_scope));
+    cx.declare("true", true_);
     let false_ = literal(cx, bool_, 0);
-    cx.trie.insert("false", Record::new(false_, cx.root_scope));
+    cx.declare("false", false_);
 
     bool_
 }

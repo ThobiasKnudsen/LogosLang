@@ -13,25 +13,26 @@
 //! literal path winning ties over a regex path (a shorter literal never blocks a
 //! longer regex match).
 //!
-//! The stored value is a list of [`Record`]s: the identities the matched text
-//! can denote, each paired with the scope it was declared in. The trie does
-//! **not** own the dyads those records point at (they live in the graph/store),
-//! so it only holds and returns them; nothing is freed on removal. A spelling
-//! declared in several scopes accumulates several records; `get` returns the
-//! whole candidate list, and the parser's scope stack picks the one live in the
-//! open scopes. Resolution *policy* (scope filtering, no-shadowing,
-//! out-of-scope, ambiguity) lives in the parser (`crate::parse`), not here: the
-//! trie is the pure name index.
+//! The stored value is a list of record dyads (see [`Record`]): the names the
+//! matched text can denote, each a dyad of type `record` in the store pairing
+//! an identity with the scope it was declared in. The trie does **not** own
+//! them (they live in the store, at stable addresses), so it only holds and
+//! returns their pointers; nothing is freed on removal. A spelling declared in
+//! several scopes accumulates several records; `get` returns the whole
+//! candidate list, and the parser's scope stack picks the one live in the open
+//! scopes. Resolution *policy* (scope filtering, no-shadowing, out-of-scope,
+//! ambiguity) lives in the parser (`crate::parse`), not here: the trie is the
+//! pure name index.
 //!
 //! Differences from the Zig original, all behaviour-preserving:
 //! - PCRE2 is replaced by the Rust `regex` crate (`regex::bytes`, byte-oriented
 //!   like the PCRE2 8-bit API). Lookaround/backreferences therefore cannot
 //!   compile; [`RegexTrieError::BadPattern`] surfaces that instead of panicking.
-//! - Because a context is a `Copy` value the trie does not own, the Zig's
-//!   shared-value/`freed`-flag bookkeeping collapses to copying the context to
-//!   each alternation path; `remove` matches on the declaring scope (its live
-//!   context: a dead one, ended by `own`/`drop`, stays for reflection), and
-//!   `update` visits every path's copy so the copies never disagree.
+//! - Because a record is a store-owned dyad the trie only points at, the Zig's
+//!   shared-value/`freed`-flag bookkeeping collapses to storing the one pointer
+//!   on each alternation path (a write through it is seen from every path, so
+//!   there is nothing to keep in step); `remove` matches on the declaring scope
+//!   (its live record: a dead one, ended by `own`/`drop`, stays for reflection).
 //! - Each regex branch owns a lazily-compiled anchored matcher behind a `RefCell`
 //!   (so `get` stays `&self`) and is matched independently. Matching branches
 //!   separately, rather than as one combined `(?:a|b|…)` alternation, is what lets
@@ -64,12 +65,12 @@ pub enum RegexTrieError {
 }
 
 /// The value stored at an end-of-word node: the pattern key and the list of
-/// `record`s the matched text can denote (one per declaring scope).
-/// Alternation paths of one `insert` each carry a copy of the same context.
+/// record dyads the matched text can denote (one per declaring scope).
+/// Alternation paths of one `insert` each hold the same pointer.
 #[derive(Debug)]
 pub struct Leaf {
     pub regex_key: String,
-    pub records: Vec<Record>,
+    pub records: Vec<DyadPtr>,
 }
 
 /// The result of a successful lookup. `regex_key` and `records` borrow the
@@ -82,8 +83,8 @@ pub struct MatchResult<'a> {
     pub matched: usize,
     /// The pattern key that matched.
     pub regex_key: &'a str,
-    /// Every identity the matched text can denote, one per declaring scope.
-    pub records: &'a [Record],
+    /// Every record the matched text can denote, one per declaring scope.
+    pub records: &'a [DyadPtr],
 }
 
 struct RegexEntry {
@@ -249,50 +250,21 @@ impl RegexTrie {
         Some(current)
     }
 
-    /// [`RegexTrie::locate`], mutably: the node an existing path ends at, for
-    /// an in-place change of its stored records ([`RegexTrie::update`]).
-    fn locate_mut(&mut self, path: &[Segment]) -> Option<&mut RegexTrie> {
-        let mut current = self;
-        for seg in path {
-            if seg.is_lit {
-                for &c in seg.str.as_bytes() {
-                    if c == 0 {
-                        return None;
-                    }
-                    let idx = current.child_indices[c as usize];
-                    if idx == NONE {
-                        return None;
-                    }
-                    match current.children[idx as usize].as_deref_mut() {
-                        Some(child) => current = child,
-                        None => return None,
-                    }
-                }
-            } else {
-                match current.regexes.iter().position(|e| e.pattern == seg.str) {
-                    Some(i) => current = &mut current.regexes[i].node,
-                    None => return None,
-                }
-            }
-        }
-        Some(current)
-    }
-
     // --- insert -------------------------------------------------------------
 
-    /// Add `record` under `key` (a literal or regex pattern). A spelling may carry
-    /// several records, one per scope it is declared in, so this appends. The
-    /// no-shadowing rule (rejecting a redeclaration whose scope is currently
-    /// live) is the parser's, since it needs the scope stack; the trie only
-    /// stores.
-    pub fn insert(&mut self, key: &str, record: Record) {
+    /// Add the record dyad `record` under `key` (a literal or regex pattern). A
+    /// spelling may carry several records, one per scope it is declared in, so
+    /// this appends. The no-shadowing rule (rejecting a redeclaration whose
+    /// scope is currently live) is the parser's, since it needs the scope
+    /// stack; the trie only stores.
+    pub fn insert(&mut self, key: &str, record: DyadPtr) {
         debug_assert!(!key.is_empty());
 
         if is_pure_literal(key) {
             return self.insert_literal_fast(key, record);
         }
 
-        // Every alternation path of this insert carries the same context.
+        // Every alternation path of this insert holds the same record.
         for path in &regex_splitting(key) {
             let leaf = Self::walk_create(self, path);
             leaf.ensure_eow();
@@ -301,7 +273,7 @@ impl RegexTrie {
     }
 
     /// Fast path for pure-literal keys: walk byte-by-byte, no splitting.
-    fn insert_literal_fast(&mut self, s: &str, record: Record) {
+    fn insert_literal_fast(&mut self, s: &str, record: DyadPtr) {
         let mut current = self;
         for &c in s.as_bytes() {
             current = current.lit_child_or_create(c);
@@ -409,54 +381,28 @@ impl RegexTrie {
 
     // --- remove -------------------------------------------------------------
 
-    /// Visit every `record` stored under `regex_key` — on every alternation
-    /// path, so the copies one `insert` spread stay identical — and let `f`
-    /// change it in place. `f` returns whether it applied; the count of records
-    /// it applied to is returned. Which context to touch (a scope, an identity,
-    /// the live one) is the caller's filter, inside `f`: the trie stays the pure
-    /// index. A key that is not indexed is simply zero applications.
-    pub fn update(&mut self, regex_key: &str, mut f: impl FnMut(&mut Record) -> bool) -> usize {
-        debug_assert!(!regex_key.is_empty());
-        let mut applied = 0;
-        for path in &regex_splitting(regex_key) {
-            let Some(node) = self.locate_mut(path) else { continue };
-            if !node.check_eow() {
-                continue;
-            }
-            if let Some(leaf) = node.leaf_value.as_mut() {
-                if leaf.regex_key == regex_key {
-                    for c in leaf.records.iter_mut() {
-                        if f(c) {
-                            applied += 1;
-                        }
-                    }
-                }
-            }
-        }
-        applied
-    }
-
-    /// Remove the *live* `record` declared in `scope` for `regex_key` and
+    /// Remove the *live* record declared in `scope` for `regex_key` and
     /// return the identity it denoted. This is the structural-deletion path:
-    /// only that one context is dropped — a dead one (ended by `own`/`drop`,
+    /// only that one record is dropped — a dead one (ended by `own`/`drop`,
     /// see [`Record::is_dead`]) in the same scope stays, its range being what
-    /// reflection reads — and a leaf is pruned only when its last context goes
+    /// reflection reads — and a leaf is pruned only when its last record goes
     /// (siblings and outer declarations of the same spelling stay). Errors with
     /// [`RegexTrieError::NodeNotFound`] if any of the key's paths lacks a live
-    /// context in `scope`, or they do not all denote the same identity.
+    /// record in `scope`, or they do not all denote the same identity.
     pub fn remove(&mut self, regex_key: &str, scope: DyadPtr) -> Result<DyadPtr, RegexTrieError> {
         debug_assert!(!regex_key.is_empty());
         let paths = regex_splitting(regex_key);
 
-        // Verify every path holds this scope's live context and they agree on
+        // Verify every path holds this scope's live record and they agree on
         // the identity before mutating anything.
         let mut held: Option<DyadPtr> = None;
         for path in &paths {
             let node = self.locate(path).filter(|n| n.check_eow());
             let ident = match node.and_then(|n| n.leaf_value.as_ref()) {
                 Some(v) if v.regex_key == regex_key => {
-                    match v.records.iter().find(|c| c.scope == scope && !c.is_dead()) {
-                        Some(c) => c.dyad,
+                    match v.records.iter().find(|&&r| is_live_in(r, scope)) {
+                        // SAFETY: every stored pointer is a record dyad.
+                        Some(&r) => unsafe { Record::of(r).dyad },
                         None => return Err(RegexTrieError::NodeNotFound),
                     }
                 }
@@ -469,8 +415,8 @@ impl RegexTrie {
             }
         }
 
-        // Drop this scope's live context at each path's leaf and prune leaves
-        // that lose their last context.
+        // Drop this scope's live record at each path's leaf and prune leaves
+        // that lose their last record.
         for path in &paths {
             let steps = flatten(path);
             Self::prune_remove(self, &steps, 0, scope);
@@ -479,14 +425,14 @@ impl RegexTrie {
         Ok(held.expect("at least one path verified"))
     }
 
-    /// Recursively descend `steps` from `node`, dropping `scope`'s context at the
-    /// end (clearing the leaf only when its last context goes) and pruning empty
+    /// Recursively descend `steps` from `node`, dropping `scope`'s record at the
+    /// end (clearing the leaf only when its last record goes) and pruning empty
     /// children on the way back up. Returns true if `node` itself became empty and
     /// the caller should drop the link to it.
     fn prune_remove(node: &mut RegexTrie, steps: &[Step], i: usize, scope: DyadPtr) -> bool {
         if i == steps.len() {
             if let Some(leaf) = &mut node.leaf_value {
-                leaf.records.retain(|c| c.scope != scope || c.is_dead());
+                leaf.records.retain(|&r| !is_live_in(r, scope));
                 if leaf.records.is_empty() {
                     node.leaf_value = None;
                     let eow = node.child_indices[EOW];
@@ -644,8 +590,16 @@ enum Step {
     Regex(String),
 }
 
+/// Whether the record dyad `record` is the live declaration of its name in
+/// `scope`.
+fn is_live_in(record: DyadPtr, scope: DyadPtr) -> bool {
+    // SAFETY: every pointer the trie stores is a record dyad from the store.
+    let fields = unsafe { Record::of(record) };
+    fields.scope == scope && !fields.is_dead()
+}
+
 /// Append `record` to `leaf`, creating the `Leaf` (keyed by `key`) if absent.
-fn push_record(leaf: &mut Option<Leaf>, key: &str, record: Record) {
+fn push_record(leaf: &mut Option<Leaf>, key: &str, record: DyadPtr) {
     match leaf {
         Some(l) => l.records.push(record),
         None => *leaf = Some(Leaf { regex_key: key.to_string(), records: vec![record] }),
@@ -679,9 +633,16 @@ mod tests {
         Box::into_raw(Box::new(Dyad { ty: std::ptr::null_mut(), value: tag as *mut u8 }))
     }
 
-    /// A `record` in `scope` for `identity`.
-    fn rec(identity: DyadPtr, scope: DyadPtr) -> Record {
-        Record::new(identity, scope)
+    /// A record dyad in `scope` for `identity`: leaked, like the dyads above.
+    fn rec(identity: DyadPtr, scope: DyadPtr) -> DyadPtr {
+        let fields = Box::into_raw(Box::new(Record::new(identity, scope)));
+        Box::into_raw(Box::new(Dyad { ty: std::ptr::null_mut(), value: fields as *mut u8 }))
+    }
+
+    /// The fields behind a record dyad the trie returned.
+    fn f(record: DyadPtr) -> Record {
+        // SAFETY: only `rec`-built dyads are inserted in these tests.
+        unsafe { *Record::of(record) }
     }
 
     #[test]
@@ -698,13 +659,13 @@ mod tests {
         let m = t.get(":=").unwrap();
         assert_eq!(m.matched, 2);
         assert_eq!(m.regex_key, ":=");
-        assert_eq!(m.records[0].dyad, colon_eq);
+        assert_eq!(f(m.records[0]).dyad, colon_eq);
 
         let m = t.get(":x").unwrap();
         assert_eq!(m.matched, 1);
-        assert_eq!(m.records[0].dyad, colon);
+        assert_eq!(f(m.records[0]).dyad, colon);
 
-        assert_eq!(t.get("=").unwrap().records[0].dyad, eq);
+        assert_eq!(f(t.get("=").unwrap().records[0]).dyad, eq);
     }
 
     #[test]
@@ -715,7 +676,7 @@ mod tests {
         t.insert("[0-9]+", rec(num, root));
         let m = t.get("123abc").unwrap();
         assert_eq!(m.matched, 3);
-        assert_eq!(m.records[0].dyad, num);
+        assert_eq!(f(m.records[0]).dyad, num);
     }
 
     #[test]
@@ -727,8 +688,8 @@ mod tests {
         t.insert("if", rec(kw, root));
         t.insert("[a-z]+", rec(ident, root));
 
-        assert_eq!(t.get("if").unwrap().records[0].dyad, kw);
-        assert_eq!(t.get("foo").unwrap().records[0].dyad, ident);
+        assert_eq!(f(t.get("if").unwrap().records[0]).dyad, kw);
+        assert_eq!(f(t.get("foo").unwrap().records[0]).dyad, ident);
     }
 
     #[test]
@@ -751,7 +712,7 @@ mod tests {
 
         let m = t.get("x").unwrap();
         assert_eq!(m.records.len(), 2);
-        let ids: Vec<_> = m.records.iter().map(|c| c.dyad).collect();
+        let ids: Vec<_> = m.records.iter().map(|&c| f(c).dyad).collect();
         assert!(ids.contains(&id_outer) && ids.contains(&id_inner));
     }
 
@@ -767,7 +728,7 @@ mod tests {
         t.insert("widget", rec(widget, root));
         let m = t.get("widget = 1").unwrap();
         assert_eq!(m.matched, 6);
-        assert_eq!(m.records[0].dyad, widget);
+        assert_eq!(f(m.records[0]).dyad, widget);
     }
 
     #[test]
@@ -777,8 +738,8 @@ mod tests {
         let d = dummy(7);
         t.insert("ab|cd", rec(d, root));
         assert_eq!(t.get("ab").unwrap().matched, 2);
-        assert_eq!(t.get("ab").unwrap().records[0].dyad, d);
-        assert_eq!(t.get("cd").unwrap().records[0].dyad, d);
+        assert_eq!(f(t.get("ab").unwrap().records[0]).dyad, d);
+        assert_eq!(f(t.get("cd").unwrap().records[0]).dyad, d);
 
         // Removing the scope's context returns the shared identity and drops both paths.
         assert_eq!(t.remove("ab|cd", root).unwrap(), d);
@@ -798,31 +759,23 @@ mod tests {
         assert_eq!(t.remove("x", inner).unwrap(), id_inner);
         let m = t.get("x").unwrap();
         assert_eq!(m.records.len(), 1);
-        assert_eq!(m.records[0].dyad, id_outer);
+        assert_eq!(f(m.records[0]).dyad, id_outer);
     }
 
     #[test]
-    fn update_reaches_every_alternation_path() {
-        // One insert spreads a copy of the context over each alternation path;
-        // an in-place change must land on all of them, or a lookup through the
-        // other branch would see a stale copy.
+    fn alternation_paths_share_one_record_dyad() {
+        // One insert puts the same record dyad on each alternation path, so a
+        // write through it is seen from every branch and nothing needs to be
+        // kept in step (DESIGN ›The dyad's read surface‹: a record is a value).
         let root = dummy(100);
         let mut t = RegexTrie::new();
         let (d, ender) = (dummy(7), dummy(8));
         t.insert("ab|cd", rec(d, root));
-        let applied = t.update("ab|cd", |c| {
-            if c.dyad == d {
-                c.end = ender;
-                true
-            } else {
-                false
-            }
-        });
-        assert_eq!(applied, 2, "one application per path");
-        assert_eq!(t.get("ab").unwrap().records[0].end, ender);
-        assert_eq!(t.get("cd").unwrap().records[0].end, ender);
-        // A key that is not indexed applies to nothing.
-        assert_eq!(t.update("zz", |_| true), 0);
+        let via_ab = t.get("ab").unwrap().records[0];
+        let via_cd = t.get("cd").unwrap().records[0];
+        assert_eq!(via_ab, via_cd, "one record dyad, two paths");
+        unsafe { Record::of(via_ab).end = ender };
+        assert_eq!(f(t.get("cd").unwrap().records[0]).end, ender);
     }
 
     #[test]
@@ -833,19 +786,17 @@ mod tests {
         let root = dummy(100);
         let mut t = RegexTrie::new();
         let (old, new, ender) = (dummy(1), dummy(2), dummy(9));
-        t.insert("x", rec(old, root));
-        t.update("x", |c| {
-            c.end = ender;
-            true
-        });
+        let old_rec = rec(old, root);
+        t.insert("x", old_rec);
+        unsafe { Record::of(old_rec).end = ender };
         t.insert("x", rec(new, root));
         assert_eq!(t.get("x").unwrap().records.len(), 2);
 
         assert_eq!(t.remove("x", root).unwrap(), new);
         let m = t.get("x").unwrap();
         assert_eq!(m.records.len(), 1);
-        assert_eq!(m.records[0].dyad, old);
-        assert!(m.records[0].is_dead());
+        assert_eq!(f(m.records[0]).dyad, old);
+        assert!(f(m.records[0]).is_dead());
         // With no live context left in the scope, a second remove is an error.
         assert_eq!(t.remove("x", root), Err(RegexTrieError::NodeNotFound));
     }
@@ -860,7 +811,7 @@ mod tests {
         assert_eq!(t.remove("foo", root).unwrap(), foo);
         assert!(t.get("foo").is_err());
         // The longer key sharing the prefix survives.
-        assert_eq!(t.get("foobar").unwrap().records[0].dyad, foobar);
+        assert_eq!(f(t.get("foobar").unwrap().records[0]).dyad, foobar);
     }
 
     #[test]
@@ -887,9 +838,9 @@ mod tests {
         ms.sort_by_key(|m| m.matched);
         assert_eq!(ms.len(), 2);
         assert_eq!(ms[0].matched, 1);
-        assert_eq!(ms[0].records[0].dyad, lit_a);
+        assert_eq!(f(ms[0].records[0]).dyad, lit_a);
         assert_eq!(ms[1].matched, 3);
-        assert_eq!(ms[1].records[0].dyad, ident);
+        assert_eq!(f(ms[1].records[0]).dyad, ident);
     }
 
     #[test]
@@ -905,11 +856,11 @@ mod tests {
         // Exact keyword: the literal wins the tie at equal length.
         let m = t.get("if").unwrap();
         assert_eq!(m.matched, 2);
-        assert_eq!(m.records[0].dyad, kw);
+        assert_eq!(f(m.records[0]).dyad, kw);
         // Longer identifier: the length-4 regex match beats the length-2 literal EOW.
         let m = t.get("iffy").unwrap();
         assert_eq!(m.matched, 4);
-        assert_eq!(m.records[0].dyad, ident);
+        assert_eq!(f(m.records[0]).dyad, ident);
     }
 
     #[test]
@@ -923,7 +874,7 @@ mod tests {
         t.insert("[a-z]+", rec(long, root)); // matches 3 on "abc"
         let m = t.get("abc").unwrap();
         assert_eq!(m.matched, 3);
-        assert_eq!(m.records[0].dyad, long);
+        assert_eq!(f(m.records[0]).dyad, long);
     }
 
     #[test]

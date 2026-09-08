@@ -29,7 +29,6 @@ use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::record::Record;
 use crate::parse::{Assoc};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
@@ -52,7 +51,7 @@ const DECL_GATE: usize = 2;
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::DECLARE);
     let token = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert(":=", Record::new(token, cx.root_scope));
+    cx.declare(":=", token);
     cx.metas.insert(token, |p, _id, tape| p.construct_decl(tape));
 
     let record = meta::operand_record(

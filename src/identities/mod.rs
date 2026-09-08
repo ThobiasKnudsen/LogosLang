@@ -48,6 +48,7 @@ use std::collections::HashMap;
 use crate::compile::LowerTable;
 use crate::dyad::DyadPtr;
 use crate::parse::{Assoc, ConstructFn, CoreTypes, ParseError, FN_OUTPUT};
+use crate::record::Record;
 use crate::regex_trie::RegexTrie;
 use crate::store::Store;
 
@@ -207,6 +208,9 @@ pub struct Core {
     /// `dyad`, the spelled view identity (#52): `(dyad a)` wraps a value
     /// as its cell; `.` reads the cell.
     pub dyad_: DyadPtr,
+    /// `record`, the type of every name's record: the trie entry, a dyad
+    /// whose value is the name's `dyad`, `scope`, `start`, `end`, `gate`.
+    pub record_: DyadPtr,
     /// `index`, the passive node a `[i]` cell carries.
     pub index_: DyadPtr,
     /// `array` (of `dyad@`), the seed's first array form: a sequence's
@@ -262,6 +266,12 @@ impl Core {
         let type_ = logos_mod::register_root(store);
         let scope_ = scope::register(store, type_);
         let root_scope = store.alloc_raw(scope_, std::ptr::null_mut());
+        // `record`: the type of every name's record (DESIGN ›The dyad's read
+        // surface‹, 8 September 2026). Minted before any spelling is declared,
+        // since each declaration allocates a record dyad of this type; its own
+        // layout — five `@dyad` fields — is filled at the end of the build,
+        // once `dyad` and `@` exist (`record::register_type`).
+        let record_ = store.alloc_raw(type_, std::ptr::null_mut());
         let fn_type = fn_mod::register(store, type_);
 
         // Then the behaviour-bearing identities, via a shared build context.
@@ -271,6 +281,7 @@ impl Core {
             type_,
             fn_type,
             root_scope,
+            record_,
             string_: std::ptr::null_mut(),
             metas: HashMap::new(),
             lower: HashMap::new(),
@@ -417,6 +428,10 @@ impl Core {
             (dm.alloc_, dm.own_, dm.drop_, dm.free_, dm.defer_);
         // A multi-expression block is a `scope`-typed sequence node; its native
         // leaf and lowering are registered once the callable machinery exists.
+        // The `record` type's own definition, last: its fields are `@dyad`
+        // places, so it waits for `dyad` and `@` (DESIGN ›The dyad's read
+        // surface‹, 8 September 2026).
+        record::register_type(&mut cx, scope_, array_, dyad_);
         op_leaves.scope_ = scope::register_exec(&mut cx, scope_, &callables);
 
         // Constructor slots (#30): the registration table was only ever the
@@ -488,6 +503,7 @@ impl Core {
             pub_,
             import_,
             dyad_,
+            record_,
             index_,
             callable_: callables.callable,
             convention_: callables.convention,
@@ -536,6 +552,7 @@ impl Core {
             pub_: self.pub_,
             import_: self.import_,
             dyad_: self.dyad_,
+            record_: self.record_,
             index_: self.index_,
             construct_: self.construct_,
             string_: self.string_,
@@ -584,12 +601,34 @@ pub(crate) struct Cx<'a> {
     type_: DyadPtr,
     fn_type: DyadPtr,
     root_scope: DyadPtr,
+    /// The `record` type, minted first so every declaration can allocate its
+    /// record dyad (`Cx::declare`).
+    record_: DyadPtr,
     /// The `string` logos, once registered (null before): an operand record's role
     /// names are string nodes, so the identities registered after it can name
     /// their operands as graph data.
     string_: DyadPtr,
     metas: HashMap<DyadPtr, ConstructFn>,
     lower: LowerTable,
+}
+
+impl Cx<'_> {
+    /// Declare `spelling` at the root scope as `id`: mint the name's record —
+    /// a dyad of type `record`, one per declared name (DESIGN ›`mut` is a gate
+    /// on the record‹) — index it, and return it.
+    pub(crate) fn declare(&mut self, spelling: &str, id: DyadPtr) -> DyadPtr {
+        let root = self.root_scope;
+        self.declare_in(root, spelling, id)
+    }
+
+    /// Declare `spelling` in `scope` as `id`: the field names of a natively
+    /// built record type live in that type's own scope, exactly as
+    /// `Parser::parse_record` declares a user record's fields.
+    pub(crate) fn declare_in(&mut self, scope: DyadPtr, spelling: &str, id: DyadPtr) -> DyadPtr {
+        let record = Record::alloc(self.store, self.record_, Record::new(id, scope));
+        self.trie.insert(spelling, record);
+        record
+    }
 }
 
 /// The one-signature infix constructor over a file's `build` fn: read the two
@@ -895,6 +934,9 @@ unsafe fn type_name(types: &CoreTypes, node: DyadPtr) -> String {
     }
     if node == types.bool_ {
         return "bool".to_string();
+    }
+    if node == types.record_ {
+        return "record".to_string();
     }
     match meta::kind_of(node) {
         Some(t) if t <= NumType::F64 as u8 => NumType::from_tag(t).spelling().to_string(),
@@ -1319,6 +1361,14 @@ mod tests {
     use crate::parse::{Parser, ScopeStack, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
     use crate::run::Runtime;
 
+    /// A record dyad of type `record` naming `identity`, for a name a test
+    /// declares by hand (its scope is set by `ScopeStack::declare`). Leaked,
+    /// like every test-built dyad: the process exits.
+    fn test_record(record_ty: DyadPtr, identity: DyadPtr) -> DyadPtr {
+        let fields = Box::into_raw(Box::new(Record::new(identity, std::ptr::null_mut())));
+        Box::into_raw(Box::new(crate::dyad::Dyad { ty: record_ty, value: fields as *mut u8 }))
+    }
+
     #[test]
     fn parses_a_equals_a_plus_one() {
         let mut store = Store::new();
@@ -1329,7 +1379,7 @@ mod tests {
         scopes.push(core.root_scope);
         // Declare the variable `a` in the root scope.
         let a = store.alloc_raw(core.i32_, std::ptr::null_mut());
-        scopes.declare(&mut trie, "a", a).unwrap();
+        scopes.declare(&mut trie, "a", test_record(core.record_, a)).unwrap();
 
         let root = {
             let mut p = Parser::new("a = a + 1", &mut store, &mut trie, core.types(), scopes);
@@ -1366,7 +1416,7 @@ mod tests {
         // `a` is an i32 variable initialised to 0.
         let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
         let a = store.alloc_raw(core.i32_, a_val);
-        scopes.declare(&mut trie, "a", a).unwrap();
+        scopes.declare(&mut trie, "a", test_record(core.record_, a)).unwrap();
 
         let root = {
             let mut p = Parser::new("a = a + 1", &mut store, &mut trie, core.types(), scopes);
@@ -1396,7 +1446,7 @@ mod tests {
         scopes.push(core.root_scope);
         let a_val = store.alloc_bytes(&41i32.to_ne_bytes());
         let a = store.alloc_raw(core.i32_, a_val);
-        scopes.declare(&mut trie, "a", a).unwrap();
+        scopes.declare(&mut trie, "a", test_record(core.record_, a)).unwrap();
 
         let main = {
             let mut p = Parser::new(
@@ -1589,7 +1639,7 @@ mod tests {
         let call = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            s.declare(&mut trie, "add", add).unwrap();
+            s.declare(&mut trie, "add", test_record(core.record_, add)).unwrap();
             let mut p =
                 Parser::new("add(40, 2)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
@@ -1657,7 +1707,7 @@ mod tests {
         let call = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            s.declare(&mut trie, "add", add).unwrap();
+            s.declare(&mut trie, "add", test_record(core.record_, add)).unwrap();
             let mut p =
                 Parser::new("add(40, 2)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
@@ -1697,7 +1747,7 @@ mod tests {
         let call = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            s.declare(&mut trie, "add", add).unwrap();
+            s.declare(&mut trie, "add", test_record(core.record_, add)).unwrap();
             let mut p = Parser::new("add(40)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
@@ -1880,7 +1930,7 @@ mod tests {
         scopes.push(core.root_scope);
         let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
         let a = store.alloc_raw(core.i32_, a_val);
-        scopes.declare(&mut trie, "a", a).unwrap();
+        scopes.declare(&mut trie, "a", test_record(core.record_, a)).unwrap();
 
         let root = {
             let mut p = Parser::new("a = a + 1", &mut store, &mut trie, core.types(), scopes);
@@ -1921,7 +1971,7 @@ mod tests {
         scopes.push(core.root_scope);
         let a_val = store.alloc_bytes(&0i64.to_ne_bytes());
         let a = store.alloc_raw(core.numtypes[NumType::I64 as usize], a_val);
-        scopes.declare(&mut trie, "a", a).unwrap();
+        scopes.declare(&mut trie, "a", test_record(core.record_, a)).unwrap();
 
         // A nullary `-> i64` fn so the compiled return logos is the declared i64
         // (`compile_fn` reads `FN_OUTPUT`); its body assigns into the enclosing `a`.
@@ -2097,7 +2147,7 @@ mod tests {
         let call = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            s.declare(&mut trie, "add4", add4).unwrap();
+            s.declare(&mut trie, "add4", test_record(core.record_, add4)).unwrap();
             let mut p =
                 Parser::new("add4(1, 2, 3, 4)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
@@ -2119,7 +2169,7 @@ mod tests {
         scopes.push(core.root_scope);
         // `x`: an i32 variable with no storage yet.
         let x = store.alloc_raw(core.i32_, std::ptr::null_mut());
-        scopes.declare(&mut trie, "x", x).unwrap();
+        scopes.declare(&mut trie, "x", test_record(core.record_, x)).unwrap();
 
         let node = {
             let mut p = Parser::new("x", &mut store, &mut trie, core.types(), scopes);
@@ -2149,7 +2199,7 @@ mod tests {
         scopes.push(core.root_scope);
         let a_val = store.alloc_bytes(&10i32.to_ne_bytes());
         let a = store.alloc_raw(core.i32_, a_val);
-        scopes.declare(&mut trie, "a", a).unwrap();
+        scopes.declare(&mut trie, "a", test_record(core.record_, a)).unwrap();
 
         let func = {
             let mut p = Parser::new(
@@ -2483,7 +2533,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let y = store.alloc_raw(core.i32_, std::ptr::null_mut());
-            s.declare(&mut trie, "y", y).unwrap();
+            s.declare(&mut trie, "y", test_record(core.record_, y)).unwrap();
         }
         let mut rt = Runtime::new(core.fn_type, core.rational);
 
@@ -2588,7 +2638,7 @@ mod tests {
             let call = {
                 let mut s = ScopeStack::new();
                 s.push(core.root_scope);
-                s.declare(&mut trie, "f", func).unwrap();
+                s.declare(&mut trie, "f", test_record(core.record_, func)).unwrap();
                 let src = format!("f({arg})");
                 let mut p =
                     Parser::new(&src, &mut store, &mut trie, core.types(), s);
@@ -2647,7 +2697,7 @@ mod tests {
         scopes.push(core.root_scope);
         let a_val = store.alloc_bytes(&41i32.to_ne_bytes());
         let a = store.alloc_raw(core.i32_, a_val);
-        scopes.declare(&mut trie, "a", a).unwrap();
+        scopes.declare(&mut trie, "a", test_record(core.record_, a)).unwrap();
         let func = {
             let mut p = Parser::new(
                 "fn () -> void ( if (a < 100) (a = a + 1) )",
@@ -2708,7 +2758,7 @@ mod tests {
         scopes.push(core.root_scope);
         let a_val = store.alloc_bytes(&5i32.to_ne_bytes());
         let a = store.alloc_raw(core.i32_, a_val);
-        scopes.declare(&mut trie, "a", a).unwrap();
+        scopes.declare(&mut trie, "a", test_record(core.record_, a)).unwrap();
         let func = {
             let mut p = Parser::new(
                 "fn () -> void ( if (a < 1) ( if (a < 1) (a = a + 1) ) else (a = a + 2) )",
@@ -2746,7 +2796,7 @@ mod tests {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let a = store.alloc_raw(core.i32_, std::ptr::null_mut());
-        s.declare(&mut trie, "a", a).unwrap();
+        s.declare(&mut trie, "a", test_record(core.record_, a)).unwrap();
         let mut p = Parser::new("a = 3.5", &mut store, &mut trie, core.types(), s);
         assert_eq!(p.parse_expression(), Err(ParseError::UncomputableLiteral));
     }
@@ -2776,7 +2826,7 @@ mod tests {
         let outer = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            s.declare(&mut trie, "mul", mul).unwrap();
+            s.declare(&mut trie, "mul", test_record(core.record_, mul)).unwrap();
             let mut p = Parser::new(
                 "fn () -> i64 ( mul(2000000000, 3) )",
                 &mut store,
@@ -2813,7 +2863,7 @@ mod tests {
         scopes.push(core.root_scope);
         let a_val = store.alloc_bytes(&2.5f64.to_bits().to_ne_bytes());
         let a = store.alloc_raw(core.numtypes[NumType::F64 as usize], a_val);
-        scopes.declare(&mut trie, "a", a).unwrap();
+        scopes.declare(&mut trie, "a", test_record(core.record_, a)).unwrap();
 
         let g = {
             let mut s = ScopeStack::new();
@@ -2828,7 +2878,7 @@ mod tests {
             );
             p.parse_expression().unwrap()
         };
-        scopes.declare(&mut trie, "g", g).unwrap();
+        scopes.declare(&mut trie, "g", test_record(core.record_, g)).unwrap();
         let outer = {
             let mut p = Parser::new(
                 "fn () -> f64 ( g(a) )",
@@ -2924,7 +2974,7 @@ mod tests {
         let outer = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            s.declare(&mut trie, "add", add).unwrap();
+            s.declare(&mut trie, "add", test_record(core.record_, add)).unwrap();
             let mut p = Parser::new(
                 "fn () -> i32 ( add(40) )",
                 &mut store,
@@ -2971,7 +3021,7 @@ mod tests {
         };
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        s.declare(&mut trie, "f", func).unwrap();
+        s.declare(&mut trie, "f", test_record(core.record_, func)).unwrap();
         let mut p = Parser::new("f(2.5)", &mut store, &mut trie, core.types(), s);
         assert_eq!(p.parse_expression(), Err(ParseError::UncomputableLiteral));
     }
@@ -3761,7 +3811,7 @@ mod tests {
         let call = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            s.declare(&mut trie, "f", func).unwrap();
+            s.declare(&mut trie, "f", test_record(core.record_, func)).unwrap();
             let mut p = Parser::new(
                 "f(5000000000)",
                 &mut store,
@@ -3955,7 +4005,7 @@ mod tests {
         s.push(core.root_scope);
         let x_val = store.alloc_bytes(&5i32.to_ne_bytes());
         let x = store.alloc_raw(core.i32_, x_val);
-        s.declare(&mut trie, "x", x).unwrap();
+        s.declare(&mut trie, "x", test_record(core.record_, x)).unwrap();
 
         let mut p = Parser::new(
             "(dyad (x + x)).type.roles[0]",
@@ -4520,7 +4570,7 @@ mod tests {
         let outer = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            s.declare(&mut trie, "add", add).unwrap();
+            s.declare(&mut trie, "add", test_record(core.record_, add)).unwrap();
             let mut p = Parser::new(
                 "fn () -> i32 ( add(40, 2) )",
                 &mut store,
@@ -4566,7 +4616,7 @@ mod tests {
         let call = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            s.declare(&mut trie, "f", func).unwrap();
+            s.declare(&mut trie, "f", test_record(core.record_, func)).unwrap();
             let mut p = Parser::new(call_src, &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
@@ -4618,7 +4668,7 @@ mod tests {
         scopes.push(core.root_scope);
         let a_val = store.alloc_bytes(&init.to_ne_bytes()[..nt.bytes()]);
         let a = store.alloc_raw(core.numtypes[nt as usize], a_val);
-        scopes.declare(&mut trie, "a", a).unwrap();
+        scopes.declare(&mut trie, "a", test_record(core.record_, a)).unwrap();
         let func = {
             let mut p = Parser::new(fn_src, &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
@@ -4733,7 +4783,7 @@ mod tests {
         scopes.push(core.root_scope);
         let a_val = store.alloc_bytes(&41i32.to_ne_bytes());
         let a = store.alloc_raw(core.i32_, a_val);
-        scopes.declare(&mut trie, "a", a).unwrap();
+        scopes.declare(&mut trie, "a", test_record(core.record_, a)).unwrap();
         let func = {
             let mut p = Parser::new(
                 "fn () -> void ( a = a + 1 )",

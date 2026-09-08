@@ -25,7 +25,6 @@ use super::numtype::{ArithOp, CmpOp, NumType};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::record::Record;
 use crate::parse::{Cell, Constructed, ParseError, ParsingTape, Parser};
 use crate::store::Store;
 
@@ -38,7 +37,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     // a prefix of the remaining input. The span is unsigned — `-` is always the
     // operator (else `a-1` would lex as `a` then the literal `-1`); a negative
     // literal is the prefix `-` negating the literal at parse time ([`negate`]).
-    cx.trie.insert(r"[0-9]+(?:\.[0-9]+)?", Record::new(id, cx.root_scope));
+    cx.declare(r"[0-9]+(?:\.[0-9]+)?", id);
     cx.metas.insert(id, construct);
     cx.lower.insert(id, lower);
     id

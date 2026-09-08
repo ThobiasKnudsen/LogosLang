@@ -21,7 +21,6 @@ use cranelift_codegen::ir::{types, Value};
 
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::record::Record;
 
 use super::Cx;
 
@@ -149,7 +148,7 @@ impl NumType {
 pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr {
     let record = super::meta::record(cx.store, nt as u8, super::meta::prec::APPLY);
     let id = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert(spelling, Record::new(id, cx.root_scope));
+    cx.declare(spelling, id);
     cx.metas.insert(id, construct);
     cx.lower.insert(id, lower_var);
     id
@@ -206,7 +205,7 @@ pub(crate) const VOID_TAG: u8 = 10;
 pub(crate) fn register_void(cx: &mut Cx) -> DyadPtr {
     let record = super::meta::record(cx.store, VOID_TAG, super::meta::prec::INERT);
     let id = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert("void", Record::new(id, cx.root_scope));
+    cx.declare("void", id);
     id
 }
 

@@ -10,6 +10,7 @@
 //! the store).
 
 use crate::dyad::{Dyad, DyadPtr};
+use crate::record::Record;
 
 /// Dyads per chunk. Each chunk is a `Vec` allocated to exactly this capacity and
 /// never grown past it, so its heap buffer never reallocates and the addresses
@@ -65,6 +66,14 @@ impl Store {
         let ptr = boxed.as_mut_ptr() as *mut u8;
         self.operands.push(boxed);
         ptr
+    }
+
+    /// Store a name's record — five `dyad@` fields, `#[repr(C)]` — and return a
+    /// write pointer to it. It rides the operand arena: a record is exactly a
+    /// run of five pointers, which that arena already keeps 8-aligned and at a
+    /// stable address, so no third arena is needed.
+    pub fn alloc_record(&mut self, rec: Record) -> *mut Record {
+        self.alloc_operands(&[rec.dyad, rec.scope, rec.start, rec.end, rec.gate]) as *mut Record
     }
 
     /// Store literal bytes (e.g. a numeric literal's digits, or a variable's

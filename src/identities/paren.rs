@@ -10,7 +10,6 @@
 
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
-use crate::record::Record;
 
 /// Register `(` and `)`, returning their handles (the parser's expect-helpers
 /// compare against them). The spellings are escaped (`\(`, `\)`) because
@@ -24,7 +23,7 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
     // in `(1 + 2) (3)`, are the checked error, not a call.
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::OPEN);
     let open = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert(r"\(", Record::new(open, cx.root_scope));
+    cx.declare(r"\(", open);
     cx.metas.insert(open, |p, _id, tape| {
         let body = p.parse_sequence()?;
         p.expect_close()?;
@@ -34,7 +33,7 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
 
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
     let close = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert(r"\)", Record::new(close, cx.root_scope));
+    cx.declare(r"\)", close);
 
     (open, close)
 }
