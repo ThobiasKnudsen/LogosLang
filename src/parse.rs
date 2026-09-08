@@ -1554,7 +1554,8 @@ impl<'a> Parser<'a> {
         id: DyadPtr,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        if let Some(scope) = tape.at(1).filter(|c| c.is_bracket()).map(|c| c.dyad) {
+        // The bracket, lexed on demand: application runs at discovery.
+        if let Some(scope) = self.cell_at(tape, 1)?.filter(|c| c.is_bracket()).map(|c| c.dyad) {
             // SAFETY: `scope` is the bracket's node from the store.
             let args = unsafe { self.args_of(scope) };
             let node = self.build_call(id, &args)?;
@@ -1643,6 +1644,51 @@ impl<'a> Parser<'a> {
     /// `name = <type>` fills (a record place by declared type is #47). The type to the left is
     /// read as it stands — `@`s and then a type name or a constructed type —
     /// and those cells are consumed.
+    /// `dyad`'s constructor (DESIGN ›Feasibility‹: "`dyad (type, value)`
+    /// construction from Logos", #60): with a bracket to its right, `dyad (T,
+    /// v)` builds a store-owned cell of type `T`. A numeric `T` takes a
+    /// literal `v` committed to its width, exactly as `T v` does; any other
+    /// `T` takes `v` as the node the cell's value points at — the reading the
+    /// sketches' `tape[0] = dyad (scope, body)` needs, what a constructor
+    /// hands in being the constructor's business (#61). Without a bracket,
+    /// `dyad` stands as its value, the cell type.
+    pub(crate) fn construct_dyad(
+        &mut self,
+        id: DyadPtr,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        let types = self.types;
+        let Some(bracket) = self.cell_at(tape, 1)?.filter(|c| c.is_bracket()) else {
+            let value = self.stand_as_value(tape, id);
+            tape.place(value);
+            return Ok(Constructed::Placed);
+        };
+        // SAFETY: the bracket cell holds a node from the store; its arguments
+        // are reduced dyads.
+        let cell = unsafe {
+            let args = self.args_of(bracket.dyad);
+            let [ty, value] = args[..] else {
+                return Err(ParseError::CtorArity);
+            };
+            let ty = types.through(ty);
+            if !crate::identities::is_type_value(&types, ty) {
+                return Err(ParseError::BadDeclaredType);
+            }
+            let read = types.through(value);
+            if crate::identities::is_numtype_node(&types, ty) {
+                if (*read).ty != types.rational {
+                    return Err(ParseError::UnsupportedOperands);
+                }
+                crate::identities::commit_literal_to(self.store, &types, read, ty)?
+            } else {
+                self.store.alloc_raw(ty, read as *mut u8)
+            }
+        };
+        tape.remove(1);
+        tape.place(cell);
+        Ok(Constructed::Placed)
+    }
+
     pub(crate) fn construct_hole(&mut self, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
         let types = self.types;
         let base = match tape.at(-1).copied() {

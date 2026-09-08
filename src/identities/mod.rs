@@ -82,7 +82,6 @@ mod divide;
 pub(crate) mod drop_model;
 mod gate;
 pub mod import;
-mod view;
 mod colon;
 mod hole;
 pub(crate) mod instance;
@@ -403,8 +402,9 @@ impl Core {
         // the pass, once per run, over a DAG (ruled August 2026).
         let (import_, import_leaf) = import::register(&mut cx, &callables);
         op_leaves.import_ = import_leaf;
-        // `dyad`, the cell type (inert), and `:`, the record read (#70).
-        let dyad_ = view::register(&mut cx);
+        // `dyad`, the cell type with its `dyad (type, value)` constructor
+        // (#60), and `:`, the record read (#70).
+        let dyad_ = dyad::register(&mut cx);
         let colon_ = colon::register(&mut cx);
         hole::register(&mut cx);
         let sep_ = logos_mod::register_syntax(&mut cx);

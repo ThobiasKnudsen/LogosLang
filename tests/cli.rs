@@ -679,3 +679,17 @@ fn a_tight_read_lexes_its_right_cell_on_demand_and_stops_at_a_boundary() {
     assert_eq!(echoes, ["3", "2", "1", "1", "1", "true"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
+
+#[test]
+fn a_dyad_is_built_from_a_type_and_a_value() {
+    // DESIGN ›Feasibility‹: "`dyad (type, value)` construction from Logos"
+    // (#60). `dyad (i32, 7)` is a store-owned i32 cell, `dyad` alone the
+    // cell type; the view reads the built cell's two fields.
+    let (echoes, stderr) = repl(
+        b"c := dyad (i32, 7)\nc\nc:dyad.type == i32\ndyad (i32, 7):dyad.type == i32\nc + 1\n",
+    );
+    assert_eq!(echoes, ["7", "true", "true", "8"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+    let (_e, stderr) = repl(b"dyad (i32)\n");
+    assert!(!stderr.is_empty(), "two operands, not one");
+}

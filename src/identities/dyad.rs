@@ -1,14 +1,27 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The node cell.
+//! The node cell, and `dyad` the identity that spells it.
 //!
 //! A dyad is a `type` pointer and a `value` pointer — sixteen bytes — and a
 //! dyad's identity is its address (see DESIGN ›A dyad is a type and a
 //! value‹): form, matter, and the compound of the two. This is the minimal cell
-//! the lexer's trie needs something to point at; Phase 0 fleshes it out (tag
-//! bits in the low pointer bits, the `void@`/`exec@`/`dyad@` handle logos).
-//! Keep additions here deliberate.
+//! the lexer's trie needs something to point at. Keep additions here
+//! deliberate.
+//!
+//! `dyad` is also a spelled type (DESIGN ›Substrate vocabulary‹: "The cell is
+//! the `dyad`, its two slots the `.type` and the `.value`"; sketch
+//! `identities/dyad.logos`: `dyad := type (type := @dyad ?, value := @void ?)`).
+//! Its constructor builds a cell: `dyad (type, value)` — the construction a
+//! Logos-written constructor uses for the node it places, `tape[0] = dyad
+//! (scope, body)` (DESIGN ›Feasibility‹: "`dyad (type, value)` construction
+//! from Logos"; #60). The cell is store-owned, never a frame instance: a
+//! node the graph keeps. Without a bracket, `dyad` stands as its value, the
+//! type, so `@dyad` names a pointer to a cell. The dyad *view* — a value of
+//! this type whose value is a cell's address, on which `.type` and `.value`
+//! read the cell — is spelled `a:dyad` (›The dyad's read surface‹).
+
+use super::{meta, Cx};
 
 /// A node cell: a `type` pointer (`dyad@`) and a `value` pointer (`void@`).
 #[repr(C)]
@@ -22,6 +35,17 @@ pub struct Dyad {
 
 /// A handle to a node: its address is its id (`dyad@` in the sketch).
 pub type DyadPtr = *mut Dyad;
+
+/// Register `dyad`, the cell type, with its constructor
+/// ([`crate::parse::Parser::construct_dyad`]): at application precedence, so
+/// `dyad (…)` reads the bracket to its right and `dyad` alone is the type.
+pub(super) fn register(cx: &mut Cx) -> DyadPtr {
+    let record = meta::record(cx.store, meta::DYAD_TAG, meta::prec::APPLY);
+    let id = cx.store.alloc_raw(cx.type_, record);
+    cx.declare("dyad", id);
+    cx.metas.insert(id, |p, id, tape| p.construct_dyad(id, tape));
+    id
+}
 
 /// The high-bit tag marking a place node's `value` as a *frame-relative* slot
 /// rather than an absolute address. A function-local variable's storage does not

@@ -137,9 +137,11 @@ pub(crate) mod prec {
     /// `(`: the discovery threshold.
     pub const OPEN: f64 = 90.0;
     /// Application and juxtaposition: a callable or a type before its argument
-    /// cell — "the tight juxtaposition just below `(`" — above the member and
-    /// dereference reads, so `f(x).y` and `f(x)@` read the call's result.
-    pub const APPLY: f64 = 88.0;
+    /// (`f(x)`, `i32 5`, `i32(x)`, `dyad (…)`). At discovery since 9 September
+    /// 2026 (#60): it reads its bracket lazily, in source order, so `f(2).x`
+    /// and `dyad (i32, 7):dyad` read the call — the tight reads sit above it
+    /// and the identities that read their own bracket above those.
+    pub const APPLY: f64 = 91.0;
     /// `?`: just below application, so `i32 ?` and `@i32 ?` find their type
     /// standing to the left.
     pub const HOLE: f64 = 87.0;

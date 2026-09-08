@@ -169,7 +169,16 @@ fn construct(
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, crate::parse::ParseError> {
     let types = p.types();
-    let node = match tape.at(1).copied() {
+    // The cell to the right, lexed on demand: this constructor runs at
+    // discovery (`prec::APPLY`), before the loop has lexed past it. A sign
+    // there belongs to the literal after it, which folds it at its own
+    // discovery — so that literal is lexed too, and the folded cell read.
+    let mut right = p.cell_at(tape, 1)?;
+    if matches!(right, Some(c) if !c.constructed && c.identity(&types) == types.minus) {
+        p.cell_at(tape, 2)?;
+        right = tape.at(1).copied();
+    }
+    let node = match right {
         // A rational literal cell (a negative one already folded at
         // discovery): the anonymous typed value. SAFETY: a dyad cell is a
         // node from the store; `id` is this numeric logos's registered node.
