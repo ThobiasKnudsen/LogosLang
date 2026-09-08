@@ -35,8 +35,8 @@ pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
 /// The literal's constructor: read the `«…»` span off the cursor token and
 /// place the string node over it (the guillemets are two bytes each in UTF-8).
 fn construct(p: &mut Parser, id: DyadPtr, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
-    let t = tape.own_token().ok_or(ParseError::BadLiteral)?;
-    let span = &p.source()[t.start..t.start + t.len];
+    let (start, len) = tape.own_span().ok_or(ParseError::BadLiteral)?;
+    let span = &p.source()[start..start + len];
     let inner = &span.as_bytes()[2..span.len() - 2];
     let node = build_text(p.store(), id, inner);
     tape.place(node);

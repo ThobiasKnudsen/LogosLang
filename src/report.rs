@@ -4,7 +4,7 @@
 //! Human-readable diagnostics: byte offsets become `file:line:col`, errors
 //! become sentences, and the offending source line is shown with a caret.
 //!
-//! The parser tracks byte offsets ([`crate::parse::Token`], the cursor) but its
+//! The parser tracks byte offsets (the tape's cell spans, the cursor) but its
 //! errors carry none; the honest v1 position is *where the parser stopped*
 //! ([`crate::parse::Parser::offset`]) — the stuck point, which for the common
 //! errors (an unknown name, a bad literal) sits exactly at the offending

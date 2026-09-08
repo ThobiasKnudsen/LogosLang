@@ -39,250 +39,346 @@ use crate::record::Record;
 use crate::regex_trie::{RegexTrie, RegexTrieError};
 use crate::store::Store;
 
-/// A pending, not-yet-reduced token: the source span it was lexed from and the
-/// identity it denotes. A token's identity is not fixed until it is consumed
-/// into a dyad — a reduced [`Cell::Dyad`] is frozen against rewriting, a token
-/// is not. The driver resolves names eagerly at scan where it can (the
-/// identity set on push) and pushes a *fresh* name as the null-until-consumed
-/// form ([`Token::new`]): a following `:=` declares it at reduction, and
-/// any other consumer converts it through `as_operand`, which re-resolves the
-/// span. Full deferred resolution for already-resolvable names — what
-/// token-rewriting operators need — rides the same null path later.
+/// One cell of the tape (DESIGN ›The scope's constructor is the driver‹, 2
+/// and 7 September 2026): a pointer to a dyad — unconstructed, the **record**
+/// the trie resolved for the spelling, or a fresh dyad with both slots null
+/// for a spelling the trie does not know (`:=` fills it); constructed, the
+/// node the constructor built — plus the tape's own two facts about the
+/// cell, whether it is constructed and the source span it was lexed at (the
+/// derived source map's seed-side stand-in). Never a token wrapper: the
+/// identity a cell denotes is read through its record ([`Cell::identity`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Token {
-    /// Byte offset of the token in the source.
+pub struct Cell {
+    /// The record, the fresh dyad, or the node.
+    pub dyad: DyadPtr,
+    /// The tape's own flag: `is_constructed` for this cell.
+    pub constructed: bool,
+    /// The tape's own mark that this constructed cell is the group a `(`
+    /// landed, so the identity to its left may claim it (`X (…)` is X's
+    /// decision). A seed stand-in: DESIGN lands every bracket as a scope cell,
+    /// whose type would say so, but the seed still unwraps a one-expression
+    /// group to its expression (`parse_sequence`), which loses that type; the
+    /// mark goes when the unwrap goes.
+    pub bracket: bool,
+    /// Byte offset of the cell's spelling in the source (0 for a cell that
+    /// was never lexed: a spliced-in or parser-minted one).
     pub start: usize,
-    /// Byte length of the matched span.
+    /// Byte length of that spelling.
     pub len: usize,
-    /// The identity this token denotes, or null until consumed (a fresh name
-    /// awaiting its declaration or its resolution error). What the driver
-    /// dispatches on (`ctor_of`, precedence).
-    pub identity: DyadPtr,
-    /// The name's record, what a use of it stores (DESIGN ›The dyad's read
-    /// surface‹, 8 September 2026); null for a fresh name and for a token the
-    /// parser minted for an identity rather than lexed from a spelling. The
-    /// cell itself becomes the record with #60.
-    pub record: DyadPtr,
-}
-
-impl Token {
-    /// A token over `start..start + len`, not yet resolved.
-    pub fn new(start: usize, len: usize) -> Self {
-        Token { start, len, identity: std::ptr::null_mut(), record: std::ptr::null_mut() }
-    }
-}
-
-/// One cell of the tape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Cell {
-    /// A pending token, still rewritable until reduced.
-    Token(Token),
-    /// A dyad already reduced from earlier cells, frozen against rewriting.
-    Dyad(DyadPtr),
-    /// A bracket, constructed at discovery: the finished scope cell `(`'s
-    /// constructor leaves (DESIGN ›The scope's constructor is the driver‹).
-    /// Told apart from a plain dyad because `X (…)` is X's decision — a
-    /// callable reads the bracket to its right as its arguments, a numeric
-    /// logos as its conversion — while `f 3` is not a call.
-    Scope(DyadPtr),
 }
 
 impl Cell {
-    /// The reduced dyad, if this cell is one (a bracket's scope included).
-    pub fn as_dyad(&self) -> Option<DyadPtr> {
-        match self {
-            Cell::Dyad(d) | Cell::Scope(d) => Some(*d),
-            Cell::Token(_) => None,
+    /// An unconstructed cell over `start..start + len` pointing at `dyad`.
+    pub fn unconstructed(dyad: DyadPtr, start: usize, len: usize) -> Self {
+        Cell { dyad, constructed: false, bracket: false, start, len }
+    }
+
+    /// A constructed cell holding `dyad`, with no spelling of its own.
+    pub fn built(dyad: DyadPtr) -> Self {
+        Cell { dyad, constructed: true, bracket: false, start: 0, len: 0 }
+    }
+
+    /// One past the cell's last byte.
+    pub fn end(&self) -> usize {
+        self.start + self.len
+    }
+
+    /// The identity this cell denotes — what the driver dispatches on: the
+    /// record read through to its dyad, a fresh dyad itself, a node itself.
+    pub fn identity(&self, types: &CoreTypes) -> DyadPtr {
+        // SAFETY: a cell's dyad is null or a dyad from the store.
+        unsafe { types.through(self.dyad) }
+    }
+
+    /// The record this cell points at, or null when it holds none (a fresh
+    /// spelling, a parser-minted identity, a constructed node).
+    pub fn record(&self, types: &CoreTypes) -> DyadPtr {
+        // SAFETY: as above.
+        if !self.constructed && !self.dyad.is_null() && unsafe { (*self.dyad).ty } == types.record_ {
+            self.dyad
+        } else {
+            std::ptr::null_mut()
         }
     }
 
-    /// The pending token, if this cell is one.
-    pub fn as_token(&self) -> Option<&Token> {
-        match self {
-            Cell::Token(t) => Some(t),
-            Cell::Dyad(_) | Cell::Scope(_) => None,
-        }
+    /// A spelling the trie did not know: an unconstructed cell whose fresh
+    /// dyad has both slots null.
+    pub fn is_fresh(&self) -> bool {
+        // SAFETY: as above.
+        !self.constructed && !self.dyad.is_null() && unsafe { (*self.dyad).ty }.is_null()
     }
 
-    /// The bracket's scope, if this cell is one.
-    pub fn as_scope(&self) -> Option<DyadPtr> {
-        match self {
-            Cell::Scope(d) => Some(*d),
-            _ => None,
-        }
+    /// A bracket: the finished group `(`'s constructor leaves, which the
+    /// identity to its left may claim (`X (…)` is X's decision). A *named*
+    /// scope value is a record, so `f s` is no call.
+    pub fn is_bracket(&self) -> bool {
+        self.constructed && self.bracket
     }
 }
 
-/// The working frontier of a scope: reduced dyads interleaved with pending
-/// tokens, indexed relative to the `cursor`.
+/// A node of the tape's doubly linked list: a cell and its two links.
+#[derive(Debug, Clone, Copy)]
+struct Node {
+    cell: Cell,
+    prev: Option<usize>,
+    next: Option<usize>,
+}
+
+/// The working frontier of a scope: a doubly linked list of cells with a
+/// movable center (DESIGN ›The scope's constructor is the driver‹, ruled 8
+/// September 2026 to be the list, not a vector): `tape[0]` is the construct's
+/// own cell, negative offsets its left context, positive its right; `insert`
+/// and `remove` at the center are constant-time splices, `tape[k]` walks k
+/// links. Nodes live in an arena so handles stay valid across splices; a
+/// removed node is simply unlinked. Absolute indices (`cell(i)`, `cursor()`,
+/// `set_cursor(i)`) walk from the head and serve the boundary-time driver.
 #[derive(Debug, Default)]
 pub struct ParsingTape {
-    cells: Vec<Cell>,
-    /// The source offset each cell was lexed at — the derived source map's
-    /// seed-side stand-in, kept beside the cells so an error over a cell
-    /// (a leftover one, an undeclared name) points at where it stood.
-    starts: Vec<usize>,
-    cursor: usize,
+    nodes: Vec<Node>,
+    head: Option<usize>,
+    tail: Option<usize>,
+    /// The center: `None` is the one-past-end position (after the last cell
+    /// was removed, or on an empty tape).
+    center: Option<usize>,
+    len: usize,
 }
 
 impl ParsingTape {
     /// An empty tape.
     pub fn new() -> Self {
-        ParsingTape { cells: Vec::new(), starts: Vec::new(), cursor: 0 }
+        ParsingTape { nodes: Vec::new(), head: None, tail: None, center: None, len: 0 }
     }
 
-    /// A tape over `cells`, cursor at index 0 (positions unknown).
+    /// A tape over `cells`, center on the first.
     pub fn from_cells(cells: Vec<Cell>) -> Self {
-        let starts = vec![0; cells.len()];
-        ParsingTape { cells, starts, cursor: 0 }
-    }
-
-    /// The source offset the cell at absolute index `i` was lexed at.
-    pub fn start_of(&self, i: usize) -> usize {
-        self.starts.get(i).copied().unwrap_or(0)
+        let mut t = ParsingTape::new();
+        for c in cells {
+            t.push(c);
+        }
+        t.center = t.head;
+        t
     }
 
     /// Number of cells currently on the tape.
     pub fn len(&self) -> usize {
-        self.cells.len()
+        self.len
     }
 
     /// True if the tape has no cells.
     pub fn is_empty(&self) -> bool {
-        self.cells.is_empty()
+        self.len == 0
     }
 
-    /// The cursor's absolute index (the cell of the identity being constructed).
-    pub fn cursor(&self) -> usize {
-        self.cursor
-    }
-
-    /// Move the cursor to absolute index `i` (clamped to `[0, len]`; `len` is the
-    /// one-past-end "at end" position).
-    pub fn set_cursor(&mut self, i: usize) {
-        self.cursor = i.min(self.cells.len());
-    }
-
-    /// Map a cursor-relative offset to an absolute index, if in range.
-    fn abs(&self, offset: isize) -> Option<usize> {
-        let i = self.cursor as isize + offset;
-        if i >= 0 && (i as usize) < self.cells.len() {
-            Some(i as usize)
-        } else {
-            None
+    /// The node `offset` links from the center; `None` off either end. Past
+    /// the end (no center), negative offsets walk back from the tail.
+    fn node_at(&self, offset: isize) -> Option<usize> {
+        let (mut n, mut steps) = match self.center {
+            Some(c) => (c, offset),
+            None => {
+                if offset >= 0 {
+                    return None;
+                }
+                (self.tail?, offset + 1)
+            }
+        };
+        while steps > 0 {
+            n = self.nodes[n].next?;
+            steps -= 1;
         }
+        while steps < 0 {
+            n = self.nodes[n].prev?;
+            steps += 1;
+        }
+        Some(n)
     }
 
-    /// The cell at cursor-relative `offset` (0 is the cursor), or `None` if out
-    /// of range.
+    /// The node at absolute index `i`, walking from the head.
+    fn node_abs(&self, i: usize) -> Option<usize> {
+        let mut n = self.head?;
+        for _ in 0..i {
+            n = self.nodes[n].next?;
+        }
+        Some(n)
+    }
+
+    /// The cell at cursor-relative `offset` (0 is the center), or `None` if
+    /// out of range.
     pub fn at(&self, offset: isize) -> Option<&Cell> {
-        self.abs(offset).map(|i| &self.cells[i])
+        self.node_at(offset).map(|n| &self.nodes[n].cell)
     }
 
     /// Mutable access to the cell at cursor-relative `offset`.
     pub fn at_mut(&mut self, offset: isize) -> Option<&mut Cell> {
-        self.abs(offset).map(move |i| &mut self.cells[i])
-    }
-
-    /// Insert `cell` at cursor-relative `offset`, shifting later cells right. The
-    /// cursor keeps pointing at the same cell, so `insert(0, ..)` splices *just
-    /// left* of the cursor and `insert(1, ..)` splices just right of it.
-    /// `offset` is clamped so an out-of-range splice lands at the near end.
-    pub fn insert(&mut self, offset: isize, cell: Cell) {
-        let old_len = self.cells.len();
-        let i = (self.cursor as isize + offset).clamp(0, old_len as isize) as usize;
-        let start = self.start_of(self.cursor);
-        self.cells.insert(i, cell);
-        self.starts.insert(i, start);
-        // The cell previously at `cursor` shifts right only if it exists and sits
-        // at or after the insertion point; follow it so `at(0)` is unchanged.
-        if i <= self.cursor && self.cursor < old_len {
-            self.cursor += 1;
-        }
-    }
-
-    /// Remove and return the cell at cursor-relative `offset`, shifting later
-    /// cells left. Removing a cell before the cursor moves its absolute index
-    /// back by one so it keeps pointing at the same cell.
-    pub fn remove(&mut self, offset: isize) -> Option<Cell> {
-        let i = self.abs(offset)?;
-        let cell = self.cells.remove(i);
-        self.starts.remove(i);
-        if i < self.cursor {
-            self.cursor -= 1;
-        }
-        Some(cell)
-    }
-
-    /// Append `cell`, lexed at source offset `start`, and move the cursor to
-    /// it. Used by the driver as it lexes a segment onto the frontier.
-    pub fn push(&mut self, cell: Cell, start: usize) {
-        self.cells.push(cell);
-        self.starts.push(start);
-        self.cursor = self.cells.len() - 1;
+        self.node_at(offset).map(move |n| &mut self.nodes[n].cell)
     }
 
     /// The cell at absolute index `i`, or `None` if out of range.
     pub fn cell(&self, i: usize) -> Option<&Cell> {
-        self.cells.get(i)
+        self.node_abs(i).map(|n| &self.nodes[n].cell)
     }
 
     /// The last cell on the tape, if any.
     pub fn last(&self) -> Option<&Cell> {
-        self.cells.last()
+        self.tail.map(|n| &self.nodes[n].cell)
     }
 
-    /// Remove and return the last cell, if any. Used by application: the callee
-    /// preceding a `(` is popped and replaced by the call node.
-    pub fn pop(&mut self) -> Option<Cell> {
-        let cell = self.cells.pop();
-        self.starts.pop();
-        self.cursor = self.cursor.min(self.cells.len().saturating_sub(1));
-        cell
+    /// The source offset the cell at absolute index `i` was lexed at.
+    pub fn start_of(&self, i: usize) -> usize {
+        self.cell(i).map(|c| c.start).unwrap_or(0)
     }
 
-    /// Reduce a binary operator: replace the three cells at `i - 1`, `i`, `i + 1`
-    /// with a single reduced `dyad`. Returns false if `i` is not flanked by two
-    /// cells. The cursor is clamped to the shortened tape.
-    pub fn reduce_binary(&mut self, i: usize, dyad: DyadPtr) -> bool {
-        if i == 0 || i + 1 >= self.cells.len() {
-            return false;
+    /// The center's absolute index; `len` for the one-past-end position.
+    pub fn cursor(&self) -> usize {
+        let Some(c) = self.center else { return self.len };
+        let mut i = 0;
+        let mut n = self.head;
+        while let Some(k) = n {
+            if k == c {
+                return i;
+            }
+            i += 1;
+            n = self.nodes[k].next;
         }
-        let start = self.starts[i - 1];
-        self.cells.splice(i - 1..=i + 1, [Cell::Dyad(dyad)]);
-        self.starts.splice(i - 1..=i + 1, [start]);
-        self.cursor = self.cursor.min(self.cells.len().saturating_sub(1));
-        true
+        self.len
     }
 
-    /// The construct's own token — the cursor cell — its source span still
-    /// attached. How an atom constructor reaches its matched text.
-    pub fn own_token(&self) -> Option<Token> {
-        self.at(0).and_then(Cell::as_token).copied()
+    /// Move the center to absolute index `i` (`len` and beyond: past the end).
+    pub fn set_cursor(&mut self, i: usize) {
+        self.center = self.node_abs(i);
     }
 
-    /// Replace the cursor cell — the construct's own token — with the dyad it
-    /// built: the in-place edit nearly every constructor ends with. (A
-    /// constructor may equally leave a *token* here via [`ParsingTape::at_mut`],
-    /// or splice cells anywhere with `insert`/`remove`; this is only the
-    /// common case.)
+    /// Move the center `offset` links: the re-centered view a constructor
+    /// hands to another (`tape.recenter(k)`).
+    pub fn recenter(&mut self, offset: isize) {
+        self.center = self.node_at(offset);
+    }
+
+    /// Whether the cell at `offset` is constructed, or `None` off the tape.
+    pub fn is_constructed(&self, offset: isize) -> Option<bool> {
+        self.at(offset).map(|c| c.constructed)
+    }
+
+    fn alloc(&mut self, cell: Cell) -> usize {
+        self.nodes.push(Node { cell, prev: None, next: None });
+        self.nodes.len() - 1
+    }
+
+    fn link_before(&mut self, at: Option<usize>, n: usize) {
+        match at {
+            Some(a) => {
+                let p = self.nodes[a].prev;
+                self.nodes[n].prev = p;
+                self.nodes[n].next = Some(a);
+                self.nodes[a].prev = Some(n);
+                match p {
+                    Some(p) => self.nodes[p].next = Some(n),
+                    None => self.head = Some(n),
+                }
+            }
+            None => {
+                // At the end.
+                self.nodes[n].prev = self.tail;
+                self.nodes[n].next = None;
+                match self.tail {
+                    Some(t) => self.nodes[t].next = Some(n),
+                    None => self.head = Some(n),
+                }
+                self.tail = Some(n);
+            }
+        }
+        self.len += 1;
+    }
+
+    /// Splice `cell` in at cursor-relative `offset`: before the cell there,
+    /// so `insert(0, ..)` lands just left of the center and `insert(1, ..)`
+    /// just right of it; past either end it lands at that end. The center
+    /// keeps pointing at the same cell.
+    pub fn insert(&mut self, offset: isize, cell: Cell) {
+        let n = self.alloc(cell);
+        if self.head.is_none() {
+            self.link_before(None, n);
+            self.center = Some(n);
+            return;
+        }
+        let at = if self.center.is_none() && offset >= 0 {
+            None
+        } else {
+            match self.node_at(offset) {
+                Some(a) => Some(a),
+                None if offset < 0 => self.head,
+                None => None,
+            }
+        };
+        self.link_before(at, n);
+    }
+
+    /// Unlink and return the cell at cursor-relative `offset`. Removing the
+    /// center moves it to the next cell (past the end if there is none);
+    /// removing any other cell leaves it where it is.
+    pub fn remove(&mut self, offset: isize) -> Option<Cell> {
+        let n = self.node_at(offset)?;
+        let Node { cell, prev, next } = self.nodes[n];
+        match prev {
+            Some(p) => self.nodes[p].next = next,
+            None => self.head = next,
+        }
+        match next {
+            Some(x) => self.nodes[x].prev = prev,
+            None => self.tail = prev,
+        }
+        if self.center == Some(n) {
+            self.center = next;
+        }
+        self.nodes[n].prev = None;
+        self.nodes[n].next = None;
+        self.len -= 1;
+        Some(cell)
+    }
+
+    /// Append `cell` and move the center to it: the driver's lex step.
+    pub fn push(&mut self, cell: Cell) {
+        let n = self.alloc(cell);
+        self.link_before(None, n);
+        self.center = Some(n);
+    }
+
+    /// The construct's own spelling — the center cell's span. How an atom
+    /// constructor reaches its matched text.
+    pub fn own_span(&self) -> Option<(usize, usize)> {
+        self.at(0).filter(|c| !c.constructed).map(|c| (c.start, c.len))
+    }
+
+    /// Replace the center cell's dyad with the node the constructor built and
+    /// mark it constructed: the in-place edit nearly every constructor ends
+    /// with (`tape[0] = dyad (…)` in the sketches). The span stays.
     pub fn place(&mut self, dyad: DyadPtr) {
-        *self.at_mut(0).expect("the construct's token cell is at the cursor") = Cell::Dyad(dyad);
+        let cell = self.at_mut(0).expect("the construct's cell is at the center");
+        cell.dyad = dyad;
+        cell.constructed = true;
+        cell.bracket = false;
     }
 
-    /// Replace the cursor cell — `(`'s own token — with the finished bracket
-    /// cell: the scope its constructor built, marked as a bracket so the
-    /// identity to its left can read it as its argument.
-    pub fn place_scope(&mut self, dyad: DyadPtr) {
-        *self.at_mut(0).expect("the construct's token cell is at the cursor") = Cell::Scope(dyad);
+    /// Replace `(`'s own cell with the group it built, marked as a bracket.
+    pub fn place_bracket(&mut self, dyad: DyadPtr) {
+        self.place(dyad);
+        self.at_mut(0).expect("placed above").bracket = true;
     }
 
-    /// Reduce the triple around the cursor — `tape[-1]`, the construct's own
-    /// token, `tape[+1]` — to the single `dyad`: an infix constructor's
-    /// in-place splice at reduction.
+    /// Reduce the triple around the center — `tape[-1]`, the construct's own
+    /// cell, `tape[+1]` — to the single constructed `dyad`, spanning all
+    /// three: an infix constructor's in-place splice.
     pub fn reduce_here(&mut self, dyad: DyadPtr) {
-        let i = self.cursor;
-        assert!(self.reduce_binary(i, dyad), "an infix reduces between two operands");
+        let (Some(left), Some(right)) = (self.at(-1).copied(), self.at(1).copied()) else {
+            panic!("an infix reduces between two operands");
+        };
+        self.remove(-1);
+        self.remove(1);
+        let cell = self.at_mut(0).expect("the center survives its neighbours");
+        cell.dyad = dyad;
+        cell.constructed = true;
+        cell.bracket = false;
+        cell.start = left.start;
+        cell.len = right.end().saturating_sub(left.start);
     }
 }
 
@@ -1443,7 +1539,7 @@ impl<'a> Parser<'a> {
         id: DyadPtr,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        if let Some(Cell::Scope(scope)) = tape.at(1).copied() {
+        if let Some(scope) = tape.at(1).filter(|c| c.is_bracket()).map(|c| c.dyad) {
             // SAFETY: `scope` is the bracket's node from the store.
             let args = unsafe { self.args_of(scope) };
             let node = self.build_call(id, &args)?;
@@ -1493,9 +1589,9 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
         let mut tape = ParsingTape::new();
-        tape.push(Cell::Token(Token { start, len, identity: id, record: std::ptr::null_mut() }), start);
+        tape.push(Cell::unconstructed(id, start, len));
         match construct(self, id, &mut tape)? {
-            Constructed::Placed => Ok(tape.cell(0).and_then(Cell::as_dyad)),
+            Constructed::Placed => Ok(tape.cell(0).filter(|c| c.constructed).map(|c| c.dyad)),
             Constructed::Decline => Ok(None),
         }
     }
@@ -1535,11 +1631,10 @@ impl<'a> Parser<'a> {
     pub(crate) fn construct_hole(&mut self, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
         let types = self.types;
         let base = match tape.at(-1).copied() {
-            Some(cell @ (Cell::Dyad(_) | Cell::Scope(_)))
-            | Some(cell @ Cell::Token(Token { identity: _, .. })) => {
+            Some(cell) => {
                 // A fresh name to the left is not a type; leave it for the
                 // boundary's own report.
-                if matches!(cell, Cell::Token(t) if t.identity.is_null()) {
+                if cell.is_fresh() {
                     None
                 } else {
                     let d = self.operand_dyad(cell)?;
@@ -1557,7 +1652,7 @@ impl<'a> Parser<'a> {
             None => self.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut()),
             Some(mut t) => {
                 let mut depth = 0usize;
-                while matches!(tape.at(-2 - depth as isize), Some(Cell::Token(a)) if a.identity == types.at_) {
+                while matches!(tape.at(-2 - depth as isize), Some(a) if !a.constructed && a.identity(&types) == types.at_) {
                     depth += 1;
                 }
                 for _ in 0..depth {
@@ -1612,14 +1707,14 @@ impl<'a> Parser<'a> {
     /// an operand.
     pub(crate) fn is_operand_cell(&self, cell: &Cell) -> bool {
         match cell {
-            Cell::Dyad(_) | Cell::Scope(_) => true,
+            c if c.constructed => true,
             // A fresh name resolves at consumption; a resolved token stands as
             // an operand only when nothing would construct it and it is not a
             // bare delimiter (`..`, `->`, `else`, `in`), which no operator
             // takes as an operand.
-            Cell::Token(t) => {
-                t.identity.is_null()
-                    || (self.ctor_of(t.identity).is_none() && !self.is_delimiter(t.identity))
+            c => {
+                let id = c.identity(&self.types);
+                c.is_fresh() || (self.ctor_of(id).is_none() && !self.is_delimiter(id))
             }
         }
     }
@@ -1648,19 +1743,19 @@ impl<'a> Parser<'a> {
     /// [`Parser::operand_dyad`] instead.
     pub(crate) fn as_operand(&mut self, cell: Cell) -> Result<DyadPtr, ParseError> {
         match cell {
-            Cell::Dyad(d) | Cell::Scope(d) => Ok(d),
-            Cell::Token(t) => {
-                let (id, record) = if t.identity.is_null() {
+            c if c.constructed => Ok(c.dyad),
+            c => {
+                let (id, record) = if c.is_fresh() {
                     let source = self.source;
-                    match self.scopes.resolve(self.trie, &source[t.start..]) {
+                    match self.scopes.resolve(self.trie, &source[c.start..]) {
                         Ok(r) => (r.identity, r.record),
                         Err(e) => {
-                            self.pos = t.start;
+                            self.pos = c.start;
                             return Err(ParseError::Resolve(e));
                         }
                     }
                 } else {
-                    (t.identity, t.record)
+                    (c.identity(&self.types), c.record(&self.types))
                 };
                 // SAFETY: `id` is a resolved dyad from the store.
                 unsafe { self.check_capture(id)? };
@@ -1694,8 +1789,7 @@ impl<'a> Parser<'a> {
         }
         let mut left = ParsingTape::new();
         for i in 0..n {
-            let cell = *tape.cell(i).expect("in range");
-            left.push(cell, tape.start_of(i));
+            left.push(*tape.cell(i).expect("in range"));
         }
         let items = self.construct_segment(&mut left)?;
         let target = match items.as_slice() {
@@ -1717,8 +1811,8 @@ impl<'a> Parser<'a> {
     /// driver‹): the use of the name, its record, when the cell was lexed from
     /// a spelling — the bare identity only for a token the parser minted.
     pub(crate) fn stand_as_value(&self, tape: &ParsingTape, id: DyadPtr) -> DyadPtr {
-        match tape.at(0) {
-            Some(Cell::Token(t)) if !t.record.is_null() => t.record,
+        match tape.at(0).map(|c| c.record(&self.types)) {
+            Some(record) if !record.is_null() => record,
             _ => id,
         }
     }
@@ -2585,14 +2679,13 @@ impl<'a> Parser<'a> {
         let Some((nstart, nlen)) = member else {
             return Err(ParseError::ExpectedField);
         };
-        let m = Token::new(nstart, nlen);
         let index = self.index_at(tape, 2);
-        // SAFETY: a scope cell is a node from the store.
+        // SAFETY: a bracket cell is a node from the store.
         let unit_call =
-            matches!(tape.at(2), Some(Cell::Scope(s)) if unsafe { self.is_empty_scope(*s) });
+            matches!(tape.at(2), Some(c) if c.is_bracket() && unsafe { self.is_empty_scope(c.dyad) });
         // SAFETY: `lhs` is a reduced dyad off the tape.
         let (node, consumed) =
-            unsafe { self.field_access(lhs, m.start, m.len, index, unit_call)? };
+            unsafe { self.field_access(lhs, nstart, nlen, index, unit_call)? };
         for _ in 0..(1 + consumed) {
             tape.remove(1);
         }
@@ -2603,7 +2696,11 @@ impl<'a> Parser<'a> {
 
     /// The comptime index a `[…]` cell carries, if the cell at `offset` is one.
     fn index_at(&self, tape: &ParsingTape, offset: isize) -> Option<usize> {
-        let d = tape.at(offset)?.as_dyad()?;
+        let c = tape.at(offset)?;
+        if !c.constructed {
+            return None;
+        }
+        let d = c.dyad;
         // SAFETY: a dyad cell is a node from the store; an index node's value
         // is its literal operand first.
         unsafe {
@@ -2762,11 +2859,9 @@ impl<'a> Parser<'a> {
         let Some(&cell) = tape.at(1) else {
             return Err(ParseError::BadAddressOf);
         };
-        if let Cell::Token(t) = cell {
-            // Keywords, operators, literals: not places.
-            if !t.identity.is_null() && self.ctor_of(t.identity).is_some() {
-                return Err(ParseError::BadAddressOf);
-            }
+        // Keywords, operators, literals: not places.
+        if !cell.constructed && !cell.is_fresh() && self.ctor_of(cell.identity(&self.types)).is_some() {
+            return Err(ParseError::BadAddressOf);
         }
         let node = self.operand_dyad(cell)?;
         // SAFETY: `node` is a resolved dyad from the store.
@@ -2816,31 +2911,30 @@ impl<'a> Parser<'a> {
         let Some(&cell) = tape.at(1) else {
             return Err(ParseError::MissingOperand);
         };
-        let (node, ended) = match cell {
-            Cell::Token(t) => {
-                let source = self.source;
-                let r = match self.scopes.resolve(self.trie, &source[t.start..]) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        self.pos = t.start;
-                        return Err(ParseError::Resolve(e));
-                    }
-                };
-                if self.ctor_of(r.identity).is_some() {
-                    return Err(ParseError::MissingOperand);
+        let (node, ended) = if cell.constructed {
+            (cell.dyad, None)
+        } else {
+            let source = self.source;
+            let r = match self.scopes.resolve(self.trie, &source[cell.start..]) {
+                Ok(r) => r,
+                Err(e) => {
+                    self.pos = cell.start;
+                    return Err(ParseError::Resolve(e));
                 }
-                let ended = if ends_name {
-                    if self.scopes.crosses_barrier(r.scope) {
-                        self.pos = t.start;
-                        return Err(ParseError::OwnOfOuterName);
-                    }
-                    Some(Ended { record: r.record })
-                } else {
-                    None
-                };
-                (r.identity, ended)
+            };
+            if self.ctor_of(r.identity).is_some() {
+                return Err(ParseError::MissingOperand);
             }
-            Cell::Dyad(d) | Cell::Scope(d) => (d, None),
+            let ended = if ends_name {
+                if self.scopes.crosses_barrier(r.scope) {
+                    self.pos = cell.start;
+                    return Err(ParseError::OwnOfOuterName);
+                }
+                Some(Ended { record: r.record })
+            } else {
+                None
+            };
+            (r.identity, ended)
         };
         // SAFETY: `node` is a resolved dyad from the store.
         unsafe {
@@ -2906,7 +3000,7 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
         let mut depth = 1usize;
-        while matches!(tape.at(1), Some(Cell::Token(t)) if t.identity == self.types.at_) {
+        while matches!(tape.at(1), Some(c) if !c.constructed && c.identity(&self.types) == self.types.at_) {
             tape.remove(1);
             depth += 1;
         }
@@ -3229,17 +3323,27 @@ impl<'a> Parser<'a> {
         // The name is the cell to the left — a spelling, declared or not
         // (redeclaring a live one is the no-shadowing error below); anything
         // but a token there (a value, a bracket) declines.
-        let Some(tok) = tape.at(-1).and_then(Cell::as_token).copied() else {
+        let Some(tok) = tape.at(-1).copied().filter(|c| !c.constructed) else {
             return Ok(Constructed::Decline);
         };
         // `source` is `&'a str` (Copy), independent of the `&mut self` the
         // declaration and value parse then need (as in `parse_record`).
         let source = self.source;
         let name = &source[tok.start..tok.start + tok.len];
-        // The placeholder is `fn`-typed so a recursive self-call sees a
-        // function-typed callee while the value is still parsing; the
-        // fixpoint below overwrites it with the value's real logos.
-        let placeholder = self.store.alloc_raw(self.types.fn_type, std::ptr::null_mut());
+        // The placeholder: for an unknown spelling, the fresh dyad the cell
+        // already holds — "`:=` fills that dyad" (DESIGN ›The scope's
+        // constructor is the driver‹) — or a fresh one when the spelling is
+        // known (a redeclaration after an `own`/`drop`). It is `fn`-typed so a
+        // recursive self-call sees a function-typed callee while the value is
+        // still parsing; the fixpoint below overwrites it with the value's
+        // real logos.
+        let placeholder = if tok.is_fresh() {
+            // SAFETY: a fresh cell's dyad is a dyad from the store.
+            unsafe { (*tok.dyad).ty = self.types.fn_type };
+            tok.dyad
+        } else {
+            self.store.alloc_raw(self.types.fn_type, std::ptr::null_mut())
+        };
         let record = match self.declare_name(name, placeholder) {
             Ok(record) => record,
             Err(e) => {
@@ -3803,15 +3907,15 @@ impl<'a> Parser<'a> {
     /// The type variable's fill, first half: exactly one token stands to the
     /// left of `=`, bound to a null-valued type placeholder (`a := type ?`),
     /// so `a = <type>` completes that declaration rather than storing.
-    pub(crate) fn is_type_variable(&self, tape: &ParsingTape) -> Option<Token> {
+    pub(crate) fn is_type_variable(&self, tape: &ParsingTape) -> Option<Cell> {
         if tape.cursor() != 1 {
             return None;
         }
-        let tok = tape.at(-1).and_then(Cell::as_token).copied()?;
-        let binding = tok.identity;
-        if binding.is_null() {
+        let tok = tape.at(-1).copied().filter(|c| !c.constructed)?;
+        if tok.is_fresh() {
             return None;
         }
+        let binding = tok.identity(&self.types);
         // SAFETY: `binding` is a resolved dyad from the store.
         if unsafe { !((*binding).ty == self.types.type_ && (*binding).value.is_null()) } {
             return None;
@@ -3823,7 +3927,7 @@ impl<'a> Parser<'a> {
     /// declaring scope to the type `value` names (a comptime-only act: inside
     /// a repeated body it is refused) and yield the declare node that
     /// completes the declaration, a silent statement.
-    pub(crate) fn type_fill(&mut self, tok: Token, value: DyadPtr) -> Result<DyadPtr, ParseError> {
+    pub(crate) fn type_fill(&mut self, tok: Cell, value: DyadPtr) -> Result<DyadPtr, ParseError> {
         if self.runtime_depth > 0 {
             self.pos = tok.start;
             return Err(ParseError::NonComptimeTypeAssign);
@@ -3866,16 +3970,16 @@ impl<'a> Parser<'a> {
         match self.scopes.resolve(self.trie, &source[start..]) {
             Ok(r) => {
                 self.pos = start + r.matched;
-                let cell = Cell::Token(Token {
-                    start,
-                    len: r.matched,
-                    identity: r.identity,
-                    record: r.record,
-                });
-                Ok(Some((cell, start)))
+                // The cell is the record the trie resolved.
+                Ok(Some((Cell::unconstructed(r.record, start, r.matched), start)))
             }
             Err(e) => match self.lex_identifier() {
-                Some((nstart, nlen)) => Ok(Some((Cell::Token(Token::new(nstart, nlen)), nstart))),
+                // A spelling the trie does not know: a fresh dyad with both
+                // slots null, its spelling kept in the cell's span.
+                Some((nstart, nlen)) => {
+                    let fresh = self.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut());
+                    Ok(Some((Cell::unconstructed(fresh, nstart, nlen), nstart)))
+                }
                 None => Err(ParseError::Resolve(e)),
             },
         }
@@ -3963,14 +4067,14 @@ impl<'a> Parser<'a> {
         let outcome = outcome?;
         // The same token, at the same offset: a splice that moved the cursor
         // onto a later cell of the same identity (`5 + 20 + 12`) is not it.
-        let standing = matches!(tape.at(0), Some(Cell::Token(t)) if t.identity == id)
+        let standing = matches!(tape.at(0), Some(c) if !c.constructed && c.identity(&self.types) == id)
             && tape.start_of(tape.cursor()) == start;
         if matches!(outcome, Constructed::Decline) || standing {
             // The identity stands as its own value: the use of its name, its
             // record, when the cell was lexed from a spelling.
             let value = self.stand_as_value(tape, id);
-            if let Some(cell) = tape.at_mut(0) {
-                *cell = Cell::Dyad(value);
+            if tape.at(0).is_some() {
+                tape.place(value);
             }
         }
         Ok(())
@@ -3999,17 +4103,18 @@ impl<'a> Parser<'a> {
             let Some((cell, start)) = self.lex_cell()? else {
                 return Ok(Boundary::Eof);
             };
-            if let Cell::Token(t) = cell {
-                if t.identity == self.types.sep_ {
+            let id = cell.identity(&self.types);
+            if !cell.constructed {
+                if id == self.types.sep_ {
                     self.pos = start;
                     return Ok(Boundary::Comma);
                 }
-                if t.identity == self.types.close_ {
+                if id == self.types.close_ {
                     self.pos = start;
                     return Ok(Boundary::Close);
                 }
                 if let Some(mode) = stop_at_open {
-                    if t.identity == self.types.open_ && !tape.is_empty() {
+                    if id == self.types.open_ && !tape.is_empty() {
                         // In a condition the bracket is the caller's only when
                         // nothing before it would read it: a `(` after an
                         // unconstructed identity with a constructor is that
@@ -4029,10 +4134,10 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
-            tape.push(cell, start);
-            if let Cell::Token(t) = cell {
-                if let Some(construct) = self.ctor_of(t.identity) {
-                    let prec = self.precedence_of_cell(t.identity);
+            tape.push(cell);
+            if !cell.constructed {
+                if let Some(construct) = self.ctor_of(id) {
+                    let prec = self.precedence_of_cell(id);
                     // A right-side read stops before its caller's bracket, so
                     // an identity that reads its own bracket (`type`, `fn`) is
                     // not woken there: `-> type ( body )` names the classifier
@@ -4040,9 +4145,9 @@ impl<'a> Parser<'a> {
                     let reader = prec == crate::identities::meta::prec::READER
                         || prec == crate::identities::meta::prec::DECLARE;
                     let asleep = (stop_at_open == Some(RightSide::ReturnType) && reader)
-                        || self.tight_read_takes(t.identity);
+                        || self.tight_read_takes(id);
                     if prec >= crate::identities::meta::prec::OPEN && !asleep {
-                        self.run_ctor(construct, t.identity, tape, true)?;
+                        self.run_ctor(construct, id, tape, true)?;
                     }
                 }
             }
@@ -4063,10 +4168,10 @@ impl<'a> Parser<'a> {
     ) -> Result<Vec<(DyadPtr, usize)>, ParseError> {
         let mut i = 0;
         while i < tape.len() {
-            // SAFETY: a dyad cell is a node from the store.
-            let is_comment = matches!(tape.cell(i), Some(Cell::Dyad(d)) if unsafe { (**d).ty } == self.types.comment_);
+            // SAFETY: a constructed cell holds a node from the store.
+            let is_comment = matches!(tape.cell(i), Some(c) if c.constructed && unsafe { (*c.dyad).ty } == self.types.comment_);
             if is_comment {
-                let d = tape.cell(i).and_then(Cell::as_dyad).expect("matched above");
+                let d = tape.cell(i).expect("matched above").dyad;
                 self.lifted.push((tape.start_of(i), d));
                 tape.set_cursor(i);
                 tape.remove(0);
@@ -4077,22 +4182,28 @@ impl<'a> Parser<'a> {
         loop {
             let mut best: Option<(usize, f64, ConstructFn, DyadPtr)> = None;
             for i in 0..tape.len() {
-                let Some(Cell::Token(t)) = tape.cell(i) else { continue };
-                let Some(construct) = self.ctor_of(t.identity) else { continue };
-                // A reader followed by `:` or `.` never wakes: the read takes it.
-                let next_is_tight = matches!(tape.cell(i + 1), Some(Cell::Token(n))
-                    if n.identity == self.types.colon_ || n.identity == self.types.dot_);
-                if next_is_tight && self.precedence_of_cell(t.identity) == crate::identities::meta::prec::READER {
+                let Some(c) = tape.cell(i) else { continue };
+                if c.constructed {
                     continue;
                 }
-                let prec = self.precedence_of_cell(t.identity);
-                let right = self.assoc_of_cell(t.identity) == Assoc::Right;
+                let id = c.identity(&self.types);
+                let Some(construct) = self.ctor_of(id) else { continue };
+                // A reader followed by `:` or `.` never wakes: the read takes it.
+                let next_is_tight = matches!(tape.cell(i + 1), Some(n) if !n.constructed && {
+                    let nid = n.identity(&self.types);
+                    nid == self.types.colon_ || nid == self.types.dot_
+                });
+                if next_is_tight && self.precedence_of_cell(id) == crate::identities::meta::prec::READER {
+                    continue;
+                }
+                let prec = self.precedence_of_cell(id);
+                let right = self.assoc_of_cell(id) == Assoc::Right;
                 let better = match best {
                     None => true,
                     Some((_, bp, _, _)) => prec > bp || (prec == bp && right),
                 };
                 if better {
-                    best = Some((i, prec, construct, t.identity));
+                    best = Some((i, prec, construct, id));
                 }
             }
             let Some((i, _, construct, id)) = best else { break };
@@ -4198,39 +4309,41 @@ mod tests {
     }
 
     fn dyad_cells(tags: &[usize]) -> Vec<Cell> {
-        tags.iter().map(|&t| Cell::Dyad(dyad(t))).collect()
+        tags.iter().map(|&t| Cell::built(dyad(t))).collect()
     }
 
     #[test]
     fn offset_indexing_is_cursor_relative() {
         let mut t = ParsingTape::from_cells(dyad_cells(&[10, 11, 12, 13]));
         t.set_cursor(2); // points at dyad(12)
-        assert_eq!(t.at(0).unwrap().as_dyad(), Some(dyad(12)));
-        assert_eq!(t.at(-1).unwrap().as_dyad(), Some(dyad(11)));
-        assert_eq!(t.at(1).unwrap().as_dyad(), Some(dyad(13)));
-        assert_eq!(t.at(-2).unwrap().as_dyad(), Some(dyad(10)));
+        assert_eq!(t.at(0).unwrap().dyad, dyad(12));
+        assert_eq!(t.at(-1).unwrap().dyad, dyad(11));
+        assert_eq!(t.at(1).unwrap().dyad, dyad(13));
+        assert_eq!(t.at(-2).unwrap().dyad, dyad(10));
         assert!(t.at(2).is_none()); // past the end
         assert!(t.at(-3).is_none()); // before the start
+        assert_eq!(t.cursor(), 2);
     }
 
     #[test]
     fn insert_left_keeps_cursor_on_same_cell() {
         let mut t = ParsingTape::from_cells(dyad_cells(&[10, 11, 12]));
         t.set_cursor(1); // dyad(11)
-        t.insert(0, Cell::Dyad(dyad(99))); // splice just left of the cursor
-        assert_eq!(t.at(0).unwrap().as_dyad(), Some(dyad(11)));
-        assert_eq!(t.at(-1).unwrap().as_dyad(), Some(dyad(99)));
+        t.insert(0, Cell::built(dyad(99))); // splice just left of the cursor
+        assert_eq!(t.at(0).unwrap().dyad, dyad(11));
+        assert_eq!(t.at(-1).unwrap().dyad, dyad(99));
         assert_eq!(t.len(), 4);
+        assert_eq!(t.cursor(), 2);
     }
 
     #[test]
     fn insert_right_leaves_cursor() {
         let mut t = ParsingTape::from_cells(dyad_cells(&[10, 11, 12]));
         t.set_cursor(1); // dyad(11)
-        t.insert(1, Cell::Dyad(dyad(99)));
-        assert_eq!(t.at(0).unwrap().as_dyad(), Some(dyad(11)));
-        assert_eq!(t.at(1).unwrap().as_dyad(), Some(dyad(99)));
-        assert_eq!(t.at(2).unwrap().as_dyad(), Some(dyad(12)));
+        t.insert(1, Cell::built(dyad(99)));
+        assert_eq!(t.at(0).unwrap().dyad, dyad(11));
+        assert_eq!(t.at(1).unwrap().dyad, dyad(99));
+        assert_eq!(t.at(2).unwrap().dyad, dyad(12));
     }
 
     #[test]
@@ -4238,33 +4351,62 @@ mod tests {
         let mut t = ParsingTape::from_cells(dyad_cells(&[10, 11, 12]));
         t.set_cursor(2); // dyad(12)
         let gone = t.remove(-1); // remove dyad(11)
-        assert_eq!(gone.unwrap().as_dyad(), Some(dyad(11)));
-        assert_eq!(t.at(0).unwrap().as_dyad(), Some(dyad(12)));
-        assert_eq!(t.at(-1).unwrap().as_dyad(), Some(dyad(10)));
+        assert_eq!(gone.unwrap().dyad, dyad(11));
+        assert_eq!(t.at(0).unwrap().dyad, dyad(12));
+        assert_eq!(t.at(-1).unwrap().dyad, dyad(10));
         assert_eq!(t.len(), 2);
     }
 
     #[test]
-    fn token_and_dyad_cells_coexist() {
-        // The tape's defining property: pending tokens and reduced dyads on one
-        // frontier.
+    fn removing_the_center_moves_it_to_the_next_cell_or_past_the_end() {
+        let mut t = ParsingTape::from_cells(dyad_cells(&[10, 11, 12]));
+        t.set_cursor(1);
+        t.remove(0);
+        assert_eq!(t.at(0).unwrap().dyad, dyad(12));
+        t.remove(0);
+        assert!(t.at(0).is_none(), "past the end");
+        assert_eq!(t.at(-1).unwrap().dyad, dyad(10), "the tail is still behind the center");
+        assert_eq!(t.cursor(), t.len());
+        t.insert(1, Cell::built(dyad(7)));
+        assert_eq!(t.last().unwrap().dyad, dyad(7));
+        assert_eq!(t.len(), 2);
+    }
+
+    #[test]
+    fn unconstructed_and_constructed_cells_coexist() {
+        // The tape's defining property: unconstructed cells (a record, a fresh
+        // dyad, their spans kept tape-side) and constructed nodes on one
+        // frontier, told apart by the tape's own flag, never by the dyad.
         let mut t = ParsingTape::new();
-        t.insert(0, Cell::Token(Token::new(0, 3)));
-        t.insert(1, Cell::Dyad(dyad(7)));
-        assert!(t.at(0).unwrap().as_token().is_some());
-        assert_eq!(t.at(1).unwrap().as_dyad(), Some(dyad(7)));
+        t.insert(0, Cell::unconstructed(dyad(3), 0, 3));
+        t.insert(1, Cell::built(dyad(7)));
+        assert_eq!(t.is_constructed(0), Some(false));
+        assert_eq!(t.is_constructed(1), Some(true));
+        assert_eq!(t.own_span(), Some((0, 3)));
+        assert_eq!(t.at(1).unwrap().dyad, dyad(7));
         assert_eq!(t.len(), 2);
     }
 
     #[test]
-    fn rewrite_a_pending_token_in_place() {
-        // Tokens are mutable until reduced: a constructor can change one on the
-        // tape (the mechanism behind token-rewriting operators like `X`).
-        let mut t = ParsingTape::from_cells(vec![Cell::Token(Token::new(4, 1))]);
-        if let Some(Cell::Token(tok)) = t.at_mut(0) {
-            tok.len = 2;
-        }
-        assert_eq!(t.at(0).unwrap().as_token().unwrap().len, 2);
+    fn a_cell_is_rewritable_in_place_until_placed() {
+        // A constructor may rewrite a pending cell's span or pointer on the
+        // tape (the mechanism behind token-rewriting operators); `place`
+        // marks it constructed, and `reduce_here` spans the triple.
+        let mut t = ParsingTape::from_cells(vec![
+            Cell::unconstructed(dyad(1), 0, 1),
+            Cell::unconstructed(dyad(2), 2, 1),
+            Cell::unconstructed(dyad(3), 4, 1),
+        ]);
+        t.set_cursor(1);
+        t.at_mut(1).unwrap().len = 2;
+        assert_eq!(t.at(1).unwrap().len, 2);
+        t.reduce_here(dyad(9));
+        assert_eq!(t.len(), 1);
+        let c = *t.at(0).unwrap();
+        assert!(c.constructed);
+        assert_eq!((c.dyad, c.start, c.len), (dyad(9), 0, 6));
+        t.recenter(0);
+        assert_eq!(t.cursor(), 0);
     }
 
     // --- scope stack + name resolution --------------------------------------

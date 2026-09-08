@@ -25,7 +25,7 @@ use super::numtype::{ArithOp, CmpOp, NumType};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{Cell, Constructed, CoreTypes, ParseError, ParsingTape, Parser};
+use crate::parse::{Constructed, CoreTypes, ParseError, ParsingTape, Parser};
 use crate::store::Store;
 
 /// Register `rational_number`: its spelling (integers or decimals), literal
@@ -46,15 +46,15 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 /// The literal's constructor: read the matched span off the cursor token,
 /// build the leaf, and place it over its own token.
 fn construct(p: &mut Parser, id: DyadPtr, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
-    let t = tape.own_token().ok_or(ParseError::BadLiteral)?;
-    let span = &p.source()[t.start..t.start + t.len];
+    let (start, len) = tape.own_span().ok_or(ParseError::BadLiteral)?;
+    let span = &p.source()[start..start + len];
     let node = build(p.store(), id, span)?;
     // A `-` directly to the left with no completed operand before it is the
     // negative literal, folded now, at discovery (DESIGN ›Numeric literals‹:
     // "`-3` still folds into the literal"): `x := -5`, `f(-1)`, `2 * -3`,
     // `i32 -5` — while `a - 5` keeps its subtraction.
     let types = p.types();
-    let negated = matches!(tape.at(-1), Some(Cell::Token(t)) if t.identity == types.minus)
+    let negated = matches!(tape.at(-1), Some(c) if !c.constructed && c.identity(&types) == types.minus)
         && !tape.at(-2).is_some_and(|c| p.is_operand_cell(c));
     let node = if negated {
         tape.remove(-1);
