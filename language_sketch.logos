@@ -195,7 +195,7 @@ a = a + 1
                     type:@dyad -> rational_number
                     value:@void -> [num 1, den 1]     # a reduced fraction — never text
                 }
-                op:@dyad -> add_i32               # the resolved concrete operation (the conserved third slot)
+                op:@dyad -> add_i32               # the conserved third slot, filled by the lowering rule «+ over i32 -> add_i32» at first run or lowering, never by +'s constructor (ruled 8 September 2026)
             }
         }
         op:@dyad -> store_i32                     # the resolved store at the target's width
