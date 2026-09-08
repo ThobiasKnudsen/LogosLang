@@ -48,6 +48,12 @@ p4 := conjecture ( (a + a) / a -> 2 ) where ( a:dyad.type == generic_number and 
     -> mul_one(2 * 1)
     -> 2
 )
+p5 := conjecture ( x <= x ^ 2 + 1 -> true ) where ( x:dyad.type == generic_number ) proof (   # a boolean mapping is goal reduction: each line is implied by the next, down to true (ruled 8 September 2026)
+    x <= x ^ 2 + 1
+    -> sub_lhs(0 <= x ^ 2 - x + 1)          # an iff rule over the inequality
+    -> 0 <= complete_square((x - 1/2) ^ 2 + 3/4)   # a value rewrite inside the line, == on the subterm
+    -> nonneg_plus_pos(true)                # a rule whose right side is true
+)
 
 @ := ?
 -> := ?
