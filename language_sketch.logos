@@ -30,10 +30,17 @@ parsing_tape := type (
 )
 
 mut := type (
-    shared constructor = fn (tape := parsing_tape ?) -> void (
-        if tape[1]:dyad.type != type
-            error «token after mut is not a type»
-        # set the mutability bit on this level's value pointer — TBD
+    # a gate word (DESIGN ›mut is a gate on the record‹, ruled 5-7 September 2026): a prefix constructor on the value at
+    # the head of a declaration's right side, x := mut 5, x := pub mut i32 5. It adds the entry «write allowed from the
+    # declaring scope and its descendants» to the gate set of the record := is filling; gates combine as grants and
+    # vetoes, ? being silence; lock seals the set, immut x removes this entry. Legal only where a record is being filled
+    # (a := right side, a field or parameter declaration, a return type); on a constructed node, f(mut i32 5), it is the
+    # checked error, a constructed node having no record. mut T as a TYPE is superseded: a type never carries mutability.
+    constructor = fn (tape := parsing_tape ?) -> void (
+        target := ?                       # the record the enclosing := is filling; how a gate word reaches it is not yet spelled
+        if target == ?
+            error «mut on a value that no declaration receives»
+        ?                                 # append the write entry to target:gate — a write at :gate, permitted while the set holds no lock
     )
 )
 
@@ -116,17 +123,17 @@ xor := ?
 not := ?
 
 
-a := mut type mut i32 32
-a {
-    value --m-> {
-        value -> 32
-    }
-    type --m-> {
-        value -> {
-            value -> copy i32.value
-        }
-        type -> type
-    }
+a := mut i32 32       # mut gates a's record, never the type (5 September 2026); the dyad is two pointers, no phase, no mutability bit
+record of a {         # the trie entry (id_context renamed record, 7 September 2026): one per declared name, itself a dyad of type record
+    dyad -> a
+    scope -> (the scope a was declared in)
+    start -> (the := node that declared a)
+    end -> null                                        # to scope end, unless own a / drop a ends the name earlier
+    gate -> [read own scope, write own scope while null, mut]   # ordered set, grants and vetoes; lock would seal it
+}
+a {                   # the dyad: type and value, nothing else; a:dyad reaches it, a:scope and a:gate read the record
+    type -> i32
+    value -> 32
 }
 
 i32 {
