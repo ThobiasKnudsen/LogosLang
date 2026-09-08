@@ -665,3 +665,17 @@ fn assignment_returns_nothing() {
     let (echoes, stderr) = repl(b"p := type (v := i32 ?)\nq := p(1)\nq.v = 3\nq.v\na := i32 1\na = a + 1\na\n");
     assert_eq!(echoes, ["3", "2"], "stderr: {stderr}");
 }
+
+#[test]
+fn a_tight_read_lexes_its_right_cell_on_demand_and_stops_at_a_boundary() {
+    // DESIGN ›The scope's constructor is the driver‹ (8-9 September 2026):
+    // `:`, `.`, and `@` construct at discovery, their right cell lexed lazily
+    // by the `tape[1]` read inside the constructor; a lazy read never crosses
+    // a `,` or a closer, and an inner `@` constructs before the outer one.
+    let (echoes, stderr) = repl(
+        b"x := i32 5\n(x:end, 3)\np := type (a := i32 ?)\nq := p(1)\n(q.a, 2)\nq.a\n\
+          r := &q\nr@.a\npp := &r\npp@@.a\nx:dyad.type == i32\n",
+    );
+    assert_eq!(echoes, ["3", "2", "1", "1", "1", "true"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}

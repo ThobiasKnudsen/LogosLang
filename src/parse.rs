@@ -258,6 +258,16 @@ impl ParsingTape {
         self.at(offset).map(|c| c.constructed)
     }
 
+    /// The center as a handle, to be put back after a lazy read moved it.
+    pub fn mark(&self) -> Option<usize> {
+        self.center
+    }
+
+    /// Put the center back at `mark`.
+    pub fn restore(&mut self, mark: Option<usize>) {
+        self.center = mark;
+    }
+
     fn alloc(&mut self, cell: Cell) -> usize {
         self.nodes.push(Node { cell, prev: None, next: None });
         self.nodes.len() - 1
@@ -1324,6 +1334,10 @@ pub struct Parser<'a> {
     /// reads source only at discovery; at a boundary its bracket, had it one,
     /// would already stand on the tape as a cell.
     discovering: bool,
+    /// The stop mode of the segment being lexed ([`Parser::lex_segment_until`]),
+    /// kept here so a lazy read inside a constructor ([`Parser::cell_at`])
+    /// stops at the same boundaries the loop would.
+    lex_mode: Option<RightSide>,
     /// The lowering table, when the driver attached one: the nested import
     /// pass hands it to its runtime so `f.compile()` at an imported top level
     /// works exactly as at the driver's own top level (one pass, one behavior).
@@ -1364,6 +1378,7 @@ impl<'a> Parser<'a> {
             lifted: Vec::new(),
             queued: std::collections::VecDeque::new(),
             discovering: false,
+            lex_mode: None,
             holes: HashSet::new(),
             frames: Vec::new(),
             runtime_depth: 0,
@@ -1767,9 +1782,14 @@ impl<'a> Parser<'a> {
     /// Whether the next token is a tight read of the cell to its left — `:`
     /// or `.` — that takes a right-side reader's own cell before the reader
     /// wakes (DESIGN ›Text is the quote‹: "the tight `.` runs over the token
-    /// before its constructor wakes"; `:` beside it, 8 September 2026). The
-    /// readers are the identities at `prec::READER`; the raw-text consumers
-    /// and `:=` sit above the reads and keep their right side.
+    /// before its constructor wakes"; `:` beside it, and the reads above the
+    /// readers on the axis, 8 September 2026). The seed's form of the rule:
+    /// the model has the read, constructed at discovery when the reader lexes
+    /// it at `tape[1]`, take the reader's cell; the seed's right-side drives
+    /// lex onto a fresh tape, so the reader is put to sleep before it drives
+    /// and the read finds it at the boundary. The readers are the identities
+    /// at `prec::READER`; the raw-text consumers and `:=` sit above the reads
+    /// and keep their right side.
     fn tight_read_takes(&mut self, id: DyadPtr) -> bool {
         if self.precedence_of_cell(id) != crate::identities::meta::prec::READER {
             return false;
@@ -2668,10 +2688,10 @@ impl<'a> Parser<'a> {
         // The member is the cell to the right, read by its spelling at the
         // offset it was lexed at — a keyword there (`.type`) was constructed
         // at discovery and stands as a dyad, its spelling still in the source.
-        let Some(&_) = tape.at(1) else {
+        let Some(m) = self.cell_at(tape, 1)? else {
             return Err(ParseError::ExpectedField);
         };
-        let mstart = tape.start_of(tape.cursor() + 1);
+        let mstart = m.start;
         let save = self.pos;
         self.pos = mstart;
         let member = self.lex_identifier();
@@ -2679,6 +2699,8 @@ impl<'a> Parser<'a> {
         let Some((nstart, nlen)) = member else {
             return Err(ParseError::ExpectedField);
         };
+        // The optional `[i]` or `()` after the member: lexed on demand.
+        self.cell_at(tape, 2)?;
         let index = self.index_at(tape, 2);
         // SAFETY: a bracket cell is a node from the store.
         let unit_call =
@@ -3000,18 +3022,20 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
         let mut depth = 1usize;
-        while matches!(tape.at(1), Some(c) if !c.constructed && c.identity(&self.types) == self.types.at_) {
+        while matches!(self.cell_at(tape, 1)?, Some(c) if !c.constructed && c.identity(&self.types) == self.types.at_) {
             tape.remove(1);
             depth += 1;
         }
-        let Some(&cell) = tape.at(1) else {
+        let Some(cell) = self.cell_at(tape, 1)? else {
             return Err(ParseError::UnsupportedOperands);
         };
         let base = self.operand_dyad(cell)?;
-        // SAFETY: `base` is a resolved dyad from the store.
+        // SAFETY: `base` is a resolved dyad from the store. A pointer type as
+        // the base is an inner `@` already constructed at discovery (`@@point`).
         let is_type = unsafe {
             crate::identities::is_numtype_node(&self.types, base)
                 || crate::identities::meta::is_record_type(base)
+                || crate::identities::numtype::is_pointer_type(base)
         };
         if !is_type {
             return Err(ParseError::UnsupportedOperands);
@@ -3695,12 +3719,11 @@ impl<'a> Parser<'a> {
             Some(cell) => self.as_operand(cell)?,
             None => return Err(ParseError::MissingOperand),
         };
-        let Some(&_) = tape.at(1) else {
+        let Some(m) = self.cell_at(tape, 1)? else {
             return Err(ParseError::ExpectedField);
         };
-        let mstart = tape.start_of(tape.cursor() + 1);
         let save = self.pos;
-        self.pos = mstart;
+        self.pos = m.start;
         let member = self.lex_identifier();
         self.pos = save;
         let Some((nstart, nlen)) = member else {
@@ -4093,65 +4116,167 @@ impl<'a> Parser<'a> {
 
     /// [`Parser::lex_segment`], optionally stopping before a `(` that follows
     /// at least one cell — the right side an identity reads up to its body
-    /// bracket ([`Parser::drive_until_open`]), in one of two modes.
+    /// bracket ([`Parser::drive_until_open`]), in one of two modes. The loop
+    /// is [`Parser::lex_next`] until a boundary; the mode is kept on the
+    /// parser for the lazy reads a constructor makes meanwhile.
     fn lex_segment_until(
         &mut self,
         tape: &mut ParsingTape,
         stop_at_open: Option<RightSide>,
     ) -> Result<Boundary, ParseError> {
-        loop {
-            let Some((cell, start)) = self.lex_cell()? else {
-                return Ok(Boundary::Eof);
-            };
-            let id = cell.identity(&self.types);
-            if !cell.constructed {
-                if id == self.types.sep_ {
-                    self.pos = start;
-                    return Ok(Boundary::Comma);
-                }
-                if id == self.types.close_ {
-                    self.pos = start;
-                    return Ok(Boundary::Close);
-                }
-                if let Some(mode) = stop_at_open {
-                    if id == self.types.open_ && !tape.is_empty() {
-                        // In a condition the bracket is the caller's only when
-                        // nothing before it would read it: a `(` after an
-                        // unconstructed identity with a constructor is that
-                        // identity's — `f(x)`'s arguments, `not (c)`'s operand,
-                        // `==`'s right operand — never the body (DESIGN ›`X (…)`
-                        // is one spelling, and X's constructor decides‹). A
-                        // return logos takes no bracket, so there the first
-                        // `(` is the body: `fn () -> i32 ( body )` "is taken by
-                        // `fn` before `i32`'s juxtaposition could read a
-                        // conversion".
-                        let owner_pending = mode == RightSide::Condition
-                            && matches!(tape.last(), Some(l) if !self.is_operand_cell(l));
-                        if !owner_pending {
-                            self.pos = start;
-                            return Ok(Boundary::Open);
-                        }
-                    }
-                }
+        let was = std::mem::replace(&mut self.lex_mode, stop_at_open);
+        let result = loop {
+            match self.lex_next(tape, false) {
+                Ok(None) => {}
+                Ok(Some(boundary)) => break Ok(boundary),
+                Err(e) => break Err(e),
             }
-            tape.push(cell);
-            if !cell.constructed {
-                if let Some(construct) = self.ctor_of(id) {
-                    let prec = self.precedence_of_cell(id);
-                    // A right-side read stops before its caller's bracket, so
-                    // an identity that reads its own bracket (`type`, `fn`) is
-                    // not woken there: `-> type ( body )` names the classifier
-                    // and leaves the body to `fn`.
-                    let reader = prec == crate::identities::meta::prec::READER
-                        || prec == crate::identities::meta::prec::DECLARE;
-                    let asleep = (stop_at_open == Some(RightSide::ReturnType) && reader)
-                        || self.tight_read_takes(id);
-                    if prec >= crate::identities::meta::prec::OPEN && !asleep {
-                        self.run_ctor(construct, id, tape, true)?;
+        };
+        self.lex_mode = was;
+        result
+    }
+
+    /// One step of the scope's loop (DESIGN ›The scope's constructor is the
+    /// driver‹): lex the next cell onto the tape's end and, if its identity's
+    /// precedence is at or above `(`'s, construct it at discovery. A boundary
+    /// token — `,`, `)`, or the bracket a right-side read stops before — is
+    /// left unconsumed (`pos` rewound) and returned; `None` means a cell was
+    /// lexed. This is also what a lazy `tape[k]` read runs
+    /// ([`Parser::cell_at`], `lazy`), with one difference: a cell lexed on
+    /// demand *inside* a constructor is constructed at discovery only if it
+    /// reads nothing to its left — a bracket, a literal, a comment — since a
+    /// left-reader (`.`, `:`, `@`, `:=`, `=`) would find the constructor's own
+    /// unfinished cell there; those wait for the loop's next step
+    /// ([`Parser::discover_pending`]), which runs before anything further is
+    /// lexed, so their right side is still theirs to read.
+    fn lex_next(&mut self, tape: &mut ParsingTape, lazy: bool) -> Result<Option<Boundary>, ParseError> {
+        let Some((cell, start)) = self.lex_cell()? else {
+            return Ok(Some(Boundary::Eof));
+        };
+        let id = cell.identity(&self.types);
+        if !cell.constructed {
+            if id == self.types.sep_ {
+                self.pos = start;
+                return Ok(Some(Boundary::Comma));
+            }
+            if id == self.types.close_ {
+                self.pos = start;
+                return Ok(Some(Boundary::Close));
+            }
+            if let Some(mode) = self.lex_mode {
+                if id == self.types.open_ && !tape.is_empty() {
+                    // In a condition the bracket is the caller's only when
+                    // nothing before it would read it: a `(` after an
+                    // unconstructed identity with a constructor is that
+                    // identity's — `f(x)`'s arguments, `not (c)`'s operand,
+                    // `==`'s right operand — never the body (DESIGN ›`X (…)`
+                    // is one spelling, and X's constructor decides‹). A
+                    // return logos takes no bracket, so there the first
+                    // `(` is the body: `fn () -> i32 ( body )` "is taken by
+                    // `fn` before `i32`'s juxtaposition could read a
+                    // conversion".
+                    let owner_pending = mode == RightSide::Condition
+                        && matches!(tape.last(), Some(l) if !self.is_operand_cell(l));
+                    if !owner_pending {
+                        self.pos = start;
+                        return Ok(Some(Boundary::Open));
                     }
                 }
             }
         }
+        tape.push(cell);
+        if !cell.constructed {
+            if let Some(construct) = self.ctor_of(id) {
+                let prec = self.precedence_of_cell(id);
+                // A right-side read stops before its caller's bracket, so an
+                // identity that reads its own bracket (`type`, `fn`) is not
+                // woken there: `-> type ( body )` names the classifier and
+                // leaves the body to `fn`. And a reader followed by a tight
+                // read never wakes: the read takes it (DESIGN ›Text is the
+                // quote‹, the seed's form of "the tight read runs first").
+                let reader = prec == crate::identities::meta::prec::READER
+                    || prec == crate::identities::meta::prec::DECLARE;
+                let asleep = (self.lex_mode == Some(RightSide::ReturnType) && reader)
+                    || self.tight_read_takes(id);
+                let reads_left = prec == crate::identities::meta::prec::TIGHT
+                    || prec == crate::identities::meta::prec::DECLARE;
+                if prec >= crate::identities::meta::prec::OPEN && !asleep && !(lazy && reads_left) {
+                    self.run_ctor(construct, id, tape, true)?;
+                }
+            }
+        }
+        if !lazy {
+            self.discover_pending(tape)?;
+        }
+        Ok(None)
+    }
+
+    /// Construct at discovery the cells a lazy read lexed but had to leave —
+    /// the left-readers — in tape order, before the loop lexes further. Each
+    /// runs with the center on its own cell; the center is put back after.
+    fn discover_pending(&mut self, tape: &mut ParsingTape) -> Result<(), ParseError> {
+        let mark = tape.mark();
+        loop {
+            let mut found = None;
+            for i in 0..tape.len() {
+                let Some(c) = tape.cell(i) else { break };
+                if c.constructed {
+                    continue;
+                }
+                let id = c.identity(&self.types);
+                let Some(construct) = self.ctor_of(id) else { continue };
+                let prec = self.precedence_of_cell(id);
+                if prec < crate::identities::meta::prec::OPEN {
+                    continue;
+                }
+                let reader = prec == crate::identities::meta::prec::READER
+                    || prec == crate::identities::meta::prec::DECLARE;
+                let asleep = (self.lex_mode == Some(RightSide::ReturnType) && reader)
+                    || self.tight_read_takes(id);
+                if asleep {
+                    continue;
+                }
+                found = Some((i, construct, id));
+                break;
+            }
+            let Some((i, construct, id)) = found else { break };
+            tape.set_cursor(i);
+            if let Err(e) = self.run_ctor(construct, id, tape, true) {
+                tape.restore(mark);
+                return Err(e);
+            }
+        }
+        tape.restore(mark);
+        Ok(())
+    }
+
+    /// The cell `offset` links right of the center, lexed on demand: the
+    /// `tape[k]` read that "lexes lazily on demand" (DESIGN ›The scope's
+    /// constructor is the driver‹), what lets `:`, `.`, and `@` construct at
+    /// discovery with their right cell not yet on the tape. Lexing runs the
+    /// loop's own step, so a cell lexed here is constructed at discovery
+    /// exactly as the loop would; the center is put back afterwards. `None`
+    /// when a boundary or the end of input comes first. Negative offsets read
+    /// the tape as it stands.
+    pub(crate) fn cell_at(&mut self, tape: &mut ParsingTape, offset: isize) -> Result<Option<Cell>, ParseError> {
+        if offset <= 0 {
+            return Ok(tape.at(offset).copied());
+        }
+        let mark = tape.mark();
+        // `lex_next` pushes at the end and moves the center there, so the
+        // center is put back before each look at `offset`.
+        while tape.at(offset).is_none() {
+            match self.lex_next(tape, true) {
+                Ok(None) => tape.restore(mark),
+                Ok(Some(_)) => break,
+                Err(e) => {
+                    tape.restore(mark);
+                    return Err(e);
+                }
+            }
+        }
+        tape.restore(mark);
+        Ok(tape.at(offset).copied())
     }
 
     /// Construct a lexed segment at its boundary: comment cells are lifted out
@@ -4188,14 +4313,6 @@ impl<'a> Parser<'a> {
                 }
                 let id = c.identity(&self.types);
                 let Some(construct) = self.ctor_of(id) else { continue };
-                // A reader followed by `:` or `.` never wakes: the read takes it.
-                let next_is_tight = matches!(tape.cell(i + 1), Some(n) if !n.constructed && {
-                    let nid = n.identity(&self.types);
-                    nid == self.types.colon_ || nid == self.types.dot_
-                });
-                if next_is_tight && self.precedence_of_cell(id) == crate::identities::meta::prec::READER {
-                    continue;
-                }
                 let prec = self.precedence_of_cell(id);
                 let right = self.assoc_of_cell(id) == Assoc::Right;
                 let better = match best {

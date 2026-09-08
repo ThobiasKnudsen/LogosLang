@@ -143,8 +143,12 @@ pub(crate) mod prec {
     /// `?`: just below application, so `i32 ?` and `@i32 ?` find their type
     /// standing to the left.
     pub const HOLE: f64 = 87.0;
-    /// `.` and `@`: the member and dereference reads.
-    pub const DOT: f64 = 86.0;
+    /// `.`, `:`, and `@`: the tight reads of the cell to their left (`@`'s
+    /// prefix form reads right), above the identities that read their own
+    /// right side and below `:=`/`=` (ruled 8 September 2026): constructed at
+    /// discovery, their right cell lexed lazily by the `tape[1]` read inside
+    /// the constructor.
+    pub const TIGHT: f64 = 92.5;
     /// `&`.
     pub const ADDRESS: f64 = 85.0;
     /// The prefix words over a place: `own`, `drop`, `free`, `alloc`, `pub`.

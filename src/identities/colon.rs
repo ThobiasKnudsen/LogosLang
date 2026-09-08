@@ -20,11 +20,12 @@
 //! and `x:dyad.type == i32` binds before the comparison — the shape DESIGN's
 //! own examples fix (`f:dyad.value.body[0].rhs`, `b:start.rhs.type`,
 //! `a:dyad.type is number`). Both reads sit above the identities that read
-//! their own right side (ruled 8 September 2026): a keyword followed by `:`
-//! or `.` is being read, not run, so `if:scope` names `if`'s record and the
-//! keyword's constructor never wakes — in the seed, the driver leaves such a
-//! token asleep and the read takes it at the boundary
-//! ([`crate::parse::Parser::tight_read_takes`]); above the reads stay `:=`,
+//! their own right side (ruled 8 September 2026): constructed at discovery,
+//! their right cell lexed on demand ([`crate::parse::Parser::cell_at`]), so
+//! a keyword followed by `:` or `.` is being read, not run — `if:scope`
+//! names `if`'s record and the keyword's constructor never wakes (the seed
+//! puts the reader to sleep before it drives,
+//! [`crate::parse::Parser::tight_read_takes`]); above the reads stay `:=`,
 //! `=`, `,`, the literals, and the raw-text consumers.
 
 use super::{meta, Cx};
@@ -34,7 +35,7 @@ use crate::dyad::DyadPtr;
 /// operator is untouched; `:` as a declaration operator stays rejected
 /// (DESIGN ›Substrate vocabulary‹, 2 September 2026).
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::DOT);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::TIGHT);
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.declare(":", id);
     cx.metas.insert(id, |p, _id, tape| p.construct_record_read(tape));

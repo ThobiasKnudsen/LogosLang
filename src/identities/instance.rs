@@ -46,7 +46,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
 
     // Escaped, because `.` is a regex metacharacter (as `\(` and `\)` are).
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::DOT);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::TIGHT);
     let dot = cx.store.alloc_raw(cx.type_, record);
     cx.declare(r"\.", dot);
     // `.` reads its member's spelling off the cell to its right, and a `[i]`

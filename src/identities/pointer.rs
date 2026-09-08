@@ -49,7 +49,7 @@ pub(super) fn register(
     cx: &mut Cx,
     cs: &Callables,
 ) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::DOT);
+    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::TIGHT);
     let at = cx.store.alloc_raw(cx.type_, record);
     cx.declare("@", at);
     // `@`'s constructor reads its own left context (the model's tape[-1]): a

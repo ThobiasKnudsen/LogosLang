@@ -394,8 +394,8 @@ mod tests {
             ("while", prec::READER, true),
             ("for", prec::READER, true),
             ("&", prec::ADDRESS, true),
-            (".", prec::DOT, true),
-            ("@", prec::DOT, true),
+            (".", prec::TIGHT, true),
+            ("@", prec::TIGHT, true),
             ("(", prec::OPEN, true),
             // The declaration operator: above `(`, declaring before the value.
             (":=", prec::DECLARE, true),
