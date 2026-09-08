@@ -24,7 +24,7 @@ use super::numtype::{self, ArithOp, CmpOp};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::id_context::IdContext;
+use crate::record::Record;
 use crate::parse::{Assoc};
 use crate::run::{RunError, Runtime};
 
@@ -41,7 +41,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
         &["variable", "start", "end", "step", "body", "op"],
     );
     let for_ = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert("for", IdContext::new(for_, cx.root_scope));
+    cx.trie.insert("for", Record::new(for_, cx.root_scope));
     cx.metas.insert(for_, |p, id, tape| {
         let node = p.parse_for(id)?;
         tape.place(node);
@@ -52,11 +52,11 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
 
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
     let in_ = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert("in", IdContext::new(in_, cx.root_scope));
+    cx.trie.insert("in", Record::new(in_, cx.root_scope));
 
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::RANGE);
     let range = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert(r"\.\.", IdContext::new(range, cx.root_scope));
+    cx.trie.insert(r"\.\.", Record::new(range, cx.root_scope));
 
     (for_, leaf, in_, range)
 }

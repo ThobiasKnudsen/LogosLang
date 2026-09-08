@@ -23,7 +23,7 @@
 //! field-list punctuation `:` and `,` it consumes.
 
 use super::{meta, Cx};
-use crate::id_context::IdContext;
+use crate::record::Record;
 use crate::store::Store;
 use crate::dyad::DyadPtr;
 
@@ -48,8 +48,8 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
     // exists and can give `logos (…)` its ruled meaning. The inserts wait
     // until here, because `register_root` builds the fixed point before the
     // trie and `root_scope` exist.
-    cx.trie.insert("type", IdContext::new(cx.type_, cx.root_scope));
-    cx.trie.insert("logos", IdContext::new(cx.type_, cx.root_scope));
+    cx.trie.insert("type", Record::new(cx.type_, cx.root_scope));
+    cx.trie.insert("logos", Record::new(cx.type_, cx.root_scope));
     // The merged constructor: a following `( field-list )` builds a record
     // logos; anything else declines the right and the constructor "yields its
     // own dyad as-is" — the classifier as a value (DESIGN ›Expressions are
@@ -73,7 +73,7 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
     // and the seed's `:` stood in only until the driver converged (#59).
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::COMMA);
     let comma = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert(",", IdContext::new(comma, cx.root_scope));
+    cx.trie.insert(",", Record::new(comma, cx.root_scope));
 
     comma
 }

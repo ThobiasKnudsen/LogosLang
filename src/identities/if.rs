@@ -20,7 +20,7 @@ use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::id_context::IdContext;
+use crate::record::Record;
 use crate::parse::{Assoc};
 use crate::run::{RunError, Runtime};
 
@@ -43,7 +43,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
         &["condition", "then", "else", "op"],
     );
     let if_ = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert("if", IdContext::new(if_, cx.root_scope));
+    cx.trie.insert("if", Record::new(if_, cx.root_scope));
     cx.metas.insert(if_, |p, id, tape| {
         let node = p.parse_if(id)?;
         tape.place(node);
@@ -55,7 +55,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     // `else` is a parse-only token between the branches, not a function.
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
     let else_ = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert("else", IdContext::new(else_, cx.root_scope));
+    cx.trie.insert("else", Record::new(else_, cx.root_scope));
 
     (if_, leaf, else_)
 }

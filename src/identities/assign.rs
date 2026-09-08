@@ -13,7 +13,7 @@ use super::numtype::{is_pointer_type, numtype_of_type, of_type_node};
 use super::{commit_if_literal, is_numtype_node, meta, operands, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::id_context::IdContext;
+use crate::record::Record;
 use crate::parse::{Assoc, CoreTypes, ParseError};
 use crate::store::Store;
 
@@ -28,7 +28,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
         &["lhs", "rhs", "op"],
     );
     let id = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert("=", IdContext::new(id, cx.root_scope));
+    cx.trie.insert("=", Record::new(id, cx.root_scope));
     cx.metas.insert(id, construct);
     cx.lower.insert(id, lower);
     id

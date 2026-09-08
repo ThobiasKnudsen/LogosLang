@@ -61,7 +61,7 @@ use super::callable::{self, Callables};
 use super::numtype;
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
-use crate::id_context::IdContext;
+use crate::record::Record;
 use crate::parse::{Assoc, CoreTypes, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
@@ -204,7 +204,7 @@ fn keyword(
 ) -> DyadPtr {
     let record = meta::operand_record(cx, meta::TUPLE_TAG, precedence, Assoc::Right, roles);
     let id = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert(spelling, IdContext::new(id, cx.root_scope));
+    cx.trie.insert(spelling, Record::new(id, cx.root_scope));
     cx.metas.insert(id, construct);
     id
 }

@@ -18,7 +18,7 @@ use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::id_context::IdContext;
+use crate::record::Record;
 use crate::parse::{Assoc};
 use crate::run::{RunError, Runtime};
 
@@ -33,7 +33,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         &["operand", "op"],
     );
     let id = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert("not", IdContext::new(id, cx.root_scope));
+    cx.trie.insert("not", Record::new(id, cx.root_scope));
     cx.metas.insert(id, |p, id, tape| {
         let operand = p.take_right(tape)?;
         // SAFETY: `operand` is the constructed cell just taken off the tape.

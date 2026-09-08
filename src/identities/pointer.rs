@@ -36,7 +36,7 @@ use super::numtype::{self, NumType};
 use super::{commit_if_literal, meta, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::id_context::IdContext;
+use crate::record::Record;
 use crate::parse::{Assoc, CoreTypes, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
@@ -52,7 +52,7 @@ pub(super) fn register(
 ) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::DOT);
     let at = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert("@", IdContext::new(at, cx.root_scope));
+    cx.trie.insert("@", Record::new(at, cx.root_scope));
     // `@`'s constructor reads its own left context (the model's tape[-1]): a
     // completed dyad makes it a postfix deref, none makes it the pointer-logos
     // prefix.
@@ -73,7 +73,7 @@ pub(super) fn register(
 
     let record = meta::record_assoc(cx.store, meta::TOKEN_TAG, meta::prec::ADDRESS, crate::parse::Assoc::Right);
     let amp = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert("&", IdContext::new(amp, cx.root_scope));
+    cx.trie.insert("&", Record::new(amp, cx.root_scope));
     cx.metas.insert(amp, |p, _id, tape| p.construct_address_of(tape));
 
     let record = meta::operand_record(

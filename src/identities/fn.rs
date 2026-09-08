@@ -22,7 +22,7 @@
 use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
-use crate::id_context::IdContext;
+use crate::record::Record;
 use crate::parse::{Assoc};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
@@ -37,7 +37,7 @@ pub(super) fn register(store: &mut Store, type_: DyadPtr) -> DyadPtr {
 /// the `->` return arrow, whose handle is returned. Done after the build context
 /// exists so it can add to the parser's table.
 pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
-    cx.trie.insert("fn", IdContext::new(cx.fn_type, cx.root_scope));
+    cx.trie.insert("fn", Record::new(cx.fn_type, cx.root_scope));
     // `fn`'s constructor claims the pending declaration placeholder (the driver
     // suppresses it when the literal does not open a (sub-)expression), so a
     // recursive self-call inside the body resolves the published signature.
@@ -81,7 +81,7 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
     // `->` separates a fn's parameter list from its return logos.
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
     let arrow = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert("->", IdContext::new(arrow, cx.root_scope));
+    cx.trie.insert("->", Record::new(arrow, cx.root_scope));
     arrow
 }
 

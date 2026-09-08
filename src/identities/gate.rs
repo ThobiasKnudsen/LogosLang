@@ -19,7 +19,7 @@
 
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
-use crate::id_context::IdContext;
+use crate::record::Record;
 use crate::parse::{Constructed, ParseError};
 
 /// Register `pub`: a fresh-start word (a plain token record, NaN precedence —
@@ -29,7 +29,7 @@ use crate::parse::{Constructed, ParseError};
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record_assoc(cx.store, meta::TOKEN_TAG, meta::prec::PREFIX, crate::parse::Assoc::Right);
     let id = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert("pub", IdContext::new(id, cx.root_scope));
+    cx.trie.insert("pub", Record::new(id, cx.root_scope));
     cx.metas.insert(id, construct);
     id
 }

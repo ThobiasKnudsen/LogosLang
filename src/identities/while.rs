@@ -17,7 +17,7 @@ use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::id_context::IdContext;
+use crate::record::Record;
 use crate::parse::{Assoc};
 use crate::run::{RunError, Runtime};
 
@@ -32,7 +32,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         &["condition", "body", "op"],
     );
     let while_ = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert("while", IdContext::new(while_, cx.root_scope));
+    cx.trie.insert("while", Record::new(while_, cx.root_scope));
     cx.metas.insert(while_, |p, id, tape| {
         let node = p.parse_while(id)?;
         tape.place(node);

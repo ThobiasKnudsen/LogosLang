@@ -25,7 +25,7 @@ use super::numtype::{self, NumType};
 use super::{commit_if_literal, meta, numtype_of, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::id_context::IdContext;
+use crate::record::Record;
 use crate::parse::{CoreTypes, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
@@ -49,7 +49,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     // Escaped, because `.` is a regex metacharacter (as `\(` and `\)` are).
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::DOT);
     let dot = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert(r"\.", IdContext::new(dot, cx.root_scope));
+    cx.trie.insert(r"\.", Record::new(dot, cx.root_scope));
     // `.` reads its member's spelling off the cell to its right, and a `[i]`
     // or `()` cell after that where the read takes one (#59 step 3).
     cx.metas.insert(dot, |p, _id, tape| p.construct_field_access(tape));
@@ -59,7 +59,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     // (DESIGN ›The constructor is a field‹).
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::LITERAL);
     let open_sq = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert(r"\[", IdContext::new(open_sq, cx.root_scope));
+    cx.trie.insert(r"\[", Record::new(open_sq, cx.root_scope));
     cx.metas.insert(open_sq, |p, _id, tape| p.construct_index(tape));
     let record = meta::operand_record(
         cx,

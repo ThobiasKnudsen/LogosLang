@@ -6,7 +6,7 @@
 //! Everything in Logos is an identity, but only the seed's *native* identities
 //! are authored in Rust; identities created while a program runs are graph data,
 //! never source files. This folder is that bounded native kernel: the node cell
-//! ([`dyad`]) and name-resolution pairing ([`id_context`]) the substrate is
+//! ([`dyad`]) and name-resolution pairing ([`record`]) the substrate is
 //! built from, plus each primitive (`logos`, `fn`, `i32`, `rational`, `=`, `+`).
 //!
 //! Each primitive file defines exactly one identity: its node, its spelling, and
@@ -54,7 +54,7 @@ use crate::store::Store;
 pub use numtype::NumType;
 
 pub mod dyad;
-pub mod id_context;
+pub mod record;
 
 #[path = "logos.rs"]
 mod logos_mod;

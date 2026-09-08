@@ -18,7 +18,7 @@
 use super::numtype::STRING_TAG;
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
-use crate::id_context::IdContext;
+use crate::record::Record;
 use crate::parse::{Constructed, ParseError, ParsingTape, Parser};
 use crate::store::Store;
 
@@ -28,7 +28,7 @@ use crate::store::Store;
 pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, STRING_TAG, meta::prec::LITERAL);
     let id = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert("«[^»]*»", IdContext::new(id, cx.root_scope));
+    cx.trie.insert("«[^»]*»", Record::new(id, cx.root_scope));
     cx.metas.insert(id, construct);
     id
 }

@@ -10,13 +10,13 @@
 
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
-use crate::id_context::IdContext;
+use crate::record::Record;
 
 /// Register `?` (escaped: `?` is a regex metacharacter).
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::HOLE);
     let id = cx.store.alloc_raw(cx.type_, record);
-    cx.trie.insert(r"\?", IdContext::new(id, cx.root_scope));
+    cx.trie.insert(r"\?", Record::new(id, cx.root_scope));
     cx.metas.insert(id, |p, _id, tape| p.construct_hole(tape));
     id
 }

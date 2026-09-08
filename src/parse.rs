@@ -35,7 +35,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::dyad::DyadPtr;
-use crate::id_context::IdContext;
+use crate::record::Record;
 use crate::regex_trie::{RegexTrie, RegexTrieError};
 use crate::store::Store;
 
@@ -477,7 +477,7 @@ impl ScopeStack {
                 }
                 Journal::Ended { name, scope, identity, prev_end } => {
                     trie.update(&name, |c| {
-                        if c.scope == scope && c.identity == identity {
+                        if c.scope == scope && c.dyad == identity {
                             c.end = prev_end;
                             true
                         } else {
@@ -518,17 +518,17 @@ impl ScopeStack {
         // During elaboration the point of use is the frontier, so "range covers
         // the point" is exactly "not yet made dead" (DESIGN ›Name resolution is
         // scope-filtered‹, ruled 3 September 2026).
-        let mut live = m.contexts.iter().filter(|c| self.is_open(c.scope) && !c.is_dead());
+        let mut live = m.records.iter().filter(|c| self.is_open(c.scope) && !c.is_dead());
         match (live.next(), live.next()) {
             (None, _) => {
-                if m.contexts.iter().any(|c| self.is_open(c.scope)) {
+                if m.records.iter().any(|c| self.is_open(c.scope)) {
                     Err(ResolveError::Dead)
                 } else {
                     Err(ResolveError::OutOfScope)
                 }
             }
             (Some(c), None) => {
-                Ok(Resolved { matched: m.matched, identity: c.identity, scope: c.scope })
+                Ok(Resolved { matched: m.matched, identity: c.dyad, scope: c.scope })
             }
             (Some(_), Some(_)) => Err(ResolveError::Ambiguous),
         }
@@ -556,7 +556,7 @@ impl ScopeStack {
             // Ambiguous or an index error: surface it rather than declaring atop.
             Err(e) => return Err(e),
         }
-        trie.insert(name, IdContext::new(identity, scope));
+        trie.insert(name, Record::new(identity, scope));
         self.journal.push(Journal::Declared { name: name.to_string(), scope });
         self.pending.push(Pending {
             name: name.to_string(),
@@ -583,7 +583,7 @@ impl ScopeStack {
     ) {
         let mut prev_end = std::ptr::null_mut();
         trie.update(name, |c| {
-            if c.scope == scope && c.identity == identity {
+            if c.scope == scope && c.dyad == identity {
                 prev_end = c.end;
                 c.end = node;
                 true
@@ -613,7 +613,7 @@ impl ScopeStack {
             }
             let p = self.pending.swap_remove(i);
             trie.update(&p.name, |c| {
-                if c.scope == p.scope && c.identity == p.identity {
+                if c.scope == p.scope && c.dyad == p.identity {
                     match p.endpoint {
                         Endpoint::Start => c.start = item,
                         Endpoint::End => c.end = item,
@@ -648,8 +648,8 @@ impl ScopeStack {
         let mut old = std::ptr::null_mut();
         trie.update(name, |c| {
             if c.scope == scope && !c.is_dead() {
-                old = c.identity;
-                c.identity = identity;
+                old = c.dyad;
+                c.dyad = identity;
                 true
             } else {
                 false
@@ -1848,7 +1848,7 @@ impl<'a> Parser<'a> {
             };
             let field = self.store.alloc_raw(logos, std::ptr::null_mut());
             // The field's NAME is not stored on the record: declaring it here
-            // puts an id_context in the shared name index, and resolution is
+            // puts a record in the shared name index, and resolution is
             // open-scope filtering over that one index (DESIGN ›Name resolution
             // is scope-filtered‹; a per-record names store is recorded as
             // rejected).
@@ -4193,8 +4193,8 @@ mod tests {
         assert_eq!(scopes.resolve(&trie, "a").unwrap().identity, dyad(2));
         // The dead entry is still indexed: its range is what reflection reads.
         let m = trie.get("a").unwrap();
-        assert_eq!(m.contexts.len(), 2);
-        assert!(m.contexts.iter().any(|c| c.identity == dyad(1) && c.end == dyad(50)));
+        assert_eq!(m.records.len(), 2);
+        assert!(m.records.iter().any(|c| c.dyad == dyad(1) && c.end == dyad(50)));
     }
 
     #[test]
@@ -4213,7 +4213,7 @@ mod tests {
         scopes.rollback(&mut trie);
 
         assert_eq!(scopes.resolve(&trie, "a").unwrap().identity, dyad(1));
-        assert_eq!(trie.get("a").unwrap().contexts.len(), 1);
+        assert_eq!(trie.get("a").unwrap().records.len(), 1);
     }
 
     #[test]
@@ -4225,25 +4225,25 @@ mod tests {
         let scope = dyad(100);
         scopes.push(scope);
         scopes.declare(&mut trie, "a", dyad(1)).unwrap();
-        let ctx = |trie: &RegexTrie| trie.get("a").unwrap().contexts[0];
-        assert!(ctx(&trie).start.is_null());
+        let rec = |trie: &RegexTrie| trie.get("a").unwrap().records[0];
+        assert!(rec(&trie).start.is_null());
 
         scopes.settle_item(&mut trie, scope, dyad(10));
-        assert_eq!(ctx(&trie).start, dyad(10));
-        assert!(ctx(&trie).end.is_null());
+        assert_eq!(rec(&trie).start, dyad(10));
+        assert!(rec(&trie).end.is_null());
 
         scopes.mark_dead(&mut trie, "a", scope, dyad(1), dyad(50));
-        assert_eq!(ctx(&trie).end, dyad(50), "provisional: the own/drop node");
+        assert_eq!(rec(&trie).end, dyad(50), "provisional: the own/drop node");
         scopes.settle_item(&mut trie, scope, dyad(11));
-        assert_eq!(ctx(&trie).end, dyad(11), "settled: the body item");
-        assert_eq!(ctx(&trie).start, dyad(10), "start untouched by the end's settle");
+        assert_eq!(rec(&trie).end, dyad(11), "settled: the body item");
+        assert_eq!(rec(&trie).start, dyad(10), "start untouched by the end's settle");
 
         // A rebind keeps the range and moves the pending endpoint with it.
         scopes.declare(&mut trie, "b", dyad(3)).unwrap();
         scopes.rebind(&mut trie, "b", dyad(4));
         scopes.settle_item(&mut trie, scope, dyad(12));
-        let b = trie.get("b").unwrap().contexts[0];
-        assert_eq!((b.identity, b.start), (dyad(4), dyad(12)));
+        let b = trie.get("b").unwrap().records[0];
+        assert_eq!((b.dyad, b.start), (dyad(4), dyad(12)));
     }
 
     #[test]
@@ -4272,8 +4272,8 @@ mod tests {
         // index to prove resolve reports corruption.
         let mut trie = RegexTrie::new();
         let (a, b) = (dyad(100), dyad(101));
-        trie.insert("z", IdContext::new(dyad(1), a));
-        trie.insert("z", IdContext::new(dyad(2), b));
+        trie.insert("z", Record::new(dyad(1), a));
+        trie.insert("z", Record::new(dyad(2), b));
 
         let mut scopes = ScopeStack::new();
         scopes.push(a);
