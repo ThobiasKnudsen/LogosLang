@@ -11,6 +11,7 @@
 - If any two sources disagree — DESIGN vs sketch, DESIGN vs an issue, one DESIGN section vs another — STOP and surface the conflict as a blocking question, with both quotes. Never silently pick a side, even if one side is newer or was written by Thobias: staleness is invisible from inside a session.
 - When a conflict is ruled on, or a design is rejected in conversation, record it in the same session: in DESIGN.md (the existing pattern: "Recorded as rejected, to stay rejected: …") or, if spec wording must wait, as an explicit pending-spec-edit in the session log AND auto-memory. An unrecorded decision is a future bug.
 - Before starting work in a spec area not touched recently, run /faithfulness-audit.
+- All rulings MUST have a good reason for existing otherwise i will forget later why i choose what i choose and change the rule
 
 # Release rules (a version tag is one-way):
 
