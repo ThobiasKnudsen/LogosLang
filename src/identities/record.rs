@@ -113,6 +113,23 @@ impl Record {
     }
 }
 
+/// The reading rule (DESIGN ›The dyad's read surface‹, 8 September 2026): a
+/// record "read as a value yields what the dyad it names yields". A use of a
+/// name stores the record, so every reader of an operand — type inference at
+/// parse, the interpreter, the lowering — hops through it once; anything that
+/// is not a record passes unchanged. `:` is the one read that does not hop.
+///
+/// # Safety
+/// `p` must be null or a valid dyad from the store; `record_ty` the `record`
+/// identity.
+pub unsafe fn through(record_ty: DyadPtr, p: DyadPtr) -> DyadPtr {
+    if !p.is_null() && (*p).ty == record_ty {
+        Record::of(p).dyad
+    } else {
+        p
+    }
+}
+
 /// Give the `record` type its layout and spelling, at the end of the build:
 /// a field scope holding the five names, each field an `@dyad` place, the
 /// `fields` array, and the `RECORD_TAG` layout with `size_bytes` = the struct's

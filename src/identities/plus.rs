@@ -50,7 +50,7 @@ fn build(
 ) -> Result<DyadPtr, ParseError> {
     // Two comptime rationals fold now (exact fraction math), staying rational until
     // context logos them; otherwise resolve the operand logos and build the `+` node.
-    if let Some(folded) = rational::fold_arith(store, types.rational, ArithOp::Add, lhs, rhs)? {
+    if let Some(folded) = rational::fold_arith(store, types, ArithOp::Add, lhs, rhs)? {
         return Ok(folded);
     }
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.

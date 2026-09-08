@@ -146,7 +146,7 @@ pub(crate) unsafe fn build_ctor(
                     // A literal into a pointer field would be a wild address.
                     return Err(ParseError::TypeMismatch);
                 }
-                commit_if_literal(store, arg, &Operand::Literal, fty, nt)?
+                commit_if_literal(store, types, arg, &Operand::Literal, fty, nt)?
             }
             Operand::Pointer(pointee) => {
                 if !field_ptr || numtype::pointee_of(fty) != pointee {

@@ -186,6 +186,10 @@ impl Lowerer<'_, '_> {
     /// `node` must be a valid dyad from the store; lowering dereferences it and
     /// its operands to read baked constants and structure.
     pub unsafe fn lower(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
+        // The reading rule, applied once at lowering: a use of a name is its
+        // record, and compiled code bakes the address of the dyad it names
+        // (DESIGN ›The dyad's read surface‹) — the emitted code is unchanged.
+        let node = self.through(node);
         let op = (*node).ty;
         // A bare parameter (`fn (a)`) has no declared logos; its frame slot holds
         // the full i64 bit-container the call passed.
@@ -252,7 +256,16 @@ impl Lowerer<'_, '_> {
     /// # Safety
     /// `node` must be a valid place node; a frame-relative one only appears in a
     /// function whose [`compile_body`] created a `frame_slot`.
+    /// The reading rule over an operand (see [`Lowerer::lower`]).
+    ///
+    /// # Safety
+    /// `p` must be null or a valid dyad from the store.
+    pub(crate) unsafe fn through(&self, p: DyadPtr) -> DyadPtr {
+        crate::record::through(self.types.record_, p)
+    }
+
     pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> Value {
+        let node = self.through(node);
         if let Some(stats) = self.collect.as_deref_mut() {
             if let Some((_, off)) = frame_ref((*node).value) {
                 let logos = (*node).ty;
@@ -279,6 +292,7 @@ impl Lowerer<'_, '_> {
     /// tag (see [`crate::dyad::FRAME_TAG`]); the depth is a parse-time capture
     /// guard, only the offset into this call's stack slot matters here.
     unsafe fn place_addr_raw(&mut self, node: DyadPtr) -> Value {
+        let node = self.through(node);
         match frame_ref((*node).value) {
             Some((_, off)) => {
                 let slot = self.frame_slot.expect("a frame-relative place needs a frame slot");
@@ -295,6 +309,7 @@ impl Lowerer<'_, '_> {
     /// # Safety
     /// `node` must be a valid place node holding a `ct`-typed scalar.
     pub(crate) unsafe fn read_place(&mut self, node: DyadPtr, ct: types::Type) -> Value {
+        let node = self.through(node);
         if let Some((_, off)) = frame_ref((*node).value) {
             if let Some(&(var, vct)) = self.promoted.get(&off) {
                 debug_assert_eq!(vct, ct, "a promoted place is used at one type");
@@ -315,6 +330,7 @@ impl Lowerer<'_, '_> {
     /// # Safety
     /// As [`Self::read_place`].
     pub(crate) unsafe fn write_place(&mut self, node: DyadPtr, ct: types::Type, v: Value) {
+        let node = self.through(node);
         if let Some((_, off)) = frame_ref((*node).value) {
             if let Some(&(var, vct)) = self.promoted.get(&off) {
                 debug_assert_eq!(vct, ct, "a promoted place is used at one type");

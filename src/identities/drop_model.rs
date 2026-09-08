@@ -367,6 +367,7 @@ pub(crate) unsafe fn teardown_place_of(defer_node: DyadPtr) -> DyadPtr {
 /// # Safety
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn owning_pointee_of(types: &CoreTypes, node: DyadPtr) -> Option<DyadPtr> {
+    let node = types.through(node);
     let logos = (*node).ty;
     if logos == types.alloc_ {
         Some(*((*node).value as *const DyadPtr).add(ALLOC_POINTEE))
@@ -516,7 +517,7 @@ mod tests {
             let mut p = Parser::new(src, &mut store, &mut trie, types, scopes);
             p.parse_sequence().expect("parse")
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational)
+        let mut rt = Runtime::new(core.types())
             .with_compiler(&core.lower, types)
             .with_defer_type(core.defer_);
         // SAFETY: `root` is the scope just parsed into `store`, which outlives `rt`.
@@ -887,7 +888,7 @@ mod tests {
             let mut p = Parser::new(src, &mut store, &mut trie, types, scopes);
             p.parse_sequence().expect("parse")
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational)
+        let mut rt = Runtime::new(core.types())
             .with_compiler(&core.lower, types)
             .with_defer_type(core.defer_);
         // SAFETY: `root` is the script just parsed into `store`.

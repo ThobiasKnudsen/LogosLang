@@ -47,7 +47,7 @@ fn build(
     lhs: DyadPtr,
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    if let Some(folded) = rational::fold_arith(store, types.rational, ArithOp::Div, lhs, rhs)? {
+    if let Some(folded) = rational::fold_arith(store, types, ArithOp::Div, lhs, rhs)? {
         return Ok(folded);
     }
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.

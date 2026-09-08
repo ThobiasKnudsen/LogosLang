@@ -168,6 +168,9 @@ pub struct Runtime {
     /// `rational_number`: a data leaf of this logos is molded to its `i32` value
     /// when read, rather than read raw through the generic i32 layout.
     rational: DyadPtr,
+    /// The `record` type: a use of a name stores its record, read through to
+    /// the dyad it names on every evaluation (the reading rule).
+    record_: DyadPtr,
     /// `defer`: a scope body expression of this logos is not run in the value
     /// pass — [`crate::identities::scope`] holds it for LIFO execution at scope
     /// exit (issue #49). Held here so the sequence native recognizes it.
@@ -208,10 +211,11 @@ impl Runtime {
     /// claimed lazily, at the first call that needs a frame). Everything
     /// executable is reached through the graph. No compiler is attached; see
     /// [`Runtime::with_compiler`].
-    pub fn new(fn_type: DyadPtr, rational: DyadPtr) -> Self {
+    pub fn new(types: crate::parse::CoreTypes) -> Self {
         Runtime {
-            fn_type,
-            rational,
+            fn_type: types.fn_type,
+            rational: types.rational,
+            record_: types.record_,
             defer_type: std::ptr::null_mut(),
             live_allocs: 0,
             stack: FrameStack::new(),
@@ -313,7 +317,18 @@ impl Runtime {
     ///
     /// # Safety
     /// `node` must be a valid place node.
+    /// The reading rule: a record operand yields the dyad it names (DESIGN
+    /// ›The dyad's read surface‹, 8 September 2026), one pointer compare per
+    /// interpreted operand read; compiled code bakes the address instead.
+    ///
+    /// # Safety
+    /// `p` must be null or a valid dyad from the store.
+    pub(crate) unsafe fn through(&self, p: DyadPtr) -> DyadPtr {
+        crate::record::through(self.record_, p)
+    }
+
     pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> Option<*mut u8> {
+        let node = self.through(node);
         match frame_ref((*node).value) {
             // Only the offset matters at run time — the place is in the call in
             // progress (the top frame); the depth is a parse-time capture guard.
@@ -338,6 +353,9 @@ impl Runtime {
     /// that owns that machine code must still be alive (see
     /// [`crate::compile::compile_fn`]).
     pub unsafe fn run(&mut self, node: DyadPtr) -> Result<i64, RunError> {
+        // The reading rule first: a use of a name is its record, and running
+        // it runs the dyad it names (DESIGN ›The dyad's read surface‹).
+        let node = self.through(node);
         let op = (*node).ty;
         // A bare parameter (`fn (a)`) has no declared logos; its frame slot holds
         // the full i64 bit-container the call bound. Checked before anything
@@ -486,6 +504,7 @@ impl Runtime {
     /// `node` must be a valid dyad from the store; a frame-tagged one must carry
     /// an offset its function's frame size covers.
     unsafe fn read_container(&mut self, node: DyadPtr) -> Result<i64, RunError> {
+        let node = self.through(node);
         if frame_ref((*node).value).is_none() {
             return Err(RunError::BadValue);
         }

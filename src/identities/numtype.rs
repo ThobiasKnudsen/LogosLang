@@ -176,7 +176,7 @@ fn construct(
         // node from the store; `id` is this numeric logos's registered node.
         Some(Cell::Dyad(l)) if unsafe { (*l).ty } == types.rational => {
             tape.remove(1);
-            unsafe { super::commit_literal_to(p.store(), l, id) }?
+            unsafe { super::commit_literal_to(p.store(), &types, l, id) }?
         }
         // `i32(x)`: the bracket is this logos's to read — a conversion (DESIGN
         // ›a numeric type applied to a value is the conversion, per-constructor
@@ -187,7 +187,7 @@ fn construct(
             tape.remove(1);
             p.build_call(id, &args)?
         }
-        _ => id,
+        _ => p.stand_as_value(tape, id),
     };
     tape.place(node);
     Ok(crate::parse::Constructed::Placed)

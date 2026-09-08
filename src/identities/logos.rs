@@ -63,7 +63,8 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
             tape.place(node);
             return Ok(crate::parse::Constructed::Placed);
         }
-        tape.place(id);
+        let value = p.stand_as_value(tape, id);
+        tape.place(value);
         Ok(crate::parse::Constructed::Placed)
     });
 

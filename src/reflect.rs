@@ -300,6 +300,55 @@ mod tests {
     }
 
     #[test]
+    fn a_use_of_a_name_is_its_record_and_reads_through() {
+        // DESIGN ›The dyad's read surface‹ (8 September 2026): a use of a name
+        // in code stores the name's record, never the dyad, so a walker that
+        // reaches a named operand holds the record and follows `dyad` to the
+        // value; the interpreter reads through the reading rule.
+        let (_store, core, roots) = parse_all(&["x := i32 41", "x + 1"]);
+        let types = core.types();
+        // SAFETY: all nodes were just parsed into the store.
+        unsafe {
+            let Shape::Tuple { slots } = describe(&types, roots[1]) else {
+                panic!("an application should be a tuple");
+            };
+            let Shape::Record { dyad, scope, start, end, gate } = describe(&types, slots[0].node)
+            else {
+                panic!("a named operand should be its record");
+            };
+            assert_eq!(describe(&types, dyad), Shape::Scalar(NumType::I32));
+            assert_eq!(scope, core.root_scope);
+            // Top level has no body array, so `start` stays null there; `end`
+            // null is alive, and v0.1.0 has no gates.
+            assert!(start.is_null() && end.is_null() && gate.is_null());
+            assert_eq!(types.through(slots[0].node), dyad);
+            let mut rt = crate::run::Runtime::new(types);
+            rt.run(roots[0]).unwrap();
+            assert_eq!(rt.run(roots[1]).unwrap(), 42);
+        }
+    }
+
+    #[test]
+    fn a_name_and_its_alias_have_two_records_over_one_dyad() {
+        // DESIGN ›`mut` is a gate on the record‹: `y := i32` binds a second
+        // name to i32's own dyad — one record per name, never one per identity.
+        let (_store, core, roots) = parse_all(&["y := i32", "y", "i32"]);
+        let types = core.types();
+        // SAFETY: all nodes were just parsed into the store.
+        unsafe {
+            let Shape::Record { dyad: via_y, .. } = describe(&types, roots[1]) else {
+                panic!("a bare name is its record");
+            };
+            let Shape::Record { dyad: via_i32, .. } = describe(&types, roots[2]) else {
+                panic!("a bare name is its record");
+            };
+            assert_eq!(via_y, via_i32, "both names point at the one dyad");
+            assert_eq!(via_y, core.i32_);
+            assert_ne!(roots[1], roots[2], "two names, two records");
+        }
+    }
+
+    #[test]
     fn every_identity_declares_its_parse_members() {
         // The sealed model's shared members, pinned for every spelled identity:
         // the precedence field is the extender signal the driver classifies by

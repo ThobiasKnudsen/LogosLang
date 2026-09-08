@@ -55,14 +55,20 @@ pub struct Token {
     /// Byte length of the matched span.
     pub len: usize,
     /// The identity this token denotes, or null until consumed (a fresh name
-    /// awaiting its declaration or its resolution error).
+    /// awaiting its declaration or its resolution error). What the driver
+    /// dispatches on (`ctor_of`, precedence).
     pub identity: DyadPtr,
+    /// The name's record, what a use of it stores (DESIGN ›The dyad's read
+    /// surface‹, 8 September 2026); null for a fresh name and for a token the
+    /// parser minted for an identity rather than lexed from a spelling. The
+    /// cell itself becomes the record with #60.
+    pub record: DyadPtr,
 }
 
 impl Token {
     /// A token over `start..start + len`, not yet resolved.
     pub fn new(start: usize, len: usize) -> Self {
-        Token { start, len, identity: std::ptr::null_mut() }
+        Token { start, len, identity: std::ptr::null_mut(), record: std::ptr::null_mut() }
     }
 }
 
@@ -614,6 +620,17 @@ impl ScopeStack {
     }
 }
 
+impl CoreTypes {
+    /// The reading rule over an operand: a record yields the dyad it names,
+    /// anything else passes (see [`crate::record::through`]).
+    ///
+    /// # Safety
+    /// `p` must be null or a valid dyad from the store.
+    pub unsafe fn through(&self, p: DyadPtr) -> DyadPtr {
+        crate::record::through(self.record_, p)
+    }
+}
+
 /// Operator associativity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Assoc {
@@ -1027,6 +1044,7 @@ pub enum ParseError {
 /// # Safety
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn is_bool_result(types: &CoreTypes, node: DyadPtr) -> bool {
+    let node = types.through(node);
     let logos = (*node).ty;
     // A sequence's value is its trailing expression's.
     if logos == types.scope {
@@ -1056,6 +1074,7 @@ pub(crate) unsafe fn is_bool_result(types: &CoreTypes, node: DyadPtr) -> bool {
 /// # Safety
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn bool_literal_value(types: &CoreTypes, node: DyadPtr) -> Option<bool> {
+    let node = types.through(node);
     if (*node).ty != types.bool_ || (*node).value.is_null() {
         return None;
     }
@@ -1329,6 +1348,7 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `node` must be a resolved dyad from the store.
     unsafe fn check_capture(&self, node: DyadPtr) -> Result<(), ParseError> {
+        let node = self.types.through(node);
         if let Some((depth, _)) = crate::dyad::frame_ref((*node).value) {
             if depth != self.frames.len() {
                 return Err(ParseError::CapturedLocal);
@@ -1429,7 +1449,8 @@ impl<'a> Parser<'a> {
             tape.remove(1);
             tape.place(node);
         } else {
-            tape.place(id);
+            let value = self.stand_as_value(tape, id);
+            tape.place(value);
         }
         Ok(Constructed::Placed)
     }
@@ -1471,7 +1492,7 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
         let mut tape = ParsingTape::new();
-        tape.push(Cell::Token(Token { start, len, identity: id }), start);
+        tape.push(Cell::Token(Token { start, len, identity: id, record: std::ptr::null_mut() }), start);
         match construct(self, id, &mut tape)? {
             Constructed::Placed => Ok(tape.cell(0).and_then(Cell::as_dyad)),
             Constructed::Decline => Ok(None),
@@ -1520,7 +1541,7 @@ impl<'a> Parser<'a> {
                 if matches!(cell, Cell::Token(t) if t.identity.is_null()) {
                     None
                 } else {
-                    let d = self.as_operand(cell)?;
+                    let d = self.operand_dyad(cell)?;
                     // SAFETY: `d` is a resolved dyad from the store.
                     if unsafe { crate::identities::is_type_value(&types, d) } {
                         Some(d)
@@ -1614,33 +1635,58 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Convert an operand cell to its dyad at consumption — the one seam every
-    /// reader goes through. A reduced dyad passes; a resolved token yields its
-    /// identity (rejecting a capture, as the old scan-time push did); a
-    /// fresh-name token re-resolves its span for the precise error, reported
-    /// at the token's own start — the same message and position the eager
-    /// driver produced at scan.
+    /// Convert an operand cell to what a node stores for it — the one seam
+    /// every constructor goes through. A reduced dyad passes; a resolved token
+    /// yields the name's **record** (DESIGN ›The dyad's read surface‹: "a use
+    /// of a name in code … stores the record, never the dyad"), rejecting a
+    /// capture as the old scan-time push did; a fresh-name token re-resolves
+    /// its span for the precise error, reported at the token's own start — the
+    /// same message and position the eager driver produced at scan. A token
+    /// the parser minted for an identity (no record) stands as the identity.
+    /// Readers that need the value behind the operand take
+    /// [`Parser::operand_dyad`] instead.
     pub(crate) fn as_operand(&mut self, cell: Cell) -> Result<DyadPtr, ParseError> {
         match cell {
             Cell::Dyad(d) | Cell::Scope(d) => Ok(d),
             Cell::Token(t) => {
-                let id = if t.identity.is_null() {
+                let (id, record) = if t.identity.is_null() {
                     let source = self.source;
                     match self.scopes.resolve(self.trie, &source[t.start..]) {
-                        Ok(r) => r.identity,
+                        Ok(r) => (r.identity, r.record),
                         Err(e) => {
                             self.pos = t.start;
                             return Err(ParseError::Resolve(e));
                         }
                     }
                 } else {
-                    t.identity
+                    (t.identity, t.record)
                 };
                 // SAFETY: `id` is a resolved dyad from the store.
                 unsafe { self.check_capture(id)? };
-                Ok(id)
+                Ok(if record.is_null() { id } else { record })
             }
         }
+    }
+
+    /// What an identity's constructor places when it declines its right and
+    /// "stands as its own value" (DESIGN ›The scope's constructor is the
+    /// driver‹): the use of the name, its record, when the cell was lexed from
+    /// a spelling — the bare identity only for a token the parser minted.
+    pub(crate) fn stand_as_value(&self, tape: &ParsingTape, id: DyadPtr) -> DyadPtr {
+        match tape.at(0) {
+            Some(Cell::Token(t)) if !t.record.is_null() => t.record,
+            _ => id,
+        }
+    }
+
+    /// The dyad behind an operand cell: [`Parser::as_operand`] read through
+    /// the reading rule — for the constructors that inspect or bind the value
+    /// itself (a type to the left of `?` or `@`, the place `&` takes, `.`'s
+    /// left side) rather than store a use of it.
+    pub(crate) fn operand_dyad(&mut self, cell: Cell) -> Result<DyadPtr, ParseError> {
+        let p = self.as_operand(cell)?;
+        // SAFETY: `p` is a dyad from the store.
+        Ok(unsafe { self.types.through(p) })
     }
 
     /// The completed operand immediately left of the tape's cursor, converted
@@ -1867,10 +1913,14 @@ impl<'a> Parser<'a> {
         // one (`i32`, `@i32`, later `array i32`).
         let output = {
             let items = self.drive_until_open(RightSide::ReturnType)?;
-            self.one_of(items).map_err(|e| match e {
+            let out = self.one_of(items).map_err(|e| match e {
                 ParseError::Empty => ParseError::ExpectedReturnType,
                 e => e,
-            })?
+            })?;
+            // A named return type (`i32`, `void`) is a use of that name: its
+            // record, read through to the type it names.
+            // SAFETY: `out` is a reduced dyad from the store.
+            unsafe { self.types.through(out) }
         };
 
         // Open this function's frame and give the parameters its first per-call
@@ -2256,8 +2306,13 @@ impl<'a> Parser<'a> {
         let parts = self.drive_until_open(RightSide::Condition)?;
         let dotdot = self.types.dotdot_;
         let (start, end, step) = match parts.as_slice() {
-            [(s, _), (d, _), (e, _)] if *d == dotdot => (*s, *e, None),
-            [(s, _), (d, _), (e, _), (d2, _), (st, _)] if *d == dotdot && *d2 == dotdot => {
+            // The `..` cells are uses of that identity: its record, read through.
+            [(s, _), (d, _), (e, _)] if unsafe { self.types.through(*d) } == dotdot => {
+                (*s, *e, None)
+            }
+            [(s, _), (d, _), (e, _), (d2, _), (st, _)]
+                if unsafe { self.types.through(*d) == dotdot && self.types.through(*d2) == dotdot } =>
+            {
                 (*s, *e, Some(*st))
             }
             _ => return Err(ParseError::ExpectedRange),
@@ -2268,7 +2323,7 @@ impl<'a> Parser<'a> {
         let types = self.types;
         // SAFETY: `step` is the reduced dyad just parsed.
         let step_was_literal =
-            step.is_some_and(|s| unsafe { (*s).ty } == types.rational);
+            step.is_some_and(|s| unsafe { (*types.through(s)).ty } == types.rational);
         let mut parts = vec![start, end];
         if let Some(s) = step {
             parts.push(s);
@@ -2469,7 +2524,7 @@ impl<'a> Parser<'a> {
         // quote‹: `i32.precedence`), so a callable or a logos name to the
         // left is the identity itself, not a call in waiting.
         let lhs = match tape.at(-1).copied() {
-            Some(cell) => self.as_operand(cell)?,
+            Some(cell) => self.operand_dyad(cell)?,
             None => return Err(ParseError::MissingOperand),
         };
         // The member is the cell to the right, read by its spelling at the
@@ -2486,7 +2541,7 @@ impl<'a> Parser<'a> {
         let Some((nstart, nlen)) = member else {
             return Err(ParseError::ExpectedField);
         };
-        let m = Token { start: nstart, len: nlen, identity: std::ptr::null_mut() };
+        let m = Token::new(nstart, nlen);
         let index = self.index_at(tape, 2);
         // SAFETY: a scope cell is a node from the store.
         let unit_call =
@@ -2616,7 +2671,7 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `call` must be a reduced call node from the store.
     unsafe fn eval_type_call(&mut self, call: DyadPtr) -> Result<DyadPtr, ParseError> {
-        let mut rt = crate::run::Runtime::new(self.types.fn_type, self.types.rational);
+        let mut rt = crate::run::Runtime::new(self.types);
         let bits = rt.run(call).map_err(|_| ParseError::NonComptimeTypeCall)?;
         let node = bits as usize as DyadPtr;
         if crate::identities::is_type_value(&self.types, node) {
@@ -2633,10 +2688,13 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `lhs` must be a reduced dyad from the store.
     pub(crate) unsafe fn build_deref(&mut self, lhs: DyadPtr) -> Result<DyadPtr, ParseError> {
-        let ptr_ty = if (*lhs).ty == self.types.deref_ {
-            crate::identities::pointer::deref_parts(lhs).1
+        // The pointer expression is stored as it stands (a use of a name is
+        // its record); its type is read through the reading rule.
+        let read = self.types.through(lhs);
+        let ptr_ty = if (*read).ty == self.types.deref_ {
+            crate::identities::pointer::deref_parts(read).1
         } else {
-            (*lhs).ty
+            (*read).ty
         };
         if ptr_ty.is_null() || !crate::identities::numtype::is_pointer_type(ptr_ty) {
             return Err(ParseError::UnsupportedOperands);
@@ -2666,7 +2724,7 @@ impl<'a> Parser<'a> {
                 return Err(ParseError::BadAddressOf);
             }
         }
-        let node = self.as_operand(cell)?;
+        let node = self.operand_dyad(cell)?;
         // SAFETY: `node` is a resolved dyad from the store.
         let addr = unsafe {
             let logos = (*node).ty;
@@ -2811,10 +2869,12 @@ impl<'a> Parser<'a> {
         let Some(&cell) = tape.at(1) else {
             return Err(ParseError::UnsupportedOperands);
         };
-        let base = self.as_operand(cell)?;
+        let base = self.operand_dyad(cell)?;
         // SAFETY: `base` is a resolved dyad from the store.
-        let is_type = crate::identities::is_numtype_node(&self.types, base)
-            || unsafe { crate::identities::meta::is_record_type(base) };
+        let is_type = unsafe {
+            crate::identities::is_numtype_node(&self.types, base)
+                || crate::identities::meta::is_record_type(base)
+        };
         if !is_type {
             return Err(ParseError::UnsupportedOperands);
         }
@@ -2850,7 +2910,8 @@ impl<'a> Parser<'a> {
                 return Err(ParseError::UnboundOwningValue);
             }
         }
-        if crate::identities::is_numtype_node(&self.types, callee) {
+        // SAFETY: `callee` is a resolved dyad from the store.
+        if unsafe { crate::identities::is_numtype_node(&self.types, callee) } {
             // SAFETY: `callee` is a numtype node; `args` are reduced dyads.
             unsafe { crate::identities::build_cast(self.store, &self.types, callee, &args) }
         } else if unsafe { crate::identities::meta::is_record_type(callee) } {
@@ -3000,7 +3061,8 @@ impl<'a> Parser<'a> {
                         t
                     }
                 };
-                if owned_here.contains(&tail_value) {
+                // SAFETY: `tail_value` is a reduced dyad from the store.
+                if owned_here.contains(&unsafe { types.through(tail_value) }) {
                     return Err(ParseError::OwningEscape);
                 }
                 // A scope IS an array: the expression list lives behind one
@@ -3147,6 +3209,11 @@ impl<'a> Parser<'a> {
         self.pending_fn = placeholder;
         let value = self.parse_expression()?;
         self.pending_fn = std::ptr::null_mut();
+        // A bare name as the value is its record (a use); the fixpoint
+        // inspects the dyad behind it and keeps `value` as what the
+        // initializer stores.
+        // SAFETY: `value` is a dyad from the store.
+        let read = unsafe { self.types.through(value) };
         // Fixpoint: make the placeholder *be* the value, so references to
         // `name` captured while parsing the value resolve to it. A
         // construction binds the name to the *instance* (the storage)
@@ -3164,16 +3231,16 @@ impl<'a> Parser<'a> {
                 // `=` reassigns, nothing initializes it.
                 self.scopes.rebind(record, value);
                 value
-            } else if (*value).ty == self.types.construct_ {
-                let ops = (*value).value as *mut DyadPtr;
+            } else if (*read).ty == self.types.construct_ {
+                let ops = (*read).value as *mut DyadPtr;
                 let instance = *ops;
                 (*placeholder).ty = (*instance).ty;
                 (*placeholder).value = (*instance).value;
                 *ops = placeholder;
                 value
-            } else if (*value).ty == self.types.type_ {
-                self.scopes.rebind(record, value);
-                value
+            } else if (*read).ty == self.types.type_ {
+                self.scopes.rebind(record, read);
+                read
             } else if crate::identities::drop_model::is_owning_value(&self.types, value) {
                 // An owning value (`alloc …`, `own a`, or a block yielding one)
                 // lands in a place here — the one site that knows the name it
@@ -3215,7 +3282,7 @@ impl<'a> Parser<'a> {
                     .expect("a scope's defer list is open")
                     .push(defer_node);
                 init
-            } else if (*value).ty != self.types.rational
+            } else if (*read).ty != self.types.rational
                 && matches!(
                     crate::identities::numtype_of(&self.types, value),
                     crate::identities::Operand::Concrete(_)
@@ -3240,8 +3307,8 @@ impl<'a> Parser<'a> {
                 self.scopes.rebind(record, place);
                 init
             } else {
-                (*placeholder).ty = (*value).ty;
-                (*placeholder).value = (*value).value;
+                (*placeholder).ty = (*read).ty;
+                (*placeholder).value = (*read).value;
                 placeholder
             }
         };
@@ -3411,7 +3478,7 @@ impl<'a> Parser<'a> {
     fn run_imported(&mut self) -> Result<(Vec<(String, DyadPtr)>, DyadPtr), String> {
         let mut pubs = Vec::new();
         let mut tail = std::ptr::null_mut();
-        let mut rt = crate::run::Runtime::new(self.types.fn_type, self.types.rational)
+        let mut rt = crate::run::Runtime::new(self.types)
             .with_defer_type(self.types.defer_);
         if let Some(lower) = self.lower {
             rt = rt.with_compiler(lower, self.types);
@@ -3473,8 +3540,9 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        let inner = self.take_right(tape)?;
         let types = self.types;
+        // SAFETY: the operand is a reduced dyad from the store.
+        let inner = unsafe { types.through(self.take_right(tape)?) };
         let node = self.store.alloc_raw(types.dyad_, inner as *mut u8);
         tape.place(node);
         Ok(Constructed::Placed)
@@ -3633,7 +3701,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::NonComptimeTypeAssign);
         }
         let rhs = tape.at(1).copied().ok_or(ParseError::MissingOperand)?;
-        let t = self.as_operand(rhs)?;
+        let t = self.operand_dyad(rhs)?;
         // SAFETY: `t` is a reduced dyad off the tape.
         if !unsafe { crate::identities::is_type_value(&self.types, t) } {
             self.pos = tok.start;
@@ -3672,7 +3740,12 @@ impl<'a> Parser<'a> {
         match self.scopes.resolve(self.trie, &source[start..]) {
             Ok(r) => {
                 self.pos = start + r.matched;
-                let cell = Cell::Token(Token { start, len: r.matched, identity: r.identity });
+                let cell = Cell::Token(Token {
+                    start,
+                    len: r.matched,
+                    identity: r.identity,
+                    record: r.record,
+                });
                 Ok(Some((cell, start)))
             }
             Err(e) => match self.lex_identifier() {

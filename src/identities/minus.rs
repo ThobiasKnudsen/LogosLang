@@ -73,7 +73,7 @@ fn build(
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
     // Two comptime rationals fold now (exact fraction math); otherwise resolve and build.
-    if let Some(folded) = rational::fold_arith(store, types.rational, ArithOp::Sub, lhs, rhs)? {
+    if let Some(folded) = rational::fold_arith(store, types, ArithOp::Sub, lhs, rhs)? {
         return Ok(folded);
     }
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.

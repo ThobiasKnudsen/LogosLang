@@ -700,6 +700,7 @@ pub(crate) enum Operand {
 /// # Safety
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
+    let node = types.through(node);
     let logos = (*node).ty;
     if logos == types.rational {
         return Operand::Literal;
@@ -880,22 +881,26 @@ pub(crate) unsafe fn resolve_binary(
         (Operand::Literal, Operand::Literal) => NumType::I32,
     };
     let type_node = types.numtypes[nt as usize];
-    let lhs = commit_if_literal(store, lhs, &a, type_node, nt)?;
-    let rhs = commit_if_literal(store, rhs, &b, type_node, nt)?;
+    let lhs = commit_if_literal(store, types, lhs, &a, type_node, nt)?;
+    let rhs = commit_if_literal(store, types, rhs, &b, type_node, nt)?;
     Ok(([lhs, rhs], nt))
 }
 
 /// Commit an uncommitted literal operand to `nt` (a typed literal node holding the
-/// molded bytes); non-literal operands pass through unchanged.
+/// molded bytes); non-literal operands pass through unchanged. A comptime
+/// binding used as an operand is its record: the literal folds through it.
 unsafe fn commit_if_literal(
     store: &mut Store,
+    types: &CoreTypes,
     node: DyadPtr,
     op: &Operand,
     type_node: DyadPtr,
     nt: NumType,
 ) -> Result<DyadPtr, ParseError> {
     if let Operand::Literal = op {
-        let bits = rational::mold_to(node, nt).ok_or(ParseError::UncomputableLiteral)?;
+        // A comptime binding used here is its record; the literal folds
+        // through it into a value of the committed type at this use.
+        let bits = rational::mold_to(types.through(node), nt).ok_or(ParseError::UncomputableLiteral)?;
         let value = store.alloc_bytes(&bits.to_ne_bytes()[..nt.bytes()]);
         Ok(store.alloc_raw(type_node, value))
     } else {
@@ -905,7 +910,12 @@ unsafe fn commit_if_literal(
 
 /// Whether `node` is one of the registered numeric logos nodes (`i32`, `f64`, …). The
 /// parser uses this to recognize a `logos(value)` conversion at a call site.
-pub(crate) fn is_numtype_node(types: &CoreTypes, node: DyadPtr) -> bool {
+///
+/// # Safety
+/// `node` must be null or a valid dyad from the store (a use of a name is
+/// its record, read through).
+pub(crate) unsafe fn is_numtype_node(types: &CoreTypes, node: DyadPtr) -> bool {
+    let node = types.through(node);
     types.numtypes.iter().any(|&t| !t.is_null() && t == node)
 }
 
@@ -918,6 +928,7 @@ pub(crate) fn is_numtype_node(types: &CoreTypes, node: DyadPtr) -> bool {
 /// # Safety
 /// `node` must be null or a valid dyad from the store.
 pub(crate) unsafe fn is_type_value(types: &CoreTypes, node: DyadPtr) -> bool {
+    let node = types.through(node);
     !node.is_null() && (*node).ty == types.type_
 }
 
@@ -1050,7 +1061,7 @@ pub unsafe fn display_value(types: &CoreTypes, node: DyadPtr, bits: i64) -> Stri
     // A file or block is a scope whose value is its trailing expression; render
     // through that so the logos-directed formatting below sees the actual value node
     // (a multi-line program ending in a logos — or a float — not the scope wrapper).
-    let node = trailing_expr(types, node);
+    let node = types.through(trailing_expr(types, node));
     // A comparison / logical result is physically an i32; show its truth. A bool
     // stored into a variable reads back as its i32 0/1 (the seed has no distinct
     // bool storage), so only a direct bool-valued expression renders this way.
@@ -1142,7 +1153,7 @@ pub(crate) unsafe fn resolve_loop_parts(
     let logos = types.numtypes[nt as usize];
     for p in parts.iter_mut() {
         if let Operand::Literal = numtype_of(types, *p) {
-            *p = commit_if_literal(store, *p, &Operand::Literal, logos, nt)?;
+            *p = commit_if_literal(store, types, *p, &Operand::Literal, logos, nt)?;
         }
     }
     Ok(logos)
@@ -1156,11 +1167,12 @@ pub(crate) unsafe fn resolve_loop_parts(
 /// `lit` must be a rational literal from the store; `ty_node` a numeric logos node.
 pub(crate) unsafe fn commit_literal_to(
     store: &mut Store,
+    types: &CoreTypes,
     lit: DyadPtr,
     ty_node: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
     let nt = numtype::of_type_node(ty_node);
-    commit_if_literal(store, lit, &Operand::Literal, ty_node, nt)
+    commit_if_literal(store, types, lit, &Operand::Literal, ty_node, nt)
 }
 
 /// Commit a call's uncommitted literal arguments to their parameters' declared
@@ -1203,9 +1215,9 @@ pub(crate) unsafe fn commit_call_args(
             }
             continue;
         }
-        if (**arg).ty == types.rational && is_numtype_node(types, pty) {
+        if (*types.through(*arg)).ty == types.rational && is_numtype_node(types, pty) {
             let nt = numtype::of_type_node(pty);
-            *arg = commit_if_literal(store, *arg, &Operand::Literal, pty, nt)?;
+            *arg = commit_if_literal(store, types, *arg, &Operand::Literal, pty, nt)?;
         }
     }
     Ok(())
@@ -1345,7 +1357,8 @@ pub(crate) unsafe fn build_cast(
         }
         // A literal: fold it into a `target`-typed value now, with `as` semantics.
         Operand::Literal => {
-            let bits = rational::cast_to(operand, to).ok_or(ParseError::UncomputableLiteral)?;
+            let bits = rational::cast_to(types.through(operand), to)
+                .ok_or(ParseError::UncomputableLiteral)?;
             let value = store.alloc_bytes(&bits.to_ne_bytes()[..to.bytes()]);
             Ok(store.alloc_raw(target, value))
         }
@@ -1390,11 +1403,12 @@ mod tests {
         unsafe {
             assert_eq!((*root).ty, core.assign);
             let top = (*root).value as *const DyadPtr;
-            assert_eq!(*top, a); // =.lhs is the variable a
+            // =.lhs is a use of `a`: its record, naming the variable.
+            assert_eq!(core.types().through(*top), a);
             let sum = *top.add(1); // =.rhs is the + application
             assert_eq!((*sum).ty, core.plus);
             let sops = (*sum).value as *const DyadPtr;
-            assert_eq!(*sops, a); // +.lhs is a
+            assert_eq!(core.types().through(*sops), a); // +.lhs is a use of a: its record
             // +.rhs is the literal `1`, committed to i32 (the logos resolved from `a`).
             let one = *sops.add(1);
             assert_eq!((*one).ty, core.i32_);
@@ -1424,7 +1438,7 @@ mod tests {
         };
 
         // run `a = a + 1`: yields 1 and leaves a holding 1.
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `root` is the valid dyad tree just parsed into `store`.
         let result = unsafe { rt.run(root) }.unwrap();
         assert_eq!(result, 1);
@@ -1462,7 +1476,7 @@ mod tests {
         // A nullary application of `main`: its logos is `main`.
         let call = store.alloc_raw(main, std::ptr::null_mut());
 
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `call`/`main`/body are valid nodes in `store`.
         let result = unsafe { rt.run(call) }.unwrap();
         assert_eq!(result, 42); // a + 1 = 41 + 1
@@ -1486,7 +1500,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
 
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `node` is the valid dyad tree just parsed.
         let result = unsafe { rt.run(node) }.unwrap();
         assert_eq!(result, 42);
@@ -1505,7 +1519,7 @@ mod tests {
             let mut p = Parser::new("return 7", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         assert_eq!(unsafe { rt.run(bare) }.unwrap(), 7);
 
         // Nested brackets group correctly.
@@ -1567,7 +1581,7 @@ mod tests {
 
         // Apply it and run: run finds no bcode for `func` and walks its body.
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `call`/`func`/body are valid nodes in `store`.
         let result = unsafe { rt.run(call) }.unwrap();
         assert_eq!(result, 42);
@@ -1609,7 +1623,7 @@ mod tests {
             // The body `return x` resolved `x` to that parameter field
             // (`return` is `[value, op]`; the operand is its first slot).
             let return_operand = *((*body).value as *const DyadPtr);
-            assert_eq!(return_operand, x_field);
+            assert_eq!(core.types().through(return_operand), x_field);
         }
     }
 
@@ -1645,7 +1659,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
 
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // Oracle: interpret the call.
         // SAFETY: `call`/`add`/args are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
@@ -1718,7 +1732,7 @@ mod tests {
             assert_eq!((*call).ty, add);
         }
 
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `call`/`add`/args are valid nodes just parsed.
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 42);
     }
@@ -1752,7 +1766,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
 
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `call`/`add` are valid nodes just parsed.
         assert_eq!(unsafe { rt.run(call) }, Err(crate::run::RunError::ArityMismatch));
     }
@@ -1780,7 +1794,7 @@ mod tests {
         };
 
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `call`/`func`/body are valid nodes just parsed.
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 42);
     }
@@ -1891,7 +1905,9 @@ mod tests {
         // declines the right and yields the classifier itself (a `40` after it
         // would be a second cell in the segment — the leftover error).
         let mut p = Parser::new("logos", &mut store, &mut trie, core.types(), scopes);
-        assert_eq!(p.parse_expression(), Ok(core.type_));
+        // A bare name is a use: its record, naming the classifier.
+        let value = p.parse_expression().unwrap();
+        assert_eq!(unsafe { core.types().through(value) }, core.type_);
     }
 
     #[test]
@@ -1938,7 +1954,7 @@ mod tests {
         };
 
         // Oracle: the interpreter, from a = 0.
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `root` is the valid tree just parsed.
         let interp = unsafe { rt.run(root) }.unwrap();
         let interp_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
@@ -1988,7 +2004,7 @@ mod tests {
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
 
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // Interpreted oracle: 0 + 5e9, and `a` now holds it.
         // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
         let interp = unsafe { rt.run(call) }.unwrap();
@@ -2037,7 +2053,7 @@ mod tests {
         // The same `run`, two paths on one node: interpret first (no bcode yet),
         // then compile and run again (jumps to the installed bcode). Both diffed.
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
 
         // Interpreted: bcode is null, so `run` walks the body.
         let interp = unsafe { rt.run(call) }.unwrap();
@@ -2081,7 +2097,7 @@ mod tests {
             assert_eq!(rational::mold(node), None); // 157/50 has no exact i32
         }
 
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `node` is the rational literal just parsed.
         assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::UncomputableLiteral));
         // SAFETY: same node; compilation reports the same outcome as the oracle.
@@ -2102,7 +2118,7 @@ mod tests {
             let mut p = Parser::new("6.0", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `node` is the rational literal just parsed.
         assert_eq!(unsafe { rt.run(node) }.unwrap(), 6);
     }
@@ -2152,7 +2168,7 @@ mod tests {
                 Parser::new("add4(1, 2, 3, 4)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `call`/`add4`/args are valid nodes just parsed.
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 10);
     }
@@ -2176,7 +2192,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         // Interpreter: clean BadValue.
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `node` is the variable reference just parsed.
         assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::BadValue));
         // Compiler: BadValue, not a baked load from address 0.
@@ -2223,7 +2239,7 @@ mod tests {
         }
 
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `call`/`func`/body are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` is the fn node just built and outlives the call.
@@ -2256,7 +2272,7 @@ mod tests {
             );
             p.parse_sequence().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `root` is the sequence just parsed; its exprs are valid.
         let interp = unsafe { rt.run(root) }.unwrap();
         assert_eq!(interp, 42);
@@ -2293,11 +2309,12 @@ mod tests {
                 let mut p = Parser::new(src, &mut store, &mut trie, core.types(), s);
                 p.parse_expression().unwrap()
             };
-            // SAFETY: `node` is the literal just parsed.
+            // SAFETY: `node` is the literal just parsed — a use of `true`'s
+            // name, its record, read through.
             unsafe {
-                assert_eq!((*node).ty, core.bool_);
+                assert_eq!((*core.types().through(node)).ty, core.bool_);
             }
-            let mut rt = Runtime::new(core.fn_type, core.rational);
+            let mut rt = Runtime::new(core.types());
             // SAFETY: `node` is a valid `bool` literal.
             assert_eq!(unsafe { rt.run(node) }.unwrap(), expect);
             // SAFETY: same node; the `bool` lowering bakes its constant.
@@ -2320,7 +2337,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `call`/`func`/body are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` is the fn node just built and outlives the call.
@@ -2535,7 +2552,7 @@ mod tests {
             let y = store.alloc_raw(core.i32_, std::ptr::null_mut());
             s.declare(&mut trie, "y", test_record(core.record_, y)).unwrap();
         }
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
 
         // The right operand alone errors — this is what short-circuiting must skip.
         let bad = {
@@ -2644,7 +2661,7 @@ mod tests {
                     Parser::new(&src, &mut store, &mut trie, core.types(), s);
                 p.parse_expression().unwrap()
             };
-            let mut rt = Runtime::new(core.fn_type, core.rational);
+            let mut rt = Runtime::new(core.types());
             // SAFETY: `call`/`func`/body are valid nodes just parsed.
             let interp = unsafe { rt.run(call) }.unwrap();
             // SAFETY: `func` is the fn node just built and outlives the call.
@@ -2710,7 +2727,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // Interpreted: taken bumps a to 42; from 100, not taken, a stays.
         // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 0, "unit (interpreted)");
@@ -2771,7 +2788,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // Interpreted: outer condition false -> else-branch -> a = 7.
         // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 0);
@@ -2841,7 +2858,7 @@ mod tests {
 
         // SAFETY: `mul` is the fn node just built and outlives every call.
         let _c_mul = unsafe { compile_fn(&mut store, &core.lower, core.types(), mul) }.unwrap();
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `call`/`outer` are valid nodes; the callee's artifact is alive.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `outer` is the fn node just built; both artifacts stay alive.
@@ -2894,7 +2911,7 @@ mod tests {
 
         // SAFETY: `g` is the fn node just built and outlives every call.
         let _c_g = unsafe { compile_fn(&mut store, &core.lower, core.types(), g) }.unwrap();
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `call`/`outer`/`a` are valid nodes; the callee's artifact is alive.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `outer` is the fn node just built; both artifacts stay alive.
@@ -2936,7 +2953,7 @@ mod tests {
             let mut p = Parser::new("s(3)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // Oracle: interpret the recursion (bcode not installed yet).
         // SAFETY: `call` applies the bound `s` to a literal.
         let interp = unsafe { rt.run(call) }.unwrap();
@@ -3058,7 +3075,7 @@ mod tests {
                 Parser::new("fact(20)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `call` applies the bound `fact` to a literal.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `fact` outlives every call; the artifact stays alive for the run.
@@ -3277,7 +3294,7 @@ mod tests {
             assert_eq!(crate::identities::string::text(node), b"hello world");
         }
         // Inert: no scalar to read, and no operator accepts it.
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `node` is the string literal just parsed.
         assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::BadValue));
         assert_eq!(parse_err("«a» + 1"), ParseError::UnsupportedOperands);
@@ -3324,7 +3341,7 @@ mod tests {
             assert_eq!(crate::identities::string::text((*c2).value.cast()), b"checked twice");
         }
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `call`/`func`/body are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` outlives the call; the artifact stays alive.
@@ -3382,7 +3399,8 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new("incr", &mut store, &mut trie, core.types(), s);
-            p.parse_expression().unwrap()
+            // A bare name is its record; the fn node is what it names.
+            unsafe { core.types().through(p.parse_expression().unwrap()) }
         };
         let func = {
             let mut s = ScopeStack::new();
@@ -3398,7 +3416,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `call`/`func`/`incr` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // Compile the callee first (the caller's call bakes its address).
@@ -3444,7 +3462,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // x: 3 + 10 = 13 (via q@.x); y: 4 + 1 = 5 (via fp@); 13 + 5 = 18.
         // SAFETY: `call`/`func` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
@@ -3488,7 +3506,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `call`/`func` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` outlives the call; the artifact stays alive.
@@ -3545,7 +3563,7 @@ mod tests {
             let mut p = Parser::new(src, &mut store, &mut trie, core.types(), scopes);
             p.parse_sequence().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational)
+        let mut rt = Runtime::new(core.types())
             .with_compiler(&core.lower, core.types());
         // SAFETY: `root` is the sequence just parsed; its exprs are valid.
         unsafe { rt.run(root) }
@@ -3764,7 +3782,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // 3 + 36 = 39; 39 + 4 + 2 = 45.
         // SAFETY: `call`/`func` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
@@ -3822,7 +3840,7 @@ mod tests {
             );
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `call`/`func` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` outlives the call; the artifact stays alive.
@@ -3895,7 +3913,7 @@ mod tests {
                 Parser::new("( x := 5, x + 1 )", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `node` is the sequence just parsed.
         assert_eq!(unsafe { rt.run(node) }.unwrap(), 6);
         // SAFETY: same node; the sequence lowering yields its trailing value.
@@ -3977,8 +3995,9 @@ mod tests {
             let mut p = Parser::new("x", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        assert_eq!(x_ref, bound); // the reference resolves to the bound node
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        // The reference is x's record; it names the bound node.
+        assert_eq!(unsafe { core.types().through(x_ref) }, bound);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `x_ref`/`decl` are valid nodes just parsed.
         unsafe {
             assert_eq!(rt.run(x_ref).unwrap(), 5);
@@ -4027,7 +4046,7 @@ mod tests {
         // SAFETY: `value` is the u64 value node the read just built.
         unsafe {
             assert_eq!((*value).ty, core.numtypes[NumType::U64 as usize]);
-            let mut rt = Runtime::new(core.fn_type, core.rational);
+            let mut rt = Runtime::new(core.types());
             assert_eq!(rt.run(value).unwrap(), x_val as i64);
         }
     }
@@ -4065,7 +4084,7 @@ mod tests {
             let mut p = Parser::new("x + 1", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `decl`/`x_ref` are valid nodes just parsed.
         unsafe {
             assert_eq!(rt.run(decl).unwrap(), 0);
@@ -4211,7 +4230,7 @@ mod tests {
                     Parser::new(&src, &mut store, &mut trie, core.types(), s);
                 p.parse_expression().unwrap()
             };
-            let mut rt = Runtime::new(core.fn_type, core.rational);
+            let mut rt = Runtime::new(core.types());
             // SAFETY: `call` applies the bound `fact` to a literal.
             assert_eq!(unsafe { rt.run(call) }.unwrap(), expect, "fact({arg})");
         }
@@ -4247,7 +4266,7 @@ mod tests {
         let cases = [(0i64, 1i64), (1, 1), (5, 120), (7, 5040)];
 
         // Oracle: interpret each call (bcode not yet installed → body walk).
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         for &(arg, expect) in &cases {
             let call = {
                 let mut s = ScopeStack::new();
@@ -4316,7 +4335,7 @@ mod tests {
         };
 
         // Oracle: interpret every case (no bcode yet → body walk).
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         for &(arg, expect) in cases {
             let call = parse_call(&mut store, &mut trie, arg);
             assert_eq!(rt.run(call).unwrap(), expect, "interpreter {name}({arg})");
@@ -4459,7 +4478,7 @@ mod tests {
                 Parser::new("outer(5)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `call` applies the bound `outer` to a literal.
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 11, "outer(5)");
     }
@@ -4532,7 +4551,7 @@ mod tests {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         let mut result = 0;
         for line in ["x := i32 7", "y := i32 9", "p := &x", "p@", "p = &y", "p@"] {
             let mut s = ScopeStack::new();
@@ -4587,7 +4606,7 @@ mod tests {
         // SAFETY: `add` is the fn node just built and outlives every call.
         let _compiled_add = unsafe { compile_fn(&mut store, &core.lower, core.types(), add) }.unwrap();
 
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // Oracle: interpret `outer` (its body calls the already-compiled `add`).
         // SAFETY: `call`/`outer`/`add` are valid nodes; `_compiled_add` is alive.
         let interp = unsafe { rt.run(call) }.unwrap();
@@ -4620,7 +4639,7 @@ mod tests {
             let mut p = Parser::new(call_src, &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `call`/`func` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` is the fn node just built; the artifact outlives the call.
@@ -4674,7 +4693,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func`/`a` live in `store`, which outlives the call.
@@ -4796,7 +4815,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // Interpreted: yields unit 0, leaves a = 42.
         // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
         let interp = unsafe { rt.run(call) }.unwrap();

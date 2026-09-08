@@ -41,7 +41,7 @@ fn build(
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
     // Two comptime rationals fold now to a `bool` literal; otherwise resolve and build.
-    if let Some(v) = rational::compare_literals(types.rational, CmpOp::Ge, lhs, rhs) {
+    if let Some(v) = rational::compare_literals(types, CmpOp::Ge, lhs, rhs) {
         return Ok(bool_mod::literal_node(store, types.bool_, v));
     }
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.

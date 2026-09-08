@@ -225,12 +225,12 @@ pub(crate) unsafe fn build_storeptr(
     if !pointer_pointee && !super::is_numtype_node(types, pointee) {
         return Err(ParseError::BadAssignTarget);
     }
-    let rhs = if (*rhs).ty == types.rational {
+    let rhs = if (*types.through(rhs)).ty == types.rational {
         if pointer_pointee {
             return Err(ParseError::TypeMismatch);
         }
         let nt = numtype::of_type_node(pointee);
-        commit_if_literal(store, rhs, &Operand::Literal, pointee, nt)?
+        commit_if_literal(store, types, rhs, &Operand::Literal, pointee, nt)?
     } else {
         // A non-literal rhs must already be the pointee's logos — no implicit
         // coercion ([`super::check_store_type`]).

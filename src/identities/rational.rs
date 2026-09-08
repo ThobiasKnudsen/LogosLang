@@ -25,7 +25,7 @@ use super::numtype::{ArithOp, CmpOp, NumType};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{Cell, Constructed, ParseError, ParsingTape, Parser};
+use crate::parse::{Cell, Constructed, CoreTypes, ParseError, ParsingTape, Parser};
 use crate::store::Store;
 
 /// Register `rational_number`: its spelling (integers or decimals), literal
@@ -95,13 +95,16 @@ fn build_literal(store: &mut Store, rational: DyadPtr, num: i64, den: i64) -> Dy
 /// num/den (its rationals are `i64` fractions; arbitrary precision is later work).
 pub(crate) fn fold_arith(
     store: &mut Store,
-    rational: DyadPtr,
+    types: &CoreTypes,
     op: ArithOp,
     lhs: DyadPtr,
     rhs: DyadPtr,
 ) -> Result<Option<DyadPtr>, ParseError> {
+    let rational = types.rational;
     // SAFETY: `lhs`/`rhs` are valid dyads; a rational-typed one holds a `[num, den]` blob.
     unsafe {
+        // A comptime binding used as an operand is its record: fold through it.
+        let (lhs, rhs) = (types.through(lhs), types.through(rhs));
         if (*lhs).ty != rational || (*rhs).ty != rational {
             return Ok(None);
         }
@@ -154,13 +157,15 @@ pub(crate) fn fold_arith(
 /// operand is not a rational literal. Cross-multiplies (`den > 0` keeps the direction);
 /// the products fit `i128`, so this never overflows.
 pub(crate) fn compare_literals(
-    rational: DyadPtr,
+    types: &CoreTypes,
     op: CmpOp,
     lhs: DyadPtr,
     rhs: DyadPtr,
 ) -> Option<bool> {
+    let rational = types.rational;
     // SAFETY: `lhs`/`rhs` are valid dyads; a rational-typed one holds a `[num, den]` blob.
     unsafe {
+        let (lhs, rhs) = (types.through(lhs), types.through(rhs));
         if (*lhs).ty != rational || (*rhs).ty != rational {
             return None;
         }

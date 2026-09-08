@@ -49,7 +49,8 @@ impl Engine {
 /// # Safety
 /// `node` must be a valid dyad.
 unsafe fn is_statement_node(core: &Core, node: seed::dyad::DyadPtr) -> bool {
-    let logos = (*node).ty;
+    // A bare name is its record: what it names decides the echo.
+    let logos = (*seed::record::through(core.record_, node)).ty;
     logos == core.declare_
         || logos == core.assign
         || logos == core.storeptr_
@@ -68,7 +69,7 @@ unsafe fn is_statement_node(core: &Core, node: seed::dyad::DyadPtr) -> bool {
 /// # Safety
 /// `node` must be a valid dyad.
 unsafe fn is_silent_tail(core: &Core, node: seed::dyad::DyadPtr) -> bool {
-    let logos = (*node).ty;
+    let logos = (*seed::record::through(core.record_, node)).ty;
     logos == core.declare_
         || logos == core.assign
         || logos == core.storeptr_
@@ -134,7 +135,7 @@ fn run_line(source: &str) -> ExitCode {
     // The compiler rides along so `f.compile()` works in the one pass; the
     // engine (core + store) outlives the runtime, per `with_compiler`'s
     // contract.
-    let mut rt = Runtime::new(engine.core.fn_type, engine.core.rational)
+    let mut rt = Runtime::new(engine.core.types())
         .with_compiler(&engine.core.lower, types)
         .with_defer_type(engine.core.defer_);
     let mut p = Parser::new(source, &mut engine.store, &mut engine.trie, types, scopes)
@@ -258,7 +259,7 @@ fn repl() -> ExitCode {
             _ => {
                 println!();
                 // Session exit: run the accumulated teardowns, newest first.
-                let mut rt = Runtime::new(engine.core.fn_type, engine.core.rational)
+                let mut rt = Runtime::new(engine.core.types())
                     .with_defer_type(engine.core.defer_);
                 for defer_node in session_defers.into_iter().rev() {
                     // SAFETY: each is a `defer` node in the engine's store, which
@@ -351,7 +352,7 @@ fn repl() -> ExitCode {
         session_defers.extend(line_defers);
 
         let mut rt =
-            Runtime::new(engine.core.fn_type, engine.core.rational)
+            Runtime::new(engine.core.types())
                 .with_compiler(&engine.core.lower, types)
                 .with_defer_type(engine.core.defer_);
         // SAFETY: `node` and everything it reaches live in the engine's store,

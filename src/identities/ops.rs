@@ -315,7 +315,7 @@ mod tests {
         let value = store.alloc_operands(&[lhs, rhs, leaf]);
         let node = store.alloc_raw(core.plus, value);
 
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: the node and its operands were just built; the leaf is a
         // minted seed-native callable.
         assert_eq!(unsafe { rt.run(node) }.unwrap(), 42);
@@ -337,7 +337,7 @@ mod tests {
         let value = store.alloc_operands(&[lhs, rhs, leaf]);
         let node = store.alloc_raw(core.plus, value);
 
-        let mut rt = Runtime::new(core.fn_type, core.rational);
+        let mut rt = Runtime::new(core.types());
         // SAFETY: the leaf was minted from a seed-native RunFn shim; the node's
         // operands are valid committed scalars.
         let got = unsafe {

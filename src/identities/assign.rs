@@ -76,23 +76,27 @@ pub(super) fn build(
 ) -> Result<DyadPtr, ParseError> {
     // A store through a pointer — `p@ = v`, `p@.x = v` — rebuilds as a storeptr
     // node with its own run/lower, resolved here at parse time.
+    // The target and the value are stored as they stand (a name is its
+    // record, DESIGN ›The dyad's read surface‹); their types are read through
+    // the reading rule.
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
-    if unsafe { (*lhs).ty } == types.deref_ {
-        return unsafe { super::pointer::build_storeptr(store, types, lhs, rhs) };
+    let (lhs_d, rhs_d) = unsafe { (types.through(lhs), types.through(rhs)) };
+    if unsafe { (*lhs_d).ty } == types.deref_ {
+        return unsafe { super::pointer::build_storeptr(store, types, lhs_d, rhs) };
     }
     // The assignable places in v1 are typed numeric and pointer variables. A
     // comptime (`:=`-bound rational) binding has no machine storage — writing
     // its value slot would corrupt the fraction — and nothing else has storage.
     // SAFETY: as above.
     let (lhs_numeric, lhs_pointer) = unsafe {
-        (is_numtype_node(types, (*lhs).ty), is_pointer_type((*lhs).ty))
+        (is_numtype_node(types, (*lhs_d).ty), is_pointer_type((*lhs_d).ty))
     };
     if !lhs_numeric && !lhs_pointer {
         return Err(ParseError::BadAssignTarget);
     }
     // A literal into a pointer would become a wild address.
     // SAFETY: as above.
-    if lhs_pointer && unsafe { (*rhs).ty } == types.rational {
+    if lhs_pointer && unsafe { (*rhs_d).ty } == types.rational {
         return Err(ParseError::TypeMismatch);
     }
     // A literal right side commits to the target's logos (the typed slot); a
@@ -100,16 +104,16 @@ pub(super) fn build(
     // ([`super::check_store_type`]).
     // SAFETY: as above.
     let rhs = unsafe {
-        if (*rhs).ty == types.rational {
-            let nt = of_type_node((*lhs).ty);
-            commit_if_literal(store, rhs, &Operand::Literal, (*lhs).ty, nt)?
+        if (*rhs_d).ty == types.rational {
+            let nt = of_type_node((*lhs_d).ty);
+            commit_if_literal(store, types, rhs, &Operand::Literal, (*lhs_d).ty, nt)?
         } else {
-            super::check_store_type(types, (*lhs).ty, rhs)?;
+            super::check_store_type(types, (*lhs_d).ty, rhs)?;
             rhs
         }
     };
     // SAFETY: `lhs` is a typed variable checked assignable above.
-    let nt = unsafe { of_type_node((*lhs).ty) };
+    let nt = unsafe { of_type_node((*lhs_d).ty) };
     let value = store.alloc_operands(&[lhs, rhs, types.ops.store_leaf(nt)]);
     Ok(store.alloc_raw(op, value))
 }
@@ -124,6 +128,7 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid application dyad, so its operands are valid nodes.
     unsafe {
         let (lhs, rhs) = operands(node);
+        let lhs = lw.through(lhs);
         if (*lhs).value.is_null() {
             return Err(CompileError::BadValue);
         }

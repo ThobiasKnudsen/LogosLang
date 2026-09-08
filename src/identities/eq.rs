@@ -42,7 +42,7 @@ fn build(
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
     // Two comptime rationals fold now to a `bool` literal; otherwise resolve and build.
-    if let Some(v) = rational::compare_literals(types.rational, CmpOp::Eq, lhs, rhs) {
+    if let Some(v) = rational::compare_literals(types, CmpOp::Eq, lhs, rhs) {
         return Ok(bool_mod::literal_node(store, types.bool_, v));
     }
     // Two logos-values compare by identity: logos are interned, so pointer identity
@@ -50,7 +50,8 @@ fn build(
     // parse-time constant (roadmap #30). This is what powers `x.logos == i32`.
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     if unsafe { is_type_value(types, lhs) && is_type_value(types, rhs) } {
-        return Ok(bool_mod::literal_node(store, types.bool_, lhs == rhs));
+        let same = unsafe { types.through(lhs) == types.through(rhs) };
+        return Ok(bool_mod::literal_node(store, types.bool_, same));
     }
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let ([lhs, rhs], nt) = unsafe { resolve_binary(store, types, lhs, rhs) }?;
