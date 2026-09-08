@@ -37,10 +37,10 @@ mut := type (
     )
 )
 
-p1 := conjecture ( a + a -> 2 * a ) where ( a:dyad.type == generic_number )           # value rule: licenses rewriting a+a into 2*a; no proof = an assumption where cited, an axiom where a scope registers it
-p2 := conjecture ( a + a == 2 * a -> true ) where ( a:dyad.type == generic_number )   # truth rule: the primitive form, states any proposition
-p3 := conjecture ( a / a -> 1 ) where ( a:dyad.type == generic_number and a != 0 )   # with a premise: where is one boolean, a hole's type a premise like any other
-p4 := conjecture ( (a + a) / a -> 2 ) where ( a:dyad.type == generic_number and a != 0 ) proof (
+p1 := conjecture ( a + a -> 2 * a ) where ( a:dyad.type is number )           # value rule: licenses rewriting a+a into 2*a; no proof = an assumption where cited, an axiom where a scope registers it
+p2 := conjecture ( a + a == 2 * a -> true ) where ( a:dyad.type is number )   # truth rule: the primitive form, states any proposition
+p3 := conjecture ( a / a -> 1 ) where ( a:dyad.type is number and a != 0 )   # with a premise: where is one boolean, a hole's type a premise like any other
+p4 := conjecture ( (a + a) / a -> 2 ) where ( a:dyad.type is number and a != 0 ) proof (
     (a + a) / a
     -> p1(a + a) / a                # the derivation is a chain of -> steps, each call written where it applies
     -> mul_div_assoc((2 * a) / a)
@@ -48,7 +48,7 @@ p4 := conjecture ( (a + a) / a -> 2 ) where ( a:dyad.type == generic_number and 
     -> mul_one(2 * 1)
     -> 2
 )
-p5 := conjecture ( x <= x ^ 2 + 1 -> true ) where ( x:dyad.type == generic_number ) proof (   # a boolean mapping is goal reduction: each line is implied by the next, down to true (ruled 8 September 2026)
+p5 := conjecture ( x <= x ^ 2 + 1 -> true ) where ( x:dyad.type is number ) proof (   # a boolean mapping is goal reduction: each line is implied by the next, down to true (ruled 8 September 2026)
     x <= x ^ 2 + 1
     -> sub_lhs(0 <= x ^ 2 - x + 1)          # an iff rule over the inequality
     -> 0 <= complete_square((x - 1/2) ^ 2 + 3/4)   # a value rewrite inside the line, == on the subterm
