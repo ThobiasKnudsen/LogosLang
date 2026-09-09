@@ -235,16 +235,11 @@ impl RegexTrie {
                     if idx == NONE {
                         return None;
                     }
-                    match &current.children[idx as usize] {
-                        Some(child) => current = child,
-                        None => return None,
-                    }
+                    current = current.children[idx as usize].as_ref()?;
                 }
             } else {
-                match current.regexes.iter().position(|e| e.pattern == seg.str) {
-                    Some(i) => current = &current.regexes[i].node,
-                    None => return None,
-                }
+                let i = current.regexes.iter().position(|e| e.pattern == seg.str)?;
+                current = &current.regexes[i].node;
             }
         }
         Some(current)

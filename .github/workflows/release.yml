@@ -92,10 +92,8 @@ jobs:
 
       # The same gate ci.yml runs on every pull request, run once more on the
       # exact tagged tree: a version is never spent on a tree whose tests fail.
-      - name: Install the stable toolchain
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - name: Test the tagged tree
         run: cargo test --release --locked
@@ -124,13 +122,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # cranelift 0.133 needs rustc 1.94, so take the newest stable rather than
-      # trusting the runner image's preinstalled toolchain.
-      - name: Install the stable toolchain and the target
+      # rust-toolchain.toml pins the version every build uses; a bare install
+      # reads it, and the target is added to that toolchain.
+      - name: Install the pinned toolchain and the target
         shell: bash
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+          rustup toolchain install
           rustup target add ${{ matrix.target }}
 
       # ubuntu-latest is x86_64, so the aarch64 Linux artifact is cross-compiled and

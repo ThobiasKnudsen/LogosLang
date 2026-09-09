@@ -3773,7 +3773,7 @@ impl<'a> Parser<'a> {
             // scope exit. Nested blocks drained their own before returning.
             let depth = self.pending_defers.len() - 1;
             if !self.pending_defers[depth].is_empty() {
-                let drained: Vec<DyadPtr> = self.pending_defers[depth].drain(..).collect();
+                let drained = std::mem::take(&mut self.pending_defers[depth]);
                 for &d in &drained {
                     // SAFETY: `d` is a `defer free <place>` node the binding site
                     // just built.
@@ -3893,7 +3893,7 @@ impl<'a> Parser<'a> {
                 self.pos = items[1].1;
                 return Some(Err(ParseError::Trailing));
             }
-            let mut ordered: Vec<(usize, DyadPtr)> = self.lifted.drain(..).collect();
+            let mut ordered = std::mem::take(&mut self.lifted);
             if let Some((item, start)) = items.pop() {
                 ordered.push((start, item));
             }

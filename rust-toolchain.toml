@@ -1,0 +1,10 @@
+# The toolchain CI, the release build, and a local checkout all use (#72).
+# Pinned, not `stable`: the ci gate runs clippy with warnings as errors, and
+# every new stable ships new lints, so a floating channel would break the gate
+# on a runner-image update with no change to the tree. Bump it deliberately,
+# fixing what the new clippy finds in the same commit. cranelift 0.133 needs
+# at least 1.94.
+[toolchain]
+channel = "1.98.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"
