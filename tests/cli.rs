@@ -166,6 +166,18 @@ fn a_collection_member_demands_its_index_brackets() {
 }
 
 #[test]
+fn a_square_bracket_is_a_paren_that_closes_only_itself() {
+    // `[` is `(` in square brackets (ruled 9 September 2026): its interior is
+    // any expression, and each opener takes only its own closer.
+    let (echoes, stderr) = repl(b"x := i32 5\n(x + x).operands[1 - 1]\n");
+    assert_eq!(echoes, ["5"], "stderr: {stderr}");
+    let (_echoes, stderr) = repl(b"(1]\n");
+    assert!(stderr.contains("never closed"), "stderr: {stderr}");
+    let (_echoes, stderr) = repl(b"x := i32 5\n(x + x).operands[0)\n");
+    assert!(stderr.contains("never closed"), "stderr: {stderr}");
+}
+
+#[test]
 fn dot_logos_off_the_view_is_a_guided_error() {
     // `.` reads only the fields a logos defines — about the value — so
     // `x.type` no longer exists; the error teaches the view spelling.

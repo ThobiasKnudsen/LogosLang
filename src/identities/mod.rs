@@ -237,6 +237,8 @@ pub struct Core {
     pub open_: DyadPtr,
     /// `)` — the closing paren token (parse-only).
     pub close_: DyadPtr,
+    /// `]` — the closing square bracket (parse-only).
+    pub close_sq_: DyadPtr,
     /// `,` — the one explicit separator (parse-only).
     pub sep_: DyadPtr,
     /// `->` — the return-logos arrow (parse-only).
@@ -412,7 +414,8 @@ impl Core {
         hole::register(&mut cx);
         let sep_ = logos_mod::register_syntax(&mut cx);
         // Struct instances: the construction statement and the `.` field access.
-        let (construct_, construct_leaf, dot_, index_) = instance::register(&mut cx, &callables);
+        let (construct_, construct_leaf, dot_, index_, close_sq_) =
+            instance::register(&mut cx, &callables);
         op_leaves.construct_ = construct_leaf;
         // Pointers: the `@`/`&` tokens and the deref/storeptr identities.
         let (deref_, storeptr_, addr_, deref_leaf, storeptr_leaf, addr_leaf, at_) =
@@ -521,6 +524,7 @@ impl Core {
             conv_seed_parse: callables.seed_parse,
             open_,
             close_,
+            close_sq_,
             sep_,
             arrow_,
             else_,
@@ -590,6 +594,7 @@ impl Core {
             conv_container: self.conv_container_i64,
             open_: self.open_,
             close_: self.close_,
+            close_sq_: self.close_sq_,
             sep_: self.sep_,
             arrow_: self.arrow_,
             else_: self.else_,

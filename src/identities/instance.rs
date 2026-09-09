@@ -31,9 +31,12 @@ use crate::store::Store;
 
 /// Register the instance machinery: the `construct` identity (no spelling; the
 /// parser builds these from a record-typed callee) with its native leaf and
-/// lowering, and the `.` field-access token (parse-only; access nodes are plain
-/// data). Returns `(identity, leaf, . token)`.
-pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
+/// lowering, the `.` field-access token (parse-only; access nodes are plain
+/// data), and the `[` `]` pair. Returns `(identity, leaf, . token, index, ])`.
+pub(super) fn register(
+    cx: &mut Cx,
+    cs: &Callables,
+) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::operand_record(
         cx,
         meta::LIST_TAG,
@@ -53,13 +56,19 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     // or `()` cell after that where the read takes one (#59 step 3).
     cx.metas.insert(dot, |p, _id, tape| p.construct_field_access(tape));
 
-    // `[`: constructed at discovery like a literal, it reads its interior to
-    // its own `]` into a passive index cell the reads after `.` consume
-    // (DESIGN ›The constructor is a field‹).
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::LITERAL);
+    // `[` is `(` in square brackets (ruled 9 September 2026): one identity at
+    // the discovery threshold, it parses its interior as any bracket's — the
+    // eager-segment loop, closed by its `]` — into a passive index cell the
+    // reads after `.` consume (DESIGN ›The constructor is a field‹: "`[…]`
+    // constructs itself … into a passive node carrying the index"), or, after
+    // a tape, into the element read the tape's constructor consumes.
+    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::OPEN);
     let open_sq = cx.store.alloc_raw(cx.type_, record);
     cx.declare(r"\[", open_sq);
     cx.metas.insert(open_sq, |p, _id, tape| p.construct_index(tape));
+    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
+    let close_sq = cx.store.alloc_raw(cx.type_, record);
+    cx.declare(r"\]", close_sq);
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
@@ -69,7 +78,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     );
     let index_ = cx.store.alloc_raw(cx.type_, record);
 
-    (construct, leaf, dot, index_)
+    (construct, leaf, dot, index_, close_sq)
 }
 
 /// The layout a record logos stores from its field declarations (DESIGN ›a logos

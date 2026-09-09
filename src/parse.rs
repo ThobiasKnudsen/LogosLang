@@ -812,8 +812,8 @@ pub struct CoreTypes {
     pub colon_: DyadPtr,
     /// `parsing_tape` and the tape's natives (#60).
     pub tape: crate::identities::tape::TapeIds,
-    /// `index`: the passive node a `[i]` cell carries (a comptime literal in
-    /// the seed).
+    /// `index`: the passive node a `[i]` cell carries — its interior, one
+    /// expression parsed as any bracket's.
     pub index_: DyadPtr,
     /// `construct`: the record-construction statement a record-typed call builds.
     pub construct_: DyadPtr,
@@ -871,6 +871,8 @@ pub struct CoreTypes {
     pub open_: DyadPtr,
     /// `)` — the closing paren token.
     pub close_: DyadPtr,
+    /// `]` — the closing square bracket.
+    pub close_sq_: DyadPtr,
     /// `,` — the one explicit separator.
     pub sep_: DyadPtr,
     /// `->` — the return-logos arrow.
@@ -1545,6 +1547,16 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Consume the `]` that matches an opening `[`, or fail (a `)` there is
+    /// the mismatched closer, the same error).
+    pub(crate) fn expect_close_sq(&mut self) -> Result<(), ParseError> {
+        if self.consume_token(self.types.close_sq_) {
+            Ok(())
+        } else {
+            Err(ParseError::UnclosedBracket)
+        }
+    }
+
     /// Application — the constructor an instance of `fn`, a record logos, or
     /// (through its own constructor) a numeric logos runs for the bracket to
     /// its right: DESIGN ›`X (…)` is one spelling, and X's constructor decides
@@ -1974,9 +1986,11 @@ impl<'a> Parser<'a> {
         self.consume_token(self.types.sep_)
     }
 
-    /// Whether the next token is a closing `)` (peek, no consume).
+    /// Whether the next token is a closer, `)` or `]` (peek, no consume): a
+    /// closer ends the body being parsed, and the opener's own expect-helper
+    /// then checks it is the matching one.
     fn at_close(&mut self) -> bool {
-        matches!(self.peek_token(), Some((id, _)) if id == self.types.close_)
+        matches!(self.peek_token(), Some((id, _)) if id == self.types.close_ || id == self.types.close_sq_)
     }
 
     /// Read a raw identifier `[A-Za-z_][A-Za-z0-9_]*` at the cursor, advancing past
@@ -2594,6 +2608,7 @@ impl<'a> Parser<'a> {
         nstart: usize,
         nlen: usize,
         index: Option<usize>,
+        key: Option<DyadPtr>,
         call: Option<Vec<DyadPtr>>,
     ) -> Result<(DyadPtr, usize), ParseError> {
         let unit_call = matches!(call, Some(ref a) if a.is_empty());
@@ -2693,8 +2708,7 @@ impl<'a> Parser<'a> {
             if let Some((op, leaf)) = crate::identities::tape::member(&self.types.tape, name) {
                 let types = self.types;
                 if op == types.tape.is_constructed {
-                    let i = index.ok_or(ParseError::ExpectedIndexBracket)?;
-                    let k = self.scalar_value(crate::identities::numtype::NumType::I64, i as i64);
+                    let k = key.ok_or(ParseError::ExpectedIndexBracket)?;
                     let node = crate::identities::tape::build_member(self.store, &types, recv, op, leaf, &[k])?;
                     return Ok((node, 1));
                 }
@@ -2777,9 +2791,10 @@ impl<'a> Parser<'a> {
             Some(c) if c.is_bracket() => Some(unsafe { self.args_of(c.dyad) }),
             _ => None,
         };
+        let key = self.index_node_at(tape, 2);
         // SAFETY: `lhs` is a reduced dyad off the tape.
         let (node, consumed) =
-            unsafe { self.field_access(lhs, nstart, nlen, index, call)? };
+            unsafe { self.field_access(lhs, nstart, nlen, index, key, call)? };
         for _ in 0..(1 + consumed) {
             tape.remove(1);
         }
@@ -2788,21 +2803,17 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// The comptime index a `[…]` cell carries, if the cell at `offset` is one.
+    /// The comptime index a `[…]` cell carries, if the cell at `offset` is
+    /// one and its interior is a non-negative literal — what the reflection
+    /// reads (`.operands[i]`, `.roles[i]`) fold at parse.
     fn index_at(&self, tape: &ParsingTape, offset: isize) -> Option<usize> {
-        let c = tape.at(offset)?;
-        if !c.constructed {
-            return None;
-        }
-        let d = c.dyad;
-        // SAFETY: a dyad cell is a node from the store; an index node's value
-        // is its literal operand first.
+        let key = self.index_node_at(tape, offset)?;
+        // SAFETY: the interior is a node from the store.
         unsafe {
-            if (*d).ty != self.types.index_ {
+            if (*key).ty != self.types.rational {
                 return None;
             }
-            let lit = *((*d).value as *const DyadPtr);
-            let i = crate::identities::rational::mold(lit)?;
+            let i = crate::identities::rational::mold(key)?;
             if i < 0 {
                 None
             } else {
@@ -2811,36 +2822,45 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// The interior a `[…]` cell carries, if the cell at `offset` is one:
+    /// any expression, for the reads whose natives run it
+    /// (`t.is_constructed[k]`).
+    fn index_node_at(&self, tape: &ParsingTape, offset: isize) -> Option<DyadPtr> {
+        let c = tape.at(offset)?;
+        if !c.constructed {
+            return None;
+        }
+        let d = c.dyad;
+        // SAFETY: a dyad cell is a node from the store; an index node's value
+        // is its interior first.
+        unsafe {
+            if (*d).ty != self.types.index_ {
+                return None;
+            }
+            Some(*((*d).value as *const DyadPtr))
+        }
+    }
+
     /// Whether `node` is a scope with nothing in it — the `()` cell.
     ///
     /// # Safety
     /// `node` must be a dyad from the store.
-    /// `[`'s constructor: an index cell — the interior read once, generically
-    /// (DESIGN ›The constructor is a field‹: "`[…]` constructs itself … into a
-    /// passive node carrying the index"), a comptime literal in the seed —
-    /// closed by its `]`, which it consumes itself.
+    /// `[`'s constructor. `[` is `(` in square brackets (ruled 9 September
+    /// 2026): the interior is parsed as any bracket's — the eager-segment
+    /// loop, to one expression — and closed by its `]`, which it consumes
+    /// itself. What it lands is the passive index cell (DESIGN ›The
+    /// constructor is a field‹: "`[…]` constructs itself … into a passive
+    /// node carrying the index"), or, right after a tape value, the element
+    /// read `t[k]` — the tape's constructor consumes the bracket to its
+    /// right (ruled the same day), which the seed folds here, `[` reading
+    /// its left cell, since a tape value has no constructor of its own yet.
+    /// The index is any expression: the natives run it.
     pub(crate) fn construct_index(
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        self.skip_trivia();
-        let source = self.source;
-        let r = self
-            .scopes
-            .resolve(self.trie, &source[self.pos..])
-            .map_err(ParseError::Resolve)?;
-        if r.identity != self.types.rational {
-            return Err(ParseError::BadReflectRead);
-        }
-        let start = self.pos;
-        self.pos += r.matched;
-        let lit =
-            self.construct_leaf(r.identity, start, r.matched)?.ok_or(ParseError::BadLiteral)?;
-        self.skip_trivia();
-        if self.source.as_bytes().get(self.pos) != Some(&b']') {
-            return Err(ParseError::ExpectedIndexBracket);
-        }
-        self.pos += 1;
+        let key = self.parse_sequence()?;
+        self.expect_close_sq()?;
         // `t[k]` (#60): an index right after a tape value is the element
         // read, a slot node the identity to its left owns; after a `.` the
         // index stays a passive cell for the member read to consume.
@@ -2852,16 +2872,14 @@ impl<'a> Parser<'a> {
                 let types = self.types;
                 // SAFETY: `lhs` is a reduced dyad from the store.
                 if let Some(recv) = unsafe { crate::identities::tape::receiver_addr(self.store, &types, lhs) } {
-                    let i = crate::identities::rational::mold(lit).ok_or(ParseError::BadReflectRead)?;
-                    let k = self.scalar_value(crate::identities::numtype::NumType::I64, i64::from(i));
-                    let node = crate::identities::tape::build_slot(self.store, &types, recv, k);
+                    let node = crate::identities::tape::build_slot(self.store, &types, recv, key);
                     tape.remove(-1);
                     tape.place(node);
                     return Ok(Constructed::Placed);
                 }
             }
         }
-        let value = self.store.alloc_operands(&[lit, std::ptr::null_mut()]);
+        let value = self.store.alloc_operands(&[key, std::ptr::null_mut()]);
         let node = self.store.alloc_raw(self.types.index_, value);
         tape.place(node);
         Ok(Constructed::Placed)
@@ -4241,7 +4259,7 @@ impl<'a> Parser<'a> {
                 self.pos = start;
                 return Ok(Some(Boundary::Comma));
             }
-            if id == self.types.close_ {
+            if id == self.types.close_ || id == self.types.close_sq_ {
                 self.pos = start;
                 return Ok(Some(Boundary::Close));
             }
@@ -4669,6 +4687,20 @@ mod tests {
             let (v, s) = go("t.remove(1)", &mut store, &mut trie, types, s);
             assert_eq!(v as DyadPtr, plus, "remove yields the cell it took");
             assert_eq!((*tape).len(), 2);
+
+            // `[` is `(` in square brackets (ruled 9 September 2026): the
+            // index is any expression, a name or a negative literal alike,
+            // run by the native.
+            let (a_rec, b_rec) = ((*tape).at(0).unwrap().dyad, (*tape).at(1).unwrap().dyad);
+            let (_, s) = go("i := i64 1", &mut store, &mut trie, types, s);
+            let (v, s) = go("t[i]", &mut store, &mut trie, types, s);
+            assert_eq!(v as DyadPtr, b_rec, "an index may be a name");
+            let (_, s) = go("t.recenter(1)", &mut store, &mut trie, types, s);
+            let (v, s) = go("t[-1]", &mut store, &mut trie, types, s);
+            assert_eq!(v as DyadPtr, a_rec, "a negative index reads the left context");
+            let (v, s) = go("t[i - 2]", &mut store, &mut trie, types, s);
+            assert_eq!(v as DyadPtr, a_rec, "an index may be an expression");
+            let (_, s) = go("t.recenter(-1)", &mut store, &mut trie, types, s);
 
             let (_, s) = go("t[0] = dyad (i32, 7)", &mut store, &mut trie, types, s);
             let c0 = *(*tape).at(0).unwrap();

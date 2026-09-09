@@ -55,7 +55,7 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::Trailing => "expected one expression, found more".into(),
         ParseError::Empty => "nothing to evaluate here".into(),
         ParseError::BadLiteral => "this is not a valid literal".into(),
-        ParseError::UnclosedBracket => "this `(` is never closed".into(),
+        ParseError::UnclosedBracket => "this bracket is never closed".into(),
         ParseError::ExpectedOpen => "expected a `(` here".into(),
         ParseError::ExpectedField => "expected a field name here".into(),
         ParseError::ExpectedArrow => "expected `->` before the return type".into(),
