@@ -2194,7 +2194,6 @@ mod tests {
                 "fn (a := i32 ?, b := i32 ?, c := i32 ?, d := i32 ?) -> i32 ( return a + b + c + d )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -2310,7 +2309,6 @@ mod tests {
                 "double := fn (x := i32 ?) -> i32 ( x + x ),\npoint := logos (instance (a := i32 ?)),\ndouble(21)",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 scopes,
             );
@@ -2984,7 +2982,6 @@ mod tests {
                 "s := fn (n := i64 ?) -> i64 ( if (n < 1) (2000000000 + 2000000000) else (s(n - 1)) )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -3481,7 +3478,6 @@ mod tests {
                 "fn () -> i32 ( pt := point(3, 4), q := &pt, q@.x = q@.x + 10, fp := &pt.y, fp@ = fp@ + 1, pp := &q, pp@@.x + pt.y )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -4452,7 +4448,6 @@ mod tests {
                 "outer := fn (a := i32 ?) -> i32 ( inner := fn (b := i32 ?) -> i32 ( y := b, y + b ), inner(a) + 1 )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
