@@ -1,6 +1,7 @@
 # The style CI enforces (`cargo fmt --check`, .github/workflows/ci.yml).
-# Chosen on 9 September 2026 as the configuration that changed the least of the
-# existing tree: the seed was written with long one-line expressions, which
-# `use_small_heuristics = "Max"` keeps.
-max_width = 100
+# One setting: rustfmt's smaller per-construct widths (a struct literal on one
+# line only up to 18 characters, a call's arguments up to 60, a chain up to 60,
+# and so on) are lifted to the line width, so the only rule is "one line if it
+# fits". Chosen 9 September 2026 because the tree was already written that way.
+# The line width itself is rustfmt's default.
 use_small_heuristics = "Max"
