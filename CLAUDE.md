@@ -27,7 +27,7 @@ Before pushing any version tag:
 2. `bash .github/scripts/docs-check.sh validate` passes.
 3. `bash .github/scripts/docs-check.sh release vX.Y.Z` passes — this is the exact check the `gate` job runs, and the in-progress `docs/vX.Y.Z/` folder must be named for the version being released.
 4. `bash .github/scripts/docs-check.test.sh` passes (the guard's own self-test).
-5. The tag is on `main`, and `main` is already merged and green. `main` is protected: it takes a PR with 2 required checks, never a direct push.
+5. The tag is on `main`, and `main` is already merged and green. `main` is protected: it takes a PR with 3 required checks (the docs guard's `test` and `validate`, and `ci`'s `rust`: fmt, clippy with warnings as errors, build, tests, smoke test, on the toolchain `rust-toolchain.toml` pins), never a direct push. Steps 1 to 4 are what that `rust` check runs; run them locally anyway, the pipeline is the backstop, not the habit.
 6. Rehearse the archive: build the seed, stage `bin/logos` with LICENSE, NOTICE, TRADEMARK.md and examples, pack it, unpack it, and run it. What ships must have been run.
 
 Never tag speculatively "to see if CI passes". There is no undo.
