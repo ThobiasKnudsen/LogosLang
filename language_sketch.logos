@@ -26,6 +26,9 @@ parsing_tape := type (
         center := @dyad ?                             # tape[0]: the center is a node of the list (DESIGN; the seed's list ruled 9 September 2026)
         insert := fn (k := i64 ?, cells := array @dyad ?) -> void ( ? )   # splice cells in: the macro mechanism
         remove := fn (k := i64 ?) -> void ( ? )                           # drop a cell before it lexes or after
+        # tape[k]: the instance's constructor consumes the [ ] to its right (ruled 9 September 2026: [ is ( in
+        # square brackets, its interior any expression); tape[k]:dyad is the cell, tape[k]:dyad.type = T a fresh
+        # node of type T with an empty operand record, tape[k]:dyad.value.operands.append(a and b) fills it
     )
 )
 

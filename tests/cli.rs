@@ -177,6 +177,30 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
 }
 
 #[test]
+fn a_constructor_written_in_logos_runs_during_the_parse() {
+    // Issue #61's done-when: a file defines a type with `precedence = …`,
+    // `associativity = …`, and a `constructor = fn (tape) -> void (…)`, and a
+    // later appearance in the same file runs that constructor during the
+    // parse — here a postfix `squared` and an infix `plus2`, the nodes they
+    // build calling like any other, interpreted and compiled.
+    let out = logos().args(["import", "tests/fixtures/squared.logos"]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "92\n");
+    // A constructor that touches nothing declines: the identity stands as
+    // its own value (DESIGN ›The scope's constructor is the driver‹).
+    let (echoes, stderr) = repl(
+        b"noop := type (constructor = fn (tape := parsing_tape ?) -> void ( tape.recenter(0) ))\n\
+          t := noop\nt:dyad.type == type\nnoop.precedence\n",
+    );
+    assert_eq!(echoes, ["true", "91.0"], "stderr: {stderr}");
+    // A constructor that fails is the checked error, reported at the appearance.
+    let (_echoes, stderr) = repl(
+        b"bad := type (constructor = fn (tape := parsing_tape ?) -> void ( tape[5] ))\nx := bad\n",
+    );
+    assert!(stderr.contains("constructor failed"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_type_body_refuses_what_is_not_its_own() {
     // `:=` on a slot name is the no-shadowing error; a member may not shadow
     // an outer name; `instance` belongs in a body, once; a line that would

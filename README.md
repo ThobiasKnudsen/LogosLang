@@ -151,7 +151,12 @@ This is what the first public preview is built to show. An operator is a type wi
 ^ := type (
     precedence = *.precedence + 1,       # binds tighter than *
     associativity = right,
-    constructor = fn (tape := parsing_tape ?) -> void ( ? ),   # builds the ^ node from tape[-1] and tape[1]
+    constructor = fn (tape := parsing_tape ?) -> void (
+        tape[0]:dyad.type = ^,                                  # the ^ node, its operand record empty
+        tape[0]:dyad.value.operands.append(tape[-1] and tape[1]),
+        tape.remove(1),
+        tape.remove(-1)
+    ),
     code = fn (a := i32 ?, b := i32 ?) -> i32 ( ? )            # the power computation
 ),
 f := fn (x := i32 ?) -> i32 ( x ^ 3 + 1 ),
@@ -159,7 +164,7 @@ f.compile(),
 f(2)
 ```
 
-The parser hands every constructor a view of the *parsing tape*, the tokens around it that are not yet built: `tape[0]` is its own cell, negative offsets are to its left, positive to its right, and it may read, insert, and remove. Precedence is one number per identity, so a new operator slots between any two existing ones by writing its number relative to theirs. `fn` is the shorthand for a type whose precedence, associativity, and constructor are the defaults of a call. This demo does not run yet: making the tape reachable from Logos source is the current work.
+The parser hands every constructor the *parsing tape*, the cells around it: `tape[0]` is its own cell, negative offsets are to its left, positive to its right, and it may read, write, insert, and remove. Assigning a cell's type makes a fresh node of that type with an empty operand record, which the constructor then fills. Precedence is one number per identity, so a new operator slots between any two existing ones by writing its number relative to theirs. `fn` is the shorthand for a type whose precedence, associativity, and constructor are the defaults of a call. Everything above runs today except the `code` slot: an operator that is its own operation is the next step, and until it lands a constructor builds a call of an ordinary function, as `tests/fixtures/squared.logos` does.
 
 ## What runs today, and what does not
 
@@ -169,6 +174,7 @@ The seed runs:
 - `:=`, `=`, `?`, juxtaposition, and `,`;
 - integer, float, and boolean primitives with conversions, and compile-time rationals;
 - `if`, `while`, `for`, functions, scopes, recursion, and records;
+- types defined with their own precedence, associativity, and a constructor written in Logos, run during the parse over the tape;
 - functions returning `type`, dependent declarations, and comptime `if`;
 - `alloc`, `own`, `drop`, `free`, `defer`, and raw pointers;
 - `.compile()` with a deoptimizing JIT;
