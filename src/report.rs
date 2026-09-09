@@ -132,6 +132,9 @@ pub fn parse_message(e: &ParseError) -> String {
             "declarations of non-numeric types are not in the seed yet"
                 .into()
         }
+        ParseError::ConstructorFailed(msg) => {
+            format!("this identity's constructor failed while parsing: {msg}")
+        }
         ParseError::NonComptimeTypeCall => {
             "a `-> logos` call must be evaluable at parse time; \
              its arguments must be comptime-known"

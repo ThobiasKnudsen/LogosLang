@@ -87,7 +87,15 @@ pub(super) fn register(
     let cells = cx.store.alloc_raw(at_void, std::ptr::null_mut());
     cx.declare_in(scope, "cells", cells);
     let fields = super::array::build(cx.store, array_ty, &[cells]);
-    let layout = meta::record_layout(cx.store, scope, fields, 8);
+    let layout = meta::record_layout(
+        cx.store,
+        scope,
+        fields,
+        8,
+        std::ptr::null_mut(),
+        meta::prec::APPLY,
+        crate::parse::Assoc::Left,
+    );
     let parsing_tape = cx.store.alloc_raw(cx.type_, layout);
     cx.declare("parsing_tape", parsing_tape);
 

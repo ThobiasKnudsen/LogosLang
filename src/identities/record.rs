@@ -149,7 +149,15 @@ pub(super) fn register_type(cx: &mut Cx, scope_ty: DyadPtr, array_ty: DyadPtr, d
     }
     debug_assert_eq!(fields.len() * 8, std::mem::size_of::<Record>());
     let fields_arr = super::array::build(cx.store, array_ty, &fields);
-    let layout = super::meta::record_layout(cx.store, scope, fields_arr, (fields.len() * 8) as u64);
+    let layout = super::meta::record_layout(
+        cx.store,
+        scope,
+        fields_arr,
+        (fields.len() * 8) as u64,
+        std::ptr::null_mut(),
+        super::meta::prec::APPLY,
+        crate::parse::Assoc::Left,
+    );
     // SAFETY: `record_` is the type node minted at the head of the build.
     unsafe { (*record_).value = layout };
     cx.declare("record", record_);

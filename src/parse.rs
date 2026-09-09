@@ -956,6 +956,19 @@ pub enum Constructed {
     Decline,
 }
 
+/// A Logos-written constructor as a [`ConstructFn`]: the function in the
+/// identity's constructor slot, run over the tape (see
+/// [`Parser::run_logos_ctor`]).
+fn logos_constructor(
+    p: &mut Parser,
+    id: DyadPtr,
+    tape: &mut ParsingTape,
+) -> Result<Constructed, ParseError> {
+    // SAFETY: `id` is the identity whose slot `construct_of` just read.
+    let f = unsafe { crate::identities::meta::constructor_of(id) };
+    p.run_logos_ctor(f, tape)
+}
+
 /// The application constructor as a [`ConstructFn`] (see
 /// [`Parser::construct_application`]).
 fn application(
@@ -985,6 +998,9 @@ pub type ConstructFn =
 pub enum ParseError {
     /// Name resolution failed.
     Resolve(ResolveError),
+    /// A Logos-written constructor, invoked for an appearance of its identity
+    /// (#61), failed while running; carries the rendered run error.
+    ConstructorFailed(Box<String>),
     /// An operator lacked a reduced operand on one side.
     MissingOperand,
     /// The tape did not reduce to a single dyad (a dangling operator or operand).
@@ -1638,15 +1654,50 @@ impl<'a> Parser<'a> {
     fn construct_of(&self, id: DyadPtr) -> Option<ConstructFn> {
         // SAFETY: `id` is a resolved identity; every constructor leaf is
         // minted from a `ConstructFn` at registration (`Core::build`) — one
-        // convention, one signature, so the transmute is exact.
+        // convention, one signature, so the transmute is exact; a Logos
+        // function in the slot is a dyad, told apart by its type.
         unsafe {
             let leaf = crate::identities::meta::constructor_of(id);
             if leaf.is_null() {
                 return None;
             }
+            // A constructor written in Logos (#61): the slot holds the
+            // function itself, run for every appearance of the identity.
+            if (*leaf).ty == self.types.fn_type {
+                return Some(logos_constructor);
+            }
             let entry = crate::identities::callable::entry_of(leaf);
             Some(std::mem::transmute::<usize, ConstructFn>(entry))
         }
+    }
+
+    /// Run a Logos-written constructor for an appearance of its identity
+    /// (DESIGN ›The constructor is a field‹: "an appearance of X runs X's
+    /// `constructor` field"; #61). The function takes the tape by value — a
+    /// `parsing_tape` instance is the tape's handle, eight bytes — so the
+    /// argument is the driver's own tape, re-centered on the cell by the
+    /// driver already; the natives it reaches edit that tape in place and
+    /// allocate into the parser's store, both through raw handles while the
+    /// driver makes no use of either. A run error is the checked
+    /// [`ParseError::ConstructorFailed`]. What the constructor left is read
+    /// off the cell by [`Parser::run_ctor`], applied or declined.
+    pub(crate) fn run_logos_ctor(
+        &mut self,
+        f: DyadPtr,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        let types = self.types;
+        let handle = self.scalar_value(
+            crate::identities::numtype::NumType::U64,
+            tape as *mut ParsingTape as usize as i64,
+        );
+        let call = build_call(self.store, f, &[handle]);
+        let mut rt = crate::run::Runtime::new(types).with_store(self.store);
+        // SAFETY: `call` was just built into the store; the tape and the
+        // store are reached only through the natives until `run` returns.
+        unsafe { rt.run(call) }
+            .map_err(|e| ParseError::ConstructorFailed(Box::new(crate::report::run_message(&e))))?;
+        Ok(Constructed::Placed)
     }
 
     /// Whether the running constructor was woken at discovery (see the
@@ -1750,9 +1801,16 @@ impl<'a> Parser<'a> {
                         self.alloc_local(t, nt.bytes())
                     } else if crate::identities::numtype::is_pointer_type(t) {
                         self.alloc_local(t, 8)
+                    } else if crate::identities::meta::is_record_type(t) {
+                        // A record-typed place: its layout's bytes (ruled 9
+                        // September 2026 for the tape parameter, `fn (tape :=
+                        // parsing_tape ?)`). As a parameter it rides the
+                        // 8-byte container the call convention passes, so a
+                        // wider record reaches a call only with #47.
+                        let size = crate::identities::meta::record_size_of(t) as usize;
+                        self.alloc_local(t, size.max(1))
                     } else {
-                        // A record or bool place by declared type waits for the
-                        // instance machinery to read it (#47).
+                        // A bool place by declared type waits (#47).
                         return Err(ParseError::NonNumericDeclaredType);
                     }
                 };
@@ -2107,8 +2165,15 @@ impl<'a> Parser<'a> {
             })
             .sum();
         let fields_arr = crate::identities::array::build(self.store, self.types.array_, &fields);
-        let record =
-            crate::identities::meta::record_layout(self.store, scope, fields_arr, size_bytes);
+        let record = crate::identities::meta::record_layout(
+            self.store,
+            scope,
+            fields_arr,
+            size_bytes,
+            std::ptr::null_mut(),
+            crate::identities::meta::prec::APPLY,
+            Assoc::Left,
+        );
         Ok(self.store.alloc_raw(record_logos, record.cast()))
     }
 
@@ -4058,7 +4123,23 @@ impl<'a> Parser<'a> {
                     .alloc_raw(self.types.dyad_, meta::record_scope_of(logos) as *mut u8))
             }
             "type" => Err(ParseError::TypeNeedsView),
-            _ => Err(ParseError::BadReflectRead),
+            // A member of the type's own definition body (#61; DESIGN ›The
+            // constructor is a field‹: bare lines "survive as members
+            // reached `g.y`"): resolved against the body scope alone.
+            _ => {
+                let body = if meta::is_record_type(logos) {
+                    meta::record_body_of(logos)
+                } else {
+                    std::ptr::null_mut()
+                };
+                if body.is_null() {
+                    return Err(ParseError::BadReflectRead);
+                }
+                let mut members = ScopeStack::new();
+                members.push(body);
+                let r = members.resolve(self.trie, name).map_err(|_| ParseError::BadReflectRead)?;
+                Ok(r.identity)
+            }
         }
     }
 
@@ -4188,8 +4269,10 @@ impl<'a> Parser<'a> {
             if (*id).ty != self.types.type_ || crate::identities::meta::kind_of(id).is_none() {
                 return None;
             }
+            // A record type runs the constructor its body filled (#61), or
+            // the derived one: application, the instance construction.
             if crate::identities::meta::is_record_type(id) {
-                return Some(application);
+                return self.construct_of(id).or(Some(application));
             }
             self.construct_of(id)
         }
@@ -4205,7 +4288,6 @@ impl<'a> Parser<'a> {
             if id.is_null()
                 || (*id).ty != self.types.type_
                 || crate::identities::meta::kind_of(id).is_none()
-                || crate::identities::meta::is_record_type(id)
             {
                 crate::identities::meta::prec::APPLY
             } else {
@@ -4223,7 +4305,6 @@ impl<'a> Parser<'a> {
             if id.is_null()
                 || (*id).ty != self.types.type_
                 || crate::identities::meta::kind_of(id).is_none()
-                || crate::identities::meta::is_record_type(id)
             {
                 Assoc::Left
             } else {
@@ -4704,6 +4785,73 @@ mod tests {
         // SAFETY: `node` was just parsed into the store.
         let v = unsafe { rt.run(node) }.unwrap_or_else(|e| panic!("{src}: {e:?}"));
         (v, scopes)
+    }
+
+    #[test]
+    fn a_logos_constructor_runs_when_its_identity_appears() {
+        // DESIGN ›The constructor is a field‹: "an appearance of X runs X's
+        // `constructor` field" (#61). A postfix `squared`, its constructor
+        // written in Logos and taking the tape by value, its precedence one
+        // above `*`'s: the driver runs it at the boundary, and what it
+        // leaves — the call `sq(x)` — runs and compiles as any call.
+        use crate::identities::Core;
+        use crate::record::Record;
+        use crate::regex_trie::RegexTrie;
+        use crate::store::Store;
+
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let types = core.types();
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+
+        let (_, s) = go("sq := fn (a := i32 ?) -> i32 ( a * a )", &mut store, &mut trie, types, scopes);
+        let (_, s) = go(
+            "c := fn (tape := parsing_tape ?) -> void ( \
+                tape[0]:dyad.type = sq, \
+                tape[0]:dyad.value.operands.append(tape[-1]), \
+                tape.remove(-1) )",
+            &mut store,
+            &mut trie,
+            types,
+            s,
+        );
+        // `squared`: a record type with no fields, the constructor slot
+        // holding `c` and the precedence one above `*`'s — what a `type (…)`
+        // body fills in the next step.
+        // SAFETY: the nodes are from the store just built.
+        let s = unsafe {
+            let c = types.through(s.resolve(&trie, "c").unwrap().record);
+            let scope = store.alloc_raw(types.scope, std::ptr::null_mut());
+            let fields = crate::identities::array::build(&mut store, types.array_, &[]);
+            let layout = crate::identities::meta::record_layout(
+                &mut store,
+                scope,
+                fields,
+                0,
+                std::ptr::null_mut(),
+                crate::identities::meta::prec::MULTIPLICATIVE + 1.0,
+                Assoc::Left,
+            );
+            let squared = store.alloc_raw(types.type_, layout);
+            crate::identities::meta::install_constructor(squared, c);
+            let rec = Record::alloc(&mut store, core.record_, Record::new(squared, core.root_scope));
+            let mut s = s;
+            s.declare(&mut trie, "squared", rec).unwrap();
+            s
+        };
+
+        let (_, s) = go("x := i32 5", &mut store, &mut trie, types, s);
+        let (v, s) = go("x squared", &mut store, &mut trie, types, s);
+        assert_eq!(v, 25);
+        let (v, s) = go("x squared + 1", &mut store, &mut trie, types, s);
+        assert_eq!(v, 26, "squared binds tighter than +");
+        let (v, s) = go("2 * x squared", &mut store, &mut trie, types, s);
+        assert_eq!(v, 50, "and tighter than *");
+        let (_, s) = go("f := fn (y := i32 ?) -> i32 ( y squared + 1 )", &mut store, &mut trie, types, s);
+        let (v, _s) = go("f(3)", &mut store, &mut trie, types, s);
+        assert_eq!(v, 10, "the node a constructor built calls like any other");
     }
 
     #[test]

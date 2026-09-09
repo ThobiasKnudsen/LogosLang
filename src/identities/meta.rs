@@ -88,7 +88,13 @@ pub(crate) const ARRAY_TAG: u8 = 22;
 /// the layout automatically — reading the field declarations in its scope and
 /// filling `fields` and `size_bytes`‹), locked before first instantiation. The
 /// payload is `[scope: @dyad][fields: @dyad (an array node over the field
-/// declarations)][size_bytes: u64]`, 24 bytes. Giving record logos a real
+/// declarations)][size_bytes: u64][body: @dyad]`, 32 bytes: the field scope
+/// (a `type (…)` body's `instance (…)`, a `fn`'s parameter list), the
+/// fields, their packed size, and the definition body's own scope — the
+/// bare lines' members, `g.y` — null where a type has no body (#61). The
+/// head carries the type's precedence and associativity, the call defaults
+/// (`APPLY`, left) unless its body filled them, and its constructor slot the
+/// Logos function its body filled, if any. Giving record logos a real
 /// record also makes their first value byte an honest kind tag — before this,
 /// it was a node address's low byte, and any tag read on it was garbage.
 pub(crate) const RECORD_TAG: u8 = 23;
@@ -227,11 +233,15 @@ pub(crate) fn record_layout(
     scope: DyadPtr,
     fields: DyadPtr,
     size_bytes: u64,
+    body: DyadPtr,
+    precedence: f64,
+    assoc: Assoc,
 ) -> *mut u8 {
-    let mut blob = header(RECORD_TAG, Assoc::Left, prec::INERT).to_vec();
+    let mut blob = header(RECORD_TAG, assoc, precedence).to_vec();
     blob.extend_from_slice(&(scope as usize).to_ne_bytes());
     blob.extend_from_slice(&(fields as usize).to_ne_bytes());
     blob.extend_from_slice(&size_bytes.to_ne_bytes());
+    blob.extend_from_slice(&(body as usize).to_ne_bytes());
     store.alloc_bytes(&blob)
 }
 
@@ -260,6 +270,15 @@ pub(crate) unsafe fn record_fields_of(id: DyadPtr) -> DyadPtr {
 /// As [`record_scope_of`].
 pub(crate) unsafe fn record_size_of(id: DyadPtr) -> u64 {
     std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF + 16) as *const u64)
+}
+
+/// The stored definition scope of a record logos node — its body's bare
+/// lines, the members read `g.y` (#61) — or null where it has no body.
+///
+/// # Safety
+/// As [`record_scope_of`].
+pub(crate) unsafe fn record_body_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF + 24) as *const DyadPtr)
 }
 
 /// The fixed head of every record: kind, associativity, precedence (the
