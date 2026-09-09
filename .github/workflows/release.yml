@@ -1,15 +1,24 @@
 name: release
 
 # Pushing a release tag (vX.Y.Z) to LogosLang:
-#   1. creates the GitHub Release,
-#   2. builds a per-OS/arch artifact and uploads it under the naming convention the
-#      website's download page reads:  logos-<tag>-<os>-<arch>.<ext>
+#   1. gates: the tag is well-formed and strictly newer, the docs are consistent,
+#      and the test suite is green on the tagged tree,
+#   2. builds a per-OS/arch artifact and smoke-tests every native one,
+#   3. only then creates the GitHub Release and uploads the artifacts under the
+#      naming convention the website's download page reads:
+#        logos-<tag>-<os>-<arch>.<ext>
 #        os   = macos | linux | windows
 #        arch = x86_64 | aarch64
 #        ext  = tar.gz (macos, linux) | zip (windows)
-#   3. notifies the website (repository_dispatch `logoslang-release`), which freezes
+#   4. notifies the website (repository_dispatch `logoslang-release`), which freezes
 #      the docs at this version and fires a deploy hook so the new build + docs
 #      appear together.
+#
+# Nothing irreversible happens before the artifacts exist and pass. A tag cannot
+# be moved or deleted (the freeze-release-tags ruleset), so a release created
+# before the build was known good would spend the version number on a broken
+# tree; that is how v0.0.3 was lost, and the smoke test below was itself broken
+# from #58 until issue #71 without any run noticing.
 #
 # Requires repo secret WEBSITE_DISPATCH_TOKEN: a fine-grained PAT scoped to
 # ThobiasKnudsen/LogosLangWebsite with Contents: read & write (the default
@@ -81,23 +90,18 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: bash .github/scripts/docs-check.sh release "$TAG"
 
-  create-release:
-    needs: gate
-    runs-on: ubuntu-latest
-    steps:
-      - name: Create the GitHub Release for this tag (idempotent)
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+      # The same gate ci.yml runs on every pull request, run once more on the
+      # exact tagged tree: a version is never spent on a tree whose tests fail.
+      - name: Install the stable toolchain
         run: |
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $TAG already exists."
-          else
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes
-          fi
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test the tagged tree
+        run: cargo test --release --locked
 
   build:
-    needs: create-release
+    needs: gate
     strategy:
       fail-fast: false
       # `native: true` means the artifact runs on the runner that built it, which is
@@ -120,9 +124,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Add the Rust target
+      # cranelift 0.133 needs rustc 1.94, so take the newest stable rather than
+      # trusting the runner image's preinstalled toolchain.
+      - name: Install the stable toolchain and the target
         shell: bash
-        run: rustup target add ${{ matrix.target }}
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add ${{ matrix.target }}
 
       # ubuntu-latest is x86_64, so the aarch64 Linux artifact is cross-compiled and
       # needs a cross linker. Every other matrix entry builds natively on its runner.
@@ -152,7 +161,8 @@ jobs:
           BIN="target/${{ matrix.target }}/release/logos"
           [ "${{ matrix.os }}" = "windows" ] && BIN="${BIN}.exe"
           "$BIN" --help > /dev/null
-          out="$("$BIN" examples/answer.logos | tail -n1)"
+          # The command line is Logos source (#58): `import` loads the file.
+          out="$("$BIN" import examples/answer.logos | tail -n1)"
           [ "$out" = "42" ] || { echo "::error::smoke test: expected 42, got '$out'"; exit 1; }
           echo "OK: $BIN runs and answer.logos evaluates to 42."
 
@@ -191,12 +201,48 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path "$env:STAGE" -DestinationPath "$($env:STAGE).zip"
 
-      - name: Upload the artifact to the release
-        shell: bash
+      # Hand the archive to the upload job; the release does not exist yet.
+      - name: Keep the archive for the upload job
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.STAGE }}.${{ matrix.ext }}
+          path: ${{ env.STAGE }}.${{ matrix.ext }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # Every artifact was built and every native one smoke-tested before this runs,
+  # so a release, once it exists, always gets its full set of archives.
+  create-release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create the GitHub Release for this tag (idempotent)
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-        run: gh release upload "$TAG" "${STAGE}.${{ matrix.ext }}" --repo "$GITHUB_REPOSITORY" --clobber
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists."
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes
+          fi
+
+  upload:
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Upload every archive to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ls -l dist
+          gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
 
   # No `logos-<tag>-wasm.wasm` asset is produced yet. The seed's run tier is a
   # Cranelift JIT, which emits native code for the host and does not target
@@ -208,7 +254,7 @@ jobs:
   # wasm32 build exists.
 
   notify-website:
-    needs: [build]
+    needs: [upload]
     runs-on: ubuntu-latest
     steps:
       - name: Notify the website (freeze docs + refresh downloads)

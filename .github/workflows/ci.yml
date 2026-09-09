@@ -1,0 +1,60 @@
+name: ci
+
+# The Rust gate (issue #72): every pull request, and every push to main or dev,
+# must format, lint clean, build, pass the tests, and pass the same smoke test
+# the release workflow runs on what it ships. Until this existed the only
+# required checks on main were the docs guard (docs.yml), so Rust that did not
+# compile could merge green. The `rust` job below is a required status check
+# on main beside docs.yml's `test` and `validate`.
+
+on:
+  pull_request:
+  push:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+
+# A newer push to the same branch supersedes the run in flight.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The cranelift 0.133 crates require rustc 1.94, so take the newest stable
+      # rather than trusting the runner image's preinstalled toolchain.
+      - name: Install the stable toolchain with clippy and rustfmt
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+          cargo --version && cargo clippy --version && cargo fmt --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format (rustfmt.toml is the style)
+        run: cargo fmt --check
+
+      - name: Lint (clippy, warnings are errors)
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Build the seed
+        run: cargo build --release --locked
+
+      - name: Test
+        run: cargo test --release --locked
+
+      # The exact check release.yml runs on every native artifact, so it cannot
+      # rot unnoticed between releases (it did, from #58 until issue #71).
+      - name: Smoke-test the binary
+        run: |
+          set -euo pipefail
+          BIN=target/release/logos
+          "$BIN" --help > /dev/null
+          out="$("$BIN" import examples/answer.logos | tail -n1)"
+          [ "$out" = "42" ] || { echo "::error::smoke test: expected 42, got '$out'"; exit 1; }
+          echo "OK: $BIN runs and answer.logos evaluates to 42."

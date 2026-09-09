@@ -657,7 +657,11 @@ impl ScopeStack {
     /// thing that may follow an `own`/`drop`, a fresh entry beside the dead one.
     /// Requires a current scope. The declaration is journalled for
     /// [`ScopeStack::rollback`], and its `start` awaits the finished body item.
-    pub fn declare(
+    ///
+    /// # Safety
+    /// `record` must be a record dyad from the store ([`Record::alloc`]); this
+    /// writes its `scope` field through the pointer.
+    pub unsafe fn declare(
         &mut self,
         trie: &mut RegexTrie,
         name: &str,
@@ -686,7 +690,11 @@ impl ScopeStack {
     /// concurrency‹, *`own` and `drop` are static*). `node` is the provisional
     /// `end`; [`ScopeStack::settle_item`] replaces it with the body item once
     /// the line is complete. Journalled for [`ScopeStack::rollback`].
-    pub fn mark_dead(&mut self, record: DyadPtr, node: DyadPtr) {
+    ///
+    /// # Safety
+    /// `record` must be a record dyad from the store (one the resolver
+    /// returned); this writes its `end` field through the pointer.
+    pub unsafe fn mark_dead(&mut self, record: DyadPtr, node: DyadPtr) {
         // SAFETY: `record` is a record dyad the trie returned.
         let prev_end = unsafe { std::mem::replace(&mut Record::of(record).end, node) };
         self.journal.push(Journal::Ended { record, prev_end });
@@ -722,7 +730,11 @@ impl ScopeStack {
     /// in an enclosing scope stands beside it, both live only until this
     /// scope closes — and a field's type names no sibling, so nothing inside
     /// the list resolves the spelling.
-    pub fn declare_field(
+    ///
+    /// # Safety
+    /// `record` must be a record dyad from the store ([`Record::alloc`]); this
+    /// writes its `scope` field through the pointer.
+    pub unsafe fn declare_field(
         &mut self,
         trie: &mut RegexTrie,
         name: &str,
@@ -755,7 +767,11 @@ impl ScopeStack {
     /// (`is_numtype_node`, logos equality) see the original. The record's
     /// range and journal entry are untouched; a pending endpoint follows,
     /// since it holds the record and not the identity.
-    pub fn rebind(&mut self, record: DyadPtr, identity: DyadPtr) {
+    ///
+    /// # Safety
+    /// `record` must be a record dyad from the store; this writes its `dyad`
+    /// field through the pointer.
+    pub unsafe fn rebind(&mut self, record: DyadPtr, identity: DyadPtr) {
         // SAFETY: `record` is a record dyad from the store.
         unsafe { Record::of(record).dyad = identity };
     }
@@ -2535,7 +2551,15 @@ impl<'a> Parser<'a> {
     /// the declaration's placeholder: the signature publishes onto it — body and
     /// bcode still null — before the body parses, so a recursive self-call inside
     /// the body reads real parameter and return logos.
-    pub fn parse_fn(&mut self, fn_type: DyadPtr, declared: DyadPtr) -> Result<DyadPtr, ParseError> {
+    ///
+    /// # Safety
+    /// `declared` must be null or a placeholder dyad from the store that nothing
+    /// has read a value from yet; the early signature is written through it.
+    pub unsafe fn parse_fn(
+        &mut self,
+        fn_type: DyadPtr,
+        declared: DyadPtr,
+    ) -> Result<DyadPtr, ParseError> {
         // The parameter list is a record; parse_record opens and closes its scope.
         let input = self.parse_record(self.types.type_)?;
         self.expect_arrow()?;
@@ -3571,7 +3595,8 @@ impl<'a> Parser<'a> {
     ) -> Result<DyadPtr, ParseError> {
         let scope = self.scopes.current().expect("declare needs an open scope");
         let record = Record::alloc(self.store, self.types.record_, Record::new(identity, scope));
-        self.scopes.declare(self.trie, name, record).map_err(ParseError::Resolve)?;
+        // SAFETY: `record` was minted by `Record::alloc` just above.
+        unsafe { self.scopes.declare(self.trie, name, record) }.map_err(ParseError::Resolve)?;
         Ok(record)
     }
 
@@ -3580,12 +3605,15 @@ impl<'a> Parser<'a> {
     fn declare_field_name(&mut self, name: &str, identity: DyadPtr) -> Result<DyadPtr, ParseError> {
         let scope = self.scopes.current().expect("declare needs an open scope");
         let record = Record::alloc(self.store, self.types.record_, Record::new(identity, scope));
-        self.scopes.declare_field(self.trie, name, record).map_err(ParseError::Resolve)?;
+        // SAFETY: `record` was minted by `Record::alloc` just above.
+        unsafe { self.scopes.declare_field(self.trie, name, record) }
+            .map_err(ParseError::Resolve)?;
         Ok(record)
     }
 
     pub(crate) fn mark_dead(&mut self, ended: Ended, node: DyadPtr) {
-        self.scopes.mark_dead(ended.record, node);
+        // SAFETY: `ended.record` is the record the resolver returned for the operand.
+        unsafe { self.scopes.mark_dead(ended.record, node) };
     }
 
     /// Consume an `else` if the next token is one, reporting whether it was.
@@ -4557,7 +4585,8 @@ impl<'a> Parser<'a> {
         let source = self.source;
         let name = &source[tok.start..tok.start + tok.len];
         let record = self.scopes.resolve(self.trie, name).map_err(ParseError::Resolve)?.record;
-        self.scopes.rebind(record, t);
+        // SAFETY: `record` is the record the resolver returned for the name.
+        unsafe { self.scopes.rebind(record, t) };
         let name_node =
             crate::identities::string::build_text(self.store, self.types.string_, name.as_bytes());
         let node = crate::identities::declare::build(
@@ -5406,7 +5435,7 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(dyad(100));
         let id = dyad(1);
-        scopes.declare(&mut trie, "a", rec(id)).unwrap();
+        unsafe { scopes.declare(&mut trie, "a", rec(id)) }.unwrap();
         assert_eq!(scopes.resolve(&trie, "a").unwrap().identity, id);
     }
 
@@ -5419,11 +5448,11 @@ mod tests {
         let (outer, inner) = (dyad(100), dyad(101));
 
         scopes.push(outer);
-        scopes.declare(&mut trie, "x", rec(dyad(1))).unwrap();
+        unsafe { scopes.declare(&mut trie, "x", rec(dyad(1))) }.unwrap();
         scopes.pop(); // close outer
 
         scopes.push(inner);
-        scopes.declare(&mut trie, "x", rec(dyad(2))).unwrap();
+        unsafe { scopes.declare(&mut trie, "x", rec(dyad(2))) }.unwrap();
         assert_eq!(scopes.resolve(&trie, "x").unwrap().identity, dyad(2));
 
         scopes.pop();
@@ -5436,7 +5465,7 @@ mod tests {
         let mut trie = RegexTrie::new();
         let mut scopes = ScopeStack::new();
         scopes.push(dyad(100));
-        scopes.declare(&mut trie, "y", rec(dyad(1))).unwrap();
+        unsafe { scopes.declare(&mut trie, "y", rec(dyad(1))) }.unwrap();
         scopes.pop(); // close the scope
 
         assert_eq!(scopes.resolve(&trie, "y"), Err(ResolveError::OutOfScope));
@@ -5450,12 +5479,18 @@ mod tests {
         let (outer, inner) = (dyad(100), dyad(101));
 
         scopes.push(outer);
-        scopes.declare(&mut trie, "a", rec(dyad(1))).unwrap();
+        unsafe { scopes.declare(&mut trie, "a", rec(dyad(1))) }.unwrap();
         // Same scope: redeclaration rejected.
-        assert_eq!(scopes.declare(&mut trie, "a", rec(dyad(2))), Err(ResolveError::Shadowed));
+        assert_eq!(
+            unsafe { scopes.declare(&mut trie, "a", rec(dyad(2))) },
+            Err(ResolveError::Shadowed)
+        );
         // Nested scope while the outer declaration is live: still rejected.
         scopes.push(inner);
-        assert_eq!(scopes.declare(&mut trie, "a", rec(dyad(3))), Err(ResolveError::Shadowed));
+        assert_eq!(
+            unsafe { scopes.declare(&mut trie, "a", rec(dyad(3))) },
+            Err(ResolveError::Shadowed)
+        );
     }
 
     #[test]
@@ -5463,15 +5498,15 @@ mod tests {
         let mut trie = RegexTrie::new();
         let mut scopes = ScopeStack::new();
         scopes.push(dyad(100));
-        scopes.declare(&mut trie, "keep", rec(dyad(1))).unwrap();
+        unsafe { scopes.declare(&mut trie, "keep", rec(dyad(1))) }.unwrap();
         scopes.commit(); // committed declarations survive a rollback
-        scopes.declare(&mut trie, "gone", rec(dyad(2))).unwrap();
+        unsafe { scopes.declare(&mut trie, "gone", rec(dyad(2))) }.unwrap();
 
         scopes.rollback(&mut trie);
         assert_eq!(scopes.resolve(&trie, "keep").unwrap().identity, dyad(1));
         assert_eq!(scopes.resolve(&trie, "gone"), Err(ResolveError::Unknown));
         // The rolled-back name is free again — no permanent "shadowed".
-        scopes.declare(&mut trie, "gone", rec(dyad(3))).unwrap();
+        unsafe { scopes.declare(&mut trie, "gone", rec(dyad(3))) }.unwrap();
         assert_eq!(scopes.resolve(&trie, "gone").unwrap().identity, dyad(3));
     }
 
@@ -5481,8 +5516,8 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(dyad(100));
         let alias = rec(dyad(1));
-        scopes.declare(&mut trie, "alias", alias).unwrap();
-        scopes.rebind(alias, dyad(2));
+        unsafe { scopes.declare(&mut trie, "alias", alias) }.unwrap();
+        unsafe { scopes.rebind(alias, dyad(2)) };
         assert_eq!(scopes.resolve(&trie, "alias").unwrap().identity, dyad(2));
         // The declare's journal entry still covers the rebound binding.
         scopes.rollback(&mut trie);
@@ -5511,11 +5546,11 @@ mod tests {
         let scope = dyad(100);
         scopes.push(scope);
         let a1 = rec(dyad(1));
-        scopes.declare(&mut trie, "a", a1).unwrap();
-        scopes.mark_dead(a1, dyad(50));
+        unsafe { scopes.declare(&mut trie, "a", a1) }.unwrap();
+        unsafe { scopes.mark_dead(a1, dyad(50)) };
 
         assert_eq!(scopes.resolve(&trie, "a"), Err(ResolveError::Dead));
-        scopes.declare(&mut trie, "a", rec(dyad(2))).unwrap();
+        unsafe { scopes.declare(&mut trie, "a", rec(dyad(2))) }.unwrap();
         assert_eq!(scopes.resolve(&trie, "a").unwrap().identity, dyad(2));
         // The dead entry is still indexed: its range is what reflection reads.
         let m = trie.get("a").unwrap();
@@ -5532,11 +5567,11 @@ mod tests {
         let scope = dyad(100);
         scopes.push(scope);
         let a1 = rec(dyad(1));
-        scopes.declare(&mut trie, "a", a1).unwrap();
+        unsafe { scopes.declare(&mut trie, "a", a1) }.unwrap();
         scopes.commit();
 
-        scopes.mark_dead(a1, dyad(50));
-        scopes.declare(&mut trie, "a", rec(dyad(2))).unwrap();
+        unsafe { scopes.mark_dead(a1, dyad(50)) };
+        unsafe { scopes.declare(&mut trie, "a", rec(dyad(2))) }.unwrap();
         scopes.rollback(&mut trie);
 
         assert_eq!(scopes.resolve(&trie, "a").unwrap().identity, dyad(1));
@@ -5552,7 +5587,7 @@ mod tests {
         let scope = dyad(100);
         scopes.push(scope);
         let a1 = rec(dyad(1));
-        scopes.declare(&mut trie, "a", a1).unwrap();
+        unsafe { scopes.declare(&mut trie, "a", a1) }.unwrap();
         let a = |trie: &RegexTrie| f(trie.get("a").unwrap().records[0]);
         assert!(a(&trie).start.is_null());
 
@@ -5560,7 +5595,7 @@ mod tests {
         assert_eq!(a(&trie).start, dyad(10));
         assert!(a(&trie).end.is_null());
 
-        scopes.mark_dead(a1, dyad(50));
+        unsafe { scopes.mark_dead(a1, dyad(50)) };
         assert_eq!(a(&trie).end, dyad(50), "provisional: the own/drop node");
         scopes.settle_item(scope, dyad(11));
         assert_eq!(a(&trie).end, dyad(11), "settled: the body item");
@@ -5568,8 +5603,8 @@ mod tests {
 
         // A rebind keeps the range, and the pending endpoint holds the record.
         let b_rec = rec(dyad(3));
-        scopes.declare(&mut trie, "b", b_rec).unwrap();
-        scopes.rebind(b_rec, dyad(4));
+        unsafe { scopes.declare(&mut trie, "b", b_rec) }.unwrap();
+        unsafe { scopes.rebind(b_rec, dyad(4)) };
         scopes.settle_item(scope, dyad(12));
         let b = f(trie.get("b").unwrap().records[0]);
         assert_eq!((b.dyad, b.start), (dyad(4), dyad(12)));

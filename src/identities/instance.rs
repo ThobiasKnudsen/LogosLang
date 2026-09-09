@@ -81,6 +81,10 @@ pub(super) fn register(
     (construct, leaf, dot, index_, close_sq)
 }
 
+/// A record's fields as `(type node, width tag, byte offset)` triples, and
+/// its total size in bytes: what [`layout`] reads off a record type.
+pub(crate) type FieldLayout = (Vec<(DyadPtr, NumType, usize)>, usize);
+
 /// The layout a record logos stores from its field declarations (DESIGN ›a logos
 /// whose constructor derives the layout automatically‹, issue #47): each field
 /// with its numeric logos and byte offset, in declaration order, plus the total
@@ -92,9 +96,7 @@ pub(super) fn register(
 /// # Safety
 /// `record_logos` must be a record logos node from the store (its value a
 /// [`meta::RECORD_TAG`] record).
-pub(crate) unsafe fn layout(
-    record_logos: DyadPtr,
-) -> Result<(Vec<(DyadPtr, NumType, usize)>, usize), ParseError> {
+pub(crate) unsafe fn layout(record_logos: DyadPtr) -> Result<FieldLayout, ParseError> {
     // A field's logos must be a *logos node* (its own logos is `logos`, reachable as
     // the record logos's logos's logos — the fixed point): that excludes a nested
     // record definition and a value node standing in logos position, whose value

@@ -1103,7 +1103,7 @@ unsafe fn build_pass(
     root: DyadPtr,
     params: &[DyadPtr],
     ret: Option<NumType>,
-    mut collect: Option<&mut PlaceStats>,
+    collect: Option<&mut PlaceStats>,
     promote: &[(usize, types::Type)],
     finish: bool,
 ) -> Result<Option<Compiled>, CompileError> {
@@ -1233,7 +1233,7 @@ unsafe fn build_pass(
                 types,
                 self_fn,
                 frame_slot,
-                collect: collect.as_deref_mut(),
+                collect,
                 promoted: &promoted,
             };
             lw.lower(root)?

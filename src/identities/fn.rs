@@ -48,10 +48,12 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
         // value can still claim it.
         let node = if tape.len() == 1 {
             let declared = p.take_pending_fn();
-            p.parse_fn(id, declared)?
+            // SAFETY: `declared` is null or the placeholder `:=` handed over.
+            unsafe { p.parse_fn(id, declared) }?
         } else {
             let suppressed = p.take_pending_fn();
-            let node = p.parse_fn(id, std::ptr::null_mut());
+            // SAFETY: a null `declared` writes nothing.
+            let node = unsafe { p.parse_fn(id, std::ptr::null_mut()) };
             p.restore_pending_fn(suppressed);
             node?
         };
