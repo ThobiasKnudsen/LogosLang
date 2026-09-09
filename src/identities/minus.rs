@@ -4,7 +4,7 @@
 //! `-`: subtraction. Like `+` (see [`crate::identities::plus`]), a parse-time
 //! constructor owning no code: it resolves each application to a concrete
 //! subtraction and stores the leaf in the op slot
-//! `{type: -, value: [lhs, rhs, sub_<logos>]}`. Same precedence as `+`,
+//! `{type: -, value: [lhs, rhs, sub_<logos>]}`. Same parse_rank as `+`,
 //! left-associative.
 
 use cranelift_codegen::ir::Value;
@@ -16,7 +16,7 @@ use crate::dyad::DyadPtr;
 use crate::parse::{Assoc, CoreTypes, ParseError};
 use crate::store::Store;
 
-/// Register `-`: spelling, precedence (same as `+`, left-associative), and its
+/// Register `-`: spelling, parse_rank (same as `+`, left-associative), and its
 /// lowering.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::operand_record(

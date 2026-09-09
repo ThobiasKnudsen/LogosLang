@@ -157,26 +157,34 @@ fn the_view_reads_the_cell_and_operands_are_ordinary_fields() {
 
 #[test]
 fn a_type_body_fills_its_slots_and_declares_its_members() {
-    // DESIGN ›The constructor is a field‹ (#61): the four slots `type`
-    // declares are filled with `=` — the precedence spelled relative, the
+    // DESIGN ›The constructor is a field‹ (#61): the five slots `type`
+    // declares are filled with `=` — the parse_rank spelled relative, the
     // associativity one of the two identities `left` and `right` (of type
     // `type`, like a keyword, ruled 9 September 2026) — bare `:=` lines are
     // the type's own members, read `g.y`, and `instance (…)` holds the
     // per-instance fields, checked against their siblings alone.
     let (echoes, stderr) = repl(
-        b"t := type (precedence = *.precedence + 1, associativity = right)\n\
-          t.precedence\nt.associativity == right\nright:dyad.type == type\n",
+        b"t := type (parse_rank = *.parse_rank + 1, associativity = right)\n\
+          t.parse_rank\nt.associativity == right\nright:dyad.type == type\n",
     );
     assert_eq!(echoes, ["71.0", "true", "true"], "stderr: {stderr}");
-    let (echoes, stderr) = repl(b"g := type (y := 3, z := y + 3)\ng.y\ng.z\ng.precedence\n");
+    let (echoes, stderr) = repl(b"g := type (y := 3, z := y + 3)\ng.y\ng.z\ng.parse_rank\n");
     assert_eq!(echoes, ["3", "6", "91.0"], "stderr: {stderr}");
+    // `lex_rank` (ruled 10 September 2026, #113): the order among pattern
+    // spellings competing at one text position, a stored slot the seed reads
+    // for nothing yet; 0 on every identity whose body did not set it.
+    let (echoes, stderr) = repl(b"r := type (lex_rank = 3)\nr.lex_rank\n+.lex_rank\n");
+    assert_eq!(echoes, ["3.0", "0.0"], "stderr: {stderr}");
+    // The superseded spelling is no slot: inside a body it is an unknown name.
+    let (echoes, stderr) = repl(b"s := type (precedence = 5)\n");
+    assert!(echoes.is_empty() && stderr.contains("unknown name"), "stderr: {stderr}");
     let (echoes, stderr) = repl(b"x := 1\np := type (instance (x := i32 ?))\nq := p(2)\nq.x\nx\n");
     assert_eq!(echoes, ["2", "1"], "stderr: {stderr}");
 }
 
 #[test]
 fn a_constructor_written_in_logos_runs_during_the_parse() {
-    // Issue #61's done-when: a file defines a type with `precedence = …`,
+    // Issue #61's done-when: a file defines a type with `parse_rank = …`,
     // `associativity = …`, and a `constructor = fn (tape) -> void (…)`, and a
     // later appearance in the same file runs that constructor during the
     // parse — here a postfix `squared` and an infix `plus2`, the nodes they
@@ -188,7 +196,7 @@ fn a_constructor_written_in_logos_runs_during_the_parse() {
     // its own value (DESIGN ›The scope's constructor is the driver‹).
     let (echoes, stderr) = repl(
         b"noop := type (constructor = fn (tape := parsing_tape ?) -> void ( tape.recenter(0) ))\n\
-          t := noop\nt:dyad.type == type\nnoop.precedence\n",
+          t := noop\nt:dyad.type == type\nnoop.parse_rank\n",
     );
     assert_eq!(echoes, ["true", "91.0"], "stderr: {stderr}");
     // A constructor that fails is the checked error, reported at the appearance.
@@ -204,7 +212,7 @@ fn a_type_body_refuses_what_is_not_its_own() {
     // an outer name; `instance` belongs in a body, once; a line that would
     // only run is refused; the slot values are checked.
     for (src, expect) in [
-        (&b"t := type (precedence := 5)\n"[..], "shadowed"),
+        (&b"t := type (parse_rank := 5)\n"[..], "shadowed"),
         (b"y := 1\ng := type (y := 3)\n", "shadowed"),
         (b"instance (x := i32 ?)\n", "belongs inside a type body"),
         (b"t := type (instance (a := i32 ?), instance (b := i32 ?))\n", "one `instance"),
@@ -216,7 +224,7 @@ fn a_type_body_refuses_what_is_not_its_own() {
             "destructor",
         ),
         (
-            b"g := fn (n := i32 ?) -> type ( type (precedence = n) )\n",
+            b"g := fn (n := i32 ?) -> type ( type (parse_rank = n) )\n",
             "known when the type is defined",
         ),
     ] {

@@ -102,7 +102,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     // "run the place's destructor" reach the same code as an inserted `free`.
     let teardown_leaf = callable::mint_native(cx.store, cs.callable, run_teardown, cs.seed_native);
 
-    // `alloc T v`: a fresh-start keyword constructor (NaN precedence → the driver
+    // `alloc T v`: a fresh-start keyword constructor (NaN parse_rank → the driver
     // invokes it immediately). Its constructor parses the following typed value.
     let alloc_ =
         keyword(cx, "alloc", meta::prec::PREFIX, &["pointee", "init", "op"], |p, _id, tape| {
@@ -195,17 +195,17 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
 }
 
 /// Register a fresh-start keyword identity: `spelling` in the trie, an operand
-/// record (`TUPLE`, at `precedence` on the one axis), and `construct` in the
+/// record (`TUPLE`, at `parse_rank` on the one axis), and `construct` in the
 /// `metas` table. Returns
 /// the identity node.
 fn keyword(
     cx: &mut Cx,
     spelling: &str,
-    precedence: f64,
+    parse_rank: f64,
     roles: &[&str],
     construct: crate::parse::ConstructFn,
 ) -> DyadPtr {
-    let record = meta::operand_record(cx, meta::TUPLE_TAG, precedence, Assoc::Right, roles);
+    let record = meta::operand_record(cx, meta::TUPLE_TAG, parse_rank, Assoc::Right, roles);
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.declare(spelling, id);
     cx.metas.insert(id, construct);

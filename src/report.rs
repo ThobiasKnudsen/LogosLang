@@ -130,14 +130,14 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::TypeBodyLine => {
-            "a type body line fills a slot (`precedence = …`), declares a member (`y := …`), or opens `instance (…)`"
+            "a type body line fills a slot (`parse_rank = …`), declares a member (`y := …`), or opens `instance (…)`"
                 .into()
         }
         ParseError::InstanceOutsideType => "`instance (…)` belongs inside a type body".into(),
         ParseError::DoubleInstance => "a type body has one `instance (…)` block".into(),
         ParseError::DeferInTypeBody => "a type body cannot own what needs a teardown".into(),
-        ParseError::NonComptimePrecedence => {
-            "a precedence must be a number known when the type is defined".into()
+        ParseError::NonComptimeRank => {
+            "a parse_rank must be a number known when the type is defined".into()
         }
         ParseError::BadAssociativity => "associativity is `left` or `right`".into(),
         ParseError::BadConstructorSignature => {

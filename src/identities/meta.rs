@@ -6,14 +6,14 @@
 //! shared by its values‹, issue #30) and of layout-as-graph-data (issue #42).
 //!
 //! Anything that stands in a node's `logos` position stores, once, the members its
-//! values share: its parse `precedence` and `associativity`, its `constructor`
+//! values share: its parse `parse_rank` and `associativity`, its `constructor`
 //! (a native callable leaf; see below) and `destructor` (null: the honest
 //! undefined until drop semantics exist), and the *layout* that says how a
 //! value of it is read — a scalar width, a text or fraction blob, a pointer's
 //! pointee, or the arity and role names of an application's operands. A
 //! generic walker ([`crate::reflect`]) reads any node's structure from these
 //! records alone, and the parser dispatches from them too: the driver
-//! classifies a token from constructor presence, the precedence field (NaN
+//! classifies a token from constructor presence, the parse_rank field (NaN
 //! never-extends / finite infix / +inf tight extender), and the kind byte —
 //! the constructors drive the tape (DESIGN ›Source becomes runnable›), and
 //! the schedule byte that stood in until they did is gone. The constructor is
@@ -27,12 +27,14 @@
 //! ```text
 //! [0]        u8   kind — the logos-tag namespace (see below)
 //! [1]        u8   associativity (0 left-to-right, 1 right-to-left)
-//! [2..10]    f64  precedence — NaN: never extends left; finite: infix;
+//! [2..10]    f64  parse_rank — NaN: never extends left; finite: infix;
 //!                 +inf: tight extender (call `(`, postfix `.`/`@`)
 //! [10..18]   u64  constructor — a callable leaf (`seed-parse` convention,
 //!                 one `ConstructFn` signature), or 0: undefined
 //! [18..26]   u64  destructor  (0: undefined until drop semantics exist)
-//! [26..]     payload, per kind:
+//! [26..34]   f64  lex_rank — recognizer order among pattern spellings
+//!                 (0 until a type body sets it; the seed registers none)
+//! [34..]     payload, per kind:
 //!              ADDR              pointee logos node (`dyad@`)
 //!              TUPLE/LIST         u8 arity, then arity × `dyad@` role-name strings
 //! ```
@@ -92,7 +94,7 @@ pub(crate) const ARRAY_TAG: u8 = 22;
 /// (a `type (…)` body's `instance (…)`, a `fn`'s parameter list), the
 /// fields, their packed size, and the definition body's own scope — the
 /// bare lines' members, `g.y` — null where a type has no body (#61). The
-/// head carries the type's precedence and associativity, the call defaults
+/// head carries the type's parse_rank and associativity, the call defaults
 /// (`APPLY`, left) unless its body filled them, and its constructor slot the
 /// Logos function its body filled, if any. Giving record logos a real
 /// record also makes their first value byte an honest kind tag — before this,
@@ -106,25 +108,29 @@ pub(crate) const DYAD_TAG: u8 = 24;
 
 /// Byte offset of the associativity in a record.
 const ASSOC_OFF: usize = 1;
-/// Byte offset of the precedence.
+/// Byte offset of the parse_rank.
 const PREC_OFF: usize = 2;
 /// Byte offset of the reserved constructor slot.
 const CTOR_OFF: usize = 10;
 /// Byte offset of the reserved destructor slot.
 const DTOR_OFF: usize = 18;
+/// Byte offset of the lex_rank (DESIGN ›The scope's constructor is the driver‹,
+/// ruled 10 September 2026: among the patterns matching at a position the
+/// highest lex_rank wins, whatever its length).
+const LEXRANK_OFF: usize = 26;
 /// Byte offset of the kind-specific payload (a pointer logos's pointee, or an
 /// operand record's arity + roles).
-pub(crate) const PAYLOAD_OFF: usize = 26;
+pub(crate) const PAYLOAD_OFF: usize = 34;
 
-/// The one precedence axis every identity is placed on (DESIGN ›The scope's
+/// The one parse_rank axis every identity is placed on (DESIGN ›The scope's
 /// constructor is the driver‹, ruled 30 August 2026: "Every identity nameable
-/// in text has a precedence — there is no NaN and no ±infinity class").
+/// in text has a parse_rank — there is no NaN and no ±infinity class").
 /// Higher binds tighter. A constructor at or above [`prec::OPEN`] runs at
 /// discovery, the moment its token is lexed; one below runs at the segment
 /// boundary, highest first, associativity breaking ties. The values are the
 /// seed's own placement of the core identities — DESIGN fixes the order and
 /// the threshold, never the numbers — spaced so a user operator can slot
-/// between any two (`^` at `*.precedence + 1`, #61).
+/// between any two (`^` at `*.parse_rank + 1`, #61).
 pub(crate) mod prec {
     /// The separator `,`: above `(`, so it acts at discovery as a segment boundary.
     pub const COMMA: f64 = 100.0;
@@ -178,35 +184,35 @@ pub(crate) mod prec {
     pub const INERT: f64 = 0.0;
 }
 
-/// Build a plain record: `kind` and `precedence`, no payload. The scalar
+/// Build a plain record: `kind` and `parse_rank`, no payload. The scalar
 /// logos, the text substance, the foundations, and the parse-only tokens.
-/// `precedence` is the identity's place on the one axis ([`prec`]).
-pub(crate) fn record(store: &mut Store, kind: u8, precedence: f64) -> *mut u8 {
-    record_assoc(store, kind, precedence, Assoc::Left)
+/// `parse_rank` is the identity's place on the one axis ([`prec`]).
+pub(crate) fn record(store: &mut Store, kind: u8, parse_rank: f64) -> *mut u8 {
+    record_assoc(store, kind, parse_rank, Assoc::Left)
 }
 
 /// [`record`] with an associativity: right for a prefix word, so that in a
 /// chain the rightmost runs first and each finds its operand constructed
 /// (`pub pub x := 5` reports the double gate; `not not x` reads inward).
-pub(crate) fn record_assoc(store: &mut Store, kind: u8, precedence: f64, assoc: Assoc) -> *mut u8 {
-    let blob = header(kind, assoc, precedence);
+pub(crate) fn record_assoc(store: &mut Store, kind: u8, parse_rank: f64, assoc: Assoc) -> *mut u8 {
+    let blob = header(kind, assoc, parse_rank);
     store.alloc_bytes(&blob)
 }
 
 /// Build an operand record for an operator/statement identity: its layout
 /// `kind` ([`TUPLE_TAG`] or [`LIST_TAG`]), its parse
-/// `precedence`/`assoc`/`schedule`, and one role-name string node per operand
+/// `parse_rank`/`assoc`/`schedule`, and one role-name string node per operand
 /// slot.
 pub(crate) fn operand_record(
     cx: &mut Cx,
     kind: u8,
-    precedence: f64,
+    parse_rank: f64,
     assoc: Assoc,
     roles: &[&str],
 ) -> *mut u8 {
     debug_assert!(matches!(kind, TUPLE_TAG | LIST_TAG), "operand records carry operand kinds");
     debug_assert!(!cx.string_.is_null(), "role names need the string logos registered");
-    let mut blob = header(kind, assoc, precedence).to_vec();
+    let mut blob = header(kind, assoc, parse_rank).to_vec();
     blob.push(roles.len() as u8);
     for role in roles {
         let name = string::build_text(cx.store, cx.string_, role.as_bytes());
@@ -234,10 +240,10 @@ pub(crate) fn record_layout(
     fields: DyadPtr,
     size_bytes: u64,
     body: DyadPtr,
-    precedence: f64,
+    parse_rank: f64,
     assoc: Assoc,
 ) -> *mut u8 {
-    let mut blob = header(RECORD_TAG, assoc, precedence).to_vec();
+    let mut blob = header(RECORD_TAG, assoc, parse_rank).to_vec();
     blob.extend_from_slice(&(scope as usize).to_ne_bytes());
     blob.extend_from_slice(&(fields as usize).to_ne_bytes());
     blob.extend_from_slice(&size_bytes.to_ne_bytes());
@@ -281,17 +287,18 @@ pub(crate) unsafe fn record_body_of(id: DyadPtr) -> DyadPtr {
     std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF + 24) as *const DyadPtr)
 }
 
-/// The fixed head of every record: kind, associativity, precedence (the
+/// The fixed head of every record: kind, associativity, parse_rank (the
 /// identity's place on the one axis, [`prec`]), and the two reserved slots.
-fn header(kind: u8, assoc: Assoc, precedence: f64) -> [u8; PAYLOAD_OFF] {
+fn header(kind: u8, assoc: Assoc, parse_rank: f64) -> [u8; PAYLOAD_OFF] {
     let mut h = [0u8; PAYLOAD_OFF];
     h[0] = kind;
     h[ASSOC_OFF] = match assoc {
         Assoc::Left => 0,
         Assoc::Right => 1,
     };
-    h[PREC_OFF..CTOR_OFF].copy_from_slice(&precedence.to_ne_bytes());
-    // CTOR_OFF..DTOR_OFF and DTOR_OFF..PAYLOAD_OFF stay zero: reserved.
+    h[PREC_OFF..CTOR_OFF].copy_from_slice(&parse_rank.to_ne_bytes());
+    // CTOR_OFF..DTOR_OFF and DTOR_OFF..LEXRANK_OFF stay zero: reserved; the
+    // lex_rank at LEXRANK_OFF..PAYLOAD_OFF is 0 until a type body sets it.
     let _ = DTOR_OFF;
     h
 }
@@ -390,11 +397,29 @@ pub(crate) unsafe fn op_slot_of(id: DyadPtr) -> Option<usize> {
     }
 }
 
-/// The parse precedence stored in `id`'s record.
+/// The identity's `lex_rank`: the order among pattern spellings competing at
+/// one text position (#113); 0 until its type body set one.
+///
+/// # Safety
+/// `id` must be a logos node from the store with a record value.
+pub(crate) unsafe fn lex_rank_of(id: DyadPtr) -> f64 {
+    let v = (*id).value as *const u8;
+    f64::from_ne_bytes(std::ptr::read_unaligned(v.add(LEXRANK_OFF) as *const [u8; 8]))
+}
+
+/// Write the identity's `lex_rank` (a type body's `lex_rank = …`, #113).
+///
+/// # Safety
+/// `id` must be a logos node from the store with a record value.
+pub(crate) unsafe fn set_lex_rank(id: DyadPtr, rank: f64) {
+    std::ptr::write_unaligned((*id).value.add(LEXRANK_OFF) as *mut [u8; 8], rank.to_ne_bytes());
+}
+
+/// The parse_rank stored in `id`'s record.
 ///
 /// # Safety
 /// `id` must carry a record ([`kind_of`] is `Some`).
-pub(crate) unsafe fn precedence_of(id: DyadPtr) -> f64 {
+pub(crate) unsafe fn parse_rank_of(id: DyadPtr) -> f64 {
     let v = (*id).value;
     f64::from_ne_bytes(std::ptr::read_unaligned(v.add(PREC_OFF) as *const [u8; 8]))
 }

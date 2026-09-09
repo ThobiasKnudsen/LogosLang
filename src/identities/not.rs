@@ -3,7 +3,7 @@
 
 //! `not (x)`: logical negation of a `bool`. Its operand must be a `bool`; the result
 //! is a `bool`. It takes a parenthesized operand (like `if`'s condition), which keeps
-//! its binding unambiguous without a unary-precedence rule: `not (a) and b` is
+//! its binding unambiguous without a unary-parse_rank rule: `not (a) and b` is
 //! `(not a) and b`. The node is `{type: not, value: [operand, op]}` — the punned
 //! single-operand form widened so the node references its native leaf like every
 //! other runnable (issue #44).

@@ -37,7 +37,7 @@ pub struct Dyad {
 pub type DyadPtr = *mut Dyad;
 
 /// Register `dyad`, the cell type, with its constructor
-/// ([`crate::parse::Parser::construct_dyad`]): at application precedence, so
+/// ([`crate::parse::Parser::construct_dyad`]): at application parse_rank, so
 /// `dyad (…)` reads the bracket to its right and `dyad` alone is the type.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, meta::DYAD_TAG, meta::prec::APPLY);

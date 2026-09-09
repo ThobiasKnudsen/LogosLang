@@ -14,10 +14,10 @@
 //!
 //! The driver ([`Parser::lex_segment`], [`Parser::construct_segment`]) lexes
 //! one token at a time, constructing at discovery every identity at or above
-//! `(` on the one precedence axis ([`crate::identities::meta::prec`]) — the
+//! `(` on the one parse_rank axis ([`crate::identities::meta::prec`]) — the
 //! brackets, the literals, `#`, `import`, `:=`, and the identities that read
 //! their own bracket or right side — and, at the segment boundary (`,`, the
-//! closer, the end of input), constructs the rest highest precedence first,
+//! closer, the end of input), constructs the rest highest parse_rank first,
 //! associativity breaking ties, each constructor taking what its syntax needs
 //! from the fully lexed segment, left or right, with no lookahead. A leftover
 //! cell is the checked error; prose is lifted out beside the segment's
@@ -28,7 +28,7 @@
 //! parser owns resolution; the trie ([`crate::regex_trie`]) is only the name
 //! index. Still to come: the tape's four affordances as Logos-reachable
 //! identities and a cell as a bare dyad pointer with `is_constructed` beside
-//! it (#60), constructors written in Logos and a precedence spelled relative
+//! it (#60), constructors written in Logos and a parse_rank spelled relative
 //! to another's (#61), `lex «…»` (#62).
 
 use std::collections::{HashMap, HashSet};
@@ -931,8 +931,8 @@ pub struct CoreTypes {
     /// `left` and `right` — associativity's two values.
     pub left_: DyadPtr,
     pub right_: DyadPtr,
-    /// The four slot markers a type body declares, in [`SLOT_NAMES`] order.
-    pub slots: [DyadPtr; 4],
+    /// The five slot markers a type body declares, in [`SLOT_NAMES`] order.
+    pub slots: [DyadPtr; 5],
     /// `->` — the return-logos arrow.
     pub arrow_: DyadPtr,
     /// `else` — the branch token `if`'s constructor consumes.
@@ -994,27 +994,30 @@ pub unsafe fn fn_frame_size(fn_node: DyadPtr) -> usize {
     }
 }
 
-/// The four slots `type` declares for every type it builds (DESIGN ›The
+/// The five slots `type` declares for every type it builds (DESIGN ›The
 /// constructor is a field‹), in the order the markers on
 /// [`CoreTypes::slots`] and [`SlotKind`] follow.
-pub const SLOT_NAMES: [&str; 4] = ["precedence", "associativity", "constructor", "destructor"];
+pub const SLOT_NAMES: [&str; 5] =
+    ["parse_rank", "lex_rank", "associativity", "constructor", "destructor"];
 
-/// One of the four slots, by [`SLOT_NAMES`] position.
+/// One of the five slots, by [`SLOT_NAMES`] position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlotKind {
-    Precedence = 0,
-    Associativity = 1,
-    Constructor = 2,
-    Destructor = 3,
+    ParseRank = 0,
+    LexRank = 1,
+    Associativity = 2,
+    Constructor = 3,
+    Destructor = 4,
 }
 
 impl SlotKind {
     /// The slot at `i` in [`SLOT_NAMES`].
     fn of(i: usize) -> Self {
         match i {
-            0 => SlotKind::Precedence,
-            1 => SlotKind::Associativity,
-            2 => SlotKind::Constructor,
+            0 => SlotKind::ParseRank,
+            1 => SlotKind::LexRank,
+            2 => SlotKind::Associativity,
+            3 => SlotKind::Constructor,
             _ => SlotKind::Destructor,
         }
     }
@@ -1025,7 +1028,9 @@ impl SlotKind {
 /// constructor to install, and the `instance (…)` block's layout.
 struct OpenType {
     scope: DyadPtr,
-    precedence: f64,
+    parse_rank: f64,
+    /// Set by a `lex_rank = …` line; written into the head at the close.
+    lex_rank: Option<f64>,
     assoc: Assoc,
     ctor: DyadPtr,
     instance: Option<(DyadPtr, DyadPtr, u64)>,
@@ -1083,7 +1088,7 @@ fn application(
 /// by consuming source forward — and it edits the tape *in place*: what it
 /// consumed it splices out, what it built it leaves at the cursor (a dyad, or
 /// another token). The driver decides only *when* constructors run — the
-/// precedence decision — never what they leave.
+/// parse_rank decision — never what they leave.
 pub type ConstructFn =
     fn(&mut Parser, DyadPtr, &mut ParsingTape) -> Result<Constructed, ParseError>;
 
@@ -1104,8 +1109,8 @@ pub enum ParseError {
     DoubleInstance,
     /// A binding in a type body inserted a teardown, which no scope exit runs.
     DeferInTypeBody,
-    /// `precedence = …` whose value is not a number known at the definition.
-    NonComptimePrecedence,
+    /// `parse_rank = …` whose value is not a number known at the definition.
+    NonComptimeRank,
     /// `associativity = …` with something other than `left` or `right`.
     BadAssociativity,
     /// `constructor = …` with something other than a function taking the
@@ -1408,10 +1413,10 @@ enum ImportState {
 }
 
 /// The one-pass elaborator: lexes on demand, resolves names against the scope
-/// stack, and reduces the tape by operator precedence, running each identity's
+/// stack, and reduces the tape by operator parse_rank, running each identity's
 /// native `Construct`. The scheduling is a deferred-reduction operator
-/// precedence over the explicit tape (not Pratt): operators wait on the tape as
-/// pending tokens until precedence says to reduce them.
+/// parse_rank over the explicit tape (not Pratt): operators wait on the tape as
+/// pending tokens until parse_rank says to reduce them.
 pub struct Parser<'a> {
     source: &'a str,
     pos: usize,
@@ -2310,17 +2315,17 @@ impl<'a> Parser<'a> {
 
     /// `type (…)`'s body (DESIGN ›The constructor is a field‹, #61): an
     /// ordinary scope whose bare lines "belong to the identity itself — they
-    /// fill its own slots (its constructor, its precedence) and may declare
+    /// fill its own slots (its constructor, its parse_rank) and may declare
     /// new members that live on it", while its `instance (…)` block holds
-    /// what lives on instances. The four slots `type` declares for every
-    /// type it builds — `precedence`, `associativity`, `constructor`,
+    /// what lives on instances. The five slots `type` declares for every
+    /// type it builds — `parse_rank`, `associativity`, `constructor`,
     /// `destructor` — are declared first, as records over the shared markers,
-    /// so `precedence := 5` is the no-shadowing error and `precedence = …`
+    /// so `parse_rank := 5` is the no-shadowing error and `parse_rank = …`
     /// the fill ([`Parser::slot_fill`]). Every other line must declare a
     /// member, open the instance block, or be prose: a type body is
     /// definition-time code and nothing runs it later, so a line that would
     /// only run is refused. The type node then carries the instance layout,
-    /// this scope as its body (members read `g.y`), the precedence and
+    /// this scope as its body (members read `g.y`), the parse_rank and
     /// associativity filled (the call defaults otherwise), and the Logos
     /// constructor installed in its slot.
     pub fn parse_type_body(&mut self, id: DyadPtr) -> Result<DyadPtr, ParseError> {
@@ -2333,7 +2338,8 @@ impl<'a> Parser<'a> {
         }
         self.definitions.push(OpenType {
             scope,
-            precedence: crate::identities::meta::prec::APPLY,
+            parse_rank: crate::identities::meta::prec::APPLY,
+            lex_rank: None,
             assoc: Assoc::Left,
             ctor: std::ptr::null_mut(),
             instance: None,
@@ -2366,10 +2372,14 @@ impl<'a> Parser<'a> {
             fields,
             size_bytes,
             scope,
-            def.precedence,
+            def.parse_rank,
             def.assoc,
         );
         let node = self.store.alloc_raw(id, layout.cast());
+        if let Some(rank) = def.lex_rank {
+            // SAFETY: `node` was just allocated above with the record `layout`.
+            unsafe { crate::identities::meta::set_lex_rank(node, rank) };
+        }
         if !def.ctor.is_null() {
             // SAFETY: `node` was just built; nothing has read its slot.
             unsafe { crate::identities::meta::install_constructor(node, def.ctor) };
@@ -2431,7 +2441,7 @@ impl<'a> Parser<'a> {
     /// Which slot of the type being defined `target` names, if any: a record
     /// over one of the four markers, declared in the innermost open
     /// definition's own scope, which must be the current one — a
-    /// `precedence = 3` inside a constructor's body is that function's own
+    /// `parse_rank = 3` inside a constructor's body is that function's own
     /// business, not the enclosing type's.
     pub(crate) fn slot_of(&self, target: DyadPtr) -> Option<SlotKind> {
         let def = self.definitions.last()?;
@@ -2452,8 +2462,8 @@ impl<'a> Parser<'a> {
     }
 
     /// Fill a slot of the type being defined (DESIGN ›The constructor is a
-    /// field‹: "A slot `type` declared is filled with `=`"). The precedence
-    /// is the value's number, run now — `*.precedence + 1` is comptime field
+    /// field‹: "A slot `type` declared is filled with `=`"). The parse_rank
+    /// is the value's number, run now — `*.parse_rank + 1` is comptime field
     /// arithmetic — so it must be known at the definition (the seed's form of
     /// "resolved by the operator's first use"); the associativity is `left`
     /// or `right`; the constructor a function taking the tape by value; a
@@ -2471,12 +2481,12 @@ impl<'a> Parser<'a> {
         let read = unsafe { types.through(value) };
         let def = self.definitions.last_mut().expect("slot_of found an open definition");
         match kind {
-            SlotKind::Precedence => {
+            SlotKind::ParseRank | SlotKind::LexRank => {
                 // SAFETY: as above.
                 let nt = match unsafe { crate::identities::numtype_of(&types, value) } {
                     crate::identities::Operand::Literal => None,
                     crate::identities::Operand::Concrete(nt) => Some(nt),
-                    _ => return Err(ParseError::NonComptimePrecedence),
+                    _ => return Err(ParseError::NonComptimeRank),
                 };
                 let bits = match nt {
                     None => crate::identities::rational::mold_to(read, NumType::F64)
@@ -2484,14 +2494,19 @@ impl<'a> Parser<'a> {
                     Some(_) => {
                         let mut rt = crate::run::Runtime::new(types);
                         // SAFETY: as above.
-                        unsafe { rt.run(value) }.map_err(|_| ParseError::NonComptimePrecedence)?
+                        unsafe { rt.run(value) }.map_err(|_| ParseError::NonComptimeRank)?
                     }
                 };
-                def.precedence = match nt {
+                let rank = match nt {
                     None | Some(NumType::F64) => f64::from_bits(bits as u64),
                     Some(NumType::F32) => f64::from(f32::from_bits(bits as u32)),
                     Some(_) => bits as f64,
                 };
+                if kind == SlotKind::ParseRank {
+                    def.parse_rank = rank;
+                } else {
+                    def.lex_rank = Some(rank);
+                }
             }
             SlotKind::Associativity => {
                 def.assoc = if read == types.left_ {
@@ -2948,7 +2963,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::ExpectedIn);
         }
         // The range: the cells up to the body bracket — `start .. end` or
-        // `start .. end .. step` — constructed by precedence, the `..` cells
+        // `start .. end .. step` — constructed by parse_rank, the `..` cells
         // inert delimiters read by position.
         let parts = self.drive_until_open(RightSide::Condition)?;
         let dotdot = self.types.dotdot_;
@@ -3256,7 +3271,7 @@ impl<'a> Parser<'a> {
     ) -> Result<Constructed, ParseError> {
         // The left is read as it stands — an identity's fields are read off
         // the token before its own constructor wakes (DESIGN ›Text is the
-        // quote‹: `i32.precedence`), so a callable or a logos name to the
+        // quote‹: `i32.parse_rank`), so a callable or a logos name to the
         // left is the identity itself, not a call in waiting.
         let lhs = match tape.at(-1).copied() {
             Some(cell) => self.operand_dyad(cell)?,
@@ -4436,7 +4451,7 @@ impl<'a> Parser<'a> {
 
     /// A member read on a node standing as a logos (#52): the shared metadata
     /// this crate stores once per logos — `.arity`, `.roles[i]`,
-    /// `.precedence`, `.associativity`, `.constructor`, `.destructor`, and the
+    /// `.parse_rank`, `.associativity`, `.constructor`, `.destructor`, and the
     /// record layout `.fields`, `.size_bytes`, `.scope`. Typically reached as
     /// `a:dyad.type.arity`. A null constructor/destructor slot is the
     /// honest undefined and errors until `?` exists.
@@ -4466,8 +4481,11 @@ impl<'a> Parser<'a> {
                 }
                 Ok(meta::role_of(logos, i))
             }
-            "precedence" => {
-                Ok(self.scalar_value(NumType::F64, meta::precedence_of(logos).to_bits() as i64))
+            "parse_rank" => {
+                Ok(self.scalar_value(NumType::F64, meta::parse_rank_of(logos).to_bits() as i64))
+            }
+            "lex_rank" => {
+                Ok(self.scalar_value(NumType::F64, meta::lex_rank_of(logos).to_bits() as i64))
             }
             // Associativity's values are the two identities `left` and
             // `right` (DESIGN ›The constructor is a field‹).
@@ -4526,7 +4544,7 @@ impl<'a> Parser<'a> {
 
     /// Build a typed scalar value node: fresh storage holding `bits` at `nt`'s
     /// width. The reflection counts (`.arity`, `.size_bytes`) and measures
-    /// (`.precedence`) are ordinary typed values, comparable with literals.
+    /// (`.parse_rank`) are ordinary typed values, comparable with literals.
     fn scalar_value(&mut self, nt: crate::identities::numtype::NumType, bits: i64) -> DyadPtr {
         let ty = self.types.numtypes[nt as usize];
         let width = nt.bytes();
@@ -4656,7 +4674,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The place of `id` on the one axis (its record's precedence), or
+    /// The place of `id` on the one axis (its record's parse_rank), or
     /// [`prec::INERT`] for a cell that carries no record.
     ///
     /// [`prec::INERT`]: crate::identities::meta::prec::INERT
@@ -4669,7 +4687,7 @@ impl<'a> Parser<'a> {
             {
                 crate::identities::meta::prec::APPLY
             } else {
-                crate::identities::meta::precedence_of(id)
+                crate::identities::meta::parse_rank_of(id)
             }
         }
     }
@@ -4728,7 +4746,7 @@ impl<'a> Parser<'a> {
     /// the end of input — none of which is consumed — constructing at
     /// discovery each cell whose identity sits at or above `(` on the axis
     /// (DESIGN ›The scope's constructor is the driver‹: "a token whose
-    /// identity's precedence is at or above `(`'s own is constructed at
+    /// identity's parse_rank is at or above `(`'s own is constructed at
     /// discovery, before the next token is lexed … every other token is
     /// placed on the tape unconstructed").
     fn lex_segment(&mut self, tape: &mut ParsingTape) -> Result<Boundary, ParseError> {
@@ -4759,7 +4777,7 @@ impl<'a> Parser<'a> {
 
     /// One step of the scope's loop (DESIGN ›The scope's constructor is the
     /// driver‹): lex the next cell onto the tape's end and, if its identity's
-    /// precedence is at or above `(`'s, construct it at discovery. A boundary
+    /// parse_rank is at or above `(`'s, construct it at discovery. A boundary
     /// token — `,`, `)`, or the bracket a right-side read stops before — is
     /// left unconsumed (`pos` rewound) and returned; `None` means a cell was
     /// lexed. This is also what a lazy `tape[k]` read runs
@@ -4910,7 +4928,7 @@ impl<'a> Parser<'a> {
 
     /// Construct a lexed segment at its boundary: comment cells are lifted out
     /// (prose is void-valued and invisible to value flow), then the
-    /// unconstructed cells run highest precedence first, associativity
+    /// unconstructed cells run highest parse_rank first, associativity
     /// breaking ties — left keeps the leftmost first, right the rightmost —
     /// each constructor taking what its syntax needs from the fully lexed
     /// segment, left or right, with no lookahead; what remains is read as
@@ -5180,7 +5198,7 @@ mod tests {
     fn a_logos_constructor_runs_when_its_identity_appears() {
         // DESIGN ›The constructor is a field‹: "an appearance of X runs X's
         // `constructor` field" (#61). A postfix `squared`, its constructor
-        // written in Logos and taking the tape by value, its precedence one
+        // written in Logos and taking the tape by value, its parse_rank one
         // above `*`'s: the driver runs it at the boundary, and what it
         // leaves — the call `sq(x)` — runs and compiles as any call.
         use crate::identities::Core;
@@ -5208,7 +5226,7 @@ mod tests {
             s,
         );
         // `squared`: a record type with no fields, the constructor slot
-        // holding `c` and the precedence one above `*`'s — what a `type (…)`
+        // holding `c` and the parse_rank one above `*`'s — what a `type (…)`
         // body fills in the next step.
         // SAFETY: the nodes are from the store just built.
         let s = unsafe {

@@ -127,10 +127,10 @@ pub enum Shape {
     LogosNode {
         /// The node's own record kind (a tag from `numtype`/`meta`).
         kind: u8,
-        /// The node's parse precedence — `None` for the NaN sentinel (the
+        /// The node's parse_rank — `None` for the NaN sentinel (the
         /// identity never extends an expression to its left), `Some(+inf)`
         /// for a tight extender, finite for an infix operator.
-        precedence: Option<f64>,
+        parse_rank: Option<f64>,
         /// The constructor: a callable leaf (`seed-parse` convention, a
         /// `native` body — invoked, never read into), or null: undefined, for
         /// a pure delimiter or a data logos with no parse role of its own.
@@ -216,7 +216,7 @@ pub unsafe fn describe(types: &CoreTypes, node: DyadPtr) -> Shape {
         meta::FRACTION_TAG => Shape::Fraction,
         meta::TYPEREC_TAG => Shape::LogosNode {
             kind: meta::kind_of(node).unwrap_or(meta::TOKEN_TAG),
-            precedence: Some(meta::precedence_of(node)),
+            parse_rank: Some(meta::parse_rank_of(node)),
             constructor: meta::constructor_of(node),
             destructor: meta::destructor_of(node),
         },
@@ -352,7 +352,7 @@ mod tests {
     #[test]
     fn every_identity_declares_its_parse_members() {
         // The sealed model's shared members, pinned for every spelled identity:
-        // the precedence field is the extender signal the driver classifies by
+        // the parse_rank field is the extender signal the driver classifies by
         // (None here = the NaN sentinel, never extends left; +inf = tight
         // extender; finite = infix), and the constructor slot carries the
         // parse behaviour — a callable leaf under the seed-parse convention —
@@ -417,11 +417,11 @@ mod tests {
             ("bool", prec::INERT, false),
             ("void", prec::INERT, false),
         ];
-        for &(spelling, precedence, has_ctor) in cases {
+        for &(spelling, parse_rank, has_ctor) in cases {
             let id = scopes.resolve(&trie, spelling).unwrap().identity;
             // SAFETY: every resolved identity carries its registration-built record.
             unsafe {
-                assert_eq!(meta::precedence_of(id), precedence, "precedence of {spelling}");
+                assert_eq!(meta::parse_rank_of(id), parse_rank, "parse_rank of {spelling}");
                 let ctor = meta::constructor_of(id);
                 assert_eq!(!ctor.is_null(), has_ctor, "constructor of {spelling}");
                 if has_ctor {
@@ -561,13 +561,13 @@ mod tests {
         // SAFETY: the handles are identities with records; roles are string nodes.
         unsafe {
             use crate::identities::meta::prec;
-            assert_eq!(meta::precedence_of(core.plus), prec::ADDITIVE);
+            assert_eq!(meta::parse_rank_of(core.plus), prec::ADDITIVE);
             assert_eq!(meta::assoc_of(core.plus), Assoc::Left);
-            assert_eq!(meta::precedence_of(core.times), prec::MULTIPLICATIVE);
-            assert_eq!(meta::precedence_of(core.assign), prec::DECLARE);
+            assert_eq!(meta::parse_rank_of(core.times), prec::MULTIPLICATIVE);
+            assert_eq!(meta::parse_rank_of(core.assign), prec::DECLARE);
             assert_eq!(meta::assoc_of(core.assign), Assoc::Right);
-            assert_eq!(meta::precedence_of(core.lt), prec::COMPARE);
-            assert_eq!(meta::precedence_of(core.eq), prec::EQUALITY);
+            assert_eq!(meta::parse_rank_of(core.lt), prec::COMPARE);
+            assert_eq!(meta::parse_rank_of(core.eq), prec::EQUALITY);
 
             let roles: Vec<&[u8]> = (0..meta::arity_of(core.for_))
                 .map(|i| text_of(meta::role_of(core.for_, i)))
@@ -709,14 +709,14 @@ mod tests {
             // Identities self-describe as logos: every shared member readable.
             // An operator carries its constructor (a callable leaf); a data
             // logos's constructor and every destructor are the honest undefined.
-            let Shape::LogosNode { kind, precedence, constructor, destructor } =
+            let Shape::LogosNode { kind, parse_rank, constructor, destructor } =
                 describe(&types, core.plus)
             else {
                 panic!("an identity self-describes");
             };
-            assert_eq!((kind, precedence), (meta::TUPLE_TAG, Some(meta::prec::ADDITIVE)));
+            assert_eq!((kind, parse_rank), (meta::TUPLE_TAG, Some(meta::prec::ADDITIVE)));
             assert!(!constructor.is_null() && destructor.is_null());
-            let Shape::LogosNode { kind, precedence, constructor, destructor } =
+            let Shape::LogosNode { kind, parse_rank, constructor, destructor } =
                 describe(&types, core.i32_)
             else {
                 panic!("an identity self-describes");
@@ -724,14 +724,14 @@ mod tests {
             // Every identity has a place on the one axis (no NaN sentinel,
             // ruled 30 August 2026): a numeric logos sits at application, the
             // juxtaposition constructor it carries (`i32 3`).
-            assert_eq!((kind, precedence), (NumType::I32 as u8, Some(meta::prec::APPLY)));
+            assert_eq!((kind, parse_rank), (NumType::I32 as u8, Some(meta::prec::APPLY)));
             assert!(!constructor.is_null() && destructor.is_null());
-            let Shape::LogosNode { kind, precedence, constructor, destructor } =
+            let Shape::LogosNode { kind, parse_rank, constructor, destructor } =
                 describe(&types, core.type_)
             else {
                 panic!("an identity self-describes");
             };
-            assert_eq!((kind, precedence), (meta::TYPEREC_TAG, Some(meta::prec::READER)));
+            assert_eq!((kind, parse_rank), (meta::TYPEREC_TAG, Some(meta::prec::READER)));
             // The root carries the merged constructor (record path / bare
             // classifier); its destructor stays the honest undefined.
             assert!(!constructor.is_null() && destructor.is_null());

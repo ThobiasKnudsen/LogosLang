@@ -21,7 +21,7 @@ use crate::dyad::DyadPtr;
 use crate::parse::{Assoc, CoreTypes, ParseError};
 use crate::store::Store;
 
-/// Register `/`: spelling, precedence (binding like `*`, left-associative), and
+/// Register `/`: spelling, parse_rank (binding like `*`, left-associative), and
 /// its lowering.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::operand_record(

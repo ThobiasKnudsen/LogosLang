@@ -8,7 +8,7 @@ What you can download today is the **bootstrap seed**: a small Rust program that
 
 1. **One cell.** Every node in the graph is a *dyad*: a pointer to a type and a pointer to a value, sixteen bytes. The type says how the value is read. Following type pointers always ends at `type`, whose type is itself.
 2. **One evaluation rule.** To evaluate a dyad, read its type. If the type is a function, run it on the dyad's value. Otherwise the dyad is data. Operators, field access, and `if` are all functions. Operands arrive unevaluated, so `if` runs only the branch it takes without being a special form.
-3. **The parser is in the graph.** Every operator, keyword, and type carries its own precedence and its own `constructor`, the code that consumes the tokens around it and builds the node. Defining a new operator is writing a type. There is no separate grammar file.
+3. **The parser is in the graph.** Every operator, keyword, and type carries its own parse_rank and its own `constructor`, the code that consumes the tokens around it and builds the node. Defining a new operator is writing a type. There is no separate grammar file.
 4. **One pass.** Source becomes graph one token at a time, and each expression runs as soon as it is built. Compile-time evaluation is ordinary interpretation that happens earlier: a function can return a type, and an `if` with a known condition drops the untaken branch before it is even parsed.
 5. **Interpreted by default, compiled where you say.** Everything runs as a graph walk until you call `f.compile()`. Then the body is lowered to machine code and the next call jumps. The compiled function stays readable through the graph it came from. No build flags exist: the code decides what compiles.
 
@@ -79,7 +79,7 @@ p := point (3, 4),
 p.x + p.y                      # 7
 ```
 
-`type` is both the root of every type chain and the keyword that defines one. The per-instance fields live in the `instance ( … )` block; the body's own lines fill the type's slots (`precedence`, `associativity`, `constructor`) or declare members of the type itself, read as `point.member`. A type with per-instance fields is a record. A type whose members are all its own is a namespace.
+`type` is both the root of every type chain and the keyword that defines one. The per-instance fields live in the `instance ( … )` block; the body's own lines fill the type's slots (`parse_rank`, `associativity`, `constructor`) or declare members of the type itself, read as `point.member`. A type with per-instance fields is a record. A type whose members are all its own is a namespace.
 
 ### Types are values
 
@@ -145,11 +145,11 @@ There is no `main`. The top level is the program, and the file's last value is i
 
 ## Defining the language from inside
 
-This is what the first public preview is built to show. An operator is a type with four slots filled: where it binds, which way it associates, how it parses, and what it computes.
+This is what the first public preview is built to show. An operator is a type with five slots filled: where it binds, which way it associates, how it parses, and what it computes.
 
 ```logos
 ^ := type (
-    precedence = *.precedence + 1,       # binds tighter than *
+    parse_rank = *.parse_rank + 1,       # binds tighter than *
     associativity = right,
     constructor = fn (tape := parsing_tape ?) -> void (
         tape[0]:dyad.type = ^,                                  # the ^ node, its operand record empty
@@ -164,7 +164,7 @@ f.compile(),
 f(2)
 ```
 
-The parser hands every constructor the *parsing tape*, the cells around it: `tape[0]` is its own cell, negative offsets are to its left, positive to its right, and it may read, write, insert, and remove. Assigning a cell's type makes a fresh node of that type with an empty operand record, which the constructor then fills. Precedence is one number per identity, so a new operator slots between any two existing ones by writing its number relative to theirs. `fn` is the shorthand for a type whose precedence, associativity, and constructor are the defaults of a call. Everything above runs today except the `code` slot: an operator that is its own operation is the next step, and until it lands a constructor builds a call of an ordinary function, as `tests/fixtures/squared.logos` does.
+The parser hands every constructor the *parsing tape*, the cells around it: `tape[0]` is its own cell, negative offsets are to its left, positive to its right, and it may read, write, insert, and remove. Assigning a cell's type makes a fresh node of that type with an empty operand record, which the constructor then fills. Precedence is one number per identity, so a new operator slots between any two existing ones by writing its number relative to theirs. `fn` is the shorthand for a type whose parse_rank, associativity, and constructor are the defaults of a call. Everything above runs today except the `code` slot: an operator that is its own operation is the next step, and until it lands a constructor builds a call of an ordinary function, as `tests/fixtures/squared.logos` does.
 
 ## What runs today, and what does not
 
@@ -174,7 +174,7 @@ The seed runs:
 - `:=`, `=`, `?`, juxtaposition, and `,`;
 - integer, float, and boolean primitives with conversions, and compile-time rationals;
 - `if`, `while`, `for`, functions, scopes, recursion, and records;
-- types defined with their own precedence, associativity, and a constructor written in Logos, run during the parse over the tape;
+- types defined with their own parse_rank, associativity, and a constructor written in Logos, run during the parse over the tape;
 - functions returning `type`, dependent declarations, and comptime `if`;
 - `alloc`, `own`, `drop`, `free`, `defer`, and raw pointers;
 - `.compile()` with a deoptimizing JIT;

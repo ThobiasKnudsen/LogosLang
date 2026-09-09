@@ -21,7 +21,7 @@ use crate::dyad::DyadPtr;
 use crate::parse::{Assoc, CoreTypes, ParseError};
 use crate::store::Store;
 
-/// Register `=`: spelling, parse precedence, and lowering. The run natives are
+/// Register `=`: spelling, parse_rank, and lowering. The run natives are
 /// the per-width store leaves ([`crate::identities::ops`]).
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::operand_record(
@@ -42,7 +42,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 /// the boundary, constructed to one — [`crate::parse::Parser::construct_left`]),
 /// then its right side driven to the boundary. Over an unfilled type
 /// placeholder, `name = <type>` is the type variable's fill instead
-/// ([`crate::parse::Parser::type_fill`]); over one of the four slots of the
+/// ([`crate::parse::Parser::type_fill`]); over one of the five slots of the
 /// type being defined, the slot's fill ([`crate::parse::Parser::slot_fill`],
 /// #61).
 fn construct(

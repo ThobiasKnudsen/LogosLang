@@ -2,12 +2,12 @@
 # DESIGN ›The constructor is a field‹: an appearance of `squared` runs its
 # constructor, written here, during the parse). Its constructor retypes its
 # own cell into a call of `sq` and takes the cell to its left as the
-# operand; its precedence sits one above `*`'s, so `2 * x squared` squares
+# operand; its parse_rank sits one above `*`'s, so `2 * x squared` squares
 # first. The `code` slot, which would make `squared` its own operation
 # rather than a call of `sq`, is issue #63.
 sq := fn (a := i32 ?) -> i32 ( a * a ),
 squared := type (
-    precedence = *.precedence + 1,
+    parse_rank = *.parse_rank + 1,
     associativity = left,
     constructor = fn (tape := parsing_tape ?) -> void (
         tape[0]:dyad.type = sq,
@@ -18,7 +18,7 @@ squared := type (
 # A binary one: the and-group appends both operands.
 add := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ),
 plus2 := type (
-    precedence = +.precedence,
+    parse_rank = +.parse_rank,
     associativity = left,
     constructor = fn (tape := parsing_tape ?) -> void (
         tape[0]:dyad.type = add,

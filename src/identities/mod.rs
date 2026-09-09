@@ -12,7 +12,7 @@
 //! Each primitive file defines exactly one identity: its node, its spelling, and
 //! its behaviour across the phases (parse construction, run native, compile
 //! lowering). [`Core::build`] wires them into the graph. Structure — parse
-//! precedence and associativity, and the layout values are read through (a
+//! parse_rank and associativity, and the layout values are read through (a
 //! scalar width, operand arity and role names) — rides the graph as each
 //! identity's shared-member record ([`meta`]; DESIGN ›A logos's metadata is
 //! shared by its values‹). Run behaviour rides the graph too (issue #44): each
@@ -246,9 +246,9 @@ pub struct Core {
     /// `left` and `right` — associativity's two values.
     pub left_: DyadPtr,
     pub right_: DyadPtr,
-    /// The four slot markers a type body declares (`precedence`,
+    /// The five slot markers a type body declares (`parse_rank`,
     /// `associativity`, `constructor`, `destructor`), in [`SLOT_NAMES`] order.
-    pub slots: [DyadPtr; 4],
+    pub slots: [DyadPtr; 5],
     /// `->` — the return-logos arrow (parse-only).
     pub arrow_: DyadPtr,
     /// `else` — the branch token `if`'s constructor consumes (parse-only).
@@ -2394,7 +2394,7 @@ mod tests {
         diff_nullary_fn("fn () -> i32 ( 2 * 4 )", 8);
         // `*` binds tighter than `+`: 2 + (3 * 4) = 14, not (2 + 3) * 4 = 20.
         diff_nullary_fn("fn () -> i32 ( 2 + 3 * 4 )", 14);
-        // `-` shares `+`'s precedence and is left-associative: (10 - 3) - 2 = 5.
+        // `-` shares `+`'s parse_rank and is left-associative: (10 - 3) - 2 = 5.
         diff_nullary_fn("fn () -> i32 ( 10 - 3 - 2 )", 5);
     }
 

@@ -21,7 +21,7 @@ use super::{meta, Cx};
 use crate::dyad::DyadPtr;
 use crate::parse::{Constructed, ParseError};
 
-/// Register `pub`: a fresh-start word (a plain token record, NaN precedence —
+/// Register `pub`: a fresh-start word (a plain token record, NaN parse_rank —
 /// never extends left, so the driver invokes the constructor immediately).
 /// No node is ever typed by `pub`; its identity exists to be named in a
 /// declare node's gate slot.

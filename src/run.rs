@@ -13,7 +13,7 @@
 //! jumps to that leaf's entry with the node. No HashMap is consulted anywhere;
 //! dispatch flows through the graph, and alternative run versions live where
 //! versions live — versioned scopes — not in swapped tables. Identities carry
-//! only their shared-member *records* (the reflectable precedence/layout data,
+//! only their shared-member *records* (the reflectable parse_rank/layout data,
 //! see [`crate::identities::meta`]), never code; a node with no code to reach
 //! is data, read through its logos's layout. v1 scalar values ride an `i64`
 //! bit-container, read and written at their logos's width (see

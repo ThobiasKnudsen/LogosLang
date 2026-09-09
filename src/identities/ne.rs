@@ -3,7 +3,7 @@
 
 //! `!=`: inequality. Like `<` (see [`crate::identities::lt`]), a parse-time
 //! constructor resolving each application to a concrete comparison in the op
-//! slot; result is `bool`. It binds at equality precedence (looser than the
+//! slot; result is `bool`. It binds at equality parse_rank (looser than the
 //! relational operators).
 
 use cranelift_codegen::ir::Value;
@@ -15,7 +15,7 @@ use crate::dyad::DyadPtr;
 use crate::parse::{Assoc, CoreTypes, ParseError};
 use crate::store::Store;
 
-/// Register `!=`: spelling, precedence (equality, left-associative), and its
+/// Register `!=`: spelling, parse_rank (equality, left-associative), and its
 /// lowering.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::operand_record(

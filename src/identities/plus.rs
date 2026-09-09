@@ -18,7 +18,7 @@ use crate::dyad::DyadPtr;
 use crate::parse::{Assoc, CoreTypes, ParseError};
 use crate::store::Store;
 
-/// Register `+`: spelling, parse precedence (left-associative, binding tighter
+/// Register `+`: spelling, parse_rank (left-associative, binding tighter
 /// than `=`), and its lowering. A plain logos — its record is parse/layout
 /// metadata; the executable code lives on the leaves its applications reference.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {

@@ -27,7 +27,7 @@ use crate::parse::{bool_literal_value, is_bool_result, Assoc, CoreTypes, ParseEr
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
-/// Register `and`: spelling and parse precedence (logical, left-associative,
+/// Register `and`: spelling and parse_rank (logical, left-associative,
 /// looser than the comparisons), its lowering, and its short-circuiting native
 /// leaf. Returns `(identity, leaf)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
