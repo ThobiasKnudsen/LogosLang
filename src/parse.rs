@@ -1164,6 +1164,11 @@ pub(crate) unsafe fn is_bool_result(types: &CoreTypes, node: DyadPtr) -> bool {
             None => false,
         };
     }
+    // `and` over two booleans is one; over two non-booleans it is a group.
+    if logos == types.and_ {
+        let (lhs, rhs) = crate::identities::operands(node);
+        return is_bool_result(types, lhs) && is_bool_result(types, rhs);
+    }
     logos == types.bool_
         || logos == types.lt
         || logos == types.gt
@@ -1171,7 +1176,6 @@ pub(crate) unsafe fn is_bool_result(types: &CoreTypes, node: DyadPtr) -> bool {
         || logos == types.le
         || logos == types.ge
         || logos == types.ne
-        || logos == types.and_
         || logos == types.or_
         || logos == types.not_
         || logos == types.tape.is_constructed
@@ -2627,6 +2631,39 @@ impl<'a> Parser<'a> {
             // member reads then need.
             let source = self.source;
             let name = &source[nstart..nstart + nlen];
+            // The path from a tape cell to its operand record (#61, ruled 9
+            // September 2026): `t[k]:dyad.type`, read or written; `.value`
+            // then `.operands` then `.append(…)`, the two steps markers the
+            // next read consumes.
+            let tt = self.types.tape;
+            if (*lhs).ty == tt.slot_dyad {
+                let types = self.types;
+                return match name {
+                    "type" => Ok((crate::identities::tape::build_cell_type(self.store, &types, lhs), 0)),
+                    "value" => Ok((crate::identities::tape::build_cell_marker(self.store, tt.cell_value, lhs), 0)),
+                    _ => Err(ParseError::BadReflectRead),
+                };
+            }
+            if (*lhs).ty == tt.cell_value {
+                if name == "operands" {
+                    return Ok((crate::identities::tape::build_cell_marker(self.store, tt.cell_operands, lhs), 0));
+                }
+                return Err(ParseError::BadReflectRead);
+            }
+            if (*lhs).ty == tt.cell_operands {
+                if name != "append" {
+                    return Err(ParseError::BadReflectRead);
+                }
+                let args = call.ok_or(ParseError::ExpectedOpen)?;
+                let types = self.types;
+                // An and-group among the arguments distributes: every leaf
+                // is appended, in order.
+                let mut items = Vec::new();
+                for a in args {
+                    self.and_leaves(a, &mut items);
+                }
+                return Ok((crate::identities::tape::build_append(self.store, &types, lhs, &items), 1));
+            }
             if (*lhs).ty == self.types.dyad_ {
                 return self.view_member(lhs, name).map(|n| (n, 0));
             }
@@ -2751,6 +2788,23 @@ impl<'a> Parser<'a> {
         let (field, offset) = self.resolve_field(record_logos, nstart, nlen)?;
         let addr = (*lhs).value.wrapping_add(offset);
         Ok((self.store.alloc_raw((*field).ty, addr), 0))
+    }
+
+    /// The leaves of an and-group, in order; a node that is no group is its
+    /// own one leaf (DESIGN: every operator distributes over an and/or group
+    /// until a boolean — the seed's `and` over non-booleans, [`crate::identities::and`]).
+    fn and_leaves(&self, node: DyadPtr, out: &mut Vec<DyadPtr>) {
+        // SAFETY: `node` is a reduced dyad from the store.
+        unsafe {
+            let n = self.types.through(node);
+            if (*n).ty == self.types.and_ && !is_bool_result(&self.types, n) {
+                let ops = (*n).value as *const DyadPtr;
+                self.and_leaves(*ops, out);
+                self.and_leaves(*ops.add(1), out);
+            } else {
+                out.push(node);
+            }
+        }
     }
 
     /// `.`'s constructor: the member read of `tape[-1]` named by the cell to
@@ -3865,6 +3919,14 @@ impl<'a> Parser<'a> {
         let types = self.types;
         let source = self.source;
         let name = &source[nstart..nstart + nlen];
+        // `t[k]:dyad` (#61): the cell the slot holds, read when the
+        // constructor runs — a record read through to the dyad it names.
+        if (*lhs).ty == types.tape.slot {
+            if name == "dyad" {
+                return Ok(crate::identities::tape::build_slot_dyad(self.store, &types, lhs));
+            }
+            return Err(ParseError::ExpectedField);
+        }
         if (*lhs).ty == types.record_ {
             if name == "dyad" {
                 let cell = Record::of(lhs).dyad;
@@ -4626,6 +4688,92 @@ mod tests {
         assert_eq!(t.cursor(), 0);
     }
 
+    /// Parse one expression and run it, the store attached to the runtime as
+    /// the parser attaches it around a constructor call.
+    fn go(
+        src: &str,
+        store: &mut crate::store::Store,
+        trie: &mut crate::regex_trie::RegexTrie,
+        types: CoreTypes,
+        scopes: ScopeStack,
+    ) -> (i64, ScopeStack) {
+        let mut p = Parser::new(src, store, trie, types, scopes);
+        let node = p.parse_expression().unwrap_or_else(|e| panic!("{src}: {e:?}"));
+        let scopes = p.into_scopes();
+        let mut rt = crate::run::Runtime::new(types).with_store(store);
+        // SAFETY: `node` was just parsed into the store.
+        let v = unsafe { rt.run(node) }.unwrap_or_else(|e| panic!("{src}: {e:?}"));
+        (v, scopes)
+    }
+
+    #[test]
+    fn a_constructor_writes_a_cell_from_logos() {
+        // The operand-record spelling ruled 9 September 2026 (#61): a
+        // constructor retypes its own cell, `tape[0]:dyad.type = g`, which
+        // initializes the value so `.operands` is valid, then appends the
+        // operands, `tape[0]:dyad.value.operands.append(tape[-1] and
+        // tape[1])`, the and-group distributing. A tape over `a + b`,
+        // centered on the `+`, edited from Logos into the call `g(a, b)`.
+        use crate::identities::Core;
+        use crate::record::Record;
+        use crate::regex_trie::RegexTrie;
+        use crate::store::Store;
+
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let types = core.types();
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+
+        let tape = {
+            let mut tape = ParsingTape::new();
+            let mut p = Parser::new("a + b", &mut store, &mut trie, types, scopes);
+            p.lex_segment(&mut tape).unwrap();
+            scopes = p.into_scopes();
+            tape.set_cursor(1);
+            Box::into_raw(Box::new(tape))
+        };
+        // SAFETY: `tape` is a live box the natives write through.
+        unsafe {
+            let (a_rec, b_rec) = ((*tape).at(-1).unwrap().dyad, (*tape).at(1).unwrap().dyad);
+            let plus = (*tape).at(0).unwrap().dyad;
+            let storage = store.alloc_bytes(&(tape as usize as u64).to_ne_bytes());
+            let t = store.alloc_raw(core.tape.parsing_tape, storage);
+            let rec = Record::alloc(&mut store, core.record_, Record::new(t, core.root_scope));
+            scopes.declare(&mut trie, "t", rec).unwrap();
+
+            // `t[k]:dyad` reads the cell through its record: the `+` identity.
+            let (v, s) = go("t[0]:dyad", &mut store, &mut trie, types, scopes);
+            assert_eq!(v as DyadPtr, Record::of(plus).dyad);
+            let (v, s) = go("t[0]:dyad.type", &mut store, &mut trie, types, s);
+            assert_eq!(v as DyadPtr, core.type_, "an identity's type is the root");
+
+            let (_, s) = go("g := fn (p := i32 ?, q := i32 ?) -> i32 ( p + q )", &mut store, &mut trie, types, s);
+            let (v, s) = go("t[0]:dyad.type = g", &mut store, &mut trie, types, s);
+            let c = *(*tape).at(0).unwrap();
+            assert!(c.constructed, "a retyped cell is constructed");
+            assert_eq!(v as DyadPtr, c.dyad, "the retype yields the new cell");
+            assert_ne!(c.dyad, plus, "the identity itself is never written through");
+            assert_eq!((*c.dyad).ty, types.through(s.resolve(&trie, "g").unwrap().record), "typed by g itself");
+            assert!((*((*c.dyad).value as *const DyadPtr)).is_null(), "an empty operand record");
+
+            let (_, s) = go("t[0]:dyad.value.operands.append(t[-1] and t[1])", &mut store, &mut trie, types, s);
+            let ops = (*c.dyad).value as *const DyadPtr;
+            assert_eq!((*ops, *ops.add(1), *ops.add(2)), (a_rec, b_rec, std::ptr::null_mut()));
+            let (_, s) = go("t[0]:dyad.value.operands.append(t[1])", &mut store, &mut trie, types, s);
+            let ops = (*c.dyad).value as *const DyadPtr;
+            assert_eq!((*ops.add(2), *ops.add(3)), (b_rec, std::ptr::null_mut()));
+
+            let (_, s) = go("t.remove(1)", &mut store, &mut trie, types, s);
+            let (_, _s) = go("t.remove(-1)", &mut store, &mut trie, types, s);
+            assert_eq!((*tape).len(), 1);
+            assert_eq!((*tape).at(0).unwrap().dyad, c.dyad);
+
+            drop(Box::from_raw(tape));
+        }
+    }
+
     #[test]
     fn the_tape_affordances_are_reachable_from_logos() {
         // DESIGN ›The scope's constructor is the driver‹: the tape's four
@@ -4636,24 +4784,7 @@ mod tests {
         use crate::identities::Core;
         use crate::record::Record;
         use crate::regex_trie::RegexTrie;
-        use crate::run::Runtime;
         use crate::store::Store;
-
-        fn go(
-            src: &str,
-            store: &mut Store,
-            trie: &mut RegexTrie,
-            types: CoreTypes,
-            scopes: ScopeStack,
-        ) -> (i64, ScopeStack) {
-            let mut p = Parser::new(src, store, trie, types, scopes);
-            let node = p.parse_expression().unwrap_or_else(|e| panic!("{src}: {e:?}"));
-            let scopes = p.into_scopes();
-            let mut rt = Runtime::new(types);
-            // SAFETY: `node` was just parsed into the store.
-            let v = unsafe { rt.run(node) }.unwrap_or_else(|e| panic!("{src}: {e:?}"));
-            (v, scopes)
-        }
 
         let mut store = Store::new();
         let mut trie = RegexTrie::new();

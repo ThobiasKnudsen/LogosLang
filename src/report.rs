@@ -204,6 +204,9 @@ pub fn run_message(e: &RunError) -> String {
                 .into()
         }
         RunError::CompileFailed(msg) => format!("compile() failed: {msg}"),
+        RunError::NoStore => {
+            "a cell can be built only inside a constructor the parser runs".into()
+        }
     }
 }
 

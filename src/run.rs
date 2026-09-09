@@ -54,6 +54,10 @@ pub enum RunError {
     /// box so the error enum keeps its one-word payload — `run` recurses
     /// deeply, and every frame carries a `Result` of this logos.
     CompileFailed(Box<String>),
+    /// A native that builds graph — a constructor's cell writes (#61) — ran
+    /// under a runtime with no store attached: only the parser, which owns the
+    /// store, hands it in for the constructors it invokes.
+    NoStore,
 }
 
 /// Call compiled machine code (a `fn(i64…) -> i64`) with `args`, dispatching on
@@ -192,6 +196,12 @@ pub struct Runtime {
     /// [`RunError::CompilerUnavailable`] instead of compiling behind the open
     /// pass's back.
     compiler: Option<CompilerCx>,
+    /// The store a Logos-written constructor builds into, attached by
+    /// [`Runtime::with_store`] for the parser's invocations (#61): the cell a
+    /// `tape[k]:dyad.type = T` makes and the operand run `append` grows are
+    /// graph, allocated where every other node is. Absent elsewhere, so a
+    /// native that needs it fails with [`RunError::NoStore`].
+    store: Option<std::ptr::NonNull<crate::store::Store>>,
 }
 
 /// The compiler context a runtime carries to serve `f.compile()`. The lower
@@ -221,6 +231,27 @@ impl Runtime {
             stack: FrameStack::new(),
             activations: Vec::new(),
             compiler: None,
+            store: None,
+        }
+    }
+
+    /// Attach the store the graph-building natives allocate into. The parser
+    /// hands its own store in around a constructor call and makes no use of
+    /// it until the call returns (the natives are the only writers meanwhile),
+    /// which is what keeps the raw handle sound. A builder, like
+    /// [`Runtime::with_compiler`].
+    pub fn with_store(mut self, store: &mut crate::store::Store) -> Self {
+        self.store = Some(std::ptr::NonNull::from(store));
+        self
+    }
+
+    /// The attached store, or [`RunError::NoStore`].
+    pub(crate) fn store(&mut self) -> Result<&mut crate::store::Store, RunError> {
+        match self.store {
+            // SAFETY: `with_store` took a live `&mut Store` whose owner makes
+            // no use of it while this runtime runs.
+            Some(mut p) => Ok(unsafe { p.as_mut() }),
+            None => Err(RunError::NoStore),
         }
     }
 

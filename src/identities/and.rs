@@ -9,6 +9,13 @@
 //! comparisons and tighter than `or`. One concrete native serves it (bool has one
 //! width): the node is `{type: and, value: [lhs, rhs, and_native]}` and run jumps
 //! through the op slot (issue #44).
+//!
+//! Over two non-booleans `and` builds a **group** instead (DESIGN ›The proof
+//! layer‹, ruled 7 September 2026: every operator distributes over an and/or
+//! group until a boolean): the same node with an empty op slot, data for the
+//! operator that consumes it — in the seed, `append(tape[-1] and tape[1])`
+//! appends both (#61). A group is neither a boolean nor a number, so `if`
+//! and the arithmetic refuse it, and running it bare is the checked error.
 
 use cranelift_codegen::ir::Value;
 
@@ -51,8 +58,14 @@ fn build(
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store; reading their logos is safe.
-    if !unsafe { is_bool_result(types, lhs) && is_bool_result(types, rhs) } {
+    let (lb, rb) = unsafe { (is_bool_result(types, lhs), is_bool_result(types, rhs)) };
+    if lb != rb {
         return Err(ParseError::NonBoolOperands);
+    }
+    if !lb {
+        // A group of non-booleans: the consuming operator distributes over it.
+        let value = store.alloc_operands(&[lhs, rhs, std::ptr::null_mut()]);
+        return Ok(store.alloc_raw(and, value));
     }
     // Two bool literals fold now (a bare literal is pure, so nothing is lost),
     // like `==` over rationals or logos — what keeps a comptime chain comptime.

@@ -737,12 +737,27 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
         || logos == types.ge
         || logos == types.eq
         || logos == types.ne
-        || logos == types.and_
         || logos == types.or_
         || logos == types.not_
         || logos == types.return_
     {
         return Operand::Concrete(NumType::I32);
+    }
+    // `and` over booleans is a boolean; over non-booleans it is a group, no
+    // number at all (see [`and`]).
+    if logos == types.and_ {
+        return if crate::parse::is_bool_result(types, node) {
+            Operand::Concrete(NumType::I32)
+        } else {
+            Operand::NonNumeric
+        };
+    }
+    // A tape's element read and the cell reads through it (#60, #61) yield a
+    // cell's address: `t[k]`, `t[k]:dyad`, and `t[k]:dyad.type` are `@dyad`
+    // values, so a write or an `insert` stores what they yield, never their
+    // own address.
+    if logos == types.tape.slot || logos == types.tape.slot_dyad || logos == types.tape.cell_type {
+        return Operand::Pointer(types.dyad_);
     }
     // A conversion's result is its target logos (stored at operand[2]).
     if logos == types.convert {

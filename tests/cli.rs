@@ -158,6 +158,18 @@ fn the_view_reads_the_cell_and_operands_are_ordinary_fields() {
 }
 
 #[test]
+fn an_and_group_of_non_booleans_is_data_not_a_condition() {
+    // `and` over two non-booleans is a group the consuming operator
+    // distributes over (DESIGN, 7 September 2026; the seed's `append`), so
+    // `if` refuses it as a condition, and a boolean beside a non-boolean is
+    // still the operand error.
+    let (_echoes, stderr) = repl(b"x := i32 1\ny := i32 2\nif (x and y) (1) else (2)\n");
+    assert!(stderr.contains("must be a bool"), "stderr: {stderr}");
+    let (_echoes, stderr) = repl(b"x := i32 1\nx and true\n");
+    assert!(stderr.contains("must be bools"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_collection_member_demands_its_index_brackets() {
     // Element access is `[…]`; the call form is refused with a teaching
     // message, and the bare collection as a value waits for the array logos.
