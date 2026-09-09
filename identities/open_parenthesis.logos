@@ -8,7 +8,7 @@
 # cell still unconstructed afterwards is the checked error. the constructed cells, in order, are the scope's
 # expressions, the array the scope dyad's value references. no holding, no re-invocation.
 ( := type (
-    precedence = …                       # near the top of the axis; , sits above it
+    parse_rank = …                       # near the top of the axis; , sits above it
     associativity = left
     constructor = fn (tape := parsing_tape ?) -> void (
         body := array @dyad ()
@@ -30,7 +30,7 @@
                 )
                 if cell == lex «)»[0] break
                 first = i + 1
-            ) else if cell.precedence >= (.precedence (
+            ) else if cell.parse_rank >= (.parse_rank (
                 cell.constructor(tape.recenter(i))                  # constructed at discovery, before the next token lexes
             )
             i = i + 1

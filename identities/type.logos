@@ -1,7 +1,8 @@
 type := type (
     # what every type carries: declared here, a slot per type, filled by each type's own body with =
     instance (
-        precedence := f64 ?
+        parse_rank := f64 ?         # construction order within a segment (spelled precedence until 10 September 2026)
+        lex_rank := f64 ?           # recognizer order at a text position; only pattern spellings need one
         associativity := ?          # left or right
         constructor := fn (tape := parsing_tape ?) -> void ?
         destructor := ?
@@ -9,7 +10,7 @@ type := type (
     )
 
     # what type itself is: the same slots, filled
-    precedence = f64 2.0
+    parse_rank = f64 2.0
     associativity = left
     constructor = fn (tape := parsing_tape ?) -> void (
         # type reads its own bracket (ruled 3 September 2026): constructed at discovery, before the ( after it is
