@@ -280,8 +280,7 @@ impl Lowerer<'_, '_> {
             }
         }
         debug_assert!(
-            frame_ref((*node).value)
-                .is_none_or(|(_, off)| !self.promoted.contains_key(&off)),
+            frame_ref((*node).value).is_none_or(|(_, off)| !self.promoted.contains_key(&off)),
             "a promoted place's address must never be taken (the analysis pass keeps them apart)"
         );
         self.place_addr_raw(node)
@@ -589,12 +588,7 @@ impl Lowerer<'_, '_> {
     /// `return_` — lands there. Nesting composes: an arm that itself branches leaves
     /// the builder in its own merge, from which this arm's `jump` fires. The shared
     /// spine of `if` and the short-circuiting `and`/`or`.
-    fn branch<T, E>(
-        &mut self,
-        cond: Value,
-        then_arm: T,
-        else_arm: E,
-    ) -> Result<Value, CompileError>
+    fn branch<T, E>(&mut self, cond: Value, then_arm: T, else_arm: E) -> Result<Value, CompileError>
     where
         T: FnOnce(&mut Self) -> Result<Value, CompileError>,
         E: FnOnce(&mut Self) -> Result<Value, CompileError>,
@@ -612,7 +606,8 @@ impl Lowerer<'_, '_> {
         let then_v = then_arm(self)?;
         // The merged value takes the branches' logos (they must agree) from the then arm,
         // so `if` yields whatever width its branches do rather than a fixed i32.
-        let result = self.builder.append_block_param(merge_b, self.builder.func.dfg.value_type(then_v));
+        let result =
+            self.builder.append_block_param(merge_b, self.builder.func.dfg.value_type(then_v));
         self.builder.ins().jump(merge_b, &[then_v.into()]);
 
         self.builder.switch_to_block(else_b);
@@ -735,11 +730,8 @@ impl Lowerer<'_, '_> {
         let cond = if nt.is_float() {
             self.fcmp(FloatCC::LessThan, v, e)
         } else {
-            let cc = if nt.is_signed_int() {
-                IntCC::SignedLessThan
-            } else {
-                IntCC::UnsignedLessThan
-            };
+            let cc =
+                if nt.is_signed_int() { IntCC::SignedLessThan } else { IntCC::UnsignedLessThan };
             self.icmp(cc, v, e)
         };
         self.builder.ins().brif(cond, body_b, &[], exit, &[]);
@@ -1137,9 +1129,8 @@ unsafe fn build_pass(
 
     // Declare the function before lowering its body, so a self-call can reference its
     // id; the JIT patches that call to this function's own address once it is defined.
-    let func_id = module
-        .declare_function("main", Linkage::Export, &ctx.func.signature)
-        .map_err(cl)?;
+    let func_id =
+        module.declare_function("main", Linkage::Export, &ctx.func.signature).map_err(cl)?;
 
     let mut fctx = FunctionBuilderContext::new();
     {
@@ -1158,8 +1149,11 @@ unsafe fn build_pass(
         let frame_slot = (frame_size > 0).then(|| {
             // Rounded up to whole i64 words so the zeroing below covers it.
             let size = (frame_size as u32).next_multiple_of(8);
-            let slot = builder
-                .create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3));
+            let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                size,
+                3,
+            ));
             // Zero the record on entry, exactly as the interpreter zeroes its
             // frame: a typed declaration (`a : i32`) has no initializer, so its
             // first read must see the same zeroed "undefined" on both tiers.
@@ -1211,7 +1205,11 @@ unsafe fn build_pass(
             if let Some(&(var, _)) = promoted.get(&off) {
                 // A promoted container parameter (a logos-valued `t : logos`,
                 // promoted through its i64 reads) keeps the full container.
-                let vn = if scalar { narrow_from_i64(&mut builder, v, numtype_of_type(logos)) } else { v };
+                let vn = if scalar {
+                    narrow_from_i64(&mut builder, v, numtype_of_type(logos))
+                } else {
+                    v
+                };
                 builder.def_var(var, vn);
                 continue;
             }

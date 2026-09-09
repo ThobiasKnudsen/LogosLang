@@ -24,9 +24,7 @@
 use crate::dyad::DyadPtr;
 use crate::identities::instance;
 use crate::identities::meta;
-use crate::identities::numtype::{
-    self, NumType, ADDR_TAG, COMMENT_TAG, STRING_TAG, VOID_TAG,
-};
+use crate::identities::numtype::{self, NumType, ADDR_TAG, COMMENT_TAG, STRING_TAG, VOID_TAG};
 use crate::parse::CoreTypes;
 use crate::record::Record;
 
@@ -179,7 +177,13 @@ pub unsafe fn describe(types: &CoreTypes, node: DyadPtr) -> Shape {
     // instance arm below would lay it out as a five-field record value.
     if logos == types.record_ {
         let f = Record::of(node);
-        return Shape::Record { dyad: f.dyad, scope: f.scope, start: f.start, end: f.end, gate: f.gate };
+        return Shape::Record {
+            dyad: f.dyad,
+            scope: f.scope,
+            start: f.start,
+            end: f.end,
+            gate: f.gate,
+        };
     }
     // A value of a record logos is an instance: its layout derives from the
     // definition's field list.
@@ -204,12 +208,10 @@ pub unsafe fn describe(types: &CoreTypes, node: DyadPtr) -> Shape {
         STRING_TAG => Shape::Text,
         COMMENT_TAG => Shape::Prose { text: (*node).value.cast() },
         ADDR_TAG => Shape::Pointer { pointee: numtype::pointee_of(logos) },
-        meta::ARRAY_TAG => Shape::Array {
-            items: crate::identities::array::items(node).to_vec(),
-        },
-        meta::CALLABLE_TAG => Shape::Callable {
-            convention: crate::identities::callable::convention_of(node),
-        },
+        meta::ARRAY_TAG => Shape::Array { items: crate::identities::array::items(node).to_vec() },
+        meta::CALLABLE_TAG => {
+            Shape::Callable { convention: crate::identities::callable::convention_of(node) }
+        }
         meta::CONVENTION_TAG => Shape::Convention { name: (*node).value.cast() },
         meta::FRACTION_TAG => Shape::Fraction,
         meta::TYPEREC_TAG => Shape::LogosNode {
@@ -235,9 +237,8 @@ unsafe fn operands_of(logos: DyadPtr, node: DyadPtr) -> Shape {
     }
     let kind = meta::kind_of(logos).expect("operand records have a kind");
     let arity = meta::arity_of(logos);
-    let slots = (0..arity)
-        .map(|i| Slot { role: meta::role_of(logos, i), node: *value.add(i) })
-        .collect();
+    let slots =
+        (0..arity).map(|i| Slot { role: meta::role_of(logos, i), node: *value.add(i) }).collect();
     match kind {
         meta::TUPLE_TAG => Shape::Tuple { slots },
         meta::LIST_TAG => Shape::List {
@@ -568,8 +569,9 @@ mod tests {
             assert_eq!(meta::precedence_of(core.lt), prec::COMPARE);
             assert_eq!(meta::precedence_of(core.eq), prec::EQUALITY);
 
-            let roles: Vec<&[u8]> =
-                (0..meta::arity_of(core.for_)).map(|i| text_of(meta::role_of(core.for_, i))).collect();
+            let roles: Vec<&[u8]> = (0..meta::arity_of(core.for_))
+                .map(|i| text_of(meta::role_of(core.for_, i)))
+                .collect();
             assert_eq!(roles, [&b"variable"[..], b"start", b"end", b"step", b"body", b"op"]);
             assert_eq!(text_of(meta::role_of(core.return_, 0)), b"value");
             assert_eq!(text_of(meta::role_of(core.fn_type, 1)), b"output");
@@ -617,8 +619,7 @@ mod tests {
             let Shape::Tuple { slots } = describe(&types, roots[1]) else {
                 panic!("a declaration should be a tuple");
             };
-            let Shape::RecordLogos { scope, fields, size_bytes } =
-                describe(&types, slots[1].node)
+            let Shape::RecordLogos { scope, fields, size_bytes } = describe(&types, slots[1].node)
             else {
                 panic!("record definition should read its stored layout");
             };
@@ -697,8 +698,7 @@ mod tests {
                 panic!("an fn value should be a tuple");
             };
             assert_eq!(text_of(slots[0].role), b"input");
-            let Shape::RecordLogos { fields: params, .. } = describe(&types, slots[0].node)
-            else {
+            let Shape::RecordLogos { fields: params, .. } = describe(&types, slots[0].node) else {
                 panic!("the input record reads its stored layout");
             };
             let Shape::Pointer { pointee } = describe(&types, params[0]) else {
@@ -780,9 +780,10 @@ mod tests {
             };
             *counts.entry(name).or_insert(0usize) += 1;
         }
-        for expected in
-            ["scalar", "text", "prose", "fraction", "pointer", "tuple", "list", "call", "instance", "logos"]
-        {
+        for expected in [
+            "scalar", "text", "prose", "fraction", "pointer", "tuple", "list", "call", "instance",
+            "logos",
+        ] {
             assert!(counts.get(expected).copied().unwrap_or(0) > 0, "no {expected} described");
         }
         // Every registered identity self-describes; the walker sees at least the

@@ -26,7 +26,12 @@ use crate::parse::{Constructed, ParseError};
 /// No node is ever typed by `pub`; its identity exists to be named in a
 /// declare node's gate slot.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    let record = meta::record_assoc(cx.store, meta::TOKEN_TAG, meta::prec::PREFIX, crate::parse::Assoc::Right);
+    let record = meta::record_assoc(
+        cx.store,
+        meta::TOKEN_TAG,
+        meta::prec::PREFIX,
+        crate::parse::Assoc::Right,
+    );
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.declare("pub", id);
     cx.metas.insert(id, construct);

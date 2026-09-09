@@ -196,7 +196,11 @@ pub(crate) fn member(ids: &TapeIds, name: &str) -> Option<(DyadPtr, DyadPtr)> {
 ///
 /// # Safety
 /// `lhs` must be a reduced dyad from the store.
-pub(crate) unsafe fn receiver_addr(store: &mut Store, types: &CoreTypes, lhs: DyadPtr) -> Option<DyadPtr> {
+pub(crate) unsafe fn receiver_addr(
+    store: &mut Store,
+    types: &CoreTypes,
+    lhs: DyadPtr,
+) -> Option<DyadPtr> {
     if (*lhs).ty == types.deref_ {
         let (ptr_expr, pointee, off) = super::pointer::deref_parts(lhs);
         if pointee == types.tape.parsing_tape && off == 0 {
@@ -219,7 +223,12 @@ fn node(store: &mut Store, op: DyadPtr, leaf: DyadPtr, operands: &[DyadPtr]) -> 
 
 /// `t[k]`: the element read, a slot node `[tape, k, op]` — read, the cell's
 /// pointer; as `=`'s target, the write ([`build_write`]).
-pub(crate) fn build_slot(store: &mut Store, types: &CoreTypes, recv: DyadPtr, k: DyadPtr) -> DyadPtr {
+pub(crate) fn build_slot(
+    store: &mut Store,
+    types: &CoreTypes,
+    recv: DyadPtr,
+    k: DyadPtr,
+) -> DyadPtr {
     node(store, types.tape.slot, types.tape.slot_leaf, &[recv, k])
 }
 
@@ -239,7 +248,12 @@ fn cell_arg(store: &mut Store, types: &CoreTypes, cell: DyadPtr) -> DyadPtr {
 ///
 /// # Safety
 /// `slot` must be a slot node from [`build_slot`].
-pub(crate) unsafe fn build_write(store: &mut Store, types: &CoreTypes, slot: DyadPtr, cell: DyadPtr) -> DyadPtr {
+pub(crate) unsafe fn build_write(
+    store: &mut Store,
+    types: &CoreTypes,
+    slot: DyadPtr,
+    cell: DyadPtr,
+) -> DyadPtr {
     let ops = (*slot).value as *const DyadPtr;
     let (recv, k) = (*ops, *ops.add(1));
     let cell = cell_arg(store, types, cell);
@@ -259,7 +273,11 @@ unsafe fn slot_parts(over: DyadPtr) -> (DyadPtr, DyadPtr) {
 ///
 /// # Safety
 /// `slot` must be a slot node from [`build_slot`].
-pub(crate) unsafe fn build_slot_dyad(store: &mut Store, types: &CoreTypes, slot: DyadPtr) -> DyadPtr {
+pub(crate) unsafe fn build_slot_dyad(
+    store: &mut Store,
+    types: &CoreTypes,
+    slot: DyadPtr,
+) -> DyadPtr {
     let (recv, k) = slot_parts(slot);
     node(store, types.tape.slot_dyad, types.tape.slot_dyad_leaf, &[recv, k])
 }
@@ -268,7 +286,11 @@ pub(crate) unsafe fn build_slot_dyad(store: &mut Store, types: &CoreTypes, slot:
 ///
 /// # Safety
 /// `slot_dyad` must be a node from [`build_slot_dyad`].
-pub(crate) unsafe fn build_cell_type(store: &mut Store, types: &CoreTypes, slot_dyad: DyadPtr) -> DyadPtr {
+pub(crate) unsafe fn build_cell_type(
+    store: &mut Store,
+    types: &CoreTypes,
+    slot_dyad: DyadPtr,
+) -> DyadPtr {
     let (recv, k) = slot_parts(slot_dyad);
     node(store, types.tape.cell_type, types.tape.cell_type_leaf, &[recv, k])
 }
@@ -278,7 +300,11 @@ pub(crate) unsafe fn build_cell_type(store: &mut Store, types: &CoreTypes, slot_
 ///
 /// # Safety
 /// `over` must be a node from [`build_slot_dyad`] or this builder.
-pub(crate) unsafe fn build_cell_marker(store: &mut Store, marker: DyadPtr, over: DyadPtr) -> DyadPtr {
+pub(crate) unsafe fn build_cell_marker(
+    store: &mut Store,
+    marker: DyadPtr,
+    over: DyadPtr,
+) -> DyadPtr {
     let (recv, k) = slot_parts(over);
     node(store, marker, std::ptr::null_mut(), &[recv, k])
 }
@@ -290,7 +316,12 @@ pub(crate) unsafe fn build_cell_marker(store: &mut Store, marker: DyadPtr, over:
 ///
 /// # Safety
 /// `cell_type` must be a node from [`build_cell_type`].
-pub(crate) unsafe fn build_retype(store: &mut Store, types: &CoreTypes, cell_type: DyadPtr, ty: DyadPtr) -> DyadPtr {
+pub(crate) unsafe fn build_retype(
+    store: &mut Store,
+    types: &CoreTypes,
+    cell_type: DyadPtr,
+    ty: DyadPtr,
+) -> DyadPtr {
     let (recv, k) = slot_parts(cell_type);
     node(store, types.tape.retype, types.tape.retype_leaf, &[recv, k, ty])
 }
@@ -441,7 +472,10 @@ fn run_recenter(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 /// The cell a `[tape, k, …]` node's slot holds, read through a record to the
 /// dyad it names (the reading rule): the constructed node, or the identity a
 /// spelling resolved to. `None` past the frontier.
-unsafe fn slot_cell(rt: &mut Runtime, ops: *const DyadPtr) -> Result<Option<(*mut ParsingTape, isize, DyadPtr)>, RunError> {
+unsafe fn slot_cell(
+    rt: &mut Runtime,
+    ops: *const DyadPtr,
+) -> Result<Option<(*mut ParsingTape, isize, DyadPtr)>, RunError> {
     let tape = tape_of(rt, *ops)?;
     let k = rt.run(*ops.add(1))? as isize;
     Ok((*tape).at(k).map(|c| (tape, k, rt.through(c.dyad))))

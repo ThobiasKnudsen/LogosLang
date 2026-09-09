@@ -39,11 +39,8 @@ pub fn line_col(source: &str, offset: usize) -> (usize, usize) {
 pub fn render(file: &str, source: &str, offset: usize, message: &str) -> String {
     let (line, col) = line_col(source, offset);
     let text = source.lines().nth(line - 1).unwrap_or("");
-    let pad: String = text
-        .chars()
-        .take(col - 1)
-        .map(|c| if c == '\t' { '\t' } else { ' ' })
-        .collect();
+    let pad: String =
+        text.chars().take(col - 1).map(|c| if c == '\t' { '\t' } else { ' ' }).collect();
     format!("{file}:{line}:{col}: error: {message}\n  {text}\n  {pad}^")
 }
 
@@ -195,9 +192,7 @@ fn resolve_message(e: &ResolveError) -> String {
         ResolveError::Ambiguous => "this name is ambiguous here".into(),
         ResolveError::Shadowed => "this name is shadowed here".into(),
         ResolveError::Dead => "this name is dead here: it was moved or dropped above".into(),
-        ResolveError::Index(RegexTrieError::NodeNotFound) => {
-            "unknown name".into()
-        }
+        ResolveError::Index(RegexTrieError::NodeNotFound) => "unknown name".into(),
         ResolveError::Index(RegexTrieError::BadPattern(p)) => {
             format!("this name's pattern is invalid: {p}")
         }
@@ -213,20 +208,14 @@ pub fn run_message(e: &RunError) -> String {
         RunError::UncomputableLiteral => {
             "a literal here has no exact value in its context logos".into()
         }
-        RunError::ArityMismatch => {
-            "a call's argument count does not match its function".into()
-        }
-        RunError::CompiledArity => {
-            "compiled calls take at most three arguments in v1".into()
-        }
+        RunError::ArityMismatch => "a call's argument count does not match its function".into(),
+        RunError::CompiledArity => "compiled calls take at most three arguments in v1".into(),
         RunError::CompilerUnavailable => {
             "compile() is not available here (parse-time evaluation runs without the compiler)"
                 .into()
         }
         RunError::CompileFailed(msg) => format!("compile() failed: {msg}"),
-        RunError::NoStore => {
-            "a cell can be built only inside a constructor the parser runs".into()
-        }
+        RunError::NoStore => "a cell can be built only inside a constructor the parser runs".into(),
     }
 }
 
@@ -244,9 +233,7 @@ pub fn compile_message(e: &CompileError) -> String {
         CompileError::UncompiledCallee(_) => {
             "a call target is not compiled yet (declare functions before their callers)".into()
         }
-        CompileError::ArityMismatch => {
-            "a call's argument count does not match its function".into()
-        }
+        CompileError::ArityMismatch => "a call's argument count does not match its function".into(),
         CompileError::Cranelift(msg) => format!("the backend rejected this: {msg}"),
     }
 }

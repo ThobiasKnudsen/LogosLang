@@ -16,9 +16,7 @@ use super::callable::{self, Callables};
 use super::{bool_mod, meta, operands, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{
-    bool_literal_value, is_bool_result, Assoc, CoreTypes, ParseError,
-};
+use crate::parse::{bool_literal_value, is_bool_result, Assoc, CoreTypes, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 

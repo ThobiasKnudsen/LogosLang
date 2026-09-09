@@ -94,7 +94,8 @@ impl Cell {
     /// spelling, a parser-minted identity, a constructed node).
     pub fn record(&self, types: &CoreTypes) -> DyadPtr {
         // SAFETY: as above.
-        if !self.constructed && !self.dyad.is_null() && unsafe { (*self.dyad).ty } == types.record_ {
+        if !self.constructed && !self.dyad.is_null() && unsafe { (*self.dyad).ty } == types.record_
+        {
             self.dyad
         } else {
             std::ptr::null_mut()
@@ -977,7 +978,6 @@ pub unsafe fn fn_frame_size(fn_node: DyadPtr) -> usize {
     }
 }
 
-
 /// The four slots `type` declares for every type it builds (DESIGN ›The
 /// constructor is a field‹), in the order the markers on
 /// [`CoreTypes::slots`] and [`SlotKind`] follow.
@@ -1353,9 +1353,7 @@ unsafe fn contains_return(types: &CoreTypes, node: DyadPtr) -> bool {
             return false;
         }
         let arr = *((*node).value as *const DyadPtr);
-        return crate::identities::array::items(arr)
-            .iter()
-            .any(|&e| contains_return(types, e));
+        return crate::identities::array::items(arr).iter().any(|&e| contains_return(types, e));
     }
     false
 }
@@ -1657,10 +1655,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::UnclosedBracket);
         }
         let start = self.pos;
-        let r = self
-            .scopes
-            .resolve(self.trie, &source[start..])
-            .map_err(ParseError::Resolve)?;
+        let r = self.scopes.resolve(self.trie, &source[start..]).map_err(ParseError::Resolve)?;
         if r.identity == self.types.close_ {
             self.pos = start + r.matched;
             Ok(())
@@ -1722,9 +1717,7 @@ impl<'a> Parser<'a> {
         crate::identities::array::items(arr)
             .iter()
             .copied()
-            .filter(|&e| {
-                !crate::identities::numtype::is_comment_type((*e).ty) && (*e).ty != defer_
-            })
+            .filter(|&e| !crate::identities::numtype::is_comment_type((*e).ty) && (*e).ty != defer_)
             .collect()
     }
 
@@ -1861,7 +1854,10 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    pub(crate) fn construct_hole(&mut self, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
+    pub(crate) fn construct_hole(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
         let types = self.types;
         let base = match tape.at(-1).copied() {
             Some(cell) => {
@@ -1885,7 +1881,8 @@ impl<'a> Parser<'a> {
             None => self.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut()),
             Some(mut t) => {
                 let mut depth = 0usize;
-                while matches!(tape.at(-2 - depth as isize), Some(a) if !a.constructed && a.identity(&types) == types.at_) {
+                while matches!(tape.at(-2 - depth as isize), Some(a) if !a.constructed && a.identity(&types) == types.at_)
+                {
                     depth += 1;
                 }
                 for _ in 0..depth {
@@ -2027,7 +2024,10 @@ impl<'a> Parser<'a> {
     /// the place `=` reads before it drives its right side (DESIGN ›The
     /// scope's constructor is the driver‹, `=` beside `:=`, 8 September 2026).
     /// `None` when nothing stands to the left.
-    pub(crate) fn construct_left(&mut self, tape: &mut ParsingTape) -> Result<Option<DyadPtr>, ParseError> {
+    pub(crate) fn construct_left(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Option<DyadPtr>, ParseError> {
         let n = tape.cursor();
         if n == 0 {
             return Ok(None);
@@ -2281,9 +2281,7 @@ impl<'a> Parser<'a> {
             .map(|&f| {
                 // SAFETY: `f` is the field dyad just built.
                 let logos = unsafe { (*f).ty };
-                if unsafe {
-                    crate::identities::numtype::is_scalar_place_type(logos)
-                } {
+                if unsafe { crate::identities::numtype::is_scalar_place_type(logos) } {
                     unsafe { crate::identities::numtype::numtype_of_type(logos) }.bytes() as u64
                 } else {
                     8
@@ -2446,7 +2444,11 @@ impl<'a> Parser<'a> {
     /// destructor is refused, since `drop` runs only the seed's own. The fill
     /// is a silent statement, the declare node the type variable's fill
     /// yields.
-    pub(crate) fn slot_fill(&mut self, kind: SlotKind, value: DyadPtr) -> Result<DyadPtr, ParseError> {
+    pub(crate) fn slot_fill(
+        &mut self,
+        kind: SlotKind,
+        value: DyadPtr,
+    ) -> Result<DyadPtr, ParseError> {
         use crate::identities::numtype::NumType;
         let types = self.types;
         // SAFETY: `value` is a reduced dyad from the store.
@@ -2504,7 +2506,8 @@ impl<'a> Parser<'a> {
             SlotKind::Destructor => return Err(ParseError::DestructorNotYet),
         }
         let name = SLOT_NAMES[kind as usize];
-        let name_node = crate::identities::string::build_text(self.store, types.string_, name.as_bytes());
+        let name_node =
+            crate::identities::string::build_text(self.store, types.string_, name.as_bytes());
         Ok(crate::identities::declare::build(
             self.store,
             types.declare_,
@@ -2633,7 +2636,8 @@ impl<'a> Parser<'a> {
         // (the typed slot), so `fn () -> i64 ( 2000000000 + 2000000000 )` returns i64
         // rather than molding to the i32 default.
         // SAFETY: `body`/`output` are valid dyads just built.
-        let body = unsafe { crate::identities::commit_fn_body(self.store, &self.types, body, output)? };
+        let body =
+            unsafe { crate::identities::commit_fn_body(self.store, &self.types, body, output)? };
 
         // `bcode` starts null; `compile_fn` installs the exec@ into that slot.
         // FN_FRAME holds the activation-record byte size — parameters first,
@@ -2746,9 +2750,8 @@ impl<'a> Parser<'a> {
             // to the branch's value would make the same text a value or a
             // statement depending on whether the condition is comptime-known.
             // Keep the ordinary `if` node (the then-branch parsed; it runs).
-            let value = self
-                .store
-                .alloc_operands(&[cond, then, std::ptr::null_mut(), self.types.ops.if_]);
+            let value =
+                self.store.alloc_operands(&[cond, then, std::ptr::null_mut(), self.types.ops.if_]);
             return Ok(self.store.alloc_raw(if_type, value));
         }
         self.skip_group()?;
@@ -2804,8 +2807,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 0xC2 if bytes.get(self.pos + 1) == Some(&0xAB) => {
-                    self.pos =
-                        skip_text(bytes, self.pos).ok_or(ParseError::UnclosedBracket)?;
+                    self.pos = skip_text(bytes, self.pos).ok_or(ParseError::UnclosedBracket)?;
                 }
                 b'#' => {
                     // `#` takes a following «…» string or the rest of the line,
@@ -2814,11 +2816,9 @@ impl<'a> Parser<'a> {
                     while self.pos < bytes.len() && matches!(bytes[self.pos], b' ' | b'\t') {
                         self.pos += 1;
                     }
-                    if bytes.get(self.pos) == Some(&0xC2)
-                        && bytes.get(self.pos + 1) == Some(&0xAB)
+                    if bytes.get(self.pos) == Some(&0xC2) && bytes.get(self.pos + 1) == Some(&0xAB)
                     {
-                        self.pos =
-                            skip_text(bytes, self.pos).ok_or(ParseError::UnclosedBracket)?;
+                        self.pos = skip_text(bytes, self.pos).ok_or(ParseError::UnclosedBracket)?;
                     } else {
                         while self.pos < bytes.len() && bytes[self.pos] != b'\n' {
                             self.pos += 1;
@@ -2868,11 +2868,7 @@ impl<'a> Parser<'a> {
         // A bool-literal operand folds now (pure, nothing lost), like the
         // `==`/`and`/`or` folds — what keeps a comptime chain comptime.
         if let Some(v) = bool_literal_value(&types, operand) {
-            return Ok(crate::identities::bool_mod::literal_node(
-                self.store,
-                self.types.bool_,
-                !v,
-            ));
+            return Ok(crate::identities::bool_mod::literal_node(self.store, self.types.bool_, !v));
         }
         let value = self.store.alloc_operands(&[operand, self.types.ops.not_]);
         Ok(self.store.alloc_raw(not_id, value))
@@ -2938,7 +2934,9 @@ impl<'a> Parser<'a> {
                 (*s, *e, None)
             }
             [(s, _), (d, _), (e, _), (d2, _), (st, _)]
-                if unsafe { self.types.through(*d) == dotdot && self.types.through(*d2) == dotdot } =>
+                if unsafe {
+                    self.types.through(*d) == dotdot && self.types.through(*d2) == dotdot
+                } =>
             {
                 (*s, *e, Some(*st))
             }
@@ -2956,7 +2954,8 @@ impl<'a> Parser<'a> {
             parts.push(s);
         }
         // SAFETY: `parts` are reduced dyads just parsed.
-        let logos = unsafe { crate::identities::resolve_loop_parts(self.store, &types, &mut parts)? };
+        let logos =
+            unsafe { crate::identities::resolve_loop_parts(self.store, &types, &mut parts)? };
         let (start, end) = (parts[0], parts[1]);
         let step = parts.get(2).copied().unwrap_or(std::ptr::null_mut());
         if step_was_literal {
@@ -3041,14 +3040,26 @@ impl<'a> Parser<'a> {
             if (*lhs).ty == tt.slot_dyad {
                 let types = self.types;
                 return match name {
-                    "type" => Ok((crate::identities::tape::build_cell_type(self.store, &types, lhs), 0)),
-                    "value" => Ok((crate::identities::tape::build_cell_marker(self.store, tt.cell_value, lhs), 0)),
+                    "type" => {
+                        Ok((crate::identities::tape::build_cell_type(self.store, &types, lhs), 0))
+                    }
+                    "value" => Ok((
+                        crate::identities::tape::build_cell_marker(self.store, tt.cell_value, lhs),
+                        0,
+                    )),
                     _ => Err(ParseError::BadReflectRead),
                 };
             }
             if (*lhs).ty == tt.cell_value {
                 if name == "operands" {
-                    return Ok((crate::identities::tape::build_cell_marker(self.store, tt.cell_operands, lhs), 0));
+                    return Ok((
+                        crate::identities::tape::build_cell_marker(
+                            self.store,
+                            tt.cell_operands,
+                            lhs,
+                        ),
+                        0,
+                    ));
                 }
                 return Err(ParseError::BadReflectRead);
             }
@@ -3064,7 +3075,10 @@ impl<'a> Parser<'a> {
                 for a in args {
                     self.and_leaves(a, &mut items);
                 }
-                return Ok((crate::identities::tape::build_append(self.store, &types, lhs, &items), 1));
+                return Ok((
+                    crate::identities::tape::build_append(self.store, &types, lhs, &items),
+                    1,
+                ));
             }
             if (*lhs).ty == self.types.dyad_ {
                 return self.view_member(lhs, name).map(|n| (n, 0));
@@ -3086,16 +3100,11 @@ impl<'a> Parser<'a> {
                 && !(*lhs).ty.is_null()
                 && matches!(
                     crate::identities::meta::kind_of((*lhs).ty),
-                    Some(
-                        crate::identities::meta::TUPLE_TAG
-                            | crate::identities::meta::LIST_TAG
-                    )
+                    Some(crate::identities::meta::TUPLE_TAG | crate::identities::meta::LIST_TAG)
                 )
             {
                 let i = index.ok_or(ParseError::ExpectedIndexBracket)?;
-                if i >= crate::identities::meta::arity_of((*lhs).ty)
-                    || (*lhs).value.is_null()
-                {
+                if i >= crate::identities::meta::arity_of((*lhs).ty) || (*lhs).value.is_null() {
                     return Err(ParseError::BadReflectRead);
                 }
                 let ops = (*lhs).value as *const DyadPtr;
@@ -3119,9 +3128,7 @@ impl<'a> Parser<'a> {
             // stack‹). The callable leaf is minted NOW, entry zero, because
             // minting needs the store the parser holds; the run patches the
             // finalized entry in.
-            if &self.source[nstart..nstart + nlen] == "compile"
-                && (*lhs).ty == self.types.fn_type
-            {
+            if &self.source[nstart..nstart + nlen] == "compile" && (*lhs).ty == self.types.fn_type {
                 if !unit_call {
                     return Err(ParseError::ExpectedOpen);
                 }
@@ -3131,8 +3138,7 @@ impl<'a> Parser<'a> {
                     0,
                     self.types.conv_container,
                 );
-                let value =
-                    self.store.alloc_operands(&[lhs, code, self.types.ops.compile_]);
+                let value = self.store.alloc_operands(&[lhs, code, self.types.ops.compile_]);
                 return Ok((self.store.alloc_raw(self.types.compile_, value), 1));
             }
         }
@@ -3148,17 +3154,25 @@ impl<'a> Parser<'a> {
                 let types = self.types;
                 if op == types.tape.is_constructed {
                     let k = key.ok_or(ParseError::ExpectedIndexBracket)?;
-                    let node = crate::identities::tape::build_member(self.store, &types, recv, op, leaf, &[k])?;
+                    let node = crate::identities::tape::build_member(
+                        self.store,
+                        &types,
+                        recv,
+                        op,
+                        leaf,
+                        &[k],
+                    )?;
                     return Ok((node, 1));
                 }
                 let args = call.ok_or(ParseError::ExpectedOpen)?;
-                let node = crate::identities::tape::build_member(self.store, &types, recv, op, leaf, &args)?;
+                let node = crate::identities::tape::build_member(
+                    self.store, &types, recv, op, leaf, &args,
+                )?;
                 return Ok((node, 1));
             }
         }
         if (*lhs).ty == self.types.deref_ {
-            let (ptr_expr, pointee, base_off) =
-                crate::identities::pointer::deref_parts(lhs);
+            let (ptr_expr, pointee, base_off) = crate::identities::pointer::deref_parts(lhs);
             if pointee.is_null() || !crate::identities::meta::is_record_type(pointee) {
                 return Err(ParseError::UnsupportedOperands);
             }
@@ -3249,8 +3263,7 @@ impl<'a> Parser<'a> {
         };
         let key = self.index_node_at(tape, 2);
         // SAFETY: `lhs` is a reduced dyad off the tape.
-        let (node, consumed) =
-            unsafe { self.field_access(lhs, nstart, nlen, index, key, call)? };
+        let (node, consumed) = unsafe { self.field_access(lhs, nstart, nlen, index, key, call)? };
         for _ in 0..(1 + consumed) {
             tape.remove(1);
         }
@@ -3327,7 +3340,9 @@ impl<'a> Parser<'a> {
                 let lhs = self.operand_dyad(left)?;
                 let types = self.types;
                 // SAFETY: `lhs` is a reduced dyad from the store.
-                if let Some(recv) = unsafe { crate::identities::tape::receiver_addr(self.store, &types, lhs) } {
+                if let Some(recv) =
+                    unsafe { crate::identities::tape::receiver_addr(self.store, &types, lhs) }
+                {
                     let node = crate::identities::tape::build_slot(self.store, &types, recv, key);
                     tape.remove(-1);
                     tape.place(node);
@@ -3357,8 +3372,7 @@ impl<'a> Parser<'a> {
         let name = &source[nstart..nstart + nlen];
         let mut field_scope = ScopeStack::new();
         field_scope.push(crate::identities::meta::record_scope_of(record_logos));
-        let field =
-            field_scope.resolve(self.trie, name).map_err(ParseError::Resolve)?.identity;
+        let field = field_scope.resolve(self.trie, name).map_err(ParseError::Resolve)?.identity;
         let (fields, _) = crate::identities::instance::layout(record_logos)?;
         let (_, _, offset) = fields
             .iter()
@@ -3440,7 +3454,10 @@ impl<'a> Parser<'a> {
             return Err(ParseError::BadAddressOf);
         };
         // Keywords, operators, literals: not places.
-        if !cell.constructed && !cell.is_fresh() && self.ctor_of(cell.identity(&self.types)).is_some() {
+        if !cell.constructed
+            && !cell.is_fresh()
+            && self.ctor_of(cell.identity(&self.types)).is_some()
+        {
             return Err(ParseError::BadAddressOf);
         }
         let node = self.operand_dyad(cell)?;
@@ -3547,7 +3564,11 @@ impl<'a> Parser<'a> {
     /// one per declared name, a dyad of type `record` (DESIGN ›`mut` is a gate
     /// on the record‹) — and return it. Errors are the no-shadowing and index
     /// errors of [`ScopeStack::declare`].
-    pub(crate) fn declare_name(&mut self, name: &str, identity: DyadPtr) -> Result<DyadPtr, ParseError> {
+    pub(crate) fn declare_name(
+        &mut self,
+        name: &str,
+        identity: DyadPtr,
+    ) -> Result<DyadPtr, ParseError> {
         let scope = self.scopes.current().expect("declare needs an open scope");
         let record = Record::alloc(self.store, self.types.record_, Record::new(identity, scope));
         self.scopes.declare(self.trie, name, record).map_err(ParseError::Resolve)?;
@@ -3589,7 +3610,8 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
         let mut depth = 1usize;
-        while matches!(self.cell_at(tape, 1)?, Some(c) if !c.constructed && c.identity(&self.types) == self.types.at_) {
+        while matches!(self.cell_at(tape, 1)?, Some(c) if !c.constructed && c.identity(&self.types) == self.types.at_)
+        {
             tape.remove(1);
             depth += 1;
         }
@@ -3727,9 +3749,7 @@ impl<'a> Parser<'a> {
                 for &d in &drained {
                     // SAFETY: `d` is a `defer free <place>` node the binding site
                     // just built.
-                    owned_here.push(unsafe {
-                        crate::identities::drop_model::teardown_place_of(d)
-                    });
+                    owned_here.push(unsafe { crate::identities::drop_model::teardown_place_of(d) });
                 }
                 exprs.extend(drained);
             }
@@ -3750,8 +3770,7 @@ impl<'a> Parser<'a> {
             // with nothing to run, yielding unit — `f()`'s argument cell, a
             // `fn () -> …` with no parameters read by its own parser.
             (0, _) => {
-                let arr =
-                    crate::identities::array::build(self.store, self.types.array_, &exprs);
+                let arr = crate::identities::array::build(self.store, self.types.array_, &exprs);
                 let value = self.store.alloc_operands(&[arr, self.types.ops.scope_]);
                 // SAFETY: `scope` was just allocated and is unaliased.
                 unsafe {
@@ -3797,8 +3816,7 @@ impl<'a> Parser<'a> {
                 // A scope IS an array: the expression list lives behind one
                 // indirection (its own array node), never inline in the scope's
                 // value, which is the `[exprs, op]` pair.
-                let arr =
-                    crate::identities::array::build(self.store, self.types.array_, &exprs);
+                let arr = crate::identities::array::build(self.store, self.types.array_, &exprs);
                 let value = self.store.alloc_operands(&[arr, self.types.ops.scope_]);
                 // SAFETY: `scope` was just allocated and is unaliased.
                 unsafe {
@@ -3880,10 +3898,8 @@ impl<'a> Parser<'a> {
         let source = self.source;
         let text_node = if source[self.pos..].starts_with('«') {
             // `# «…»`: the string form ends at the `»`, not the line.
-            let r = self
-                .scopes
-                .resolve(self.trie, &source[self.pos..])
-                .map_err(ParseError::Resolve)?;
+            let r =
+                self.scopes.resolve(self.trie, &source[self.pos..]).map_err(ParseError::Resolve)?;
             let start = self.pos;
             self.pos += r.matched;
             self.construct_leaf(r.identity, start, r.matched)?.ok_or(ParseError::BadLiteral)?
@@ -4088,10 +4104,8 @@ impl<'a> Parser<'a> {
         let source = self.source;
         let start = self.pos;
         let path_text: String = if source[self.pos..].starts_with('«') {
-            let r = self
-                .scopes
-                .resolve(self.trie, &source[self.pos..])
-                .map_err(ParseError::Resolve)?;
+            let r =
+                self.scopes.resolve(self.trie, &source[self.pos..]).map_err(ParseError::Resolve)?;
             let s = self.pos;
             self.pos += r.matched;
             let node =
@@ -4114,11 +4128,8 @@ impl<'a> Parser<'a> {
         }
         let tail = self.import_file(&path_text)?;
         let types = self.types;
-        let path_node = crate::identities::string::build_text(
-            self.store,
-            types.string_,
-            path_text.as_bytes(),
-        );
+        let path_node =
+            crate::identities::string::build_text(self.store, types.string_, path_text.as_bytes());
         let value = self.store.alloc_operands(&[path_node, tail, types.ops.import_]);
         let node = self.store.alloc_raw(types.import_, value);
         tape.place(node);
@@ -4201,7 +4212,9 @@ impl<'a> Parser<'a> {
                 })
             }
             Ok((pubs, tail)) => {
-                self.imports.entries.insert(canon, ImportState::Loaded { pubs: pubs.clone(), tail });
+                self.imports
+                    .entries
+                    .insert(canon, ImportState::Loaded { pubs: pubs.clone(), tail });
                 self.publish(&pubs)?;
                 Ok(tail)
             }
@@ -4219,8 +4232,7 @@ impl<'a> Parser<'a> {
     fn run_imported(&mut self) -> Result<(Vec<(String, DyadPtr)>, DyadPtr), String> {
         let mut pubs = Vec::new();
         let mut tail = std::ptr::null_mut();
-        let mut rt = crate::run::Runtime::new(self.types)
-            .with_defer_type(self.types.defer_);
+        let mut rt = crate::run::Runtime::new(self.types).with_defer_type(self.types.defer_);
         if let Some(lower) = self.lower {
             rt = rt.with_compiler(lower, self.types);
         }
@@ -4237,9 +4249,8 @@ impl<'a> Parser<'a> {
                     && crate::identities::declare::gate_of(node) == self.types.pub_
                 {
                     let name_node = *((*node).value as *const DyadPtr);
-                    let name =
-                        String::from_utf8_lossy(crate::identities::string::text(name_node))
-                            .into_owned();
+                    let name = String::from_utf8_lossy(crate::identities::string::text(name_node))
+                        .into_owned();
                     let identity = self
                         .scopes
                         .resolve(self.trie, &name)
@@ -4378,11 +4389,7 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `view` must be a view node as `a:dyad` builds it
     /// ([`Parser::record_read`]).
-    unsafe fn view_member(
-        &mut self,
-        view: DyadPtr,
-        name: &str,
-    ) -> Result<DyadPtr, ParseError> {
+    unsafe fn view_member(&mut self, view: DyadPtr, name: &str) -> Result<DyadPtr, ParseError> {
         let viewed = (*view).value as DyadPtr;
         if viewed.is_null() {
             return Err(ParseError::BadReflectRead);
@@ -4419,8 +4426,7 @@ impl<'a> Parser<'a> {
         if meta::kind_of(logos).is_none() {
             return Err(ParseError::BadReflectRead);
         }
-        let operand_kind =
-            matches!(meta::kind_of(logos), Some(meta::TUPLE_TAG | meta::LIST_TAG));
+        let operand_kind = matches!(meta::kind_of(logos), Some(meta::TUPLE_TAG | meta::LIST_TAG));
         match name {
             "arity" if operand_kind => {
                 Ok(self.scalar_value(NumType::I64, meta::arity_of(logos) as i64))
@@ -4432,10 +4438,9 @@ impl<'a> Parser<'a> {
                 }
                 Ok(meta::role_of(logos, i))
             }
-            "precedence" => Ok(self.scalar_value(
-                NumType::F64,
-                meta::precedence_of(logos).to_bits() as i64,
-            )),
+            "precedence" => {
+                Ok(self.scalar_value(NumType::F64, meta::precedence_of(logos).to_bits() as i64))
+            }
             // Associativity's values are the two identities `left` and
             // `right` (DESIGN ›The constructor is a field‹).
             "associativity" => Ok(match meta::assoc_of(logos) {
@@ -4462,17 +4467,13 @@ impl<'a> Parser<'a> {
                 Ok(self.store.alloc_raw(self.types.dyad_, d as *mut u8))
             }
             "fields" if meta::is_record_type(logos) => {
-                Ok(self
-                    .store
-                    .alloc_raw(self.types.dyad_, meta::record_fields_of(logos) as *mut u8))
+                Ok(self.store.alloc_raw(self.types.dyad_, meta::record_fields_of(logos) as *mut u8))
             }
             "size_bytes" if meta::is_record_type(logos) => {
                 Ok(self.scalar_value(NumType::I64, meta::record_size_of(logos) as i64))
             }
             "scope" if meta::is_record_type(logos) => {
-                Ok(self
-                    .store
-                    .alloc_raw(self.types.dyad_, meta::record_scope_of(logos) as *mut u8))
+                Ok(self.store.alloc_raw(self.types.dyad_, meta::record_scope_of(logos) as *mut u8))
             }
             "type" => Err(ParseError::TypeNeedsView),
             // A member of the type's own definition body (#61; DESIGN ›The
@@ -4498,11 +4499,7 @@ impl<'a> Parser<'a> {
     /// Build a typed scalar value node: fresh storage holding `bits` at `nt`'s
     /// width. The reflection counts (`.arity`, `.size_bytes`) and measures
     /// (`.precedence`) are ordinary typed values, comparable with literals.
-    fn scalar_value(
-        &mut self,
-        nt: crate::identities::numtype::NumType,
-        bits: i64,
-    ) -> DyadPtr {
+    fn scalar_value(&mut self, nt: crate::identities::numtype::NumType, bits: i64) -> DyadPtr {
         let ty = self.types.numtypes[nt as usize];
         let width = nt.bytes();
         let bytes = bits.to_ne_bytes();
@@ -4744,7 +4741,11 @@ impl<'a> Parser<'a> {
     /// unfinished cell there; those wait for the loop's next step
     /// ([`Parser::discover_pending`]), which runs before anything further is
     /// lexed, so their right side is still theirs to read.
-    fn lex_next(&mut self, tape: &mut ParsingTape, lazy: bool) -> Result<Option<Boundary>, ParseError> {
+    fn lex_next(
+        &mut self,
+        tape: &mut ParsingTape,
+        lazy: bool,
+    ) -> Result<Option<Boundary>, ParseError> {
         let Some((cell, start)) = self.lex_cell()? else {
             return Ok(Some(Boundary::Eof));
         };
@@ -4853,7 +4854,11 @@ impl<'a> Parser<'a> {
     /// exactly as the loop would; the center is put back afterwards. `None`
     /// when a boundary or the end of input comes first. Negative offsets read
     /// the tape as it stands.
-    pub(crate) fn cell_at(&mut self, tape: &mut ParsingTape, offset: isize) -> Result<Option<Cell>, ParseError> {
+    pub(crate) fn cell_at(
+        &mut self,
+        tape: &mut ParsingTape,
+        offset: isize,
+    ) -> Result<Option<Cell>, ParseError> {
         if offset <= 0 {
             return Ok(tape.at(offset).copied());
         }
@@ -5007,7 +5012,10 @@ mod tests {
 
     fn rec_in(identity: DyadPtr, scope: DyadPtr) -> DyadPtr {
         let fields = Box::into_raw(Box::new(Record::new(identity, scope)));
-        Box::into_raw(Box::new(crate::dyad::Dyad { ty: std::ptr::null_mut(), value: fields as *mut u8 }))
+        Box::into_raw(Box::new(crate::dyad::Dyad {
+            ty: std::ptr::null_mut(),
+            value: fields as *mut u8,
+        }))
     }
 
     /// The fields behind a record dyad.
@@ -5158,7 +5166,8 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
 
-        let (_, s) = go("sq := fn (a := i32 ?) -> i32 ( a * a )", &mut store, &mut trie, types, scopes);
+        let (_, s) =
+            go("sq := fn (a := i32 ?) -> i32 ( a * a )", &mut store, &mut trie, types, scopes);
         let (_, s) = go(
             "c := fn (tape := parsing_tape ?) -> void ( \
                 tape[0]:dyad.type = sq, \
@@ -5188,7 +5197,8 @@ mod tests {
             );
             let squared = store.alloc_raw(types.type_, layout);
             crate::identities::meta::install_constructor(squared, c);
-            let rec = Record::alloc(&mut store, core.record_, Record::new(squared, core.root_scope));
+            let rec =
+                Record::alloc(&mut store, core.record_, Record::new(squared, core.root_scope));
             let mut s = s;
             s.declare(&mut trie, "squared", rec).unwrap();
             s
@@ -5201,7 +5211,8 @@ mod tests {
         assert_eq!(v, 26, "squared binds tighter than +");
         let (v, s) = go("2 * x squared", &mut store, &mut trie, types, s);
         assert_eq!(v, 50, "and tighter than *");
-        let (_, s) = go("f := fn (y := i32 ?) -> i32 ( y squared + 1 )", &mut store, &mut trie, types, s);
+        let (_, s) =
+            go("f := fn (y := i32 ?) -> i32 ( y squared + 1 )", &mut store, &mut trie, types, s);
         let (v, _s) = go("f(3)", &mut store, &mut trie, types, s);
         assert_eq!(v, 10, "the node a constructor built calls like any other");
     }
@@ -5249,19 +5260,36 @@ mod tests {
             let (v, s) = go("t[0]:dyad.type", &mut store, &mut trie, types, s);
             assert_eq!(v as DyadPtr, core.type_, "an identity's type is the root");
 
-            let (_, s) = go("g := fn (p := i32 ?, q := i32 ?) -> i32 ( p + q )", &mut store, &mut trie, types, s);
+            let (_, s) = go(
+                "g := fn (p := i32 ?, q := i32 ?) -> i32 ( p + q )",
+                &mut store,
+                &mut trie,
+                types,
+                s,
+            );
             let (v, s) = go("t[0]:dyad.type = g", &mut store, &mut trie, types, s);
             let c = *(*tape).at(0).unwrap();
             assert!(c.constructed, "a retyped cell is constructed");
             assert_eq!(v as DyadPtr, c.dyad, "the retype yields the new cell");
             assert_ne!(c.dyad, plus, "the identity itself is never written through");
-            assert_eq!((*c.dyad).ty, types.through(s.resolve(&trie, "g").unwrap().record), "typed by g itself");
+            assert_eq!(
+                (*c.dyad).ty,
+                types.through(s.resolve(&trie, "g").unwrap().record),
+                "typed by g itself"
+            );
             assert!((*((*c.dyad).value as *const DyadPtr)).is_null(), "an empty operand record");
 
-            let (_, s) = go("t[0]:dyad.value.operands.append(t[-1] and t[1])", &mut store, &mut trie, types, s);
+            let (_, s) = go(
+                "t[0]:dyad.value.operands.append(t[-1] and t[1])",
+                &mut store,
+                &mut trie,
+                types,
+                s,
+            );
             let ops = (*c.dyad).value as *const DyadPtr;
             assert_eq!((*ops, *ops.add(1), *ops.add(2)), (a_rec, b_rec, std::ptr::null_mut()));
-            let (_, s) = go("t[0]:dyad.value.operands.append(t[1])", &mut store, &mut trie, types, s);
+            let (_, s) =
+                go("t[0]:dyad.value.operands.append(t[1])", &mut store, &mut trie, types, s);
             let ops = (*c.dyad).value as *const DyadPtr;
             assert_eq!((*ops.add(2), *ops.add(3)), (b_rec, std::ptr::null_mut()));
 

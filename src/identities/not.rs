@@ -18,7 +18,7 @@ use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc};
+use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
 
 /// Register `not`: spelling, the parenthesized-operand construct, native leaf,

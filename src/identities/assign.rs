@@ -110,9 +110,8 @@ pub(super) fn build(
     // comptime (`:=`-bound rational) binding has no machine storage — writing
     // its value slot would corrupt the fraction — and nothing else has storage.
     // SAFETY: as above.
-    let (lhs_numeric, lhs_pointer) = unsafe {
-        (is_numtype_node(types, (*lhs_d).ty), is_pointer_type((*lhs_d).ty))
-    };
+    let (lhs_numeric, lhs_pointer) =
+        unsafe { (is_numtype_node(types, (*lhs_d).ty), is_pointer_type((*lhs_d).ty)) };
     if !lhs_numeric && !lhs_pointer {
         return Err(ParseError::BadAssignTarget);
     }

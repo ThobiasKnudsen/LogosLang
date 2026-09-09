@@ -18,7 +18,7 @@
 use super::numtype::STRING_TAG;
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
-use crate::parse::{Constructed, ParseError, ParsingTape, Parser};
+use crate::parse::{Constructed, ParseError, Parser, ParsingTape};
 use crate::store::Store;
 
 /// Register `string`: its [`STRING_TAG`] logos node and the `«…»` literal pattern
@@ -34,7 +34,11 @@ pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
 
 /// The literal's constructor: read the `«…»` span off the cursor token and
 /// place the string node over it (the guillemets are two bytes each in UTF-8).
-fn construct(p: &mut Parser, id: DyadPtr, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
+fn construct(
+    p: &mut Parser,
+    id: DyadPtr,
+    tape: &mut ParsingTape,
+) -> Result<Constructed, ParseError> {
     let (start, len) = tape.own_span().ok_or(ParseError::BadLiteral)?;
     let span = &p.source()[start..start + len];
     let inner = &span.as_bytes()[2..span.len() - 2];

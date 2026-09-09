@@ -110,10 +110,7 @@ impl OpLeaves {
 /// Run a binary arithmetic node with the (operation, logos) pair baked in:
 /// evaluate both operands and apply the shared helper. The concrete op never
 /// reads a logos from the node — its logos *is* this instantiation.
-fn arith_run<const OP: u8, const NT: u8>(
-    rt: &mut Runtime,
-    node: DyadPtr,
-) -> Result<i64, RunError> {
+fn arith_run<const OP: u8, const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a resolved binary operator application whose first two
     // slots are its operands, as the family builders construct.
     unsafe {

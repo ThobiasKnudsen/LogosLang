@@ -24,7 +24,7 @@ use super::numtype::{self, ArithOp, CmpOp};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc};
+use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
 
 /// Register `for` (the loop keyword, its run native, and its lowering) plus the

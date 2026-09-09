@@ -470,9 +470,7 @@ impl Runtime {
             // A dyad view (#52) is parse-time data whose value IS the viewed
             // node's address; its run value is that address, mirroring a logos
             // node standing as a value.
-            if crate::identities::meta::kind_of(op)
-                == Some(crate::identities::meta::DYAD_TAG)
-            {
+            if crate::identities::meta::kind_of(op) == Some(crate::identities::meta::DYAD_TAG) {
                 return Ok((*node).value as i64);
             }
             // `node` is data or a migrated application. A rational literal is

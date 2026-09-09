@@ -32,8 +32,8 @@
 use crate::parse::SLOT_NAMES;
 
 use super::{meta, Cx};
-use crate::store::Store;
 use crate::dyad::DyadPtr;
+use crate::store::Store;
 
 /// Create the `logos : logos` root and return it.
 pub(super) fn register_root(store: &mut Store) -> DyadPtr {

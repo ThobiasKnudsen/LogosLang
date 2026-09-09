@@ -259,8 +259,7 @@ fn repl() -> ExitCode {
             _ => {
                 println!();
                 // Session exit: run the accumulated teardowns, newest first.
-                let mut rt = Runtime::new(engine.core.types())
-                    .with_defer_type(engine.core.defer_);
+                let mut rt = Runtime::new(engine.core.types()).with_defer_type(engine.core.defer_);
                 for defer_node in session_defers.into_iter().rev() {
                     // SAFETY: each is a `defer` node in the engine's store, which
                     // is still alive here.
@@ -304,10 +303,7 @@ fn repl() -> ExitCode {
         let node = match parsed {
             Ok(node) => node,
             Err(e) => {
-                eprintln!(
-                    "{}",
-                    report::render("<repl>", &line, end, &report::parse_message(&e))
-                );
+                eprintln!("{}", report::render("<repl>", &line, end, &report::parse_message(&e)));
                 fail(&mut scopes, &mut engine.trie);
                 continue;
             }
@@ -351,10 +347,9 @@ fn repl() -> ExitCode {
         // null place and no-ops, so keeping them is the fail-closed side.
         session_defers.extend(line_defers);
 
-        let mut rt =
-            Runtime::new(engine.core.types())
-                .with_compiler(&engine.core.lower, types)
-                .with_defer_type(engine.core.defer_);
+        let mut rt = Runtime::new(engine.core.types())
+            .with_compiler(&engine.core.lower, types)
+            .with_defer_type(engine.core.defer_);
         // SAFETY: `node` and everything it reaches live in the engine's store,
         // which outlives the loop. Statements still run — for their effect —
         // they just do not echo.

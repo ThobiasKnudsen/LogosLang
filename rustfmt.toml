@@ -1,0 +1,6 @@
+# The style CI enforces (`cargo fmt --check`, .github/workflows/ci.yml).
+# Chosen on 9 September 2026 as the configuration that changed the least of the
+# existing tree: the seed was written with long one-line expressions, which
+# `use_small_heuristics = "Max"` keeps.
+max_width = 100
+use_small_heuristics = "Max"

@@ -46,7 +46,7 @@
 //! leaves their op slots reference.
 
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc};
+use crate::parse::Assoc;
 use crate::store::Store;
 
 use super::numtype::ADDR_TAG;

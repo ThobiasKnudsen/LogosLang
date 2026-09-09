@@ -76,7 +76,10 @@ const OFFSET_MASK: usize = (1 << DEPTH_SHIFT) - 1;
 /// how many function frames are open) and byte `offset`. See [`FRAME_TAG`].
 pub fn frame_place(depth: usize, offset: usize) -> *mut u8 {
     debug_assert!(offset <= OFFSET_MASK, "a frame offset must fit in 48 bits");
-    debug_assert!(depth >= 1 && depth << DEPTH_SHIFT < FRAME_TAG, "a frame depth must fit in 15 bits");
+    debug_assert!(
+        depth >= 1 && depth << DEPTH_SHIFT < FRAME_TAG,
+        "a frame depth must fit in 15 bits"
+    );
     std::ptr::without_provenance_mut(FRAME_TAG | (depth << DEPTH_SHIFT) | offset)
 }
 

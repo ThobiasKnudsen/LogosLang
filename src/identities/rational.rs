@@ -25,7 +25,7 @@ use super::numtype::{ArithOp, CmpOp, NumType};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{Constructed, CoreTypes, ParseError, ParsingTape, Parser};
+use crate::parse::{Constructed, CoreTypes, ParseError, Parser, ParsingTape};
 use crate::store::Store;
 
 /// Register `rational_number`: its spelling (integers or decimals), literal
@@ -45,7 +45,11 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 
 /// The literal's constructor: read the matched span off the cursor token,
 /// build the leaf, and place it over its own token.
-fn construct(p: &mut Parser, id: DyadPtr, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
+fn construct(
+    p: &mut Parser,
+    id: DyadPtr,
+    tape: &mut ParsingTape,
+) -> Result<Constructed, ParseError> {
     let (start, len) = tape.own_span().ok_or(ParseError::BadLiteral)?;
     let span = &p.source()[start..start + len];
     let node = build(p.store(), id, span)?;
@@ -72,7 +76,11 @@ fn construct(p: &mut Parser, id: DyadPtr, tape: &mut ParsingTape) -> Result<Cons
 /// -range span is a [`ParseError::BadLiteral`]; a well-formed decimal always builds
 /// (whether it can later be computed as an `i32` is a use-site question). Also the
 /// parser's direct path for the negated-literal and range-endpoint services.
-pub(crate) fn build(store: &mut Store, rational: DyadPtr, span: &str) -> Result<DyadPtr, ParseError> {
+pub(crate) fn build(
+    store: &mut Store,
+    rational: DyadPtr,
+    span: &str,
+) -> Result<DyadPtr, ParseError> {
     let (num, den) = parse_fraction(span).ok_or(ParseError::BadLiteral)?;
     Ok(build_literal(store, rational, num, den))
 }
@@ -110,19 +118,16 @@ pub(crate) fn fold_arith(
         }
         let (n1, d1) = read_fraction(lhs);
         let (n2, d2) = read_fraction(rhs);
-        let (n1, d1, n2, d2) =
-            (i128::from(n1), i128::from(d1), i128::from(n2), i128::from(d2));
+        let (n1, d1, n2, d2) = (i128::from(n1), i128::from(d1), i128::from(n2), i128::from(d2));
         // `d1`,`d2` come from `i64` denominators, so each product fits `i128`; only the
         // add/sub of the two cross-products can overflow, which `checked_*` catches.
         let (num, den) = match op {
-            ArithOp::Add => (
-                (n1 * d2).checked_add(n2 * d1).ok_or(ParseError::UncomputableLiteral)?,
-                d1 * d2,
-            ),
-            ArithOp::Sub => (
-                (n1 * d2).checked_sub(n2 * d1).ok_or(ParseError::UncomputableLiteral)?,
-                d1 * d2,
-            ),
+            ArithOp::Add => {
+                ((n1 * d2).checked_add(n2 * d1).ok_or(ParseError::UncomputableLiteral)?, d1 * d2)
+            }
+            ArithOp::Sub => {
+                ((n1 * d2).checked_sub(n2 * d1).ok_or(ParseError::UncomputableLiteral)?, d1 * d2)
+            }
             ArithOp::Mul => (n1 * n2, d1 * d2),
             // Exact fraction division (`1 / 3` IS one third); a zero divisor has
             // no comptime value.

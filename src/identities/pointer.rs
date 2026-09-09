@@ -70,7 +70,12 @@ pub(super) fn register(
         Ok(crate::parse::Constructed::Placed)
     });
 
-    let record = meta::record_assoc(cx.store, meta::TOKEN_TAG, meta::prec::ADDRESS, crate::parse::Assoc::Right);
+    let record = meta::record_assoc(
+        cx.store,
+        meta::TOKEN_TAG,
+        meta::prec::ADDRESS,
+        crate::parse::Assoc::Right,
+    );
     let amp = cx.store.alloc_raw(cx.type_, record);
     cx.declare("&", amp);
     cx.metas.insert(amp, |p, _id, tape| p.construct_address_of(tape));
@@ -95,8 +100,7 @@ pub(super) fn register(
     );
     let storeptr = cx.store.alloc_raw(cx.type_, record);
     cx.lower.insert(storeptr, lower_storeptr);
-    let storeptr_leaf =
-        callable::mint_native(cx.store, cs.callable, run_storeptr, cs.seed_native);
+    let storeptr_leaf = callable::mint_native(cx.store, cs.callable, run_storeptr, cs.seed_native);
 
     // `addr` (prefix `&`): no spelling of its own beyond the `&` token; the
     // parser builds these from `parse_address_of`. `[place, pointee, op]`.
@@ -156,7 +160,12 @@ fn lower_addr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
 /// An `@pointee` value holding `addr`: a pointer-typed literal with its own
 /// eight bytes of storage, read at run time like any pointer variable. How a
 /// node is handed to a native *by identity* (`:scope`, a tape's cell).
-pub(crate) fn address_value(store: &mut Store, types: &CoreTypes, pointee: DyadPtr, addr: DyadPtr) -> DyadPtr {
+pub(crate) fn address_value(
+    store: &mut Store,
+    types: &CoreTypes,
+    pointee: DyadPtr,
+    addr: DyadPtr,
+) -> DyadPtr {
     let ty = make_pointer_type(store, types.type_, pointee);
     let storage = store.alloc_bytes(&(addr as usize as u64).to_ne_bytes());
     store.alloc_raw(ty, storage)

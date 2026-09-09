@@ -19,9 +19,9 @@ use cranelift_codegen::ir::Value;
 use super::callable::{self, Callables};
 use super::numtype::{apply_cast, of_type_node, NumType};
 use super::{meta, Cx};
-use crate::parse::{Assoc, CoreTypes};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
+use crate::parse::{Assoc, CoreTypes};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 

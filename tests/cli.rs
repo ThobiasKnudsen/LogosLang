@@ -82,8 +82,7 @@ fn importing_a_library_alone_is_silent_and_clean() {
 fn an_imported_file_cannot_see_the_import_site() {
     // The fresh view (ruled August 2026): the imported scope resolves ambient
     // names and its own imports only — never the command line's declarations.
-    let out =
-        logos().arg("x := 5, import tests/fixtures/uses_missing.logos").output().unwrap();
+    let out = logos().arg("x := 5, import tests/fixtures/uses_missing.logos").output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("uses_missing.logos:2:6"), "stderr: {err}");
@@ -131,9 +130,8 @@ fn the_repl_imports_once_per_session_and_keeps_pub_names() {
     // The REPL threads one import registry across lines (a session is a run):
     // the answer echoes through the import's tail, the library import is
     // silent, and its pub fn stays callable on a later line.
-    let (echoes, stderr) = repl(
-        b"import examples/answer.logos\nimport tests/fixtures/lib_pub.logos\ndouble(4)\n",
-    );
+    let (echoes, stderr) =
+        repl(b"import examples/answer.logos\nimport tests/fixtures/lib_pub.logos\ndouble(4)\n");
     assert_eq!(echoes, ["42", "8"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
@@ -213,8 +211,14 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"t := type (5)\n", "a type body line"),
         (b"t := type (associativity = 5)\n", "`left` or `right`"),
         (b"t := type (constructor = fn (a := i32 ?) -> void ( a = 1 ))\n", "parsing_tape"),
-        (b"t := type (destructor = fn (tape := parsing_tape ?) -> void ( tape.remove(1) ))\n", "destructor"),
-        (b"g := fn (n := i32 ?) -> type ( type (precedence = n) )\n", "known when the type is defined"),
+        (
+            b"t := type (destructor = fn (tape := parsing_tape ?) -> void ( tape.remove(1) ))\n",
+            "destructor",
+        ),
+        (
+            b"g := fn (n := i32 ?) -> type ( type (precedence = n) )\n",
+            "known when the type is defined",
+        ),
     ] {
         let (_echoes, stderr) = repl(src);
         assert!(stderr.contains(expect), "{}: stderr: {stderr}", String::from_utf8_lossy(src));
@@ -273,8 +277,7 @@ fn a_reflect_read_that_does_not_fit_is_an_error() {
 fn an_import_inside_a_fn_body_is_rejected() {
     // The load is a comptime effect; inside a fn body parse and run order do
     // not coincide, so it is rejected like a logos variable's fill.
-    let (_echoes, stderr) =
-        repl(b"g := fn () -> i32 ( import examples/answer.logos 1 )\n");
+    let (_echoes, stderr) = repl(b"g := fn () -> i32 ( import examples/answer.logos 1 )\n");
     assert!(stderr.contains("loads at parse time"), "stderr: {stderr}");
 }
 
@@ -290,7 +293,9 @@ fn the_repl_echoes_values_but_not_declarations_or_assignments() {
         .stdin
         .as_mut()
         .unwrap()
-        .write_all(b"x := i32 5\nx = 40\ndouble := fn (a := i32 ?) -> i32 ( a + a )\nzz\ndouble(x) + 2\n")
+        .write_all(
+            b"x := i32 5\nx = 40\ndouble := fn (a := i32 ?) -> i32 ( a + a )\nzz\ndouble(x) + 2\n",
+        )
         .unwrap();
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success());
@@ -334,9 +339,8 @@ fn the_repl_rolls_back_a_failed_lines_declarations() {
     // A failed line — parse error or run error — must not burn its name: the
     // same spelling declares cleanly on the next line instead of reporting
     // "shadowed" for the rest of the session.
-    let (echoes, stderr) = repl(
-        b"b := )\nb := 5\nf := fn (v := i32 ?) -> i32 ( v )\ng := f(1,2)\ng := f(3)\ng + b\n",
-    );
+    let (echoes, stderr) =
+        repl(b"b := )\nb := 5\nf := fn (v := i32 ?) -> i32 ( v )\ng := f(1,2)\ng := f(3)\ng + b\n");
     assert_eq!(echoes, ["8"], "stderr: {stderr}");
     assert!(stderr.contains("nothing to evaluate here"), "stderr: {stderr}");
     assert!(stderr.contains("argument count"), "stderr: {stderr}");
@@ -361,10 +365,7 @@ fn the_repl_reuses_a_name_after_drop() {
     // name refuses a read instead of reporting "shadowed" forever.
     let (echoes, stderr) = repl(b"n := i32 5\ndrop n\nn\nn := i32 6\nn\n");
     assert_eq!(echoes, ["6"], "stderr: {stderr}");
-    assert!(
-        stderr.contains("<repl>:1:1: error: this name is dead here"),
-        "stderr: {stderr}"
-    );
+    assert!(stderr.contains("<repl>:1:1: error: this name is dead here"), "stderr: {stderr}");
 }
 
 #[test]
@@ -394,9 +395,8 @@ fn the_repl_compiles_a_fn_across_lines() {
     // `f.compile()` on one line installs the machine code; the call on the
     // next line jumps to it. The compile itself is a silent statement, so the
     // only echo is the call's value.
-    let (echoes, stderr) = repl(
-        b"double := fn (x := i64 ?) -> i64 ( x + x )\ndouble.compile()\ndouble(21)\n",
-    );
+    let (echoes, stderr) =
+        repl(b"double := fn (x := i64 ?) -> i64 ( x + x )\ndouble.compile()\ndouble(21)\n");
     assert_eq!(echoes, ["42"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
@@ -422,9 +422,8 @@ fn the_repl_binds_a_name_to_a_type() {
     // `t := i32` makes `t` another spelling of `i32` (a `:=` value may be a
     // logos): it works by juxtaposition, as a conversion, and in a fn
     // signature; declaring it and echoing the bare logos are silent.
-    let (echoes, stderr) = repl(
-        b"t := i32\nx := t 7\nt(9)\nf := fn (v := t ?) -> t ( v + v )\nt\nf(x)\n",
-    );
+    let (echoes, stderr) =
+        repl(b"t := i32\nx := t 7\nt(9)\nf := fn (v := t ?) -> t ( v + v )\nt\nf(x)\n");
     assert_eq!(echoes, ["9", "14"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
@@ -532,8 +531,10 @@ fn a_dependent_typed_declaration_takes_a_computed_type() {
 
 #[test]
 fn a_logos_declaration_works_after_other_code() {
-    let out =
-        logos().args(["import", "tests/fixtures/declared_logos_after_code.logos"]).output().unwrap();
+    let out = logos()
+        .args(["import", "tests/fixtures/declared_logos_after_code.logos"])
+        .output()
+        .unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "10\n");
 }
@@ -560,9 +561,8 @@ fn a_logos_variable_declares_fills_once_and_becomes_the_type() {
     // `a := logos ?` declares a logos variable (an undefined logos); `a = i32` fills
     // it at parse — comptime rebinding — after which the name is a full
     // spelling of the logos: `==` folds, juxtaposition builds typed values.
-    let (echoes, stderr) = repl(
-        b"a := logos ?\na:dyad.type == logos\na == i32\na = i32\na == i32\ny := a 5\ny\n",
-    );
+    let (echoes, stderr) =
+        repl(b"a := logos ?\na:dyad.type == logos\na == i32\na = i32\na == i32\ny := a 5\ny\n");
     assert_eq!(echoes, ["true", "false", "true", "5"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
@@ -655,9 +655,8 @@ fn values_render_through_their_type() {
     // The CLI shows a value through its static logos, not the raw i64 container:
     // floats with a decimal point, unsigned at width, bool as true/false, and a
     // negative literal juxtaposed onto a logos (`i64 -1`).
-    let (echoes, stderr) = repl(
-        b"f32 5.5\nq := f64 2.5\nq + q\ni64 -1\nu8 200\n1 < 2\nnot (1 < 2)\n",
-    );
+    let (echoes, stderr) =
+        repl(b"f32 5.5\nq := f64 2.5\nq + q\ni64 -1\nu8 200\n1 < 2\nnot (1 < 2)\n");
     assert_eq!(echoes, ["5.5", "5.0", "-1", "200", "true", "false"], "stderr: {stderr}");
 }
 
@@ -750,7 +749,9 @@ fn assignment_returns_nothing() {
     assert!(stderr.contains("yields no value"), "stderr: {stderr}");
     let (_e, stderr) = repl(b"a := i32 1\ny := (a = 2) + 1\n");
     assert!(!stderr.is_empty(), "stderr: {stderr}");
-    let (echoes, stderr) = repl(b"p := type (instance (v := i32 ?))\nq := p(1)\nq.v = 3\nq.v\na := i32 1\na = a + 1\na\n");
+    let (echoes, stderr) = repl(
+        b"p := type (instance (v := i32 ?))\nq := p(1)\nq.v = 3\nq.v\na := i32 1\na = a + 1\na\n",
+    );
     assert_eq!(echoes, ["3", "2"], "stderr: {stderr}");
 }
 
@@ -773,9 +774,8 @@ fn a_dyad_is_built_from_a_type_and_a_value() {
     // DESIGN ›Feasibility‹: "`dyad (type, value)` construction from Logos"
     // (#60). `dyad (i32, 7)` is a store-owned i32 cell, `dyad` alone the
     // cell type; the view reads the built cell's two fields.
-    let (echoes, stderr) = repl(
-        b"c := dyad (i32, 7)\nc\nc:dyad.type == i32\ndyad (i32, 7):dyad.type == i32\nc + 1\n",
-    );
+    let (echoes, stderr) =
+        repl(b"c := dyad (i32, 7)\nc\nc:dyad.type == i32\ndyad (i32, 7):dyad.type == i32\nc + 1\n");
     assert_eq!(echoes, ["7", "true", "true", "8"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
     let (_e, stderr) = repl(b"dyad (i32)\n");

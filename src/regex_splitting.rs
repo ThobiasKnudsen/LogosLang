@@ -232,7 +232,9 @@ fn parse_atom(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
                 } else {
                     *pos = s.len();
                 }
-                result.push(vec![Segment::rx(&bytes_to_string(&s[group_start..group_start + length]))]);
+                result.push(vec![Segment::rx(&bytes_to_string(
+                    &s[group_start..group_start + length],
+                ))]);
                 return result;
             }
         }
@@ -494,10 +496,7 @@ mod tests {
     fn optional_appends_empty_path_last() {
         // `ab?` -> the `?` makes `b` a regex segment (`b?`), giving the full path
         // then the shorter "a" path (empty tail appended last so longer wins).
-        assert_eq!(
-            regex_splitting("ab?"),
-            vec![vec![lit("a"), rx("b?")], vec![lit("a")]]
-        );
+        assert_eq!(regex_splitting("ab?"), vec![vec![lit("a"), rx("b?")], vec![lit("a")]]);
     }
 
     #[test]

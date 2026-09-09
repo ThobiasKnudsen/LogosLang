@@ -182,7 +182,9 @@ fn construct(
         // A rational literal cell (a negative one already folded at
         // discovery): the anonymous typed value. SAFETY: a dyad cell is a
         // node from the store; `id` is this numeric logos's registered node.
-        Some(c) if c.constructed && !c.is_bracket() && unsafe { (*c.dyad).ty } == types.rational => {
+        Some(c)
+            if c.constructed && !c.is_bracket() && unsafe { (*c.dyad).ty } == types.rational =>
+        {
             let l = c.dyad;
             tape.remove(1);
             unsafe { super::commit_literal_to(p.store(), &types, l, id) }?
@@ -427,7 +429,6 @@ pub(crate) unsafe fn stored_type(node: DyadPtr) -> DyadPtr {
     *((*node).value as *const DyadPtr).add(2)
 }
 
-
 /// The five machine arithmetic operations. Integer `Div`/`Rem` are TOTAL
 /// (settled): a zero divisor yields the logos's MAX — a loud sentinel, easier to
 /// discover than 0 — the signed MIN/-1 overflow saturates to MAX, and MIN % -1 is
@@ -645,4 +646,3 @@ fn encode_from_f64(to: NumType, f: f64) -> i64 {
         F64 => f.to_bits() as i64,
     }
 }
-

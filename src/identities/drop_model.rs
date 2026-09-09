@@ -61,10 +61,10 @@ use super::callable::{self, Callables};
 use super::numtype;
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
+use crate::dyad::DyadPtr;
 use crate::parse::{Assoc, CoreTypes, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
-use crate::dyad::DyadPtr;
 
 /// Operand index of the pointee logos in an `alloc` node (`[pointee, init, op]`).
 const ALLOC_POINTEE: usize = 0;
@@ -104,28 +104,30 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
 
     // `alloc T v`: a fresh-start keyword constructor (NaN precedence → the driver
     // invokes it immediately). Its constructor parses the following typed value.
-    let alloc_ = keyword(cx, "alloc", meta::prec::PREFIX, &["pointee", "init", "op"], |p, _id, tape| {
-        let init = p.take_right(tape)?;
-        let types = p.types();
-        let node = build_alloc(p.store(), &types, init)?;
-        tape.place(node);
-        Ok(crate::parse::Constructed::Placed)
-    });
+    let alloc_ =
+        keyword(cx, "alloc", meta::prec::PREFIX, &["pointee", "init", "op"], |p, _id, tape| {
+            let init = p.take_right(tape)?;
+            let types = p.types();
+            let node = build_alloc(p.store(), &types, init)?;
+            tape.place(node);
+            Ok(crate::parse::Constructed::Placed)
+        });
     let alloc_leaf = callable::mint_native(cx.store, cs.callable, run_alloc, cs.seed_native);
 
     // `own a`: move out of a place; yields the pointer, empties the source.
     // `own a`: move the pointer out, emptying the source; `a` is dead from here
     // (DESIGN ›Memory and concurrency‹, *`own` and `drop` are static*).
-    let own_ = keyword(cx, "own", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
-        let (place, ended) = p.place_operand_cell(tape, true)?;
-        let types = p.types();
-        let node = build_teardown(p.store(), &types, types.own_, place, true)?;
-        tape.place(node);
-        if let Some(ended) = ended {
-            p.mark_dead(ended, node);
-        }
-        Ok(crate::parse::Constructed::Placed)
-    });
+    let own_ =
+        keyword(cx, "own", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
+            let (place, ended) = p.place_operand_cell(tape, true)?;
+            let types = p.types();
+            let node = build_teardown(p.store(), &types, types.own_, place, true)?;
+            tape.place(node);
+            if let Some(ended) = ended {
+                p.mark_dead(ended, node);
+            }
+            Ok(crate::parse::Constructed::Placed)
+        });
     let own_leaf = callable::mint_native(cx.store, cs.callable, run_own, cs.seed_native);
 
     // `drop a`: run the place's destructor eagerly and empty it; `a` is dead
@@ -135,20 +137,21 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     // its type"): an owning place gets the teardown node, anything else an
     // inert `drop` node — the emptying is the parse-time dead mark, and the
     // run-time write is not needed, since no later use can observe the place.
-    let drop_ = keyword(cx, "drop", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
-        let (place, ended) = p.place_operand_cell(tape, true)?;
-        let types = p.types();
-        let node = if is_owning_place(place) {
-            build_teardown(p.store(), &types, types.drop_, place, true)?
-        } else {
-            build_inert_drop(p.store(), &types, place)
-        };
-        tape.place(node);
-        if let Some(ended) = ended {
-            p.mark_dead(ended, node);
-        }
-        Ok(crate::parse::Constructed::Placed)
-    });
+    let drop_ =
+        keyword(cx, "drop", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
+            let (place, ended) = p.place_operand_cell(tape, true)?;
+            let types = p.types();
+            let node = if is_owning_place(place) {
+                build_teardown(p.store(), &types, types.drop_, place, true)?
+            } else {
+                build_inert_drop(p.store(), &types, place)
+            };
+            tape.place(node);
+            if let Some(ended) = ended {
+                p.mark_dead(ended, node);
+            }
+            Ok(crate::parse::Constructed::Placed)
+        });
     cx.lower.insert(drop_, lower_drop);
     let drop_leaf = callable::mint_native(cx.store, cs.callable, run_drop, cs.seed_native);
 
@@ -156,14 +159,15 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     // `own`/`drop` it demands an owning place — only an `alloc`-minted pointer
     // points at heap the allocator can free; freeing a borrow (`&x`) would hand
     // a stack/global address to the allocator.
-    let free_ = keyword(cx, "free", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
-        // The raw teardown verb leaves the name alive: only `own`/`drop` end it.
-        let (place, _) = p.place_operand_cell(tape, false)?;
-        let types = p.types();
-        let node = build_teardown(p.store(), &types, types.free_, place, true)?;
-        tape.place(node);
-        Ok(crate::parse::Constructed::Placed)
-    });
+    let free_ =
+        keyword(cx, "free", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
+            // The raw teardown verb leaves the name alive: only `own`/`drop` end it.
+            let (place, _) = p.place_operand_cell(tape, false)?;
+            let types = p.types();
+            let node = build_teardown(p.store(), &types, types.free_, place, true)?;
+            tape.place(node);
+            Ok(crate::parse::Constructed::Placed)
+        });
 
     // `defer <expr>`: hold `<expr>` for LIFO execution at scope exit. Its own run
     // native is a no-op — the scope machinery runs the inner, never the defer node.
@@ -251,9 +255,9 @@ pub(super) fn build_alloc(
 ) -> Result<DyadPtr, ParseError> {
     // SAFETY: `init` is a reduced dyad just parsed.
     let pointee = match unsafe { crate::identities::numtype_of(types, init) } {
-        crate::identities::Operand::Concrete(_) | crate::identities::Operand::Pointer(_) => {
-            unsafe { crate::identities::scalar_binding_type(store, types, init).0 }
-        }
+        crate::identities::Operand::Concrete(_) | crate::identities::Operand::Pointer(_) => unsafe {
+            crate::identities::scalar_binding_type(store, types, init).0
+        },
         _ => return Err(ParseError::UnsupportedOperands),
     };
     let value = store.alloc_operands(&[pointee, init, types.ops.alloc_]);
@@ -645,7 +649,9 @@ mod tests {
         // While the line is still parsing the entry's `end` is the `drop` node
         // itself, so the second argument already sees a dead name.
         assert_eq!(
-            parse_err("h := fn (x := i32 ?, p := @i32 ?) -> i32 ( x ),\na := alloc i32 1,\nh(drop a, a)"),
+            parse_err(
+                "h := fn (x := i32 ?, p := @i32 ?) -> i32 ( x ),\na := alloc i32 1,\nh(drop a, a)"
+            ),
             ParseError::Resolve(ResolveError::Dead)
         );
     }
@@ -702,7 +708,8 @@ mod tests {
         // surface‹): `drop n` ends it from that line, the redeclaration gets a
         // fresh frame slot, and the inert drop lowers to unit, so the function
         // compiles rather than declining like a heap path would.
-        let (v, live) = run("f := fn (n := i32 ?) -> i32 ( drop n, n := i32 4, n ),\nf.compile(),\nf(1)");
+        let (v, live) =
+            run("f := fn (n := i32 ?) -> i32 ( drop n, n := i32 4, n ),\nf.compile(),\nf(1)");
         assert_eq!(v, 4);
         assert_eq!(live, 0);
     }

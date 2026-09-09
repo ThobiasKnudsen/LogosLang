@@ -57,40 +57,34 @@ pub use numtype::NumType;
 pub mod dyad;
 pub mod record;
 
-#[path = "logos.rs"]
-mod logos_mod;
-#[path = "fn.rs"]
-mod fn_mod;
-#[path = "return.rs"]
-mod return_mod;
-#[path = "bool.rs"]
-pub(crate) mod bool_mod;
-#[path = "if.rs"]
-mod if_mod;
-#[path = "while.rs"]
-mod while_mod;
-#[path = "for.rs"]
-mod for_mod;
 mod and;
 pub(crate) mod array;
 mod assign;
+#[path = "bool.rs"]
+pub(crate) mod bool_mod;
 pub(crate) mod callable;
+mod colon;
 mod comment;
 mod convert;
 pub(crate) mod declare;
 mod divide;
 pub(crate) mod drop_model;
-mod gate;
-pub mod import;
-mod colon;
-pub mod tape;
-mod hole;
-pub(crate) mod instance;
-pub(crate) mod pointer;
 mod eq;
+#[path = "fn.rs"]
+mod fn_mod;
+#[path = "for.rs"]
+mod for_mod;
+mod gate;
 mod ge;
 mod gt;
+mod hole;
+#[path = "if.rs"]
+mod if_mod;
+pub mod import;
+pub(crate) mod instance;
 mod le;
+#[path = "logos.rs"]
+mod logos_mod;
 mod lt;
 pub(crate) mod meta;
 mod minus;
@@ -102,10 +96,16 @@ pub(crate) mod ops;
 mod or;
 mod paren;
 mod plus;
+pub(crate) mod pointer;
 pub(crate) mod rational;
+#[path = "return.rs"]
+mod return_mod;
 mod scope;
 pub(crate) mod string;
+pub mod tape;
 mod times;
+#[path = "while.rs"]
+mod while_mod;
 
 /// The core identities and the per-phase tables that drive them.
 pub struct Core {
@@ -740,7 +740,12 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
     // An arithmetic operator's result logos is its left operand's: resolution
     // committed both operands to one logos and stored the concrete op — not a
     // logos — in the op slot, so the logos is read where it lives.
-    if logos == types.plus || logos == types.minus || logos == types.times || logos == types.div_ || logos == types.rem_ {
+    if logos == types.plus
+        || logos == types.minus
+        || logos == types.times
+        || logos == types.div_
+        || logos == types.rem_
+    {
         let lhs = *((*node).value as *const DyadPtr);
         return numtype_of(types, lhs);
     }
@@ -946,7 +951,8 @@ unsafe fn commit_if_literal(
     if let Operand::Literal = op {
         // A comptime binding used here is its record; the literal folds
         // through it into a value of the committed type at this use.
-        let bits = rational::mold_to(types.through(node), nt).ok_or(ParseError::UncomputableLiteral)?;
+        let bits =
+            rational::mold_to(types.through(node), nt).ok_or(ParseError::UncomputableLiteral)?;
         let value = store.alloc_bytes(&bits.to_ne_bytes()[..nt.bytes()]);
         Ok(store.alloc_raw(type_node, value))
     } else {
@@ -1077,7 +1083,11 @@ pub(crate) unsafe fn check_store_type(
         matches!(numtype_of(types, rhs),
             Operand::Concrete(nt) if nt == numtype::of_type_node(target_ty))
     };
-    if ok { Ok(()) } else { Err(ParseError::TypeMismatch) }
+    if ok {
+        Ok(())
+    } else {
+        Err(ParseError::TypeMismatch)
+    }
 }
 
 /// Whether two pointee logos nodes denote the same logos: the same node (numeric
@@ -1120,9 +1130,7 @@ pub unsafe fn display_value(types: &CoreTypes, node: DyadPtr, bits: i64) -> Stri
         return type_name(types, node);
     }
     // A dyad view (#52) shows as the view it is, not its address bits.
-    if !(*node).ty.is_null()
-        && meta::kind_of((*node).ty) == Some(meta::DYAD_TAG)
-    {
+    if !(*node).ty.is_null() && meta::kind_of((*node).ty) == Some(meta::DYAD_TAG) {
         return "dyad".to_string();
     }
     match numtype_of(types, node) {
@@ -1458,7 +1466,7 @@ mod tests {
             assert_eq!((*sum).ty, core.plus);
             let sops = (*sum).value as *const DyadPtr;
             assert_eq!(core.types().through(*sops), a); // +.lhs is a use of a: its record
-            // +.rhs is the literal `1`, committed to i32 (the logos resolved from `a`).
+                                                        // +.rhs is the literal `1`, committed to i32 (the logos resolved from `a`).
             let one = *sops.add(1);
             assert_eq!((*one).ty, core.i32_);
             assert_eq!(std::ptr::read_unaligned((*one).value as *const i32), 1);
@@ -1516,7 +1524,6 @@ mod tests {
                 "fn () -> i32 ( return a + 1 )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 scopes,
             );
@@ -1545,7 +1552,8 @@ mod tests {
         scopes.push(core.root_scope);
 
         let node = {
-            let mut p = Parser::new("( return 40 + 2 )", &mut store, &mut trie, core.types(), scopes);
+            let mut p =
+                Parser::new("( return 40 + 2 )", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
@@ -1609,7 +1617,6 @@ mod tests {
                 "fn () -> i32 ( return 40 + 2 )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 scopes,
             );
@@ -1654,7 +1661,6 @@ mod tests {
                 "fn (x := i32 ?) -> i32 ( return x )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 scopes,
             );
@@ -1692,7 +1698,6 @@ mod tests {
                 "fn (x := i32 ?, y := i32 ?) -> i32 ( return x + y )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -1703,8 +1708,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             s.declare(&mut trie, "add", test_record(core.record_, add)).unwrap();
-            let mut p =
-                Parser::new("add(40, 2)", &mut store, &mut trie, core.types(), s);
+            let mut p = Parser::new("add(40, 2)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
 
@@ -1715,7 +1719,7 @@ mod tests {
 
         // Compile `add` (installs parameterized bcode); keep the artifact alive.
         // SAFETY: `add` is the fn node just built and outlives the call.
-        let _compiled = unsafe { compile_fn(&mut store, &core.lower, core.types(),add) }.unwrap();
+        let _compiled = unsafe { compile_fn(&mut store, &core.lower, core.types(), add) }.unwrap();
         // JIT: the same `run(call)` now evaluates the arguments and calls native code.
         let jit = unsafe { rt.run(call) }.unwrap();
 
@@ -1731,14 +1735,7 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
 
-        let mut p = Parser::new(
-            "fn () ( return 1 )",
-            &mut store,
-            &mut trie,
-            
-            core.types(),
-            scopes,
-        );
+        let mut p = Parser::new("fn () ( return 1 )", &mut store, &mut trie, core.types(), scopes);
         assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::ExpectedArrow));
     }
 
@@ -1759,7 +1756,6 @@ mod tests {
                 "fn (x := i32 ?, y := i32 ?) -> i32 ( return x + y )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -1771,8 +1767,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             s.declare(&mut trie, "add", test_record(core.record_, add)).unwrap();
-            let mut p =
-                Parser::new("add(40, 2)", &mut store, &mut trie, core.types(), s);
+            let mut p = Parser::new("add(40, 2)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
 
@@ -1800,7 +1795,6 @@ mod tests {
                 "fn (x := i32 ?, y := i32 ?) -> i32 ( return x + y )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -1831,14 +1825,8 @@ mod tests {
         scopes.push(core.root_scope);
 
         let func = {
-            let mut p = Parser::new(
-                "fn () -> i32 ( 40 + 2 )",
-                &mut store,
-                &mut trie,
-                
-                core.types(),
-                scopes,
-            );
+            let mut p =
+                Parser::new("fn () -> i32 ( 40 + 2 )", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
@@ -1880,8 +1868,13 @@ mod tests {
         scopes.push(core.root_scope);
 
         let node = {
-            let mut p =
-                Parser::new("logos (instance (x := i32 ?, y := i32 ?))", &mut store, &mut trie, core.types(), scopes);
+            let mut p = Parser::new(
+                "logos (instance (x := i32 ?, y := i32 ?))",
+                &mut store,
+                &mut trie,
+                core.types(),
+                scopes,
+            );
             p.parse_expression().unwrap()
         };
 
@@ -1920,7 +1913,8 @@ mod tests {
         scopes.push(core.root_scope);
 
         let node = {
-            let mut p = Parser::new("logos (instance (t))", &mut store, &mut trie, core.types(), scopes);
+            let mut p =
+                Parser::new("logos (instance (t))", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
@@ -1975,8 +1969,13 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
         let node = {
-            let mut p =
-                Parser::new("logos (instance (x := i32 ?))", &mut store, &mut trie, core.types(), scopes);
+            let mut p = Parser::new(
+                "logos (instance (x := i32 ?))",
+                &mut store,
+                &mut trie,
+                core.types(),
+                scopes,
+            );
             p.parse_expression().unwrap()
         };
         unsafe {
@@ -2011,7 +2010,7 @@ mod tests {
         // Reset a to 0, then JIT-compile and call, and diff against the oracle.
         unsafe { std::ptr::write_unaligned(a_val as *mut i32, 0) };
         // SAFETY: `root`/`a` live in `store`, which outlives the call.
-        let compiled = unsafe { compile_nullary_i32(&core.lower, core.types(),root) }.unwrap();
+        let compiled = unsafe { compile_nullary_i32(&core.lower, core.types(), root) }.unwrap();
         let jit = unsafe { compiled.call() };
         let jit_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
 
@@ -2045,7 +2044,6 @@ mod tests {
                 "fn () -> i64 ( a = a + 5000000000, a )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 scopes,
             );
@@ -2092,7 +2090,6 @@ mod tests {
                 "fn () -> i32 ( return 40 + 2 )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 scopes,
             );
@@ -2113,7 +2110,7 @@ mod tests {
 
         // Compile installs the exec@ on `func`; keep the artifact alive for the run.
         // SAFETY: `func` is the fn node just built and outlives the call.
-        let _compiled = unsafe { compile_fn(&mut store, &core.lower, core.types(),func) }.unwrap();
+        let _compiled = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
         unsafe {
             let bcode = *((*func).value as *const DyadPtr).add(FN_BCODE);
             assert!(!bcode.is_null()); // bcode installed on the node
@@ -2150,7 +2147,7 @@ mod tests {
         // SAFETY: `node` is the rational literal just parsed.
         assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::UncomputableLiteral));
         // SAFETY: same node; compilation reports the same outcome as the oracle.
-        let compiled = unsafe { compile_nullary_i32(&core.lower, core.types(),node) };
+        let compiled = unsafe { compile_nullary_i32(&core.lower, core.types(), node) };
         assert!(matches!(compiled, Err(crate::compile::CompileError::UncomputableLiteral)));
     }
 
@@ -2205,7 +2202,7 @@ mod tests {
         };
         // Compilation refuses the arity up front.
         // SAFETY: `add4` is the fn node just built.
-        let result = unsafe { compile_fn(&mut store, &core.lower, core.types(),add4) };
+        let result = unsafe { compile_fn(&mut store, &core.lower, core.types(), add4) };
         assert!(matches!(result, Err(crate::compile::CompileError::UnsupportedArity(4))));
 
         // Interpreted, the same function computes (bcode was never installed).
@@ -2213,8 +2210,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             s.declare(&mut trie, "add4", test_record(core.record_, add4)).unwrap();
-            let mut p =
-                Parser::new("add4(1, 2, 3, 4)", &mut store, &mut trie, core.types(), s);
+            let mut p = Parser::new("add4(1, 2, 3, 4)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         let mut rt = Runtime::new(core.types());
@@ -2246,7 +2242,7 @@ mod tests {
         assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::BadValue));
         // Compiler: BadValue, not a baked load from address 0.
         // SAFETY: same node; the lowering guards the null storage.
-        let compiled = unsafe { compile_nullary_i32(&core.lower, core.types(),node) };
+        let compiled = unsafe { compile_nullary_i32(&core.lower, core.types(), node) };
         assert!(matches!(compiled, Err(crate::compile::CompileError::BadValue)));
     }
 
@@ -2271,7 +2267,6 @@ mod tests {
                 "fn () -> i32 ( a + 20 + 12 )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 scopes,
             );
@@ -2336,8 +2331,7 @@ mod tests {
         };
         // SAFETY: `func` is the fn node just parsed and outlives the calls.
         let _fc = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
-        let compiled =
-            unsafe { compile_nullary_i32(&core.lower, core.types(), root) }.unwrap();
+        let compiled = unsafe { compile_nullary_i32(&core.lower, core.types(), root) }.unwrap();
         // SAFETY: the artifacts are alive; the baked storage outlives the call.
         assert_eq!(unsafe { compiled.call() }, 42);
     }
@@ -2367,7 +2361,7 @@ mod tests {
             // SAFETY: `node` is a valid `bool` literal.
             assert_eq!(unsafe { rt.run(node) }.unwrap(), expect);
             // SAFETY: same node; the `bool` lowering bakes its constant.
-            let compiled = unsafe { compile_nullary_i32(&core.lower, core.types(),node) }.unwrap();
+            let compiled = unsafe { compile_nullary_i32(&core.lower, core.types(), node) }.unwrap();
             assert_eq!(unsafe { compiled.call() }, expect);
         }
     }
@@ -2390,7 +2384,7 @@ mod tests {
         // SAFETY: `call`/`func`/body are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` is the fn node just built and outlives the call.
-        let _compiled = unsafe { compile_fn(&mut store, &core.lower, core.types(),func) }.unwrap();
+        let _compiled = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, expect, "interpreter: {src}");
         assert_eq!(jit, interp, "jit != interpreter: {src}");
@@ -2419,7 +2413,6 @@ mod tests {
                 "fn (a := i32 ?) -> i32 ( a - a * 3 )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -2472,7 +2465,6 @@ mod tests {
                 "fn (a := i32 ?) -> i32 ( a < 5 )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -2534,11 +2526,31 @@ mod tests {
         // A concrete operand (`a`) keeps each a node; two literals would fold to a bool.
         use numtype::CmpOp;
         let cases: [(&str, DyadPtr, DyadPtr); 5] = [
-            ("fn (a := i32 ?) -> i32 ( a > 2 )", core.gt, core.ops.cmp_leaf(CmpOp::Gt, NumType::I32)),
-            ("fn (a := i32 ?) -> i32 ( a == 2 )", core.eq, core.ops.cmp_leaf(CmpOp::Eq, NumType::I32)),
-            ("fn (a := i32 ?) -> i32 ( a <= 2 )", core.le, core.ops.cmp_leaf(CmpOp::Le, NumType::I32)),
-            ("fn (a := i32 ?) -> i32 ( a >= 2 )", core.ge, core.ops.cmp_leaf(CmpOp::Ge, NumType::I32)),
-            ("fn (a := i32 ?) -> i32 ( a != 2 )", core.ne, core.ops.cmp_leaf(CmpOp::Ne, NumType::I32)),
+            (
+                "fn (a := i32 ?) -> i32 ( a > 2 )",
+                core.gt,
+                core.ops.cmp_leaf(CmpOp::Gt, NumType::I32),
+            ),
+            (
+                "fn (a := i32 ?) -> i32 ( a == 2 )",
+                core.eq,
+                core.ops.cmp_leaf(CmpOp::Eq, NumType::I32),
+            ),
+            (
+                "fn (a := i32 ?) -> i32 ( a <= 2 )",
+                core.le,
+                core.ops.cmp_leaf(CmpOp::Le, NumType::I32),
+            ),
+            (
+                "fn (a := i32 ?) -> i32 ( a >= 2 )",
+                core.ge,
+                core.ops.cmp_leaf(CmpOp::Ge, NumType::I32),
+            ),
+            (
+                "fn (a := i32 ?) -> i32 ( a != 2 )",
+                core.ne,
+                core.ops.cmp_leaf(CmpOp::Ne, NumType::I32),
+            ),
         ];
         for (src, abstract_op, concrete) in cases {
             let func = {
@@ -2616,8 +2628,7 @@ mod tests {
         let and_sc = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p =
-                Parser::new("false and y < 1", &mut store, &mut trie, core.types(), s);
+            let mut p = Parser::new("false and y < 1", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         assert_eq!(unsafe { rt.run(and_sc) }.unwrap(), 0);
@@ -2626,8 +2637,7 @@ mod tests {
         let or_sc = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p =
-                Parser::new("true or y < 1", &mut store, &mut trie, core.types(), s);
+            let mut p = Parser::new("true or y < 1", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         assert_eq!(unsafe { rt.run(or_sc) }.unwrap(), 1);
@@ -2665,7 +2675,11 @@ mod tests {
             let mut p = Parser::new(src, &mut store, &mut trie, core.types(), s);
             let node = p.parse_expression().unwrap();
             // SAFETY: `node` is the folded bool literal just built.
-            assert_eq!(unsafe { crate::parse::bool_literal_value(&core.types(), node) }, Some(false), "`{src}`");
+            assert_eq!(
+                unsafe { crate::parse::bool_literal_value(&core.types(), node) },
+                Some(false),
+                "`{src}`"
+            );
         }
     }
 
@@ -2695,7 +2709,6 @@ mod tests {
                     "fn (n := i32 ?) -> i32 ( if (n < 1) (100) else (200) )",
                     &mut store,
                     &mut trie,
-                    
                     core.types(),
                     s,
                 );
@@ -2706,15 +2719,15 @@ mod tests {
                 s.push(core.root_scope);
                 s.declare(&mut trie, "f", test_record(core.record_, func)).unwrap();
                 let src = format!("f({arg})");
-                let mut p =
-                    Parser::new(&src, &mut store, &mut trie, core.types(), s);
+                let mut p = Parser::new(&src, &mut store, &mut trie, core.types(), s);
                 p.parse_expression().unwrap()
             };
             let mut rt = Runtime::new(core.types());
             // SAFETY: `call`/`func`/body are valid nodes just parsed.
             let interp = unsafe { rt.run(call) }.unwrap();
             // SAFETY: `func` is the fn node just built and outlives the call.
-            let _compiled = unsafe { compile_fn(&mut store, &core.lower, core.types(),func) }.unwrap();
+            let _compiled =
+                unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
             let jit = unsafe { rt.run(call) }.unwrap();
             assert_eq!(interp, expect, "interpreter n={arg}");
             assert_eq!(jit, interp, "jit != interpreter n={arg}");
@@ -2734,7 +2747,6 @@ mod tests {
             "fn () -> i32 ( if (1) (100) else (200) )",
             &mut store,
             &mut trie,
-            
             core.types(),
             s,
         );
@@ -2744,10 +2756,7 @@ mod tests {
     #[test]
     fn nested_if_matches_between_tiers() {
         // A then-branch that is itself an `if`, exercising nested merge blocks.
-        diff_nullary_fn(
-            "fn () -> i32 ( if (true) ( if (false) (1) else (2) ) else (3) )",
-            2,
-        );
+        diff_nullary_fn("fn () -> i32 ( if (true) ( if (false) (1) else (2) ) else (3) )", 2);
     }
 
     #[test]
@@ -2769,7 +2778,6 @@ mod tests {
                 "fn () -> void ( if (a < 100) (a = a + 1) )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 scopes,
             );
@@ -2830,7 +2838,6 @@ mod tests {
                 "fn () -> void ( if (a < 1) ( if (a < 1) (a = a + 1) ) else (a = a + 2) )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 scopes,
             );
@@ -2883,7 +2890,6 @@ mod tests {
                 "fn (x := i64 ?, y := i64 ?) -> i64 ( x * y )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -2897,7 +2903,6 @@ mod tests {
                 "fn () -> i64 ( mul(2000000000, 3) )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -2938,7 +2943,6 @@ mod tests {
                 "fn (x := f64 ?) -> f64 ( x + 0.5 )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -2946,14 +2950,8 @@ mod tests {
         };
         scopes.declare(&mut trie, "g", test_record(core.record_, g)).unwrap();
         let outer = {
-            let mut p = Parser::new(
-                "fn () -> f64 ( g(a) )",
-                &mut store,
-                &mut trie,
-                
-                core.types(),
-                scopes,
-            );
+            let mut p =
+                Parser::new("fn () -> f64 ( g(a) )", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(outer, std::ptr::null_mut());
@@ -3029,7 +3027,6 @@ mod tests {
                 "fn (x := i32 ?, y := i32 ?) -> i32 ( x + y )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -3041,14 +3038,8 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             s.declare(&mut trie, "add", test_record(core.record_, add)).unwrap();
-            let mut p = Parser::new(
-                "fn () -> i32 ( add(40) )",
-                &mut store,
-                &mut trie,
-                
-                core.types(),
-                s,
-            );
+            let mut p =
+                Parser::new("fn () -> i32 ( add(40) )", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         // SAFETY: `outer` is the fn node just built.
@@ -3075,14 +3066,8 @@ mod tests {
         let func = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new(
-                "fn (x := i32 ?) -> i32 ( x )",
-                &mut store,
-                &mut trie,
-                
-                core.types(),
-                s,
-            );
+            let mut p =
+                Parser::new("fn (x := i32 ?) -> i32 ( x )", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         let mut s = ScopeStack::new();
@@ -3108,7 +3093,6 @@ mod tests {
                 "fact := fn (n := i64 ?) -> i64 ( if (n < 1) (1) else (n * fact(n - 1)) )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -3120,8 +3104,7 @@ mod tests {
         let call = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p =
-                Parser::new("fact(20)", &mut store, &mut trie, core.types(), s);
+            let mut p = Parser::new("fact(20)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         let mut rt = Runtime::new(core.types());
@@ -3165,20 +3148,11 @@ mod tests {
         // ((end-start)/delta).ceil() count): sum = 45. `s := i32 0` re-initializes
         // on each run, so the interpreted and compiled runs agree without a manual
         // reset.
-        diff_nullary_fn(
-            "fn () -> i32 ( s := i32 0, for i in 0..10 ( s = s + i ), s )",
-            45,
-        );
+        diff_nullary_fn("fn () -> i32 ( s := i32 0, for i in 0..10 ( s = s + i ), s )", 45);
         // With a step: 0, 2, 4, 6, 8 sum to 20.
-        diff_nullary_fn(
-            "fn () -> i32 ( s := i32 0, for i in 0..10..2 ( s = s + i ), s )",
-            20,
-        );
+        diff_nullary_fn("fn () -> i32 ( s := i32 0, for i in 0..10..2 ( s = s + i ), s )", 20);
         // An empty range runs zero iterations.
-        diff_nullary_fn(
-            "fn () -> i32 ( s := i32 7, for i in 5..5 ( s = 0 ), s )",
-            7,
-        );
+        diff_nullary_fn("fn () -> i32 ( s := i32 7, for i in 5..5 ( s = 0 ), s )", 7);
     }
 
     #[test]
@@ -3200,7 +3174,6 @@ mod tests {
             "fn (a := i32 ?, b := i64 ?) -> void ( for i in a..b ( a = 0 ) )",
             &mut store,
             &mut trie,
-            
             core.types(),
             s,
         );
@@ -3224,10 +3197,7 @@ mod tests {
         // missing `in`; a non-primary endpoint.
         assert_eq!(parse_err("for i in 0..10..0 ( 1 )"), ParseError::BadStep);
         assert_eq!(parse_err("for i in 10..0..-1 ( 1 )"), ParseError::BadStep);
-        assert_eq!(
-            parse_err("fn () -> i32 ( for i in 0..3 ( 1 ) )"),
-            ParseError::StatementAsValue
-        );
+        assert_eq!(parse_err("fn () -> i32 ( for i in 0..3 ( 1 ) )"), ParseError::StatementAsValue);
         assert_eq!(
             parse_err("fn () -> void ( for i in 0..3 ( return 1 ) )"),
             ParseError::EarlyReturn
@@ -3285,8 +3255,16 @@ mod tests {
         // Settled: a zero divisor yields the logos's MAX — a loud sentinel, easier
         // to discover than 0 — and signed MIN/-1, the other impossible quotient,
         // saturates to MAX too. MIN % -1 is the well-defined 0.
-        diff_typed_call("fn (x := i32 ?, y := i32 ?) -> i32 ( x / y )", "f(10, 0)", i64::from(i32::MAX));
-        diff_typed_call("fn (x := i32 ?, y := i32 ?) -> i32 ( x % y )", "f(10, 0)", i64::from(i32::MAX));
+        diff_typed_call(
+            "fn (x := i32 ?, y := i32 ?) -> i32 ( x / y )",
+            "f(10, 0)",
+            i64::from(i32::MAX),
+        );
+        diff_typed_call(
+            "fn (x := i32 ?, y := i32 ?) -> i32 ( x % y )",
+            "f(10, 0)",
+            i64::from(i32::MAX),
+        );
         diff_typed_call("fn (x := u8 ?, y := u8 ?) -> u8 ( x / y )", "f(7, 0)", 255);
         diff_typed_call(
             "fn (x := i32 ?, y := i32 ?) -> i32 ( x / y )",
@@ -3310,7 +3288,10 @@ mod tests {
             f64::INFINITY.to_bits() as i64,
         );
         // No Cranelift float remainder; `%` over floats is rejected at parse.
-        assert_eq!(parse_err("fn (x := f64 ?) -> f64 ( x % 2.0 )"), ParseError::UnsupportedOperands);
+        assert_eq!(
+            parse_err("fn (x := f64 ?) -> f64 ( x % 2.0 )"),
+            ParseError::UnsupportedOperands
+        );
     }
 
     #[test]
@@ -3333,8 +3314,7 @@ mod tests {
         let node = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p =
-                Parser::new("«hello world»", &mut store, &mut trie, core.types(), s);
+            let mut p = Parser::new("«hello world»", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         // SAFETY: `node` is the string literal just parsed.
@@ -3364,7 +3344,6 @@ mod tests {
                 "fn () -> i32 ( # the answer\n 40 + 2\n # «checked twice» )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -3438,7 +3417,6 @@ mod tests {
                 "incr := fn (p := @i32 ?) -> void ( p@ = p@ + 1 )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -3458,7 +3436,6 @@ mod tests {
                 "fn () -> i32 ( x := i32 41, x = 41, incr(&x), x )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -3535,7 +3512,6 @@ mod tests {
                 "holder := logos (instance (r := @i32 ?))",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -3548,7 +3524,6 @@ mod tests {
                 "fn () -> i32 ( x := i32 7, x = 7, h := holder(&x), h.r@ + 1 )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -3572,10 +3547,7 @@ mod tests {
         // tail. (& of a parameter is no longer misuse: a parameter is a frame
         // place with storage, like a local — see `address_of_a_parameter_works`.)
         assert_eq!(parse_err("( x := i32 1, x@ )"), ParseError::UnsupportedOperands);
-        assert_eq!(
-            parse_err("( x := i32 1, p := &x, p + 1 )"),
-            ParseError::UnsupportedOperands
-        );
+        assert_eq!(parse_err("( x := i32 1, p := &x, p + 1 )"), ParseError::UnsupportedOperands);
         assert_eq!(parse_err("( x := i32 1, p := &x, p = 5 )"), ParseError::TypeMismatch);
         assert_eq!(parse_err("( y := 5, &y )"), ParseError::BadAddressOf);
         assert_eq!(parse_err("fn () -> i32 ( x := i32 1, x = 1, &x )"), ParseError::TypeMismatch);
@@ -3612,8 +3584,7 @@ mod tests {
             let mut p = Parser::new(src, &mut store, &mut trie, core.types(), scopes);
             p.parse_sequence().unwrap()
         };
-        let mut rt = Runtime::new(core.types())
-            .with_compiler(&core.lower, core.types());
+        let mut rt = Runtime::new(core.types()).with_compiler(&core.lower, core.types());
         // SAFETY: `root` is the sequence just parsed; its exprs are valid.
         unsafe { rt.run(root) }
     }
@@ -3657,7 +3628,9 @@ mod tests {
         // `compile` … and `run`"): write the body, compile, and the next call
         // runs the machine code — same answer the body walk gives.
         assert_eq!(
-            run_script("double := fn (x := i64 ?) -> i64 ( x + x ),\ndouble.compile(),\ndouble(21)"),
+            run_script(
+                "double := fn (x := i64 ?) -> i64 ( x + x ),\ndouble.compile(),\ndouble(21)"
+            ),
             42
         );
         // Compiled recursion through the member: the self-call jumps too.
@@ -3734,11 +3707,7 @@ mod tests {
         // write through `p` targets `a`'s frame slot, and the following read
         // of `a` must see it on both tiers. A promoted `a` would return the
         // stale 5.
-        diff_typed_call(
-            "fn (x := i64 ?) -> i64 ( a := i64 5, p := &a, p@ = 7, a + x )",
-            "f(1)",
-            8,
-        );
+        diff_typed_call("fn (x := i64 ?) -> i64 ( a := i64 5, p := &a, p@ = 7, a + x )", "f(1)", 8);
     }
 
     #[test]
@@ -3779,7 +3748,6 @@ mod tests {
                 "f := fn (p := @i32 ?) -> void ( p@ = 1 )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -3799,7 +3767,6 @@ mod tests {
             "point := logos (instance (x := i32 ?, y := i32 ?))",
             store,
             trie,
-            
             core.types(),
             s,
         );
@@ -3824,7 +3791,6 @@ mod tests {
                 "fn () -> i32 ( p := point(3, 4), p.x = p.x + 36, p.x + p.y + 2 )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -3856,7 +3822,6 @@ mod tests {
                 "cell := logos (instance (a := u8 ?, b := i64 ?, c := i32 ?))",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -3869,7 +3834,6 @@ mod tests {
                 "fn (n := i64 ?) -> i64 ( q := cell(200, n, 7), q.b + i64(q.a) + i64(q.c) )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -3879,14 +3843,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             s.declare(&mut trie, "f", test_record(core.record_, func)).unwrap();
-            let mut p = Parser::new(
-                "f(5000000000)",
-                &mut store,
-                &mut trie,
-                
-                core.types(),
-                s,
-            );
+            let mut p = Parser::new("f(5000000000)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         let mut rt = Runtime::new(core.types());
@@ -3958,8 +3915,7 @@ mod tests {
         let node = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p =
-                Parser::new("( x := 5, x + 1 )", &mut store, &mut trie, core.types(), s);
+            let mut p = Parser::new("( x := 5, x + 1 )", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         let mut rt = Runtime::new(core.types());
@@ -4023,8 +3979,7 @@ mod tests {
         let decl = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p =
-                Parser::new("x := 5", &mut store, &mut trie, core.types(), s);
+            let mut p = Parser::new("x := 5", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         // The declare node carries the name and the bound value: a rational
@@ -4075,13 +4030,8 @@ mod tests {
         let x = store.alloc_raw(core.i32_, x_val);
         s.declare(&mut trie, "x", test_record(core.record_, x)).unwrap();
 
-        let mut p = Parser::new(
-            "(x + x):dyad.type.roles[0]",
-            &mut store,
-            &mut trie,
-            core.types(),
-            s,
-        );
+        let mut p =
+            Parser::new("(x + x):dyad.type.roles[0]", &mut store, &mut trie, core.types(), s);
         let role = p.parse_expression().unwrap();
         // SAFETY: `role` is the role-name string node the read just yielded.
         unsafe {
@@ -4113,8 +4063,7 @@ mod tests {
         let decl = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p =
-                Parser::new("pub x := 5", &mut store, &mut trie, core.types(), s);
+            let mut p = Parser::new("pub x := 5", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         // SAFETY: `decl` is the declare node just parsed.
@@ -4152,8 +4101,7 @@ mod tests {
         let decl = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p =
-                Parser::new("pub x := i32 ?", &mut store, &mut trie, core.types(), s);
+            let mut p = Parser::new("pub x := i32 ?", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         // SAFETY: `decl` is the declare node just parsed.
@@ -4215,12 +4163,8 @@ mod tests {
 
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        let mut p =
-            Parser::new("pub pub x := 5", &mut store, &mut trie, core.types(), s);
-        assert!(matches!(
-            p.parse_expression(),
-            Err(crate::parse::ParseError::DoubleGate)
-        ));
+        let mut p = Parser::new("pub pub x := 5", &mut store, &mut trie, core.types(), s);
+        assert!(matches!(p.parse_expression(), Err(crate::parse::ParseError::DoubleGate)));
     }
 
     #[test]
@@ -4232,8 +4176,7 @@ mod tests {
         {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p =
-                Parser::new("y := 1", &mut store, &mut trie, core.types(), s);
+            let mut p = Parser::new("y := 1", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap();
         }
         let mut s = ScopeStack::new();
@@ -4263,7 +4206,6 @@ mod tests {
                 "fact := fn (n := i32 ?) -> i32 ( if (n < 1) (1) else (n * fact(n - 1)) )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -4275,8 +4217,7 @@ mod tests {
                 let mut s = ScopeStack::new();
                 s.push(core.root_scope);
                 let src = format!("fact({arg})");
-                let mut p =
-                    Parser::new(&src, &mut store, &mut trie, core.types(), s);
+                let mut p = Parser::new(&src, &mut store, &mut trie, core.types(), s);
                 p.parse_expression().unwrap()
             };
             let mut rt = Runtime::new(core.types());
@@ -4302,7 +4243,6 @@ mod tests {
                 "fact := fn (n := i32 ?) -> i32 ( if (n < 1) (1) else (n * fact(n - 1)) )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -4321,8 +4261,7 @@ mod tests {
                 let mut s = ScopeStack::new();
                 s.push(core.root_scope);
                 let src = format!("fact({arg})");
-                let mut p =
-                    Parser::new(&src, &mut store, &mut trie, core.types(), s);
+                let mut p = Parser::new(&src, &mut store, &mut trie, core.types(), s);
                 p.parse_expression().unwrap()
             };
             // SAFETY: `call` applies the bound `fact` to a literal.
@@ -4344,8 +4283,7 @@ mod tests {
                 let mut s = ScopeStack::new();
                 s.push(core.root_scope);
                 let src = format!("fact({arg})");
-                let mut p =
-                    Parser::new(&src, &mut store, &mut trie, core.types(), s);
+                let mut p = Parser::new(&src, &mut store, &mut trie, core.types(), s);
                 p.parse_expression().unwrap()
             };
             // SAFETY: `_compiled` is alive; `call` applies the compiled `fact`.
@@ -4523,8 +4461,7 @@ mod tests {
         let call = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p =
-                Parser::new("outer(5)", &mut store, &mut trie, core.types(), s);
+            let mut p = Parser::new("outer(5)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         let mut rt = Runtime::new(core.types());
@@ -4539,9 +4476,7 @@ mod tests {
         // the same capture — caught at parse as CapturedLocal, not surfacing as
         // an unrelated no-storage error at run time.
         assert_eq!(
-            parse_err(
-                "outer := fn (a := i32 ?) -> i32 ( inner := fn () -> i32 ( a ), inner() )"
-            ),
+            parse_err("outer := fn (a := i32 ?) -> i32 ( inner := fn () -> i32 ( a ), inner() )"),
             ParseError::CapturedLocal,
         );
         assert_eq!(
@@ -4628,7 +4563,6 @@ mod tests {
                 "fn (x := i32 ?, y := i32 ?) -> i32 ( x + y )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 s,
             );
@@ -4639,21 +4573,16 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             s.declare(&mut trie, "add", test_record(core.record_, add)).unwrap();
-            let mut p = Parser::new(
-                "fn () -> i32 ( add(40, 2) )",
-                &mut store,
-                &mut trie,
-                
-                core.types(),
-                s,
-            );
+            let mut p =
+                Parser::new("fn () -> i32 ( add(40, 2) )", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(outer, std::ptr::null_mut());
 
         // Compile `add` first so `outer`'s call has a machine address to bake.
         // SAFETY: `add` is the fn node just built and outlives every call.
-        let _compiled_add = unsafe { compile_fn(&mut store, &core.lower, core.types(), add) }.unwrap();
+        let _compiled_add =
+            unsafe { compile_fn(&mut store, &core.lower, core.types(), add) }.unwrap();
 
         let mut rt = Runtime::new(core.types());
         // Oracle: interpret `outer` (its body calls the already-compiled `add`).
@@ -4662,7 +4591,8 @@ mod tests {
 
         // Compile `outer`: `add(40, 2)` becomes a call_indirect to `add`'s address.
         // SAFETY: `outer` is the fn node just built; both compiled artifacts are alive.
-        let _compiled_outer = unsafe { compile_fn(&mut store, &core.lower, core.types(), outer) }.unwrap();
+        let _compiled_outer =
+            unsafe { compile_fn(&mut store, &core.lower, core.types(), outer) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
 
         assert_eq!(interp, 42);
@@ -4701,8 +4631,16 @@ mod tests {
     #[test]
     fn integer_width_arithmetic_matches_between_tiers() {
         // i64 multiplication that overflows i32 (10^10) but fits i64 — proves the width.
-        diff_typed_call("fn (x := i64 ?, y := i64 ?) -> i64 ( x * y )", "f(100000, 100000)", 10_000_000_000);
-        diff_typed_call("fn (x := i64 ?, y := i64 ?) -> i64 ( x + y )", "f(1000000, 2000000)", 3_000_000);
+        diff_typed_call(
+            "fn (x := i64 ?, y := i64 ?) -> i64 ( x * y )",
+            "f(100000, 100000)",
+            10_000_000_000,
+        );
+        diff_typed_call(
+            "fn (x := i64 ?, y := i64 ?) -> i64 ( x + y )",
+            "f(1000000, 2000000)",
+            3_000_000,
+        );
         // u8 addition wraps at 256: 200 + 100 = 44.
         diff_typed_call("fn (x := u8 ?, y := u8 ?) -> u8 ( x + y )", "f(200, 100)", 44);
         // i16 subtraction, signed negative result.
@@ -4757,23 +4695,48 @@ mod tests {
         // f64 add with a molded `1.5` beside a typed f64 variable (2.5): 2.5 + 1.5 = 4.0.
         // Result is the f64 bit-container, so both tiers must reinterpret bits the same
         // way across the ABI (interpreter read/mold vs JIT bitcast).
-        diff_var_fn(NumType::F64, 2.5f64.to_bits() as i64, "fn () -> f64 ( a + 1.5 )", 4.0f64.to_bits() as i64);
-        diff_var_fn(NumType::F64, 2.5f64.to_bits() as i64, "fn () -> f64 ( a - 0.5 )", 2.0f64.to_bits() as i64);
+        diff_var_fn(
+            NumType::F64,
+            2.5f64.to_bits() as i64,
+            "fn () -> f64 ( a + 1.5 )",
+            4.0f64.to_bits() as i64,
+        );
+        diff_var_fn(
+            NumType::F64,
+            2.5f64.to_bits() as i64,
+            "fn () -> f64 ( a - 0.5 )",
+            2.0f64.to_bits() as i64,
+        );
     }
 
     #[test]
     fn f32_arithmetic_matches_between_tiers() {
         // f32 add: the f32 bits ride the low 32 of the container (zero-extended), a
         // different ABI path than f64, so it is worth its own diff.
-        diff_var_fn(NumType::F32, i64::from(2.5f32.to_bits()), "fn () -> f32 ( a + 1.5 )", i64::from(4.0f32.to_bits()));
+        diff_var_fn(
+            NumType::F32,
+            i64::from(2.5f32.to_bits()),
+            "fn () -> f32 ( a + 1.5 )",
+            i64::from(4.0f32.to_bits()),
+        );
     }
 
     #[test]
     fn f64_comparison_matches_between_tiers() {
         // f64 `<` (an fcmp), true and false, gated through `if` so the result is the
         // i32 bool the comparison yields. a = 2.5.
-        diff_var_fn(NumType::F64, 2.5f64.to_bits() as i64, "fn () -> i32 ( if (a < 3.0) (100) else (200) )", 100);
-        diff_var_fn(NumType::F64, 2.5f64.to_bits() as i64, "fn () -> i32 ( if (a < 2.0) (100) else (200) )", 200);
+        diff_var_fn(
+            NumType::F64,
+            2.5f64.to_bits() as i64,
+            "fn () -> i32 ( if (a < 3.0) (100) else (200) )",
+            100,
+        );
+        diff_var_fn(
+            NumType::F64,
+            2.5f64.to_bits() as i64,
+            "fn () -> i32 ( if (a < 2.0) (100) else (200) )",
+            200,
+        );
     }
 
     /// Parse `src` at expression scope and return the error it fails with.
@@ -4799,7 +4762,12 @@ mod tests {
         diff_typed_call("fn (x := i8 ?) -> u8 ( u8(x) )", "f(i8(255))", 255);
         diff_typed_call("fn (x := i32 ?) -> i32 ( i32(x) )", "f(42)", 42);
         // u32 3e9 reinterpreted as i32: 3_000_000_000 - 2^32.
-        diff_var_fn(NumType::U32, 3_000_000_000, "fn () -> i32 ( i32(a) )", 3_000_000_000i64 - 4_294_967_296);
+        diff_var_fn(
+            NumType::U32,
+            3_000_000_000,
+            "fn () -> i32 ( i32(a) )",
+            3_000_000_000i64 - 4_294_967_296,
+        );
         // u64 300 -> u8 wraps to 44.
         diff_var_fn(NumType::U64, 300, "fn () -> u8 ( u8(a) )", 44);
     }
@@ -4811,10 +4779,25 @@ mod tests {
         diff_typed_call("fn (x := i32 ?) -> f64 ( f64(x) )", "f(3)", 3.0f64.to_bits() as i64);
         diff_var_fn(NumType::F64, 3.7f64.to_bits() as i64, "fn () -> i32 ( i32(a) )", 3);
         diff_var_fn(NumType::F64, (-3.7f64).to_bits() as i64, "fn () -> i32 ( i32(a) )", -3);
-        diff_var_fn(NumType::F64, 1e20f64.to_bits() as i64, "fn () -> i32 ( i32(a) )", i64::from(i32::MAX));
-        diff_var_fn(NumType::F64, (-1e20f64).to_bits() as i64, "fn () -> i32 ( i32(a) )", i64::from(i32::MIN));
+        diff_var_fn(
+            NumType::F64,
+            1e20f64.to_bits() as i64,
+            "fn () -> i32 ( i32(a) )",
+            i64::from(i32::MAX),
+        );
+        diff_var_fn(
+            NumType::F64,
+            (-1e20f64).to_bits() as i64,
+            "fn () -> i32 ( i32(a) )",
+            i64::from(i32::MIN),
+        );
         // f64 -> f32 demote.
-        diff_var_fn(NumType::F64, 1.5f64.to_bits() as i64, "fn () -> f32 ( f32(a) )", i64::from(1.5f32.to_bits()));
+        diff_var_fn(
+            NumType::F64,
+            1.5f64.to_bits() as i64,
+            "fn () -> f32 ( f32(a) )",
+            i64::from(1.5f32.to_bits()),
+        );
     }
 
     #[test]
@@ -4857,7 +4840,6 @@ mod tests {
                 "fn () -> void ( a = a + 1 )",
                 &mut store,
                 &mut trie,
-                
                 core.types(),
                 scopes,
             );
@@ -4935,7 +4917,7 @@ mod tests {
         let fn_src = "fn (c := i32 ?) -> i64 ( if (c < 1) (2000000000 + 2000000000) else (0) )";
         diff_typed_call(fn_src, "f(0)", 4_000_000_000); // then-branch taken
         diff_typed_call(fn_src, "f(5)", 0); // else-branch taken
-        // The else-branch commits too.
+                                            // The else-branch commits too.
         let fn_src = "fn (c := i32 ?) -> i64 ( if (c < 1) (0) else (2000000000 + 2000000000) )";
         diff_typed_call(fn_src, "f(5)", 4_000_000_000);
     }
@@ -4952,7 +4934,6 @@ mod tests {
             "fn (x := i32 ?, y := i64 ?) -> i64 ( x + y )",
             &mut store,
             &mut trie,
-            
             core.types(),
             s,
         );
@@ -4971,7 +4952,6 @@ mod tests {
             "fn (x := i32 ?) -> i32 ( x + 1.5 )",
             &mut store,
             &mut trie,
-            
             core.types(),
             s,
         );
@@ -4988,8 +4968,7 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
 
-        let mut p =
-            Parser::new("logos () + 1", &mut store, &mut trie, core.types(), scopes);
+        let mut p = Parser::new("logos () + 1", &mut store, &mut trie, core.types(), scopes);
         assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::UnsupportedOperands));
     }
 }

@@ -291,11 +291,9 @@ impl RegexTrie {
     pub fn get(&self, string: &str) -> Result<MatchResult<'_>, RegexTrieError> {
         debug_assert!(!string.is_empty());
         match self.longest(string.as_bytes(), 0)? {
-            Some((matched, leaf)) => Ok(MatchResult {
-                matched,
-                regex_key: &leaf.regex_key,
-                records: &leaf.records,
-            }),
+            Some((matched, leaf)) => {
+                Ok(MatchResult { matched, regex_key: &leaf.regex_key, records: &leaf.records })
+            }
             None => Err(RegexTrieError::NodeNotFound),
         }
     }

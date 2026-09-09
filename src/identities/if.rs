@@ -20,7 +20,7 @@ use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc};
+use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
 
 /// The index of the condition in an `if` node's value record.
