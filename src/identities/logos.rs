@@ -17,10 +17,19 @@
 //! shared name index and resolve by open-scope filtering (a per-record names
 //! store is recorded as rejected).
 //!
-//! The field-list parse lives in [`crate::parse::Parser::parse_record`] because
-//! it needs the parser's tape, scope stack, and reentrant expression parse;
-//! here we only create the root, attach its constructor, and register the
-//! field-list punctuation `:` and `,` it consumes.
+//! The definition body's parse lives in
+//! [`crate::parse::Parser::parse_type_body`] because it needs the parser's
+//! tape, scope stack, and reentrant expression parse (DESIGN ›The constructor
+//! is a field‹, #61): a body is a scope whose bare lines fill the four slots
+//! `type` declares for every type it builds — `precedence`, `associativity`,
+//! `constructor`, `destructor`, filled with `=` — or declare its own members,
+//! and whose `instance (…)` block holds the per-instance fields. Here we only
+//! create the root, attach its constructor, and register what the body
+//! consumes: `,`, `instance`, the two associativity values `left` and
+//! `right` (identities of type `type`, like a keyword, ruled 9 September
+//! 2026), and the four slot markers.
+
+use crate::parse::SLOT_NAMES;
 
 use super::{meta, Cx};
 use crate::store::Store;
@@ -36,10 +45,10 @@ pub(super) fn register_root(store: &mut Store) -> DyadPtr {
     logos_
 }
 
-/// Spell the root, attach its merged constructor, and register the field-list
-/// punctuation (`:`, `,`) the record path consumes, returning the two
-/// punctuation handles.
-pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
+/// Spell the root, attach its constructor, and register what a definition
+/// body consumes: `,`, `instance`, `left`, `right`, and the four slot
+/// markers, returned in that order.
+pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, [DyadPtr; 4]) {
     // The spelling: `type` resolves to the root as a first-class value (DESIGN
     // ›Substrate vocabulary‹, ruled 4 September 2026: `type` is the ground and
     // the definition keyword, `logos` names the language). `logos` stays a
@@ -49,17 +58,17 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
     // trie and `root_scope` exist.
     cx.declare("type", cx.type_);
     cx.declare("logos", cx.type_);
-    // The merged constructor: a following `( field-list )` builds a record
-    // logos; anything else declines the right and the constructor "yields its
-    // own dyad as-is" — the classifier as a value (DESIGN ›Expressions are
-    // self-delimiting‹), exactly the numeric logos' shape.
+    // The constructor: a following `( body )` defines a type; anything else
+    // declines the right and the constructor "yields its own dyad as-is" —
+    // the classifier as a value (DESIGN ›Expressions are self-delimiting‹),
+    // exactly the numeric logos' shape.
     cx.metas.insert(cx.type_, |p, id, tape| {
         // The definition bracket is read at discovery only (DESIGN: `type`
         // "reads its own bracket … constructed at discovery, before the
         // bracket is lexed"); woken at a boundary — the `-> type` of a return
         // logos — the classifier stands as its own value.
         if p.discovering() && p.at_open() {
-            let node = p.parse_record(id)?;
+            let node = p.parse_type_body(id)?;
             tape.place(node);
             return Ok(crate::parse::Constructed::Placed);
         }
@@ -68,6 +77,31 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
         Ok(crate::parse::Constructed::Placed)
     });
 
+    // `instance (…)`: the per-instance fields of the type being defined,
+    // read at discovery like every bracket reader (the word itself recorded
+    // as open, 2 September 2026).
+    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::READER);
+    let instance_ = cx.store.alloc_raw(cx.type_, record);
+    cx.declare("instance", instance_);
+    cx.metas.insert(instance_, |p, id, tape| p.construct_instance_block(id, tape));
+
+    // `left` and `right`: associativity's two values, identities of type
+    // `type` with nothing behind them — a type's own record, not a
+    // delimiter's, so each stands as an operand (`^.associativity == right`).
+    let side = |cx: &mut Cx, name: &str| {
+        let record = meta::record(cx.store, meta::TYPEREC_TAG, meta::prec::INERT);
+        let id = cx.store.alloc_raw(cx.type_, record);
+        cx.declare(name, id);
+        id
+    };
+    let left_ = side(cx, "left");
+    let right_ = side(cx, "right");
+
+    // The four slot markers: what the slot names denote inside a body
+    // (declared there per definition), never spelled outside one. Both slots
+    // undefined, so a read or an ordinary `=` on them is refused at parse.
+    let slots = SLOT_NAMES.map(|_| cx.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut()));
+
     // `:` is no declaration operator (DESIGN ›Declarations are immutable by
     // default‹, ruled 2 September 2026): `key := T ?` is the valueless form,
     // and the seed's `:` stood in only until the driver converged (#59).
@@ -75,5 +109,5 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
     let comma = cx.store.alloc_raw(cx.type_, record);
     cx.declare(",", comma);
 
-    comma
+    (comma, instance_, left_, right_, slots)
 }

@@ -713,6 +713,40 @@ impl ScopeStack {
         }
     }
 
+    /// Declare `name` denoting the record in the current scope, checked
+    /// against its *siblings* alone (DESIGN ›The constructor is a field‹:
+    /// "a field's declaration is checked only against its siblings", so
+    /// `x := 1, p := type (instance (x := i32 ?))` is legal): a live record
+    /// of the spelling in this very scope is [`ResolveError::Shadowed`]; one
+    /// in an enclosing scope stands beside it, both live only until this
+    /// scope closes — and a field's type names no sibling, so nothing inside
+    /// the list resolves the spelling.
+    pub fn declare_field(
+        &mut self,
+        trie: &mut RegexTrie,
+        name: &str,
+        record: DyadPtr,
+    ) -> Result<(), ResolveError> {
+        let scope = self.current().expect("declare needs an open scope");
+        match trie.get(name) {
+            Ok(m) if m.matched == name.len() => {
+                // SAFETY: every pointer the trie stores is a record dyad.
+                let fields = |r: DyadPtr| unsafe { *Record::of(r) };
+                if m.records.iter().any(|&r| fields(r).scope == scope && !fields(r).is_dead()) {
+                    return Err(ResolveError::Shadowed);
+                }
+            }
+            Ok(_) | Err(RegexTrieError::NodeNotFound) => {}
+            Err(e) => return Err(ResolveError::Index(e)),
+        }
+        // SAFETY: `record` is a record dyad from the store, built for this name.
+        unsafe { Record::of(record).scope = scope };
+        trie.insert(name, record);
+        self.journal.push(Journal::Declared { name: name.to_string(), scope });
+        self.pending.push(Pending { record, endpoint: Endpoint::Start });
+        Ok(())
+    }
+
     /// Re-point `record` at `identity`. Used by the declaration fixpoint when
     /// the value turns out to *be* an existing identity (a logos): the name
     /// becomes another spelling of that node — its own record, one per name,
@@ -875,6 +909,13 @@ pub struct CoreTypes {
     pub close_sq_: DyadPtr,
     /// `,` — the one explicit separator.
     pub sep_: DyadPtr,
+    /// `instance` — the per-instance block of a type body (#61).
+    pub instance_: DyadPtr,
+    /// `left` and `right` — associativity's two values.
+    pub left_: DyadPtr,
+    pub right_: DyadPtr,
+    /// The four slot markers a type body declares, in [`SLOT_NAMES`] order.
+    pub slots: [DyadPtr; 4],
     /// `->` — the return-logos arrow.
     pub arrow_: DyadPtr,
     /// `else` — the branch token `if`'s constructor consumes.
@@ -936,6 +977,43 @@ pub unsafe fn fn_frame_size(fn_node: DyadPtr) -> usize {
     }
 }
 
+
+/// The four slots `type` declares for every type it builds (DESIGN ›The
+/// constructor is a field‹), in the order the markers on
+/// [`CoreTypes::slots`] and [`SlotKind`] follow.
+pub const SLOT_NAMES: [&str; 4] = ["precedence", "associativity", "constructor", "destructor"];
+
+/// One of the four slots, by [`SLOT_NAMES`] position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlotKind {
+    Precedence = 0,
+    Associativity = 1,
+    Constructor = 2,
+    Destructor = 3,
+}
+
+impl SlotKind {
+    /// The slot at `i` in [`SLOT_NAMES`].
+    fn of(i: usize) -> Self {
+        match i {
+            0 => SlotKind::Precedence,
+            1 => SlotKind::Associativity,
+            2 => SlotKind::Constructor,
+            _ => SlotKind::Destructor,
+        }
+    }
+}
+
+/// A `type (…)` definition being parsed (#61): its body scope, and what its
+/// lines have filled so far — the head the type node takes at the close, the
+/// constructor to install, and the `instance (…)` block's layout.
+struct OpenType {
+    scope: DyadPtr,
+    precedence: f64,
+    assoc: Assoc,
+    ctor: DyadPtr,
+    instance: Option<(DyadPtr, DyadPtr, u64)>,
+}
 
 /// Whether a constructor applied. A constructor never hands a result to a
 /// scheduling driver: it edits the tape *in place* — usually replacing its own
@@ -1001,6 +1079,25 @@ pub enum ParseError {
     /// A Logos-written constructor, invoked for an appearance of its identity
     /// (#61), failed while running; carries the rendered run error.
     ConstructorFailed(Box<String>),
+    /// A line of a `type (…)` body that neither fills a slot, declares a
+    /// member, opens `instance (…)`, nor is prose (#61).
+    TypeBodyLine,
+    /// `instance (…)` written outside a type body's own lines.
+    InstanceOutsideType,
+    /// A second `instance (…)` block in one type body.
+    DoubleInstance,
+    /// A binding in a type body inserted a teardown, which no scope exit runs.
+    DeferInTypeBody,
+    /// `precedence = …` whose value is not a number known at the definition.
+    NonComptimePrecedence,
+    /// `associativity = …` with something other than `left` or `right`.
+    BadAssociativity,
+    /// `constructor = …` with something other than a function taking the
+    /// tape by value.
+    BadConstructorSignature,
+    /// `destructor = …`: a Logos-written destructor, which `drop` cannot run
+    /// yet — refused rather than accepted and never run.
+    DestructorNotYet,
     /// An operator lacked a reduced operand on one side.
     MissingOperand,
     /// The tape did not reduce to a single dyad (a dangling operator or operand).
@@ -1329,6 +1426,10 @@ pub struct Parser<'a> {
     /// the rebinding would happen once, at the wrong time, and on both runtime
     /// branches. Comptime-taken `if` branches do not count (they run iff parsed).
     runtime_depth: u32,
+    /// The type definitions open around the current position, innermost
+    /// last (#61): a `type (…)` body pushes one while its lines parse, and
+    /// the slot fills and the `instance (…)` block write into it.
+    definitions: Vec<OpenType>,
     /// The constructor-inserted teardown registry (issue #49), one list per open
     /// scope. A binding of an owning value (`a := alloc …`) pushes `defer free a`
     /// onto the top list; [`Parser::parse_sequence`] drains it into the scope's
@@ -1407,6 +1508,7 @@ impl<'a> Parser<'a> {
             holes: HashSet::new(),
             frames: Vec::new(),
             runtime_depth: 0,
+            definitions: Vec::new(),
             pending_defers: vec![Vec::new()],
             dir: PathBuf::from("."),
             imports: Imports::default(),
@@ -2094,6 +2196,26 @@ impl<'a> Parser<'a> {
     ///
     /// [`RECORD_TAG`]: crate::identities::meta::RECORD_TAG
     pub fn parse_record(&mut self, record_logos: DyadPtr) -> Result<DyadPtr, ParseError> {
+        let (scope, fields_arr, size_bytes) = self.parse_field_list(false)?;
+        let record = crate::identities::meta::record_layout(
+            self.store,
+            scope,
+            fields_arr,
+            size_bytes,
+            std::ptr::null_mut(),
+            crate::identities::meta::prec::APPLY,
+            Assoc::Left,
+        );
+        Ok(self.store.alloc_raw(record_logos, record.cast()))
+    }
+
+    /// The field list `( name := T ?, name, … )`: its scope, its `fields`
+    /// array, and the packed size. A `fn`'s parameter list checks each name
+    /// against every open scope (the body reopens the list's scope, so a
+    /// parameter may not shadow a name the body could still mean); an
+    /// `instance (…)` block's fields are checked against their siblings alone
+    /// (`relaxed`; DESIGN ›The constructor is a field‹).
+    fn parse_field_list(&mut self, relaxed: bool) -> Result<(DyadPtr, DyadPtr, u64), ParseError> {
         self.expect_open()?;
         // The record's own scope: a `scope`-typed node keyed by address for
         // open-scope membership. Field names are declared into it.
@@ -2136,7 +2258,11 @@ impl<'a> Parser<'a> {
             // open-scope filtering over that one index (DESIGN ›Name resolution
             // is scope-filtered‹; a per-record names store is recorded as
             // rejected).
-            self.declare_name(name, field)?;
+            if relaxed {
+                self.declare_field_name(name, field)?;
+            } else {
+                self.declare_name(name, field)?;
+            }
             fields.push(field);
             if !self.consume_separator() {
                 break;
@@ -2165,16 +2291,227 @@ impl<'a> Parser<'a> {
             })
             .sum();
         let fields_arr = crate::identities::array::build(self.store, self.types.array_, &fields);
-        let record = crate::identities::meta::record_layout(
-            self.store,
+        Ok((scope, fields_arr, size_bytes))
+    }
+
+    /// `type (…)`'s body (DESIGN ›The constructor is a field‹, #61): an
+    /// ordinary scope whose bare lines "belong to the identity itself — they
+    /// fill its own slots (its constructor, its precedence) and may declare
+    /// new members that live on it", while its `instance (…)` block holds
+    /// what lives on instances. The four slots `type` declares for every
+    /// type it builds — `precedence`, `associativity`, `constructor`,
+    /// `destructor` — are declared first, as records over the shared markers,
+    /// so `precedence := 5` is the no-shadowing error and `precedence = …`
+    /// the fill ([`Parser::slot_fill`]). Every other line must declare a
+    /// member, open the instance block, or be prose: a type body is
+    /// definition-time code and nothing runs it later, so a line that would
+    /// only run is refused. The type node then carries the instance layout,
+    /// this scope as its body (members read `g.y`), the precedence and
+    /// associativity filled (the call defaults otherwise), and the Logos
+    /// constructor installed in its slot.
+    pub fn parse_type_body(&mut self, id: DyadPtr) -> Result<DyadPtr, ParseError> {
+        self.expect_open()?;
+        let scope = self.store.alloc_raw(self.types.scope, std::ptr::null_mut());
+        self.scopes.push(scope);
+        let slots = self.types.slots;
+        for (name, marker) in SLOT_NAMES.iter().zip(slots) {
+            self.declare_field_name(name, marker)?;
+        }
+        self.definitions.push(OpenType {
             scope,
-            fields_arr,
+            precedence: crate::identities::meta::prec::APPLY,
+            assoc: Assoc::Left,
+            ctor: std::ptr::null_mut(),
+            instance: None,
+        });
+        // A `fn` literal on a slot's right side must not claim the enclosing
+        // declaration's placeholder (`x := type (constructor = fn …)`).
+        let suppressed = self.take_pending_fn();
+        self.pending_defers.push(Vec::new());
+        let lines = self.type_body_lines(scope);
+        let defers = self.pending_defers.pop().expect("pushed above");
+        self.restore_pending_fn(suppressed);
+        let def = self.definitions.pop().expect("pushed above");
+        self.scopes.pop();
+        lines?;
+        if !defers.is_empty() {
+            return Err(ParseError::DeferInTypeBody);
+        }
+        self.expect_close()?;
+        let (field_scope, fields, size_bytes) = match def.instance {
+            Some(instance) => instance,
+            None => {
+                let field_scope = self.store.alloc_raw(self.types.scope, std::ptr::null_mut());
+                let fields = crate::identities::array::build(self.store, self.types.array_, &[]);
+                (field_scope, fields, 0)
+            }
+        };
+        let layout = crate::identities::meta::record_layout(
+            self.store,
+            field_scope,
+            fields,
             size_bytes,
-            std::ptr::null_mut(),
-            crate::identities::meta::prec::APPLY,
-            Assoc::Left,
+            scope,
+            def.precedence,
+            def.assoc,
         );
-        Ok(self.store.alloc_raw(record_logos, record.cast()))
+        let node = self.store.alloc_raw(id, layout.cast());
+        if !def.ctor.is_null() {
+            // SAFETY: `node` was just built; nothing has read its slot.
+            unsafe { crate::identities::meta::install_constructor(node, def.ctor) };
+        }
+        Ok(node)
+    }
+
+    /// The lines of a type body, each settled as the body item of the
+    /// names it declared and checked to be one of the kinds a body holds.
+    fn type_body_lines(&mut self, scope: DyadPtr) -> Result<(), ParseError> {
+        while let Some(item) = self.parse_next() {
+            let item = item?;
+            self.scopes.settle_item(scope, item);
+            // SAFETY: `item` is a reduced dyad just parsed.
+            let ok = unsafe {
+                let ty = (*item).ty;
+                crate::identities::numtype::is_comment_type(ty)
+                    || ty == self.types.declare_
+                    || self.types.through(item) == self.types.instance_
+            };
+            if !ok {
+                return Err(ParseError::TypeBodyLine);
+            }
+        }
+        Ok(())
+    }
+
+    /// `instance`'s constructor: inside a type body's own lines, the block
+    /// of per-instance fields (`name := T ?`, a place per instance), parsed
+    /// as a field list checked against its siblings alone; the identity then
+    /// stands as its value, the line's item. Anywhere else the block has no
+    /// type to belong to.
+    pub(crate) fn construct_instance_block(
+        &mut self,
+        id: DyadPtr,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        if !(self.discovering() && self.at_open()) {
+            let value = self.stand_as_value(tape, id);
+            tape.place(value);
+            return Ok(Constructed::Placed);
+        }
+        let Some(def) = self.definitions.last() else {
+            return Err(ParseError::InstanceOutsideType);
+        };
+        if self.scopes.current() != Some(def.scope) {
+            return Err(ParseError::InstanceOutsideType);
+        }
+        if def.instance.is_some() {
+            return Err(ParseError::DoubleInstance);
+        }
+        let instance = self.parse_field_list(true)?;
+        self.definitions.last_mut().expect("checked above").instance = Some(instance);
+        let value = self.stand_as_value(tape, id);
+        tape.place(value);
+        Ok(Constructed::Placed)
+    }
+
+    /// Which slot of the type being defined `target` names, if any: a record
+    /// over one of the four markers, declared in the innermost open
+    /// definition's own scope, which must be the current one — a
+    /// `precedence = 3` inside a constructor's body is that function's own
+    /// business, not the enclosing type's.
+    pub(crate) fn slot_of(&self, target: DyadPtr) -> Option<SlotKind> {
+        let def = self.definitions.last()?;
+        if self.scopes.current() != Some(def.scope) {
+            return None;
+        }
+        // SAFETY: `target` is a reduced dyad from the store.
+        unsafe {
+            if (*target).ty != self.types.record_ {
+                return None;
+            }
+            let r = Record::of(target);
+            if r.scope != def.scope {
+                return None;
+            }
+            self.types.slots.iter().position(|&m| m == r.dyad).map(SlotKind::of)
+        }
+    }
+
+    /// Fill a slot of the type being defined (DESIGN ›The constructor is a
+    /// field‹: "A slot `type` declared is filled with `=`"). The precedence
+    /// is the value's number, run now — `*.precedence + 1` is comptime field
+    /// arithmetic — so it must be known at the definition (the seed's form of
+    /// "resolved by the operator's first use"); the associativity is `left`
+    /// or `right`; the constructor a function taking the tape by value; a
+    /// destructor is refused, since `drop` runs only the seed's own. The fill
+    /// is a silent statement, the declare node the type variable's fill
+    /// yields.
+    pub(crate) fn slot_fill(&mut self, kind: SlotKind, value: DyadPtr) -> Result<DyadPtr, ParseError> {
+        use crate::identities::numtype::NumType;
+        let types = self.types;
+        // SAFETY: `value` is a reduced dyad from the store.
+        let read = unsafe { types.through(value) };
+        let def = self.definitions.last_mut().expect("slot_of found an open definition");
+        match kind {
+            SlotKind::Precedence => {
+                // SAFETY: as above.
+                let nt = match unsafe { crate::identities::numtype_of(&types, value) } {
+                    crate::identities::Operand::Literal => None,
+                    crate::identities::Operand::Concrete(nt) => Some(nt),
+                    _ => return Err(ParseError::NonComptimePrecedence),
+                };
+                let bits = match nt {
+                    None => crate::identities::rational::mold_to(read, NumType::F64)
+                        .ok_or(ParseError::UncomputableLiteral)?,
+                    Some(_) => {
+                        let mut rt = crate::run::Runtime::new(types);
+                        // SAFETY: as above.
+                        unsafe { rt.run(value) }.map_err(|_| ParseError::NonComptimePrecedence)?
+                    }
+                };
+                def.precedence = match nt {
+                    None | Some(NumType::F64) => f64::from_bits(bits as u64),
+                    Some(NumType::F32) => f64::from(f32::from_bits(bits as u32)),
+                    Some(_) => bits as f64,
+                };
+            }
+            SlotKind::Associativity => {
+                def.assoc = if read == types.left_ {
+                    Assoc::Left
+                } else if read == types.right_ {
+                    Assoc::Right
+                } else {
+                    return Err(ParseError::BadAssociativity);
+                };
+            }
+            SlotKind::Constructor => {
+                // SAFETY: `read` is a reduced dyad; a fn node's value is its
+                // five slots, its input a record whose fields are the params.
+                let takes_tape = unsafe {
+                    (*read).ty == types.fn_type && {
+                        let input = *((*read).value as *const DyadPtr).add(FN_INPUT);
+                        let params = crate::identities::array::items(
+                            crate::identities::meta::record_fields_of(input),
+                        );
+                        params.len() == 1 && (*params[0]).ty == types.tape.parsing_tape
+                    }
+                };
+                if !takes_tape {
+                    return Err(ParseError::BadConstructorSignature);
+                }
+                def.ctor = read;
+            }
+            SlotKind::Destructor => return Err(ParseError::DestructorNotYet),
+        }
+        let name = SLOT_NAMES[kind as usize];
+        let name_node = crate::identities::string::build_text(self.store, types.string_, name.as_bytes());
+        Ok(crate::identities::declare::build(
+            self.store,
+            types.declare_,
+            types.ops.declare_,
+            name_node,
+            value,
+        ))
     }
 
     /// Parse a function literal `fn ( params ) -> ret ( body )` (DESIGN ›A
@@ -3217,6 +3554,15 @@ impl<'a> Parser<'a> {
         Ok(record)
     }
 
+    /// Declare `name` as a field, checked against its siblings alone
+    /// ([`ScopeStack::declare_field`]).
+    fn declare_field_name(&mut self, name: &str, identity: DyadPtr) -> Result<DyadPtr, ParseError> {
+        let scope = self.scopes.current().expect("declare needs an open scope");
+        let record = Record::alloc(self.store, self.types.record_, Record::new(identity, scope));
+        self.scopes.declare_field(self.trie, name, record).map_err(ParseError::Resolve)?;
+        Ok(record)
+    }
+
     pub(crate) fn mark_dead(&mut self, ended: Ended, node: DyadPtr) {
         self.scopes.mark_dead(ended.record, node);
     }
@@ -3828,6 +4174,7 @@ impl<'a> Parser<'a> {
             canon.parent().map(Into::into).unwrap_or_else(|| PathBuf::from(".")),
         );
         let saved_frames = std::mem::take(&mut self.frames);
+        let saved_definitions = std::mem::take(&mut self.definitions);
         let saved_pending_fn = std::mem::replace(&mut self.pending_fn, std::ptr::null_mut());
         let saved_runtime_depth = std::mem::replace(&mut self.runtime_depth, 0);
 
@@ -3839,6 +4186,7 @@ impl<'a> Parser<'a> {
         self.scopes = saved_scopes;
         self.dir = saved_dir;
         self.frames = saved_frames;
+        self.definitions = saved_definitions;
         self.pending_fn = saved_pending_fn;
         self.runtime_depth = saved_runtime_depth;
 
@@ -4088,17 +4436,21 @@ impl<'a> Parser<'a> {
                 NumType::F64,
                 meta::precedence_of(logos).to_bits() as i64,
             )),
-            "associativity" => Ok(self.scalar_value(
-                NumType::I64,
-                match meta::assoc_of(logos) {
-                    Assoc::Left => 0,
-                    Assoc::Right => 1,
-                },
-            )),
+            // Associativity's values are the two identities `left` and
+            // `right` (DESIGN ›The constructor is a field‹).
+            "associativity" => Ok(match meta::assoc_of(logos) {
+                Assoc::Left => self.types.left_,
+                Assoc::Right => self.types.right_,
+            }),
+            // The constructor: the Logos function a body filled the slot
+            // with (#61), or the view of a native leaf.
             "constructor" => {
                 let c = meta::constructor_of(logos);
                 if c.is_null() {
                     return Err(ParseError::BadReflectRead);
+                }
+                if (*c).ty == self.types.fn_type {
+                    return Ok(c);
                 }
                 Ok(self.store.alloc_raw(self.types.dyad_, c as *mut u8))
             }

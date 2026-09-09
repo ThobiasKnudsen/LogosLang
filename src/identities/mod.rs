@@ -241,6 +241,14 @@ pub struct Core {
     pub close_sq_: DyadPtr,
     /// `,` — the one explicit separator (parse-only).
     pub sep_: DyadPtr,
+    /// `instance` — the per-instance block of a type body (#61).
+    pub instance_: DyadPtr,
+    /// `left` and `right` — associativity's two values.
+    pub left_: DyadPtr,
+    pub right_: DyadPtr,
+    /// The four slot markers a type body declares (`precedence`,
+    /// `associativity`, `constructor`, `destructor`), in [`SLOT_NAMES`] order.
+    pub slots: [DyadPtr; 4],
     /// `->` — the return-logos arrow (parse-only).
     pub arrow_: DyadPtr,
     /// `else` — the branch token `if`'s constructor consumes (parse-only).
@@ -412,7 +420,7 @@ impl Core {
         let dyad_ = dyad::register(&mut cx);
         let colon_ = colon::register(&mut cx);
         hole::register(&mut cx);
-        let sep_ = logos_mod::register_syntax(&mut cx);
+        let (sep_, instance_, left_, right_, slots) = logos_mod::register_syntax(&mut cx);
         // Struct instances: the construction statement and the `.` field access.
         let (construct_, construct_leaf, dot_, index_, close_sq_) =
             instance::register(&mut cx, &callables);
@@ -526,6 +534,10 @@ impl Core {
             close_,
             close_sq_,
             sep_,
+            instance_,
+            left_,
+            right_,
+            slots,
             arrow_,
             else_,
             in_,
@@ -596,6 +608,10 @@ impl Core {
             close_: self.close_,
             close_sq_: self.close_sq_,
             sep_: self.sep_,
+            instance_: self.instance_,
+            left_: self.left_,
+            right_: self.right_,
+            slots: self.slots,
             arrow_: self.arrow_,
             else_: self.else_,
             in_: self.in_,
@@ -1865,7 +1881,7 @@ mod tests {
 
         let node = {
             let mut p =
-                Parser::new("logos (x := i32 ?, y := i32 ?)", &mut store, &mut trie, core.types(), scopes);
+                Parser::new("logos (instance (x := i32 ?, y := i32 ?))", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
@@ -1904,7 +1920,7 @@ mod tests {
         scopes.push(core.root_scope);
 
         let node = {
-            let mut p = Parser::new("logos (t)", &mut store, &mut trie, core.types(), scopes);
+            let mut p = Parser::new("logos (instance (t))", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
@@ -1960,7 +1976,7 @@ mod tests {
         scopes.push(core.root_scope);
         let node = {
             let mut p =
-                Parser::new("logos (x := i32 ?)", &mut store, &mut trie, core.types(), scopes);
+                Parser::new("logos (instance (x := i32 ?))", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
         unsafe {
@@ -2296,7 +2312,7 @@ mod tests {
         scopes.push(core.root_scope);
         let root = {
             let mut p = Parser::new(
-                "double := fn (x := i32 ?) -> i32 ( x + x ),\npoint := logos (a := i32 ?),\ndouble(21)",
+                "double := fn (x := i32 ?) -> i32 ( x + x ),\npoint := logos (instance (a := i32 ?)),\ndouble(21)",
                 &mut store,
                 &mut trie,
                 
@@ -3516,7 +3532,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "holder := logos (r := @i32 ?)",
+                "holder := logos (instance (r := @i32 ?))",
                 &mut store,
                 &mut trie,
                 
@@ -3744,7 +3760,7 @@ mod tests {
         // the member intercept fires only when the lhs is fn-typed, so the
         // spelling is not globally reserved (unlike `.logos`).
         assert_eq!(
-            run_script("point := logos (compile := i32 ?),\np := point(7),\np.compile"),
+            run_script("point := logos (instance (compile := i32 ?)),\np := point(7),\np.compile"),
             7
         );
     }
@@ -3775,12 +3791,12 @@ mod tests {
         assert_eq!(p.parse_expression(), Err(ParseError::TypeMismatch));
     }
 
-    /// Declare `point := logos (x : i32, y : i32)` in the root scope.
+    /// Declare `point := logos (instance (x := i32 ?, y := i32 ?))` in the root scope.
     fn declare_point(store: &mut Store, trie: &mut RegexTrie, core: &Core) {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(
-            "point := logos (x := i32 ?, y := i32 ?)",
+            "point := logos (instance (x := i32 ?, y := i32 ?))",
             store,
             trie,
             
@@ -3837,7 +3853,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "cell := logos (a := u8 ?, b := i64 ?, c := i32 ?)",
+                "cell := logos (instance (a := u8 ?, b := i64 ?, c := i32 ?))",
                 &mut store,
                 &mut trie,
                 
@@ -4422,7 +4438,7 @@ mod tests {
         unsafe {
             assert_recursion_both_tiers(
                 &[
-                    "point := logos ( x := i32 ?, y := i32 ? )",
+                    "point := logos ( instance ( x := i32 ?, y := i32 ? ) )",
                     "h := fn (n := i32 ?) -> i32 ( pt := point(n, 0), if (n < 1) (0) else (h(n - 1), pt.x) )",
                 ],
                 "h",

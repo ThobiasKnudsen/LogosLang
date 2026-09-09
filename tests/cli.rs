@@ -158,6 +158,46 @@ fn the_view_reads_the_cell_and_operands_are_ordinary_fields() {
 }
 
 #[test]
+fn a_type_body_fills_its_slots_and_declares_its_members() {
+    // DESIGN ›The constructor is a field‹ (#61): the four slots `type`
+    // declares are filled with `=` — the precedence spelled relative, the
+    // associativity one of the two identities `left` and `right` (of type
+    // `type`, like a keyword, ruled 9 September 2026) — bare `:=` lines are
+    // the type's own members, read `g.y`, and `instance (…)` holds the
+    // per-instance fields, checked against their siblings alone.
+    let (echoes, stderr) = repl(
+        b"t := type (precedence = *.precedence + 1, associativity = right)\n\
+          t.precedence\nt.associativity == right\nright:dyad.type == type\n",
+    );
+    assert_eq!(echoes, ["71.0", "true", "true"], "stderr: {stderr}");
+    let (echoes, stderr) = repl(b"g := type (y := 3, z := y + 3)\ng.y\ng.z\ng.precedence\n");
+    assert_eq!(echoes, ["3", "6", "91.0"], "stderr: {stderr}");
+    let (echoes, stderr) = repl(b"x := 1\np := type (instance (x := i32 ?))\nq := p(2)\nq.x\nx\n");
+    assert_eq!(echoes, ["2", "1"], "stderr: {stderr}");
+}
+
+#[test]
+fn a_type_body_refuses_what_is_not_its_own() {
+    // `:=` on a slot name is the no-shadowing error; a member may not shadow
+    // an outer name; `instance` belongs in a body, once; a line that would
+    // only run is refused; the slot values are checked.
+    for (src, expect) in [
+        (&b"t := type (precedence := 5)\n"[..], "shadowed"),
+        (b"y := 1\ng := type (y := 3)\n", "shadowed"),
+        (b"instance (x := i32 ?)\n", "belongs inside a type body"),
+        (b"t := type (instance (a := i32 ?), instance (b := i32 ?))\n", "one `instance"),
+        (b"t := type (5)\n", "a type body line"),
+        (b"t := type (associativity = 5)\n", "`left` or `right`"),
+        (b"t := type (constructor = fn (a := i32 ?) -> void ( a = 1 ))\n", "parsing_tape"),
+        (b"t := type (destructor = fn (tape := parsing_tape ?) -> void ( tape.remove(1) ))\n", "destructor"),
+        (b"g := fn (n := i32 ?) -> type ( type (precedence = n) )\n", "known when the type is defined"),
+    ] {
+        let (_echoes, stderr) = repl(src);
+        assert!(stderr.contains(expect), "{}: stderr: {stderr}", String::from_utf8_lossy(src));
+    }
+}
+
+#[test]
 fn an_and_group_of_non_booleans_is_data_not_a_condition() {
     // `and` over two non-booleans is a group the consuming operator
     // distributes over (DESIGN, 7 September 2026; the seed's `append`), so
@@ -642,11 +682,11 @@ fn a_field_the_record_has_not_is_the_same_error_as_an_undeclared_dot_field() {
         stderr.lines().next().and_then(|l| l.split("error: ").nth(1)).unwrap_or("").to_string()
     }
     let (_e, via_record) = repl(b"x := i32 5\nx:type\n");
-    let (_e, via_dot) = repl(b"p := type (a := i32 ?)\nq := p(1)\nq.scope\n");
+    let (_e, via_dot) = repl(b"p := type (instance (a := i32 ?))\nq := p(1)\nq.scope\n");
     assert_eq!(message(&via_record), message(&via_dot), "record: {via_record}\ndot: {via_dot}");
     assert!(via_record.contains("not in scope"), "stderr: {via_record}");
     let (_e, via_record) = repl(b"x := i32 5\nx:nonexistent\n");
-    let (_e, via_dot) = repl(b"p := type (a := i32 ?)\nq := p(1)\nq.nonexistent\n");
+    let (_e, via_dot) = repl(b"p := type (instance (a := i32 ?))\nq := p(1)\nq.nonexistent\n");
     assert_eq!(message(&via_record), message(&via_dot), "record: {via_record}\ndot: {via_dot}");
     assert!(via_record.contains("unknown name"), "stderr: {via_record}");
 }
@@ -686,7 +726,7 @@ fn assignment_returns_nothing() {
     assert!(stderr.contains("yields no value"), "stderr: {stderr}");
     let (_e, stderr) = repl(b"a := i32 1\ny := (a = 2) + 1\n");
     assert!(!stderr.is_empty(), "stderr: {stderr}");
-    let (echoes, stderr) = repl(b"p := type (v := i32 ?)\nq := p(1)\nq.v = 3\nq.v\na := i32 1\na = a + 1\na\n");
+    let (echoes, stderr) = repl(b"p := type (instance (v := i32 ?))\nq := p(1)\nq.v = 3\nq.v\na := i32 1\na = a + 1\na\n");
     assert_eq!(echoes, ["3", "2"], "stderr: {stderr}");
 }
 
@@ -697,7 +737,7 @@ fn a_tight_read_lexes_its_right_cell_on_demand_and_stops_at_a_boundary() {
     // by the `tape[1]` read inside the constructor; a lazy read never crosses
     // a `,` or a closer, and an inner `@` constructs before the outer one.
     let (echoes, stderr) = repl(
-        b"x := i32 5\n(x:end, 3)\np := type (a := i32 ?)\nq := p(1)\n(q.a, 2)\nq.a\n\
+        b"x := i32 5\n(x:end, 3)\np := type (instance (a := i32 ?))\nq := p(1)\n(q.a, 2)\nq.a\n\
           r := &q\nr@.a\npp := &r\npp@@.a\nx:dyad.type == i32\n",
     );
     assert_eq!(echoes, ["3", "2", "1", "1", "1", "true"], "stderr: {stderr}");

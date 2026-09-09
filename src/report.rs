@@ -132,6 +132,23 @@ pub fn parse_message(e: &ParseError) -> String {
             "declarations of non-numeric types are not in the seed yet"
                 .into()
         }
+        ParseError::TypeBodyLine => {
+            "a type body line fills a slot (`precedence = …`), declares a member (`y := …`), or opens `instance (…)`"
+                .into()
+        }
+        ParseError::InstanceOutsideType => "`instance (…)` belongs inside a type body".into(),
+        ParseError::DoubleInstance => "a type body has one `instance (…)` block".into(),
+        ParseError::DeferInTypeBody => "a type body cannot own what needs a teardown".into(),
+        ParseError::NonComptimePrecedence => {
+            "a precedence must be a number known when the type is defined".into()
+        }
+        ParseError::BadAssociativity => "associativity is `left` or `right`".into(),
+        ParseError::BadConstructorSignature => {
+            "a constructor is `fn (tape := parsing_tape ?) -> void (…)`".into()
+        }
+        ParseError::DestructorNotYet => {
+            "a destructor written in Logos is not run by drop yet".into()
+        }
         ParseError::ConstructorFailed(msg) => {
             format!("this identity's constructor failed while parsing: {msg}")
         }

@@ -1,1 +1,1 @@
-dyad := type (type := @dyad ?, value := @void ?)
+dyad := type (instance (type := @dyad ?, value := @void ?))

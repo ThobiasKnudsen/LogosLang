@@ -109,8 +109,10 @@ bool := type ?         # a comparison's result type; an if condition must be one
 @exec := type ?
 
 callable := type (          # the complete jump info — the ONE representation of jumpable code, never a bare address
-    entry := @exec ?
-    convention := @dyad ?    # the declared calling-convention identity
+    instance (
+        entry := @exec ?
+        convention := @dyad ?    # the declared calling-convention identity
+    )
 )
 
 if := ?

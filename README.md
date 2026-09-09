@@ -74,12 +74,12 @@ if s > 10 (s) else (0)         # 16
 ### Records
 
 ```logos
-point := type ( x := i32 ?, y := i32 ? ),
+point := type ( instance ( x := i32 ?, y := i32 ? ) ),
 p := point (3, 4),
 p.x + p.y                      # 7
 ```
 
-`type` is both the root of every type chain and the keyword that defines one. A type with per-instance fields is a record. A type whose members are all shared is a namespace. The ruled spelling puts the per-instance fields in an `instance ( … )` block inside the body; today's seed still takes them as bare lines, as above.
+`type` is both the root of every type chain and the keyword that defines one. The per-instance fields live in the `instance ( … )` block; the body's own lines fill the type's slots (`precedence`, `associativity`, `constructor`) or declare members of the type itself, read as `point.member`. A type with per-instance fields is a record. A type whose members are all its own is a namespace.
 
 ### Types are values
 
