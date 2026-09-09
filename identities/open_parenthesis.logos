@@ -1,9 +1,9 @@
 # ( is the scope opener and the driver (DESIGN ›The scope's constructor is the driver‹, eager-segment model,
 # ruled 30 August 2026; respelled to it 5 September 2026). constructed at discovery, it lexes its interior one
-# cell at a time: a cell whose identity's precedence is at or above ('s own is constructed the moment it is lexed
+# cell at a time: a cell whose identity's parse_rank is at or above ('s own is constructed the moment it is lexed
 # — #, «, import, an inner (, and the identities that read their own bracket: fn, for, while, defer, type, a
 # language, an instance — and every other cell waits. at a segment boundary — a , or the closing ) — the cells
-# lexed since the previous boundary are constructed highest precedence first, associativity breaking ties, each
+# lexed since the previous boundary are constructed highest parse_rank first, associativity breaking ties, each
 # constructor taking what it needs from the fully lexed segment, left or right, any arity, with no lookahead; a
 # cell still unconstructed afterwards is the checked error. the constructed cells, in order, are the scope's
 # expressions, the array the scope dyad's value references. no holding, no re-invocation.
@@ -17,7 +17,7 @@
         while true (
             cell := tape[i]              # lexes the next token on demand
             if cell == lex «)»[0] or cell == lex «,»[0] (
-                # segment boundary: construct what was lexed since the previous one, highest precedence first
+                # segment boundary: construct what was lexed since the previous one, highest parse_rank first
                 while true (
                     k := highest_unconstructed(tape, first, i)      # ties broken by associativity; ? when none is left
                     if k == ? break
