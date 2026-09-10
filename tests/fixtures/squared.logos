@@ -3,8 +3,8 @@
 # constructor, written here, during the parse). Its constructor retypes its
 # own cell into a call of `sq` and takes the cell to its left as the
 # operand; its parse_rank sits one above `*`'s, so `2 * x squared` squares
-# first. The `code` slot, which would make `squared` its own operation
-# rather than a call of `sq`, is issue #63.
+# first. A `code` slot (#63) would make `squared` its own operation; this
+# file keeps the other shape a constructor may build, a call of a function.
 sq := fn (a := i32 ?) -> i32 ( a * a ),
 squared := type (
     parse_rank = *.parse_rank + 1,

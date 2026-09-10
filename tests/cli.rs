@@ -157,7 +157,7 @@ fn the_view_reads_the_cell_and_operands_are_ordinary_fields() {
 
 #[test]
 fn a_type_body_fills_its_slots_and_declares_its_members() {
-    // DESIGN ›The constructor is a field‹ (#61): the five slots `type`
+    // DESIGN ›The constructor is a field‹ (#61): the six slots `type`
     // declares are filled with `=` — the parse_rank spelled relative, the
     // associativity one of the two identities `left` and `right` (of type
     // `type`, like a keyword, ruled 9 September 2026) — bare `:=` lines are
@@ -178,6 +178,9 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
     // The superseded spelling is no slot: inside a body it is an unknown name.
     let (echoes, stderr) = repl(b"s := type (precedence = 5)\n");
     assert!(echoes.is_empty() && stderr.contains("unknown name"), "stderr: {stderr}");
+    // `code` holds a function and nothing else (#63).
+    let (echoes, stderr) = repl(b"c := type (code = 5)\n");
+    assert!(echoes.is_empty() && stderr.contains("must be a function"), "stderr: {stderr}");
     let (echoes, stderr) = repl(b"x := 1\np := type (instance (x := i32 ?))\nq := p(2)\nq.x\nx\n");
     assert_eq!(echoes, ["2", "1"], "stderr: {stderr}");
 }
@@ -199,9 +202,9 @@ fn any_spelling_the_index_can_hold_is_nameable() {
     assert_eq!(echoes, ["6", "3", "-1", "7"], "stderr: {stderr}");
     // The fresh `^` is the leftover cell of its line, reported at its column.
     assert!(stderr.contains("<repl>:1:2: error:"), "stderr: {stderr}");
-    // The pinned demo minus its `code` slot (#63): `^` defined with `type`,
-    // right-associative, above `*`, its constructor in Logos, used glued
-    // (`x^3`) inside a function that compiles. 9 + 512 + 18.
+    // The demo's operator with its `code` slot (#63): `^` defined with
+    // `type`, right-associative, above `*`, its constructor and its code in
+    // Logos, used glued (`x^3`) inside a function that compiles. 9 + 512 + 18.
     let out = logos().args(["import", "tests/fixtures/caret.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "539\n");

@@ -228,7 +228,19 @@ impl Lowerer<'_, '_> {
         // callee. The operator identities are plain logos with lowering rules
         // above; only real functions are fn-typed.
         if !op.is_null() && (*op).ty == self.types.fn_type {
-            return self.lower_call(node);
+            return self.lower_call_to(op, node);
+        }
+        // A type carrying a `code` is the call kind (#63; DESIGN ›Execution is
+        // function application‹): the node lowers as a call of that function.
+        // A frame place of such a type is not one and falls through.
+        if !op.is_null()
+            && crate::identities::meta::is_record_type(op)
+            && frame_ref((*node).value).is_none()
+        {
+            let code = crate::identities::meta::code_of(op);
+            if !code.is_null() {
+                return self.lower_call_to(code, node);
+            }
         }
         // A pointer-typed leaf (an `&x` literal or a pointer variable): pointer
         // logos nodes are created per use, so they are not in the identity-keyed
@@ -813,9 +825,14 @@ impl Lowerer<'_, '_> {
     /// ([`CompileError::ArityMismatch`], mirroring the interpreter).
     ///
     /// # Safety
-    /// `node` must be a call node from the store whose `logos` is a user function.
-    unsafe fn lower_call(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
-        let callee = (*node).ty;
+    /// `callee` must be a `fn` node from the store and `node` a node whose
+    /// value is its null-terminated argument run (the node's own type is the
+    /// callee, or a type whose `code` the callee is).
+    unsafe fn lower_call_to(
+        &mut self,
+        callee: DyadPtr,
+        node: DyadPtr,
+    ) -> Result<Value, CompileError> {
         let fields = (*callee).value as *const DyadPtr;
         if fields.is_null() {
             return Err(CompileError::UncompiledCallee(callee));

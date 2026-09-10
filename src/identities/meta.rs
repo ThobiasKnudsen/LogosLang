@@ -34,7 +34,9 @@
 //! [18..26]   u64  destructor  (0: undefined until drop semantics exist)
 //! [26..34]   f64  lex_rank — recognizer order among pattern spellings
 //!                 (0 until a type body sets it; the seed registers none)
-//! [34..]     payload, per kind:
+//! [34..42]   u64  code — the `fn` node a type body's `code = …` filled (#63):
+//!                 what a node of the type runs and compiles as, or 0
+//! [42..]     payload, per kind:
 //!              ADDR              pointee logos node (`dyad@`)
 //!              TUPLE/LIST         u8 arity, then arity × `dyad@` role-name strings
 //! ```
@@ -118,9 +120,14 @@ const DTOR_OFF: usize = 18;
 /// ruled 10 September 2026: among the patterns matching at a position the
 /// highest lex_rank wins, whatever its length).
 const LEXRANK_OFF: usize = 26;
+/// Byte offset of the code slot (DESIGN ›Execution is function application‹,
+/// ruled 4 September 2026: "if the type carries a `code`, run that function on
+/// it"; #63). Where the slot is stored is the seed's own placement: the spec
+/// leaves it open (Thobias, 10 September 2026).
+const CODE_OFF: usize = 34;
 /// Byte offset of the kind-specific payload (a pointer logos's pointee, or an
 /// operand record's arity + roles).
-pub(crate) const PAYLOAD_OFF: usize = 34;
+pub(crate) const PAYLOAD_OFF: usize = 42;
 
 /// The one parse_rank axis every identity is placed on (DESIGN ›The scope's
 /// constructor is the driver‹, ruled 30 August 2026: "Every identity nameable
@@ -298,7 +305,8 @@ fn header(kind: u8, assoc: Assoc, parse_rank: f64) -> [u8; PAYLOAD_OFF] {
     };
     h[PREC_OFF..CTOR_OFF].copy_from_slice(&parse_rank.to_ne_bytes());
     // CTOR_OFF..DTOR_OFF and DTOR_OFF..LEXRANK_OFF stay zero: reserved; the
-    // lex_rank at LEXRANK_OFF..PAYLOAD_OFF is 0 until a type body sets it.
+    // lex_rank at LEXRANK_OFF..CODE_OFF is 0 and the code at CODE_OFF..PAYLOAD_OFF
+    // null until a type body sets them.
     let _ = DTOR_OFF;
     h
 }
@@ -345,6 +353,26 @@ pub(crate) unsafe fn install_constructor(id: DyadPtr, leaf: DyadPtr) {
 /// the identity's teardown.
 pub(crate) unsafe fn install_destructor(id: DyadPtr, leaf: DyadPtr) {
     std::ptr::write_unaligned((*id).value.add(DTOR_OFF) as *mut DyadPtr, leaf);
+}
+
+/// The `code` stored in `id`'s record (#63): the `fn` node a type body's
+/// `code = …` filled, what a node of the type runs and compiles as (DESIGN
+/// ›Execution is function application‹: "if the type carries a `code`, run
+/// that function on it"), or null for a type with nothing to run.
+///
+/// # Safety
+/// As [`parse_rank_of`].
+pub(crate) unsafe fn code_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned((*id).value.add(CODE_OFF) as *const DyadPtr)
+}
+
+/// Install `f` (a `fn` node) as `id`'s code — the type body's writer, run
+/// once at the close while the record is under construction.
+///
+/// # Safety
+/// `id` must carry a record and `f` must be a `fn` node from the store.
+pub(crate) unsafe fn install_code(id: DyadPtr, f: DyadPtr) {
+    std::ptr::write_unaligned((*id).value.add(CODE_OFF) as *mut DyadPtr, f);
 }
 
 /// The record kind of `id`, or `None` for a null value slot (a still-unbound

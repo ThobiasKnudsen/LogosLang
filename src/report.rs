@@ -145,6 +145,7 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::BadConstructorSignature => {
             "a constructor is `fn (tape := parsing_tape ?) -> void (…)`".into()
         }
+        ParseError::BadCodeSlot => "`code` must be a function".into(),
         ParseError::DestructorNotYet => {
             "a destructor written in Logos is not run by drop yet".into()
         }

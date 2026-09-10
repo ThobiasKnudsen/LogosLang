@@ -251,9 +251,10 @@ pub struct Core {
     /// `left` and `right` — associativity's two values.
     pub left_: DyadPtr,
     pub right_: DyadPtr,
-    /// The five slot markers a type body declares (`parse_rank`,
-    /// `associativity`, `constructor`, `destructor`), in [`SLOT_NAMES`] order.
-    pub slots: [DyadPtr; 5],
+    /// The six slot markers a type body declares (`parse_rank`, `lex_rank`,
+    /// `associativity`, `constructor`, `destructor`, `code`), in
+    /// [`SLOT_NAMES`] order.
+    pub slots: [DyadPtr; 6],
     /// `->` — the return-logos arrow (parse-only).
     pub arrow_: DyadPtr,
     /// `else` — the branch token `if`'s constructor consumes (parse-only).
@@ -872,6 +873,14 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
     // placeholder with no published signature (the value did not open with `fn`)
     // falls back to the i32 default. A void-returning callee yields no numeric
     // value (and its output has no NumType).
+    // A type carrying a `code` is the call kind (#63; DESIGN ›Execution is
+    // function application‹): a node of it yields what its code yields.
+    let logos =
+        if !logos.is_null() && meta::is_record_type(logos) && !meta::code_of(logos).is_null() {
+            meta::code_of(logos)
+        } else {
+            logos
+        };
     if !logos.is_null() && (*logos).ty == types.fn_type {
         let fields = (*logos).value as *const DyadPtr;
         if !fields.is_null() {
@@ -3658,6 +3667,54 @@ mod tests {
             ),
             84
         );
+    }
+
+    /// A power operator defined with `type`, its constructor and its code in
+    /// Logos: the shape of the v0.1.0 demo (#63), spelled with a word so the
+    /// script needs no fresh symbol.
+    const POW_TYPE: &str = "pw := type (\n\
+         parse_rank = *.parse_rank + 1,\n\
+         associativity = right,\n\
+         constructor = fn (tape := parsing_tape ?) -> void (\n\
+             tape[0]:dyad.type = pw,\n\
+             tape[0]:dyad.value.operands.append(tape[-1] and tape[1]),\n\
+             tape.remove(1),\n\
+             tape.remove(-1)\n\
+         ),\n\
+         code = fn (a := i32 ?, b := i32 ?) -> i32 ( r := i32 1, for i in 0..b ( r = r * a ), r )\n\
+        ),\n";
+
+    #[test]
+    fn a_type_with_code_runs_as_a_call_of_it() {
+        // DESIGN ›Execution is function application‹ (#63): "if the type
+        // carries a `code`, run that function on it … A node typed `^` thus
+        // runs and compiles exactly as a node typed `f` does". The infix node
+        // the constructor builds and the applied form `pw(2, 3)` are one call;
+        // the result types through `+`; `2 pw 3 pw 2` associates right.
+        assert_eq!(run_script(&format!("{POW_TYPE}2 pw 10 + pw(2, 3) + 1")), 1033);
+        assert_eq!(run_script(&format!("{POW_TYPE}2 pw 3 pw 2")), 512);
+        // `.code` is the fn itself.
+        assert_eq!(run_script(&format!("{POW_TYPE}pw.code:dyad.type == fn")), 1);
+    }
+
+    #[test]
+    fn a_type_with_code_compiles_as_a_call_of_it() {
+        // The caller compiles to a direct call once the code is compiled (the
+        // uncompiled-callee boundary is #65); both tiers agree.
+        assert_eq!(
+            run_script(&format!(
+                "{POW_TYPE}f := fn (x := i32 ?) -> i32 ( x pw 3 + 1 ),\na := f(2),\npw.code.compile(), f.compile(),\na + f(2)"
+            )),
+            18
+        );
+    }
+
+    #[test]
+    fn a_code_slot_holds_a_function_and_types_no_place() {
+        // `code = 5` is refused; a hole typed by a code-carrying type has no
+        // place, exactly as `f ?` has none (a value of it is a call node).
+        assert_eq!(parse_err("t := type (code = 5)"), ParseError::BadCodeSlot);
+        assert_eq!(parse_err(&format!("{POW_TYPE}p := pw ?")), ParseError::NonNumericDeclaredType);
     }
 
     #[test]

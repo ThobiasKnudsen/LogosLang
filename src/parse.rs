@@ -1076,8 +1076,8 @@ pub struct CoreTypes {
     /// `left` and `right` — associativity's two values.
     pub left_: DyadPtr,
     pub right_: DyadPtr,
-    /// The five slot markers a type body declares, in [`SLOT_NAMES`] order.
-    pub slots: [DyadPtr; 5],
+    /// The six slot markers a type body declares, in [`SLOT_NAMES`] order.
+    pub slots: [DyadPtr; 6],
     /// `->` — the return-logos arrow.
     pub arrow_: DyadPtr,
     /// `else` — the branch token `if`'s constructor consumes.
@@ -1139,13 +1139,18 @@ pub unsafe fn fn_frame_size(fn_node: DyadPtr) -> usize {
     }
 }
 
-/// The five slots `type` declares for every type it builds (DESIGN ›The
-/// constructor is a field‹), in the order the markers on
-/// [`CoreTypes::slots`] and [`SlotKind`] follow.
-pub const SLOT_NAMES: [&str; 5] =
-    ["parse_rank", "lex_rank", "associativity", "constructor", "destructor"];
+/// The six slots `type` declares for every type it builds, in the order the
+/// markers on [`CoreTypes::slots`] and [`SlotKind`] follow: the five of DESIGN
+/// ›The constructor is a field‹ and `code`, the one ›Execution is function
+/// application‹ adds (ruled 4 September 2026: "one more slot, `code`, with an
+/// ordinary function"). The two passages have not been reconciled: where
+/// `code` is stored is open (Thobias, 10 September 2026: "for now it is at
+/// least stored in fn"), so the seed keeps it in the record head beside the
+/// constructor as its own placement, not the spec's.
+pub const SLOT_NAMES: [&str; 6] =
+    ["parse_rank", "lex_rank", "associativity", "constructor", "destructor", "code"];
 
-/// One of the five slots, by [`SLOT_NAMES`] position.
+/// One of the six slots, by [`SLOT_NAMES`] position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlotKind {
     ParseRank = 0,
@@ -1153,6 +1158,7 @@ pub enum SlotKind {
     Associativity = 2,
     Constructor = 3,
     Destructor = 4,
+    Code = 5,
 }
 
 impl SlotKind {
@@ -1163,7 +1169,8 @@ impl SlotKind {
             1 => SlotKind::LexRank,
             2 => SlotKind::Associativity,
             3 => SlotKind::Constructor,
-            _ => SlotKind::Destructor,
+            4 => SlotKind::Destructor,
+            _ => SlotKind::Code,
         }
     }
 }
@@ -1178,6 +1185,8 @@ struct OpenType {
     lex_rank: Option<f64>,
     assoc: Assoc,
     ctor: DyadPtr,
+    /// Set by a `code = …` line: the fn a node of the type runs as (#63).
+    code: DyadPtr,
     instance: Option<(DyadPtr, DyadPtr, u64)>,
 }
 
@@ -1264,6 +1273,8 @@ pub enum ParseError {
     /// `destructor = …`: a Logos-written destructor, which `drop` cannot run
     /// yet — refused rather than accepted and never run.
     DestructorNotYet,
+    /// `code = …` with a value that is not a function (#63).
+    BadCodeSlot,
     /// An operator lacked a reduced operand on one side.
     MissingOperand,
     /// The tape did not reduce to a single dyad (a dangling operator or operand).
@@ -2074,6 +2085,13 @@ impl<'a> Parser<'a> {
                         self.alloc_local(t, nt.bytes())
                     } else if crate::identities::numtype::is_pointer_type(t) {
                         self.alloc_local(t, 8)
+                    } else if crate::identities::meta::is_record_type(t)
+                        && !crate::identities::meta::code_of(t).is_null()
+                    {
+                        // A type carrying a `code` is the call kind (#63): a
+                        // value of it is a call node, never a place, exactly
+                        // as `f ?` has no place either.
+                        return Err(ParseError::NonNumericDeclaredType);
                     } else if crate::identities::meta::is_record_type(t) {
                         // A record-typed place: its layout's bytes (ruled 9
                         // September 2026 for the tape parameter, `fn (tape :=
@@ -2467,9 +2485,9 @@ impl<'a> Parser<'a> {
     /// ordinary scope whose bare lines "belong to the identity itself — they
     /// fill its own slots (its constructor, its parse_rank) and may declare
     /// new members that live on it", while its `instance (…)` block holds
-    /// what lives on instances. The five slots `type` declares for every
-    /// type it builds — `parse_rank`, `associativity`, `constructor`,
-    /// `destructor` — are declared first, as records over the shared markers,
+    /// what lives on instances. The six slots `type` declares for every
+    /// type it builds — `parse_rank`, `lex_rank`, `associativity`,
+    /// `constructor`, `destructor`, `code` — are declared first, as records over the shared markers,
     /// so `parse_rank := 5` is the no-shadowing error and `parse_rank = …`
     /// the fill ([`Parser::slot_fill`]). Every other line must declare a
     /// member, open the instance block, or be prose: a type body is
@@ -2492,6 +2510,7 @@ impl<'a> Parser<'a> {
             lex_rank: None,
             assoc: Assoc::Left,
             ctor: std::ptr::null_mut(),
+            code: std::ptr::null_mut(),
             instance: None,
         });
         // A `fn` literal on a slot's right side must not claim the enclosing
@@ -2533,6 +2552,10 @@ impl<'a> Parser<'a> {
         if !def.ctor.is_null() {
             // SAFETY: `node` was just built; nothing has read its slot.
             unsafe { crate::identities::meta::install_constructor(node, def.ctor) };
+        }
+        if !def.code.is_null() {
+            // SAFETY: as above; `def.code` is the fn node the body's fill checked.
+            unsafe { crate::identities::meta::install_code(node, def.code) };
         }
         Ok(node)
     }
@@ -2685,6 +2708,15 @@ impl<'a> Parser<'a> {
                 def.ctor = read;
             }
             SlotKind::Destructor => return Err(ParseError::DestructorNotYet),
+            // `code = fn …`: the function a node of the type runs and compiles
+            // as (#63; DESIGN ›Execution is function application‹).
+            SlotKind::Code => {
+                // SAFETY: `read` is a reduced dyad from the store.
+                if unsafe { (*read).ty } != types.fn_type {
+                    return Err(ParseError::BadCodeSlot);
+                }
+                def.code = read;
+            }
         }
         let name = SLOT_NAMES[kind as usize];
         let name_node =
@@ -3873,6 +3905,23 @@ impl<'a> Parser<'a> {
         if unsafe { crate::identities::is_numtype_node(&self.types, callee) } {
             // SAFETY: `callee` is a numtype node; `args` are reduced dyads.
             unsafe { crate::identities::build_cast(self.store, &self.types, callee, &args) }
+        } else if unsafe { crate::identities::meta::is_record_type(callee) }
+            && !unsafe { crate::identities::meta::code_of(callee) }.is_null()
+        {
+            // A type carrying a `code` applied to arguments is a call of that
+            // function, the node typed by the type (#63; DESIGN ›Execution is
+            // function application‹: "A node typed `^` thus runs and compiles
+            // exactly as a node typed `f` does"), so `^(2, 3)` is the node
+            // `2 ^ 3` builds. The literals commit to the code's parameters.
+            let types = self.types;
+            let mut args = args;
+            // SAFETY: `callee` is a record type node with a code; `args` are
+            // reduced dyads from the store.
+            unsafe {
+                let code = crate::identities::meta::code_of(callee);
+                crate::identities::commit_call_args(self.store, &types, code, &mut args)?;
+            }
+            Ok(build_call(self.store, callee, &args))
         } else if unsafe { crate::identities::meta::is_record_type(callee) } {
             // A record logos applied to its field values constructs an
             // instance — the constructor doctrine, like `i32(a)`.
@@ -4744,6 +4793,15 @@ impl<'a> Parser<'a> {
                     return Ok(c);
                 }
                 Ok(self.store.alloc_raw(self.types.dyad_, c as *mut u8))
+            }
+            // The code: the function a node of the type runs as (#63), the
+            // fn node itself, so `t.code.compile()` compiles it.
+            "code" => {
+                let c = meta::code_of(logos);
+                if c.is_null() {
+                    return Err(ParseError::BadReflectRead);
+                }
+                Ok(c)
             }
             "destructor" => {
                 let d = meta::destructor_of(logos);

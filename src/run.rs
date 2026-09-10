@@ -376,6 +376,64 @@ impl Runtime {
         }
     }
 
+    /// Apply the function `f` to the call node `node` — `{type: _, value:
+    /// [args…, null]}` — the one act behind every call: a node typed by a
+    /// function (`f(2)`) and a node typed by a type carrying a `code` (`2 ^ 3`,
+    /// DESIGN ›Execution is function application‹, #63) both arrive here, the
+    /// latter with `f` the type's code. Compiled: evaluate the arguments in
+    /// the current frame and jump to the installed entry. Interpreted: claim
+    /// the callee's zeroed frame, bind the arguments into it, make it
+    /// current, walk the body, and pop both again.
+    ///
+    /// # Safety
+    /// `f` must be a `fn` node from the store and `node` a node whose value
+    /// is a null-terminated operand run (or null for a nullary call).
+    pub unsafe fn apply(&mut self, f: DyadPtr, node: DyadPtr) -> Result<i64, RunError> {
+        // A user function's value is `[input, output, body, bcode, frame]`.
+        let fields = (*f).value as *const DyadPtr;
+        if fields.is_null() {
+            return Err(RunError::NotRunnable(f));
+        }
+        // Compiled: evaluate the arguments (in the current frame) and call
+        // the installed code — a callable node carrying the finalized entry
+        // under the container convention (issue #44).
+        let bcode = *fields.add(FN_BCODE);
+        if !bcode.is_null() {
+            let (args, arity) = self.eval_args_compiled(f, node)?;
+            let entry = crate::identities::callable::entry_of(bcode);
+            return call_compiled(entry as *const u8, &args[..arity]);
+        }
+        let body = *fields.add(FN_BODY);
+        if body.is_null() {
+            return Err(RunError::NotRunnable(f));
+        }
+        // Interpreted: claim the callee's zeroed frame from the activation
+        // stack, evaluate each argument in the *caller's* frame and write it
+        // into the callee's parameter slot — the caller placing the operands
+        // on the stack for the callee to read, the ordinary calling
+        // convention (DESIGN ›Operands travel on the stack‹) — then make the
+        // frame current, walk the body, and pop both again. The stack mark
+        // rides this Rust frame, so unwinding on an argument error releases
+        // the claim without ever having pushed the activation.
+        let mark = self.stack.mark();
+        let base = self.stack.alloc(fn_frame_size(f));
+        if let Err(e) = self.bind_args(f, node, base) {
+            self.stack.release(mark);
+            return Err(e);
+        }
+        self.activations.push(base);
+        let result = self.run(body);
+        self.activations.pop();
+        self.stack.release(mark);
+        // A `-> void` function runs its body for effect and yields unit (0 bits),
+        // matching the compiled void fn's `return 0`, so both tiers agree.
+        if crate::identities::numtype::is_void_type(*fields.add(FN_OUTPUT)) {
+            result.map(|_| 0)
+        } else {
+            result
+        }
+    }
+
     /// Run `node`: read its operation (its `logos`). If the operation is a
     /// function (its own logos is `fn`), apply it — jump to its installed code
     /// or walk its `body`. Otherwise consult the node's op slot: a resolved
@@ -400,49 +458,7 @@ impl Runtime {
             return self.read_container(node);
         }
         if (*op).ty == self.fn_type {
-            // A user function's value is `[input, output, body, bcode, frame]`.
-            let fields = (*op).value as *const DyadPtr;
-            if fields.is_null() {
-                return Err(RunError::NotRunnable(op));
-            }
-            // Compiled: evaluate the arguments (in the current frame) and call
-            // the installed code — a callable node carrying the finalized entry
-            // under the container convention (issue #44).
-            let bcode = *fields.add(FN_BCODE);
-            if !bcode.is_null() {
-                let (args, arity) = self.eval_args_compiled(op, node)?;
-                let entry = crate::identities::callable::entry_of(bcode);
-                return call_compiled(entry as *const u8, &args[..arity]);
-            }
-            let body = *fields.add(FN_BODY);
-            if body.is_null() {
-                return Err(RunError::NotRunnable(op));
-            }
-            // Interpreted: claim the callee's zeroed frame from the activation
-            // stack, evaluate each argument in the *caller's* frame and write it
-            // into the callee's parameter slot — the caller placing the operands
-            // on the stack for the callee to read, the ordinary calling
-            // convention (DESIGN ›Operands travel on the stack‹) — then make the
-            // frame current, walk the body, and pop both again. The stack mark
-            // rides this Rust frame, so unwinding on an argument error releases
-            // the claim without ever having pushed the activation.
-            let mark = self.stack.mark();
-            let base = self.stack.alloc(fn_frame_size(op));
-            if let Err(e) = self.bind_args(op, node, base) {
-                self.stack.release(mark);
-                return Err(e);
-            }
-            self.activations.push(base);
-            let result = self.run(body);
-            self.activations.pop();
-            self.stack.release(mark);
-            // A `-> void` function runs its body for effect and yields unit (0 bits),
-            // matching the compiled void fn's `return 0`, so both tiers agree.
-            if crate::identities::numtype::is_void_type(*fields.add(FN_OUTPUT)) {
-                result.map(|_| 0)
-            } else {
-                result
-            }
+            self.apply(op, node)
         } else {
             // A fn literal is an inert declaration statement (its work happened at
             // parse) and yields unit, the same precedent as `-> void`. Checked
@@ -480,6 +496,19 @@ impl Runtime {
                 return crate::identities::rational::mold(node)
                     .map(i64::from)
                     .ok_or(RunError::UncomputableLiteral);
+            }
+            // A type carrying a `code` runs as a call of that function on the
+            // node's operand run (#63; DESIGN ›Execution is function
+            // application‹: "if the type carries a `code`, run that function
+            // on it"). A *place* of such a type (a frame slot, never an
+            // operand run) is not one and falls through.
+            if crate::identities::meta::is_record_type(op)
+                && crate::dyad::frame_ref((*node).value).is_none()
+            {
+                let code = crate::identities::meta::code_of(op);
+                if !code.is_null() {
+                    return self.apply(code, node);
+                }
             }
             // A record instance is not a scalar; its fields are read through
             // `.` places, never the whole value, so it must not reach the

@@ -20,14 +20,15 @@
 //! The definition body's parse lives in
 //! [`crate::parse::Parser::parse_type_body`] because it needs the parser's
 //! tape, scope stack, and reentrant expression parse (DESIGN ›The constructor
-//! is a field‹, #61): a body is a scope whose bare lines fill the five slots
-//! `type` declares for every type it builds — `parse_rank`, `associativity`,
-//! `constructor`, `destructor`, filled with `=` — or declare its own members,
+//! is a field‹, #61): a body is a scope whose bare lines fill the six slots
+//! `type` declares for every type it builds — `parse_rank`, `lex_rank`,
+//! `associativity`, `constructor`, `destructor`, `code`, filled with `=` — or
+//! declare its own members,
 //! and whose `instance (…)` block holds the per-instance fields. Here we only
 //! create the root, attach its constructor, and register what the body
 //! consumes: `,`, `instance`, the two associativity values `left` and
 //! `right` (identities of type `type`, like a keyword, ruled 9 September
-//! 2026), and the five slot markers.
+//! 2026), and the six slot markers.
 
 use crate::parse::SLOT_NAMES;
 
@@ -46,9 +47,9 @@ pub(super) fn register_root(store: &mut Store) -> DyadPtr {
 }
 
 /// Spell the root, attach its constructor, and register what a definition
-/// body consumes: `,`, `instance`, `left`, `right`, and the five slot
+/// body consumes: `,`, `instance`, `left`, `right`, and the six slot
 /// markers, returned in that order.
-pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, [DyadPtr; 5]) {
+pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, [DyadPtr; 6]) {
     // The spelling: `type` resolves to the root as a first-class value (DESIGN
     // ›Substrate vocabulary‹, ruled 4 September 2026: `type` is the ground and
     // the definition keyword, `logos` names the language). `logos` stays a
@@ -97,7 +98,7 @@ pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPt
     let left_ = side(cx, "left");
     let right_ = side(cx, "right");
 
-    // The five slot markers: what the slot names denote inside a body
+    // The six slot markers: what the slot names denote inside a body
     // (declared there per definition), never spelled outside one. Both slots
     // undefined, so a read or an ordinary `=` on them is refused at parse.
     let slots = SLOT_NAMES.map(|_| cx.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut()));
