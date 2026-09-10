@@ -245,6 +245,18 @@ impl RegexTrie {
         Some(current)
     }
 
+    /// The records stored under exactly `key` — the literal or pattern as it
+    /// was inserted — or `None` when nothing is. A declaration-time question
+    /// ("is this very spelling already declared?"), unlike [`get`](Self::get),
+    /// which asks what a text lexes as. Every alternation path of one insert
+    /// holds the same records, so the first path answers for all.
+    pub fn records_for_key(&self, key: &str) -> Option<&[DyadPtr]> {
+        let path = regex_splitting(key).into_iter().next()?;
+        let node = self.locate(&path).filter(|n| n.check_eow())?;
+        let leaf = node.leaf_value.as_ref().filter(|v| v.regex_key == key)?;
+        Some(&leaf.records)
+    }
+
     // --- insert -------------------------------------------------------------
 
     /// Add the record dyad `record` under `key` (a literal or regex pattern). A
@@ -880,5 +892,19 @@ mod tests {
             Err(RegexTrieError::BadPattern(_)) => {}
             other => panic!("expected BadPattern, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn records_for_key_answers_by_the_key_as_inserted() {
+        let mut t = RegexTrie::new();
+        let d = |n: usize| n as DyadPtr;
+        t.insert("ab", d(1));
+        t.insert("a[0-9]", d(2));
+        t.insert("a[0-9]", d(3));
+        assert_eq!(t.records_for_key("ab"), Some(&[d(1)][..]));
+        assert_eq!(t.records_for_key("a[0-9]"), Some(&[d(2), d(3)][..]));
+        assert_eq!(t.records_for_key("a"), None);
+        assert_eq!(t.records_for_key("a[0-9]x"), None);
+        assert_eq!(t.records_for_key("[0-9]"), None);
     }
 }

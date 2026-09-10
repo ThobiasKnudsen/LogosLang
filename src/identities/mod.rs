@@ -99,6 +99,7 @@ mod paren;
 mod plus;
 pub(crate) mod pointer;
 pub(crate) mod rational;
+mod regex_mod;
 #[path = "return.rs"]
 mod return_mod;
 mod scope;
@@ -179,6 +180,9 @@ pub struct Core {
     pub rational: DyadPtr,
     /// `string` (the `«…»` text literal); inert in the seed, the comment substance.
     pub string_: DyadPtr,
+    /// `regex`, the reader that turns a quote into a recognizer (#114): the
+    /// node it places is what `:=` declares as a pattern spelling.
+    pub regex_: DyadPtr,
     /// `comment` (the prose node a statement-level `#` builds); invisible to
     /// value flow.
     pub comment_: DyadPtr,
@@ -330,6 +334,7 @@ impl Core {
         let string_ = string::register(&mut cx);
         cx.string_ = string_;
         let comment_ = comment::register(&mut cx);
+        let regex_ = regex_mod::register(&mut cx);
         // The callable machinery: the `callable`/`convention` logos and the two
         // seed conventions. After `string` (convention names are string nodes),
         // before everything executable (exec leaves are callable values).
@@ -511,6 +516,7 @@ impl Core {
             compile_,
             rational,
             string_,
+            regex_,
             comment_,
             construct_,
             deref_,
@@ -586,6 +592,7 @@ impl Core {
             index_: self.index_,
             construct_: self.construct_,
             string_: self.string_,
+            regex_: self.regex_,
             comment_: self.comment_,
             convert: self.convert,
             plus: self.plus,

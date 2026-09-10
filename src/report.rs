@@ -83,6 +83,8 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::DoubleGate => "this declaration is already marked `pub`".into(),
         ParseError::ExpectedPath => "`import` must be followed by a file path".into(),
+        ParseError::ExpectedPattern => "`regex` must be followed by a «…» pattern".into(),
+        ParseError::BadPattern(why) => format!("this pattern does not compile: {why}"),
         ParseError::ImportInRuntimeBody => {
             "`import` loads at parse time, so it cannot stand inside a \
              function body, loop, or runtime branch"

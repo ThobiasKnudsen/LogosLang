@@ -208,6 +208,41 @@ fn any_spelling_the_index_can_hold_is_nameable() {
 }
 
 #[test]
+fn a_pattern_spelling_is_declared_through_regex() {
+    // DESIGN ›The scope's constructor is the driver‹ (ruled 10 September 2026,
+    // #114): `regex «…»` reads its own quote and yields a recognizer, which
+    // `:=` enters into the index as written. So a spelling that is a pattern
+    // (`5k`), or a compound of known symbols (`<=>`, beating `<=` `>` by
+    // length at equal rank), becomes a name like any other; the same key live
+    // twice is the shadowing error (the core's `..` is spelled `\.\.`).
+    let (echoes, stderr) = repl(
+        b"regex \xc2\xab[0-9]+[kK]\xc2\xbb := type ()\n(5k):dyad.type == type\n\
+          regex \xc2\xab<=>\xc2\xbb := type ()\n(<=>):dyad.type == type\n\
+          regex \xc2\xab\\.\\.\xc2\xbb := type ()\n",
+    );
+    assert_eq!(echoes, ["true", "true"], "stderr: {stderr}");
+    assert!(stderr.contains("shadowed"), "stderr: {stderr}");
+    // Two declared patterns of equal rank matching the same length is the
+    // inconsistency the definitions must correct; the seed reports it where
+    // text hits both. A `lex_rank` on one of them settles it.
+    let (echoes, stderr) = repl(
+        b"regex \xc2\xab[a-z][0-9]\xc2\xbb := type ()\nregex \xc2\xaba[0-9]\xc2\xbb := type ()\na1\n\
+          regex \xc2\xabb[0-9]\xc2\xbb := type (lex_rank = 1)\n(b1):dyad.type == type\n",
+    );
+    assert_eq!(echoes, ["true"], "stderr: {stderr}");
+    assert!(stderr.contains("same lex_rank"), "stderr: {stderr}");
+    // A pattern that does not compile is refused at its quote; `regex` with
+    // no quote is refused at the word; a failed line rolls its pattern back.
+    let (echoes, stderr) = repl(
+        b"regex \xc2\xab[unclosed\xc2\xbb := type ()\nregex 5\n\
+          regex \xc2\xabz[0-9]\xc2\xbb := type (\nregex \xc2\xabz[0-9]\xc2\xbb := type ()\n(z1):dyad.type == type\n",
+    );
+    assert_eq!(echoes, ["true"], "stderr: {stderr}");
+    assert!(stderr.contains("does not compile"), "stderr: {stderr}");
+    assert!(stderr.contains("must be followed by a"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_constructor_written_in_logos_runs_during_the_parse() {
     // Issue #61's done-when: a file defines a type with `parse_rank = …`,
     // `associativity = …`, and a `constructor = fn (tape) -> void (…)`, and a

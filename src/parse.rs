@@ -787,6 +787,43 @@ impl ScopeStack {
         Ok(())
     }
 
+    /// Declare the pattern `key` denoting `record` in the current scope (#114,
+    /// `regex «…» := …`): the key enters the index as the recognizer it is,
+    /// never escaped. No haystack check applies to a pattern; the one
+    /// consistency check the seed can make at the definition is that this very
+    /// key is not already live in an open scope ([`ResolveError::Shadowed`]).
+    /// Two different patterns that can match the same length at equal rank are
+    /// the inconsistency DESIGN ›The scope's constructor is the driver‹ rules an
+    /// error at the second declaration; deciding it needs automaton
+    /// intersection the seed does not have, so the lexer's
+    /// [`ResolveError::Tied`] stands in when text hits both. Journalled like a
+    /// name, under the key as inserted.
+    ///
+    /// # Safety
+    /// `record` must be a record dyad from the store ([`Record::alloc`]); this
+    /// writes its `scope` field through the pointer.
+    pub unsafe fn declare_pattern(
+        &mut self,
+        trie: &mut RegexTrie,
+        key: &str,
+        record: DyadPtr,
+    ) -> Result<(), ResolveError> {
+        let scope = self.current().expect("declare needs an open scope");
+        if let Some(records) = trie.records_for_key(key) {
+            // SAFETY: every pointer the trie stores is a record dyad from the store.
+            let fields = |r: DyadPtr| unsafe { *Record::of(r) };
+            if records.iter().any(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead()) {
+                return Err(ResolveError::Shadowed);
+            }
+        }
+        // SAFETY: `record` is a record dyad from the store, built for this pattern.
+        unsafe { Record::of(record).scope = scope };
+        trie.insert(key, record);
+        self.journal.push(Journal::Declared { name: key.to_string(), scope });
+        self.pending.push(Pending { record, endpoint: Endpoint::Start });
+        Ok(())
+    }
+
     /// Make `name`'s entry for `identity` in `scope` dead from here on: an
     /// `own` or `drop` (`node`) emptied its place, so every later use is
     /// refused until a `:=` redeclares the spelling (DESIGN ›Memory and
@@ -977,6 +1014,8 @@ pub struct CoreTypes {
     /// `string`: the text-literal logos (`«…»`); inert in the seed, above all the
     /// comment substance.
     pub string_: DyadPtr,
+    /// `regex`: the reader whose node, left of `:=`, declares a pattern (#114).
+    pub regex_: DyadPtr,
     /// `comment`: the prose-node logos a statement-level `#` builds; reflectable
     /// graph structure, invisible to value flow.
     pub comment_: DyadPtr,
@@ -1281,6 +1320,12 @@ pub enum ParseError {
     DoubleGate,
     /// An `import` was not followed by a path token.
     ExpectedPath,
+    /// A `regex` was not followed by a `«…»` quote (#114).
+    ExpectedPattern,
+    /// The pattern a `regex «…»` quotes does not compile (the regex engine's
+    /// reason), or is empty. Reported at the quote, at the definition, since
+    /// the index compiles a branch only on first lookup.
+    BadPattern(String),
     /// An `import` inside a deferred-or-repeated body (a fn body, a loop, a
     /// runtime branch): the load happens once, at parse, so `import` belongs
     /// where parse order and run order coincide.
@@ -3720,6 +3765,21 @@ impl<'a> Parser<'a> {
         Ok(record)
     }
 
+    /// Declare the pattern `key` in the current scope as `identity`, minting
+    /// its record — the pattern twin of [`Parser::declare_name`] (#114).
+    pub(crate) fn declare_pattern(
+        &mut self,
+        key: &str,
+        identity: DyadPtr,
+    ) -> Result<DyadPtr, ParseError> {
+        let scope = self.scopes.current().expect("declare needs an open scope");
+        let record = Record::alloc(self.store, self.types.record_, Record::new(identity, scope));
+        // SAFETY: `record` was minted by `Record::alloc` just above.
+        unsafe { self.scopes.declare_pattern(self.trie, key, record) }
+            .map_err(ParseError::Resolve)?;
+        Ok(record)
+    }
+
     /// Declare `name` as a field, checked against its siblings alone
     /// ([`ScopeStack::declare_field`]).
     fn declare_field_name(&mut self, name: &str, identity: DyadPtr) -> Result<DyadPtr, ParseError> {
@@ -4076,15 +4136,34 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
         // The name is the cell to the left — a spelling, declared or not
-        // (redeclaring a live one is the no-shadowing error below); anything
-        // but a token there (a value, a bracket) declines.
-        let Some(tok) = tape.at(-1).copied().filter(|c| !c.constructed) else {
+        // (redeclaring a live one is the no-shadowing error below), or the
+        // node `regex «…»` placed, whose text is the spelling, a pattern
+        // (#114). Anything else there (a value, a bracket) declines.
+        let Some(tok) = tape.at(-1).copied() else {
             return Ok(Constructed::Decline);
+        };
+        let pattern: Option<Vec<u8>> = if tok.constructed {
+            // SAFETY: a constructed cell holds a node from the store.
+            if unsafe { (*tok.dyad).ty } == self.types.regex_ {
+                // SAFETY: a `regex` node's value is a text blob.
+                Some(unsafe { crate::identities::string::text(tok.dyad) }.to_vec())
+            } else {
+                return Ok(Constructed::Decline);
+            }
+        } else {
+            None
         };
         // `source` is `&'a str` (Copy), independent of the `&mut self` the
         // declaration and value parse then need (as in `parse_record`).
         let source = self.source;
-        let name = &source[tok.start..tok.start + tok.len];
+        let owned;
+        let name: &str = match &pattern {
+            Some(bytes) => {
+                owned = String::from_utf8_lossy(bytes).into_owned();
+                &owned
+            }
+            None => &source[tok.start..tok.start + tok.len],
+        };
         // The placeholder: for an unknown spelling, the fresh dyad the cell
         // already holds — "`:=` fills that dyad" (DESIGN ›The scope's
         // constructor is the driver‹) — or a fresh one when the spelling is
@@ -4099,7 +4178,12 @@ impl<'a> Parser<'a> {
         } else {
             self.store.alloc_raw(self.types.fn_type, std::ptr::null_mut())
         };
-        let record = match self.declare_name(name, placeholder) {
+        let declared = if pattern.is_some() {
+            self.declare_pattern(name, placeholder)
+        } else {
+            self.declare_name(name, placeholder)
+        };
+        let record = match declared {
             Ok(record) => record,
             Err(e) => {
                 // The stuck point is the name itself (it is what shadows).
@@ -4280,6 +4364,56 @@ impl<'a> Parser<'a> {
             crate::identities::string::build_text(self.store, types.string_, path_text.as_bytes());
         let value = self.store.alloc_operands(&[path_node, tail, types.ops.import_]);
         let node = self.store.alloc_raw(types.import_, value);
+        tape.place(node);
+        Ok(Constructed::Placed)
+    }
+
+    /// `regex`'s constructor body (#114; DESIGN ›The scope's constructor is
+    /// the driver‹, ruled 10 September 2026: "`regex` is an ordinary identity
+    /// that reads its own quote, as `lex` does, and yields a recognizer, which
+    /// is what `:=` enters into the trie"): read the `«…»` to the right at
+    /// discovery and place a `regex` node holding the pattern's bytes. The
+    /// pattern is compiled here, so a bad one is the checked error at its
+    /// quote rather than at the first text position the index tries it on
+    /// (the trie compiles a branch lazily, on first lookup).
+    pub(crate) fn construct_regex(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        self.skip_whitespace();
+        let source = self.source;
+        let start = self.pos;
+        if !source[start..].starts_with('«') {
+            return Err(ParseError::ExpectedPattern);
+        }
+        let r = self.scopes.resolve(self.trie, &source[start..]).map_err(ParseError::Resolve)?;
+        self.pos += r.matched;
+        let quote = self
+            .construct_leaf(r.identity, start, r.matched)?
+            .ok_or(ParseError::ExpectedPattern)?;
+        // SAFETY: the leaf just built is a string node.
+        let pattern = unsafe { crate::identities::string::text(quote) }.to_vec();
+        let text = String::from_utf8_lossy(&pattern);
+        let bad = if pattern.is_empty() {
+            Some("a pattern must not be empty".to_string())
+        } else {
+            // The engine's report ends in its one-line reason; the lines
+            // before it repeat the pattern with a caret.
+            regex::bytes::Regex::new(&format!("^(?:{text})")).err().map(|e| {
+                e.to_string()
+                    .lines()
+                    .last()
+                    .unwrap_or("")
+                    .trim()
+                    .trim_start_matches("error: ")
+                    .to_string()
+            })
+        };
+        if let Some(reason) = bad {
+            self.pos = start;
+            return Err(ParseError::BadPattern(reason));
+        }
+        let node = crate::identities::string::build_text(self.store, self.types.regex_, &pattern);
         tape.place(node);
         Ok(Constructed::Placed)
     }
