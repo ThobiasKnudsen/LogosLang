@@ -1,0 +1,33 @@
+LogosLang provenance manifest
+=============================
+
+Project:   LogosLang
+Author:    Thobias Melfjord Knudsen <thobknu@gmail.com>
+Origin:    https://github.com/ThobiasKnudsen/LogosLang
+License:   Apache-2.0 (code) + TRADEMARK.md (the name)
+Written:   2026-09-10T18:29:38Z (UTC)
+
+A git commit hash covers the whole tree and every commit that led to it, so
+timestamping the line below fixes the entire history of this repository at the
+moment the timestamp authority countersigned it.
+
+  commit  c7e8ffe93f218e64a6da6760cd7c63e36311cd3d
+  tree    695ea2093ee9ea93eabcc1523a2a0b715d49496f
+  branch  dev
+  commits 263
+  first   1332bfb948f312d990165b1fa7de3aacb12e0e1b 2026-06-17T13:27:28+02:00
+  latest  c7e8ffe93f218e64a6da6760cd7c63e36311cd3d 2026-09-10T20:09:37+02:00
+
+Release tags at the time of writing:
+  v0.0.3
+  v0.0.4
+
+SHA-256 of the governing documents:
+  d4496770ac0719d4e95c3f308847e9f86308890893c96e790a721f979f22b9ad  DESIGN.md
+  c7bed6d5dcdd981af72261ab54a2cac7539c0be9e8941560b8562e62566ae1f5  README.md
+  c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4  LICENSE
+  dda34c99434750a37c25edd7690a06448671c747cfba4787274cda551d04fe9e  NOTICE
+  673d5cf1f19c22a8670f9cbd60839e655b8775d6b867a957a9423c8ea15310c7  TRADEMARK.md
+  13f5b9799d167887474ed7c95899a553a51c078918340d903460e7ef97a459a7  DCO
+  b5b5ef8a55c8a3c5e0c11907e4ee05d94351d303089ce31ddd95375de28d5c5c  CONTRIBUTING.md
+  0a7b187daf75328b465343408e4e07e68e62a888eee1f3a8bcaf6a065fd450a2  language_sketch.logos

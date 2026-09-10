@@ -1,0 +1,76 @@
+name: archive
+
+# CLAUDE.md: "MAKE SURE THE CODE IS ARCHIVED AT UNESCO-backed permanent source-code
+# archive AT LEAST MONTHLY." This is that rule, run by a machine instead of remembered.
+#
+# Software Heritage (archive.softwareheritage.org, UNESCO-backed) takes a full snapshot
+# of a git origin on request and keeps it permanently. It is independent of GitHub, so a
+# repository deleted there, by anyone and for any reason, still exists in full with its
+# history intact. Provenance is the point: see provenance/README.md.
+#
+# The obvious weakness is that a job hosted by GitHub cannot save anything if GitHub is
+# the thing that fails. It is the routine keep-it-fresh mechanism, not the last line of
+# defence; the archive it writes to is what survives, and a local clone plus the
+# `save` step below run by hand covers the day GitHub does not cooperate:
+#
+#   curl -X POST https://archive.softwareheritage.org/api/1/origin/save/git/url/<repo>/
+#
+# GitHub disables a scheduled workflow after 60 days without repository activity, so a
+# dormant project stops archiving itself exactly when nobody is watching. The run
+# summary below says when the last visit actually landed, so a silent stop is visible
+# the next time anyone looks.
+
+on:
+  schedule:
+    # 04:17 UTC on the 1st of every month. Off the hour because everyone schedules on it.
+    - cron: '17 4 1 * *'
+  workflow_dispatch: # archive on demand, e.g. right before a release
+
+permissions:
+  contents: read
+
+concurrency:
+  group: archive
+  cancel-in-progress: false
+
+jobs:
+  save:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false # one repository failing must not skip the others
+      matrix:
+        repo:
+          - ThobiasKnudsen/LogosLang
+          - ThobiasKnudsen/LogosLangWebsite
+          - ThobiasKnudsen/LogosMath
+    steps:
+      - name: Ask Software Heritage to archive ${{ matrix.repo }}
+        env:
+          REPO: ${{ matrix.repo }}
+        run: |
+          set -euo pipefail
+          API="https://archive.softwareheritage.org/api/1"
+          ORIGIN="https://github.com/${REPO}"
+
+          # A save request is queued, not instant; "accepted" means it was taken.
+          body="$(curl -sS --fail-with-body --retry 3 --retry-delay 10 --max-time 120 \
+            -X POST -H 'Accept: application/json' \
+            "${API}/origin/save/git/url/${ORIGIN}/")"
+          status="$(printf '%s' "$body" | grep -o '"save_request_status":"[^"]*"' | cut -d'"' -f4 || true)"
+          if [ "$status" != "accepted" ]; then
+            echo "::error::Software Heritage did not accept the save request for ${REPO}: ${body}"
+            exit 1
+          fi
+          echo "Save request accepted for ${ORIGIN}."
+
+          # Report the newest visit already on record, so the run summary shows whether
+          # the archive is actually current rather than only that a request was taken.
+          visits="$(curl -sS --max-time 60 "${API}/origin/${ORIGIN}/visits/?per_page=1" || true)"
+          last="$(printf '%s' "$visits" | grep -o '"date":"[^"]*"' | head -1 | cut -d'"' -f4 || true)"
+          {
+            echo "### ${REPO}"
+            echo ""
+            echo "- Save request: accepted"
+            echo "- Newest snapshot on record before this run: ${last:-none yet}"
+            echo "- Browse: ${API%/api/1}/browse/origin/directory/?origin_url=${ORIGIN}"
+          } >> "$GITHUB_STEP_SUMMARY"
