@@ -250,6 +250,7 @@ cargo test --release
 bash .github/scripts/docs-check.sh validate
 bash .github/scripts/docs-check.sh release vX.Y.Z   # the exact check the gate job runs
 bash .github/scripts/docs-check.test.sh
+bash .github/scripts/dco-check.test.sh
 ```
 
 `main` is protected. It takes a pull request with the required checks, never a direct push.
@@ -267,6 +268,22 @@ The same loop as in the *Compile* section, written the obvious way in each langu
 | Python 3.13 (CPython) | ~170 | ~360x |
 
 The Rust row uses `std::hint::black_box`, because as literally written LLVM replaces the loop with the closed-form formula. Interpreted Logos sits in CPython's class while staying a graph walk over fully reflectable structure. One `.compile()` call puts the same function within about 1.5x of Rust's scalar code. The remaining gap is backend work, loop rotation and vectorization, not language overhead. Absolute numbers vary with hardware; the ratios are the point.
+
+## Contributing
+
+Contributions are welcome. Two rules carry weight and CI enforces both.
+
+Every commit needs a `Signed-off-by` line naming its author, which `git commit -s`
+writes for you. That line certifies the [Developer Certificate of Origin](./DCO): that
+you wrote the change, or may submit somebody else's work under this license. It is the
+lightweight alternative to a contributor agreement, and it is how the project can show,
+commit by commit, that every line was given deliberately by someone entitled to give it.
+Run `git config core.hooksPath .githooks` to have the line added for you.
+
+And [DESIGN.md](./DESIGN.md) rules: quote the passage that licenses a spec-governed
+change, and stop and ask when two sources disagree.
+
+[CONTRIBUTING.md](./CONTRIBUTING.md) has the rest.
 
 ## License and credit
 

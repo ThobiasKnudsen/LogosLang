@@ -6,6 +6,13 @@ name: ci
 # required checks on main were the docs guard (docs.yml), so Rust that did not
 # compile could merge green. The `rust` job below is a required status check
 # on main beside docs.yml's `test` and `validate`.
+#
+# The `dco` job is the provenance gate: every commit a pull request adds must carry a
+# `Signed-off-by` line naming its author, which is what `git commit -s` writes. That
+# line certifies the Developer Certificate of Origin 1.1 (./DCO), the lightweight
+# alternative to a contributor agreement, so the project can show commit by commit that
+# every line was given by someone entitled to give it. Make `dco` a required status
+# check on main too. The guard and its self-test are in .github/scripts.
 
 on:
   pull_request:
@@ -57,3 +64,24 @@ jobs:
           out="$("$BIN" import examples/answer.logos | tail -n1)"
           [ "$out" = "42" ] || { echo "::error::smoke test: expected 42, got '$out'"; exit 1; }
           echo "OK: $BIN runs and answer.logos evaluates to 42."
+
+  # Provenance, not code: every commit added by this pull request is signed off.
+  # Only pull requests have a base to diff against, so this job does not run on push.
+  dco:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 because the guard walks base..head, and a shallow clone
+      # cannot see the base commit (the guard exits 2 rather than passing blindly).
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Self-test the DCO guard
+        run: bash .github/scripts/dco-check.test.sh
+
+      - name: Every commit is signed off
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: bash .github/scripts/dco-check.sh "$BASE" "$HEAD"
