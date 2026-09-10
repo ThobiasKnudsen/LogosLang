@@ -397,6 +397,10 @@ impl ParsingTape {
 /// in the open scopes, the identity it names, and the scope it was declared in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Resolved {
+    /// Whether the spelling is a fresh run — the index knows it only through
+    /// one of the two fresh-spelling patterns (#110) — rather than a declared
+    /// name; only [`ScopeStack::lex`] ever answers `true`.
+    pub fresh: bool,
     /// Bytes consumed from the start of the input.
     pub matched: usize,
     /// The name's record (a dyad of type `record`) — what a use of the name
@@ -427,6 +431,11 @@ pub enum ResolveError {
     /// follow (DESIGN ›Name resolution is scope-filtered‹, ruled 3 September
     /// 2026).
     Dead,
+    /// Two declared spellings of equal `lex_rank` match the same length here:
+    /// an inconsistency in the definitions, never a pick by declaration order
+    /// (DESIGN ›The scope's constructor is the driver‹, ruled 10 September
+    /// 2026). One of them must rank above the other.
+    Tied,
     /// The name index itself rejected the lookup (e.g. a bad regex pattern).
     Index(RegexTrieError),
 }
@@ -476,7 +485,7 @@ pub(crate) struct Ended {
 /// is open and whose range covers the frontier (DESIGN ›Name resolution is
 /// scope-filtered‹: live = declared, scope open, not yet made dead by `own` or
 /// `drop`), and declaration enforces no-shadowing against it.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ScopeStack {
     open: Vec<DyadPtr>,
     set: HashSet<DyadPtr>,
@@ -493,6 +502,15 @@ pub struct ScopeStack {
     /// that run again or later*): the loop would read a dead name on its next
     /// pass, and a function may own only what its parameters hand it.
     barriers: Vec<usize>,
+    /// The `type` root ([`ScopeStack::set_lexing`], null in a bare stack),
+    /// to read a spelling's `lex_rank` off its identity's record.
+    type_: DyadPtr,
+}
+
+impl Default for ScopeStack {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ScopeStack {
@@ -504,6 +522,34 @@ impl ScopeStack {
             journal: Vec::new(),
             pending: Vec::new(),
             barriers: Vec::new(),
+            type_: std::ptr::null_mut(),
+        }
+    }
+
+    /// Hand the stack the `type` root, so lexing can read a spelling's
+    /// `lex_rank` off its identity's record.
+    pub fn set_lexing(&mut self, type_: DyadPtr) {
+        self.type_ = type_;
+    }
+
+    /// The `lex_rank` a spelling denoting `id` carries: its record's when `id`
+    /// is a type with a record head, the default `0` for every other identity
+    /// (a place, a function, a bare stack that was never told the root).
+    fn lex_rank_of(&self, id: DyadPtr) -> f64 {
+        if id.is_null() || self.type_.is_null() {
+            return 0.0;
+        }
+        // SAFETY: `id` is a dyad from the store (a record's `dyad`); a
+        // frame-tagged value is never dereferenced.
+        unsafe {
+            if (*id).ty == self.type_
+                && crate::dyad::frame_ref((*id).value).is_none()
+                && crate::identities::meta::kind_of(id).is_some()
+            {
+                crate::identities::meta::lex_rank_of(id)
+            } else {
+                0.0
+            }
         }
     }
 
@@ -600,53 +646,107 @@ impl ScopeStack {
     }
 
     /// Resolve `name` against `trie` to the single identity live in the open
-    /// scopes: [`ResolveError::Unknown`] if the spelling is not indexed,
-    /// [`ResolveError::OutOfScope`] if it is but no declaration is open,
-    /// [`ResolveError::Dead`] if the open declarations were all made dead by an
-    /// `own` or `drop`, and [`ResolveError::Ambiguous`] if more than one is
-    /// live (a corrupt index, which no-shadowing otherwise makes impossible).
+    /// scopes: [`ResolveError::Unknown`] if nothing declared lexes there (a
+    /// fresh spelling included), [`ResolveError::OutOfScope`] if a spelling is
+    /// known but no declaration is open, [`ResolveError::Dead`] if the open
+    /// declarations were all made dead by an `own` or `drop`,
+    /// [`ResolveError::Ambiguous`] if more than one is live (a corrupt index,
+    /// which no-shadowing otherwise makes impossible), and
+    /// [`ResolveError::Tied`] for equal rank and length.
     pub fn resolve(&self, trie: &RegexTrie, name: &str) -> Result<Resolved, ResolveError> {
-        let m = match trie.get(name) {
-            Ok(m) => m,
-            Err(RegexTrieError::NodeNotFound) => return Err(ResolveError::Unknown),
-            Err(e) => return Err(ResolveError::Index(e)),
-        };
-        // Word characters bind maximally: a match that ends mid-identifier is not
-        // a token — `incr` must never lex as `in` + `cr`, nor `i32abc` as `i32` +
-        // `abc`. (Symbol tokens like `:=` are unaffected: they do not end in a
-        // word character.)
-        let bytes = name.as_bytes();
-        let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
-        if m.matched > 0
-            && m.matched < bytes.len()
-            && word(bytes[m.matched - 1])
-            && word(bytes[m.matched])
-        {
+        self.select(trie, name, false)
+    }
+
+    /// Lex the spelling at the start of `text`: as [`ScopeStack::resolve`],
+    /// but the two fresh-spelling patterns compete too, so a spelling nothing
+    /// declared resolves with [`Resolved::fresh`] set and the run's length, and
+    /// the lexer mints the fresh dyad.
+    pub fn lex(&self, trie: &RegexTrie, text: &str) -> Result<Resolved, ResolveError> {
+        self.select(trie, text, true)
+    }
+
+    /// The one selection rule (DESIGN ›The scope's constructor is the
+    /// driver‹, ruled 10 September 2026): among every candidate the index
+    /// matches at the start of `text`, a match that would end between two
+    /// word characters is no candidate (`in` never cuts `incr`, `i32` never
+    /// cuts `i32abc`; the word pattern, greedy over word characters, never
+    /// ends inside one); of the rest, those with a live record compete, the
+    /// highest `lex_rank` first and the longest match at equal rank; equal
+    /// rank and equal length is [`ResolveError::Tied`]. When no candidate has
+    /// a live record, the error says why the declared ones have none.
+    fn select(
+        &self,
+        trie: &RegexTrie,
+        text: &str,
+        include_fresh: bool,
+    ) -> Result<Resolved, ResolveError> {
+        if text.is_empty() {
             return Err(ResolveError::Unknown);
         }
-        // During elaboration the point of use is the frontier, so "range covers
-        // the point" is exactly "not yet made dead" (DESIGN ›Name resolution is
-        // scope-filtered‹, ruled 3 September 2026).
+        let matches = trie.get_all_matches(text).map_err(ResolveError::Index)?;
+        let bytes = text.as_bytes();
+        let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
         // SAFETY: every pointer the trie stores is a record dyad from the store.
         let fields = |r: DyadPtr| unsafe { *Record::of(r) };
-        let mut live = m
-            .records
-            .iter()
-            .copied()
-            .filter(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead());
-        match (live.next(), live.next()) {
-            (None, _) => {
-                if m.records.iter().any(|&r| self.is_open(fields(r).scope)) {
-                    Err(ResolveError::Dead)
-                } else {
-                    Err(ResolveError::OutOfScope)
+        // One candidate per record, at its longest match: a pattern with an
+        // optional tail reports every end it can reach, and an alternation
+        // holds the same record on each of its paths. A match with no live
+        // record is no candidate; why it has none is kept for the error.
+        let mut cands: Vec<(DyadPtr, usize, bool)> = Vec::new();
+        let mut why_none: Option<ResolveError> = None;
+        for m in &matches {
+            let cuts_word =
+                m.matched < bytes.len() && word(bytes[m.matched - 1]) && word(bytes[m.matched]);
+            let fresh = crate::identities::fresh::is_fresh_key(m.regex_key);
+            if m.matched == 0 || cuts_word || (fresh && !include_fresh) {
+                continue;
+            }
+            // During elaboration the point of use is the frontier, so "range
+            // covers the point" is exactly "not yet made dead" (DESIGN ›Name
+            // resolution is scope-filtered‹, ruled 3 September 2026).
+            let mut live = m
+                .records
+                .iter()
+                .copied()
+                .filter(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead());
+            let record = match (live.next(), live.next()) {
+                (None, _) => {
+                    if m.records.iter().any(|&r| self.is_open(fields(r).scope)) {
+                        why_none = Some(ResolveError::Dead);
+                    } else if why_none.is_none() {
+                        why_none = Some(ResolveError::OutOfScope);
+                    }
+                    continue;
                 }
+                (Some(r), None) => r,
+                (Some(_), Some(_)) => return Err(ResolveError::Ambiguous),
+            };
+            match cands.iter_mut().find(|(r, _, _)| *r == record) {
+                Some(e) => e.1 = e.1.max(m.matched),
+                None => cands.push((record, m.matched, fresh)),
             }
-            (Some(r), None) => {
-                let f = fields(r);
-                Ok(Resolved { matched: m.matched, record: r, identity: f.dyad, scope: f.scope })
+        }
+        let mut best: Option<(f64, usize, Resolved)> = None;
+        let mut tied = false;
+        for (record, matched, fresh) in cands {
+            let f = fields(record);
+            let rank = self.lex_rank_of(f.dyad);
+            let better = match &best {
+                None => true,
+                Some((r, n, _)) => rank > *r || (rank == *r && matched > *n),
+            };
+            if better {
+                let r = Resolved { fresh, matched, record, identity: f.dyad, scope: f.scope };
+                best = Some((rank, matched, r));
+                tied = false;
+            } else if matches!(&best, Some((r, n, _)) if rank == *r && matched == *n) {
+                tied = true;
             }
-            (Some(_), Some(_)) => Err(ResolveError::Ambiguous),
+        }
+        match best {
+            Some(_) if tied => Err(ResolveError::Tied),
+            Some((_, _, r)) => Ok(r),
+            None => Err(why_none.unwrap_or(ResolveError::Unknown)),
         }
     }
 
@@ -676,10 +776,13 @@ impl ScopeStack {
             // Ambiguous or an index error: surface it rather than declaring atop.
             Err(e) => return Err(e),
         }
+        // The spelling is text, whatever characters it has (`^`, `<=>`): it
+        // enters the index as a literal key, never as a pattern (#110).
+        let key = regex::escape(name);
         // SAFETY: `record` is a record dyad from the store, built for this name.
         unsafe { Record::of(record).scope = scope };
-        trie.insert(name, record);
-        self.journal.push(Journal::Declared { name: name.to_string(), scope });
+        trie.insert(&key, record);
+        self.journal.push(Journal::Declared { name: key, scope });
         self.pending.push(Pending { record, endpoint: Endpoint::Start });
         Ok(())
     }
@@ -752,10 +855,13 @@ impl ScopeStack {
             Ok(_) | Err(RegexTrieError::NodeNotFound) => {}
             Err(e) => return Err(ResolveError::Index(e)),
         }
+        // The spelling is text, whatever characters it has (`^`, `<=>`): it
+        // enters the index as a literal key, never as a pattern (#110).
+        let key = regex::escape(name);
         // SAFETY: `record` is a record dyad from the store, built for this name.
         unsafe { Record::of(record).scope = scope };
-        trie.insert(name, record);
-        self.journal.push(Journal::Declared { name: name.to_string(), scope });
+        trie.insert(&key, record);
+        self.journal.push(Journal::Declared { name: key, scope });
         self.pending.push(Pending { record, endpoint: Endpoint::Start });
         Ok(())
     }
@@ -1512,6 +1618,8 @@ impl<'a> Parser<'a> {
         types: CoreTypes,
         scopes: ScopeStack,
     ) -> Self {
+        let mut scopes = scopes;
+        scopes.set_lexing(types.type_);
         Parser {
             source,
             pos: 0,
@@ -2178,28 +2286,25 @@ impl<'a> Parser<'a> {
         matches!(self.peek_token(), Some((id, _)) if id == self.types.close_ || id == self.types.close_sq_)
     }
 
-    /// Read a raw identifier `[A-Za-z_][A-Za-z0-9_]*` at the cursor, advancing past
-    /// it, returning its `(start, len)`; `None` if the next non-space byte does not
-    /// begin an identifier. Declaration position reads fresh names raw, since they
-    /// are not yet in the name index to resolve (the sketch's `declare(name:string)`).
-    fn lex_identifier(&mut self) -> Option<(usize, usize)> {
-        self.skip_trivia();
-        let bytes = self.source.as_bytes();
+    /// Read one spelling at the cursor — what the index lexes there, a
+    /// declared name or a fresh run, never a bracket, the separator, a quote,
+    /// or the comment mark — advancing past it and returning its `(start,
+    /// len)`; `None` if nothing lexes. Declaration and member positions read
+    /// spellings this way: a fresh one is not yet in the index to resolve, and
+    /// a member resolves in its owner's scope, not here.
+    fn lex_spelling(&mut self) -> Option<(usize, usize)> {
+        self.skip_whitespace();
+        let source = self.source;
         let start = self.pos;
-        match bytes.get(start) {
-            Some(&b) if b.is_ascii_alphabetic() || b == b'_' => {}
-            _ => return None,
+        let rest = source.get(start..)?;
+        if matches!(rest.as_bytes().first(), Some(b'(' | b')' | b'[' | b']' | b',' | b'#') | None)
+            || rest.starts_with('«')
+        {
+            return None;
         }
-        let mut end = start + 1;
-        while let Some(&b) = bytes.get(end) {
-            if b.is_ascii_alphanumeric() || b == b'_' {
-                end += 1;
-            } else {
-                break;
-            }
-        }
-        self.pos = end;
-        Some((start, end - start))
+        let r = self.scopes.lex(self.trie, rest).ok()?;
+        self.pos = start + r.matched;
+        Some((start, r.matched))
     }
 
     /// Parse a `( field-list )` into a record node. `record_logos` is the identity
@@ -2248,7 +2353,7 @@ impl<'a> Parser<'a> {
             if self.at_close() {
                 break;
             }
-            let (start, len) = self.lex_identifier().ok_or(ParseError::ExpectedField)?;
+            let (start, len) = self.lex_spelling().ok_or(ParseError::ExpectedField)?;
             // `self.source` is `&'a str` (Copy), so this slice is independent of the
             // `&mut self` the reentrant logos-parse and the declaration then need.
             let source = self.source;
@@ -2956,7 +3061,7 @@ impl<'a> Parser<'a> {
     /// statement yielding unit, and a `return` in the body is rejected
     /// ([`ParseError::EarlyReturn`], no unwinding to exit with).
     pub fn parse_for(&mut self, for_id: DyadPtr) -> Result<DyadPtr, ParseError> {
-        let (nstart, nlen) = self.lex_identifier().ok_or(ParseError::ExpectedLoopVar)?;
+        let (nstart, nlen) = self.lex_spelling().ok_or(ParseError::ExpectedLoopVar)?;
         let source = self.source;
         let name = &source[nstart..nstart + nlen];
         if !self.consume_token(self.types.in_) {
@@ -3286,7 +3391,7 @@ impl<'a> Parser<'a> {
         let mstart = m.start;
         let save = self.pos;
         self.pos = mstart;
-        let member = self.lex_identifier();
+        let member = self.lex_spelling();
         self.pos = save;
         let Some((nstart, nlen)) = member else {
             return Err(ParseError::ExpectedField);
@@ -4217,6 +4322,7 @@ impl<'a> Parser<'a> {
         let root = *self.scopes.open.first().expect("an import site has an open root scope");
         let section = self.store.alloc_raw(self.types.scope, std::ptr::null_mut());
         let mut nested = ScopeStack::new();
+        nested.set_lexing(self.types.type_);
         nested.push(root);
         nested.push(section);
 
@@ -4347,7 +4453,7 @@ impl<'a> Parser<'a> {
         };
         let save = self.pos;
         self.pos = m.start;
-        let member = self.lex_identifier();
+        let member = self.lex_spelling();
         self.pos = save;
         let Some((nstart, nlen)) = member else {
             return Err(ParseError::ExpectedField);
@@ -4629,21 +4735,21 @@ impl<'a> Parser<'a> {
         }
         let source = self.source;
         let start = self.pos;
-        match self.scopes.resolve(self.trie, &source[start..]) {
+        match self.scopes.lex(self.trie, &source[start..]) {
+            // A spelling the index knows only through a fresh-spelling pattern
+            // (#110): a fresh dyad with both slots null, its spelling kept in
+            // the cell's span — the pattern's construction, done at the lex.
+            Ok(r) if r.fresh => {
+                self.pos = start + r.matched;
+                let fresh = self.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut());
+                Ok(Some((Cell::unconstructed(fresh, start, r.matched), start)))
+            }
             Ok(r) => {
                 self.pos = start + r.matched;
                 // The cell is the record the trie resolved.
                 Ok(Some((Cell::unconstructed(r.record, start, r.matched), start)))
             }
-            Err(e) => match self.lex_identifier() {
-                // A spelling the trie does not know: a fresh dyad with both
-                // slots null, its spelling kept in the cell's span.
-                Some((nstart, nlen)) => {
-                    let fresh = self.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut());
-                    Ok(Some((Cell::unconstructed(fresh, nstart, nlen), nstart)))
-                }
-                None => Err(ParseError::Resolve(e)),
-            },
+            Err(e) => Err(ParseError::Resolve(e)),
         }
     }
 
@@ -5594,6 +5700,26 @@ mod tests {
 
         assert_eq!(scopes.resolve(&trie, "a").unwrap().identity, dyad(1));
         assert_eq!(trie.get("a").unwrap().records.len(), 1);
+    }
+
+    #[test]
+    fn two_spellings_of_equal_rank_matching_the_same_length_are_a_tie() {
+        // DESIGN ›The scope's constructor is the driver‹ (ruled 10 September
+        // 2026): equal rank and equal length is the inconsistency the
+        // definitions must correct, never a silent pick by declaration order.
+        // Two patterns entered as the core enters its own (raw keys).
+        let mut trie = RegexTrie::new();
+        let mut scopes = ScopeStack::new();
+        let sc = dyad(9);
+        scopes.push(sc);
+        trie.insert("a[0-9]", rec_in(dyad(1), sc));
+        trie.insert("[a-z]1", rec_in(dyad(2), sc));
+        assert_eq!(scopes.resolve(&trie, "a1"), Err(ResolveError::Tied));
+        assert_eq!(scopes.resolve(&trie, "a2").unwrap().identity, dyad(1));
+        assert_eq!(scopes.resolve(&trie, "b1").unwrap().identity, dyad(2));
+        // A longer match at equal rank wins, as `:=` wins over `:`.
+        trie.insert("a1x", rec_in(dyad(3), sc));
+        assert_eq!(scopes.resolve(&trie, "a1x").unwrap().identity, dyad(3));
     }
 
     #[test]

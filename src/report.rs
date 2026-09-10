@@ -192,6 +192,10 @@ fn resolve_message(e: &ResolveError) -> String {
         ResolveError::Ambiguous => "this name is ambiguous here".into(),
         ResolveError::Shadowed => "this name is shadowed here".into(),
         ResolveError::Dead => "this name is dead here: it was moved or dropped above".into(),
+        ResolveError::Tied => {
+            "two spellings match here with the same lex_rank; give one of them a higher lex_rank"
+                .into()
+        }
         ResolveError::Index(RegexTrieError::NodeNotFound) => "unknown name".into(),
         ResolveError::Index(RegexTrieError::BadPattern(p)) => {
             format!("this name's pattern is invalid: {p}")

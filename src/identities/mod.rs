@@ -74,6 +74,7 @@ mod eq;
 mod fn_mod;
 #[path = "for.rs"]
 mod for_mod;
+pub(crate) mod fresh;
 mod gate;
 mod ge;
 mod gt;
@@ -421,6 +422,8 @@ impl Core {
         let colon_ = colon::register(&mut cx);
         hole::register(&mut cx);
         let (sep_, instance_, left_, right_, slots) = logos_mod::register_syntax(&mut cx);
+        // The two fresh-spelling patterns, ranked below every declared spelling.
+        fresh::register(&mut cx);
         // Struct instances: the construction statement and the `.` field access.
         let (construct_, construct_leaf, dot_, index_, close_sq_) =
             instance::register(&mut cx, &callables);

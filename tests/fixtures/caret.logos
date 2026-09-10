@@ -1,0 +1,24 @@
+# The v0.1.0 demo minus its `code` slot (#63): a power operator `^` defined
+# with `type` in Logos and used in the same file, right-associative, binding
+# tighter than `*`, its constructor written in Logos. Until the code slot
+# lands the node it builds calls `powfn`, as squared.logos does. `^` is a
+# fresh symbol spelling (#110, ruled 10 September 2026): nothing declared it
+# before its `:=`, and once declared it lexes glued to its operands (`x^3`).
+powfn := fn (a := i32 ?, b := i32 ?) -> i32 (
+    r := i32 1,
+    for i in 0..b ( r = r * a ),
+    r
+),
+^ := type (
+    parse_rank = *.parse_rank + 1,
+    associativity = right,
+    constructor = fn (tape := parsing_tape ?) -> void (
+        tape[0]:dyad.type = powfn,
+        tape[0]:dyad.value.operands.append(tape[-1] and tape[1]),
+        tape.remove(1),
+        tape.remove(-1)
+    )
+),
+f := fn (x := i32 ?) -> i32 ( x^3 + 1 ),
+powfn.compile(), f.compile(),
+f(2) + 2 ^ 3 ^ 2 + 2 * 3 ^ 2      # 9 + 512 + 18

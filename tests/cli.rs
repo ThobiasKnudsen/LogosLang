@@ -183,6 +183,31 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
 }
 
 #[test]
+fn any_spelling_the_index_can_hold_is_nameable() {
+    // DESIGN ›The scope's constructor is the driver‹ (ruled 10 September 2026,
+    // #110): a spelling nothing declared lexes through one of two fresh
+    // patterns, a word or a symbol run, ranked below every declared spelling;
+    // the highest-ranked candidate wins, the longest at equal rank. So `^` is
+    // a name like any other, a declared `a` does not cut the fresh `ab2`, a
+    // declared `@` beats the run `@@`, `=` and `-` glue without a rank set,
+    // and a fresh symbol used as an operand is the leftover-cell error at its
+    // own column.
+    let (echoes, stderr) = repl(
+        b"^ := i32 5\n^ + 1\na := i32 1\nab2 := i32 2\nab2 + a\nx := i32 5\nx=-1\nx\n\
+          p := type (instance (v := i32 ?))\nq := p(7)\nr := &q\nrr := &r\nrr@@.v\nx^2\n",
+    );
+    assert_eq!(echoes, ["6", "3", "-1", "7"], "stderr: {stderr}");
+    // The fresh `^` is the leftover cell of its line, reported at its column.
+    assert!(stderr.contains("<repl>:1:2: error:"), "stderr: {stderr}");
+    // The pinned demo minus its `code` slot (#63): `^` defined with `type`,
+    // right-associative, above `*`, its constructor in Logos, used glued
+    // (`x^3`) inside a function that compiles. 9 + 512 + 18.
+    let out = logos().args(["import", "tests/fixtures/caret.logos"]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "539\n");
+}
+
+#[test]
 fn a_constructor_written_in_logos_runs_during_the_parse() {
     // Issue #61's done-when: a file defines a type with `parse_rank = …`,
     // `associativity = …`, and a `constructor = fn (tape) -> void (…)`, and a
