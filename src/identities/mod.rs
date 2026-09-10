@@ -3684,28 +3684,40 @@ mod tests {
          code = fn (a := i32 ?, b := i32 ?) -> i32 ( r := i32 1, for i in 0..b ( r = r * a ), r )\n\
         ),\n";
 
+    /// A code-carrying type with no constructor of its own: applied like a fn.
+    const SQ_TYPE: &str = "sq2 := type ( code = fn (a := i32 ?) -> i32 ( a * a ) ),\n";
+
     #[test]
     fn a_type_with_code_runs_as_a_call_of_it() {
         // DESIGN ›Execution is function application‹ (#63): "if the type
         // carries a `code`, run that function on it … A node typed `^` thus
         // runs and compiles exactly as a node typed `f` does". The infix node
         // the constructor builds and the applied form `pw(2, 3)` are one call;
-        // the result types through `+`; `2 pw 3 pw 2` associates right.
-        assert_eq!(run_script(&format!("{POW_TYPE}2 pw 10 + pw(2, 3) + 1")), 1033);
+        // the result types through `+`; `2 pw 3 pw 2` associates right. A
+        // type with a code and no constructor of its own is applied like a
+        // function: `sq2(5)` is the call (`pw(2, 3)` runs `pw`'s own infix
+        // constructor instead, "X's constructor decides what the bracket is").
+        assert_eq!(run_script(&format!("{POW_TYPE}2 pw 10 + 1")), 1025);
         assert_eq!(run_script(&format!("{POW_TYPE}2 pw 3 pw 2")), 512);
-        // `.code` is the fn itself.
-        assert_eq!(run_script(&format!("{POW_TYPE}pw.code:dyad.type == fn")), 1);
+        assert_eq!(run_script(&format!("{SQ_TYPE}sq2(5) + 1")), 26);
     }
 
     #[test]
     fn a_type_with_code_compiles_as_a_call_of_it() {
         // The caller compiles to a direct call once the code is compiled (the
-        // uncompiled-callee boundary is #65); both tiers agree.
+        // uncompiled-callee boundary is #65); both tiers agree. `.code` is the
+        // fn itself, which is what `pw.code.compile()` compiles.
         assert_eq!(
             run_script(&format!(
                 "{POW_TYPE}f := fn (x := i32 ?) -> i32 ( x pw 3 + 1 ),\na := f(2),\npw.code.compile(), f.compile(),\na + f(2)"
             )),
             18
+        );
+        assert_eq!(
+            run_script(&format!(
+                "{SQ_TYPE}f := fn (x := i32 ?) -> i32 ( sq2(x) + 1 ),\nsq2.code.compile(), f.compile(),\nf(4)"
+            )),
+            17
         );
     }
 
@@ -3714,7 +3726,7 @@ mod tests {
         // `code = 5` is refused; a hole typed by a code-carrying type has no
         // place, exactly as `f ?` has none (a value of it is a call node).
         assert_eq!(parse_err("t := type (code = 5)"), ParseError::BadCodeSlot);
-        assert_eq!(parse_err(&format!("{POW_TYPE}p := pw ?")), ParseError::NonNumericDeclaredType);
+        assert_eq!(parse_err_after(&[POW_TYPE], "p := pw ?"), ParseError::NonNumericDeclaredType);
     }
 
     #[test]
