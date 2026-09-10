@@ -12,8 +12,9 @@
 //! carries a run native, kept in [`crate::identities::Core`]'s `lower` table. The
 //! seed compiles whole `fn` bodies: parameters map to block params, `if` and the
 //! short-circuiting `and`/`or` lower to branch-and-merge blocks, and a call
-//! lowers to a direct self-call (compiled recursion) or a `call_indirect` to an
-//! already-compiled callee, with operand addresses and literals baked as
+//! lowers to a direct self-call (compiled recursion), a `call_indirect` to an
+//! already-compiled callee, or a jump into the interpreter for a callee not
+//! compiled yet (#65), with operand addresses and literals baked as
 //! immediates (DESIGN ›operand access is baked into the machine code‹). The
 //! calling convention is uniform — every parameter and result is the
 //! interpreter's `i64` bit-container, reinterpreted at the boundary — capped at
@@ -119,10 +120,6 @@ pub enum CompileError {
     /// time so a 4+ parameter function stays interpreted rather than compiling to a
     /// body that errors only when called.
     UnsupportedArity(usize),
-    /// A call targets a function that is neither the one being compiled nor already
-    /// compiled, so there is no machine address to call. The enclosing function stays
-    /// interpreted rather than baking a call to nothing.
-    UncompiledCallee(DyadPtr),
     /// A call's argument count did not match the callee's parameter count — the
     /// compile-time mirror of `RunError::ArityMismatch`, refused instead of baking a
     /// call with the wrong signature.
@@ -813,9 +810,12 @@ impl Lowerer<'_, '_> {
     /// a direct Cranelift `call` to this function — a relocation the JIT patches to
     /// this function's own address, which is what makes compiled recursion work. A
     /// call to another already-compiled function becomes a `call_indirect` through
-    /// its baked machine address. A call to a not-yet-compiled function has no
-    /// address, so it cannot be lowered ([`CompileError::UncompiledCallee`]) and the
-    /// enclosing function stays interpreted.
+    /// its baked machine address. A call to a function not compiled yet is a jump
+    /// into the interpreter ([`crate::run::interpret_call`], #65): the callee's
+    /// node and its containers travel in a stack slot, and compiling the callee
+    /// and then this function again makes the call direct — compile order
+    /// decides the call's shape, never whether it compiles (DESIGN ›The callable
+    /// ground‹).
     ///
     /// The boundary follows the uniform convention (see `compile_body`): each
     /// argument widens into the `i64` bit-container per its *own* resolved logos —
@@ -835,7 +835,8 @@ impl Lowerer<'_, '_> {
     ) -> Result<Value, CompileError> {
         let fields = (*callee).value as *const DyadPtr;
         if fields.is_null() {
-            return Err(CompileError::UncompiledCallee(callee));
+            // No signature to size the call by: an unbound placeholder.
+            return Err(CompileError::NotLowerable(callee));
         }
         // The callee's parameter count (from the input record's stored fields
         // array) and return logos (`None` for void; a `-> logos` callee cannot
@@ -885,21 +886,48 @@ impl Lowerer<'_, '_> {
             let fref = self.module.declare_func_in_func(self.func_id, &mut *self.builder.func);
             self.builder.ins().call(fref, &args64)
         } else {
-            // Otherwise the callee must already be compiled: call its machine code
-            // through the entry of the callable node in its `bcode` slot.
             let bcode = *fields.add(FN_BCODE);
             if bcode.is_null() {
-                return Err(CompileError::UncompiledCallee(callee));
+                // Not compiled: jump into the interpreter with the callee's node
+                // and its containers in a stack slot (#65). A nullary call
+                // passes no slot.
+                let argv = if args64.is_empty() {
+                    self.builder.ins().iconst(self.ptr_ty, 0)
+                } else {
+                    let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        (args64.len() * 8) as u32,
+                        3,
+                    ));
+                    for (i, &v) in args64.iter().enumerate() {
+                        self.builder.ins().stack_store(v, slot, (i * 8) as i32);
+                    }
+                    self.builder.ins().stack_addr(self.ptr_ty, slot, 0)
+                };
+                let fn_node = self.builder.ins().iconst(self.ptr_ty, callee as i64);
+                let argc = self.builder.ins().iconst(types::I64, args64.len() as i64);
+                let mut sig = self.module.make_signature();
+                for _ in 0..3 {
+                    sig.params.push(AbiParam::new(types::I64));
+                }
+                sig.returns.push(AbiParam::new(types::I64));
+                let sigref = self.builder.import_signature(sig);
+                let entry = crate::run::interpret_call as *const () as usize;
+                let addr = self.builder.ins().iconst(self.ptr_ty, entry as i64);
+                self.builder.ins().call_indirect(sigref, addr, &[fn_node, argc, argv])
+            } else {
+                // Compiled: call its machine code through the entry of the
+                // callable node in its `bcode` slot.
+                let entry = crate::identities::callable::entry_of(bcode);
+                let mut sig = self.module.make_signature();
+                for _ in 0..param_count {
+                    sig.params.push(AbiParam::new(types::I64));
+                }
+                sig.returns.push(AbiParam::new(types::I64));
+                let sigref = self.builder.import_signature(sig);
+                let addr = self.builder.ins().iconst(self.ptr_ty, entry as i64);
+                self.builder.ins().call_indirect(sigref, addr, &args64)
             }
-            let entry = crate::identities::callable::entry_of(bcode);
-            let mut sig = self.module.make_signature();
-            for _ in 0..param_count {
-                sig.params.push(AbiParam::new(types::I64));
-            }
-            sig.returns.push(AbiParam::new(types::I64));
-            let sigref = self.builder.import_signature(sig);
-            let addr = self.builder.ins().iconst(self.ptr_ty, entry as i64);
-            self.builder.ins().call_indirect(sigref, addr, &args64)
         };
         let r = self.builder.inst_results(inst)[0];
         Ok(match ret {

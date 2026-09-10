@@ -22,5 +22,5 @@
     )
 ),
 f := fn (x := i32 ?) -> i32 ( x^3 + 1 ),
-^.code.compile(), f.compile(),
+f.compile(),
 f(2) + 2 ^ 3 ^ 2 + 2 * 3 ^ 2      # 9 + 512 + 18

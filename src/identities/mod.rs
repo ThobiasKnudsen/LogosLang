@@ -3719,6 +3719,14 @@ mod tests {
             )),
             17
         );
+        // The pinned demo's shape: only the caller compiles, the operator's
+        // code stays interpreted behind the boundary (#65).
+        assert_eq!(
+            run_script(&format!(
+                "{POW_TYPE}f := fn (x := i32 ?) -> i32 ( x pw 3 + 1 ),\nf.compile(),\nf(2)"
+            )),
+            9
+        );
     }
 
     #[test]
@@ -3730,9 +3738,38 @@ mod tests {
     }
 
     #[test]
-    fn a_second_compile_is_a_no_op() {
-        // The code is installed; compiling again has nothing to do and errors
-        // nothing.
+    fn a_compiled_caller_reaches_an_uncompiled_callee_through_the_interpreter() {
+        // DESIGN ›The callable ground‹ (#65): "`compile` never fails on an
+        // uncompiled Logos callee — the call is emitted as a jump into the
+        // interpreter … Compile order therefore decides the call's shape". f
+        // compiled first walks g's body through the boundary; compiling g and
+        // then f again makes the call direct; both answers agree.
+        assert_eq!(
+            run_script(
+                "g := fn (x := i32 ?) -> i32 ( x + 1 ),\nf := fn (x := i32 ?) -> i32 ( g(x) * 2 ),\nf.compile(),\na := f(3),\ng.compile(), f.compile(),\na + f(3)"
+            ),
+            16
+        );
+        // A chain with only the outermost compiled, a nullary callee among
+        // them (no argument slot), and a void callee run for effect.
+        assert_eq!(
+            run_script(
+                "h := fn () -> i32 ( 5 ),\ng := fn (x := i32 ?) -> i32 ( h() + x ),\nf := fn (x := i32 ?) -> i32 ( g(x) * 2 ),\nf.compile(),\nf(1)"
+            ),
+            12
+        );
+        assert_eq!(
+            run_script(
+                "v := fn (x := i32 ?) -> void ( x + 1 ),\nf := fn (x := i32 ?) -> i32 ( v(x), x * 2 ),\nf.compile(),\nf(4)"
+            ),
+            8
+        );
+    }
+
+    #[test]
+    fn a_second_compile_replaces_the_entry() {
+        // Compiling again compiles again (the recompile that lifts a boundary,
+        // #65); the value is the same and nothing errors.
         assert_eq!(
             run_script(
                 "double := fn (x := i64 ?) -> i64 ( x + x ),\ndouble.compile(),\ndouble.compile(),\ndouble(21)"

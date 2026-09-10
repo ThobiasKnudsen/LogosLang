@@ -132,7 +132,7 @@ sum_to.compile(),
 sum_to(1000000)
 ```
 
-Before `sum_to.compile()` the loop is a graph walk. After it, the same function is machine code. The ruled behaviour is that a compiled function may call an uncompiled one, the call jumping into the interpreter. Today's seed refuses that case instead, so compile callees before their callers.
+Before `sum_to.compile()` the loop is a graph walk. After it, the same function is machine code. A compiled function may call one that is not compiled: the call jumps into the interpreter, and compiling the callee and then the caller again makes it a direct call. Compile order decides the call's shape, never whether it works.
 
 ### Import
 

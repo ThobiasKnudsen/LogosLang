@@ -19,7 +19,9 @@
 //! bit-container, read and written at their logos's width (see
 //! `crate::identities::numtype`).
 
-use crate::dyad::{frame_ref, DyadPtr};
+use std::cell::Cell;
+
+use crate::dyad::{frame_ref, Dyad, DyadPtr};
 use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
 
 /// The signature of a seed-native shim — what a `seed-native` callable's entry
@@ -58,10 +60,29 @@ pub enum RunError {
     /// under a runtime with no store attached: only the parser, which owns the
     /// store, hands it in for the constructors it invokes.
     NoStore,
+    /// The interpreter panicked while running an uncompiled callee under
+    /// compiled code (#65): a seed bug, carried back across the machine-code
+    /// boundary as a checked error rather than an abort; the panic's message.
+    Faulted(Box<String>),
+}
+
+thread_local! {
+    /// The runtime whose compiled code is running, set around every jump into
+    /// machine code so a call that lands back in the interpreter
+    /// ([`interpret_call`]) finds it. Null outside such a jump. Re-derived at
+    /// each jump and restored after it, never cached: a nested jump (compiled
+    /// f, interpreted g, compiled f again) sees the same runtime at each level.
+    static CURRENT: Cell<*mut Runtime> = const { Cell::new(std::ptr::null_mut()) };
+    /// The checked error an interpreted callee raised under compiled code,
+    /// parked here because an `extern "C"` function cannot return it; the
+    /// runtime reads it back the moment the machine code returns.
+    static PENDING: Cell<Option<RunError>> = const { Cell::new(None) };
 }
 
 /// Call compiled machine code (a `fn(i64…) -> i64`) with `args`, dispatching on
-/// arity, since a raw code pointer must be given a concrete function logos to call.
+/// arity, since a raw code pointer must be given a concrete function type to call.
+/// Reached only through [`Runtime::call_compiled`], which stands the runtime by
+/// for a jump back into the interpreter.
 /// The calling convention is uniform: every argument and the result is the `i64`
 /// bit-container (the compiled body reinterprets them to their real logos at the
 /// boundary), so this dispatch is independent of the parameter/return logos. The seed
@@ -70,7 +91,7 @@ pub enum RunError {
 /// # Safety
 /// `p` must point at live machine code of exactly `args.len()` `i64` parameters
 /// returning `i64` (as [`crate::compile::compile_fn`] produces).
-unsafe fn call_compiled(p: *const u8, args: &[i64]) -> Result<i64, RunError> {
+unsafe fn call_machine(p: *const u8, args: &[i64]) -> Result<i64, RunError> {
     let r = match args {
         [] => (std::mem::transmute::<*const u8, extern "C" fn() -> i64>(p))(),
         [a] => (std::mem::transmute::<*const u8, extern "C" fn(i64) -> i64>(p))(*a),
@@ -81,6 +102,55 @@ unsafe fn call_compiled(p: *const u8, args: &[i64]) -> Result<i64, RunError> {
         _ => return Err(RunError::CompiledArity),
     };
     Ok(r)
+}
+
+/// The jump a compiled caller makes into a callee that is not compiled (#65;
+/// DESIGN ›The callable ground‹: "`compile` never fails on an uncompiled Logos
+/// callee — the call is emitted as a jump into the interpreter, `run`'s
+/// body-walk over that callee"). The compiled code passes the callee's fn
+/// node, the argument count, and the arguments as containers in a stack
+/// slot; the runtime whose code is running ([`CURRENT`]) applies the callee
+/// by value ([`Runtime::apply_values`]). An `extern "C"` function can neither
+/// return a `RunError` nor let a panic cross into machine code, so a checked
+/// error, or a panic, is parked in [`PENDING`] and 0 returned; the runtime
+/// reads it back as the call's error the moment the machine code returns.
+///
+/// # Safety
+/// Called only by compiled code the seed emitted: `fn_node` must be a `fn`
+/// node from the store and `argv` must hold `argc` containers.
+pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *const i64) -> i64 {
+    let rt = CURRENT.get();
+    if rt.is_null() {
+        // Only machine code called with no runtime at all (the test-only
+        // `Compiled::call`) can get here; there is nowhere to report to.
+        eprintln!("logos: compiled code reached an uncompiled function with no runtime to run it");
+        std::process::abort();
+    }
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // SAFETY: `rt` was set by the runtime around this very jump and is
+        // live for its duration; `argv` holds `argc` containers the compiled
+        // caller stored; `fn_node` is the fn node the caller baked.
+        unsafe {
+            let args = if argc == 0 { &[][..] } else { std::slice::from_raw_parts(argv, argc) };
+            (*rt).apply_values(fn_node, args)
+        }
+    }));
+    match outcome {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => {
+            PENDING.set(Some(e));
+            0
+        }
+        Err(panic) => {
+            let msg = panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_else(|| "unknown panic".to_string());
+            PENDING.set(Some(RunError::Faulted(Box::new(msg))));
+            0
+        }
+    }
 }
 
 /// The chunk size of the interpreter's activation stack. One chunk carries many
@@ -303,8 +373,11 @@ impl Runtime {
 
     /// `f.compile()`: lower `fn_node`'s body to machine code and install the
     /// finalized entry into `code_leaf` (the leaf the parser pre-minted), so
-    /// the next call jumps instead of walking the body. Already-compiled is a
-    /// no-op — the code is installed, the call already jumps.
+    /// the next call jumps instead of walking the body. Compiling again
+    /// compiles again: a call to a callee that had no code the first time was
+    /// emitted as a jump into the interpreter, and the recompile is what lifts
+    /// that boundary once the callee has code (DESIGN ›The callable ground‹,
+    /// #65: "a boundary left behind is lifted by compiling f again").
     ///
     /// # Safety
     /// `fn_node` must be a valid dyad and `code_leaf` a callable value, both
@@ -323,9 +396,6 @@ impl Runtime {
         let fields = (*fn_node).value as *const DyadPtr;
         if fields.is_null() {
             return Err(RunError::NotRunnable(fn_node));
-        }
-        if !(*fields.add(FN_BCODE)).is_null() {
-            return Ok(());
         }
         crate::compile::compile_into(&*cx.lower, cx.types, fn_node, code_leaf)
             .map_err(|e| RunError::CompileFailed(Box::new(crate::report::compile_message(&e))))
@@ -380,44 +450,51 @@ impl Runtime {
     /// [args…, null]}` — the one act behind every call: a node typed by a
     /// function (`f(2)`) and a node typed by a type carrying a `code` (`2 ^ 3`,
     /// DESIGN ›Execution is function application‹, #63) both arrive here, the
-    /// latter with `f` the type's code. Compiled: evaluate the arguments in
-    /// the current frame and jump to the installed entry. Interpreted: claim
-    /// the callee's zeroed frame, bind the arguments into it, make it
-    /// current, walk the body, and pop both again.
+    /// latter with `f` the type's code. The arguments are evaluated in the
+    /// current frame (the caller's) into their containers, then
+    /// [`Runtime::apply_values`] does the rest.
     ///
     /// # Safety
     /// `f` must be a `fn` node from the store and `node` a node whose value
     /// is a null-terminated operand run (or null for a nullary call).
     pub unsafe fn apply(&mut self, f: DyadPtr, node: DyadPtr) -> Result<i64, RunError> {
+        if ((*f).value as *const DyadPtr).is_null() {
+            return Err(RunError::NotRunnable(f));
+        }
+        let values = self.eval_args(f, node)?;
+        self.apply_values(f, &values)
+    }
+
+    /// Apply `f` to arguments already evaluated into their `i64` containers —
+    /// the second half of [`Runtime::apply`], and the whole of a jump back
+    /// from compiled code ([`interpret_call`], #65). Compiled: jump to the
+    /// installed entry. Interpreted: claim the callee's zeroed frame from the
+    /// activation stack, write the containers into its parameter slots — the
+    /// caller placing the operands on the stack for the callee to read, the
+    /// ordinary calling convention (DESIGN ›Operands travel on the stack‹) —
+    /// make the frame current, walk the body, and pop both again.
+    ///
+    /// # Safety
+    /// `f` must be a `fn` node from the store; `values` one container per
+    /// parameter.
+    pub unsafe fn apply_values(&mut self, f: DyadPtr, values: &[i64]) -> Result<i64, RunError> {
         // A user function's value is `[input, output, body, bcode, frame]`.
         let fields = (*f).value as *const DyadPtr;
         if fields.is_null() {
             return Err(RunError::NotRunnable(f));
         }
-        // Compiled: evaluate the arguments (in the current frame) and call
-        // the installed code — a callable node carrying the finalized entry
-        // under the container convention (issue #44).
         let bcode = *fields.add(FN_BCODE);
         if !bcode.is_null() {
-            let (args, arity) = self.eval_args_compiled(f, node)?;
             let entry = crate::identities::callable::entry_of(bcode);
-            return call_compiled(entry as *const u8, &args[..arity]);
+            return self.call_compiled(entry as *const u8, values);
         }
         let body = *fields.add(FN_BODY);
         if body.is_null() {
             return Err(RunError::NotRunnable(f));
         }
-        // Interpreted: claim the callee's zeroed frame from the activation
-        // stack, evaluate each argument in the *caller's* frame and write it
-        // into the callee's parameter slot — the caller placing the operands
-        // on the stack for the callee to read, the ordinary calling
-        // convention (DESIGN ›Operands travel on the stack‹) — then make the
-        // frame current, walk the body, and pop both again. The stack mark
-        // rides this Rust frame, so unwinding on an argument error releases
-        // the claim without ever having pushed the activation.
         let mark = self.stack.mark();
         let base = self.stack.alloc(fn_frame_size(f));
-        if let Err(e) = self.bind_args(f, node, base) {
+        if let Err(e) = Self::bind_values(f, base, values) {
             self.stack.release(mark);
             return Err(e);
         }
@@ -431,6 +508,25 @@ impl Runtime {
             result.map(|_| 0)
         } else {
             result
+        }
+    }
+
+    /// Jump to compiled machine code with `args`, this runtime standing by as
+    /// the one a call back into the interpreter finds ([`CURRENT`]), and read
+    /// back the checked error such a call parked ([`PENDING`]) the moment the
+    /// machine code returns — whatever value it returned, since 0 is a value.
+    ///
+    /// # Safety
+    /// `entry` must be live machine code of `args.len()` `i64` parameters
+    /// returning `i64`, as the seed compiles.
+    unsafe fn call_compiled(&mut self, entry: *const u8, args: &[i64]) -> Result<i64, RunError> {
+        let prev = CURRENT.replace(self as *mut Runtime);
+        let r = call_machine(entry, args);
+        CURRENT.set(prev);
+        let r = r?;
+        match PENDING.take() {
+            Some(e) => Err(e),
+            None => Ok(r),
         }
     }
 
@@ -575,27 +671,25 @@ impl Runtime {
         Ok(std::ptr::read_unaligned(slot as *const i64))
     }
 
-    /// Evaluate a compiled call's arguments, in order, in the *current* frame
-    /// (the caller's), checking their count against the callee's parameters. The
-    /// parameter and argument arrays are both null-terminated (the input record
-    /// is `[scope, param0 …, null]`, the call value `[arg0 …, null]` or null).
-    /// Returns the bit-container values and the arity; more than the seed's
-    /// three compiled arguments is [`RunError::CompiledArity`].
+    /// Evaluate a call's arguments, in order, in the *current* frame (the
+    /// caller's) into their `i64` bit-containers. The parameter and argument
+    /// arrays are both null-terminated (the input record's fields, the call
+    /// value `[arg0 …, null]` or null); a count mismatch is
+    /// [`RunError::ArityMismatch`].
     ///
     /// # Safety
-    /// `fn_node` must be a valid function node and `call_node` a valid application
-    /// of it, both from the store.
-    unsafe fn eval_args_compiled(
+    /// `fn_node` must be a valid function node and `call_node` a valid
+    /// application of it, both from the store.
+    unsafe fn eval_args(
         &mut self,
         fn_node: DyadPtr,
         call_node: DyadPtr,
-    ) -> Result<([i64; 3], usize), RunError> {
+    ) -> Result<Vec<i64>, RunError> {
         let input = *((*fn_node).value as *const DyadPtr).add(FN_INPUT);
         let params =
             crate::identities::array::items(crate::identities::meta::record_fields_of(input));
         let args = (*call_node).value as *const DyadPtr; // [arg0 …, null] or null
-
-        let mut values = [0i64; 3];
+        let mut values = Vec::with_capacity(params.len());
         let mut i = 0usize;
         loop {
             let param = params.get(i).copied().unwrap_or(std::ptr::null_mut());
@@ -603,64 +697,43 @@ impl Runtime {
             match (param.is_null(), arg.is_null()) {
                 (true, true) => break, // both exhausted: counts matched
                 (false, false) => {
-                    if i == values.len() {
-                        return Err(RunError::CompiledArity);
-                    }
-                    values[i] = self.run(arg)?;
+                    values.push(self.run(arg)?);
                     i += 1;
                 }
                 _ => return Err(RunError::ArityMismatch),
             }
         }
-        Ok((values, i))
+        Ok(values)
     }
 
-    /// Evaluate an interpreted call's arguments, in order, in the *current*
-    /// frame (the caller's), writing each into the callee's parameter slot in
-    /// the fresh frame at `base` — the caller's side of the calling convention.
-    /// A scalar-typed parameter stores at its logos's width, exactly as a local
-    /// of that logos would; any other (a bare `name`, a logos-valued parameter)
-    /// stores the full i64 bit-container. Arity is checked against the callee's
-    /// parameters as the walk pairs them.
+    /// Write `values`, one per parameter, into the callee's parameter slots in
+    /// the fresh frame at `base`. A scalar-typed parameter stores at its
+    /// type's width, exactly as a local of that type would; any other (a bare
+    /// `name`, a type-valued parameter) stores the full i64 bit-container.
     ///
     /// # Safety
-    /// As [`Runtime::eval_args_compiled`]; `base` must be a frame allocation of
-    /// the callee's `FN_FRAME` size, which covers every parameter slot the
-    /// parser assigned.
-    unsafe fn bind_args(
-        &mut self,
-        fn_node: DyadPtr,
-        call_node: DyadPtr,
-        base: *mut u8,
-    ) -> Result<(), RunError> {
+    /// `fn_node` must be a valid function node; `base` a frame allocation of
+    /// its `FN_FRAME` size, which covers every parameter slot the parser
+    /// assigned.
+    unsafe fn bind_values(fn_node: DyadPtr, base: *mut u8, values: &[i64]) -> Result<(), RunError> {
         let input = *((*fn_node).value as *const DyadPtr).add(FN_INPUT);
         let params =
             crate::identities::array::items(crate::identities::meta::record_fields_of(input));
-        let args = (*call_node).value as *const DyadPtr; // [arg0 …, null] or null
-
-        let mut i = 0usize;
-        loop {
-            let param = params.get(i).copied().unwrap_or(std::ptr::null_mut());
-            let arg = if args.is_null() { std::ptr::null_mut() } else { *args.add(i) };
-            match (param.is_null(), arg.is_null()) {
-                (true, true) => break, // both exhausted: counts matched
-                (false, false) => {
-                    let bits = self.run(arg)?;
-                    // A parameter without a parse-assigned slot is a malformed
-                    // function node (the parser always assigns one).
-                    let Some((_, off)) = frame_ref((*param).value) else {
-                        return Err(RunError::BadValue);
-                    };
-                    let slot = base.add(off);
-                    let logos = (*param).ty;
-                    if crate::identities::numtype::is_scalar_place_type(logos) {
-                        crate::identities::numtype::write_scalar(logos, slot, bits);
-                    } else {
-                        std::ptr::write_unaligned(slot as *mut i64, bits);
-                    }
-                    i += 1;
-                }
-                _ => return Err(RunError::ArityMismatch),
+        if params.len() != values.len() {
+            return Err(RunError::ArityMismatch);
+        }
+        for (&param, &bits) in params.iter().zip(values) {
+            // A parameter without a parse-assigned slot is a malformed
+            // function node (the parser always assigns one).
+            let Some((_, off)) = frame_ref((*param).value) else {
+                return Err(RunError::BadValue);
+            };
+            let slot = base.add(off);
+            let ty = (*param).ty;
+            if crate::identities::numtype::is_scalar_place_type(ty) {
+                crate::identities::numtype::write_scalar(ty, slot, bits);
+            } else {
+                std::ptr::write_unaligned(slot as *mut i64, bits);
             }
         }
         Ok(())

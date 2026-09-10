@@ -222,6 +222,7 @@ pub fn run_message(e: &RunError) -> String {
                 .into()
         }
         RunError::CompileFailed(msg) => format!("compile() failed: {msg}"),
+        RunError::Faulted(msg) => format!("the interpreter stopped inside compiled code: {msg}"),
         RunError::NoStore => "a cell can be built only inside a constructor the parser runs".into(),
     }
 }
@@ -236,9 +237,6 @@ pub fn compile_message(e: &CompileError) -> String {
         }
         CompileError::UnsupportedArity(n) => {
             format!("compiled functions take at most three parameters in v1 (this one has {n})")
-        }
-        CompileError::UncompiledCallee(_) => {
-            "a call target is not compiled yet (declare functions before their callers)".into()
         }
         CompileError::ArityMismatch => "a call's argument count does not match its function".into(),
         CompileError::Cranelift(msg) => format!("the backend rejected this: {msg}"),
@@ -288,7 +286,7 @@ mod tests {
     fn messages_never_print_node_addresses() {
         let msg = run_message(&RunError::NotRunnable(std::ptr::null_mut()));
         assert!(!msg.contains("0x"));
-        let msg = compile_message(&CompileError::UncompiledCallee(std::ptr::null_mut()));
+        let msg = compile_message(&CompileError::NotLowerable(std::ptr::null_mut()));
         assert!(!msg.contains("0x"));
     }
 }
