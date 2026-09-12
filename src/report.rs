@@ -138,6 +138,9 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::InstanceOutsideType => "`instance (…)` belongs inside a type body".into(),
         ParseError::DoubleInstance => "a type body has one `instance (…)` block".into(),
         ParseError::DeferInTypeBody => "a type body cannot own what needs a teardown".into(),
+        ParseError::TypeBodyFailed(msg) => {
+            format!("a type body's own declaration failed at the definition: {msg}")
+        }
         ParseError::NonComptimeRank => {
             "a parse_rank must be a number known when the type is defined".into()
         }

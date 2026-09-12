@@ -170,6 +170,20 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
     assert_eq!(echoes, ["71.0", "true", "true"], "stderr: {stderr}");
     let (echoes, stderr) = repl(b"g := type (y := 3, z := y + 3)\ng.y\ng.z\ng.parse_rank\n");
     assert_eq!(echoes, ["3", "6", "91.0"], "stderr: {stderr}");
+    // A member's initializer runs at the definition, so a *typed* member holds
+    // its value too — the body's own declarations run as they are parsed, the
+    // one pass over a type body as over a file. Before that, only the untyped
+    // comptime form worked, because it folds at parse, and `g.y` read the
+    // zeroed place (#87).
+    let (echoes, stderr) = repl(b"g := type (y := i32 7, z := i32 (y + 3))\ng.y\ng.z\ng.y + 1\n");
+    assert_eq!(echoes, ["7", "10", "8"], "stderr: {stderr}");
+    // A declaration that faults at the definition says so, and names the type
+    // body it was in.
+    let (echoes, stderr) = repl(b"h := fn () -> i32 ( p := @i32 ?, p@ )\ng := type (y := h())\n");
+    assert!(
+        echoes.is_empty() && stderr.contains("a type body's own declaration failed"),
+        "stderr: {stderr}"
+    );
     // `lex_rank` (ruled 10 September 2026, #113): the order among pattern
     // spellings competing at one text position, a stored slot the seed reads
     // for nothing yet; 0 on every identity whose body did not set it.
@@ -280,6 +294,9 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"instance (x := i32 ?)\n", "belongs inside a type body"),
         (b"t := type (instance (a := i32 ?), instance (b := i32 ?))\n", "one `instance"),
         (b"t := type (5)\n", "a type body line"),
+        // `instance` without its bracket declares nothing: it used to stand as
+        // a bare value and pass as a silent no-op (#87).
+        (b"t := type (instance)\n", "a type body line"),
         (b"t := type (associativity = 5)\n", "`left` or `right`"),
         (b"t := type (constructor = fn (a := i32 ?) -> void ( a = 1 ))\n", "parsing_tape"),
         (

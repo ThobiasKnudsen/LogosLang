@@ -1150,6 +1150,22 @@ pub unsafe fn fn_frame_size(fn_node: DyadPtr) -> usize {
 pub const SLOT_NAMES: [&str; 6] =
     ["parse_rank", "lex_rank", "associativity", "constructor", "destructor", "code"];
 
+/// What a line of a `type (…)` body is (DESIGN ›The constructor is a field‹:
+/// a body line fills a slot, declares a member, opens `instance (…)`, or is
+/// prose). Anything else is [`ParseError::TypeBodyLine`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BodyLine {
+    /// A comment.
+    Prose,
+    /// A declaration — a member of the type's own, or a slot fill, which is
+    /// the declare node [`Parser::slot_fill`] yields.
+    Declare,
+    /// The `instance` identity: its block, or the bare word.
+    Instance,
+    /// None of those.
+    Other,
+}
+
 /// One of the six slots, by [`SLOT_NAMES`] position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlotKind {
@@ -1263,6 +1279,9 @@ pub enum ParseError {
     DoubleInstance,
     /// A binding in a type body inserted a teardown, which no scope exit runs.
     DeferInTypeBody,
+    /// A type body's own declaration failed while running at the definition
+    /// (#87); carries the rendered run error.
+    TypeBodyFailed(Box<String>),
     /// `parse_rank = …` whose value is not a number known at the definition.
     NonComptimeRank,
     /// `associativity = …` with something other than `left` or `right`.
@@ -2563,18 +2582,53 @@ impl<'a> Parser<'a> {
     /// The lines of a type body, each settled as the body item of the
     /// names it declared and checked to be one of the kinds a body holds.
     fn type_body_lines(&mut self, scope: DyadPtr) -> Result<(), ParseError> {
+        // The body's own declarations run as they are parsed, the one pass
+        // over a type body as over a file ([`Self::run_imported`]): a member
+        // is stored once, at the definition, which is what DESIGN ›The
+        // constructor is a field‹ asks of a bare body line — it "may declare
+        // new members that live on it, a namespace's", read `g.y`. Without
+        // the run, a typed member's initializer never stored and `g.y` read
+        // the zeroed place (#87), while the untyped `y := 3` worked because
+        // it folds at parse. A fresh interpreter, as every other parse-time
+        // evaluation uses ([`Self::eval_type_call`]): no compiler, so a
+        // `.compile()` here is the checked error rather than code installed
+        // behind the open pass, and no defer type is needed because a body
+        // that inserts a teardown is already `DeferInTypeBody`.
+        let mut rt = crate::run::Runtime::new(self.types);
         while let Some(item) = self.parse_next() {
             let item = item?;
             self.scopes.settle_item(scope, item);
             // SAFETY: `item` is a reduced dyad just parsed.
-            let ok = unsafe {
+            let kind = unsafe {
                 let ty = (*item).ty;
-                crate::identities::numtype::is_comment_type(ty)
-                    || ty == self.types.declare_
-                    || self.types.through(item) == self.types.instance_
+                if crate::identities::numtype::is_comment_type(ty) {
+                    BodyLine::Prose
+                } else if ty == self.types.declare_ {
+                    BodyLine::Declare
+                } else if self.types.through(item) == self.types.instance_ {
+                    BodyLine::Instance
+                } else {
+                    BodyLine::Other
+                }
             };
-            if !ok {
-                return Err(ParseError::TypeBodyLine);
+            match kind {
+                BodyLine::Other => return Err(ParseError::TypeBodyLine),
+                // `instance` without its bracket stood as a bare value and was
+                // silently accepted as a no-op; it declares nothing, so it is
+                // the same error as any other line that declares nothing (#87).
+                BodyLine::Instance => {
+                    if self.definitions.last().is_none_or(|d| d.instance.is_none()) {
+                        return Err(ParseError::TypeBodyLine);
+                    }
+                }
+                BodyLine::Prose => {}
+                // SAFETY: `item` is the declare node just parsed, and the
+                // store outlives the pass; the runtime works off raw handles.
+                BodyLine::Declare => unsafe {
+                    rt.run(item).map_err(|e| {
+                        ParseError::TypeBodyFailed(Box::new(crate::report::run_message(&e)))
+                    })?;
+                },
             }
         }
         Ok(())
