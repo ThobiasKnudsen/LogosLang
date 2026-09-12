@@ -200,7 +200,17 @@ fn run_line(source: &str) -> ExitCode {
                         }
                     } else if (*node).ty != types.comment_ {
                         ran_something = true;
-                        last = Some((node, bits));
+                        // A statement shows nothing, the same test an import's
+                        // tail takes and the same policy the REPL applies.
+                        // `=` yields nothing (DESIGN ›The scope's constructor
+                        // is the driver‹, 8 September 2026), so
+                        // `logos 'x := i32 0, x = 5'` printed 5 where the REPL
+                        // and a file both stayed silent; this line is what
+                        // run_line's own promise that "the command line and
+                        // REPL agree" was missing.
+                        if !is_silent_tail(&engine.core, node) {
+                            last = Some((node, bits));
+                        }
                     }
                 }
             }

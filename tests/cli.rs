@@ -766,6 +766,23 @@ fn help_prints_usage_and_version() {
 }
 
 #[test]
+fn a_statement_tail_prints_nothing_on_the_command_line_too() {
+    // `=` yields nothing (DESIGN ›The scope's constructor is the driver‹,
+    // 8 September 2026). The REPL knew that and an imported file's tail knew
+    // it; the command line did not, so `logos 'x := i32 0, x = 5'` printed 5
+    // where the same source in the REPL and in a file printed nothing.
+    // run_line's own doc says "the command line and REPL agree".
+    for src in ["x := i32 0, x = 5", "x := i32 5", "x := i32 1, p := &x, p@ = 9"] {
+        let out = logos().arg(src).output().unwrap();
+        assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(out.stdout.is_empty(), "{src}: printed {:?}", String::from_utf8_lossy(&out.stdout));
+    }
+    // A value tail still prints, which is the whole point of the tail.
+    let out = logos().arg("x := i32 0, x = 5, x").output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "5\n");
+}
+
+#[test]
 fn a_line_starting_with_a_dash_is_source_not_a_flag() {
     // DESIGN ›The command line is Logos source‹: "Everything after `logos`
     // is one line of Logos code" and "There are no build or compile flags".
