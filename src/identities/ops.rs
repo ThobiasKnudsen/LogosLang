@@ -105,6 +105,20 @@ impl OpLeaves {
     pub(crate) fn store_leaf(&self, nt: NumType) -> DyadPtr {
         self.store[nt as usize]
     }
+
+    /// The width a store leaf writes at — the reverse of [`Self::store_leaf`],
+    /// ten pointer compares. An `=` node's op slot carries the leaf its builder
+    /// chose, so the width is *in the node*; a reader that re-derives it from
+    /// the target's logos instead is the second copy of a decision already
+    /// made, and for a `type ?` or `dyad ?` box the two disagreed (#82: the
+    /// logos has no numeric tag, the leaf says `I64`). `None` for a pointer
+    /// that is not a store leaf.
+    pub(crate) fn store_nt_of(&self, leaf: DyadPtr) -> Option<NumType> {
+        if leaf.is_null() {
+            return None;
+        }
+        self.store.iter().position(|&l| l == leaf).map(|i| NumType::from_tag(i as u8))
+    }
 }
 
 /// Run a binary arithmetic node with the (operation, logos) pair baked in:

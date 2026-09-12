@@ -3720,6 +3720,34 @@ mod tests {
     }
 
     #[test]
+    fn a_compiled_store_into_a_node_box_takes_its_width_from_the_leaf() {
+        // #82, asymmetry 6. `assign::build` bakes the store leaf for the
+        // target's width into the node's op slot (`store_leaf(I64)` for a
+        // `type ?` or `dyad ?` box), and the interpreter honours it. The
+        // compiler re-derived the width from the target's logos instead, and
+        // a node box has no numeric tag: `numtype_of_type` reached
+        // `NumType::from_tag(18)` and panicked. A compiled body writing an
+        // outer box is the reachable shape — the box is global, the store is
+        // inside the body. Both tiers now read the leaf, so both answer 1.
+        for tail in ["", "f.compile(), "] {
+            assert_eq!(
+                run_script(&format!(
+                    "a := type ?, f := fn () -> i32 ( a = i32, 5 ),\n{tail}f(), a == i32"
+                )),
+                1,
+                "type box, {tail:?}"
+            );
+            assert_eq!(
+                run_script(&format!(
+                    "a := dyad ?, f := fn () -> i32 ( a = f64, 5 ),\n{tail}f(), a == f64"
+                )),
+                1,
+                "dyad box, {tail:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_type_is_a_value_a_place_can_hold() {
         // DESIGN ›A type is a comptime value‹ (12 September 2026): "a type
         // value is a node address like any other value, so it may be passed to

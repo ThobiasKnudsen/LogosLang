@@ -369,6 +369,13 @@ impl Lowerer<'_, '_> {
         self.store_at(ct, addr, 0, v);
     }
 
+    /// The core handles this compilation resolves against — for an identity's
+    /// lowering to reach the op-leaf table (`types.ops`) the way the builders
+    /// that filled the node's op slot did.
+    pub(crate) fn types(&self) -> &CoreTypes {
+        &self.types
+    }
+
     /// Load a `ct`-typed value through a *runtime* address (an SSA i64 pointer)
     /// at a byte offset. The address is a runtime value — from [`Self::place_addr`]
     /// (a baked `iconst` or a frame `stack_addr`) or a dereferenced pointer.

@@ -14,7 +14,7 @@
 
 use cranelift_codegen::ir::Value;
 
-use super::numtype::{is_pointer_type, numtype_of_type, of_type_node, NumType};
+use super::numtype::{is_pointer_type, of_type_node, NumType};
 use super::{commit_if_literal, is_numtype_node, meta, operands, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
@@ -188,17 +188,29 @@ pub(super) fn build(
 /// `BadValue` — without it the compiler would bake a store to address 0 and
 /// SIGSEGV at call time where the interpreter cleanly errors, breaking
 /// interpreter/JIT parity.
+///
+/// The width comes from the node's own op slot — the store leaf [`build`]
+/// chose — exactly as the interpreter's `store_run<NT>` reads it. It used to
+/// be re-derived from the target's logos, which for a `type ?` or `dyad ?` box
+/// has no numeric tag: `numtype_of_type` reached `NumType::from_tag(18)` and
+/// panicked, so a compiled body assigning into such a box took the process
+/// down where the interpreter wrote eight bytes (#82, asymmetry 6). One
+/// decision, made at build, read twice.
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a valid application dyad, so its operands are valid nodes.
+    // SAFETY: `node` is a valid `=` application `[lhs, rhs, store leaf]`, so
+    // its operands and its op slot are valid nodes.
     unsafe {
         let (lhs, rhs) = operands(node);
+        let leaf = *((*node).value as *const DyadPtr).add(2);
+        let Some(nt) = lw.types().ops.store_nt_of(leaf) else {
+            return Err(CompileError::BadValue);
+        };
         let lhs = lw.through(lhs);
         if (*lhs).value.is_null() {
             return Err(CompileError::BadValue);
         }
         let v = lw.lower(rhs)?;
-        let ct = numtype_of_type((*lhs).ty).cranelift_type();
-        lw.write_place(lhs, ct, v);
+        lw.write_place(lhs, nt.cranelift_type(), v);
         Ok(v)
     }
 }
