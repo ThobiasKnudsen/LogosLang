@@ -1437,10 +1437,6 @@ pub enum ParseError {
     /// a logos, so the expression must evaluate to one (a spelled logos, or a
     /// `-> logos` call resolved at parse time).
     BadDeclaredType,
-    /// A logos variable was assigned inside a deferred or repeated body (a fn
-    /// body, loop body, or runtime `if` branch). The fill rebinds the name at
-    /// parse time, which is only sound where parsing and running coincide.
-    NonComptimeTypeAssign,
     /// A typed declaration of a non-numeric logos (`a := logos ?`, a record, a
     /// pointer, `bool`, `void`) — the declared-logos storage for those is not in
     /// the seed yet, and this names the gap instead of mis-storing the value.
@@ -2118,7 +2114,10 @@ impl<'a> Parser<'a> {
                 if cell.is_fresh() {
                     None
                 } else {
+                    // Through `settled_type`: a box the pass has already
+                    // filled declares with the type it holds.
                     let d = self.operand_dyad(cell)?;
+                    let d = self.settled_type(d);
                     // SAFETY: `d` is a resolved dyad from the store.
                     unsafe {
                         // A place holding a type cannot say what a hole's
@@ -2153,10 +2152,14 @@ impl<'a> Parser<'a> {
                 // SAFETY: `t` is a type node from the store.
                 let place = unsafe {
                     if t == types.type_ {
-                        // A type variable: the null-valued placeholder — the
-                        // undefined type, the null value being the marker no
-                        // real type node has — filled once by `name = <type>`.
-                        self.store.alloc_raw(types.type_, std::ptr::null_mut())
+                        // A place holding a type: eight bytes for the node
+                        // address, like any other non-scalar place. It used to
+                        // be a null-valued placeholder that `name = <type>`
+                        // filled by *rebinding the name*, which is why a
+                        // second assignment reported "not an assignable
+                        // place": the first one had replaced the variable with
+                        // a synonym for the type. A box can be written again.
+                        self.alloc_local(types.type_, 8)
                     } else if crate::identities::is_numtype_node(&types, t) {
                         let nt = crate::identities::numtype::of_type_node(t);
                         self.alloc_local(t, nt.bytes())
@@ -2219,7 +2222,7 @@ impl<'a> Parser<'a> {
             // bare delimiter (`..`, `->`, `else`, `in`), which no operator
             // takes as an operand.
             c => {
-                let id = c.identity(&self.types);
+                let id = self.cell_identity(c);
                 c.is_fresh() || (self.ctor_of(id).is_none() && !self.is_delimiter(id))
             }
         }
@@ -2261,7 +2264,7 @@ impl<'a> Parser<'a> {
                         }
                     }
                 } else {
-                    (c.identity(&self.types), c.record(&self.types))
+                    (self.cell_identity(&c), c.record(&self.types))
                 };
                 // SAFETY: `id` is a resolved dyad from the store.
                 unsafe { self.check_capture(id)? };
@@ -3816,7 +3819,7 @@ impl<'a> Parser<'a> {
         // Keywords, operators, literals: not places.
         if !cell.constructed
             && !cell.is_fresh()
-            && self.ctor_of(cell.identity(&self.types)).is_some()
+            && self.ctor_of(self.cell_identity(&cell)).is_some()
         {
             return Err(ParseError::BadAddressOf);
         }
@@ -3989,7 +3992,7 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
         let mut depth = 1usize;
-        while matches!(self.cell_at(tape, 1)?, Some(c) if !c.constructed && c.identity(&self.types) == self.types.at_)
+        while matches!(self.cell_at(tape, 1)?, Some(c) if !c.constructed && self.cell_identity(&c) == self.types.at_)
         {
             tape.remove(1);
             depth += 1;
@@ -4996,70 +4999,6 @@ impl<'a> Parser<'a> {
         self.store.alloc_raw(ty, storage)
     }
 
-    /// A logos variable's fill, tried by `=`'s constructor at reduction:
-    /// `name = <logos>` where the name token's binding is an unfilled logos
-    /// placeholder (`logos == logos`, null value — the marker no real logos node
-    /// has). The fill rebinds the name to the logos node at parse, completing
-    /// the `name := logos ?` declaration — logos are comptime, so the assignment
-    /// is elaboration, not a runtime store; from here the name is a full
-    /// spelling of the logos (`==` folds, `a 5` juxtaposes, printing reads
-    /// it). Only at a comptime execution position: inside a deferred or
-    /// repeated body the rebind would fire once at parse, the wrong time and
-    /// on both runtime branches ([`ParseError::NonComptimeTypeAssign`]). A
-    /// second fill finds a real logos node, never the placeholder, and returns
-    /// `None` into ordinary (rejected) assignment: define-once.
-    /// The type variable's fill, first half: exactly one token stands to the
-    /// left of `=`, bound to a null-valued type placeholder (`a := type ?`),
-    /// so `a = <type>` completes that declaration rather than storing.
-    pub(crate) fn is_type_variable(&self, tape: &ParsingTape) -> Option<Cell> {
-        if tape.cursor() != 1 {
-            return None;
-        }
-        let tok = tape.at(-1).copied().filter(|c| !c.constructed)?;
-        if tok.is_fresh() {
-            return None;
-        }
-        let binding = tok.identity(&self.types);
-        // SAFETY: `binding` is a resolved dyad from the store.
-        if unsafe { !((*binding).ty == self.types.type_ && (*binding).value.is_null()) } {
-            return None;
-        }
-        Some(tok)
-    }
-
-    /// The type variable's fill, second half: rebind the name at its
-    /// declaring scope to the type `value` names (a comptime-only act: inside
-    /// a repeated body it is refused) and yield the declare node that
-    /// completes the declaration, a silent statement.
-    pub(crate) fn type_fill(&mut self, tok: Cell, value: DyadPtr) -> Result<DyadPtr, ParseError> {
-        if self.runtime_depth > 0 {
-            self.pos = tok.start;
-            return Err(ParseError::NonComptimeTypeAssign);
-        }
-        // SAFETY: `value` is a reduced dyad from the store.
-        let t = unsafe { self.types.through(value) };
-        // SAFETY: `t` is a reduced dyad off the tape.
-        if !unsafe { crate::identities::is_type_value(&self.types, t) } {
-            self.pos = tok.start;
-            return Err(ParseError::BadDeclaredType);
-        }
-        let source = self.source;
-        let name = &source[tok.start..tok.start + tok.len];
-        let record = self.scopes.resolve(self.trie, name).map_err(ParseError::Resolve)?.record;
-        // SAFETY: `record` is the record the resolver returned for the name.
-        unsafe { self.scopes.rebind(record, t) };
-        let name_node =
-            crate::identities::string::build_text(self.store, self.types.string_, name.as_bytes());
-        let node = crate::identities::declare::build(
-            self.store,
-            self.types.declare_,
-            self.types.ops.declare_,
-            name_node,
-            t,
-        );
-        Ok(node)
-    }
-
     /// One lex step: the next token as a tape cell with its source offset, or
     /// `None` at the end of input. Only whitespace is skipped — `#` is an
     /// identity, constructed at discovery like any literal. A spelling the
@@ -5096,6 +5035,48 @@ impl<'a> Parser<'a> {
     /// instance of `fn` and for a record logos (DESIGN ›The constructor is a
     /// field‹: "whether the name resolves to X's own slot or to the type's
     /// shared one is ordinary field semantics").
+    /// The identity a cell denotes *now*.
+    ///
+    /// A place holding a type denotes the type it holds. At top level the one
+    /// pass has already run the assignment that filled it by the time a later
+    /// item parses (DESIGN ›Build and run are one self-directing pass‹: each
+    /// expression runs the moment it is parsed), so the pass may read the box
+    /// and use what it finds — which is how `a := type ?, a = i32, x := a 5`
+    /// declares an `i32`. Inside a deferred body the assignment has not run
+    /// when the body parses, so the place denotes itself and the uses that
+    /// need an identity report [`ParseError::TypeKnownOnlyAtRun`]. Only a
+    /// global place is read for the same reason: a frame slot has no content
+    /// until its call.
+    ///
+    /// Everything that is not a settled type place is returned unchanged, so
+    /// this is safe to ask of any cell.
+    fn settled_type(&self, id: DyadPtr) -> DyadPtr {
+        if self.runtime_depth > 0 {
+            return id;
+        }
+        // SAFETY: `id` is null or a resolved dyad from the store; the read is
+        // of a place this parser allocated, eight bytes wide.
+        unsafe {
+            if id.is_null() || (*id).ty != self.types.type_ {
+                return id;
+            }
+            let Some(addr) = crate::dyad::global_ref((*id).value) else {
+                return id;
+            };
+            let held = std::ptr::read_unaligned(addr as *const DyadPtr);
+            match crate::identities::type_identity_of(&self.types, held) {
+                Some(t) => t,
+                None => id,
+            }
+        }
+    }
+
+    /// [`Cell::identity`] through [`Self::settled_type`]: what the cell means
+    /// to the pass, which is what the driver dispatches on.
+    fn cell_identity(&self, cell: &Cell) -> DyadPtr {
+        self.settled_type(cell.identity(&self.types))
+    }
+
     fn ctor_of(&self, id: DyadPtr) -> Option<ConstructFn> {
         // SAFETY: `id` is a resolved dyad from the store.
         unsafe {
@@ -5172,7 +5153,7 @@ impl<'a> Parser<'a> {
         let outcome = outcome?;
         // The same token, at the same offset: a splice that moved the cursor
         // onto a later cell of the same identity (`5 + 20 + 12`) is not it.
-        let standing = matches!(tape.at(0), Some(c) if !c.constructed && c.identity(&self.types) == id)
+        let standing = matches!(tape.at(0), Some(c) if !c.constructed && self.cell_identity(c) == id)
             && tape.start_of(tape.cursor()) == start;
         if matches!(outcome, Constructed::Decline) || standing {
             // The identity stands as its own value: the use of its name, its
@@ -5239,7 +5220,7 @@ impl<'a> Parser<'a> {
         let Some((cell, start)) = self.lex_cell()? else {
             return Ok(Some(Boundary::Eof));
         };
-        let id = cell.identity(&self.types);
+        let id = self.cell_identity(&cell);
         if !cell.constructed {
             if id == self.types.sep_ {
                 self.pos = start;
@@ -5309,7 +5290,7 @@ impl<'a> Parser<'a> {
                 if c.constructed {
                     continue;
                 }
-                let id = c.identity(&self.types);
+                let id = self.cell_identity(c);
                 let Some(construct) = self.ctor_of(id) else { continue };
                 let prec = self.precedence_of_cell(id);
                 if prec < crate::identities::meta::prec::OPEN {
@@ -5401,7 +5382,7 @@ impl<'a> Parser<'a> {
                 if c.constructed {
                     continue;
                 }
-                let id = c.identity(&self.types);
+                let id = self.cell_identity(c);
                 let Some(construct) = self.ctor_of(id) else { continue };
                 let prec = self.precedence_of_cell(id);
                 let right = self.assoc_of_cell(id) == Assoc::Right;

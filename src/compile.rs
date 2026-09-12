@@ -211,12 +211,13 @@ impl Lowerer<'_, '_> {
         // its bits are its own address, baked as an i64 immediate — run's rule
         // mirrored (the interpreter is the compiler's oracle), which is what
         // lets a `-> logos` function compile: logos identities are interned and
-        // per-run, and so is the machine code baking them. A frame place
-        // *typed* by a logos (`t : logos`, a logos-valued parameter) is not a
+        // per-run, and so is the machine code baking them. A *place* typed by a
+        // logos — a logos-valued parameter, or a top-level box — is not a
         // logos standing as a value: its slot holds the bound logos's address,
-        // read as the container.
+        // read as the container. The tag is what tells the two apart, which is
+        // why every place carries one (›GLOBAL_TAG‹).
         if op == (*op).ty {
-            if frame_ref((*node).value).is_some() {
+            if crate::dyad::is_place((*node).value) {
                 return Ok(self.read_place(node, types::I64));
             }
             return Ok(self.builder.ins().iconst(types::I64, node as i64));

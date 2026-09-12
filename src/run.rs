@@ -616,11 +616,14 @@ impl Runtime {
             // self-classified node, so `op == (*op).ty` recognizes every logos node
             // (numeric logos, the root, `bool`, `void`, pointer and record logos — a
             // record *instance* has `op ==` its record logos, not the root, and is
-            // handled by the lower branch). A frame place *classified* by a logos
-            // (`t : logos`, a logos-valued parameter) is not a logos standing as a
-            // value: its slot holds the bound logos's address, read as the container.
+            // handled by the lower branch). A *place* classified by a logos — a
+            // logos-valued parameter, or a top-level box — is not a logos standing
+            // as a value: its slot holds the bound logos's address, read as the
+            // container. Every place carries a tag, which is what tells the two
+            // apart (›GLOBAL_TAG‹); before that only a frame place could be told,
+            // so only a parameter could hold a type.
             if op == (*op).ty {
-                if frame_ref((*node).value).is_some() {
+                if crate::dyad::is_place((*node).value) {
                     return self.read_container(node);
                 }
                 return Ok(node as i64);
@@ -686,7 +689,7 @@ impl Runtime {
             // place, a parameter slot of a non-scalar declared logos, which
             // holds the container its call bound.
             if !crate::identities::numtype::is_scalar_type((*node).ty) {
-                if frame_ref((*node).value).is_some() {
+                if crate::dyad::is_place((*node).value) {
                     return self.read_container(node);
                 }
                 return Err(RunError::BadValue);
@@ -700,17 +703,17 @@ impl Runtime {
         }
     }
 
-    /// Read a frame place's full 8-byte slot as the raw i64 bit-container — how
-    /// a parameter of no declared scalar width (a bare `name`, a logos-valued
-    /// parameter) is stored and read. Not a frame place, or no call in
-    /// progress: [`RunError::BadValue`].
+    /// Read a place's full 8-byte slot as the raw i64 bit-container — how a
+    /// binding of no declared scalar width (a bare `name`, a place holding a
+    /// type) is stored and read, in a frame or at top level alike. Not a place
+    /// at all, or no call in progress for a frame one: [`RunError::BadValue`].
     ///
     /// # Safety
     /// `node` must be a valid dyad from the store; a frame-tagged one must carry
     /// an offset its function's frame size covers.
     unsafe fn read_container(&mut self, node: DyadPtr) -> Result<i64, RunError> {
         let node = self.through(node);
-        if frame_ref((*node).value).is_none() {
+        if !crate::dyad::is_place((*node).value) {
             return Err(RunError::BadValue);
         }
         let slot = self.place_addr(node).ok_or(RunError::BadValue)?;

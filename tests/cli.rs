@@ -656,16 +656,24 @@ fn a_logos_variable_declares_fills_once_and_becomes_the_type() {
 }
 
 #[test]
-fn a_logos_variable_fill_is_define_once_and_comptime_only() {
-    // A second fill finds a real logos, not the placeholder, and is an ordinary
-    // (rejected) assignment; a fill inside a fn body is rejected explicitly —
-    // it would rebind at parse, where parse and run do not coincide.
-    let (_e1, stderr1) = repl(b"a := logos ?\na = i32\na = f64\n");
-    assert!(stderr1.contains("not an assignable place"), "stderr: {stderr1}");
-    let (_e2, stderr2) = repl(b"a := logos ?\ng := fn () -> i32 ( a = i32, 1 )\n");
-    assert!(stderr2.contains("where parsing and running coincide"), "stderr: {stderr2}");
-    let (_e3, stderr3) = repl(b"a := logos ?\na = 5\n");
-    assert!(stderr3.contains("must be a type value"), "stderr: {stderr3}");
+fn a_logos_box_is_written_as_often_as_you_like() {
+    // Superseded behaviour, kept as the record of what changed: a fill used to
+    // be define-once and comptime-only, because `a = i32` rebound the *name* to
+    // the type instead of writing a box. A second fill then reported "not an
+    // assignable place" and a fill inside a fn body was refused outright.
+    // DESIGN ›A type is a comptime value‹ (12 September 2026) makes it an
+    // ordinary place, so both work now.
+    let (echoes, stderr) = repl(b"a := logos ?\na = i32\na = f64\na\n");
+    assert_eq!(echoes, ["f64"], "stderr: {stderr}");
+
+    // A store from inside a function body happens when the function runs, which
+    // is exactly the runtime type value the ruling is about.
+    let (echoes, stderr) = repl(b"a := logos ?\ng := fn () -> i32 ( a = i32, 1 )\ng()\na\n");
+    assert_eq!(echoes, ["1", "i32"], "stderr: {stderr}");
+
+    // What it still takes is a type and nothing else.
+    let (_e, stderr) = repl(b"a := logos ?\na = 5\n");
+    assert!(stderr.contains("must be a type value"), "stderr: {stderr}");
 }
 
 #[test]
@@ -879,6 +887,31 @@ fn a_tight_read_lexes_its_right_cell_on_demand_and_stops_at_a_boundary() {
     );
     assert_eq!(echoes, ["3", "2", "1", "1", "1", "true"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
+fn a_type_box_is_an_ordinary_variable() {
+    // DESIGN ›A type is a comptime value‹ (12 September 2026): "a place holding
+    // a type is therefore an ordinary place". `a := type ?` used to build a
+    // null-valued placeholder that `a = i32` filled by *rebinding the name*,
+    // so the name stopped being a variable and became a synonym for `i32`, and
+    // a second assignment reported "this is not an assignable place". It is a
+    // box now: written, read, and written again.
+    let (echoes, stderr) = repl(b"a := type ?\na = i32\na == i32\na = f64\na == f64\na == i32\n");
+    assert_eq!(echoes, ["true", "true", "false"], "stderr: {stderr}");
+
+    // And it still declares: at the top level the one pass has run the
+    // assignment by the time a later item parses, so the box is read and what
+    // it holds is the declared logos. Reassigning changes which.
+    let (echoes, stderr) = repl(b"a := type ?\na = i32\nx := a 5\nx\na = f64\ny := a 2.5\ny\na\n");
+    assert_eq!(echoes, ["5", "2.5", "f64"], "stderr: {stderr}");
+
+    // A box nothing has filled cannot say what a hole's logos is.
+    let (echoes, stderr) = repl(b"b := type ?\nz := b ?\n");
+    assert!(
+        echoes.is_empty() && stderr.contains("known only when the program runs"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]

@@ -122,11 +122,6 @@ pub fn parse_message(e: &ParseError) -> String {
             "the declared or assigned type must be a type value"
                 .into()
         }
-        ParseError::NonComptimeTypeAssign => {
-            "a type variable can only be assigned where parsing and running \
-             coincide — not inside a function body, loop, or runtime branch"
-                .into()
-        }
         ParseError::NonNumericDeclaredType => {
             "declarations of non-numeric types are not in the seed yet"
                 .into()

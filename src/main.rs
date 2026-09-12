@@ -50,14 +50,21 @@ impl Engine {
 /// `node` must be a valid dyad.
 unsafe fn is_statement_node(core: &Core, node: seed::dyad::DyadPtr) -> bool {
     // A bare name is its record: what it names decides the echo.
-    let logos = (*seed::record::through(core.record_, node)).ty;
+    let named = seed::record::through(core.record_, node);
+    let logos = (*named).ty;
+    // A bare type *definition* is a statement, as a bare `fn` is. A place
+    // holding a type is a value and echoes what it holds, like any variable —
+    // the tag is what tells the two apart (DESIGN ›A type is a comptime
+    // value‹, 12 September 2026).
+    if logos == core.type_ {
+        return !seed::dyad::is_place((*named).value);
+    }
     logos == core.declare_
         || logos == core.assign
         || logos == core.storeptr_
         || logos == core.fn_type
         || logos == core.compile_
         || logos == core.import_
-        || logos == core.type_
         || logos == core.drop_
 }
 

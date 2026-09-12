@@ -14,7 +14,7 @@
 
 use cranelift_codegen::ir::Value;
 
-use super::numtype::{is_pointer_type, numtype_of_type, of_type_node};
+use super::numtype::{is_pointer_type, numtype_of_type, of_type_node, NumType};
 use super::{commit_if_literal, is_numtype_node, meta, operands, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
@@ -40,27 +40,20 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 
 /// `=`'s constructor: at discovery, the place to its left (the cells since
 /// the boundary, constructed to one — [`crate::parse::Parser::construct_left`]),
-/// then its right side driven to the boundary. Over an unfilled type
-/// placeholder, `name = <type>` is the type variable's fill instead
-/// ([`crate::parse::Parser::type_fill`]); over one of the six slots of the
-/// type being defined, the slot's fill ([`crate::parse::Parser::slot_fill`],
-/// #61).
+/// then its right side driven to the boundary. Over one of the six slots of
+/// the type being defined, the slot's fill
+/// ([`crate::parse::Parser::slot_fill`], #61).
 fn construct(
     p: &mut crate::parse::Parser,
     id: DyadPtr,
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, ParseError> {
-    // The type variable's fill — `name = <type>` over an unfilled placeholder
-    // rebinds the name at parse ([`crate::parse::Parser::type_fill`]).
-    let type_var = p.is_type_variable(tape);
     let Some(target) = p.construct_left(tape)? else {
         return Err(ParseError::MissingOperand);
     };
     let slot = p.slot_of(target);
     let value = p.parse_expression()?;
-    let node = if let Some(tok) = type_var {
-        p.type_fill(tok, value)?
-    } else if let Some(kind) = slot {
+    let node = if let Some(kind) = slot {
         p.slot_fill(kind, value)?
     } else {
         let types = p.types();
@@ -112,6 +105,20 @@ pub(super) fn build(
     // SAFETY: as above.
     let (lhs_numeric, lhs_pointer) =
         unsafe { (is_numtype_node(types, (*lhs_d).ty), is_pointer_type((*lhs_d).ty)) };
+    // A place holding a type is assignable like any other: it stores the node
+    // address, eight bytes (DESIGN ›A type is a comptime value‹, 12 September
+    // 2026: "a place holding a type is therefore an ordinary place"). What it
+    // takes is a type value, identity or place alike.
+    // SAFETY: `lhs_d`/`rhs` are reduced dyads from the store.
+    let lhs_type_place =
+        unsafe { (*lhs_d).ty == types.type_ && crate::dyad::is_place((*lhs_d).value) };
+    if lhs_type_place {
+        if !unsafe { super::is_type_valued(types, rhs) } {
+            return Err(ParseError::BadDeclaredType);
+        }
+        let value = store.alloc_operands(&[lhs, rhs, types.ops.store_leaf(NumType::I64)]);
+        return Ok(store.alloc_raw(op, value));
+    }
     if !lhs_numeric && !lhs_pointer {
         return Err(ParseError::BadAssignTarget);
     }

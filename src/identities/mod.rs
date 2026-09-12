@@ -1004,21 +1004,20 @@ pub(crate) unsafe fn is_type_value(types: &CoreTypes, node: DyadPtr) -> bool {
 
 /// The type identity `node` *is*, or `None` if it is not one in hand.
 ///
-/// Two nodes carry `type` in their type slot and are not identities: a place
-/// holding a type — a `fn (t := type ?)` parameter, whose value is a frame
-/// offset — and the unfilled type variable, whose value is null. Both are
-/// legitimate (DESIGN ›A type is a comptime value‹, 12 September 2026: "a
-/// place holding a type is therefore an ordinary place"), and neither can
-/// answer a question about layout, fields, or parse behavior, because what
-/// they hold is known only when the program runs. So the elaboration asks
-/// this, and gets `None` where it used to get a record pointer that was
-/// really a frame offset (#75).
+/// A node carrying `type` in its type slot and *not* an identity is a place
+/// holding a type, which is an ordinary place (DESIGN ›A type is a comptime
+/// value‹, 12 September 2026). It cannot answer a question about layout,
+/// fields, or parse behavior, because what it holds is known only when the
+/// program runs. The tag is the whole test: every place carries one and no
+/// definition does (›GLOBAL_TAG‹). A null value is no place — `fn`, `scope`
+/// and `record` are identities that carry no record — so they stay type
+/// values, as they were before the split (#75).
 ///
 /// # Safety
 /// `node` must be null or a valid dyad from the store.
 pub(crate) unsafe fn type_identity_of(types: &CoreTypes, node: DyadPtr) -> Option<DyadPtr> {
     let node = types.through(node);
-    if !node.is_null() && (*node).ty == types.type_ && meta::kind_of(node).is_some() {
+    if !node.is_null() && (*node).ty == types.type_ && !crate::dyad::is_place((*node).value) {
         Some(node)
     } else {
         None
@@ -1181,6 +1180,17 @@ pub unsafe fn display_value(types: &CoreTypes, node: DyadPtr, bits: i64) -> Stri
     // (roadmap #30) — so a program ending in `i32` prints `i32`, not `0`.
     if is_type_value(types, node) {
         return type_name(types, node);
+    }
+    // A place holding a type shows the type it holds: the container IS the
+    // identity's address (DESIGN ›A type is a comptime value‹, 12 September
+    // 2026). Rendering the address would be showing the box instead of what
+    // is in it, which is not what any other place does.
+    if is_type_valued(types, node) {
+        let held = bits as usize as DyadPtr;
+        if type_identity_of(types, held).is_some() {
+            return type_name(types, held);
+        }
+        return "type ?".to_string();
     }
     // A dyad view (#52) shows as the view it is, not its address bits.
     if !(*node).ty.is_null() && meta::kind_of((*node).ty) == Some(meta::DYAD_TAG) {
@@ -3729,14 +3739,17 @@ mod tests {
         );
 
         // Untouched: an identity in hand still folds its comparison at parse,
-        // a `-> type` function still resolves in the pass, and the top-level
-        // type variable is still filled once and used as a type.
+        // and a `-> type` function still resolves in the pass.
         assert_eq!(run_script("i32 == i32"), 1);
-        assert_eq!(run_script("a := type ?, a = i32, x := a 5, x"), 5);
         assert_eq!(
             run_script("f := fn (b := i32 ?) -> type ( if (b < 1) (i32) else (f64) ),\nt := f(0), x := t 5, x"),
             5
         );
+        // A box holding a type declares with what it holds, but only where the
+        // pass has already run the assignment that filled it — which is the
+        // real top level, not this helper (it parses the whole sequence before
+        // running any of it). That case is `a_type_box_is_an_ordinary_variable`
+        // in tests/cli.rs, against the binary.
     }
 
     #[test]
