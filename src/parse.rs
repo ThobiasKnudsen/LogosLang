@@ -1294,6 +1294,9 @@ pub enum ParseError {
     /// Scopes nested deeper than [`MAX_BRACKET_DEPTH`] (#80): the checked
     /// error a wall of brackets gets, instead of the Rust stack overflowing.
     TooDeep,
+    /// `dyad (T, v)` for a `T` whose values are bytes at a width the seed
+    /// cannot fill from a value node (#85): a pointer, `void`, a record type.
+    BadDyadType,
     /// A parameter declared `type ?` (#75). Types are comptime (DESIGN ›A type
     /// is a comptime value‹), so a type is no parameter place; the generic fn
     /// that would make it mean something is a chooser the seed cannot build.
@@ -2065,8 +2068,28 @@ impl<'a> Parser<'a> {
                     return Err(ParseError::UnsupportedOperands);
                 }
                 crate::identities::commit_literal_to(self.store, &types, read, ty)?
+            } else if ty == types.bool_ {
+                // `bool` is physically an i32 0/1 in storage, so the cell gets
+                // its own copy of the literal's byte. Only `true` and `false`
+                // are literals; a runtime comparison has no bits at parse.
+                if (*read).ty != types.bool_ || (*read).value.is_null() {
+                    return Err(ParseError::UnsupportedOperands);
+                }
+                let bits = std::ptr::read_unaligned((*read).value as *const i32);
+                let storage = self.store.alloc_bytes(&bits.to_ne_bytes());
+                self.store.alloc_raw(types.bool_, storage)
             } else {
-                self.store.alloc_raw(ty, read as *mut u8)
+                // Every other type reads its `.value` as bytes at its own
+                // width — a pointer as an address, `void` as nothing, a record
+                // as its fields — and the old branch handed each of them the
+                // *node* as those bytes: `dyad (bool, 0)` was true because a
+                // node address is nonzero, `dyad (@i32, 5)` read the rational
+                // node's own bytes as an i32, and a write through it corrupted
+                // the store (#85). Nothing builds such a cell and nothing has
+                // ruled what one would mean, so it is refused rather than
+                // guessed: fail-closed, the same inertness DESIGN ›The
+                // constructor is a field‹ gives a type with no constructor.
+                return Err(ParseError::BadDyadType);
             }
         };
         tape.remove(1);

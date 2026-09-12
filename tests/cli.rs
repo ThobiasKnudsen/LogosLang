@@ -892,4 +892,28 @@ fn a_dyad_is_built_from_a_type_and_a_value() {
     assert!(stderr.is_empty(), "stderr: {stderr}");
     let (_e, stderr) = repl(b"dyad (i32)\n");
     assert!(!stderr.is_empty(), "two operands, not one");
+
+    // A bool cell carries the literal's own 0/1 byte. It used to carry the
+    // *node* as its value, so every bool dyad read true because a node address
+    // is nonzero — `dyad (bool, false)` included (#85).
+    let (echoes, stderr) = repl(b"dyad (bool, true)\ndyad (bool, false)\n");
+    assert_eq!(echoes, ["true", "false"], "stderr: {stderr}");
+
+    // Every other type reads its value as bytes at its own width, and handing
+    // it a node was type confusion: `dyad (@i32, 5)` read the rational node's
+    // bytes as an i32 and a write through it corrupted the store. Nothing
+    // builds such a cell, so it is refused rather than guessed.
+    for src in [
+        &b"dyad (bool, 0)\n"[..],
+        b"p := dyad (@i32, 5)\n",
+        b"dyad (void, 0)\n",
+        b"g := type (instance (x := i32 ?))\ndyad (g, 5)\n",
+    ] {
+        let (echoes, stderr) = repl(src);
+        assert!(
+            echoes.is_empty() && !stderr.is_empty(),
+            "{}: stderr: {stderr}",
+            String::from_utf8_lossy(src)
+        );
+    }
 }
