@@ -3631,6 +3631,31 @@ mod tests {
     }
 
     #[test]
+    fn a_type_cannot_be_a_parameter() {
+        // #75: `fn (t := type ?)` gave the type variable's null marker a frame
+        // place, and every reader of a type record then dereferenced a tagged
+        // pointer and took the process down. DESIGN ›A type is a comptime
+        // value‹ chose against runtime type-values — "a dependent declaration
+        // ... is the ordinary declaration mechanism over a computed type
+        // (chosen over runtime type-values: types are comptime)" — so a type
+        // is no parameter place, and the generic fn that would give the
+        // spelling a meaning is "a chooser", machinery the seed lacks.
+        assert_eq!(parse_err("fn (t := type ?) -> f64 ( 1.0 )"), ParseError::TypeAsParameter);
+        assert_eq!(
+            parse_err("fn (a := i32 ?, t := type ?) -> i32 ( a )"),
+            ParseError::TypeAsParameter
+        );
+
+        // Types stay comptime in the two places they already worked: a
+        // function's *return*, and a top-level type variable filled once.
+        assert_eq!(
+            run_script("f := fn (a := i32 ?) -> type ( if (a < 1) (i32) else (f64) ),\nt := f(0), x := t 5, x"),
+            5
+        );
+        assert_eq!(run_script("a := type ?, a = i32, x := a 5, x"), 5);
+    }
+
+    #[test]
     fn a_type_returning_body_must_hand_back_a_type() {
         // #76: `eval_type_call` reads a `-> type` call's result bits as a node
         // address, so a body handing back a number handed back an address that

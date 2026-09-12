@@ -138,6 +138,10 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::InstanceOutsideType => "`instance (…)` belongs inside a type body".into(),
         ParseError::DoubleInstance => "a type body has one `instance (…)` block".into(),
         ParseError::DeferInTypeBody => "a type body cannot own what needs a teardown".into(),
+        ParseError::TypeAsParameter => {
+            "a type cannot be a parameter: types are comptime, resolved while the file parses"
+                .into()
+        }
         ParseError::TooDeep => {
             format!("scopes nested deeper than {}", crate::parse::MAX_BRACKET_DEPTH)
         }

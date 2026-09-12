@@ -1294,6 +1294,10 @@ pub enum ParseError {
     /// Scopes nested deeper than [`MAX_BRACKET_DEPTH`] (#80): the checked
     /// error a wall of brackets gets, instead of the Rust stack overflowing.
     TooDeep,
+    /// A parameter declared `type ?` (#75). Types are comptime (DESIGN ›A type
+    /// is a comptime value‹), so a type is no parameter place; the generic fn
+    /// that would make it mean something is a chooser the seed cannot build.
+    TypeAsParameter,
     /// `parse_rank = …` whose value is not a number known at the definition.
     NonComptimeRank,
     /// `associativity = …` with something other than `left` or `right`.
@@ -2860,6 +2864,19 @@ impl<'a> Parser<'a> {
             let fields = crate::identities::meta::record_fields_of(input);
             for &param in crate::identities::array::items(fields) {
                 let logos = (*param).ty;
+                // A `type`-typed parameter would be a frame place holding a
+                // type, which DESIGN ›A type is a comptime value‹ chose
+                // against: "a dependent declaration ... is the ordinary
+                // declaration mechanism over a computed type (chosen over
+                // runtime type-values: types are comptime)". Stamping a frame
+                // place over the type variable's null marker is what made
+                // every reader of it dereference a tagged pointer and crash
+                // (#75). The generic fn DESIGN does rule — "a chooser ... each
+                // parameter yielding its own concrete identity built once" —
+                // needs specialization machinery the seed does not have.
+                if logos == self.types.type_ {
+                    return Err(ParseError::TypeAsParameter);
+                }
                 let width = if crate::identities::numtype::is_scalar_place_type(logos) {
                     crate::identities::numtype::numtype_of_type(logos).bytes()
                 } else {
