@@ -138,16 +138,15 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::InstanceOutsideType => "`instance (…)` belongs inside a type body".into(),
         ParseError::DoubleInstance => "a type body has one `instance (…)` block".into(),
         ParseError::DeferInTypeBody => "a type body cannot own what needs a teardown".into(),
+        ParseError::TypeKnownOnlyAtRun => {
+            "which type this is is known only when the program runs, and this needs it now".into()
+        }
         ParseError::NonOwningIntoOwning => {
             "this place owns what it holds, so what is assigned must own too (`alloc …`, or `own x`)"
                 .into()
         }
         ParseError::BadDyadType => {
             "a dyad of this type cannot be built here: only a number or a bool".into()
-        }
-        ParseError::TypeAsParameter => {
-            "a type cannot be a parameter: types are comptime, resolved while the file parses"
-                .into()
         }
         ParseError::TooDeep => {
             format!("scopes nested deeper than {}", crate::parse::MAX_BRACKET_DEPTH)

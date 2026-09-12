@@ -9,6 +9,7 @@
 use cranelift_codegen::ir::Value;
 
 use super::numtype::CmpOp;
+use super::numtype::NumType;
 use super::{bool_mod, is_type_value, meta, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
@@ -52,6 +53,19 @@ fn build(
     if unsafe { is_type_value(types, lhs) && is_type_value(types, rhs) } {
         let same = unsafe { types.through(lhs) == types.through(rhs) };
         return Ok(bool_mod::literal_node(store, types.bool_, same));
+    }
+    // One of them is a type-valued *place* — a `fn (t := type ?)` parameter —
+    // so which identity it holds is known only when the program runs, and the
+    // comparison is an ordinary one of the two node addresses. DESIGN ›A type
+    // is a comptime value‹ (12 September 2026): a type value "may be passed to
+    // a function, held in a place, and compared". The clause above keeps its
+    // fold for the case it was written for, two identities in hand; what is
+    // superseded is its reason, "a logos never varies at runtime", which was
+    // true only because no place could hold one.
+    // SAFETY: as above.
+    if unsafe { super::is_type_valued(types, lhs) && super::is_type_valued(types, rhs) } {
+        let value = store.alloc_operands(&[lhs, rhs, types.ops.cmp_leaf(CmpOp::Eq, NumType::I64)]);
+        return Ok(store.alloc_raw(eq, value));
     }
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let ([lhs, rhs], nt) = unsafe { resolve_binary(store, types, lhs, rhs) }?;

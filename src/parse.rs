@@ -1294,6 +1294,12 @@ pub enum ParseError {
     /// Scopes nested deeper than [`MAX_BRACKET_DEPTH`] (#80): the checked
     /// error a wall of brackets gets, instead of the Rust stack overflowing.
     TooDeep,
+    /// The pass needed a type identity and found a place that will only hold
+    /// one when the program runs (#75): a hole's layout, a field of the
+    /// identity, an `==` that must fold. DESIGN ›A type is a comptime value‹
+    /// (12 September 2026) keeps exactly this work in the pass, while passing,
+    /// storing and comparing a type value stay ordinary.
+    TypeKnownOnlyAtRun,
     /// `=` into an owning place whose right side does not own (#79): a borrow,
     /// or a bare name that is itself an owner. Either leaves two teardowns
     /// over one block, or one over memory the store owns.
@@ -1301,10 +1307,6 @@ pub enum ParseError {
     /// `dyad (T, v)` for a `T` whose values are bytes at a width the seed
     /// cannot fill from a value node (#85): a pointer, `void`, a record type.
     BadDyadType,
-    /// A parameter declared `type ?` (#75). Types are comptime (DESIGN ›A type
-    /// is a comptime value‹), so a type is no parameter place; the generic fn
-    /// that would make it mean something is a chooser the seed cannot build.
-    TypeAsParameter,
     /// `parse_rank = …` whose value is not a number known at the definition.
     NonComptimeRank,
     /// `associativity = …` with something other than `left` or `right`.
@@ -2115,10 +2117,20 @@ impl<'a> Parser<'a> {
                 } else {
                     let d = self.operand_dyad(cell)?;
                     // SAFETY: `d` is a resolved dyad from the store.
-                    if unsafe { crate::identities::is_type_value(&types, d) } {
-                        Some(d)
-                    } else {
-                        None
+                    unsafe {
+                        // A place holding a type cannot say what a hole's
+                        // layout is: that is the one thing DESIGN ›A type is a
+                        // comptime value‹ keeps in the pass — "a place whose
+                        // *layout* waits on a runtime type is the thing that
+                        // stays refused". Named, rather than left to fall
+                        // through as two stray cells.
+                        if crate::identities::type_identity_of(&types, d).is_some() {
+                            Some(d)
+                        } else if crate::identities::is_type_valued(&types, d) {
+                            return Err(ParseError::TypeKnownOnlyAtRun);
+                        } else {
+                            None
+                        }
                     }
                 }
             }
@@ -2891,19 +2903,15 @@ impl<'a> Parser<'a> {
             let fields = crate::identities::meta::record_fields_of(input);
             for &param in crate::identities::array::items(fields) {
                 let logos = (*param).ty;
-                // A `type`-typed parameter would be a frame place holding a
-                // type, which DESIGN ›A type is a comptime value‹ chose
-                // against: "a dependent declaration ... is the ordinary
-                // declaration mechanism over a computed type (chosen over
-                // runtime type-values: types are comptime)". Stamping a frame
-                // place over the type variable's null marker is what made
-                // every reader of it dereference a tagged pointer and crash
-                // (#75). The generic fn DESIGN does rule — "a chooser ... each
-                // parameter yielding its own concrete identity built once" —
-                // needs specialization machinery the seed does not have.
-                if logos == self.types.type_ {
-                    return Err(ParseError::TypeAsParameter);
-                }
+                // A `type`-typed parameter is a frame place holding a type:
+                // DESIGN ›A type is a comptime value‹ (12 September 2026) —
+                // "a type value is a node address like any other value, so it
+                // may be passed to a function, held in a place, and compared
+                // ... a place holding a type is therefore an ordinary place".
+                // It rides the 8-byte container like every other non-scalar,
+                // which is what the width below already gives it; what had to
+                // change was every reader that took the frame tag for a record
+                // ([`crate::identities::meta::kind_of`], #75).
                 let width = if crate::identities::numtype::is_scalar_place_type(logos) {
                     crate::identities::numtype::numtype_of_type(logos).bytes()
                 } else {
@@ -3417,6 +3425,16 @@ impl<'a> Parser<'a> {
             if crate::identities::is_type_value(&self.types, lhs) {
                 let n = self.logos_member(lhs, name, index)?;
                 return Ok((n, usize::from(name == "roles")));
+            }
+            // A place holding a type: its fields are the identity's, and which
+            // identity that is nobody knows until the program runs. DESIGN ›A
+            // type is a comptime value‹ (12 September 2026) says where that
+            // becomes readable — "under interpretation the graph can change as
+            // it runs, so a type reached at runtime can still be followed to
+            // its fields, which is the reflection of *Metareflection from
+            // within the language*" (#52). Until that runs, saying so.
+            if crate::identities::is_type_valued(&self.types, lhs) {
+                return Err(ParseError::TypeKnownOnlyAtRun);
             }
             if name == "type" {
                 return Err(ParseError::TypeNeedsView);

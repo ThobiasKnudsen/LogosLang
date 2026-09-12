@@ -375,14 +375,23 @@ pub(crate) unsafe fn install_code(id: DyadPtr, f: DyadPtr) {
     std::ptr::write_unaligned((*id).value.add(CODE_OFF) as *mut DyadPtr, f);
 }
 
-/// The record kind of `id`, or `None` for a null value slot (a still-unbound
-/// declaration placeholder).
+/// The record kind of `id`, or `None` where there is no record to read: a
+/// null value slot (a still-unbound declaration placeholder), or a tagged
+/// frame place (a slot *holding* a type rather than being one).
+///
+/// Every accessor below contracts on "`kind_of` is `Some`", so this is where
+/// the contract is established and therefore where a node that is not an
+/// identity must be turned away. A type-valued place is an ordinary place
+/// (DESIGN ›A type is a comptime value‹, 12 September 2026: "a place holding
+/// a type is therefore an ordinary place"), and its bits are an address in a
+/// frame, not a record — reading a tag byte through them is what crashed
+/// (#75).
 ///
 /// # Safety
-/// `id` must be a valid dyad from the store whose non-null value is a record.
+/// `id` must be a valid dyad from the store.
 pub(crate) unsafe fn kind_of(id: DyadPtr) -> Option<u8> {
     let v = (*id).value;
-    if v.is_null() {
+    if v.is_null() || crate::dyad::frame_ref(v).is_some() {
         None
     } else {
         Some(*(v as *const u8))
@@ -394,9 +403,10 @@ pub(crate) unsafe fn kind_of(id: DyadPtr) -> Option<u8> {
 /// `logos == struct_` classifier test: since the `logos`/`record` merge every
 /// logos's own classifier is the root, and the stored layout record is what
 /// marks the record case. The tag read is guarded so the test is safe on ANY
-/// node, as the identity compare it replaces was: only a node classified by
-/// the self-classified root (a logos at all) whose value is not a tagged frame
-/// place (a logos-valued parameter's slot) has its record tag consulted.
+/// node, as the identity compare it replaces was: [`kind_of`] turns away both
+/// a null value and a type-valued place, so only a node classified by the
+/// self-classified root (a logos at all) that actually carries a record has
+/// its tag consulted.
 ///
 /// # Safety
 /// `id` must be null or a valid dyad from the store.
@@ -404,7 +414,6 @@ pub(crate) unsafe fn is_record_type(id: DyadPtr) -> bool {
     !id.is_null()
         && !(*id).ty.is_null()
         && (*id).ty == (*(*id).ty).ty
-        && crate::dyad::frame_ref((*id).value).is_none()
         && kind_of(id) == Some(RECORD_TAG)
 }
 

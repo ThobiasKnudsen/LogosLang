@@ -999,6 +999,40 @@ pub(crate) unsafe fn is_numtype_node(types: &CoreTypes, node: DyadPtr) -> bool {
 /// # Safety
 /// `node` must be null or a valid dyad from the store.
 pub(crate) unsafe fn is_type_value(types: &CoreTypes, node: DyadPtr) -> bool {
+    type_identity_of(types, node).is_some()
+}
+
+/// The type identity `node` *is*, or `None` if it is not one in hand.
+///
+/// Two nodes carry `type` in their type slot and are not identities: a place
+/// holding a type — a `fn (t := type ?)` parameter, whose value is a frame
+/// offset — and the unfilled type variable, whose value is null. Both are
+/// legitimate (DESIGN ›A type is a comptime value‹, 12 September 2026: "a
+/// place holding a type is therefore an ordinary place"), and neither can
+/// answer a question about layout, fields, or parse behavior, because what
+/// they hold is known only when the program runs. So the elaboration asks
+/// this, and gets `None` where it used to get a record pointer that was
+/// really a frame offset (#75).
+///
+/// # Safety
+/// `node` must be null or a valid dyad from the store.
+pub(crate) unsafe fn type_identity_of(types: &CoreTypes, node: DyadPtr) -> Option<DyadPtr> {
+    let node = types.through(node);
+    if !node.is_null() && (*node).ty == types.type_ && meta::kind_of(node).is_some() {
+        Some(node)
+    } else {
+        None
+    }
+}
+
+/// Whether `node` is a *value* of logos `type`: an identity in hand, or a
+/// place that will hold one when the program runs. What may be passed,
+/// stored, and compared, as against what the pass may elaborate over
+/// ([`type_identity_of`]).
+///
+/// # Safety
+/// As [`type_identity_of`].
+pub(crate) unsafe fn is_type_valued(types: &CoreTypes, node: DyadPtr) -> bool {
     let node = types.through(node);
     !node.is_null() && (*node).ty == types.type_
 }
@@ -1288,10 +1322,19 @@ pub(crate) unsafe fn commit_call_args(
             }
             continue;
         }
+        // A `type` parameter takes a type value, identity or place alike
+        // (DESIGN ›A type is a comptime value‹, 12 September 2026), and
+        // nothing else: a number into one would travel as an address.
+        if pty == types.type_ {
+            if !is_type_valued(types, *arg) {
+                return Err(ParseError::TypeMismatch);
+            }
+            continue;
+        }
         if !is_numtype_node(types, pty) {
             // A bare `name` parameter accepts any dyad (DESIGN ›A function's
-            // surface‹), and a parameter of a record, `type`, or `fn` logos is
-            // checked where that logos is built, not here.
+            // surface‹), and a parameter of a record or `fn` logos is checked
+            // where that logos is built, not here.
             continue;
         }
         if (*types.through(*arg)).ty == types.rational {
@@ -3631,28 +3674,69 @@ mod tests {
     }
 
     #[test]
-    fn a_type_cannot_be_a_parameter() {
-        // #75: `fn (t := type ?)` gave the type variable's null marker a frame
-        // place, and every reader of a type record then dereferenced a tagged
-        // pointer and took the process down. DESIGN ›A type is a comptime
-        // value‹ chose against runtime type-values — "a dependent declaration
-        // ... is the ordinary declaration mechanism over a computed type
-        // (chosen over runtime type-values: types are comptime)" — so a type
-        // is no parameter place, and the generic fn that would give the
-        // spelling a meaning is "a chooser", machinery the seed lacks.
-        assert_eq!(parse_err("fn (t := type ?) -> f64 ( 1.0 )"), ParseError::TypeAsParameter);
+    fn a_type_is_a_value_a_place_can_hold() {
+        // DESIGN ›A type is a comptime value‹ (12 September 2026): "a type
+        // value is a node address like any other value, so it may be passed to
+        // a function, held in a place, and compared ... a place holding a type
+        // is therefore an ordinary place". The seed already did all three
+        // through an untyped `fn (a)` parameter; what crashed was the spelling
+        // that admitted what was happening, because every reader took the
+        // frame tag for a record (#75).
+        //
+        // Passed in, held, and compared — interpreted and compiled alike,
+        // since a compiled comparison of two type values is an ordinary
+        // 64-bit equality.
+        for tail in ["", "f.compile(), "] {
+            assert_eq!(
+                run_script(&format!("f := fn (t := type ?) -> bool ( t == i32 ),\n{tail}f(i32)")),
+                1
+            );
+            assert_eq!(
+                run_script(&format!("f := fn (t := type ?) -> bool ( t == i32 ),\n{tail}f(f64)")),
+                0
+            );
+            assert_eq!(
+                run_script(&format!(
+                    "f := fn (t := type ?, u := type ?) -> bool ( t != u ),\n{tail}f(i32, f64)"
+                )),
+                1
+            );
+        }
+        // And handed on to another function that declares it the same way.
         assert_eq!(
-            parse_err("fn (a := i32 ?, t := type ?) -> i32 ( a )"),
-            ParseError::TypeAsParameter
+            run_script(
+                "f := fn (t := type ?) -> bool ( t == f64 ),\ng := fn (u := type ?) -> bool ( f(u) ),\ng(f64)"
+            ),
+            1
+        );
+        // A `type` parameter takes a type and nothing else.
+        assert_eq!(
+            parse_err_after(&["f := fn (t := type ?) -> i32 ( 1 )"], "f(5)"),
+            ParseError::TypeMismatch
         );
 
-        // Types stay comptime in the two places they already worked: a
-        // function's *return*, and a top-level type variable filled once.
+        // What stays in the pass is the elaboration. A hole whose *layout*
+        // would come from a runtime type is the thing DESIGN keeps refused,
+        // and a field of the identity cannot be read before the identity is
+        // known (that read is #52's reflection).
         assert_eq!(
-            run_script("f := fn (a := i32 ?) -> type ( if (a < 1) (i32) else (f64) ),\nt := f(0), x := t 5, x"),
+            parse_err("fn (t := type ?) -> i32 ( x := t ?, 1 )"),
+            ParseError::TypeKnownOnlyAtRun
+        );
+        assert_eq!(
+            parse_err("fn (t := type ?) -> f64 ( t.parse_rank )"),
+            ParseError::TypeKnownOnlyAtRun
+        );
+
+        // Untouched: an identity in hand still folds its comparison at parse,
+        // a `-> type` function still resolves in the pass, and the top-level
+        // type variable is still filled once and used as a type.
+        assert_eq!(run_script("i32 == i32"), 1);
+        assert_eq!(run_script("a := type ?, a = i32, x := a 5, x"), 5);
+        assert_eq!(
+            run_script("f := fn (b := i32 ?) -> type ( if (b < 1) (i32) else (f64) ),\nt := f(0), x := t 5, x"),
             5
         );
-        assert_eq!(run_script("a := type ?, a = i32, x := a 5, x"), 5);
     }
 
     #[test]

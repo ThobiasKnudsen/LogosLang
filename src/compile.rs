@@ -549,6 +549,19 @@ impl Lowerer<'_, '_> {
         let (lhs, rhs) = operands(node);
         let logos = match numtype_of(&self.types, lhs) {
             Operand::Concrete(nt) => nt,
+            // Two type values compare as their node addresses (DESIGN ›A type
+            // is a comptime value‹, 12 September 2026: a type value "may be
+            // passed to a function, held in a place, and compared"). The
+            // compiled side is an ordinary 64-bit equality, which is why this
+            // much of a type at runtime survives `compile` — what does not is
+            // anything that needs the identity's *fields*. The width is also
+            // in the node's own op leaf; reading it from there rather than
+            // re-deriving it here is #99.
+            _ if crate::identities::is_type_valued(&self.types, lhs)
+                && crate::identities::is_type_valued(&self.types, rhs) =>
+            {
+                NumType::I64
+            }
             // Resolution committed both operands; anything else cannot exist here.
             _ => return Err(CompileError::BadValue),
         };

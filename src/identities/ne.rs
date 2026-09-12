@@ -9,6 +9,7 @@
 use cranelift_codegen::ir::Value;
 
 use super::numtype::CmpOp;
+use super::numtype::NumType;
 use super::{bool_mod, is_type_value, meta, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
@@ -52,6 +53,14 @@ fn build(
     if unsafe { is_type_value(types, lhs) && is_type_value(types, rhs) } {
         let same = unsafe { types.through(lhs) == types.through(rhs) };
         return Ok(bool_mod::literal_node(store, types.bool_, !same));
+    }
+    // A type-valued place on either side: the identity it holds is known only
+    // when the program runs, so this is an ordinary comparison of two node
+    // addresses. See the same branch in [`super::eq`].
+    // SAFETY: as above.
+    if unsafe { super::is_type_valued(types, lhs) && super::is_type_valued(types, rhs) } {
+        let value = store.alloc_operands(&[lhs, rhs, types.ops.cmp_leaf(CmpOp::Ne, NumType::I64)]);
+        return Ok(store.alloc_raw(ne, value));
     }
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let ([lhs, rhs], nt) = unsafe { resolve_binary(store, types, lhs, rhs) }?;
