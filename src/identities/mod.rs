@@ -1288,9 +1288,26 @@ pub(crate) unsafe fn commit_call_args(
             }
             continue;
         }
-        if (*types.through(*arg)).ty == types.rational && is_numtype_node(types, pty) {
+        if !is_numtype_node(types, pty) {
+            // A bare `name` parameter accepts any dyad (DESIGN ›A function's
+            // surface‹), and a parameter of a record, `type`, or `fn` logos is
+            // checked where that logos is built, not here.
+            continue;
+        }
+        if (*types.through(*arg)).ty == types.rational {
             let nt = numtype::of_type_node(pty);
             *arg = commit_if_literal(store, types, *arg, &Operand::Literal, pty, nt)?;
+        } else {
+            // Anything that is not a literal must already be the parameter's
+            // logos. DESIGN ›A function's surface‹ rules that the parameter
+            // list *is* a record type whose fields are `name := T ?` and that
+            // "the caller's positional arguments are the parameter list's
+            // holes, in order", so filling one is the store a typed place
+            // takes — the very check `=` makes ([`check_store_type`]), with no
+            // implicit coercion. Until this, every non-literal argument passed
+            // untouched: `f(i32)` printed the type node's bits and `f(g)`
+            // printed 0 (#83).
+            check_store_type(types, pty, *arg)?;
         }
     }
     Ok(())
@@ -3882,6 +3899,33 @@ mod tests {
             run_script("point := logos (instance (compile := i32 ?)),\np := point(7),\np.compile"),
             7
         );
+    }
+
+    #[test]
+    fn an_argument_must_be_the_parameters_logos() {
+        // DESIGN ›A function's surface‹: the parameter list "*is* a record
+        // type, its fields written `name := T ?`" and "the caller's positional
+        // arguments are the parameter list's holes, in order" — so filling a
+        // hole is the store a typed place takes, the same check `=` makes, and
+        // crossing logos needs an explicit cast. Before this, every argument
+        // that was not a rational literal passed untouched: `f(i32)` ran the
+        // body over the type node's address and `f(g)` over 0 (#83).
+        let defs: &[&str] =
+            &["f := fn (a := i32 ?) -> i32 ( a )", "g := fn () -> i32 ( 1 )", "x := i64 5"];
+        assert_eq!(parse_err_after(defs, "f(i32)"), ParseError::TypeMismatch);
+        assert_eq!(parse_err_after(defs, "f(g)"), ParseError::TypeMismatch);
+        assert_eq!(parse_err_after(defs, "f(«s»)"), ParseError::TypeMismatch);
+        // A width that does not match is a crossing like any other.
+        assert_eq!(parse_err_after(defs, "f(x)"), ParseError::TypeMismatch);
+
+        // What the check must not refuse: a literal still molds to the
+        // parameter (that is the branch above it), an expression of the right
+        // logos passes, and a named binding of the right logos passes.
+        assert_eq!(run_script("f := fn (a := i32 ?) -> i32 ( a ), f(7)"), 7);
+        assert_eq!(run_script("f := fn (a := i32 ?) -> i32 ( a ), f(3 + 4)"), 7);
+        assert_eq!(run_script("y := i32 2, f := fn (a := i32 ?) -> i32 ( a ), f(y + 1)"), 3);
+        // A bare parameter takes any dyad, so it is not checked.
+        assert_eq!(run_script("h := fn (a) -> i32 ( 1 ), h(i32)"), 1);
     }
 
     #[test]
