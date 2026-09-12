@@ -59,6 +59,10 @@ fn construct(
         let types = p.types();
         build(p.store(), &types, id, target, value)?
     };
+    // A node-valued box's store is replayed at parse, so a `( )` block settles
+    // its boxes exactly as the top level does (see
+    // [`crate::parse::Parser::settle_box_store`]).
+    p.settle_box_store(node);
     tape.place(node);
     Ok(crate::parse::Constructed::Placed)
 }

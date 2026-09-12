@@ -929,6 +929,33 @@ fn the_dyad_box_holds_any_node_and_says_what_it_holds() {
     let (echoes, stderr) = repl(b"a := dyad ?\na = i32\ny := a 5\ny\n");
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
 
+    // A `( )` block settles its boxes exactly as the top level does. It did
+    // not before: the top level runs each item as it parses and a block parses
+    // its whole body first, so the same source meant two things in the two
+    // places. The depth-0 stores are replayed at parse, in parse order, which
+    // is their run order.
+    for src in
+        [&b"( a := type ?, a = i32, x := a 5, x )"[..], b"( a := dyad ?, a = i32, x := a 5, x )"]
+    {
+        let out = logos().arg(String::from_utf8_lossy(src).as_ref()).output().unwrap();
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "5\n", "{}", String::from_utf8_lossy(src));
+    }
+
+    // A deferred body is the one place it stays refused, because there parse
+    // order is not run order — and it says so, rather than reporting a
+    // leftover cell and sending the reader looking for a missing comma.
+    let out = logos()
+        .arg("f := fn () -> i32 ( a := type ?, a = i32, x := a 5, x ), f()")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("known only when the program runs"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
     // A box holding a node address may only be given one: a number's *value*
     // in it would be followed as an address by every later reader.
     let (_e, stderr) = repl(b"a := dyad ?\na = 5\n");

@@ -2318,9 +2318,10 @@ impl<'a> Parser<'a> {
         let target = match items.as_slice() {
             [(one, _)] => *one,
             [] => return Ok(None),
-            [_, (_, start), ..] => {
+            [(first, _), (_, start), ..] => {
+                let e = self.leftover_error(*first);
                 self.pos = *start;
-                return Err(ParseError::Trailing);
+                return Err(e);
             }
         };
         for _ in 0..n {
@@ -5048,6 +5049,46 @@ impl<'a> Parser<'a> {
     /// instance of `fn` and for a record logos (DESIGN ›The constructor is a
     /// field‹: "whether the name resolves to X's own slot or to the type's
     /// shared one is ordinary field semantics").
+    /// A store into a node-valued box — `type ?` or `dyad ?` — performed at
+    /// parse as well as at run, where parse order is run order.
+    ///
+    /// Why it is needed: `settled_type` reads the box, so what it can see
+    /// depends on whether the enclosing scope has already run the store. At
+    /// the top level each item runs the moment it is parsed and it had; inside
+    /// a `( )` block the whole body parses before any of it runs and it had
+    /// not, so the same source meant two different things in the two places.
+    /// DESIGN ›Build and run are one self-directing pass‹ wants one, and this
+    /// is the cheap half of it: the depth-0 stores are replayed in parse
+    /// order, which *is* their run order, so the box holds at parse exactly
+    /// what it will hold at run.
+    ///
+    /// Safe to repeat, which is what makes this sound rather than a second
+    /// execution: the right side of such a store is a node address fixed at
+    /// parse (an identity, or a view), so the run stores the same bits again.
+    /// Nothing else is pre-run, and inside a deferred body — where parse order
+    /// is *not* run order — nothing is pre-run at all.
+    pub(crate) fn settle_box_store(&mut self, node: DyadPtr) {
+        if self.runtime_depth > 0 {
+            return;
+        }
+        // SAFETY: `node` is the assign node just built; its lhs is a reduced
+        // dyad from the store.
+        unsafe {
+            let lhs = *((*node).value as *const DyadPtr);
+            let target = self.types.through(lhs);
+            let ty = (*target).ty;
+            if (ty != self.types.type_ && ty != self.types.dyad_)
+                || !crate::dyad::is_place((*target).value)
+            {
+                return;
+            }
+            // A fresh interpreter, as every other parse-time evaluation uses:
+            // no compiler, nothing but the store this very node describes.
+            let mut rt = crate::run::Runtime::new(self.types);
+            let _ = rt.run(node);
+        }
+    }
+
     /// The identity a cell denotes *now*.
     ///
     /// A place holding a type denotes the type it holds. At top level the one
@@ -5469,8 +5510,29 @@ impl<'a> Parser<'a> {
             1 => Ok(items[0].0),
             _ => {
                 self.pos = items[1].1;
-                Err(ParseError::Trailing)
+                Err(self.leftover_error(items[0].0))
             }
+        }
+    }
+
+    /// Why a segment was left with more than one cell. Usually the leftover
+    /// cell DESIGN names, [`ParseError::Trailing`] — but where the first of
+    /// them is a box holding a node, the real reason is that the box could not
+    /// say what it holds, so `a 5` never juxtaposed. That happens inside a
+    /// deferred body, where parse order is not run order, and saying "expected
+    /// one expression" sends the reader looking for a missing comma.
+    fn leftover_error(&self, first: DyadPtr) -> ParseError {
+        // SAFETY: `first` is a constructed node from the store.
+        let node_box = unsafe {
+            let d = self.types.through(first);
+            !d.is_null()
+                && ((*d).ty == self.types.type_ || (*d).ty == self.types.dyad_)
+                && crate::dyad::is_place((*d).value)
+        };
+        if node_box {
+            ParseError::TypeKnownOnlyAtRun
+        } else {
+            ParseError::Trailing
         }
     }
 }
