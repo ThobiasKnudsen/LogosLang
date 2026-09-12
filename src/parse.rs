@@ -3696,6 +3696,14 @@ impl<'a> Parser<'a> {
         let mut rt = crate::run::Runtime::new(self.types);
         let bits = rt.run(call).map_err(|_| ParseError::NonComptimeTypeCall)?;
         let node = bits as usize as DyadPtr;
+        // The bits are read as a node address, so they must be one. A `-> type`
+        // body whose tail is not a type is already refused at the definition
+        // (`check_type_tail`, #76); this is the second wall, against any path
+        // that ever hands back something else — bits that were never a node
+        // are the checked error here, never a dereference.
+        if !self.store.contains(node) {
+            return Err(ParseError::NonComptimeTypeCall);
+        }
         if crate::identities::is_type_value(&self.types, node) {
             Ok(node)
         } else {

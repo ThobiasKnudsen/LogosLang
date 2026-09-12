@@ -1326,59 +1326,62 @@ pub(crate) unsafe fn commit_fn_body(
     body: DyadPtr,
     output: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
+    // A `-> type` body's value is read back as a node address by
+    // `eval_type_call`, so every tail leaf must be a type (#76).
+    if output == types.type_ {
+        check_type_tail(types, body)?;
+        return Ok(body);
+    }
     if !is_numtype_node(types, output) {
         return Ok(body);
     }
     commit_tail(store, types, body, output)
 }
 
-/// Commit a comptime rational in tail (value-producing) position to `output`, a numeric
-/// logos node. The tail positions are the leaves a function's value can come from: the
-/// node itself, the operand of a `return`, and *both* branches of an `if` — recursively,
-/// so `return (if …)`, nested `if`s, and the like all reach their leaves. A rational
-/// leaf molds to `output` (exact, else [`ParseError::UncomputableLiteral`]); everything
-/// else passes through. The value-producing constructs are enumerated here because the
-/// seed has no graph-driven value-slot machinery yet (that arrives with self-hosting);
-/// the branch node is mutated in place, which is safe since it was just parsed and is not
+/// Walk the tail (value-producing) positions of `node`, applying `leaf` at each
+/// leaf and writing back what it returns.
+///
+/// The tail positions are the leaves a function's value can come from: the node
+/// itself, the operand of a `return`, both branches of an `if`, and a scope's
+/// trailing non-comment expression — recursively, so `return (if …)`, nested
+/// `if`s, and the like all reach their leaves. The constructs that yield unit
+/// are enumerated here and refused, because the seed has no graph-driven
+/// value-slot machinery yet (that arrives with self-hosting; #82). The branch
+/// node is mutated in place, which is safe since it was just parsed and is not
 /// yet aliased.
 ///
+/// What a leaf must satisfy is the caller's business: [`commit_tail`] molds a
+/// rational to a numeric output, [`check_type_tail`] demands a type.
+///
 /// # Safety
-/// `node`/`output` are valid dyads from the store; `output` is a numeric logos node.
-unsafe fn commit_tail(
-    store: &mut Store,
+/// `node` is a valid dyad from the store.
+unsafe fn walk_tail(
     types: &CoreTypes,
     node: DyadPtr,
-    output: DyadPtr,
+    leaf: &mut impl FnMut(DyadPtr) -> Result<DyadPtr, ParseError>,
 ) -> Result<DyadPtr, ParseError> {
-    if (*node).ty == types.rational {
-        let nt = numtype::of_type_node(output);
-        let bits = rational::mold_to(node, nt).ok_or(ParseError::UncomputableLiteral)?;
-        let value = store.alloc_bytes(&bits.to_ne_bytes()[..nt.bytes()]);
-        return Ok(store.alloc_raw(output, value));
-    }
     // `return X`: X is the tail (the node's first slot, `[value, op]`).
     if (*node).ty == types.return_ {
         let ops = (*node).value as *mut DyadPtr;
-        let committed = commit_tail(store, types, *ops, output)?;
-        *ops = committed;
+        *ops = walk_tail(types, *ops, leaf)?;
         return Ok(node);
     }
     // `if (c) (then) else (else)`: both branches are tails (value `[cond, then, else]`).
-    // An else-less `if` yields unit, so it cannot be a numeric function's tail.
+    // An else-less `if` yields unit, so it cannot be a value function's tail.
     if (*node).ty == types.if_ {
         let ops = (*node).value as *mut DyadPtr;
         if (*ops.add(2)).is_null() {
             return Err(ParseError::MissingElse);
         }
-        let then_c = commit_tail(store, types, *ops.add(1), output)?;
-        let else_c = commit_tail(store, types, *ops.add(2), output)?;
+        let then_c = walk_tail(types, *ops.add(1), leaf)?;
+        let else_c = walk_tail(types, *ops.add(2), leaf)?;
         *ops.add(1) = then_c;
         *ops.add(2) = else_c;
         return Ok(node);
     }
     // A `while`/`for` loop, a construction, a declaration, an assignment, or
-    // a `f.compile()` yields unit, so none of them can be a numeric
-    // function's tail.
+    // a `f.compile()` yields unit, so none of them can be a value function's
+    // tail.
     if (*node).ty == types.while_
         || (*node).ty == types.for_
         || (*node).ty == types.construct_
@@ -1401,8 +1404,7 @@ unsafe fn commit_tail(
             while i > 0 {
                 let cand = *data.add(i - 1);
                 if !numtype::is_comment_type((*cand).ty) {
-                    let committed = commit_tail(store, types, cand, output)?;
-                    *data.add(i - 1) = committed;
+                    *data.add(i - 1) = walk_tail(types, cand, leaf)?;
                     break;
                 }
                 i -= 1;
@@ -1410,12 +1412,55 @@ unsafe fn commit_tail(
         }
         return Ok(node);
     }
-    // A pointer cannot be a numeric function's value (commit_tail runs only for
-    // numeric outputs); rejecting here beats an invalid widen at the ABI.
-    if let Operand::Pointer(_) = numtype_of(types, node) {
-        return Err(ParseError::TypeMismatch);
-    }
-    Ok(node)
+    leaf(node)
+}
+
+/// Commit a comptime rational in tail position to `output`, a numeric logos
+/// node: a rational leaf molds to `output` (exact, else
+/// [`ParseError::UncomputableLiteral`]) and everything else passes through.
+/// The tail positions are [`walk_tail`]'s.
+///
+/// # Safety
+/// `node`/`output` are valid dyads from the store; `output` is a numeric logos node.
+unsafe fn commit_tail(
+    store: &mut Store,
+    types: &CoreTypes,
+    node: DyadPtr,
+    output: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
+    walk_tail(types, node, &mut |leaf| {
+        if (*leaf).ty == types.rational {
+            let nt = numtype::of_type_node(output);
+            let bits = rational::mold_to(leaf, nt).ok_or(ParseError::UncomputableLiteral)?;
+            let value = store.alloc_bytes(&bits.to_ne_bytes()[..nt.bytes()]);
+            return Ok(store.alloc_raw(output, value));
+        }
+        // A pointer cannot be a numeric function's value (commit_tail runs only
+        // for numeric outputs); rejecting here beats an invalid widen at the ABI.
+        if let Operand::Pointer(_) = numtype_of(types, leaf) {
+            return Err(ParseError::TypeMismatch);
+        }
+        Ok(leaf)
+    })
+}
+
+/// Require every tail leaf of a `-> type` function to actually be a type
+/// (#76). `eval_type_call` reads a `-> type` call's result bits as a node
+/// address, so a body that hands back a number hands back an address that was
+/// never a node: `fn () -> type (5), f()` dereferenced 5 and took the process
+/// down. The body is where that is knowable, so it is refused there.
+///
+/// # Safety
+/// `node` is a valid dyad from the store.
+unsafe fn check_type_tail(types: &CoreTypes, node: DyadPtr) -> Result<(), ParseError> {
+    walk_tail(types, node, &mut |leaf| {
+        if is_type_value(types, types.through(leaf)) {
+            Ok(leaf)
+        } else {
+            Err(ParseError::TypeMismatch)
+        }
+    })?;
+    Ok(())
 }
 
 /// Build a scalar numeric conversion `target(operand)` — the `logos(value)` constructor
@@ -3583,6 +3628,34 @@ mod tests {
         assert_eq!(parse_err("( x := i32 1, p := &x, p = 5 )"), ParseError::TypeMismatch);
         assert_eq!(parse_err("( y := 5, &y )"), ParseError::BadAddressOf);
         assert_eq!(parse_err("fn () -> i32 ( x := i32 1, x = 1, &x )"), ParseError::TypeMismatch);
+    }
+
+    #[test]
+    fn a_type_returning_body_must_hand_back_a_type() {
+        // #76: `eval_type_call` reads a `-> type` call's result bits as a node
+        // address, so a body handing back a number handed back an address that
+        // was never a node and the process died. The body is where that is
+        // knowable, so it is refused at the definition, every tail leaf of it.
+        assert_eq!(parse_err("fn () -> type ( 5 )"), ParseError::TypeMismatch);
+        assert_eq!(
+            parse_err_after(&["x := i32 5"], "fn () -> type ( x )"),
+            ParseError::TypeMismatch
+        );
+        // Through the tail positions: a `return`, and both arms of an `if`.
+        assert_eq!(parse_err("fn () -> type ( return 5 )"), ParseError::TypeMismatch);
+        assert_eq!(
+            parse_err("fn (b := i32 ?) -> type ( if (b < 1) (i32) else (5) )"),
+            ParseError::TypeMismatch
+        );
+
+        // What must still pass: a type, and a type from either arm.
+        assert_eq!(run_script("f := fn () -> type ( i32 ), g := f(), x := g 5, x"), 5);
+        assert_eq!(
+            run_script(
+                "f := fn (b := i32 ?) -> type ( if (b < 1) (i32) else (i64) ),\ng := f(0), x := g 7, x"
+            ),
+            7
+        );
     }
 
     #[test]

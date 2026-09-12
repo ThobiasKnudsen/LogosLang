@@ -49,6 +49,30 @@ impl Store {
         chunk.last_mut().unwrap() as *mut Dyad
     }
 
+    /// Whether `ptr` is an address this store handed out: inside one of its
+    /// chunks, and on a `Dyad` boundary there.
+    ///
+    /// A chunk is allocated at its full capacity and never reallocates, so a
+    /// chunk's live range is a plain interval and the scan is exact. Used
+    /// where a node address arrives as raw bits from a run
+    /// ([`crate::parse::Parser::eval_type_call`], #76): bits that were never
+    /// a node must become a checked error, not a dereference. Costs a walk of
+    /// the chunk list, which is a comptime price at a comptime site.
+    pub fn contains(&self, ptr: DyadPtr) -> bool {
+        if ptr.is_null() {
+            return false;
+        }
+        self.chunks.iter().any(|chunk| {
+            let start = chunk.as_ptr();
+            // SAFETY: `start` and `start + len` bound one allocation.
+            let end = unsafe { start.add(chunk.len()) };
+            let p = ptr.cast_const();
+            p >= start
+                && p < end
+                && (p as usize - start as usize).is_multiple_of(std::mem::size_of::<Dyad>())
+        })
+    }
+
     /// Store a dyad with the given `logos` and `value` fields and return its address.
     pub fn alloc_raw(&mut self, ty: DyadPtr, value: *mut u8) -> DyadPtr {
         self.alloc(Dyad { ty, value })
