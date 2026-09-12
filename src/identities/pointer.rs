@@ -150,7 +150,7 @@ fn lower_addr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is an addr node; its first operand is a place.
     unsafe {
         let place = *((*node).value as *const DyadPtr);
-        Ok(lw.place_addr(place))
+        lw.place_addr(place)
     }
 }
 

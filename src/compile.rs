@@ -192,7 +192,7 @@ impl Lowerer<'_, '_> {
         // the full i64 bit-container the call passed.
         if op.is_null() {
             if frame_ref((*node).value).is_some() {
-                let addr = self.place_addr(node);
+                let addr = self.place_addr(node)?;
                 return Ok(self.load_at(types::I64, addr, 0));
             }
             return Err(CompileError::NotLowerable(op));
@@ -218,7 +218,7 @@ impl Lowerer<'_, '_> {
         // why every place carries one (›GLOBAL_TAG‹).
         if op == (*op).ty {
             if crate::dyad::is_place((*node).value) {
-                return Ok(self.read_place(node, types::I64));
+                return self.read_place(node, types::I64);
             }
             return Ok(self.builder.ins().iconst(types::I64, node as i64));
         }
@@ -247,7 +247,7 @@ impl Lowerer<'_, '_> {
             && crate::identities::meta::kind_of(op) == Some(crate::identities::meta::DYAD_TAG)
             && crate::dyad::is_place((*node).value)
         {
-            return Ok(self.read_place(node, types::I64));
+            return self.read_place(node, types::I64);
         }
         // A pointer-typed leaf (an `&x` literal or a pointer variable): pointer
         // logos nodes are created per use, so they are not in the identity-keyed
@@ -283,7 +283,7 @@ impl Lowerer<'_, '_> {
         crate::record::through(self.types.record_, p)
     }
 
-    pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> Value {
+    pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
         let node = self.through(node);
         if let Some(stats) = self.collect.as_deref_mut() {
             if let Some((_, off)) = frame_ref((*node).value) {
@@ -309,19 +309,25 @@ impl Lowerer<'_, '_> {
     /// materialization itself. The one place the compiler decodes the frame
     /// tag (see [`crate::dyad::FRAME_TAG`]); the depth is a parse-time capture
     /// guard, only the offset into this call's stack slot matters here.
-    unsafe fn place_addr_raw(&mut self, node: DyadPtr) -> Value {
+    unsafe fn place_addr_raw(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
         let node = self.through(node);
         match frame_ref((*node).value) {
             Some((_, off)) => {
-                let slot = self.frame_slot.expect("a frame-relative place needs a frame slot");
-                self.builder.ins().stack_addr(self.ptr_ty, slot, off as i32)
+                // A frame place with no frame under it — a bare expression
+                // compiled outside any call — is the checked error the
+                // interpreter gives for the same shape (`place_addr` there is
+                // `None` with no activation), not a panic (#82, asymmetry 8).
+                let Some(slot) = self.frame_slot else {
+                    return Err(CompileError::BadValue);
+                };
+                Ok(self.builder.ins().stack_addr(self.ptr_ty, slot, off as i32))
             }
             // Global storage: the tag comes off before the address is baked
             // into the machine code (see [`crate::dyad::GLOBAL_TAG`]).
             None => {
                 let v = (*node).value;
                 let addr = crate::dyad::global_ref(v).unwrap_or(v);
-                self.builder.ins().iconst(self.ptr_ty, addr as usize as i64)
+                Ok(self.builder.ins().iconst(self.ptr_ty, addr as usize as i64))
             }
         }
     }
@@ -332,19 +338,23 @@ impl Lowerer<'_, '_> {
     ///
     /// # Safety
     /// `node` must be a valid place node holding a `ct`-typed scalar.
-    pub(crate) unsafe fn read_place(&mut self, node: DyadPtr, ct: types::Type) -> Value {
+    pub(crate) unsafe fn read_place(
+        &mut self,
+        node: DyadPtr,
+        ct: types::Type,
+    ) -> Result<Value, CompileError> {
         let node = self.through(node);
         if let Some((_, off)) = frame_ref((*node).value) {
             if let Some(&(var, vct)) = self.promoted.get(&off) {
                 debug_assert_eq!(vct, ct, "a promoted place is used at one type");
-                return self.builder.use_var(var);
+                return Ok(self.builder.use_var(var));
             }
             if let Some(stats) = self.collect.as_deref_mut() {
                 stats.record_use(off, ct);
             }
         }
-        let addr = self.place_addr_raw(node);
-        self.load_at(ct, addr, 0)
+        let addr = self.place_addr_raw(node)?;
+        Ok(self.load_at(ct, addr, 0))
     }
 
     /// Write `v` (of logos `ct`) to a place — the dual of [`Self::read_place`]:
@@ -353,20 +363,26 @@ impl Lowerer<'_, '_> {
     ///
     /// # Safety
     /// As [`Self::read_place`].
-    pub(crate) unsafe fn write_place(&mut self, node: DyadPtr, ct: types::Type, v: Value) {
+    pub(crate) unsafe fn write_place(
+        &mut self,
+        node: DyadPtr,
+        ct: types::Type,
+        v: Value,
+    ) -> Result<(), CompileError> {
         let node = self.through(node);
         if let Some((_, off)) = frame_ref((*node).value) {
             if let Some(&(var, vct)) = self.promoted.get(&off) {
                 debug_assert_eq!(vct, ct, "a promoted place is used at one type");
                 self.builder.def_var(var, v);
-                return;
+                return Ok(());
             }
             if let Some(stats) = self.collect.as_deref_mut() {
                 stats.record_use(off, ct);
             }
         }
-        let addr = self.place_addr_raw(node);
+        let addr = self.place_addr_raw(node)?;
         self.store_at(ct, addr, 0, v);
+        Ok(())
     }
 
     /// The core handles this compilation resolves against — for an identity's
@@ -774,7 +790,7 @@ impl Lowerer<'_, '_> {
         let ct = nt.cranelift_type();
 
         let s = self.lower(start)?;
-        self.write_place(var, ct, s);
+        self.write_place(var, ct, s)?;
         let e = self.lower(end)?;
         let d = if !step.is_null() {
             self.lower(step)?
@@ -810,7 +826,7 @@ impl Lowerer<'_, '_> {
         self.builder.ins().brif(pos, header, &[], exit, &[]);
 
         self.builder.switch_to_block(header);
-        let v = self.read_place(var, ct);
+        let v = self.read_place(var, ct)?;
         let cond = if nt.is_float() {
             self.fcmp(FloatCC::LessThan, v, e)
         } else {
@@ -823,13 +839,13 @@ impl Lowerer<'_, '_> {
         self.builder.switch_to_block(body_b);
         self.builder.seal_block(body_b);
         self.lower(body)?;
-        let v2 = self.read_place(var, ct);
+        let v2 = self.read_place(var, ct)?;
         let inc = if nt.is_float() {
             self.builder.ins().fadd(v2, d)
         } else {
             self.builder.ins().iadd(v2, d)
         };
-        self.write_place(var, ct, inc);
+        self.write_place(var, ct, inc)?;
         self.builder.ins().jump(header, &[]);
         // Both of the header's predecessors (the entry brif and the back-edge)
         // now exist.

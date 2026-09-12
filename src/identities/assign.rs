@@ -210,7 +210,7 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
             return Err(CompileError::BadValue);
         }
         let v = lw.lower(rhs)?;
-        lw.write_place(lhs, nt.cranelift_type(), v);
+        lw.write_place(lhs, nt.cranelift_type(), v)?;
         Ok(v)
     }
 }

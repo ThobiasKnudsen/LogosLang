@@ -203,7 +203,7 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         let (fields, _) = layout((*instance).ty).map_err(|_| CompileError::BadValue)?;
         // The instance's base address, resolved once (baked absolute, or a frame
         // `stack_addr`); each field stores at its byte offset from it.
-        let base = lw.place_addr(instance);
+        let base = lw.place_addr(instance)?;
         // The arguments follow the two fixed head slots (instance, op).
         for (i, &(_, nt, offset)) in fields.iter().enumerate() {
             let v = lw.lower(*ops.add(i + 2))?;

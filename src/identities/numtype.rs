@@ -401,7 +401,7 @@ pub(crate) fn lower_var(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, Compil
         return Err(CompileError::BadValue);
     }
     let ct = unsafe { of_type_node((*node).ty) }.cranelift_type();
-    Ok(unsafe { lw.read_place(node, ct) })
+    unsafe { lw.read_place(node, ct) }
 }
 
 /// The `NumType` a numeric logos node describes (read from its value-slot tag).

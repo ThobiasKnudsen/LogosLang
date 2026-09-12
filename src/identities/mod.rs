@@ -3749,6 +3749,29 @@ mod tests {
     }
 
     #[test]
+    fn a_bool_literal_agrees_across_tiers() {
+        // Pinned before the compiler's data path is routed through the
+        // reading rule (#82): `bool::lower` bakes the literal as an immediate,
+        // the `Scalar` arm will load it from its storage. Same value either way.
+        for tail in ["", "f.compile(), "] {
+            assert_eq!(run_script(&format!("f := fn () -> bool ( true ),\n{tail}f()")), 1);
+            assert_eq!(run_script(&format!("f := fn () -> bool ( false ),\n{tail}f()")), 0);
+        }
+    }
+
+    #[test]
+    fn a_dyad_view_in_a_compiled_body_is_refused_not_crashed() {
+        // #82, asymmetry 2, as it stands: the interpreter yields a view's
+        // address, the compiler has no arm for one and declines cleanly. The
+        // routing step gives the compiler the `Address` arm and flips this to
+        // the interpreter's answer.
+        let r = run_script_result("x := i32 5, f := fn () -> i64 ( x:dyad ), f.compile(), f()");
+        assert!(matches!(r, Err(crate::run::RunError::CompileFailed(_))), "{r:?}");
+        let interpreted = run_script("x := i32 5, f := fn () -> i64 ( x:dyad ), f()");
+        assert_ne!(interpreted, 0, "interpreted, a view is an address");
+    }
+
+    #[test]
     fn a_type_is_a_value_a_place_can_hold() {
         // DESIGN ›A type is a comptime value‹ (12 September 2026): "a type
         // value is a node address like any other value, so it may be passed to
