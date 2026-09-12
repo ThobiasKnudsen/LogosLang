@@ -110,10 +110,27 @@ pub(super) fn build(
     // 2026: "a place holding a type is therefore an ordinary place"). What it
     // takes is a type value, identity or place alike.
     // SAFETY: `lhs_d`/`rhs` are reduced dyads from the store.
-    let lhs_type_place =
-        unsafe { (*lhs_d).ty == types.type_ && crate::dyad::is_place((*lhs_d).value) };
-    if lhs_type_place {
-        if !unsafe { super::is_type_valued(types, rhs) } {
+    // The general box, `dyad ?`, takes any node at all: what it holds is asked
+    // afterwards, `a:dyad.type == type`. A `type ?` box is the narrow case and
+    // takes only a type value.
+    let (lhs_type_place, lhs_dyad_place) = unsafe {
+        let place = crate::dyad::is_place((*lhs_d).value);
+        ((*lhs_d).ty == types.type_ && place, (*lhs_d).ty == types.dyad_ && place)
+    };
+    if lhs_type_place || lhs_dyad_place {
+        // Both boxes hold a *node address*. A `type ?` box takes a type value;
+        // a `dyad ?` box takes anything whose run yields a node — a type, or a
+        // dyad view (`x:dyad`). A number is not one: storing its value would
+        // leave bits in the box that every later reader would follow as an
+        // address.
+        let ok = unsafe {
+            if lhs_type_place {
+                super::is_type_valued(types, rhs)
+            } else {
+                super::is_node_valued(types, rhs)
+            }
+        };
+        if !ok {
             return Err(ParseError::BadDeclaredType);
         }
         let value = store.alloc_operands(&[lhs, rhs, types.ops.store_leaf(NumType::I64)]);

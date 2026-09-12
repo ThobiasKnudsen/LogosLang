@@ -1036,6 +1036,18 @@ pub(crate) unsafe fn is_type_valued(types: &CoreTypes, node: DyadPtr) -> bool {
     !node.is_null() && (*node).ty == types.type_
 }
 
+/// Whether what `node` yields at run is a *node address*: a type value
+/// (an identity, or a place holding one), or a dyad — the `dyad ?` box and the
+/// view alike. These are the values that compare by identity rather than by
+/// width, which is why `==` over two of them is one 64-bit equality.
+///
+/// # Safety
+/// As [`type_identity_of`].
+pub(crate) unsafe fn is_node_valued(types: &CoreTypes, node: DyadPtr) -> bool {
+    let node = types.through(node);
+    !node.is_null() && ((*node).ty == types.type_ || (*node).ty == types.dyad_)
+}
+
 /// The display spelling of a logos-value (`i32`, `bool`, `type`, …). Numeric
 /// logos and `void` read their name from the record tag; the root and `bool`
 /// are recognized by identity; other logos-values (record logos, pointers,
@@ -1192,6 +1204,21 @@ pub unsafe fn display_value(types: &CoreTypes, node: DyadPtr, bits: i64) -> Stri
         }
         return "type ?".to_string();
     }
+    // The general box, `dyad ?`. Empty, it is the hole it was declared as. A
+    // type in it shows its spelling, which is the case the box is usually for;
+    // anything else shows as the dyad it is, exactly as a view does — a
+    // rendering of the *value* behind it would mean running the node, and
+    // display has no runtime.
+    if !(*node).ty.is_null() && (*node).ty == types.dyad_ && crate::dyad::is_place((*node).value) {
+        let held = bits as usize as DyadPtr;
+        if held.is_null() {
+            return "dyad ?".to_string();
+        }
+        if type_identity_of(types, held).is_some() {
+            return type_name(types, held);
+        }
+        return "dyad".to_string();
+    }
     // A dyad view (#52) shows as the view it is, not its address bits.
     if !(*node).ty.is_null() && meta::kind_of((*node).ty) == Some(meta::DYAD_TAG) {
         return "dyad".to_string();
@@ -1329,6 +1356,15 @@ pub(crate) unsafe fn commit_call_args(
             match numtype_of(types, *arg) {
                 Operand::Pointer(pointee) if pointee == numtype::pointee_of(pty) => {}
                 _ => return Err(ParseError::TypeMismatch),
+            }
+            continue;
+        }
+        // A `dyad` parameter takes any node-valued argument: the general box
+        // as a parameter (DESIGN ›A type is a comptime value‹, 12 September
+        // 2026).
+        if pty == types.dyad_ {
+            if !is_node_valued(types, *arg) {
+                return Err(ParseError::TypeMismatch);
             }
             continue;
         }

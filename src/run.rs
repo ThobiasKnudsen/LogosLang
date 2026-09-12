@@ -632,6 +632,12 @@ impl Runtime {
             // node's address; its run value is that address, mirroring a logos
             // node standing as a value.
             if crate::identities::meta::kind_of(op) == Some(crate::identities::meta::DYAD_TAG) {
+                // A dyad *place* — the `dyad ?` box — holds the address in its
+                // storage; a dyad *value* is the address. Same distinction as
+                // for a type, and the same answer: the tag says which.
+                if crate::dyad::is_place((*node).value) {
+                    return self.read_container(node);
+                }
                 return Ok((*node).value as i64);
             }
             // `node` is data or a migrated application. A rational literal is

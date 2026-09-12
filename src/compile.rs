@@ -240,6 +240,15 @@ impl Lowerer<'_, '_> {
                 return self.lower_call_to(code, node);
             }
         }
+        // A dyad place — the `dyad ?` box — holds a node address in its eight
+        // bytes, exactly as a place classified by a logos does. The tag is what
+        // says place rather than view (›GLOBAL_TAG‹).
+        if !op.is_null()
+            && crate::identities::meta::kind_of(op) == Some(crate::identities::meta::DYAD_TAG)
+            && crate::dyad::is_place((*node).value)
+        {
+            return Ok(self.read_place(node, types::I64));
+        }
         // A pointer-typed leaf (an `&x` literal or a pointer variable): pointer
         // logos nodes are created per use, so they are not in the identity-keyed
         // table; load the 8-byte address blob like any numeric variable.
@@ -564,8 +573,8 @@ impl Lowerer<'_, '_> {
             // anything that needs the identity's *fields*. The width is also
             // in the node's own op leaf; reading it from there rather than
             // re-deriving it here is #99.
-            _ if crate::identities::is_type_valued(&self.types, lhs)
-                && crate::identities::is_type_valued(&self.types, rhs) =>
+            _ if crate::identities::is_node_valued(&self.types, lhs)
+                && crate::identities::is_node_valued(&self.types, rhs) =>
             {
                 NumType::I64
             }

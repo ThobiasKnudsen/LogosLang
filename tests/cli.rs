@@ -915,6 +915,27 @@ fn a_type_box_is_an_ordinary_variable() {
 }
 
 #[test]
+fn the_dyad_box_holds_any_node_and_says_what_it_holds() {
+    // `dyad ?` is the general box and `type ?` the narrow case of it: both
+    // hold a node address, and what the general one currently holds is asked
+    // the ordinary way, `a:dyad.type == type` (DESIGN ›The dyad's read
+    // surface‹ over ›A type is a comptime value‹, 12 September 2026).
+    let (echoes, stderr) = repl(
+        b"a := dyad ?\na\na = i32\na:dyad.type == type\na == i32\na\n          x := i32 7\na = x:dyad\na:dyad.type == i32\na:dyad.type == type\n",
+    );
+    assert_eq!(echoes, ["dyad ?", "true", "true", "i32", "true", "false"], "stderr: {stderr}");
+
+    // It declares with what it holds, like the narrow box.
+    let (echoes, stderr) = repl(b"a := dyad ?\na = i32\ny := a 5\ny\n");
+    assert_eq!(echoes, ["5"], "stderr: {stderr}");
+
+    // A box holding a node address may only be given one: a number's *value*
+    // in it would be followed as an address by every later reader.
+    let (_e, stderr) = repl(b"a := dyad ?\na = 5\n");
+    assert!(stderr.contains("must be a type value"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_dyad_is_built_from_a_type_and_a_value() {
     // DESIGN ›Feasibility‹: "`dyad (type, value)` construction from Logos"
     // (#60). `dyad (i32, 7)` is a store-owned i32 cell, `dyad` alone the

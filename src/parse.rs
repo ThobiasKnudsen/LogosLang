@@ -2160,6 +2160,12 @@ impl<'a> Parser<'a> {
                         // place": the first one had replaced the variable with
                         // a synonym for the type. A box can be written again.
                         self.alloc_local(types.type_, 8)
+                    } else if t == types.dyad_ {
+                        // The general box: eight bytes holding *any* node's
+                        // address, `type ?` being the case where what it holds
+                        // is known to be a type. What it currently holds is
+                        // asked the ordinary way, `a:dyad.type == type`.
+                        self.alloc_local(types.dyad_, 8)
                     } else if crate::identities::is_numtype_node(&types, t) {
                         let nt = crate::identities::numtype::of_type_node(t);
                         self.alloc_local(t, nt.bytes())
@@ -2341,7 +2347,11 @@ impl<'a> Parser<'a> {
     pub(crate) fn operand_dyad(&mut self, cell: Cell) -> Result<DyadPtr, ParseError> {
         let p = self.as_operand(cell)?;
         // SAFETY: `p` is a dyad from the store.
-        Ok(unsafe { self.types.through(p) })
+        let d = unsafe { self.types.through(p) };
+        // A box the pass has already filled reads as what it holds, which is
+        // what an operand position wants. An assignment's *target* does not
+        // come through here, so `a = f64` still writes the box.
+        Ok(self.settled_type(d))
     }
 
     /// The completed operand immediately left of the tape's cursor, converted
@@ -4833,7 +4843,10 @@ impl<'a> Parser<'a> {
         }
         if (*lhs).ty == types.record_ {
             if name == "dyad" {
-                let cell = Record::of(lhs).dyad;
+                // Through a settled box: `a:dyad.type` asks the type of what
+                // the name holds, and for `a := dyad ?` holding `i32` that is
+                // `type`, exactly as `x:dyad.type` for `x := i32 5` is `i32`.
+                let cell = self.settled_type(Record::of(lhs).dyad);
                 return Ok(self.store.alloc_raw(types.dyad_, cell as *mut u8));
             }
             let (field, offset) = self.resolve_field(types.record_, nstart, nlen)?;
@@ -5057,17 +5070,31 @@ impl<'a> Parser<'a> {
         // SAFETY: `id` is null or a resolved dyad from the store; the read is
         // of a place this parser allocated, eight bytes wide.
         unsafe {
-            if id.is_null() || (*id).ty != self.types.type_ {
+            if id.is_null() {
+                return id;
+            }
+            // The two boxes whose content is a node: `type ?`, which holds an
+            // identity, and `dyad ?`, which holds anything. Both store the
+            // node's address, so both are read the same way.
+            let ty = (*id).ty;
+            if ty != self.types.type_ && ty != self.types.dyad_ {
                 return id;
             }
             let Some(addr) = crate::dyad::global_ref((*id).value) else {
                 return id;
             };
             let held = std::ptr::read_unaligned(addr as *const DyadPtr);
-            match crate::identities::type_identity_of(&self.types, held) {
-                Some(t) => t,
-                None => id,
+            if held.is_null() || !self.store.contains(held) {
+                return id;
             }
+            // A `type ?` box may hold only an identity; a `dyad ?` box holds
+            // whatever was put in it.
+            if ty == self.types.type_
+                && crate::identities::type_identity_of(&self.types, held).is_none()
+            {
+                return id;
+            }
+            held
         }
     }
 

@@ -63,7 +63,7 @@ fn build(
     // superseded is its reason, "a logos never varies at runtime", which was
     // true only because no place could hold one.
     // SAFETY: as above.
-    if unsafe { super::is_type_valued(types, lhs) && super::is_type_valued(types, rhs) } {
+    if unsafe { super::is_node_valued(types, lhs) && super::is_node_valued(types, rhs) } {
         let value = store.alloc_operands(&[lhs, rhs, types.ops.cmp_leaf(CmpOp::Eq, NumType::I64)]);
         return Ok(store.alloc_raw(eq, value));
     }

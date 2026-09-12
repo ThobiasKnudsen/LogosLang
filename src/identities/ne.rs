@@ -58,7 +58,7 @@ fn build(
     // when the program runs, so this is an ordinary comparison of two node
     // addresses. See the same branch in [`super::eq`].
     // SAFETY: as above.
-    if unsafe { super::is_type_valued(types, lhs) && super::is_type_valued(types, rhs) } {
+    if unsafe { super::is_node_valued(types, lhs) && super::is_node_valued(types, rhs) } {
         let value = store.alloc_operands(&[lhs, rhs, types.ops.cmp_leaf(CmpOp::Ne, NumType::I64)]);
         return Ok(store.alloc_raw(ne, value));
     }
