@@ -3586,6 +3586,36 @@ mod tests {
     }
 
     #[test]
+    fn runaway_depth_is_a_checked_error_not_an_abort() {
+        // #80: the parser recurses per open bracket and the interpreter per
+        // call, so a wall of `(` and a recursion with no base case both used
+        // to overflow the Rust stack and abort the process with no
+        // diagnostic. Both are now checked, and both limits are generous:
+        // what a person writes is nowhere near them.
+        //
+        // On the seed's own stack, the one the binary hands itself, so the
+        // guard fires before the stack does. A test thread's default 2 MiB is
+        // a quarter of the main thread's and would abort the whole runner.
+        let work = std::thread::Builder::new()
+            .stack_size(crate::WORK_STACK_BYTES)
+            .spawn(|| {
+                let deep = "(".repeat(crate::parse::MAX_BRACKET_DEPTH + 1);
+                assert_eq!(parse_err(&format!("{deep}1")), ParseError::TooDeep);
+                assert_eq!(run_script("(((((1)))))"), 1);
+
+                let runaway = "f := fn (n := i32 ?) -> i32 ( f(n + 1) ), f(1)";
+                assert_eq!(run_script_result(runaway), Err(crate::run::RunError::CallDepth));
+                // A recursion that ends is untouched, at a depth well past
+                // where the unguarded interpreter used to die in a debug build.
+                let ending =
+                    "f := fn (n := i32 ?) -> i32 ( if (n < 1) (0) else (f(n - 1)) ), f(9000)";
+                assert_eq!(run_script(ending), 0);
+            })
+            .expect("the work thread must start");
+        work.join().expect("depth guards hold");
+    }
+
+    #[test]
     fn a_read_or_write_through_the_hole_is_the_checked_error_both_tiers() {
         // DESIGN ›Both slots of a dyad follow one lifecycle‹: "`undefined` is
         // the hole ... and reading it is a checked error, never undefined

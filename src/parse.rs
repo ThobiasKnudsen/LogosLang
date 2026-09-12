@@ -1150,6 +1150,15 @@ pub unsafe fn fn_frame_size(fn_node: DyadPtr) -> usize {
 pub const SLOT_NAMES: [&str; 6] =
     ["parse_rank", "lex_rank", "associativity", "constructor", "destructor", "code"];
 
+/// How deep scopes may nest before the parse is refused (#80). Each open
+/// bracket recurses `parse_sequence` -> `parse_next` -> `parse_expression` ->
+/// the opener's constructor -> `parse_sequence`, so a wall of `(` costs Rust
+/// stack the same way a runaway recursion does, and answered it the same way:
+/// by aborting. Sized well under what [`crate::WORK_STACK_BYTES`] holds, and
+/// far past anything a person writes — source nested two thousand brackets
+/// deep is generated, and generated source can be told a number.
+pub const MAX_BRACKET_DEPTH: usize = 2_000;
+
 /// What a line of a `type (…)` body is (DESIGN ›The constructor is a field‹:
 /// a body line fills a slot, declares a member, opens `instance (…)`, or is
 /// prose). Anything else is [`ParseError::TypeBodyLine`].
@@ -1282,6 +1291,9 @@ pub enum ParseError {
     /// A type body's own declaration failed while running at the definition
     /// (#87); carries the rendered run error.
     TypeBodyFailed(Box<String>),
+    /// Scopes nested deeper than [`MAX_BRACKET_DEPTH`] (#80): the checked
+    /// error a wall of brackets gets, instead of the Rust stack overflowing.
+    TooDeep,
     /// `parse_rank = …` whose value is not a number known at the definition.
     NonComptimeRank,
     /// `associativity = …` with something other than `left` or `right`.
@@ -4035,6 +4047,12 @@ impl<'a> Parser<'a> {
     pub fn parse_sequence(&mut self) -> Result<DyadPtr, ParseError> {
         // The block's scope node: the membership key while parsing and, when the
         // sequence is real, the sequence node itself.
+        // `pending_defers` carries one entry per open scope, so its length is
+        // the nesting depth; past the limit the parse is the checked error
+        // rather than a Rust stack overflow (#80).
+        if self.pending_defers.len() >= MAX_BRACKET_DEPTH {
+            return Err(ParseError::TooDeep);
+        }
         let scope = self.store.alloc_raw(self.types.scope, std::ptr::null_mut());
         self.scopes.push(scope);
         self.pending_defers.push(Vec::new());

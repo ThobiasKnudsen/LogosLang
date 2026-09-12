@@ -78,6 +78,22 @@ unsafe fn is_silent_tail(core: &Core, node: seed::dyad::DyadPtr) -> bool {
 }
 
 fn main() -> ExitCode {
+    // The work runs on a thread of the seed's own stack size, not the main
+    // thread's default (#80). The parser recurses per open bracket and the
+    // interpreter per call, so how deep a Logos program may go would otherwise
+    // be decided by whatever stack the OS handed this process, and the checked
+    // depth limits would mean a different thing in a debug build than in a
+    // release one. See `seed::WORK_STACK_BYTES`.
+    std::thread::Builder::new()
+        .stack_size(seed::WORK_STACK_BYTES)
+        .spawn(work)
+        .expect("the work thread must start")
+        .join()
+        .unwrap_or(ExitCode::FAILURE)
+}
+
+/// The command, on the work thread: the whole of [`main`]'s decision.
+fn work() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [] => repl(),

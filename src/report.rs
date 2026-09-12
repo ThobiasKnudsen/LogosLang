@@ -138,6 +138,9 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::InstanceOutsideType => "`instance (…)` belongs inside a type body".into(),
         ParseError::DoubleInstance => "a type body has one `instance (…)` block".into(),
         ParseError::DeferInTypeBody => "a type body cannot own what needs a teardown".into(),
+        ParseError::TooDeep => {
+            format!("scopes nested deeper than {}", crate::parse::MAX_BRACKET_DEPTH)
+        }
         ParseError::TypeBodyFailed(msg) => {
             format!("a type body's own declaration failed at the definition: {msg}")
         }
@@ -228,6 +231,12 @@ pub fn run_message(e: &RunError) -> String {
         RunError::Faulted(msg) => format!("the interpreter stopped inside compiled code: {msg}"),
         RunError::NoStore => "a cell can be built only inside a constructor the parser runs".into(),
         RunError::NullPointer => "this pointer holds nothing yet".into(),
+        RunError::CallDepth => {
+            format!(
+                "calls nested deeper than {}: is this recursion ending?",
+                crate::run::MAX_CALL_DEPTH
+            )
+        }
     }
 }
 

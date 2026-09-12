@@ -64,6 +64,10 @@ pub enum RunError {
     /// compiled code (#65): a seed bug, carried back across the machine-code
     /// boundary as a checked error rather than an abort; the panic's message.
     Faulted(Box<String>),
+    /// Interpreted calls nested deeper than [`MAX_CALL_DEPTH`] (#80): the
+    /// checked error a runaway recursion gets, instead of the Rust stack
+    /// overflowing and aborting the process.
+    CallDepth,
     /// A read or a write went through a pointer holding nothing — the hole a
     /// `p := @i32 ?` declaration leaves (#74). DESIGN ›Both slots of a dyad
     /// follow one lifecycle‹: "`undefined` is the hole ... and reading it is a
@@ -176,6 +180,16 @@ pub unsafe extern "C" fn park_null_pointer() -> i64 {
     PENDING.set(Some(RunError::NullPointer));
     0
 }
+
+/// How deep interpreted calls may nest before the run faults (#80). The
+/// interpreter walks the body of each call on the Rust stack, so without a
+/// limit a runaway recursion overflows it and the process aborts with no
+/// diagnostic — the one failure a language must never answer with a crash.
+/// Chosen against [`crate::WORK_STACK_BYTES`], which is eight times the
+/// default main thread: a debug build overflowed near 5,500 frames on 8 MiB,
+/// so 10,000 frames on 64 MiB leaves room of about four times over in the
+/// most expensive build. Deeper than this is what `.compile()` is for.
+pub const MAX_CALL_DEPTH: usize = 10_000;
 
 /// The chunk size of the interpreter's activation stack. One chunk carries many
 /// ordinary frames; a frame larger than this gets a dedicated chunk of its own
@@ -515,6 +529,12 @@ impl Runtime {
         let body = *fields.add(FN_BODY);
         if body.is_null() {
             return Err(RunError::NotRunnable(f));
+        }
+        // The depth is the count of in-flight interpreted calls, which
+        // `activations` already is; past the limit the run faults rather than
+        // letting the Rust stack under `run` overflow and abort (#80).
+        if self.activations.len() >= MAX_CALL_DEPTH {
+            return Err(RunError::CallDepth);
         }
         let mark = self.stack.mark();
         let base = self.stack.alloc(fn_frame_size(f));
