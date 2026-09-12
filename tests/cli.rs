@@ -741,9 +741,33 @@ fn help_prints_usage_and_version() {
 }
 
 #[test]
-fn an_unknown_flag_is_a_usage_error() {
+fn a_line_starting_with_a_dash_is_source_not_a_flag() {
+    // DESIGN ›The command line is Logos source‹: "Everything after `logos`
+    // is one line of Logos code" and "There are no build or compile flags".
+    // Prefix `-` is the negation identity there as everywhere else, so a
+    // leading `-` reaches the parser (#90) and a would-be flag is an ordinary
+    // parse error at its own position, never a usage message.
+    // Both shapes a shell produces: the words unquoted, which the binary joins
+    // back into one line, and the line as a single argument.
+    let out = logos().args(["-5", "+", "3"]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "-2\n");
+
+    let out = logos().arg("-5+3").output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "-2\n");
+
     let out = logos().arg("--nope").output().unwrap();
-    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("<command line>:1:7: error:"), "stderr: {err}");
+
+    // The two exact spellings are still flags, matched whole and not by prefix.
+    for flag in ["--help", "-h"] {
+        let out = logos().arg(flag).output().unwrap();
+        assert!(out.status.success(), "{flag}");
+        assert!(String::from_utf8_lossy(&out.stdout).contains("usage:"), "{flag}");
+    }
 }
 
 #[test]

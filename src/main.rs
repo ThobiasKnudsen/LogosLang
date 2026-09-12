@@ -85,10 +85,11 @@ fn main() -> ExitCode {
             print!("{}", help());
             ExitCode::SUCCESS
         }
-        [first, ..] if first.starts_with('-') => {
-            eprintln!("usage: logos [code…]   (or `logos --help`)");
-            ExitCode::from(2)
-        }
+        // No arm rejects a leading `-`: DESIGN ›The command line is Logos
+        // source‹ rules "Everything after `logos` is one line of Logos code"
+        // and "There are no build or compile flags", so `-` is the negation
+        // identity here as everywhere else and `logos '-5 + 3'` runs (#90).
+        // `--help` and `-h` above are matched exactly, never as a prefix.
         line => run_line(&line.join(" ")),
     }
 }
