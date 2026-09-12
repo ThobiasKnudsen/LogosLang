@@ -377,7 +377,7 @@ pub(crate) unsafe fn install_code(id: DyadPtr, f: DyadPtr) {
 
 /// The record kind of `id`, or `None` where there is no record to read: a
 /// null value slot (a still-unbound declaration placeholder), or a tagged
-/// frame place (a slot *holding* a type rather than being one).
+/// place, frame or global (a slot *holding* a type rather than being one).
 ///
 /// Every accessor below contracts on "`kind_of` is `Some`", so this is where
 /// the contract is established and therefore where a node that is not an
@@ -391,7 +391,7 @@ pub(crate) unsafe fn install_code(id: DyadPtr, f: DyadPtr) {
 /// `id` must be a valid dyad from the store.
 pub(crate) unsafe fn kind_of(id: DyadPtr) -> Option<u8> {
     let v = (*id).value;
-    if v.is_null() || crate::dyad::frame_ref(v).is_some() {
+    if v.is_null() || crate::dyad::is_place(v) {
         None
     } else {
         Some(*(v as *const u8))

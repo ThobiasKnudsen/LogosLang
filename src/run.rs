@@ -480,7 +480,9 @@ impl Runtime {
                 let base = *self.activations.last()?;
                 Some(base.add(off))
             }
-            None => Some((*node).value),
+            // Global storage carries its own tag; anything else is not a place
+            // and has no storage to read.
+            None => crate::dyad::global_ref((*node).value).or(Some((*node).value)),
         }
     }
 

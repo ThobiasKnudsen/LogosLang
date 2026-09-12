@@ -94,3 +94,77 @@ pub fn frame_ref(value: *mut u8) -> Option<(usize, usize)> {
         Some(((bits & !FRAME_TAG) >> DEPTH_SHIFT, bits & OFFSET_MASK))
     }
 }
+
+/// The tag marking a place node's `value` as *global* storage: an absolute
+/// address, but an address of a box rather than of a definition.
+///
+/// [`FRAME_TAG`] marks the places that live in a call. This marks the rest, so
+/// that **every** place carries a mark and a definition carries none. Without
+/// it the two are only distinguishable where a frame exists, which is why a
+/// type-valued place worked as a parameter and nowhere else: `i32` the
+/// identity is `{type: type, value: <its record>}` and a top-level box holding
+/// a type is `{type: type, value: <8 bytes>}`, the same shape, both untagged.
+/// `type` is the only logos with that problem, being the only one that is its
+/// own logos — for every other `T`, an identity says `type` in its type slot
+/// and a box says `T`.
+///
+/// Bit 62, below the frame tag and far above any canonical user-space address
+/// (which stays under 2^47 on the platforms the seed targets), so the three
+/// cases — frame place, global place, definition — are exactly discriminated.
+pub const GLOBAL_TAG: usize = 1 << 62;
+
+/// Mark an absolute address as global *storage*. See [`GLOBAL_TAG`].
+pub fn global_place(addr: *mut u8) -> *mut u8 {
+    let bits = addr as usize;
+    debug_assert!(bits & (FRAME_TAG | GLOBAL_TAG) == 0, "a real address must carry no place tag");
+    std::ptr::without_provenance_mut(GLOBAL_TAG | bits)
+}
+
+/// Decode a global place: `Some(addr)` with the tag stripped, `None` for
+/// anything else (a frame place, a definition, null). See [`GLOBAL_TAG`].
+pub fn global_ref(value: *mut u8) -> Option<*mut u8> {
+    let bits = value as usize;
+    if bits & GLOBAL_TAG == 0 {
+        None
+    } else {
+        Some(std::ptr::with_exposed_provenance_mut(bits & !GLOBAL_TAG))
+    }
+}
+
+/// Whether `value` is a place at all — a frame slot or global storage — as
+/// against a definition's record or null. The one question a reader of an
+/// identity has to ask before it reads a record ([`super::meta::kind_of`]).
+pub fn is_place(value: *mut u8) -> bool {
+    (value as usize) & (FRAME_TAG | GLOBAL_TAG) != 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_place_is_marked_and_a_definition_is_not() {
+        // The invariant the whole tag scheme exists for: a reader can ask of
+        // any `value` whether it is storage or a definition's record, without
+        // needing to know whether a frame happens to be open. Before the
+        // global tag that question was only answerable inside a function,
+        // which is why a type-valued place worked as a parameter and nowhere
+        // else (#75): `i32` the identity and a top-level box holding a type
+        // are both `{type: type, value: <an address>}`.
+        let mut storage = [0u8; 8];
+        let real: *mut u8 = storage.as_mut_ptr();
+        assert!(!is_place(real), "a plain address is a definition's record");
+
+        let global = global_place(real);
+        assert!(is_place(global));
+        assert_eq!(global_ref(global), Some(real), "the tag comes off exactly");
+        assert!(frame_ref(global).is_none(), "a global place is not a frame place");
+
+        let frame = frame_place(2, 24);
+        assert!(is_place(frame));
+        assert_eq!(frame_ref(frame), Some((2, 24)));
+        assert!(global_ref(frame).is_none(), "a frame place is not a global place");
+
+        assert!(!is_place(std::ptr::null_mut()), "null is no place");
+    }
+}

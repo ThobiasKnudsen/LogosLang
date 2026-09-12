@@ -306,7 +306,13 @@ impl Lowerer<'_, '_> {
                 let slot = self.frame_slot.expect("a frame-relative place needs a frame slot");
                 self.builder.ins().stack_addr(self.ptr_ty, slot, off as i32)
             }
-            None => self.builder.ins().iconst(self.ptr_ty, (*node).value as usize as i64),
+            // Global storage: the tag comes off before the address is baked
+            // into the machine code (see [`crate::dyad::GLOBAL_TAG`]).
+            None => {
+                let v = (*node).value;
+                let addr = crate::dyad::global_ref(v).unwrap_or(v);
+                self.builder.ins().iconst(self.ptr_ty, addr as usize as i64)
+            }
         }
     }
 

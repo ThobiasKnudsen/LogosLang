@@ -1793,7 +1793,10 @@ impl<'a> Parser<'a> {
     /// an [`crate::dyad::FRAME_TAG`] offset or a real address respectively.
     fn alloc_local(&mut self, ty_node: DyadPtr, width: usize) -> DyadPtr {
         let place = if self.frames.is_empty() {
-            self.store.alloc_bytes(&vec![0u8; width])
+            // Marked as storage, not as a definition's record: every place
+            // carries a tag so the two are told apart everywhere, not only
+            // where a frame exists (see [`crate::dyad::GLOBAL_TAG`]).
+            crate::dyad::global_place(self.store.alloc_bytes(&vec![0u8; width]))
         } else {
             let depth = self.frames.len();
             let frame = self.frames.last_mut().unwrap();
