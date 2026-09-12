@@ -65,7 +65,7 @@ pub enum Shape {
     },
     /// An application/value of fixed named operand slots: an operator or
     /// statement node (`[lhs, rhs, logos]`, `[condition, then, else]`, …) or an
-    /// fn value (`[input, output, body, bcode]`).
+    /// fn value (`[input, output, body, bcode, frame]`).
     Tuple {
         /// The operands, one per role in the logos's record.
         slots: Vec<Slot>,

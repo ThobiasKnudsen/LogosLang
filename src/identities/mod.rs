@@ -55,6 +55,7 @@ use crate::store::Store;
 pub use numtype::NumType;
 
 pub mod dyad;
+pub mod read;
 pub mod record;
 
 mod and;
@@ -1009,9 +1010,9 @@ pub(crate) unsafe fn is_type_value(types: &CoreTypes, node: DyadPtr) -> bool {
 /// value‹, 12 September 2026). It cannot answer a question about layout,
 /// fields, or parse behavior, because what it holds is known only when the
 /// program runs. The tag is the whole test: every place carries one and no
-/// definition does (›GLOBAL_TAG‹). A null value is no place — `fn`, `scope`
-/// and `record` are identities that carry no record — so they stay type
-/// values, as they were before the split (#75).
+/// definition does (›GLOBAL_TAG‹). The four roots `type`, `fn`, `scope` and `record` are
+/// minted with null values and back-filled with records in `Core::build`; what
+/// keeps them type values is that a record is no place, not a null (#75).
 ///
 /// # Safety
 /// `node` must be null or a valid dyad from the store.
