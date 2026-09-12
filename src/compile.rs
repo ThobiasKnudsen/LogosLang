@@ -570,23 +570,17 @@ impl Lowerer<'_, '_> {
         op: CmpOp,
     ) -> Result<Value, CompileError> {
         let (lhs, rhs) = operands(node);
-        let logos = match numtype_of(&self.types, lhs) {
-            Operand::Concrete(nt) => nt,
-            // Two type values compare as their node addresses (DESIGN ›A type
-            // is a comptime value‹, 12 September 2026: a type value "may be
-            // passed to a function, held in a place, and compared"). The
-            // compiled side is an ordinary 64-bit equality, which is why this
-            // much of a type at runtime survives `compile` — what does not is
-            // anything that needs the identity's *fields*. The width is also
-            // in the node's own op leaf; reading it from there rather than
-            // re-deriving it here is #99.
-            _ if crate::identities::is_node_valued(&self.types, lhs)
-                && crate::identities::is_node_valued(&self.types, rhs) =>
-            {
-                NumType::I64
-            }
-            // Resolution committed both operands; anything else cannot exist here.
-            _ => return Err(CompileError::BadValue),
+        // The width is in the node: the comparison's builder chose a leaf for
+        // the resolved operand logos and stored it in the op slot, and the
+        // interpreter's `cmp_run<OP, NT>` *is* that leaf. Reading it here is
+        // DESIGN ›Declarations are immutable by default‹ applied once — "the
+        // type defines how the value is read" — instead of classifying the
+        // operands a second time with a special case for two node-valued
+        // operands (a type or a `dyad` box compares as its address, at I64;
+        // the builder already said so, #82 asymmetry 7).
+        let leaf = *((*node).value as *const DyadPtr).add(2);
+        let Some(logos) = self.types.ops.cmp_nt_of(leaf) else {
+            return Err(CompileError::BadValue);
         };
         let l = self.lower(lhs)?;
         let r = self.lower(rhs)?;

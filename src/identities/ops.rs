@@ -119,6 +119,23 @@ impl OpLeaves {
         }
         self.store.iter().position(|&l| l == leaf).map(|i| NumType::from_tag(i as u8))
     }
+
+    /// The width a comparison leaf compares at — the reverse of
+    /// [`Self::cmp_leaf`], sixty pointer compares at most. The comparison
+    /// builders (`==`, `<`, …) put the leaf they chose in the node's op slot,
+    /// and the interpreter's `cmp_run<OP, NT>` is that leaf; the compiler used
+    /// to classify the operands again to recover the same width, with its own
+    /// special case for two node-valued operands (#82, asymmetry 7). `None` for
+    /// a pointer that is not a comparison leaf.
+    pub(crate) fn cmp_nt_of(&self, leaf: DyadPtr) -> Option<NumType> {
+        if leaf.is_null() {
+            return None;
+        }
+        self.cmp
+            .iter()
+            .find_map(|row| row.iter().position(|&l| l == leaf))
+            .map(|i| NumType::from_tag(i as u8))
+    }
 }
 
 /// Run a binary arithmetic node with the (operation, logos) pair baked in:
