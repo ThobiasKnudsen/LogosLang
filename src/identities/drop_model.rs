@@ -304,7 +304,7 @@ pub(crate) fn build_teardown(
 ///
 /// # Safety-free at the call boundary; reads `place`'s logos, which must be a
 /// reduced dyad from the store.
-fn is_owning_place(place: DyadPtr) -> bool {
+pub(crate) fn is_owning_place(place: DyadPtr) -> bool {
     // SAFETY: `place` is a reduced dyad; its logos is a valid logos node.
     unsafe {
         let logos = (*place).ty;
@@ -527,6 +527,35 @@ mod tests {
         // SAFETY: `root` is the scope just parsed into `store`, which outlives `rt`.
         let bits = unsafe { rt.run(root) }.expect("run");
         (bits, rt.live_allocs())
+    }
+
+    #[test]
+    fn an_owning_place_takes_only_an_owning_value() {
+        // #79: `=` checked only that the right side was a pointer to the same
+        // pointee, so a borrow or a second owner went straight into an owning
+        // place and the scope-exit teardown then freed store-owned memory, or
+        // freed one block twice. Both aborted the process; both are refused.
+        assert_eq!(
+            parse_err("x := i32 1, a := alloc i32 5, a = &x"),
+            ParseError::NonOwningIntoOwning
+        );
+        assert_eq!(
+            parse_err("a := alloc i32 5, b := alloc i32 6, a = b"),
+            ParseError::NonOwningIntoOwning
+        );
+        // A borrow place is unaffected: it owns nothing, so it takes a borrow.
+        assert_eq!(run("x := i32 1, p := &x, p = &x, p@").0, 1);
+        // And a store *through* an owning pointer is not a store to it.
+        assert_eq!(run("a := alloc i32 5, a@ = 9, a@"), (9, 0));
+
+        // What an owning place does take: another owning value. The displaced
+        // block is NOT freed — one live allocation is left over — because the
+        // ruling that `=` over a live owned place destructs the displaced
+        // value (8 September 2026) has no DESIGN wording yet, so the teardown
+        // it asks for is not built. Pinned here so the leak is a recorded
+        // number rather than a surprise.
+        assert_eq!(run("a := alloc i32 5, a = alloc i32 6, a@"), (6, 1));
+        assert_eq!(run("a := alloc i32 5, b := alloc i32 6, a = own b, a@"), (6, 1));
     }
 
     fn free_log() -> Vec<i64> {

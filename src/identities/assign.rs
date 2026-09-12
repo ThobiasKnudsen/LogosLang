@@ -137,6 +137,17 @@ pub(super) fn build(
             rhs
         }
     };
+    // An owning place holds the only pointer to a block its teardown frees, so
+    // what is written into it must own too: a borrow leaves the teardown
+    // freeing memory the store owns, and a bare owning name leaves two places
+    // whose teardowns free one block (#79). Both aborted the process with a
+    // double free at scope exit; both are the checked error here.
+    // SAFETY: `lhs_d`/`rhs` are reduced dyads from the store.
+    if super::drop_model::is_owning_place(lhs_d)
+        && !unsafe { super::drop_model::is_owning_value(types, rhs) }
+    {
+        return Err(ParseError::NonOwningIntoOwning);
+    }
     // SAFETY: `lhs` is a typed variable checked assignable above.
     let nt = unsafe { of_type_node((*lhs_d).ty) };
     let value = store.alloc_operands(&[lhs, rhs, types.ops.store_leaf(nt)]);

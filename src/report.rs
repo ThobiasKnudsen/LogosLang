@@ -138,6 +138,10 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::InstanceOutsideType => "`instance (…)` belongs inside a type body".into(),
         ParseError::DoubleInstance => "a type body has one `instance (…)` block".into(),
         ParseError::DeferInTypeBody => "a type body cannot own what needs a teardown".into(),
+        ParseError::NonOwningIntoOwning => {
+            "this place owns what it holds, so what is assigned must own too (`alloc …`, or `own x`)"
+                .into()
+        }
         ParseError::BadDyadType => {
             "a dyad of this type cannot be built here: only a number or a bool".into()
         }

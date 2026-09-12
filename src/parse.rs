@@ -1294,6 +1294,10 @@ pub enum ParseError {
     /// Scopes nested deeper than [`MAX_BRACKET_DEPTH`] (#80): the checked
     /// error a wall of brackets gets, instead of the Rust stack overflowing.
     TooDeep,
+    /// `=` into an owning place whose right side does not own (#79): a borrow,
+    /// or a bare name that is itself an owner. Either leaves two teardowns
+    /// over one block, or one over memory the store owns.
+    NonOwningIntoOwning,
     /// `dyad (T, v)` for a `T` whose values are bytes at a width the seed
     /// cannot fill from a value node (#85): a pointer, `void`, a record type.
     BadDyadType,
