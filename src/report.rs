@@ -224,6 +224,7 @@ pub fn run_message(e: &RunError) -> String {
         RunError::CompileFailed(msg) => format!("compile() failed: {msg}"),
         RunError::Faulted(msg) => format!("the interpreter stopped inside compiled code: {msg}"),
         RunError::NoStore => "a cell can be built only inside a constructor the parser runs".into(),
+        RunError::NullPointer => "this pointer holds nothing yet".into(),
     }
 }
 

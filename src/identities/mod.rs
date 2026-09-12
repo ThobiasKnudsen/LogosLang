@@ -3569,6 +3569,44 @@ mod tests {
     }
 
     #[test]
+    fn a_read_or_write_through_the_hole_is_the_checked_error_both_tiers() {
+        // DESIGN ›Both slots of a dyad follow one lifecycle‹: "`undefined` is
+        // the hole ... and reading it is a checked error, never undefined
+        // behavior", and DESIGN ›Errors are values‹ rules what a checked error
+        // is in v0.1.0 — "not a value but a fault ... the run aborts with its
+        // message". A `p := @i32 ?` pointer holds nothing, so a read or a
+        // write through it is that fault, never the access at address 0 that
+        // took the process down with a SIGSEGV (#74).
+        use crate::run::RunError::NullPointer;
+        assert_eq!(run_script_result("p := @i32 ?, p@"), Err(NullPointer));
+        assert_eq!(run_script_result("p := @i32 ?, p@ = 5, 1"), Err(NullPointer));
+
+        // Compiled, the same guard is the null arm of the lowering: the fault
+        // the native parks is the error the call hands back, so both tiers
+        // answer alike. A float pointee takes the same arm.
+        assert_eq!(
+            run_script_result("f := fn () -> i32 ( p := @i32 ?, p@ ), f.compile(), f()"),
+            Err(NullPointer)
+        );
+        assert_eq!(
+            run_script_result("f := fn () -> i32 ( p := @i32 ?, p@ = 5, 1 ), f.compile(), f()"),
+            Err(NullPointer)
+        );
+        assert_eq!(
+            run_script_result("f := fn () -> f64 ( p := @f64 ?, p@ ), f.compile(), f()"),
+            Err(NullPointer)
+        );
+
+        // The guard costs a live pointer nothing but the branch: reads and
+        // writes through a real address still work on both tiers.
+        assert_eq!(run_script("c := i32 7, q := &c, q@"), 7);
+        assert_eq!(
+            run_script("f := fn () -> i32 ( c := i32 1, q := &c, q@ = 9, c ), f.compile(), f()"),
+            9
+        );
+    }
+
+    #[test]
     fn address_of_a_parameter_works_both_tiers() {
         // A parameter is a frame place — a field of the call's activation
         // record — so `&a` yields its per-call address and `q@` reads the

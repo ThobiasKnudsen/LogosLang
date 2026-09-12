@@ -64,6 +64,11 @@ pub enum RunError {
     /// compiled code (#65): a seed bug, carried back across the machine-code
     /// boundary as a checked error rather than an abort; the panic's message.
     Faulted(Box<String>),
+    /// A read or a write went through a pointer holding nothing — the hole a
+    /// `p := @i32 ?` declaration leaves (#74). DESIGN ›Both slots of a dyad
+    /// follow one lifecycle‹: "`undefined` is the hole ... and reading it is a
+    /// checked error, never undefined behavior".
+    NullPointer,
 }
 
 thread_local! {
@@ -151,6 +156,25 @@ pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *
             0
         }
     }
+}
+
+/// The fault a compiled read or write through a null pointer raises (#74), the
+/// compiled half of the guard [`crate::identities::pointer::run_deref`] makes
+/// in the interpreter. DESIGN ›Both slots of a dyad follow one lifecycle‹
+/// rules a read of the hole "a checked error, never undefined behavior", and
+/// DESIGN ›Errors are values‹ rules what a checked error does in v0.1.0: it is
+/// "not a value but a fault ... the run aborts with its message". An
+/// `extern "C"` function cannot return a `RunError`, so the error is parked in
+/// [`PENDING`] exactly as [`interpret_call`] parks one, and the guarded arm
+/// yields a zero the runtime discards when it reads the park back
+/// ([`Runtime::call_compiled`]).
+///
+/// # Safety
+/// Called only by compiled code the seed emitted, on the null arm of a
+/// pointer guard. It touches no memory of its own.
+pub unsafe extern "C" fn park_null_pointer() -> i64 {
+    PENDING.set(Some(RunError::NullPointer));
+    0
 }
 
 /// The chunk size of the interpreter's activation stack. One chunk carries many

@@ -269,7 +269,16 @@ fn run_deref(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         if !numtype::is_scalar_place_type(pointee) {
             return Err(RunError::BadValue);
         }
-        let addr = (rt.run(ptr_expr)? as u64).wrapping_add(off) as *const u8;
+        // The base is the pointer's own value: a hole-declared `p := @i32 ?`
+        // reads as 0, and DESIGN ›Both slots of a dyad follow one lifecycle‹
+        // rules that reading the hole is "a checked error, never undefined
+        // behavior" (#74). The base is what is checked, not base + offset, so
+        // a field read `p@.x` through a null `p` is caught at any offset.
+        let base = rt.run(ptr_expr)? as u64;
+        if base == 0 {
+            return Err(RunError::NullPointer);
+        }
+        let addr = base.wrapping_add(off) as *const u8;
         Ok(numtype::read_scalar(pointee, addr))
     }
 }
@@ -283,7 +292,13 @@ fn run_storeptr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let (ptr_expr, rhs, pointee) = (*p, *p.add(1), *p.add(2));
         let off = std::ptr::read_unaligned((**p.add(3)).value as *const u64);
         let bits = rt.run(rhs)?;
-        let addr = (rt.run(ptr_expr)? as u64).wrapping_add(off) as *mut u8;
+        // Same guard as `run_deref`: a write through the hole is the checked
+        // error, never a store to address 0 (#74).
+        let base = rt.run(ptr_expr)? as u64;
+        if base == 0 {
+            return Err(RunError::NullPointer);
+        }
+        let addr = base.wrapping_add(off) as *mut u8;
         numtype::write_scalar(pointee, addr, bits);
         Ok(bits)
     }
@@ -300,7 +315,9 @@ fn lower_deref(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         }
         let addr = lw.lower(ptr_expr)?;
         let ct = numtype::of_type_node(pointee).cranelift_type();
-        Ok(lw.load_at(ct, addr, off as i64))
+        // The same null guard the interpreter makes, so both tiers answer a
+        // read through the hole with the checked error (#74).
+        lw.guard_non_null(addr, ct, |s| Ok(s.load_at(ct, addr, off as i64)))
     }
 }
 
@@ -315,7 +332,11 @@ fn lower_storeptr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError
         let v = lw.lower(rhs)?;
         let addr = lw.lower(ptr_expr)?;
         let ct = numtype::of_type_node(pointee).cranelift_type();
-        lw.store_at(ct, addr, off as i64, v);
-        Ok(v)
+        // A write through the hole is guarded too: the store happens only on
+        // the non-null arm, and the yielded value is the stored one (#74).
+        lw.guard_non_null(addr, ct, |s| {
+            s.store_at(ct, addr, off as i64, v);
+            Ok(v)
+        })
     }
 }

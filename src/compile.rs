@@ -360,6 +360,51 @@ impl Lowerer<'_, '_> {
         self.builder.ins().load(ct, self.flags, addr, offset as i32)
     }
 
+    /// Run `ok` unless `addr` is null; on null, park the null-pointer fault
+    /// ([`crate::run::park_null_pointer`]) and yield a zero of `ct` (#74).
+    ///
+    /// This is the compiled half of the guard the interpreter makes directly.
+    /// The two tiers agree on the answer: the fault the native parks is the
+    /// `RunError` the interpreter returns, and the runtime reads it back the
+    /// moment the machine code returns ([`crate::run::Runtime::call_compiled`]),
+    /// discarding the zero. Compiled code cannot simply stop — a Cranelift
+    /// block needs its terminator and the seed installs no trap handler — so
+    /// the faulted call runs on over zeroed values it never reports.
+    pub(crate) fn guard_non_null<F>(
+        &mut self,
+        addr: Value,
+        ct: types::Type,
+        ok: F,
+    ) -> Result<Value, CompileError>
+    where
+        F: FnOnce(&mut Self) -> Result<Value, CompileError>,
+    {
+        let zero = self.builder.ins().iconst(self.ptr_ty, 0);
+        let is_null = self.icmp(IntCC::Equal, addr, zero);
+        self.branch(
+            is_null,
+            |s| {
+                let mut sig = s.module.make_signature();
+                sig.returns.push(AbiParam::new(types::I64));
+                let sigref = s.builder.import_signature(sig);
+                let entry = crate::run::park_null_pointer as *const () as usize;
+                let a = s.builder.ins().iconst(s.ptr_ty, entry as i64);
+                s.builder.ins().call_indirect(sigref, a, &[]);
+                Ok(s.zero_of(ct))
+            },
+            ok,
+        )
+    }
+
+    /// A zero of a Cranelift type, whichever kind it is.
+    fn zero_of(&mut self, ct: types::Type) -> Value {
+        match ct {
+            types::F32 => self.builder.ins().f32const(0.0),
+            types::F64 => self.builder.ins().f64const(0.0),
+            _ => self.builder.ins().iconst(ct, 0),
+        }
+    }
+
     /// Store `v` through a runtime address at a byte offset — the dual of
     /// [`Self::load_at`].
     pub(crate) fn store_at(&mut self, ct: types::Type, addr: Value, offset: i64, v: Value) {
