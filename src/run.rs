@@ -635,7 +635,7 @@ impl Runtime {
                 .ok_or(RunError::UncomputableLiteral),
             // A numeric, bool, or pointer value: read at its type's width from
             // its storage — a declared place, or a literal's untagged blob.
-            Read::Scalar(_) => {
+            Read::Scalar(_) | Read::Pointer(_) => {
                 let slot = self.place_addr(node).ok_or(RunError::BadValue)?;
                 if slot.is_null() {
                     return Err(RunError::BadValue);

@@ -1009,6 +1009,26 @@ fn only_a_marked_place_is_written_or_addressed() {
 }
 
 #[test]
+fn declaring_from_a_box_copies_it() {
+    // #82 step 9, behaviour change 3. `x := a` where `a := type ?` used to
+    // rebind `x` to `a`'s storage — the type-slot test in construct_decl
+    // matched a box as well as an identity — so `x = f64` wrote `a`. Reads are
+    // copy by default (ruled 12 September 2026): `x` is its own box.
+    let (echoes, stderr) = repl(
+        b"a := type ?\na = i32\nx := a\nx = f64\na == i32\nx == f64\n\
+          d := dyad ?\nd = i32\ne := d\ne = f64\nd == i32\ne == f64\n",
+    );
+    assert_eq!(echoes, ["true", "true", "true", "true"], "stderr: {stderr}");
+    // An identity on the right still makes the name a spelling of the type.
+    let (echoes, stderr) = repl(b"t := i32\ny := t 5\ny\n");
+    assert_eq!(echoes, ["5"], "stderr: {stderr}");
+    // A `bool` place is still refused (#47): the one exception the allocation
+    // rule keeps by identity, stated at construct_hole.
+    let (_e, stderr) = repl(b"b := bool ?\n");
+    assert!(stderr.contains("not in the seed yet"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_dyad_is_built_from_a_type_and_a_value() {
     // DESIGN ›Feasibility‹: "`dyad (type, value)` construction from Logos"
     // (#60). `dyad (i32, 7)` is a store-owned i32 cell, `dyad` alone the

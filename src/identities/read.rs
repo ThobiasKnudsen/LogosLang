@@ -46,10 +46,15 @@ use crate::parse::CoreTypes;
 /// interpreted value read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Read {
-    /// A numeric, bool, or pointer value: load at the type's width. The place
-    /// mark does not matter here — a declared place, a committed literal, and a
+    /// A numeric or bool value: load at the type's width. The place mark does
+    /// not matter here — a declared place, a committed literal, and a
     /// reflection scalar all hold storage the type says how to read.
     Scalar(NumType),
+    /// A pointer value: eight bytes holding an address, its pointee the type
+    /// node carried. Read like a `U64`, but it is an address, not a number —
+    /// which is why a literal may fill a scalar and never a pointer, and why
+    /// the pointee is here for `@` and `=` to consult.
+    Pointer(DyadPtr),
     /// A place holding a node address: eight bytes, read as the address they
     /// hold. Carries the declared type — `type` for a `type ?` box, `dyad` for
     /// a `dyad ?` box, null for a bare parameter's slot — so a writer can say
@@ -137,7 +142,7 @@ pub unsafe fn read_kind(types: &CoreTypes, node: DyadPtr) -> Read {
     // 5 and 6.
     match kind {
         k if k < VOID_TAG => Read::Scalar(numtype::of_type_node(op)),
-        ADDR_TAG => Read::Scalar(numtype::of_type_node(op)),
+        ADDR_TAG => Read::Pointer(numtype::pointee_of(op)),
         meta::TYPEREC_TAG => {
             if place {
                 Read::Container(op)
@@ -211,6 +216,41 @@ pub unsafe fn read_kind(types: &CoreTypes, node: DyadPtr) -> Read {
                 Read::Opaque
             }
         }
+    }
+}
+
+/// The reading rule asked of a *type*: what a place of `t` reads as, and how
+/// many bytes it takes — or `None` when no place of `t` can exist. This is the
+/// allocation side of [`read_kind`]: `construct_hole` and `parse_fn` size a
+/// place from it, and a read of that place must agree with them or two frame
+/// slots overlap, which no read-side check can catch. One table for both.
+///
+/// A numeric or pointer type is a scalar at its width; `type` and `dyad` are
+/// boxes holding a node address; a record type is an aggregate of its layout's
+/// size, unless it carries a `code` — then a node of it is a call, never a
+/// place (#63). Everything else (text, void, prose, a parse-only identity)
+/// has no place. `bool` is a 4-byte scalar by kind; that a `bool ?` place is
+/// still refused is `construct_hole`'s stated exception (#47), not this rule's.
+///
+/// # Safety
+/// `t` must be null or a valid dyad from the store.
+pub unsafe fn place_layout(types: &CoreTypes, t: DyadPtr) -> Option<(Read, usize)> {
+    let t = super::type_identity_of(types, t)?;
+    let kind = meta::kind_of(t)?;
+    match kind {
+        k if k < VOID_TAG => {
+            let nt = numtype::of_type_node(t);
+            Some((Read::Scalar(nt), nt.bytes()))
+        }
+        ADDR_TAG => Some((Read::Pointer(numtype::pointee_of(t)), 8)),
+        meta::TYPEREC_TAG | meta::DYAD_TAG => Some((Read::Container(t), 8)),
+        meta::RECORD_TAG => {
+            if !meta::code_of(t).is_null() {
+                return None;
+            }
+            Some((Read::Aggregate, (meta::record_size_of(t) as usize).max(1)))
+        }
+        _ => None,
     }
 }
 
@@ -318,7 +358,7 @@ mod tests {
             // marked, its `&` is a pointer place read as an address.
             assert_eq!(read_kind(&types, declared(0)), Read::Scalar(NumType::I32));
             assert!(is_place((*declared(0)).value));
-            assert_eq!(read_kind(&types, declared(1)), Read::Scalar(NumType::U64));
+            assert_eq!(read_kind(&types, declared(1)), Read::Pointer(core.i32_));
             // The two node boxes hold a container.
             assert_eq!(read_kind(&types, declared(2)), Read::Container(core.type_));
             assert_eq!(read_kind(&types, declared(3)), Read::Container(core.dyad_));
@@ -381,6 +421,44 @@ mod tests {
             let value = store.alloc_operands(&[exprs[1], exprs[1], std::ptr::null_mut()]);
             let leafless = store.alloc_raw(core.plus, value);
             assert_eq!(read_kind(&types, leafless), Read::Executable(Dispatch::None));
+        }
+    }
+
+    #[test]
+    fn a_place_of_a_type_is_sized_by_the_same_rule() {
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let types = core.types();
+        // SAFETY: all handles are identities Core::build just allocated.
+        unsafe {
+            assert_eq!(place_layout(&types, core.i32_), Some((Read::Scalar(NumType::I32), 4)));
+            assert_eq!(place_layout(&types, core.bool_), Some((Read::Scalar(NumType::I32), 4)));
+            assert_eq!(
+                place_layout(&types, types.numtypes[NumType::F64 as usize]),
+                Some((Read::Scalar(NumType::F64), 8))
+            );
+            assert_eq!(place_layout(&types, core.type_), Some((Read::Container(core.type_), 8)));
+            assert_eq!(place_layout(&types, core.dyad_), Some((Read::Container(core.dyad_), 8)));
+            // No place: text, void, prose, a parse-only identity, a non-identity.
+            for t in [core.string_, core.void, core.comment_, core.plus, core.fn_type] {
+                assert_eq!(place_layout(&types, t), None, "{t:p}");
+            }
+            assert_eq!(place_layout(&types, std::ptr::null_mut()), None);
+        }
+        // A record type is an aggregate of its size; a code-carrying one has no
+        // place, since a node of it is a call.
+        let (_store, core, exprs) = parse_seq(
+            "w := type ( instance (x := i64 ?, y := i64 ?) ),\n\
+             c := type ( code = fn (a := i32 ?) -> i32 ( a ) )",
+        );
+        let types = core.types();
+        // SAFETY: the declared identities were just parsed.
+        unsafe {
+            let w = declare::declared_of(exprs[0]);
+            assert_eq!(place_layout(&types, w), Some((Read::Aggregate, 16)));
+            let c = declare::declared_of(exprs[1]);
+            assert_eq!(place_layout(&types, c), None);
         }
     }
 }

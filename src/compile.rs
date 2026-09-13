@@ -231,6 +231,13 @@ impl Lowerer<'_, '_> {
                 }
                 self.read_place(node, nt.cranelift_type())
             }
+            // A pointer place: its eight-byte address, the same load at `U64`.
+            Read::Pointer(_) => {
+                if (*node).value.is_null() {
+                    return Err(CompileError::BadValue);
+                }
+                self.read_place(node, NumType::U64.cranelift_type())
+            }
             // A record instance has no whole-value read; text and unit have no
             // scalar; a hole holds nothing yet.
             Read::Aggregate | Read::Opaque | Read::Undefined => Err(CompileError::NotLowerable(op)),

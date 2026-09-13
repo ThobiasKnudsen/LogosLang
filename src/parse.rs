@@ -2068,12 +2068,20 @@ impl<'a> Parser<'a> {
                 return Err(ParseError::BadDeclaredType);
             }
             let read = types.through(value);
-            if crate::identities::is_numtype_node(&types, ty) {
+            // What a cell of `ty` holds is the reading rule's answer for a
+            // place of `ty` (#82): a scalar is storage at its width, filled
+            // from a literal of it; nothing else has a whole value a cell can
+            // hold from a node.
+            let scalar = matches!(
+                crate::identities::read::place_layout(&types, ty),
+                Some((crate::identities::read::Read::Scalar(_), _))
+            );
+            if scalar && ty != types.bool_ {
                 if (*read).ty != types.rational {
                     return Err(ParseError::UnsupportedOperands);
                 }
                 crate::identities::commit_literal_to(self.store, &types, read, ty)?
-            } else if ty == types.bool_ {
+            } else if scalar {
                 // `bool` is physically an i32 0/1 in storage, so the cell gets
                 // its own copy of the literal's byte. Only `true` and `false`
                 // are literals; a runtime comparison has no bits at parse.
@@ -2150,46 +2158,24 @@ impl<'a> Parser<'a> {
                     t = crate::identities::pointer::make_pointer_type(self.store, types.type_, t);
                 }
                 // SAFETY: `t` is a type node from the store.
+                // The place's width comes from the reading rule asked of the
+                // type (`place_layout`, #82): the same table a read of the
+                // place consults, so allocation and read cannot disagree. A
+                // code-carrying type has no place — a node of it is a call
+                // (#63), as `f ?` has none either — and text, void and prose
+                // have none. One exception stays by identity: a `bool` place is
+                // a 4-byte scalar by kind, but its literals cannot yet be
+                // stored into one (#47), so declaring one is refused here
+                // rather than allowed halfway.
+                // SAFETY: `t` is a type node from the store.
                 let place = unsafe {
-                    if t == types.type_ {
-                        // A place holding a type: eight bytes for the node
-                        // address, like any other non-scalar place. It used to
-                        // be a null-valued placeholder that `name = <type>`
-                        // filled by *rebinding the name*, which is why a
-                        // second assignment reported "not an assignable
-                        // place": the first one had replaced the variable with
-                        // a synonym for the type. A box can be written again.
-                        self.alloc_local(types.type_, 8)
-                    } else if t == types.dyad_ {
-                        // The general box: eight bytes holding *any* node's
-                        // address, `type ?` being the case where what it holds
-                        // is known to be a type. What it currently holds is
-                        // asked the ordinary way, `a:dyad.type == type`.
-                        self.alloc_local(types.dyad_, 8)
-                    } else if crate::identities::is_numtype_node(&types, t) {
-                        let nt = crate::identities::numtype::of_type_node(t);
-                        self.alloc_local(t, nt.bytes())
-                    } else if crate::identities::numtype::is_pointer_type(t) {
-                        self.alloc_local(t, 8)
-                    } else if crate::identities::meta::is_record_type(t)
-                        && !crate::identities::meta::code_of(t).is_null()
-                    {
-                        // A type carrying a `code` is the call kind (#63): a
-                        // value of it is a call node, never a place, exactly
-                        // as `f ?` has no place either.
-                        return Err(ParseError::NonNumericDeclaredType);
-                    } else if crate::identities::meta::is_record_type(t) {
-                        // A record-typed place: its layout's bytes (ruled 9
-                        // September 2026 for the tape parameter, `fn (tape :=
-                        // parsing_tape ?)`). As a parameter it rides the
-                        // 8-byte container the call convention passes, so a
-                        // wider record reaches a call only with #47.
-                        let size = crate::identities::meta::record_size_of(t) as usize;
-                        self.alloc_local(t, size.max(1))
-                    } else {
-                        // A bool place by declared type waits (#47).
+                    if t == types.bool_ {
                         return Err(ParseError::NonNumericDeclaredType);
                     }
+                    let Some((_, width)) = crate::identities::read::place_layout(&types, t) else {
+                        return Err(ParseError::NonNumericDeclaredType);
+                    };
+                    self.alloc_local(t, width)
                 };
                 for _ in 0..(1 + depth) {
                     tape.remove(-1);
@@ -2929,10 +2915,20 @@ impl<'a> Parser<'a> {
                 // which is what the width below already gives it; what had to
                 // change was every reader that took the frame tag for a record
                 // ([`crate::identities::meta::kind_of`], #75).
-                let width = if crate::identities::numtype::is_scalar_place_type(logos) {
-                    crate::identities::numtype::numtype_of_type(logos).bytes()
-                } else {
+                // A parameter's slot is a place of its type, sized by the same
+                // rule that sizes a local (`place_layout`, #82). A bare
+                // parameter has no type and holds the 8-byte container its call
+                // binds. A record parameter now gets its layout's width rather
+                // than the container's 8 — the call still binds only the
+                // container into it until the convention copies bytes (#115).
+                // `logos` is null or a type node from the store (inside the
+                // enclosing SAFETY block).
+                let width = if logos.is_null() {
                     8
+                } else {
+                    crate::identities::read::place_layout(&self.types, logos)
+                        .map(|(_, w)| w)
+                        .unwrap_or(8)
                 };
                 let frame = self.frames.last_mut().expect("parse_fn just pushed a frame");
                 let offset = frame.size;
@@ -3318,6 +3314,17 @@ impl<'a> Parser<'a> {
             use crate::identities::numtype;
             // SAFETY: `step` is the committed literal just built; `logos` a numtype node.
             let (bits, nt) = unsafe {
+                // The rule says what the step's value is before its bytes are
+                // read: a scalar in untagged literal storage (#82). A marked
+                // place here would mean the literal check above let a variable
+                // through, and reading its tagged offset as an address is the
+                // crash class the rule exists to end.
+                use crate::identities::read::{read_kind, Read};
+                if !matches!(read_kind(&types, step), Read::Scalar(_))
+                    || crate::dyad::is_place((*step).value)
+                {
+                    return Err(ParseError::BadStep);
+                }
                 (numtype::read_scalar((*step).ty, (*step).value), numtype::of_type_node(logos))
             };
             if numtype::apply_compare(numtype::CmpOp::Gt, nt, bits, 0) == 0 {
@@ -3845,8 +3852,10 @@ impl<'a> Parser<'a> {
             // instance has fields — its "address" was a pointer into the graph
             // that faulted on the first read. All three are refused.
             use crate::identities::read::{read_kind, Read};
-            let placed = matches!(read_kind(&self.types, node), Read::Scalar(_) | Read::Aggregate)
-                && crate::dyad::is_place((*node).value);
+            let placed = matches!(
+                read_kind(&self.types, node),
+                Read::Scalar(_) | Read::Pointer(_) | Read::Aggregate
+            ) && crate::dyad::is_place((*node).value);
             if !placed {
                 return Err(ParseError::BadAddressOf);
             }
@@ -4424,6 +4433,18 @@ impl<'a> Parser<'a> {
         // that logos, so the pointer-identity checks (`is_numtype_node`,
         // cross-logos mismatch, record-logos equality) see the original.
         // SAFETY: `placeholder`/`value` are valid dyads just built.
+        // A box on the right, by the reading rule (#82): its declared type, or
+        // none. Decided before the chain below because a `let` chain would
+        // need the 2024 edition.
+        // SAFETY: `read` is a reduced dyad from the store.
+        let box_ty = match unsafe { crate::identities::read::read_kind(&self.types, read) } {
+            crate::identities::read::Read::Container(t)
+                if t == self.types.type_ || t == self.types.dyad_ =>
+            {
+                Some(t)
+            }
+            _ => None,
+        };
         let declared = unsafe {
             if self.holes.remove(&value) {
                 // `x := i32 ?`: the place `?` built, with the declared type
@@ -4438,9 +4459,23 @@ impl<'a> Parser<'a> {
                 (*placeholder).value = (*instance).value;
                 *ops = placeholder;
                 value
-            } else if (*read).ty == self.types.type_ {
+            } else if crate::identities::read::read_kind(&self.types, read)
+                == crate::identities::read::Read::Identity
+            {
+                // A type value: the name becomes another spelling of the type.
                 self.scopes.rebind(record, read);
                 read
+            } else if let Some(t) = box_ty {
+                // A box on the right (`x := a` where `a := type ?`): reads are
+                // copy by default (ruled 12 September 2026), so `x` gets its
+                // own box and a copy of what `a` holds. Before the reading rule
+                // the type-slot test above matched a box too and *rebound* `x`
+                // to `a`'s storage, so `x = f64` silently wrote `a` (#82).
+                let place = self.alloc_local(t, 8);
+                let init = crate::identities::build_box_init(self.store, &self.types, place, read)?;
+                self.scopes.rebind(record, place);
+                self.settle_box_store(init);
+                init
             } else if crate::identities::drop_model::is_owning_value(&self.types, value) {
                 // An owning value (`alloc …`, `own a`, or a block yielding one)
                 // lands in a place here — the one site that knows the name it
@@ -5081,11 +5116,12 @@ impl<'a> Parser<'a> {
         unsafe {
             let lhs = *((*node).value as *const DyadPtr);
             let target = self.types.through(lhs);
-            let ty = (*target).ty;
-            if (ty != self.types.type_ && ty != self.types.dyad_)
-                || !crate::dyad::is_place((*target).value)
-            {
-                return;
+            // A node-valued box, by the reading rule (#82): a `Container` of a
+            // declared type. A bare parameter's container has none and is not
+            // a box.
+            match crate::identities::read::read_kind(&self.types, target) {
+                crate::identities::read::Read::Container(t) if !t.is_null() => {}
+                _ => return,
             }
             // A fresh interpreter, as every other parse-time evaluation uses:
             // no compiler, nothing but the store this very node describes.
@@ -5121,11 +5157,12 @@ impl<'a> Parser<'a> {
             }
             // The two boxes whose content is a node: `type ?`, which holds an
             // identity, and `dyad ?`, which holds anything. Both store the
-            // node's address, so both are read the same way.
-            let ty = (*id).ty;
-            if ty != self.types.type_ && ty != self.types.dyad_ {
-                return id;
-            }
+            // node's address, so both are read the same way — the reading
+            // rule's `Container` of a declared type (#82).
+            let ty = match crate::identities::read::read_kind(&self.types, id) {
+                crate::identities::read::Read::Container(t) if !t.is_null() => t,
+                _ => return id,
+            };
             let Some(addr) = crate::dyad::global_ref((*id).value) else {
                 return id;
             };

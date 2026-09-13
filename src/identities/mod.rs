@@ -1099,6 +1099,20 @@ pub(crate) unsafe fn scalar_binding_type(
     }
 }
 
+/// The `place = value` store that fills a fresh box — a `type ?` or `dyad ?`
+/// place — from a node value: what `x := a` builds when `a` is itself such a
+/// box, so that `x` gets its own eight bytes and a copy of what `a` holds
+/// (reads are copy by default, ruled 12 September 2026). `assign::build`
+/// checks what the box may take, exactly as a written `x = a` would.
+pub(crate) fn build_box_init(
+    store: &mut Store,
+    types: &CoreTypes,
+    place: DyadPtr,
+    value: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
+    assign::build(store, types, types.assign, place, value)
+}
+
 /// Build a declaration's snapshot *initializer*: an `=` writing `value` into the
 /// pre-minted `place` (`place = value`), kept as the declaration's declared slot
 /// and re-run each time the declaration evaluates. The caller mints `place` (see
@@ -1221,6 +1235,7 @@ pub unsafe fn display_value(types: &CoreTypes, node: DyadPtr, bits: i64) -> Stri
         // an unsigned integer at its own width. (A pointer is `U64`, and
         // every real address prints the same digits signed or unsigned.)
         read::Read::Scalar(nt) => format_scalar(nt, bits),
+        read::Read::Pointer(_) => format_scalar(NumType::U64, bits),
         // An expression's result is typed by what it computes, which is
         // `numtype_of`'s question, not the reading rule's (#82's second half).
         _ => match numtype_of(types, node) {

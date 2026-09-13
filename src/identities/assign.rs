@@ -140,7 +140,7 @@ pub(super) fn build(
             let value = store.alloc_operands(&[lhs, rhs, types.ops.store_leaf(NumType::I64)]);
             return Ok(store.alloc_raw(op, value));
         }
-        Read::Scalar(_) if marked => {}
+        Read::Scalar(_) | Read::Pointer(_) if marked => {}
         _ => return Err(ParseError::BadAssignTarget),
     }
     // A literal into a pointer would become a wild address.
