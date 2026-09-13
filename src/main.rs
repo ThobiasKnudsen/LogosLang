@@ -49,6 +49,8 @@ impl Engine {
 /// # Safety
 /// `node` must be a valid dyad.
 unsafe fn is_statement_node(core: &Core, node: seed::dyad::DyadPtr) -> bool {
+    // An item that ran in the pass echoes as its expression would.
+    let node = seed::identities::ran::expr_of(&core.types(), node);
     // A bare name is its record: what it names decides the echo.
     let named = seed::record::through(core.record_, node);
     let logos = (*named).ty;
@@ -79,6 +81,7 @@ unsafe fn is_statement_node(core: &Core, node: seed::dyad::DyadPtr) -> bool {
 /// # Safety
 /// `node` must be a valid dyad.
 unsafe fn is_silent_tail(core: &Core, node: seed::dyad::DyadPtr) -> bool {
+    let node = seed::identities::ran::expr_of(&core.types(), node);
     let logos = (*seed::record::through(core.record_, node)).ty;
     logos == core.declare_
         || logos == core.assign

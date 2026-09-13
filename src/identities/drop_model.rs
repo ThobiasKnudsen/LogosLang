@@ -380,6 +380,10 @@ pub(crate) unsafe fn owning_pointee_of(types: &CoreTypes, node: DyadPtr) -> Opti
     } else if logos == types.scope {
         // A block that yields an owning value moves ownership to the binder.
         crate::parse::last_sequence_expr(node).and_then(|tail| owning_pointee_of(types, tail))
+    } else if logos == types.ran_ {
+        // An item that ran in the pass owns what its expression owns: the
+        // block it allocated is the one the cell now points at.
+        owning_pointee_of(types, super::ran::expr_of(types, node))
     } else {
         None
     }

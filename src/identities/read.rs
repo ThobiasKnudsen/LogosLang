@@ -295,6 +295,7 @@ mod tests {
                 core.type_,
                 core.fn_type,
                 core.scope_,
+                core.ran_,
                 core.record_,
                 core.i32_,
                 core.bool_,

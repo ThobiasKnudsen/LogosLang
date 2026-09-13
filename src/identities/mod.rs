@@ -99,6 +99,7 @@ mod or;
 mod paren;
 mod plus;
 pub(crate) mod pointer;
+pub mod ran;
 pub(crate) mod rational;
 mod regex_mod;
 #[path = "return.rs"]
@@ -117,6 +118,10 @@ pub struct Core {
     /// `scope`, the logos of a scope node (the graph's spine). Each scope the parser
     /// opens is typed with this.
     pub scope_: DyadPtr,
+    /// `ran`, the logos of an item that has run in the pass and carries its
+    /// result (DESIGN ›Build and run are one self-directing pass‹, 13
+    /// September 2026). Built by the parser, never spelled.
+    pub ran_: DyadPtr,
     /// The scope every core identity is declared in; itself a `scope`-typed node.
     pub root_scope: DyadPtr,
     /// `fn`, the logos whose values are functions.
@@ -461,6 +466,9 @@ impl Core {
         let tape = tape::register(&mut cx, &callables, scope_, array_, void);
         record::register_type(&mut cx, scope_, array_, dyad_);
         op_leaves.scope_ = scope::register_exec(&mut cx, scope_, &callables);
+        // An item that ran in the pass keeps its result beside it (R3, #88).
+        let (ran_, ran_leaf) = ran::register(&mut cx, &callables);
+        op_leaves.ran_ = ran_leaf;
 
         // Constructor slots (#30): the registration table was only ever the
         // collection point. Every identity's parse-time constructor moves onto
@@ -487,6 +495,7 @@ impl Core {
         Core {
             type_,
             scope_,
+            ran_,
             array_,
             root_scope,
             fn_type,
@@ -566,6 +575,7 @@ impl Core {
     pub fn types(&self) -> CoreTypes {
         CoreTypes {
             scope: self.scope_,
+            ran_: self.ran_,
             array_: self.array_,
             fn_type: self.fn_type,
             i32_: self.i32_,
@@ -746,6 +756,10 @@ pub(crate) enum Operand {
 pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
     let node = types.through(node);
     let logos = (*node).ty;
+    // An item that ran in the pass yields what its expression yields.
+    if logos == types.ran_ {
+        return numtype_of(types, ran::expr_of(types, node));
+    }
     if logos == types.rational {
         return Operand::Literal;
     }

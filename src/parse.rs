@@ -946,6 +946,8 @@ pub enum Assoc {
 pub struct CoreTypes {
     /// `scope`: the logos of each scope the parser opens.
     pub scope: DyadPtr,
+    /// `ran`: the logos of an item that ran in the pass and carries its result.
+    pub ran_: DyadPtr,
     /// `array` (of `dyad@`): a sequence's expression list rides behind one.
     pub array_: DyadPtr,
     /// `fn`: the logos of a function; a call whose callee is `fn`-typed yields a
@@ -1499,6 +1501,10 @@ pub enum ParseError {
 pub(crate) unsafe fn is_bool_result(types: &CoreTypes, node: DyadPtr) -> bool {
     let node = types.through(node);
     let logos = (*node).ty;
+    // An item that ran in the pass is what its expression is.
+    if logos == types.ran_ {
+        return is_bool_result(types, crate::identities::ran::expr_of(types, node));
+    }
     // A sequence's value is its trailing expression's.
     if logos == types.scope {
         return match last_sequence_expr(node) {

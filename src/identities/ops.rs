@@ -70,6 +70,8 @@ pub struct OpLeaves {
     pub(crate) addr_: DyadPtr,
     /// `scope`'s sequence native (run the array in order, yield the tail).
     pub(crate) scope_: DyadPtr,
+    /// `ran`'s native (read the cell an item's run left behind).
+    pub(crate) ran_: DyadPtr,
     /// `declare`'s native (run the initializer for effect, yield unit).
     pub(crate) declare_: DyadPtr,
     /// `compile`'s native (`f.compile()`, the fn logos's shared member).
@@ -276,6 +278,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
         storeptr_: std::ptr::null_mut(),
         addr_: std::ptr::null_mut(),
         scope_: std::ptr::null_mut(),
+        ran_: std::ptr::null_mut(),
         declare_: std::ptr::null_mut(),
         compile_: std::ptr::null_mut(),
         alloc_: std::ptr::null_mut(),
