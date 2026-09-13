@@ -142,11 +142,12 @@ fn help() -> String {
     )
 }
 
-/// Run the command line as one line of Logos source: one pass — each
-/// expression runs the moment it is parsed (DESIGN ›Build and run are one
-/// self-directing pass‹), so everything the parser itself evaluates (an
-/// `import`, a `-> logos` call reading an earlier binding) sees committed
-/// state, and the command line and REPL agree. The line's tail value prints
+/// Run the command line as one line of Logos source: one pass — each item
+/// is pending as it parses and runs when the pass needs a value or at the
+/// end, in order (DESIGN ›Build and run are one self-directing pass‹, 13
+/// September 2026), so everything the parser itself evaluates (an `import`,
+/// a `-> logos` call reading an earlier binding) sees committed state, and
+/// the command line and REPL agree. The line's tail value prints
 /// at the end — for an import node, the imported file's own tail. Parse
 /// errors render with line:col and a caret; run errors are message-only
 /// (nodes carry no source positions yet).
@@ -293,7 +294,7 @@ fn repl() -> ExitCode {
     let mut lines = stdin.lock().lines();
     // The session's own teardowns (issue #49): a REPL binding lives for the whole
     // session, so its `defer free` belongs at session exit — the REPL's top-level
-    // scope exit, the same drain the file driver runs at program end (file mode
+    // scope exit, the same exit the file driver runs at program end (file mode
     // and the REPL are one pass and must agree). Each line's parser is fresh, so
     // its pending teardowns are collected here as the line is accepted.
     let mut session_defers: Vec<seed::dyad::DyadPtr> = Vec::new();

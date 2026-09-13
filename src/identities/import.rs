@@ -14,9 +14,9 @@
 //!
 //! The import node `{type: import, value: [path, tail, op]}` is the
 //! reflectable trace of the load. Running it does NOT run the file again —
-//! that happened in the pass, once — it re-yields the file's tail value by
-//! running the tail node, the same stable read a bare name's re-run performs
-//! (a declaration tail re-runs harmlessly; a value tail is a read).
+//! that happened at the import, once — it yields the file's tail value by
+//! running the tail node, which is the tail's ran form ([`super::ran`]) or a
+//! bare read, so nothing with an effect runs twice (#88).
 
 use super::callable::{self, Callables};
 use super::{meta, Cx};

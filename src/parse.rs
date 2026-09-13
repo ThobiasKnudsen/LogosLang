@@ -1915,9 +1915,10 @@ impl<'a> Parser<'a> {
 
     /// Take the top-level scope's pending teardowns (issue #49): the `defer free`
     /// nodes that top-level owning bindings inserted, which no `parse_sequence`
-    /// drained (the file driver runs top-level items itself). The file driver
-    /// runs their inners LIFO at program exit — the top level's own scope-exit.
-    /// Returns them in insertion order; the caller reverses for LIFO.
+    /// drained (the top level is no block). [`Parser::exit`] runs their inners
+    /// LIFO at program exit — the top level's own scope-exit; the REPL collects
+    /// them per line and runs them at session exit. Returns them in insertion
+    /// order; the caller reverses for LIFO.
     pub fn take_pending_defers(&mut self) -> Vec<DyadPtr> {
         match self.open.first_mut() {
             Some(base) => std::mem::take(&mut base.defers),
@@ -4410,9 +4411,10 @@ impl<'a> Parser<'a> {
     /// ›Expressions are self-delimiting; `,` is the one explicit separator‹).
     /// `None` at the sequence's end: the end of input, or an unconsumed `)` left
     /// for the enclosing opener. This is the one sequencing step, shared by
-    /// [`Parser::parse_sequence`] (which collects a whole block) and the file
-    /// driver (which runs each top-level item as it is parsed — build and run
-    /// are one pass, so parse-time evaluation sees every earlier item's effect).
+    /// [`Parser::parse_sequence`] (which collects a whole block), the drivers
+    /// (the command line, an imported file) and a type body. Where parse order
+    /// is run order the item is left pending, to run when the pass needs a
+    /// value or when its scope runs ([`Parser::drain`]).
     pub fn parse_next(&mut self) -> Option<Result<DyadPtr, ParseError>> {
         loop {
             // What the last segment yielded — its expression and the prose
