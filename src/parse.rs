@@ -4628,7 +4628,6 @@ impl<'a> Parser<'a> {
                 let place = self.alloc_local(t, 8);
                 let init = crate::identities::build_box_init(self.store, &self.types, place, read)?;
                 self.scopes.rebind(record, place);
-                self.settle_box_store(init);
                 init
             } else if crate::identities::drop_model::is_owning_value(&self.types, value) {
                 // An owning value (`alloc …`, `own a`, or a block yielding one)
@@ -5222,6 +5221,30 @@ impl<'a> Parser<'a> {
             }
             Ok(r) => {
                 self.pos = start + r.matched;
+                // A box — a place holding a node, `type ?` or `dyad ?` — is
+                // read by the pass wherever it stands as an operand
+                // ([`Self::settled_type`]), and the read is honest only if
+                // everything parsed before it has run. So where parse order is
+                // run order, its cell is the point the pass runs to
+                // ([`Self::drain`]). A box that turns out to be an assignment's
+                // target ran what stood before it a little early; that is the
+                // same order, and the item being parsed has not begun.
+                if self.runtime_depth == 0 {
+                    // SAFETY: the record the trie resolved is a dyad from the
+                    // store.
+                    let is_box = unsafe {
+                        matches!(
+                            crate::identities::read::read_kind(
+                                &self.types,
+                                self.types.through(r.record)
+                            ),
+                            crate::identities::read::Read::Container(t) if !t.is_null()
+                        )
+                    };
+                    if is_box {
+                        self.drain()?;
+                    }
+                }
                 // The cell is the record the trie resolved.
                 Ok(Some((Cell::unconstructed(r.record, start, r.matched), start)))
             }
@@ -5235,56 +5258,20 @@ impl<'a> Parser<'a> {
     /// instance of `fn` and for a record logos (DESIGN ›The constructor is a
     /// field‹: "whether the name resolves to X's own slot or to the type's
     /// shared one is ordinary field semantics").
-    /// A store into a node-valued box — `type ?` or `dyad ?` — performed at
-    /// parse as well as at run, where parse order is run order.
-    ///
-    /// Why it is needed: `settled_type` reads the box, so what it can see
-    /// depends on whether the enclosing scope has already run the store. At
-    /// the top level each item runs the moment it is parsed and it had; inside
-    /// a `( )` block the whole body parses before any of it runs and it had
-    /// not, so the same source meant two different things in the two places.
-    /// DESIGN ›Build and run are one self-directing pass‹ wants one, and this
-    /// is the cheap half of it: the depth-0 stores are replayed in parse
-    /// order, which *is* their run order, so the box holds at parse exactly
-    /// what it will hold at run.
-    ///
-    /// Safe to repeat, which is what makes this sound rather than a second
-    /// execution: the right side of such a store is a node address fixed at
-    /// parse (an identity, or a view), so the run stores the same bits again.
-    /// Nothing else is pre-run, and inside a deferred body — where parse order
-    /// is *not* run order — nothing is pre-run at all.
-    pub(crate) fn settle_box_store(&mut self, node: DyadPtr) {
-        if self.runtime_depth > 0 {
-            return;
-        }
-        // SAFETY: `node` is the assign node just built; its lhs is a reduced
-        // dyad from the store.
-        unsafe {
-            let lhs = *((*node).value as *const DyadPtr);
-            let target = self.types.through(lhs);
-            // A node-valued box, by the reading rule (#82): a `Container` of a
-            // declared type. A bare parameter's container has none and is not
-            // a box.
-            match crate::identities::read::read_kind(&self.types, target) {
-                crate::identities::read::Read::Container(t) if !t.is_null() => {}
-                _ => return,
-            }
-            let _ = self.rt.run(node);
-        }
-    }
-
     /// The identity a cell denotes *now*.
     ///
-    /// A place holding a type denotes the type it holds. At top level the one
-    /// pass has already run the assignment that filled it by the time a later
-    /// item parses (DESIGN ›Build and run are one self-directing pass‹: each
-    /// expression runs the moment it is parsed), so the pass may read the box
-    /// and use what it finds — which is how `a := type ?, a = i32, x := a 5`
-    /// declares an `i32`. Inside a deferred body the assignment has not run
-    /// when the body parses, so the place denotes itself and the uses that
-    /// need an identity report [`ParseError::TypeKnownOnlyAtRun`]. Only a
-    /// global place is read for the same reason: a frame slot has no content
-    /// until its call.
+    /// A place holding a type denotes the type it holds. Where parse order is
+    /// run order, lexing a box's cell first runs everything parsed before it
+    /// ([`Self::lex_cell`], through [`Self::drain`]), so by the time the box
+    /// is read here the assignment that filled it has run, wherever the box
+    /// sits — which is how `a := type ?, a = i32, x := a 5` declares an `i32`
+    /// at the top level, inside a block, and in a REPL line alike (DESIGN ›A
+    /// type is a comptime value‹: "where the pass has already run the
+    /// assignment that filled it, the box is read during the pass"). Inside a
+    /// deferred body the assignment has not run when the body parses, so the
+    /// place denotes itself and the uses that need an identity report
+    /// [`ParseError::TypeKnownOnlyAtRun`]. Only a global place is read for
+    /// the same reason: a frame slot has no content until its call.
     ///
     /// Everything that is not a settled type place is returned unchanged, so
     /// this is safe to ask of any cell.
