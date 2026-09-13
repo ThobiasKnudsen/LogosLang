@@ -12,11 +12,8 @@
 //! ([`Parser::skip_trivia`](crate::parse::Parser)); the full constructor form
 //! arrives at self-hosting.
 
-use cranelift_codegen::ir::Value;
-
 use super::numtype::COMMENT_TAG;
 use super::{meta, Cx};
-use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 
 /// Register the `comment` logos: its [`COMMENT_TAG`] node — no spelling; the
@@ -27,7 +24,6 @@ use crate::dyad::DyadPtr;
 pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, COMMENT_TAG, meta::prec::INERT);
     let id = cx.store.alloc_raw(cx.type_, record);
-    cx.lower.insert(id, lower);
 
     // `#` is the one comment constructor, an identity constructed at
     // discovery like a literal (DESIGN ›Text literals are plain values; `#`
@@ -40,9 +36,4 @@ pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
     cx.declare("#", hash);
     cx.metas.insert(hash, |p, _id, tape| p.construct_comment(tape));
     id
-}
-
-/// Lower: prose yields unit.
-fn lower(lw: &mut Lowerer, _node: DyadPtr) -> Result<Value, CompileError> {
-    Ok(lw.const_i32(0))
 }

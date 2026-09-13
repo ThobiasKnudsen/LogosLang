@@ -19,11 +19,8 @@
 //!
 //! Storage: the value points at 16 bytes, two native-endian `i64`s `[num, den]`.
 
-use cranelift_codegen::ir::Value;
-
 use super::numtype::{ArithOp, CmpOp, NumType};
 use super::{meta, Cx};
-use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::parse::{Constructed, CoreTypes, ParseError, Parser, ParsingTape};
 use crate::store::Store;
@@ -39,7 +36,6 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     // literal is the prefix `-` negating the literal at parse time ([`negate`]).
     cx.declare(r"[0-9]+(?:\.[0-9]+)?", id);
     cx.metas.insert(id, construct);
-    cx.lower.insert(id, lower);
     id
 }
 
@@ -210,16 +206,6 @@ fn gcd128(mut a: u128, mut b: u128) -> u128 {
         b = t;
     }
     a
-}
-
-/// Lower a rational literal to an `i32` immediate, or fail if it has no exact `i32`
-/// value (a fraction or an out-of-range integer) — the same outcome the
-/// interpreter reaches, so compiled and interpreted agree.
-fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    match mold(node) {
-        Some(v) => Ok(lw.const_i32(v)),
-        None => Err(CompileError::UncomputableLiteral),
-    }
 }
 
 /// Parse `[0-9]+(?:\.[0-9]+)?` into a reduced fraction `(num, den)` with

@@ -25,6 +25,7 @@ use crate::dyad::DyadPtr;
 use crate::identities::instance;
 use crate::identities::meta;
 use crate::identities::numtype::{self, NumType, ADDR_TAG, COMMENT_TAG, STRING_TAG, VOID_TAG};
+use crate::identities::read::{read_kind, Read};
 use crate::parse::CoreTypes;
 use crate::record::Record;
 
@@ -145,6 +146,12 @@ pub enum Shape {
     /// stores one of these, so a walker reaching a named operand lands here and
     /// follows `dyad` to the value.
     Record { dyad: DyadPtr, scope: DyadPtr, start: DyadPtr, end: DyadPtr, gate: DyadPtr },
+    /// A place holding a node address — a `type ?` or `dyad ?` box: eight
+    /// bytes whose content is known when the program runs. The reading rule's
+    /// `Container` ([`crate::identities::read`]); before this arm a type box
+    /// described as a `LogosNode` and read its parse_rank through the tagged
+    /// offset in its value slot.
+    Container,
     /// Declared but not (yet) defined: a null logos, a null value where operands
     /// would be, or a layout that cannot be derived.
     Undefined,
@@ -184,6 +191,12 @@ pub unsafe fn describe(types: &CoreTypes, node: DyadPtr) -> Shape {
             end: f.end,
             gate: f.gate,
         };
+    }
+    // A place holding a node address is the reading rule's container: asked of
+    // the same rule execution uses, so reflection and the tiers never disagree
+    // about what a `.value` is (#82).
+    if read_kind(types, node) == Read::Container {
+        return Shape::Container;
     }
     // A value of a record logos is an instance: its layout derives from the
     // definition's field list.
@@ -496,6 +509,30 @@ mod tests {
         assert!(!slots[4].node.is_null(), "a fn with locals carries its frame size");
     }
 
+    /// A box holding a node address describes as the container it is, not as
+    /// the logos whose address it happens to hold — the arm `describe` lacked
+    /// until it asked the reading rule (#82).
+    #[test]
+    fn a_node_box_describes_as_a_container() {
+        let (_store, core, roots) = parse_all(&["a := type ?", "d := dyad ?", "x := i32 5"]);
+        let types = core.types();
+        // SAFETY: the declare nodes were just parsed; their declared slots are
+        // the places.
+        unsafe {
+            let place = |i: usize| {
+                let d = crate::identities::declare::declared_of(roots[i]);
+                if (*d).ty == core.assign {
+                    types.through(crate::identities::operands(d).0)
+                } else {
+                    d
+                }
+            };
+            assert_eq!(describe(&types, place(0)), Shape::Container);
+            assert_eq!(describe(&types, place(1)), Shape::Container);
+            assert_eq!(describe(&types, place(2)), Shape::Scalar(NumType::I32));
+        }
+    }
+
     /// Every core identity carries its shared-member record, with the layout
     /// kind its values need — the #42 acceptance shape.
     #[test]
@@ -776,6 +813,7 @@ mod tests {
                 Shape::RecordLogos { .. } => "record-logos",
                 Shape::Record { .. } => "record",
                 Shape::LogosNode { .. } => "logos",
+                Shape::Container => "container",
                 Shape::Undefined => "undefined",
             };
             *counts.entry(name).or_insert(0usize) += 1;

@@ -11,11 +11,8 @@
 //! resolve to their node and push as an operand); `run`'s generic data path reads
 //! the `i32`, and the `bool` lowering bakes it as a constant.
 
-use cranelift_codegen::ir::Value;
-
 use super::numtype::NumType;
 use super::{meta, Cx};
-use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 
 /// Register `bool`: its logos spelling and lowering, plus the `true`/`false`
@@ -28,7 +25,6 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, NumType::I32 as u8, meta::prec::INERT);
     let bool_ = cx.store.alloc_raw(cx.type_, record);
     cx.declare("bool", bool_);
-    cx.lower.insert(bool_, lower);
 
     let true_ = literal(cx, bool_, 1);
     cx.declare("true", true_);
@@ -49,16 +45,4 @@ fn literal(cx: &mut Cx, bool_: DyadPtr, v: i32) -> DyadPtr {
 pub(crate) fn literal_node(store: &mut crate::store::Store, bool_: DyadPtr, v: bool) -> DyadPtr {
     let value = store.alloc_bytes(&i32::from(v).to_ne_bytes());
     store.alloc_raw(bool_, value)
-}
-
-/// Lower a `bool` value to its `i32` 0/1 constant, read from its storage. Guards a
-/// null address, mirroring the interpreter's `BadValue`.
-fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    let addr = unsafe { (*node).value };
-    if addr.is_null() {
-        return Err(CompileError::BadValue);
-    }
-    // SAFETY: a non-null `bool` storage holds an `i32` 0/1 (see `literal`).
-    let v = unsafe { std::ptr::read_unaligned(addr as *const i32) };
-    Ok(lw.const_i32(v))
 }

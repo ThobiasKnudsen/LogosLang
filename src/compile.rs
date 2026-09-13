@@ -36,6 +36,7 @@ use crate::dyad::{frame_ref, DyadPtr};
 use crate::identities::numtype::{
     is_void_type, numtype_of_type, of_type_node, ArithOp, CmpOp, NumType,
 };
+use crate::identities::read::{read_kind, Dispatch, Read};
 use crate::identities::{numtype_of, operands, Operand};
 use crate::parse::{fn_frame_size, CoreTypes, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
 
@@ -188,74 +189,52 @@ impl Lowerer<'_, '_> {
         // (DESIGN ›The dyad's read surface‹) — the emitted code is unchanged.
         let node = self.through(node);
         let op = (*node).ty;
-        // A bare parameter (`fn (a)`) has no declared logos; its frame slot holds
-        // the full i64 bit-container the call passed.
-        if op.is_null() {
-            if frame_ref((*node).value).is_some() {
-                let addr = self.place_addr(node)?;
-                return Ok(self.load_at(types::I64, addr, 0));
+        match read_kind(&self.types, node) {
+            // A value of a function is a call; a node typed by a type carrying
+            // a `code` is a call of that code (#63).
+            Read::Executable(Dispatch::Call(f)) => self.lower_call_to(f, node),
+            // An application lowers by its identity's rule — the one table the
+            // compiler keeps (DESIGN ›The backend interface‹). An identity with
+            // no rule cannot be compiled; neither can an operand record with
+            // nothing in its op slot.
+            Read::Executable(Dispatch::Leaf(_)) => match self.lower.get(&op).copied() {
+                Some(f) => f(self, node),
+                None => Err(CompileError::NotLowerable(op)),
+            },
+            Read::Executable(Dispatch::None) => Err(CompileError::NotLowerable(op)),
+            // Prose, or a fn literal standing as a statement: unit, as it runs.
+            Read::Unit => Ok(self.const_i32(0)),
+            // A logos standing as a value: its own address, baked as an i64
+            // immediate — logos identities are interned and per-run, and so is
+            // the machine code baking them, which is what lets a `-> type`
+            // function compile.
+            Read::Identity => Ok(self.builder.ins().iconst(types::I64, node as i64)),
+            // A dyad view: the viewed node's address, baked the same way. The
+            // compiler had no arm for a view before the rule (#82, asymmetry 2).
+            Read::Address => Ok(self.builder.ins().iconst(types::I64, (*node).value as i64)),
+            // A place holding a node address — a `type ?` or `dyad ?` box, a
+            // bare parameter's slot: its eight bytes, frame or global alike.
+            Read::Container => self.read_place(node, types::I64),
+            // A rational literal molds to its i32 value now, an immediate.
+            Read::Literal => match crate::identities::rational::mold(node) {
+                Some(v) => Ok(self.const_i32(v)),
+                None => Err(CompileError::UncomputableLiteral),
+            },
+            // A numeric, bool, or pointer value: a load at the type's width
+            // from its storage. A null value slot is a comptime binding with no
+            // storage — BadValue, mirroring the interpreter. A `bool` literal
+            // used to bake an immediate read from its storage; it loads it now,
+            // the same value by the same rule as every other scalar.
+            Read::Scalar(nt) => {
+                if (*node).value.is_null() {
+                    return Err(CompileError::BadValue);
+                }
+                self.read_place(node, nt.cranelift_type())
             }
-            return Err(CompileError::NotLowerable(op));
+            // A record instance has no whole-value read; text and unit have no
+            // scalar; a hole holds nothing yet.
+            Read::Aggregate | Read::Opaque | Read::Undefined => Err(CompileError::NotLowerable(op)),
         }
-        if let Some(f) = self.lower.get(&op).copied() {
-            return f(self, node);
-        }
-        // A declaration statement — a fn literal standing as an expression —
-        // lowers to unit, exactly as it runs to unit. (A record logos standing
-        // as an expression is a logos value: the self-classified-root branch
-        // below bakes its address, mirroring run.)
-        if op == self.types.fn_type {
-            return Ok(self.const_i32(0));
-        }
-        // A logos node standing as a value carries its identity AS its value:
-        // its bits are its own address, baked as an i64 immediate — run's rule
-        // mirrored (the interpreter is the compiler's oracle), which is what
-        // lets a `-> logos` function compile: logos identities are interned and
-        // per-run, and so is the machine code baking them. A *place* typed by a
-        // logos — a logos-valued parameter, or a top-level box — is not a
-        // logos standing as a value: its slot holds the bound logos's address,
-        // read as the container. The tag is what tells the two apart, which is
-        // why every place carries one (›GLOBAL_TAG‹).
-        if op == (*op).ty {
-            if crate::dyad::is_place((*node).value) {
-                return self.read_place(node, types::I64);
-            }
-            return Ok(self.builder.ins().iconst(types::I64, node as i64));
-        }
-        // A node whose operation is a user function is a call: `op` is the
-        // callee. The operator identities are plain logos with lowering rules
-        // above; only real functions are fn-typed.
-        if !op.is_null() && (*op).ty == self.types.fn_type {
-            return self.lower_call_to(op, node);
-        }
-        // A type carrying a `code` is the call kind (#63; DESIGN ›Execution is
-        // function application‹): the node lowers as a call of that function.
-        // A frame place of such a type is not one and falls through.
-        if !op.is_null()
-            && crate::identities::meta::is_record_type(op)
-            && frame_ref((*node).value).is_none()
-        {
-            let code = crate::identities::meta::code_of(op);
-            if !code.is_null() {
-                return self.lower_call_to(code, node);
-            }
-        }
-        // A dyad place — the `dyad ?` box — holds a node address in its eight
-        // bytes, exactly as a place classified by a logos does. The tag is what
-        // says place rather than view (›GLOBAL_TAG‹).
-        if !op.is_null()
-            && crate::identities::meta::kind_of(op) == Some(crate::identities::meta::DYAD_TAG)
-            && crate::dyad::is_place((*node).value)
-        {
-            return self.read_place(node, types::I64);
-        }
-        // A pointer-typed leaf (an `&x` literal or a pointer variable): pointer
-        // logos nodes are created per use, so they are not in the identity-keyed
-        // table; load the 8-byte address blob like any numeric variable.
-        if !op.is_null() && crate::identities::numtype::is_pointer_type(op) {
-            return crate::identities::numtype::lower_var(self, node);
-        }
-        Err(CompileError::NotLowerable(op))
     }
 
     /// An `i32` immediate.

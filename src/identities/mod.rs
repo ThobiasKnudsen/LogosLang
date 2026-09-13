@@ -3760,15 +3760,15 @@ mod tests {
     }
 
     #[test]
-    fn a_dyad_view_in_a_compiled_body_is_refused_not_crashed() {
-        // #82, asymmetry 2, as it stands: the interpreter yields a view's
-        // address, the compiler has no arm for one and declines cleanly. The
-        // routing step gives the compiler the `Address` arm and flips this to
-        // the interpreter's answer.
-        let r = run_script_result("x := i32 5, f := fn () -> i64 ( x:dyad ), f.compile(), f()");
-        assert!(matches!(r, Err(crate::run::RunError::CompileFailed(_))), "{r:?}");
-        let interpreted = run_script("x := i32 5, f := fn () -> i64 ( x:dyad ), f()");
-        assert_ne!(interpreted, 0, "interpreted, a view is an address");
+    fn a_dyad_view_lowers_to_the_node_it_views() {
+        // #82, asymmetry 2, closed: the interpreter yields a view's address,
+        // and the compiler now has the `Address` arm and bakes the same
+        // address. Before the reading rule it declined ("cannot be compiled
+        // yet"); the two tiers answer alike.
+        assert_eq!(
+            run_script("x := i32 5, f := fn () -> i64 ( x:dyad ), a := f(), f.compile(), a == f()"),
+            1
+        );
     }
 
     #[test]

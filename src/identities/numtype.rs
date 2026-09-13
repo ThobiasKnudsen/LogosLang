@@ -17,9 +17,8 @@
 //! [`of_type_node`]), so neither the interpreter nor the compiler needs a separate
 //! logos→NumType map — the tag rides the graph.
 
-use cranelift_codegen::ir::{types, Value};
+use cranelift_codegen::ir::types;
 
-use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 
 use super::Cx;
@@ -143,14 +142,13 @@ impl NumType {
 /// Register a numeric logos node: its spelling (so it resolves as a logos name), its
 /// shared-member record with the `NumType` tag as its kind (self-describing, so
 /// run/compile recover the logos from the graph), its juxtaposition constructor,
-/// and the shared numeric-variable lowering [`lower_var`]. The interpreter reads
+/// (its lowering is the reading rule's `Scalar` arm in `Lowerer::lower`). The interpreter reads
 /// its values through the logos's width (see [`read_scalar`]).
 pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr {
     let record = super::meta::record(cx.store, nt as u8, super::meta::prec::APPLY);
     let id = cx.store.alloc_raw(cx.type_, record);
     cx.declare(spelling, id);
     cx.metas.insert(id, construct);
-    cx.lower.insert(id, lower_var);
     id
 }
 
@@ -384,24 +382,6 @@ pub(crate) unsafe fn write_scalar_nt(nt: NumType, slot: *mut u8, bits: i64) {
         F32 => wr(slot as *mut u32, bits as u32),
         F64 => wr(slot as *mut u64, bits as u64),
     }
-}
-
-/// Lower a numeric variable/value: read it at its logos's width — a promoted
-/// frame place from its register variable, anything else from its baked
-/// storage. The shared lowering rule (a [`crate::compile::LowerFn`]) for every
-/// numeric logos node. Guards a null address, mirroring the interpreter's
-/// `BadValue`.
-pub(crate) fn lower_var(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a numeric variable node from the store.
-    // A null value slot is a comptime/no-storage binding — BadValue, mirroring
-    // the interpreter. A frame-relative local is never null (its tag bit is set),
-    // so this guard rejects only genuine no-storage places.
-    let raw = unsafe { (*node).value };
-    if raw.is_null() {
-        return Err(CompileError::BadValue);
-    }
-    let ct = unsafe { of_type_node((*node).ty) }.cranelift_type();
-    unsafe { lw.read_place(node, ct) }
 }
 
 /// The `NumType` a numeric logos node describes (read from its value-slot tag).
