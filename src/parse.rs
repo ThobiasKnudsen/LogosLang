@@ -1281,6 +1281,9 @@ pub enum ParseError {
     /// A Logos-written constructor, invoked for an appearance of its identity
     /// (#61), failed while running; carries the rendered run error.
     ConstructorFailed(Box<String>),
+    /// An item the pass ran failed (DESIGN ›Build and run are one
+    /// self-directing pass‹): the run error, reported by the drivers as one.
+    Run(crate::run::RunError),
     /// A line of a `type (…)` body that neither fills a slot, declares a
     /// member, opens `instance (…)`, nor is prose (#61).
     TypeBodyLine,
@@ -1697,6 +1700,15 @@ pub struct Parser<'a> {
     /// kept here so a lazy read inside a constructor ([`Parser::cell_at`])
     /// stops at the same boundaries the loop would.
     lex_mode: Option<RightSide>,
+    /// The pass's one runtime (DESIGN ›Build and run are one self-directing
+    /// pass‹): everything the parser runs — a Logos-written constructor, a
+    /// type body's declarations, a rank, a call for a type, an imported
+    /// file, and the items the drivers hand back through [`Parser::value_of`]
+    /// — runs here, off raw handles into the store, with the defer type and
+    /// the store attached and the compiler when [`Parser::with_lower`]
+    /// attached one. One runtime keeps the frame arena and the allocation
+    /// ledger whole across the pass.
+    rt: crate::run::Runtime,
     /// The lowering table, when the driver attached one: the nested import
     /// pass hands it to its runtime so `f.compile()` at an imported top level
     /// works exactly as at the driver's own top level (one pass, one behavior).
@@ -1728,11 +1740,17 @@ impl<'a> Parser<'a> {
     ) -> Self {
         let mut scopes = scopes;
         scopes.set_lexing(types.type_);
+        // The store is attached before it moves into the parser: the parser
+        // makes no use of it while the runtime runs (the natives are the only
+        // writers meanwhile), which is what keeps the raw handle sound.
+        let rt =
+            crate::run::Runtime::new(types).with_defer_type(types.defer_).with_store(&mut *store);
         Parser {
             source,
             pos: 0,
             scopes,
             store,
+            rt,
             trie,
             types,
             pending_fn: std::ptr::null_mut(),
@@ -1757,7 +1775,35 @@ impl<'a> Parser<'a> {
     /// already does for the store.
     pub fn with_lower(mut self, lower: &'a crate::compile::LowerTable) -> Self {
         self.lower = Some(lower);
+        let rt = std::mem::replace(&mut self.rt, crate::run::Runtime::new(self.types));
+        self.rt = rt.with_compiler(lower, self.types);
         self
+    }
+
+    /// What `node` yields: an item that ran in the pass has its value at hand
+    /// ([`crate::identities::ran`]); anything else runs now, on the pass's
+    /// runtime. The drivers' one read of an item's value.
+    ///
+    /// # Safety
+    /// `node` must be a valid dyad this parser built into its store.
+    pub unsafe fn value_of(&mut self, node: DyadPtr) -> Result<i64, ParseError> {
+        if (*node).ty == self.types.ran_ {
+            return Ok(crate::identities::ran::value_of(node));
+        }
+        self.rt.run(node).map_err(ParseError::Run)
+    }
+
+    /// The root scope's exit (issue #49): run the teardowns the top level's
+    /// owning bindings inserted, LIFO, on the pass's runtime. The file driver
+    /// calls this at program end; a nested scope ran its own at its exit.
+    pub fn exit(&mut self) -> Result<(), ParseError> {
+        for defer_node in self.take_pending_defers().into_iter().rev() {
+            // SAFETY: `defer_node` is a `defer` node built into the store,
+            // which outlives the pass.
+            unsafe { crate::identities::run_deferred(&mut self.rt, defer_node) }
+                .map_err(ParseError::Run)?;
+        }
+        Ok(())
     }
 
     /// Thread an existing import registry through this parser. The REPL uses
@@ -2021,16 +2067,14 @@ impl<'a> Parser<'a> {
         f: DyadPtr,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        let types = self.types;
         let handle = self.scalar_value(
             crate::identities::numtype::NumType::U64,
             tape as *mut ParsingTape as usize as i64,
         );
         let call = build_call(self.store, f, &[handle]);
-        let mut rt = crate::run::Runtime::new(types).with_store(self.store);
         // SAFETY: `call` was just built into the store; the tape and the
         // store are reached only through the natives until `run` returns.
-        unsafe { rt.run(call) }
+        unsafe { self.rt.run(call) }
             .map_err(|e| ParseError::ConstructorFailed(Box::new(crate::report::run_message(&e))))?;
         Ok(Constructed::Placed)
     }
@@ -2661,12 +2705,8 @@ impl<'a> Parser<'a> {
         // new members that live on it, a namespace's", read `g.y`. Without
         // the run, a typed member's initializer never stored and `g.y` read
         // the zeroed place (#87), while the untyped `y := 3` worked because
-        // it folds at parse. A fresh interpreter, as every other parse-time
-        // evaluation uses ([`Self::eval_type_call`]): no compiler, so a
-        // `.compile()` here is the checked error rather than code installed
-        // behind the open pass, and no defer type is needed because a body
-        // that inserts a teardown is already `DeferInTypeBody`.
-        let mut rt = crate::run::Runtime::new(self.types);
+        // it folds at parse. On the pass's one runtime, as every other
+        // parse-time evaluation ([`Self::eval_type_call`]).
         while let Some(item) = self.parse_next() {
             let item = item?;
             self.scopes.settle_item(scope, item);
@@ -2697,7 +2737,7 @@ impl<'a> Parser<'a> {
                 // SAFETY: `item` is the declare node just parsed, and the
                 // store outlives the pass; the runtime works off raw handles.
                 BodyLine::Declare => unsafe {
-                    rt.run(item).map_err(|e| {
+                    self.rt.run(item).map_err(|e| {
                         ParseError::TypeBodyFailed(Box::new(crate::report::run_message(&e)))
                     })?;
                 },
@@ -2791,9 +2831,8 @@ impl<'a> Parser<'a> {
                     None => crate::identities::rational::mold_to(read, NumType::F64)
                         .ok_or(ParseError::UncomputableLiteral)?,
                     Some(_) => {
-                        let mut rt = crate::run::Runtime::new(types);
                         // SAFETY: as above.
-                        unsafe { rt.run(value) }.map_err(|_| ParseError::NonComptimeRank)?
+                        unsafe { self.rt.run(value) }.map_err(|_| ParseError::NonComptimeRank)?
                     }
                 };
                 let rank = match nt {
@@ -3796,8 +3835,7 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `call` must be a reduced call node from the store.
     unsafe fn eval_type_call(&mut self, call: DyadPtr) -> Result<DyadPtr, ParseError> {
-        let mut rt = crate::run::Runtime::new(self.types);
-        let bits = rt.run(call).map_err(|_| ParseError::NonComptimeTypeCall)?;
+        let bits = self.rt.run(call).map_err(|_| ParseError::NonComptimeTypeCall)?;
         let node = bits as usize as DyadPtr;
         // The bits are read as a node address, so they must be one. A `-> type`
         // body whose tail is not a type is already refused at the definition
@@ -4773,26 +4811,19 @@ impl<'a> Parser<'a> {
     }
 
     /// The nested top-to-bottom pass over an imported file: parse each
-    /// statement and run it — the one pass, under a fresh interpreter working
-    /// off raw handles as [`Parser::eval_type_call`] does — collecting the
-    /// `pub` declarations' (name, identity) pairs and the file's tail node.
-    /// (`f.compile()` at an imported top level is not wired yet: the parser
-    /// carries no lowering table; compiled members keep working inside the
-    /// importing program.) On failure the message is returned with
+    /// statement and run it — the one pass, on the pass's one runtime —
+    /// collecting the `pub` declarations' (name, identity) pairs and the
+    /// file's tail node. On failure the message is returned with
     /// [`Parser::offset`] left at the stuck point in the imported source.
     fn run_imported(&mut self) -> Result<(Vec<(String, DyadPtr)>, DyadPtr), String> {
         let mut pubs = Vec::new();
         let mut tail = std::ptr::null_mut();
-        let mut rt = crate::run::Runtime::new(self.types).with_defer_type(self.types.defer_);
-        if let Some(lower) = self.lower {
-            rt = rt.with_compiler(lower, self.types);
-        }
         while let Some(item) = self.parse_next() {
             let node = item.map_err(|e| crate::report::parse_message(&e))?;
             // SAFETY: `node` was just parsed into the store, which outlives
             // the pass; the runtime works off raw handles.
             unsafe {
-                rt.run(node).map_err(|e| crate::report::run_message(&e))?;
+                self.rt.run(node).map_err(|e| crate::report::run_message(&e))?;
                 if (*node).ty != self.types.comment_ {
                     tail = node;
                 }
@@ -5143,10 +5174,7 @@ impl<'a> Parser<'a> {
                 crate::identities::read::Read::Container(t) if !t.is_null() => {}
                 _ => return,
             }
-            // A fresh interpreter, as every other parse-time evaluation uses:
-            // no compiler, nothing but the store this very node describes.
-            let mut rt = crate::run::Runtime::new(self.types);
-            let _ = rt.run(node);
+            let _ = self.rt.run(node);
         }
     }
 

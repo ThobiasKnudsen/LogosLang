@@ -168,6 +168,7 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::ConstructorFailed(msg) => {
             format!("this identity's constructor failed while parsing: {msg}")
         }
+        ParseError::Run(e) => format!("run error: {}", run_message(e)),
         ParseError::NonComptimeTypeCall => {
             "a `-> logos` call must be evaluable at parse time; \
              its arguments must be comptime-known"

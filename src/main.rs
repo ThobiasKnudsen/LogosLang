@@ -163,11 +163,8 @@ fn run_line(source: &str) -> ExitCode {
 
     let types = engine.core.types();
     // The compiler rides along so `f.compile()` works in the one pass; the
-    // engine (core + store) outlives the runtime, per `with_compiler`'s
-    // contract.
-    let mut rt = Runtime::new(engine.core.types())
-        .with_compiler(&engine.core.lower, types)
-        .with_defer_type(engine.core.defer_);
+    // parser's runtime carries it, and the engine (core + store) outlives
+    // the parser.
     let mut p = Parser::new(source, &mut engine.store, &mut engine.trie, types, scopes)
         .with_lower(&engine.core.lower);
 
@@ -190,9 +187,8 @@ fn run_line(source: &str) -> ExitCode {
             }
         };
         // SAFETY: `node` and everything it reaches were just parsed into the
-        // store, which lives for the rest of this function. The runtime works
-        // off raw handles, so running interleaves with the open parse.
-        match unsafe { rt.run(node) } {
+        // store, which lives for the rest of this function.
+        match unsafe { p.value_of(node) } {
             Ok(bits) => {
                 // SAFETY: `node` is the valid dyad just parsed.
                 unsafe {
@@ -221,7 +217,7 @@ fn run_line(source: &str) -> ExitCode {
                 }
             }
             Err(e) => {
-                eprintln!("{path}: run error: {}", report::run_message(&e));
+                eprintln!("{path}: {}", report::parse_message(&e));
                 return ExitCode::FAILURE;
             }
         }
@@ -236,16 +232,13 @@ fn run_line(source: &str) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    // The top level's own scope exit (issue #49): run the teardowns top-level
-    // owning bindings inserted, LIFO, at program end. A nested scope ran its own
-    // at its exit; these are the file's, freeing what top-level `alloc`s owned.
-    for defer_node in p.take_pending_defers().into_iter().rev() {
-        // SAFETY: `defer_node` is a `defer` node just built into the store; the
-        // runtime works off raw handles into the store, which is still alive.
-        if let Err(e) = unsafe { seed::identities::run_deferred(&mut rt, defer_node) } {
-            eprintln!("{path}: run error: {}", report::run_message(&e));
-            return ExitCode::FAILURE;
-        }
+    // The top level's own scope exit (issue #49): the teardowns top-level
+    // owning bindings inserted run LIFO at program end. A nested scope ran its
+    // own at its exit; these are the file's, freeing what top-level `alloc`s
+    // owned.
+    if let Err(e) = p.exit() {
+        eprintln!("{path}: {}", report::parse_message(&e));
+        return ExitCode::FAILURE;
     }
 
     match last {
@@ -316,17 +309,29 @@ fn repl() -> ExitCode {
         }
 
         let types = engine.core.types();
-        let (parsed, end, line_defers, scopes_back, imports_back) = {
+        // A REPL line is one item, and reading its value is its run: the
+        // parser's runtime carries the compiler, so `f.compile()` works
+        // across lines (the installed code lives in the engine's store and is
+        // process-lived). The read happens while the parser is alive and
+        // only for a line that parsed whole.
+        let (parsed, end, value, line_defers, scopes_back, imports_back) = {
             let mut p = Parser::new(&line, &mut engine.store, &mut engine.trie, types, scopes)
                 .with_imports(std::mem::take(&mut imports))
                 .with_lower(&engine.core.lower);
             let parsed = p.parse_expression();
             let end = p.offset();
+            let value = match parsed {
+                // SAFETY: `node` was just parsed into the engine's store.
+                Ok(node) if line[end..].trim_start().is_empty() => {
+                    Some(unsafe { p.value_of(node) })
+                }
+                _ => None,
+            };
             // Teardowns this line's bindings inserted; kept only if the line is
             // accepted, so a failed line leaves no trace here either.
             let line_defers = p.take_pending_defers();
             let imports_back = p.take_imports();
-            (parsed, end, line_defers, p.into_scopes(), imports_back)
+            (parsed, end, value, line_defers, p.into_scopes(), imports_back)
         };
         scopes = scopes_back;
         imports = imports_back;
@@ -379,34 +384,29 @@ fn repl() -> ExitCode {
         // SAFETY: `display_node` is a valid dyad (the node or its import tail).
         let is_statement = unsafe { is_statement_node(&engine.core, display_node) };
 
-        // The compiler rides along so `f.compile()` works across lines: the
-        // installed bcode lives in the engine's store and the compiled
-        // artifact is process-lived, so a fresh per-line runtime is fine.
         // The line is accepted, so its bindings' teardowns join the session's,
         // to run at exit. A teardown over a place whose binding never ran sees a
         // null place and no-ops, so keeping them is the fail-closed side.
         session_defers.extend(line_defers);
 
-        let mut rt = Runtime::new(engine.core.types())
-            .with_compiler(&engine.core.lower, types)
-            .with_defer_type(engine.core.defer_);
-        // SAFETY: `node` and everything it reaches live in the engine's store,
-        // which outlives the loop. Statements still run — for their effect —
-        // they just do not echo.
-        match unsafe { rt.run(node) } {
+        // Statements still ran — for their effect — they just do not echo.
+        match value {
             // SAFETY: `display_node` is a valid dyad whose value `bits` is
             // (an import's run yields its tail's bits).
-            Ok(bits) if !is_statement => {
+            Some(Ok(bits)) if !is_statement => {
                 println!("{}", unsafe {
                     seed::identities::display_value(&types, display_node, bits)
                 })
             }
-            Ok(_) => {}
-            Err(e) => {
-                eprintln!("run error: {}", report::run_message(&e));
+            Some(Ok(_)) => {}
+            Some(Err(e)) => {
+                eprintln!("{}", report::parse_message(&e));
                 fail(&mut scopes, &mut engine.trie);
                 continue;
             }
+            // Unreachable: the value is read for every line that parsed whole,
+            // and both other outcomes continued above.
+            None => {}
         }
         scopes.commit();
     }
