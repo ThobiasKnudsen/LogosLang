@@ -1189,44 +1189,44 @@ pub unsafe fn display_value(types: &CoreTypes, node: DyadPtr, bits: i64) -> Stri
     if crate::parse::is_bool_result(types, node) {
         return if bits != 0 { "true" } else { "false" }.to_string();
     }
-    // A logos is a first-class value; show its spelling, not the raw bit container
-    // (roadmap #30) — so a program ending in `i32` prints `i32`, not `0`.
-    if is_type_value(types, node) {
-        return type_name(types, node);
-    }
-    // A place holding a type shows the type it holds: the container IS the
-    // identity's address (DESIGN ›A type is a comptime value‹, 12 September
-    // 2026). Rendering the address would be showing the box instead of what
-    // is in it, which is not what any other place does.
-    if is_type_valued(types, node) {
-        let held = bits as usize as DyadPtr;
-        if type_identity_of(types, held).is_some() {
-            return type_name(types, held);
+    // From here the reading rule says what the bits are (#82): the rest of
+    // this function used to re-derive it with four tests of its own.
+    match read::read_kind(types, node) {
+        // A logos is a first-class value; show its spelling, not the raw bit
+        // container (roadmap #30) — a program ending in `i32` prints `i32`.
+        read::Read::Identity => type_name(types, node),
+        // A box shows what it holds: the container IS the held node's address
+        // (DESIGN ›A type is a comptime value‹, 12 September 2026). A type in
+        // it shows its spelling; an empty box is the hole it was declared as;
+        // anything else in a `dyad ?` box shows as the dyad it is, exactly as a
+        // view does — rendering the value behind it would mean running the
+        // node, and display has no runtime. A bare parameter's container has
+        // no declared type and shows its bits.
+        read::Read::Container => {
+            let held = bits as usize as DyadPtr;
+            let ty = (*node).ty;
+            if ty.is_null() {
+                bits.to_string()
+            } else if held.is_null() {
+                if ty == types.type_ { "type ?" } else { "dyad ?" }.to_string()
+            } else if type_identity_of(types, held).is_some() {
+                type_name(types, held)
+            } else {
+                "dyad".to_string()
+            }
         }
-        return "type ?".to_string();
-    }
-    // The general box, `dyad ?`. Empty, it is the hole it was declared as. A
-    // type in it shows its spelling, which is the case the box is usually for;
-    // anything else shows as the dyad it is, exactly as a view does — a
-    // rendering of the *value* behind it would mean running the node, and
-    // display has no runtime.
-    if !(*node).ty.is_null() && (*node).ty == types.dyad_ && crate::dyad::is_place((*node).value) {
-        let held = bits as usize as DyadPtr;
-        if held.is_null() {
-            return "dyad ?".to_string();
-        }
-        if type_identity_of(types, held).is_some() {
-            return type_name(types, held);
-        }
-        return "dyad".to_string();
-    }
-    // A dyad view (#52) shows as the view it is, not its address bits.
-    if !(*node).ty.is_null() && meta::kind_of((*node).ty) == Some(meta::DYAD_TAG) {
-        return "dyad".to_string();
-    }
-    match numtype_of(types, node) {
-        Operand::Concrete(nt) => format_scalar(nt, bits),
-        _ => bits.to_string(),
+        // A dyad view (#52) shows as the view it is, not its address bits.
+        read::Read::Address => "dyad".to_string(),
+        // A scalar formats at its type's width: a float via its bit pattern,
+        // an unsigned integer at its own width. (A pointer is `U64`, and
+        // every real address prints the same digits signed or unsigned.)
+        read::Read::Scalar(nt) => format_scalar(nt, bits),
+        // An expression's result is typed by what it computes, which is
+        // `numtype_of`'s question, not the reading rule's (#82's second half).
+        _ => match numtype_of(types, node) {
+            Operand::Concrete(nt) => format_scalar(nt, bits),
+            _ => bits.to_string(),
+        },
     }
 }
 
