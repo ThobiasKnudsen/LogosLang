@@ -10,7 +10,8 @@ use cranelift_codegen::ir::Value;
 
 use super::numtype::CmpOp;
 use super::numtype::NumType;
-use super::{bool_mod, is_type_value, meta, rational, resolve_binary, Cx};
+use super::read::Read;
+use super::{bool_mod, meta, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::parse::{Assoc, CoreTypes, ParseError};
@@ -46,19 +47,23 @@ fn build(
     if let Some(v) = rational::compare_literals(types, CmpOp::Ne, lhs, rhs) {
         return Ok(bool_mod::literal_node(store, types.bool_, v));
     }
-    // Two logos-values compare by identity: logos are interned, so pointer identity
-    // *is* logos identity and a logos never varies at runtime, making the comparison a
-    // parse-time constant (roadmap #30) — `x.logos != f64` is decided now.
+    // What the two operands are is the reading rule's answer (#82). Two
+    // identities in hand compare by identity now: logos are interned, so
+    // pointer identity *is* logos identity (roadmap #30) — `x:dyad.type == i32`
+    // is decided at parse. Two values that read as node addresses — an
+    // identity against a box or a view, two boxes, a bare parameter that
+    // "accepts any dyad" — compare those addresses when the program runs
+    // (DESIGN ›A type is a comptime value‹, 12 September 2026: a type value
+    // "may be passed to a function, held in a place, and compared").
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
-    if unsafe { is_type_value(types, lhs) && is_type_value(types, rhs) } {
+    let (l, r) =
+        unsafe { (super::read::read_kind(types, lhs), super::read::read_kind(types, rhs)) };
+    if l == Read::Identity && r == Read::Identity {
         let same = unsafe { types.through(lhs) == types.through(rhs) };
         return Ok(bool_mod::literal_node(store, types.bool_, !same));
     }
-    // A type-valued place on either side: the identity it holds is known only
-    // when the program runs, so this is an ordinary comparison of two node
-    // addresses. See the same branch in [`super::eq`].
-    // SAFETY: as above.
-    if unsafe { super::is_node_valued(types, lhs) && super::is_node_valued(types, rhs) } {
+    let addressed = |k: Read| matches!(k, Read::Identity | Read::Container | Read::Address);
+    if addressed(l) && addressed(r) {
         let value = store.alloc_operands(&[lhs, rhs, types.ops.cmp_leaf(CmpOp::Ne, NumType::I64)]);
         return Ok(store.alloc_raw(ne, value));
     }

@@ -3772,6 +3772,18 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_parameter_compares_by_address() {
+        // #82 step 7. A bare parameter "accepts any dyad" (DESIGN ›A function's
+        // surface‹) and holds its argument's address in its container, so
+        // `a == i32` asks whether that argument IS the identity `i32`. The old
+        // `is_node_valued` list admitted only `type`- and `dyad`-typed operands
+        // and refused this as uncomputable; the reading rule sees a container.
+        assert_eq!(run_script("f := fn (a) -> bool ( a == i32 ), f(i32)"), 1);
+        assert_eq!(run_script("f := fn (a) -> bool ( a == i32 ), f(f64)"), 0);
+        assert_eq!(run_script("f := fn (a) -> bool ( a != i32 ), f(f64)"), 1);
+    }
+
+    #[test]
     fn a_type_is_a_value_a_place_can_hold() {
         // DESIGN ›A type is a comptime value‹ (12 September 2026): "a type
         // value is a node address like any other value, so it may be passed to
