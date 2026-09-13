@@ -1202,7 +1202,7 @@ pub unsafe fn display_value(types: &CoreTypes, node: DyadPtr, bits: i64) -> Stri
         // view does — rendering the value behind it would mean running the
         // node, and display has no runtime. A bare parameter's container has
         // no declared type and shows its bits.
-        read::Read::Container => {
+        read::Read::Container(_) => {
             let held = bits as usize as DyadPtr;
             let ty = (*node).ty;
             if ty.is_null() {
@@ -1605,6 +1605,13 @@ mod tests {
     /// A record dyad of type `record` naming `identity`, for a name a test
     /// declares by hand (its scope is set by `ScopeStack::declare`). Leaked,
     /// like every test-built dyad: the process exits.
+    /// A variable a test mints by hand must carry the storage mark the parser
+    /// puts on every place it allocates (`alloc_local` -> `global_place`): the
+    /// reading rule tells a place from a literal's untagged storage by that
+    /// mark, and `=` and `&` accept only places (#82). Build the storage as
+    /// `crate::dyad::global_place(store.alloc_bytes(..))`. A null value stays
+    /// legitimate for a variable a test declares but never writes — reading it
+    /// is the checked `BadValue` those tests pin.
     fn test_record(record_ty: DyadPtr, identity: DyadPtr) -> DyadPtr {
         let fields = Box::into_raw(Box::new(Record::new(identity, std::ptr::null_mut())));
         Box::into_raw(Box::new(crate::dyad::Dyad { ty: record_ty, value: fields as *mut u8 }))
@@ -1619,7 +1626,8 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
         // Declare the variable `a` in the root scope.
-        let a = store.alloc_raw(core.i32_, std::ptr::null_mut());
+        let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
+        let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
         unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
 
         let root = {
@@ -1657,7 +1665,7 @@ mod tests {
         scopes.push(core.root_scope);
         // `a` is an i32 variable initialised to 0.
         let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
-        let a = store.alloc_raw(core.i32_, a_val);
+        let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
         unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
 
         let root = {
@@ -1687,7 +1695,7 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
         let a_val = store.alloc_bytes(&41i32.to_ne_bytes());
-        let a = store.alloc_raw(core.i32_, a_val);
+        let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
         unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
 
         let main = {
@@ -2164,7 +2172,7 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
         let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
-        let a = store.alloc_raw(core.i32_, a_val);
+        let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
         unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
 
         let root = {
@@ -2205,7 +2213,8 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
         let a_val = store.alloc_bytes(&0i64.to_ne_bytes());
-        let a = store.alloc_raw(core.numtypes[NumType::I64 as usize], a_val);
+        let a =
+            store.alloc_raw(core.numtypes[NumType::I64 as usize], crate::dyad::global_place(a_val));
         unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
 
         // A nullary `-> i64` fn so the compiled return logos is the declared i64
@@ -2429,7 +2438,7 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
         let a_val = store.alloc_bytes(&10i32.to_ne_bytes());
-        let a = store.alloc_raw(core.i32_, a_val);
+        let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
         unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
 
         let func = {
@@ -2940,7 +2949,7 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
         let a_val = store.alloc_bytes(&41i32.to_ne_bytes());
-        let a = store.alloc_raw(core.i32_, a_val);
+        let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
         unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
         let func = {
             let mut p = Parser::new(
@@ -3000,7 +3009,7 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
         let a_val = store.alloc_bytes(&5i32.to_ne_bytes());
-        let a = store.alloc_raw(core.i32_, a_val);
+        let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
         unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
         let func = {
             let mut p = Parser::new(
@@ -3037,7 +3046,8 @@ mod tests {
         let core = Core::build(&mut store, &mut trie);
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        let a = store.alloc_raw(core.i32_, std::ptr::null_mut());
+        let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
+        let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
         unsafe { s.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
         let mut p = Parser::new("a = 3.5", &mut store, &mut trie, core.types(), s);
         assert_eq!(p.parse_expression(), Err(ParseError::UncomputableLiteral));
@@ -3102,7 +3112,8 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
         let a_val = store.alloc_bytes(&2.5f64.to_bits().to_ne_bytes());
-        let a = store.alloc_raw(core.numtypes[NumType::F64 as usize], a_val);
+        let a =
+            store.alloc_raw(core.numtypes[NumType::F64 as usize], crate::dyad::global_place(a_val));
         unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
 
         let g = {
@@ -4546,7 +4557,7 @@ mod tests {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let x_val = store.alloc_bytes(&5i32.to_ne_bytes());
-        let x = store.alloc_raw(core.i32_, x_val);
+        let x = store.alloc_raw(core.i32_, crate::dyad::global_place(x_val));
         unsafe { s.declare(&mut trie, "x", test_record(core.record_, x)) }.unwrap();
 
         let mut p =
@@ -4565,7 +4576,10 @@ mod tests {
         unsafe {
             assert_eq!((*value).ty, core.numtypes[NumType::U64 as usize]);
             let mut rt = Runtime::new(core.types());
-            assert_eq!(rt.run(value).unwrap(), x_val as i64);
+            // The raw value slot of a place holds its storage *marked* as a
+            // place (`GLOBAL_TAG`, 44ea208): that mark is part of what is in the
+            // slot, and the view shows the slot, not the address behind it.
+            assert_eq!(rt.run(value).unwrap(), crate::dyad::global_place(x_val) as i64);
         }
     }
 
@@ -5191,7 +5205,7 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
         let a_val = store.alloc_bytes(&init.to_ne_bytes()[..nt.bytes()]);
-        let a = store.alloc_raw(core.numtypes[nt as usize], a_val);
+        let a = store.alloc_raw(core.numtypes[nt as usize], crate::dyad::global_place(a_val));
         unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
         let func = {
             let mut p = Parser::new(fn_src, &mut store, &mut trie, core.types(), scopes);
@@ -5351,7 +5365,7 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
         let a_val = store.alloc_bytes(&41i32.to_ne_bytes());
-        let a = store.alloc_raw(core.i32_, a_val);
+        let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
         unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
         let func = {
             let mut p = Parser::new(

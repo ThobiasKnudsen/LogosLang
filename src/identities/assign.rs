@@ -15,7 +15,8 @@
 use cranelift_codegen::ir::Value;
 
 use super::numtype::{is_pointer_type, of_type_node, NumType};
-use super::{commit_if_literal, is_numtype_node, meta, operands, Cx, Operand};
+use super::read::{read_kind, Read};
+use super::{commit_if_literal, meta, operands, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::parse::{Assoc, CoreTypes, ParseError};
@@ -103,48 +104,48 @@ pub(super) fn build(
     if unsafe { (*lhs_d).ty } == types.deref_ {
         return unsafe { super::pointer::build_storeptr(store, types, lhs_d, rhs) };
     }
-    // The assignable places in v1 are typed numeric and pointer variables. A
-    // comptime (`:=`-bound rational) binding has no machine storage — writing
-    // its value slot would corrupt the fraction — and nothing else has storage.
-    // SAFETY: as above.
-    let (lhs_numeric, lhs_pointer) =
-        unsafe { (is_numtype_node(types, (*lhs_d).ty), is_pointer_type((*lhs_d).ty)) };
-    // A place holding a type is assignable like any other: it stores the node
-    // address, eight bytes (DESIGN ›A type is a comptime value‹, 12 September
-    // 2026: "a place holding a type is therefore an ordinary place"). What it
-    // takes is a type value, identity or place alike.
+    // What the target is, by the reading rule (#82). A scalar place — a numeric
+    // or pointer variable, marked as storage — takes a value at its width. A
+    // box holding a node address takes a node: a `type ?` box a type value
+    // (an identity, or another type box), a `dyad ?` box anything whose run
+    // yields a node — a type, a box, a view — since what it holds is asked
+    // afterwards, `a:dyad.type == type`. A number into either would leave
+    // bits every later reader follows as an address. Nothing else has storage
+    // an `=` may write: a comptime binding has none, a literal's untagged
+    // storage is not a place (writing `i32 5 = 3` into it used to be
+    // accepted), a bare parameter's container is not assignable, and a record
+    // instance is written by field (#115).
     // SAFETY: `lhs_d`/`rhs` are reduced dyads from the store.
-    // The general box, `dyad ?`, takes any node at all: what it holds is asked
-    // afterwards, `a:dyad.type == type`. A `type ?` box is the narrow case and
-    // takes only a type value.
-    let (lhs_type_place, lhs_dyad_place) = unsafe {
-        let place = crate::dyad::is_place((*lhs_d).value);
-        ((*lhs_d).ty == types.type_ && place, (*lhs_d).ty == types.dyad_ && place)
-    };
-    if lhs_type_place || lhs_dyad_place {
-        // Both boxes hold a *node address*. A `type ?` box takes a type value;
-        // a `dyad ?` box takes anything whose run yields a node — a type, or a
-        // dyad view (`x:dyad`). A number is not one: storing its value would
-        // leave bits in the box that every later reader would follow as an
-        // address.
-        let ok = unsafe {
-            if lhs_type_place {
-                super::is_type_valued(types, rhs)
-            } else {
-                super::is_node_valued(types, rhs)
+    let (target, marked) =
+        unsafe { (read_kind(types, lhs_d), crate::dyad::is_place((*lhs_d).value)) };
+    match target {
+        Read::Container(t) if t == types.type_ || t == types.dyad_ => {
+            // SAFETY: as above.
+            let value_read = unsafe { read_kind(types, rhs) };
+            let ok = match value_read {
+                Read::Identity => true,
+                Read::Container(c) => {
+                    if t == types.type_ {
+                        c == types.type_
+                    } else {
+                        !c.is_null()
+                    }
+                }
+                Read::Address => t == types.dyad_,
+                _ => false,
+            };
+            if !ok {
+                return Err(ParseError::BadDeclaredType);
             }
-        };
-        if !ok {
-            return Err(ParseError::BadDeclaredType);
+            let value = store.alloc_operands(&[lhs, rhs, types.ops.store_leaf(NumType::I64)]);
+            return Ok(store.alloc_raw(op, value));
         }
-        let value = store.alloc_operands(&[lhs, rhs, types.ops.store_leaf(NumType::I64)]);
-        return Ok(store.alloc_raw(op, value));
-    }
-    if !lhs_numeric && !lhs_pointer {
-        return Err(ParseError::BadAssignTarget);
+        Read::Scalar(_) if marked => {}
+        _ => return Err(ParseError::BadAssignTarget),
     }
     // A literal into a pointer would become a wild address.
     // SAFETY: as above.
+    let lhs_pointer = unsafe { is_pointer_type((*lhs_d).ty) };
     if lhs_pointer && unsafe { (*rhs_d).ty } == types.rational {
         return Err(ParseError::TypeMismatch);
     }

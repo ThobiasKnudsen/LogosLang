@@ -627,7 +627,7 @@ impl Runtime {
             Read::Address => Ok((*node).value as i64),
             // A place holding a node address — a `type ?` or `dyad ?` box, a
             // bare parameter's slot — reads its 8-byte container.
-            Read::Container => self.read_container(node),
+            Read::Container(_) => self.read_container(node),
             // A rational literal molds to its integer value (a fraction like
             // 3.14 has none: UncomputableLiteral, not a bad read).
             Read::Literal => crate::identities::rational::mold(node)

@@ -3837,12 +3837,17 @@ impl<'a> Parser<'a> {
         let node = self.operand_dyad(cell)?;
         // SAFETY: `node` is a resolved dyad from the store.
         let addr = unsafe {
-            let logos = (*node).ty;
-            let is_place = crate::identities::is_numtype_node(&self.types, logos)
-                || crate::identities::numtype::is_pointer_type(logos)
-                || crate::identities::meta::is_record_type(logos);
-            if !is_place || (*node).value.is_null() {
-                // Comptime bindings have no storage.
+            // A place the reading rule can name — a scalar, or a record
+            // instance — that is marked as storage (#82). A comptime binding
+            // has no storage; a literal's untagged blob is not a place (`&(i32
+            // 5)` used to yield its address); and a node typed by a
+            // code-carrying type, `&(2 ^ 3)`, has an operand run where an
+            // instance has fields — its "address" was a pointer into the graph
+            // that faulted on the first read. All three are refused.
+            use crate::identities::read::{read_kind, Read};
+            let placed = matches!(read_kind(&self.types, node), Read::Scalar(_) | Read::Aggregate)
+                && crate::dyad::is_place((*node).value);
+            if !placed {
                 return Err(ParseError::BadAddressOf);
             }
             // No taking the address of an enclosing function's local or
@@ -5810,7 +5815,8 @@ mod tests {
             let (a_rec, b_rec) = ((*tape).at(-1).unwrap().dyad, (*tape).at(1).unwrap().dyad);
             let plus = (*tape).at(0).unwrap().dyad;
             let storage = store.alloc_bytes(&(tape as usize as u64).to_ne_bytes());
-            let t = store.alloc_raw(core.tape.parsing_tape, storage);
+            // Marked as storage, as the parser marks every place it allocates.
+            let t = store.alloc_raw(core.tape.parsing_tape, crate::dyad::global_place(storage));
             let rec = Record::alloc(&mut store, core.record_, Record::new(t, core.root_scope));
             scopes.declare(&mut trie, "t", rec).unwrap();
 
@@ -5897,7 +5903,8 @@ mod tests {
             assert!(!(*tape).at(1).unwrap().constructed, "a lexed cell is unconstructed");
 
             let storage = store.alloc_bytes(&(tape as usize as u64).to_ne_bytes());
-            let t = store.alloc_raw(core.tape.parsing_tape, storage);
+            // Marked as storage, as the parser marks every place it allocates.
+            let t = store.alloc_raw(core.tape.parsing_tape, crate::dyad::global_place(storage));
             let rec = Record::alloc(&mut store, core.record_, Record::new(t, core.root_scope));
             scopes.declare(&mut trie, "t", rec).unwrap();
 

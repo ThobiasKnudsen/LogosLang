@@ -980,6 +980,35 @@ fn the_dyad_box_holds_any_node_and_says_what_it_holds() {
 }
 
 #[test]
+fn only_a_marked_place_is_written_or_addressed() {
+    // #82 step 8: `=`'s target and `&`'s operand are asked of the reading rule.
+    // Three things used to pass that are not places: a literal's untagged
+    // storage as an assignment target, the same as an `&` operand, and an
+    // application of a code-carrying type — whose "address" was a pointer into
+    // the graph that faulted on the first read.
+    let pw = "pw := type ( parse_rank = *.parse_rank + 1, associativity = right, \
+              constructor = fn (tape := parsing_tape ?) -> void ( tape[0]:dyad.type = pw, \
+              tape[0]:dyad.value.operands.append(tape[-1] and tape[1]), tape.remove(1), tape.remove(-1) ), \
+              code = fn (a := i32 ?, b := i32 ?) -> i32 ( a * b ) )";
+    for (src, expect) in [
+        ("i32 5 = 3\n", "not an assignable place"),
+        ("x := &(i32 5)\n", "needs a variable"),
+        (&format!("{pw}\np := &(2 pw 3)\n"), "needs a variable"),
+    ] {
+        let (_e, stderr) = repl(src.as_bytes());
+        assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+    // What still works: a marked scalar place, a record instance's address,
+    // a type box written from an identity or another type box, a dyad box
+    // written from a view.
+    let (echoes, stderr) = repl(
+        b"x := i32 5\nx = 6\np := &x\np@\nw := type (instance (y := i64 ?))\nq := w(7)\nr := &q\nr@.y\n\
+          a := type ?\nb := type ?\na = i32\nb = a\nb == i32\nd := dyad ?\nd = x:dyad\nd:dyad.type == i32\n",
+    );
+    assert_eq!(echoes, ["6", "7", "true", "true"], "stderr: {stderr}");
+}
+
+#[test]
 fn a_dyad_is_built_from_a_type_and_a_value() {
     // DESIGN ›Feasibility‹: "`dyad (type, value)` construction from Logos"
     // (#60). `dyad (i32, 7)` is a store-owned i32 cell, `dyad` alone the

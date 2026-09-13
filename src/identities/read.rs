@@ -50,9 +50,11 @@ pub enum Read {
     /// mark does not matter here — a declared place, a committed literal, and a
     /// reflection scalar all hold storage the type says how to read.
     Scalar(NumType),
-    /// A place holding a node address: a `type ?` box, a `dyad ?` box, a bare
-    /// parameter's slot. Eight bytes, read as the address they hold.
-    Container,
+    /// A place holding a node address: eight bytes, read as the address they
+    /// hold. Carries the declared type — `type` for a `type ?` box, `dyad` for
+    /// a `dyad ?` box, null for a bare parameter's slot — so a writer can say
+    /// what the box may take without reading the node's type slot again.
+    Container(DyadPtr),
     /// A logos standing as a value: its own address is the value (›A type is a
     /// comptime value‹: "a logos node standing as a value carries its identity
     /// as its value").
@@ -112,7 +114,7 @@ pub unsafe fn read_kind(types: &CoreTypes, node: DyadPtr) -> Read {
     // A node with no type: a bare parameter's slot holds the container its
     // call bound; a hole, a slot marker, or a fresh spelling holds nothing.
     if op.is_null() {
-        return if place { Read::Container } else { Read::Undefined };
+        return if place { Read::Container(op) } else { Read::Undefined };
     }
     // 2. A value of a function is a call — before any record read.
     if (*op).ty == types.fn_type {
@@ -130,7 +132,7 @@ pub unsafe fn read_kind(types: &CoreTypes, node: DyadPtr) -> Read {
         // rather than assumed, so the debug suite is the proof that
         // `is_scalar_type`'s null-value default can go (#82, step 10).
         debug_assert!(!(*op).value.is_null(), "a type with no record stands in a type slot");
-        return if place { Read::Container } else { Read::Undefined };
+        return if place { Read::Container(op) } else { Read::Undefined };
     };
     // 5 and 6.
     match kind {
@@ -138,14 +140,14 @@ pub unsafe fn read_kind(types: &CoreTypes, node: DyadPtr) -> Read {
         ADDR_TAG => Read::Scalar(numtype::of_type_node(op)),
         meta::TYPEREC_TAG => {
             if place {
-                Read::Container
+                Read::Container(op)
             } else {
                 Read::Identity
             }
         }
         meta::DYAD_TAG => {
             if place {
-                Read::Container
+                Read::Container(op)
             } else {
                 Read::Address
             }
@@ -160,7 +162,7 @@ pub unsafe fn read_kind(types: &CoreTypes, node: DyadPtr) -> Read {
         }
         meta::TUPLE_TAG | meta::LIST_TAG => {
             if place {
-                return Read::Container;
+                return Read::Container(op);
             }
             // The op slot: the last fixed slot of the type's operand record.
             let Some(idx) = meta::op_slot_of(op) else {
@@ -179,14 +181,14 @@ pub unsafe fn read_kind(types: &CoreTypes, node: DyadPtr) -> Read {
         }
         meta::FRACTION_TAG => {
             if place {
-                Read::Container
+                Read::Container(op)
             } else {
                 Read::Literal
             }
         }
         COMMENT_TAG => {
             if place {
-                Read::Container
+                Read::Container(op)
             } else {
                 Read::Unit
             }
@@ -204,7 +206,7 @@ pub unsafe fn read_kind(types: &CoreTypes, node: DyadPtr) -> Read {
                     | meta::TOKEN_TAG
             ));
             if place {
-                Read::Container
+                Read::Container(op)
             } else {
                 Read::Opaque
             }
@@ -318,8 +320,8 @@ mod tests {
             assert!(is_place((*declared(0)).value));
             assert_eq!(read_kind(&types, declared(1)), Read::Scalar(NumType::U64));
             // The two node boxes hold a container.
-            assert_eq!(read_kind(&types, declared(2)), Read::Container);
-            assert_eq!(read_kind(&types, declared(3)), Read::Container);
+            assert_eq!(read_kind(&types, declared(2)), Read::Container(core.type_));
+            assert_eq!(read_kind(&types, declared(3)), Read::Container(core.dyad_));
             // A record type is an identity; its instance is an aggregate place.
             assert_eq!(read_kind(&types, declared(4)), Read::Identity);
             assert_eq!(read_kind(&types, declared(5)), Read::Aggregate);
@@ -330,7 +332,7 @@ mod tests {
             let input = *((*f).value as *const DyadPtr).add(crate::parse::FN_INPUT);
             let params = array::items(meta::record_fields_of(input));
             assert_eq!(read_kind(&types, params[0]), Read::Scalar(NumType::I32));
-            assert_eq!(read_kind(&types, params[1]), Read::Container);
+            assert_eq!(read_kind(&types, params[1]), Read::Container(std::ptr::null_mut()));
             // Values by kind: a bool literal is scalar storage (untagged, still
             // storage), a rational is a literal, text is opaque, prose is unit,
             // a view is an address, an application is its leaf, a call is a

@@ -62,7 +62,7 @@ fn build(
         let same = unsafe { types.through(lhs) == types.through(rhs) };
         return Ok(bool_mod::literal_node(store, types.bool_, same));
     }
-    let addressed = |k: Read| matches!(k, Read::Identity | Read::Container | Read::Address);
+    let addressed = |k: Read| matches!(k, Read::Identity | Read::Container(_) | Read::Address);
     if addressed(l) && addressed(r) {
         let value = store.alloc_operands(&[lhs, rhs, types.ops.cmp_leaf(CmpOp::Eq, NumType::I64)]);
         return Ok(store.alloc_raw(eq, value));

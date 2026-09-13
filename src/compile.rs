@@ -214,7 +214,7 @@ impl Lowerer<'_, '_> {
             Read::Address => Ok(self.builder.ins().iconst(types::I64, (*node).value as i64)),
             // A place holding a node address — a `type ?` or `dyad ?` box, a
             // bare parameter's slot: its eight bytes, frame or global alike.
-            Read::Container => self.read_place(node, types::I64),
+            Read::Container(_) => self.read_place(node, types::I64),
             // A rational literal molds to its i32 value now, an immediate.
             Read::Literal => match crate::identities::rational::mold(node) {
                 Some(v) => Ok(self.const_i32(v)),

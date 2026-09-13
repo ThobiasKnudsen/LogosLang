@@ -195,7 +195,7 @@ pub unsafe fn describe(types: &CoreTypes, node: DyadPtr) -> Shape {
     // A place holding a node address is the reading rule's container: asked of
     // the same rule execution uses, so reflection and the tiers never disagree
     // about what a `.value` is (#82).
-    if read_kind(types, node) == Read::Container {
+    if matches!(read_kind(types, node), Read::Container(_)) {
         return Shape::Container;
     }
     // A value of a record logos is an instance: its layout derives from the
