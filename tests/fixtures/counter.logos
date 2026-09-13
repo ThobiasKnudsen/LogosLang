@@ -1,0 +1,6 @@
+# A tail with an effect: `bump()` must run exactly once per program, in the
+# pass, and never again when the import node runs or the file is imported a
+# second time (#88).
+pub c := alloc i32 0,
+bump := fn () -> i32 ( c@ = c@ + 1, c@ ),
+bump()

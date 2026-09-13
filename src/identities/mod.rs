@@ -2518,9 +2518,12 @@ mod tests {
         // file compiles once its fn is compiled.
         // SAFETY: the sequence's first expression is the fn declaration; the
         // bound fn is its declared slot.
+        // The type body that follows the declaration ran what stood before
+        // it, so the declaration stands in the sequence as its ran form.
         let func = unsafe {
             let arr = *((*root).value as *const DyadPtr);
-            declare::declared_of(crate::identities::array::items(arr)[0])
+            let first = crate::identities::array::items(arr)[0];
+            declare::declared_of(ran::expr_of(&core.types(), first))
         };
         // SAFETY: `func` is the fn node just parsed and outlives the calls.
         let _fc = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
@@ -4002,7 +4005,8 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
         let root = {
-            let mut p = Parser::new(src, &mut store, &mut trie, core.types(), scopes);
+            let mut p = Parser::new(src, &mut store, &mut trie, core.types(), scopes)
+                .with_lower(&core.lower);
             p.parse_sequence().unwrap()
         };
         let mut rt = Runtime::new(core.types()).with_compiler(&core.lower, core.types());

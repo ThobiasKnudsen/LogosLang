@@ -1273,6 +1273,18 @@ fn application(
 pub type ConstructFn =
     fn(&mut Parser, DyadPtr, &mut ParsingTape) -> Result<Constructed, ParseError>;
 
+/// An open scope's bookkeeping while its body parses (see [`Parser::open`]).
+#[derive(Default)]
+struct OpenScope {
+    /// The `defer free <place>` nodes the scope's owning bindings inserted
+    /// (issue #49), drained into the body after each statement.
+    defers: Vec<DyadPtr>,
+    /// The items parsed at depth 0 and not yet run; run by
+    /// [`Parser::drain`] when the pass needs a value, and otherwise by the
+    /// scope's own run (a block's, or the top level's [`Parser::finish`]).
+    unrun: Vec<DyadPtr>,
+}
+
 /// Why elaboration failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseError {
@@ -1666,12 +1678,13 @@ pub struct Parser<'a> {
     /// last (#61): a `type (…)` body pushes one while its lines parse, and
     /// the slot fills and the `instance (…)` block write into it.
     definitions: Vec<OpenType>,
-    /// The constructor-inserted teardown registry (issue #49), one list per open
-    /// scope. A binding of an owning value (`a := alloc …`) pushes `defer free a`
-    /// onto the top list; [`Parser::parse_sequence`] drains it into the scope's
-    /// body so the defer runs at scope exit as ordinary structure. The base entry
-    /// (index 0) collects top-level bindings, drained by the file driver.
-    pending_defers: Vec<Vec<DyadPtr>>,
+    /// The open scopes, innermost last; the base entry is the top level. Each
+    /// carries the constructor-inserted teardowns its bindings pushed (issue
+    /// #49; [`Parser::parse_sequence`] drains them into the body so a defer
+    /// runs at scope exit as ordinary structure, and [`Parser::exit`] runs
+    /// the top level's) and the items it has parsed and not yet run
+    /// ([`Parser::drain`]). Its length is the bracket depth.
+    open: Vec<OpenScope>,
     /// The folder relative import paths resolve against — the importing file's
     /// own folder during a nested import, the working directory when the
     /// importer is the command line or REPL (ruled August 2026).
@@ -1762,7 +1775,7 @@ impl<'a> Parser<'a> {
             frames: Vec::new(),
             runtime_depth: 0,
             definitions: Vec::new(),
-            pending_defers: vec![Vec::new()],
+            open: vec![OpenScope::default()],
             dir: PathBuf::from("."),
             imports: Imports::default(),
             lower: None,
@@ -1906,10 +1919,52 @@ impl<'a> Parser<'a> {
     /// runs their inners LIFO at program exit — the top level's own scope-exit.
     /// Returns them in insertion order; the caller reverses for LIFO.
     pub fn take_pending_defers(&mut self) -> Vec<DyadPtr> {
-        match self.pending_defers.first_mut() {
-            Some(base) => std::mem::take(base),
+        match self.open.first_mut() {
+            Some(base) => std::mem::take(&mut base.defers),
             None => Vec::new(),
         }
+    }
+
+    /// Run everything parsed and not yet run, outermost scope first, in
+    /// order: the pass running because it must (DESIGN ›Build and run are
+    /// one self-directing pass‹, 13 September 2026) — a box it is about to
+    /// read, a call for a type, a Logos-written constructor, a type's own
+    /// body, an import, or the end of the program. Each executable item
+    /// becomes its ran form in place ([`crate::identities::ran`]), so the
+    /// scope it stands in reads it later instead of running it again; a
+    /// read stays a read, prose stays prose, and a `defer` is held for its
+    /// scope's exit as ever. The lists are taken before anything runs, so a
+    /// drain inside a drain finds nothing. The item being parsed is in no
+    /// list: it runs after, so order is left to right.
+    pub fn drain(&mut self) -> Result<(), ParseError> {
+        let lists: Vec<Vec<DyadPtr>> =
+            self.open.iter_mut().map(|s| std::mem::take(&mut s.unrun)).collect();
+        for node in lists.into_iter().flatten() {
+            // SAFETY: every pending item is a dyad this parser built into its
+            // store, which outlives the pass; the runtime works off raw handles.
+            unsafe {
+                let ty = (*node).ty;
+                if crate::identities::numtype::is_comment_type(ty) || ty == self.types.defer_ {
+                    continue;
+                }
+                let bits = self.rt.run(node).map_err(ParseError::Run)?;
+                if matches!(
+                    crate::identities::read::read_kind(&self.types, node),
+                    crate::identities::read::Read::Executable(_)
+                ) {
+                    crate::identities::ran::rewrite(self.store, &self.types, node, bits);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The end of the program: run what the top level parsed and has not
+    /// run — the root scope's own run (DESIGN ›The scope's constructor is
+    /// the driver‹: "the root scope run by `import` over a file and by the
+    /// command line over its one line").
+    pub fn finish(&mut self) -> Result<(), ParseError> {
+        self.drain()
     }
 
     /// Recover the scope stack, consuming the parser. The REPL parses each line
@@ -2067,6 +2122,8 @@ impl<'a> Parser<'a> {
         f: DyadPtr,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
+        // A constructor runs now, by nature; what stands before it runs first.
+        self.drain()?;
         let handle = self.scalar_value(
             crate::identities::numtype::NumType::U64,
             tape as *mut ParsingTape as usize as i64,
@@ -2651,9 +2708,24 @@ impl<'a> Parser<'a> {
         // A `fn` literal on a slot's right side must not claim the enclosing
         // declaration's placeholder (`x := type (constructor = fn …)`).
         let suppressed = self.take_pending_fn();
-        self.pending_defers.push(Vec::new());
-        let lines = self.type_body_lines(scope);
-        let defers = self.pending_defers.pop().expect("pushed above");
+        // The body's declarations are pending until its close, whatever
+        // encloses it: a type is comptime and its members are stored at the
+        // definition (#87). Everything before the body runs first, so a
+        // member's initializer reads committed state, and what fails among
+        // the body's own lines is reported as the body's.
+        let outer = self.drain();
+        self.open.push(OpenScope::default());
+        let saved_depth = std::mem::replace(&mut self.runtime_depth, 0);
+        let lines = outer.and_then(|()| self.type_body_lines(scope)).and_then(|()| {
+            self.drain().map_err(|e| match e {
+                ParseError::Run(r) => {
+                    ParseError::TypeBodyFailed(Box::new(crate::report::run_message(&r)))
+                }
+                other => other,
+            })
+        });
+        self.runtime_depth = saved_depth;
+        let defers = self.open.pop().expect("pushed above").defers;
         self.restore_pending_fn(suppressed);
         let def = self.definitions.pop().expect("pushed above");
         self.scopes.pop();
@@ -2698,15 +2770,16 @@ impl<'a> Parser<'a> {
     /// The lines of a type body, each settled as the body item of the
     /// names it declared and checked to be one of the kinds a body holds.
     fn type_body_lines(&mut self, scope: DyadPtr) -> Result<(), ParseError> {
-        // The body's own declarations run as they are parsed, the one pass
+        // The body's own declarations run at the definition, the one pass
         // over a type body as over a file ([`Self::run_imported`]): a member
-        // is stored once, at the definition, which is what DESIGN ›The
-        // constructor is a field‹ asks of a bare body line — it "may declare
-        // new members that live on it, a namespace's", read `g.y`. Without
-        // the run, a typed member's initializer never stored and `g.y` read
-        // the zeroed place (#87), while the untyped `y := 3` worked because
-        // it folds at parse. On the pass's one runtime, as every other
-        // parse-time evaluation ([`Self::eval_type_call`]).
+        // is stored once, which is what DESIGN ›The constructor is a field‹
+        // asks of a bare body line — it "may declare new members that live
+        // on it, a namespace's", read `g.y`. Without the run, a typed
+        // member's initializer never stored and `g.y` read the zeroed place
+        // (#87), while the untyped `y := 3` worked because it folds at
+        // parse. The lines are pending as they parse and run at the body's
+        // close ([`Self::parse_type_body`]); this loop only checks what each
+        // line is.
         while let Some(item) = self.parse_next() {
             let item = item?;
             self.scopes.settle_item(scope, item);
@@ -2733,14 +2806,7 @@ impl<'a> Parser<'a> {
                         return Err(ParseError::TypeBodyLine);
                     }
                 }
-                BodyLine::Prose => {}
-                // SAFETY: `item` is the declare node just parsed, and the
-                // store outlives the pass; the runtime works off raw handles.
-                BodyLine::Declare => unsafe {
-                    self.rt.run(item).map_err(|e| {
-                        ParseError::TypeBodyFailed(Box::new(crate::report::run_message(&e)))
-                    })?;
-                },
+                BodyLine::Prose | BodyLine::Declare => {}
             }
         }
         Ok(())
@@ -2809,40 +2875,58 @@ impl<'a> Parser<'a> {
     /// destructor is refused, since `drop` runs only the seed's own. The fill
     /// is a silent statement, the declare node the type variable's fill
     /// yields.
+    /// The number a rank slot's right side stands for: a literal molds to
+    /// f64 without running; a concrete expression runs now, on the pass's
+    /// runtime, after everything parsed before it (a rank may read a
+    /// variable). Anything else is [`ParseError::NonComptimeRank`].
+    fn rank_value(&mut self, value: DyadPtr, read: DyadPtr) -> Result<f64, ParseError> {
+        use crate::identities::numtype::NumType;
+        // SAFETY: `value` is a reduced dyad from the store.
+        let nt = match unsafe { crate::identities::numtype_of(&self.types, value) } {
+            crate::identities::Operand::Literal => None,
+            crate::identities::Operand::Concrete(nt) => Some(nt),
+            _ => return Err(ParseError::NonComptimeRank),
+        };
+        let bits = match nt {
+            None => crate::identities::rational::mold_to(read, NumType::F64)
+                .ok_or(ParseError::UncomputableLiteral)?,
+            Some(_) => {
+                self.drain()?;
+                // SAFETY: as above.
+                unsafe { self.rt.run(value) }.map_err(|_| ParseError::NonComptimeRank)?
+            }
+        };
+        Ok(match nt {
+            None | Some(NumType::F64) => f64::from_bits(bits as u64),
+            Some(NumType::F32) => f64::from(f32::from_bits(bits as u32)),
+            Some(_) => bits as f64,
+        })
+    }
+
     pub(crate) fn slot_fill(
         &mut self,
         kind: SlotKind,
         value: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
-        use crate::identities::numtype::NumType;
         let types = self.types;
         // SAFETY: `value` is a reduced dyad from the store.
         let read = unsafe { types.through(value) };
+        // A rank is a number the pass needs now; computed before the open
+        // definition is borrowed, since computing it may run what stands
+        // before it.
+        let rank = match kind {
+            SlotKind::ParseRank | SlotKind::LexRank => Some(self.rank_value(value, read)?),
+            _ => None,
+        };
         let def = self.definitions.last_mut().expect("slot_of found an open definition");
         match kind {
-            SlotKind::ParseRank | SlotKind::LexRank => {
-                // SAFETY: as above.
-                let nt = match unsafe { crate::identities::numtype_of(&types, value) } {
-                    crate::identities::Operand::Literal => None,
-                    crate::identities::Operand::Concrete(nt) => Some(nt),
-                    _ => return Err(ParseError::NonComptimeRank),
-                };
-                let bits = match nt {
-                    None => crate::identities::rational::mold_to(read, NumType::F64)
-                        .ok_or(ParseError::UncomputableLiteral)?,
-                    Some(_) => {
-                        // SAFETY: as above.
-                        unsafe { self.rt.run(value) }.map_err(|_| ParseError::NonComptimeRank)?
-                    }
-                };
-                let rank = match nt {
-                    None | Some(NumType::F64) => f64::from_bits(bits as u64),
-                    Some(NumType::F32) => f64::from(f32::from_bits(bits as u32)),
-                    Some(_) => bits as f64,
-                };
-                if kind == SlotKind::ParseRank {
+            SlotKind::ParseRank => {
+                if let Some(rank) = rank {
                     def.parse_rank = rank;
-                } else {
+                }
+            }
+            SlotKind::LexRank => {
+                if let Some(rank) = rank {
                     def.lex_rank = Some(rank);
                 }
             }
@@ -3835,6 +3919,9 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `call` must be a reduced call node from the store.
     unsafe fn eval_type_call(&mut self, call: DyadPtr) -> Result<DyadPtr, ParseError> {
+        // The pass needs the identity now: what stands before the call runs
+        // first, so the call reads committed state.
+        self.drain()?;
         let bits = self.rt.run(call).map_err(|_| ParseError::NonComptimeTypeCall)?;
         let node = bits as usize as DyadPtr;
         // The bits are read as a node address, so they must be one. A `-> type`
@@ -4206,15 +4293,15 @@ impl<'a> Parser<'a> {
     pub fn parse_sequence(&mut self) -> Result<DyadPtr, ParseError> {
         // The block's scope node: the membership key while parsing and, when the
         // sequence is real, the sequence node itself.
-        // `pending_defers` carries one entry per open scope, so its length is
-        // the nesting depth; past the limit the parse is the checked error
+        // `open` carries one entry per open scope, so its length is the
+        // nesting depth; past the limit the parse is the checked error
         // rather than a Rust stack overflow (#80).
-        if self.pending_defers.len() >= MAX_BRACKET_DEPTH {
+        if self.open.len() >= MAX_BRACKET_DEPTH {
             return Err(ParseError::TooDeep);
         }
         let scope = self.store.alloc_raw(self.types.scope, std::ptr::null_mut());
         self.scopes.push(scope);
-        self.pending_defers.push(Vec::new());
+        self.open.push(OpenScope::default());
         let mut exprs = Vec::new();
         // The places this scope's own teardowns will free — what the escape check
         // below tests its tail against (issue #49).
@@ -4231,9 +4318,9 @@ impl<'a> Parser<'a> {
             // so the defer sits at its source position — the right LIFO rank
             // among other statements' defers, and `scope::run` runs them all at
             // scope exit. Nested blocks drained their own before returning.
-            let depth = self.pending_defers.len() - 1;
-            if !self.pending_defers[depth].is_empty() {
-                let drained = std::mem::take(&mut self.pending_defers[depth]);
+            let depth = self.open.len() - 1;
+            if !self.open[depth].defers.is_empty() {
+                let drained = std::mem::take(&mut self.open[depth].defers);
                 for &d in &drained {
                     // SAFETY: `d` is a `defer free <place>` node the binding site
                     // just built.
@@ -4243,7 +4330,10 @@ impl<'a> Parser<'a> {
             }
         }
         self.scopes.pop();
-        self.pending_defers.pop();
+        // What the block parsed and did not run runs when the block runs; what
+        // it did run (a drain the pass needed) stands in the body as its
+        // result, read then.
+        self.open.pop();
         // Prose is invisible to value flow, and so is a `defer` (it runs at exit,
         // never as the tail): the expression count and the tail below are taken
         // over the non-comment, non-defer expressions.
@@ -4328,6 +4418,12 @@ impl<'a> Parser<'a> {
             // What the last segment yielded — its expression and the prose
             // lifted out of it, in source order — goes out first.
             if let Some(item) = self.queued.pop_front() {
+                // Where parse order is run order, the item is pending: it runs
+                // when the pass needs a value ([`Self::drain`]) or when its
+                // scope runs. A deferred body's item runs with the body.
+                if self.runtime_depth == 0 {
+                    self.open.last_mut().expect("the root scope is open").unrun.push(item);
+                }
                 return Some(Ok(item));
             }
             self.skip_whitespace();
@@ -4570,10 +4666,7 @@ impl<'a> Parser<'a> {
                 )?;
                 let defer_node =
                     crate::identities::drop_model::build_defer(self.store, &self.types, free_node);
-                self.pending_defers
-                    .last_mut()
-                    .expect("a scope's defer list is open")
-                    .push(defer_node);
+                self.open.last_mut().expect("a scope's defer list is open").defers.push(defer_node);
                 init
             } else if (*read).ty != self.types.rational
                 && matches!(
@@ -4811,9 +4904,11 @@ impl<'a> Parser<'a> {
     }
 
     /// The nested top-to-bottom pass over an imported file: parse each
-    /// statement and run it — the one pass, on the pass's one runtime —
-    /// collecting the `pub` declarations' (name, identity) pairs and the
-    /// file's tail node. On failure the message is returned with
+    /// statement, pending, and run the file at its end — a file loads once
+    /// and a second import must find it ran — collecting the `pub`
+    /// declarations' (name, identity) pairs and the file's tail node, which
+    /// is then its ran form or a read, so running the import node never runs
+    /// the file again (#88). On failure the message is returned with
     /// [`Parser::offset`] left at the stuck point in the imported source.
     fn run_imported(&mut self) -> Result<(Vec<(String, DyadPtr)>, DyadPtr), String> {
         let mut pubs = Vec::new();
@@ -4821,9 +4916,8 @@ impl<'a> Parser<'a> {
         while let Some(item) = self.parse_next() {
             let node = item.map_err(|e| crate::report::parse_message(&e))?;
             // SAFETY: `node` was just parsed into the store, which outlives
-            // the pass; the runtime works off raw handles.
+            // the pass.
             unsafe {
-                self.rt.run(node).map_err(|e| crate::report::run_message(&e))?;
                 if (*node).ty != self.types.comment_ {
                     tail = node;
                 }
@@ -4846,6 +4940,7 @@ impl<'a> Parser<'a> {
         if !self.source[self.pos..].trim_start().is_empty() {
             return Err("unexpected `)` — no scope is open here".to_string());
         }
+        self.drain().map_err(|e| crate::report::parse_message(&e))?;
         Ok((pubs, tail))
     }
 

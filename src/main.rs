@@ -173,11 +173,19 @@ fn run_line(source: &str) -> ExitCode {
     // becomes the line's value). An import node's value displays through the
     // imported file's own tail; a declaration-only import counts as ran work
     // with nothing to print.
+    // The items are pending as they parse and run when the pass needs a
+    // value or at the end, in order (DESIGN ›Build and run are one
+    // self-directing pass‹, 13 September 2026): a run error is a parse error
+    // here, reported the same way, wherever it surfaces.
     let mut last = None;
     let mut ran_something = false;
     while let Some(item) = p.parse_next() {
         let node = match item {
             Ok(node) => node,
+            Err(ParseError::Run(e)) => {
+                eprintln!("{path}: run error: {}", report::run_message(&e));
+                return ExitCode::FAILURE;
+            }
             Err(e) => {
                 eprintln!(
                     "{}",
@@ -186,39 +194,28 @@ fn run_line(source: &str) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        // SAFETY: `node` and everything it reaches were just parsed into the
-        // store, which lives for the rest of this function.
-        match unsafe { p.value_of(node) } {
-            Ok(bits) => {
-                // SAFETY: `node` is the valid dyad just parsed.
-                unsafe {
-                    if (*node).ty == engine.core.import_ {
-                        ran_something = true;
-                        // A value tail is the import's value; a statement tail
-                        // (a library ending in a declaration) shows nothing.
-                        let tail = seed::identities::import::tail_of(node);
-                        if !tail.is_null() && !is_silent_tail(&engine.core, tail) {
-                            last = Some((tail, bits));
-                        }
-                    } else if (*node).ty != types.comment_ {
-                        ran_something = true;
-                        // A statement shows nothing, the same test an import's
-                        // tail takes and the same policy the REPL applies.
-                        // `=` yields nothing (DESIGN ›The scope's constructor
-                        // is the driver‹, 8 September 2026), so
-                        // `logos 'x := i32 0, x = 5'` printed 5 where the REPL
-                        // and a file both stayed silent; this line is what
-                        // run_line's own promise that "the command line and
-                        // REPL agree" was missing.
-                        if !is_silent_tail(&engine.core, node) {
-                            last = Some((node, bits));
-                        }
-                    }
+        // SAFETY: `node` is the valid dyad just parsed.
+        unsafe {
+            if (*node).ty == engine.core.import_ {
+                ran_something = true;
+                // A value tail is the import's value; a statement tail (a
+                // library ending in a declaration) shows nothing.
+                let tail = seed::identities::import::tail_of(node);
+                if !tail.is_null() && !is_silent_tail(&engine.core, tail) {
+                    last = Some(tail);
                 }
-            }
-            Err(e) => {
-                eprintln!("{path}: {}", report::parse_message(&e));
-                return ExitCode::FAILURE;
+            } else if (*node).ty != types.comment_ {
+                ran_something = true;
+                // A statement shows nothing, the same test an import's tail
+                // takes and the same policy the REPL applies. `=` yields
+                // nothing (DESIGN ›The scope's constructor is the driver‹, 8
+                // September 2026), so `logos 'x := i32 0, x = 5'` printed 5
+                // where the REPL and a file both stayed silent; this line is
+                // what run_line's own promise that "the command line and REPL
+                // agree" was missing.
+                if !is_silent_tail(&engine.core, node) {
+                    last = Some(node);
+                }
             }
         }
     }
@@ -231,6 +228,25 @@ fn run_line(source: &str) -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
+    // The root scope's own run: what the top level has not run yet, in order.
+    // The tail's value is read afterwards — an item that ran answers from its
+    // cell, a bare name is read — and before the teardowns, which may free
+    // what it points at.
+    if let Err(e) = p.finish() {
+        eprintln!("{path}: {}", report::parse_message(&e));
+        return ExitCode::FAILURE;
+    }
+    let last = match last {
+        // SAFETY: `node` is a valid dyad the parser built.
+        Some(node) => match unsafe { p.value_of(node) } {
+            Ok(bits) => Some((node, bits)),
+            Err(e) => {
+                eprintln!("{path}: {}", report::parse_message(&e));
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
 
     // The top level's own scope exit (issue #49): the teardowns top-level
     // owning bindings inserted run LIFO at program end. A nested scope ran its

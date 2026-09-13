@@ -1068,3 +1068,48 @@ fn a_dyad_is_built_from_a_type_and_a_value() {
         );
     }
 }
+
+/// Run one command line and return its stdout, asserting success.
+fn line(src: &str) -> String {
+    let out = logos().arg(src).output().unwrap();
+    assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8_lossy(&out.stdout).trim_end().to_string()
+}
+
+#[test]
+fn an_import_tail_runs_once() {
+    // #88: the imported file's tail ran once in the pass and again whenever
+    // the import node ran, and once more per repeated import of the file.
+    // The file runs at the import, its tail stands in the graph as the item
+    // that ran, and running the import node reads it.
+    assert_eq!(line("import ./tests/fixtures/counter.logos, c@"), "1");
+    let (echoes, stderr) =
+        repl(b"import ./tests/fixtures/counter.logos\nimport ./tests/fixtures/counter.logos\nc@\n");
+    assert_eq!(echoes, ["1", "1", "1"], "stderr: {stderr}");
+}
+
+#[test]
+fn the_pass_runs_only_as_far_as_it_must_in_order_and_never_twice() {
+    // DESIGN ›Build and run are one self-directing pass‹ (13 September 2026).
+    let bump = "x := i32 0, bump := fn () -> i32 ( x = x + 1, x )";
+    // Order is left to right: a bracket does not run early for being one.
+    assert_eq!(line(&format!("{bump}, bump() + ( x = 10, x )")), "11");
+    // An argument list's items run once, at the call.
+    let add = "f := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b )";
+    assert_eq!(line(&format!("{bump}, {add}, f(bump(), bump()) * 10 + x")), "32");
+    // A loop's condition is a body: never run in the pass.
+    assert_eq!(line("x := i32 0, while (x < 3) ( x = x + 1 ), x"), "3");
+    // Where the pass must read a box, what stands before the read runs
+    // first, and an item that ran is read when its block runs, never run
+    // again: `bump()` once gives 7; twice would give 9.
+    let block = "y := ( a := type ?, a = i32, bump(), z := a 5, z + x ), y + x";
+    assert_eq!(line(&format!("{bump}, {block}")), "7");
+    // The same text means the same thing inside an expression.
+    assert_eq!(line("y := ( a := type ?, a = i32, x := a 5, x ) + 1, y"), "6");
+    // And in the REPL, where a run the pass needed can fail and the line
+    // then leaves no trace.
+    let (echoes, stderr) =
+        repl(b"( a := type ?, a = i32, x := a 5, x )\nq := ( p := @i32 ?, p@ )\nq := i32 4\nq\n");
+    assert_eq!(echoes, ["5", "4"], "stderr: {stderr}");
+    assert!(stderr.contains("holds nothing yet"), "stderr: {stderr}");
+}

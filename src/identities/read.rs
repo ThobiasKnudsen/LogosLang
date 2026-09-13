@@ -264,6 +264,9 @@ mod tests {
 
     /// Parse `src` as one top-level sequence in a fresh core and return the
     /// sequence's expressions in order, with the core and store kept alive.
+    /// An item the pass had to run stands in the sequence as its ran form
+    /// ([`crate::identities::ran`]); these tests ask what each item *is*, so
+    /// they look through it.
     fn parse_seq(src: &str) -> (Store, Core, Vec<DyadPtr>) {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
@@ -274,8 +277,14 @@ mod tests {
             let mut p = Parser::new(src, &mut store, &mut trie, core.types(), scopes);
             p.parse_sequence().unwrap()
         };
+        let types = core.types();
         // SAFETY: a sequence node's first slot is its expression array.
-        let exprs = unsafe { array::items(*((*seq).value as *const DyadPtr)).to_vec() };
+        let exprs = unsafe {
+            array::items(*((*seq).value as *const DyadPtr))
+                .iter()
+                .map(|&e| crate::identities::ran::expr_of(&types, e))
+                .collect()
+        };
         (store, core, exprs)
     }
 

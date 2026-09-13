@@ -23,9 +23,12 @@
 //! a name's record; the reading rule and `run` do not, which is the point.
 //! Like `scope`, `ran` is built by the parser and never spelled in source.
 
+use cranelift_codegen::ir::Value;
+
 use super::callable::{self, Callables};
 use super::numtype::NumType;
 use super::{meta, Cx};
+use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::parse::{Assoc, CoreTypes};
 use crate::run::{RunError, Runtime};
@@ -36,8 +39,8 @@ const EXPR: usize = 0;
 /// The slot holding the cell with the run's result.
 const VALUE: usize = 1;
 
-/// Register `ran`: the operand record and the run leaf. Returns
-/// `(identity, leaf)`; the identity has no spelling.
+/// Register `ran`: the operand record, the run leaf, and the lowering.
+/// Returns `(identity, leaf)`; the identity has no spelling.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let record = meta::operand_record(
         cx,
@@ -48,6 +51,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     );
     let id = cx.store.alloc_raw(cx.type_, record);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
+    cx.lower.insert(id, lower);
     (id, leaf)
 }
 
@@ -101,6 +105,16 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     unsafe {
         let cell = *((*node).value as *const DyadPtr).add(VALUE);
         rt.run(cell)
+    }
+}
+
+/// Lower: the cell read, the same on both tiers — a scope that ran an item
+/// in the pass and is compiled whole afterwards reads the result it kept.
+fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: as [`run`].
+    unsafe {
+        let cell = *((*node).value as *const DyadPtr).add(VALUE);
+        lw.lower(cell)
     }
 }
 

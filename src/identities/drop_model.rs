@@ -522,7 +522,8 @@ mod tests {
         scopes.push(core.root_scope);
         let types = core.types();
         let root = {
-            let mut p = Parser::new(src, &mut store, &mut trie, types, scopes);
+            let mut p =
+                Parser::new(src, &mut store, &mut trie, types, scopes).with_lower(&core.lower);
             p.parse_sequence().expect("parse")
         };
         let mut rt = Runtime::new(core.types())
@@ -925,7 +926,8 @@ mod tests {
         let types = core.types();
         let src = "main := fn () -> i32 ( p := alloc i32 5, p@ ),\nmain.compile()";
         let root = {
-            let mut p = Parser::new(src, &mut store, &mut trie, types, scopes);
+            let mut p =
+                Parser::new(src, &mut store, &mut trie, types, scopes).with_lower(&core.lower);
             p.parse_sequence().expect("parse")
         };
         let mut rt = Runtime::new(core.types())
