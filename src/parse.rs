@@ -416,21 +416,23 @@ pub struct Resolved {
 /// Why a name could not be resolved or declared.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolveError {
-    /// The spelling is not in the name index at all (an unknown token).
-    Unknown,
+    /// The spelling is not in the name index at all (an unknown token): the
+    /// leading word at the position, or empty for no text at all.
+    Unknown(String),
     /// The spelling is known, but none of its declarations is in an open scope:
     /// a genuine out-of-scope use, distinct from an unknown one.
-    OutOfScope,
+    OutOfScope(String),
     /// More than one live candidate. Impossible under no-shadowing, so it signals
     /// a corrupt index.
-    Ambiguous,
-    /// A declaration would shadow a name already live in an open scope.
-    Shadowed,
+    Ambiguous(String),
+    /// Declaring the spelling would shadow a declaration of it that is still
+    /// live in an open scope.
+    Shadowed(String),
     /// The spelling is declared in an open scope, but an `own` or `drop` above
     /// made it dead: a read, a write, or a pass is refused, and only `:=` may
     /// follow (DESIGN ›Name resolution is scope-filtered‹, ruled 3 September
     /// 2026).
-    Dead,
+    Dead(String),
     /// Two declared spellings of equal `lex_rank` match the same length here:
     /// an inconsistency in the definitions, never a pick by declaration order
     /// (DESIGN ›The scope's constructor is the driver‹, ruled 10 September
@@ -438,6 +440,19 @@ pub enum ResolveError {
     Tied,
     /// The name index itself rejected the lookup (e.g. a bad regex pattern).
     Index(RegexTrieError),
+}
+
+/// The spelling an unknown-name error names: the leading run of word
+/// characters at the position, or the first character when the text starts
+/// with something else. Nothing matched, so this is the reader's best guess at
+/// what the writer meant as one name.
+fn unknown_spelling(text: &str) -> String {
+    let word = text.split(|c: char| !(c.is_alphanumeric() || c == '_')).next().unwrap_or("");
+    if word.is_empty() {
+        text.chars().next().map(String::from).unwrap_or_default()
+    } else {
+        word.to_string()
+    }
 }
 
 /// One act on the name index since the last [`ScopeStack::commit`], undone
@@ -681,7 +696,7 @@ impl ScopeStack {
         include_fresh: bool,
     ) -> Result<Resolved, ResolveError> {
         if text.is_empty() {
-            return Err(ResolveError::Unknown);
+            return Err(ResolveError::Unknown(String::new()));
         }
         let matches = trie.get_all_matches(text).map_err(ResolveError::Index)?;
         let bytes = text.as_bytes();
@@ -711,15 +726,18 @@ impl ScopeStack {
                 .filter(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead());
             let record = match (live.next(), live.next()) {
                 (None, _) => {
+                    let spelling = text[..m.matched].to_string();
                     if m.records.iter().any(|&r| self.is_open(fields(r).scope)) {
-                        why_none = Some(ResolveError::Dead);
+                        why_none = Some(ResolveError::Dead(spelling));
                     } else if why_none.is_none() {
-                        why_none = Some(ResolveError::OutOfScope);
+                        why_none = Some(ResolveError::OutOfScope(spelling));
                     }
                     continue;
                 }
                 (Some(r), None) => r,
-                (Some(_), Some(_)) => return Err(ResolveError::Ambiguous),
+                (Some(_), Some(_)) => {
+                    return Err(ResolveError::Ambiguous(text[..m.matched].to_string()))
+                }
             };
             match cands.iter_mut().find(|(r, _, _)| *r == record) {
                 Some(e) => e.1 = e.1.max(m.matched),
@@ -746,7 +764,7 @@ impl ScopeStack {
         match best {
             Some(_) if tied => Err(ResolveError::Tied),
             Some((_, _, r)) => Ok(r),
-            None => Err(why_none.unwrap_or(ResolveError::Unknown)),
+            None => Err(why_none.unwrap_or_else(|| ResolveError::Unknown(unknown_spelling(text)))),
         }
     }
 
@@ -770,9 +788,10 @@ impl ScopeStack {
         let scope = self.current().expect("declare needs an open scope");
         match self.resolve(trie, name) {
             // Already live in an open scope: shadowing is disallowed.
-            Ok(_) => return Err(ResolveError::Shadowed),
+            Ok(_) => return Err(ResolveError::Shadowed(name.to_string())),
             // Known but closed, unknown, or dead: all fine to declare here.
-            Err(ResolveError::OutOfScope | ResolveError::Unknown | ResolveError::Dead) => {}
+            Err(ResolveError::OutOfScope(_) | ResolveError::Unknown(_) | ResolveError::Dead(_)) => {
+            }
             // Ambiguous or an index error: surface it rather than declaring atop.
             Err(e) => return Err(e),
         }
@@ -813,7 +832,7 @@ impl ScopeStack {
             // SAFETY: every pointer the trie stores is a record dyad from the store.
             let fields = |r: DyadPtr| unsafe { *Record::of(r) };
             if records.iter().any(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead()) {
-                return Err(ResolveError::Shadowed);
+                return Err(ResolveError::Shadowed(key.to_string()));
             }
         }
         // SAFETY: `record` is a record dyad from the store, built for this pattern.
@@ -886,7 +905,7 @@ impl ScopeStack {
                 // SAFETY: every pointer the trie stores is a record dyad.
                 let fields = |r: DyadPtr| unsafe { *Record::of(r) };
                 if m.records.iter().any(|&r| fields(r).scope == scope && !fields(r).is_dead()) {
-                    return Err(ResolveError::Shadowed);
+                    return Err(ResolveError::Shadowed(name.to_string()));
                 }
             }
             Ok(_) | Err(RegexTrieError::NodeNotFound) => {}
@@ -2641,9 +2660,9 @@ impl<'a> Parser<'a> {
             // is scope-filtered‹; a per-record names store is recorded as
             // rejected).
             if relaxed {
-                self.declare_field_name(name, field)?;
+                self.declare_field_name(name, field, start)?;
             } else {
-                self.declare_name(name, field)?;
+                self.declare_name(name, field, start)?;
             }
             fields.push(field);
             if !self.consume_separator() {
@@ -2694,8 +2713,9 @@ impl<'a> Parser<'a> {
         let scope = self.store.alloc_raw(self.types.scope, std::ptr::null_mut());
         self.scopes.push(scope);
         let slots = self.types.slots;
+        let at = self.pos;
         for (name, marker) in SLOT_NAMES.iter().zip(slots) {
-            self.declare_field_name(name, marker)?;
+            self.declare_field_name(name, marker, at)?;
         }
         self.definitions.push(OpenType {
             scope,
@@ -3481,7 +3501,7 @@ impl<'a> Parser<'a> {
         // is inside.
         self.scopes.push_barrier();
         self.scopes.push(scope);
-        self.declare_name(name, var)?;
+        self.declare_name(name, var, nstart)?;
         // Parse-time rebinding is off inside a repeated body.
         self.runtime_depth += 1;
         self.expect_open()?;
@@ -4097,16 +4117,22 @@ impl<'a> Parser<'a> {
     /// Declare `name` in the current scope as `identity`, minting its record —
     /// one per declared name, a dyad of type `record` (DESIGN ›`mut` is a gate
     /// on the record‹) — and return it. Errors are the no-shadowing and index
-    /// errors of [`ScopeStack::declare`].
+    /// errors of [`ScopeStack::declare`], reported at `at`, the name's own
+    /// offset in the source, so the caret lands on the name and not where the
+    /// declaration happened to end.
     pub(crate) fn declare_name(
         &mut self,
         name: &str,
         identity: DyadPtr,
+        at: usize,
     ) -> Result<DyadPtr, ParseError> {
         let scope = self.scopes.current().expect("declare needs an open scope");
         let record = Record::alloc(self.store, self.types.record_, Record::new(identity, scope));
         // SAFETY: `record` was minted by `Record::alloc` just above.
-        unsafe { self.scopes.declare(self.trie, name, record) }.map_err(ParseError::Resolve)?;
+        if let Err(e) = unsafe { self.scopes.declare(self.trie, name, record) } {
+            self.pos = at;
+            return Err(ParseError::Resolve(e));
+        }
         Ok(record)
     }
 
@@ -4116,23 +4142,34 @@ impl<'a> Parser<'a> {
         &mut self,
         key: &str,
         identity: DyadPtr,
+        at: usize,
     ) -> Result<DyadPtr, ParseError> {
         let scope = self.scopes.current().expect("declare needs an open scope");
         let record = Record::alloc(self.store, self.types.record_, Record::new(identity, scope));
         // SAFETY: `record` was minted by `Record::alloc` just above.
-        unsafe { self.scopes.declare_pattern(self.trie, key, record) }
-            .map_err(ParseError::Resolve)?;
+        if let Err(e) = unsafe { self.scopes.declare_pattern(self.trie, key, record) } {
+            self.pos = at;
+            return Err(ParseError::Resolve(e));
+        }
         Ok(record)
     }
 
     /// Declare `name` as a field, checked against its siblings alone
-    /// ([`ScopeStack::declare_field`]).
-    fn declare_field_name(&mut self, name: &str, identity: DyadPtr) -> Result<DyadPtr, ParseError> {
+    /// ([`ScopeStack::declare_field`]); a failure is reported at `at`, the
+    /// name's offset.
+    fn declare_field_name(
+        &mut self,
+        name: &str,
+        identity: DyadPtr,
+        at: usize,
+    ) -> Result<DyadPtr, ParseError> {
         let scope = self.scopes.current().expect("declare needs an open scope");
         let record = Record::alloc(self.store, self.types.record_, Record::new(identity, scope));
         // SAFETY: `record` was minted by `Record::alloc` just above.
-        unsafe { self.scopes.declare_field(self.trie, name, record) }
-            .map_err(ParseError::Resolve)?;
+        if let Err(e) = unsafe { self.scopes.declare_field(self.trie, name, record) } {
+            self.pos = at;
+            return Err(ParseError::Resolve(e));
+        }
         Ok(record)
     }
 
@@ -4557,9 +4594,9 @@ impl<'a> Parser<'a> {
             self.store.alloc_raw(self.types.fn_type, std::ptr::null_mut())
         };
         let declared = if pattern.is_some() {
-            self.declare_pattern(name, placeholder)
+            self.declare_pattern(name, placeholder, tok.start)
         } else {
-            self.declare_name(name, placeholder)
+            self.declare_name(name, placeholder, tok.start)
         };
         let record = match declared {
             Ok(record) => record,
@@ -4951,13 +4988,15 @@ impl<'a> Parser<'a> {
     /// name already resolves to the same identity (the same file imported
     /// twice into one scope).
     fn publish(&mut self, pubs: &[(String, DyadPtr)]) -> Result<(), ParseError> {
+        // A collision is the import's: reported where the import stands.
+        let at = self.pos;
         for (name, identity) in pubs {
             if let Ok(r) = self.scopes.resolve(self.trie, name) {
                 if r.identity == *identity {
                     continue;
                 }
             }
-            self.declare_name(name, *identity)?;
+            self.declare_name(name, *identity, at)?;
         }
         Ok(())
     }
@@ -6179,8 +6218,8 @@ mod tests {
         unsafe { scopes.declare(&mut trie, "y", rec(dyad(1))) }.unwrap();
         scopes.pop(); // close the scope
 
-        assert_eq!(scopes.resolve(&trie, "y"), Err(ResolveError::OutOfScope));
-        assert_eq!(scopes.resolve(&trie, "nope"), Err(ResolveError::Unknown));
+        assert_eq!(scopes.resolve(&trie, "y"), Err(ResolveError::OutOfScope("y".into())));
+        assert_eq!(scopes.resolve(&trie, "nope"), Err(ResolveError::Unknown("nope".into())));
     }
 
     #[test]
@@ -6194,13 +6233,13 @@ mod tests {
         // Same scope: redeclaration rejected.
         assert_eq!(
             unsafe { scopes.declare(&mut trie, "a", rec(dyad(2))) },
-            Err(ResolveError::Shadowed)
+            Err(ResolveError::Shadowed("a".into()))
         );
         // Nested scope while the outer declaration is live: still rejected.
         scopes.push(inner);
         assert_eq!(
             unsafe { scopes.declare(&mut trie, "a", rec(dyad(3))) },
-            Err(ResolveError::Shadowed)
+            Err(ResolveError::Shadowed("a".into()))
         );
     }
 
@@ -6215,7 +6254,7 @@ mod tests {
 
         scopes.rollback(&mut trie);
         assert_eq!(scopes.resolve(&trie, "keep").unwrap().identity, dyad(1));
-        assert_eq!(scopes.resolve(&trie, "gone"), Err(ResolveError::Unknown));
+        assert_eq!(scopes.resolve(&trie, "gone"), Err(ResolveError::Unknown("gone".into())));
         // The rolled-back name is free again — no permanent "shadowed".
         unsafe { scopes.declare(&mut trie, "gone", rec(dyad(3))) }.unwrap();
         assert_eq!(scopes.resolve(&trie, "gone").unwrap().identity, dyad(3));
@@ -6232,7 +6271,7 @@ mod tests {
         assert_eq!(scopes.resolve(&trie, "alias").unwrap().identity, dyad(2));
         // The declare's journal entry still covers the rebound binding.
         scopes.rollback(&mut trie);
-        assert_eq!(scopes.resolve(&trie, "alias"), Err(ResolveError::Unknown));
+        assert_eq!(scopes.resolve(&trie, "alias"), Err(ResolveError::Unknown("alias".into())));
     }
 
     #[test]
@@ -6260,7 +6299,7 @@ mod tests {
         unsafe { scopes.declare(&mut trie, "a", a1) }.unwrap();
         unsafe { scopes.mark_dead(a1, dyad(50)) };
 
-        assert_eq!(scopes.resolve(&trie, "a"), Err(ResolveError::Dead));
+        assert_eq!(scopes.resolve(&trie, "a"), Err(ResolveError::Dead("a".into())));
         unsafe { scopes.declare(&mut trie, "a", rec(dyad(2))) }.unwrap();
         assert_eq!(scopes.resolve(&trie, "a").unwrap().identity, dyad(2));
         // The dead entry is still indexed: its range is what reflection reads.
@@ -6373,6 +6412,6 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(a);
         scopes.push(b); // both open at once
-        assert_eq!(scopes.resolve(&trie, "z"), Err(ResolveError::Ambiguous));
+        assert_eq!(scopes.resolve(&trie, "z"), Err(ResolveError::Ambiguous("z".into())));
     }
 }

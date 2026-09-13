@@ -207,11 +207,15 @@ pub fn parse_message(e: &ParseError) -> String {
 /// The human sentence for a name-resolution error.
 fn resolve_message(e: &ResolveError) -> String {
     match e {
-        ResolveError::Unknown => "unknown name".into(),
-        ResolveError::OutOfScope => "this name is not in scope here".into(),
-        ResolveError::Ambiguous => "this name is ambiguous here".into(),
-        ResolveError::Shadowed => "this name is shadowed here".into(),
-        ResolveError::Dead => "this name is dead here: it was moved or dropped above".into(),
+        ResolveError::Unknown(n) if n.is_empty() => "unknown name".into(),
+        ResolveError::Unknown(n) => format!("unknown name `{n}`"),
+        ResolveError::OutOfScope(n) => format!("`{n}` is not in scope here"),
+        ResolveError::Ambiguous(n) => format!("`{n}` is ambiguous here"),
+        ResolveError::Shadowed(n) => format!(
+            "`{n}` is already declared and still in scope; declaring it again would \
+             leave the first one shadowed (a name ended by `drop {n}` may be declared again)"
+        ),
+        ResolveError::Dead(n) => format!("`{n}` is dead here: it was moved or dropped above"),
         ResolveError::Tied => {
             "two spellings match here with the same lex_rank; give one of them a higher lex_rank"
                 .into()

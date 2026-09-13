@@ -453,7 +453,7 @@ fn the_repl_reuses_a_name_after_drop() {
     // name refuses a read instead of reporting "shadowed" forever.
     let (echoes, stderr) = repl(b"n := i32 5\ndrop n\nn\nn := i32 6\nn\n");
     assert_eq!(echoes, ["6"], "stderr: {stderr}");
-    assert!(stderr.contains("<repl>:1:1: error: this name is dead here"), "stderr: {stderr}");
+    assert!(stderr.contains("<repl>:1:1: error: `n` is dead here"), "stderr: {stderr}");
 }
 
 #[test]
@@ -838,8 +838,16 @@ fn a_field_the_record_has_not_is_the_same_error_as_an_undeclared_dot_field() {
     // the same resolution a `.` read runs against a user record's scope, so
     // the two report the same way, whether the spelling exists elsewhere
     // (`type`, `scope`: out of scope) or nowhere (`nonexistent`: unknown).
+    // The message names the spelling, which is the one thing the two probes
+    // differ in, so it is blanked before the two are compared.
     fn message(stderr: &str) -> String {
-        stderr.lines().next().and_then(|l| l.split("error: ").nth(1)).unwrap_or("").to_string()
+        let m = stderr.lines().next().and_then(|l| l.split("error: ").nth(1)).unwrap_or("");
+        m.split('`')
+            .enumerate()
+            .filter(|(i, _)| i % 2 == 0)
+            .map(|(_, part)| part)
+            .collect::<Vec<_>>()
+            .join("`…`")
     }
     let (_e, via_record) = repl(b"x := i32 5\nx:type\n");
     let (_e, via_dot) = repl(b"p := type (instance (a := i32 ?))\nq := p(1)\nq.scope\n");
@@ -1112,4 +1120,19 @@ fn the_pass_runs_only_as_far_as_it_must_in_order_and_never_twice() {
         repl(b"( a := type ?, a = i32, x := a 5, x )\nq := ( p := @i32 ?, p@ )\nq := i32 4\nq\n");
     assert_eq!(echoes, ["5", "4"], "stderr: {stderr}");
     assert!(stderr.contains("holds nothing yet"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_name_error_names_the_name_and_points_at_it() {
+    // A parameter that reuses a session name is the no-shadowing error
+    // (DESIGN ›Name resolution is scope-filtered‹). The message says which
+    // name, and the caret sits on that name, not where the declaration
+    // happened to end: `x` is the tenth character of the line.
+    let (echoes, stderr) = repl(b"x := i32 1\nf := fn (x:=i32 ?, y:=i32 ?) -> i32 ( x + y )\n");
+    assert!(echoes.is_empty(), "stderr: {stderr}");
+    assert!(stderr.contains("<repl>:1:10: error: `x` is already declared"), "stderr: {stderr}");
+    // The other name errors name their name too.
+    let (_echoes, stderr) = repl(b"zz + 1\nq := i32 1\n( q := 2 )\n");
+    assert!(stderr.contains("unknown name `zz`"), "stderr: {stderr}");
+    assert!(stderr.contains("<repl>:1:3: error: `q` is already declared"), "stderr: {stderr}");
 }

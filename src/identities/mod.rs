@@ -4426,7 +4426,7 @@ mod tests {
         check("fn () -> i32 ( p := point(1, 2) )", ParseError::StatementAsValue);
         check(
             "( p := point(1, 2), p.z )",
-            ParseError::Resolve(crate::parse::ResolveError::Unknown),
+            ParseError::Resolve(crate::parse::ResolveError::Unknown("z".into())),
         );
     }
 
@@ -4489,7 +4489,9 @@ mod tests {
         let mut p = Parser::new("x", &mut store, &mut trie, core.types(), s);
         assert_eq!(
             p.parse_expression(),
-            Err(crate::parse::ParseError::Resolve(crate::parse::ResolveError::OutOfScope))
+            Err(crate::parse::ParseError::Resolve(crate::parse::ResolveError::OutOfScope(
+                "x".into()
+            )))
         );
     }
 
@@ -4746,7 +4748,9 @@ mod tests {
         let mut p = Parser::new("y := 2", &mut store, &mut trie, core.types(), s);
         assert_eq!(
             p.parse_expression(),
-            Err(crate::parse::ParseError::Resolve(crate::parse::ResolveError::Shadowed))
+            Err(crate::parse::ParseError::Resolve(crate::parse::ResolveError::Shadowed(
+                "y".into()
+            )))
         );
     }
 

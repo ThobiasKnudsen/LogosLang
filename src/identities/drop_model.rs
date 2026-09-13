@@ -644,7 +644,7 @@ mod tests {
         // it a no-op is still there for the scope's own `defer free a`.
         assert_eq!(
             parse_err("a := alloc i32 4,\ndrop a,\nfree a,\n1"),
-            ParseError::Resolve(ResolveError::Dead)
+            ParseError::Resolve(ResolveError::Dead("a".into()))
         );
     }
 
@@ -664,7 +664,7 @@ mod tests {
     fn a_read_after_own_is_refused() {
         assert_eq!(
             parse_err("a := alloc i32 7,\nb := own a,\na@"),
-            ParseError::Resolve(ResolveError::Dead)
+            ParseError::Resolve(ResolveError::Dead("a".into()))
         );
     }
 
@@ -674,7 +674,7 @@ mod tests {
         // a dead name takes no writes either, only `:=`.
         assert_eq!(
             parse_err("a := alloc i32 7,\nb := own a,\na = b"),
-            ParseError::Resolve(ResolveError::Dead)
+            ParseError::Resolve(ResolveError::Dead("a".into()))
         );
     }
 
@@ -686,7 +686,7 @@ mod tests {
             parse_err(
                 "h := fn (x := i32 ?, p := @i32 ?) -> i32 ( x ),\na := alloc i32 1,\nh(drop a, a)"
             ),
-            ParseError::Resolve(ResolveError::Dead)
+            ParseError::Resolve(ResolveError::Dead("a".into()))
         );
     }
 
@@ -697,7 +697,7 @@ mod tests {
         // whether its teardown fires. A redeclaration after the block is fine.
         assert_eq!(
             parse_err("a := alloc i32 7,\nc := i32 1,\nif (c == 1) ( b := own a, b@ ),\na@"),
-            ParseError::Resolve(ResolveError::Dead)
+            ParseError::Resolve(ResolveError::Dead("a".into()))
         );
         let (v, live) =
             run("a := alloc i32 7,\nc := i32 1,\nif (c == 1) ( b := own a, b@ ),\na := alloc i32 9,\na@");
@@ -732,7 +732,7 @@ mod tests {
         assert_eq!(live, 0);
         assert_eq!(
             parse_err("n := i32 5,\ndrop n,\nn + 1"),
-            ParseError::Resolve(ResolveError::Dead)
+            ParseError::Resolve(ResolveError::Dead("n".into()))
         );
     }
 
