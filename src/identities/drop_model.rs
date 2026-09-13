@@ -241,7 +241,7 @@ unsafe fn heap_free(ptr: *mut u8, width: usize) {
 /// # Safety
 /// `pointee` must be a scalar or pointer logos node.
 unsafe fn pointee_width(pointee: DyadPtr) -> usize {
-    numtype::numtype_of_type(pointee).bytes()
+    numtype::of_type_node(pointee).bytes()
 }
 
 /// Build an `alloc` node from its parsed initializer. The pointee logos is the

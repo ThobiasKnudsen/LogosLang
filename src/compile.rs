@@ -33,9 +33,7 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{default_libcall_names, FuncId, Linkage, Module};
 
 use crate::dyad::{frame_ref, DyadPtr};
-use crate::identities::numtype::{
-    is_void_type, numtype_of_type, of_type_node, ArithOp, CmpOp, NumType,
-};
+use crate::identities::numtype::{is_void_type, of_type_node, ArithOp, CmpOp, NumType};
 use crate::identities::read::{read_kind, Dispatch, Read};
 use crate::identities::{numtype_of, operands, Operand};
 use crate::parse::{fn_frame_size, CoreTypes, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
@@ -274,8 +272,8 @@ impl Lowerer<'_, '_> {
         if let Some(stats) = self.collect.as_deref_mut() {
             if let Some((_, off)) = frame_ref((*node).value) {
                 let logos = (*node).ty;
-                if crate::identities::numtype::is_scalar_place_type(logos) {
-                    stats.dirty.push((off, numtype_of_type(logos).bytes()));
+                if crate::identities::numtype::is_scalar_type(logos) {
+                    stats.dirty.push((off, of_type_node(logos).bytes()));
                 } else {
                     // A non-scalar place (an instance base, a bare parameter's
                     // container): the escaping extent is unknown here, so
@@ -927,8 +925,8 @@ impl Lowerer<'_, '_> {
             None
         } else if out == self.types.type_ {
             Some(NumType::I64)
-        } else if crate::identities::numtype::is_scalar_place_type(out) {
-            Some(numtype_of_type(out))
+        } else if crate::identities::numtype::is_scalar_type(out) {
+            Some(of_type_node(out))
         } else {
             return Err(CompileError::NotLowerable(out));
         };
@@ -1112,8 +1110,8 @@ unsafe fn compile_fn_body(
         None
     } else if out == types.type_ {
         Some(NumType::I64)
-    } else if crate::identities::numtype::is_scalar_place_type(out) {
-        Some(numtype_of_type(out))
+    } else if crate::identities::numtype::is_scalar_type(out) {
+        Some(of_type_node(out))
     } else {
         return Err(CompileError::NotLowerable(out));
     };
@@ -1323,21 +1321,18 @@ unsafe fn build_pass(
                 return Err(CompileError::NotLowerable(p));
             };
             let logos = (*p).ty;
-            let scalar = crate::identities::numtype::is_scalar_place_type(logos);
+            let scalar = crate::identities::numtype::is_scalar_type(logos);
             if let Some(&(var, _)) = promoted.get(&off) {
                 // A promoted container parameter (a logos-valued `t : logos`,
                 // promoted through its i64 reads) keeps the full container.
-                let vn = if scalar {
-                    narrow_from_i64(&mut builder, v, numtype_of_type(logos))
-                } else {
-                    v
-                };
+                let vn =
+                    if scalar { narrow_from_i64(&mut builder, v, of_type_node(logos)) } else { v };
                 builder.def_var(var, vn);
                 continue;
             }
             let slot = frame_slot.expect("parameters occupy the frame, so a frame slot exists");
             if scalar {
-                let vn = narrow_from_i64(&mut builder, v, numtype_of_type(logos));
+                let vn = narrow_from_i64(&mut builder, v, of_type_node(logos));
                 builder.ins().stack_store(vn, slot, off as i32);
             } else {
                 builder.ins().stack_store(v, slot, off as i32);

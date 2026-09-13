@@ -909,7 +909,7 @@ unsafe fn call_return_numtype(fn_node: DyadPtr) -> NumType {
     if out.is_null() {
         NumType::I32
     } else {
-        numtype::numtype_of_type(out)
+        numtype::of_type_node(out)
     }
 }
 
@@ -1018,35 +1018,11 @@ pub(crate) unsafe fn is_type_value(types: &CoreTypes, node: DyadPtr) -> bool {
 /// `node` must be null or a valid dyad from the store.
 pub(crate) unsafe fn type_identity_of(types: &CoreTypes, node: DyadPtr) -> Option<DyadPtr> {
     let node = types.through(node);
-    if !node.is_null() && (*node).ty == types.type_ && !crate::dyad::is_place((*node).value) {
+    if read::read_kind(types, node) == read::Read::Identity {
         Some(node)
     } else {
         None
     }
-}
-
-/// Whether `node` is a *value* of logos `type`: an identity in hand, or a
-/// place that will hold one when the program runs. What may be passed,
-/// stored, and compared, as against what the pass may elaborate over
-/// ([`type_identity_of`]).
-///
-/// # Safety
-/// As [`type_identity_of`].
-pub(crate) unsafe fn is_type_valued(types: &CoreTypes, node: DyadPtr) -> bool {
-    let node = types.through(node);
-    !node.is_null() && (*node).ty == types.type_
-}
-
-/// Whether what `node` yields at run is a *node address*: a type value
-/// (an identity, or a place holding one), or a dyad — the `dyad ?` box and the
-/// view alike. These are the values that compare by identity rather than by
-/// width, which is why `==` over two of them is one 64-bit equality.
-///
-/// # Safety
-/// As [`type_identity_of`].
-pub(crate) unsafe fn is_node_valued(types: &CoreTypes, node: DyadPtr) -> bool {
-    let node = types.through(node);
-    !node.is_null() && ((*node).ty == types.type_ || (*node).ty == types.dyad_)
 }
 
 /// The display spelling of a logos-value (`i32`, `bool`, `type`, …). Numeric
@@ -1379,7 +1355,11 @@ pub(crate) unsafe fn commit_call_args(
         // as a parameter (DESIGN ›A type is a comptime value‹, 12 September
         // 2026).
         if pty == types.dyad_ {
-            if !is_node_valued(types, *arg) {
+            let ok = matches!(
+                read::read_kind(types, *arg),
+                read::Read::Identity | read::Read::Address | read::Read::Container(_)
+            ) && !matches!(read::read_kind(types, *arg), read::Read::Container(c) if c.is_null());
+            if !ok {
                 return Err(ParseError::TypeMismatch);
             }
             continue;
@@ -1388,7 +1368,12 @@ pub(crate) unsafe fn commit_call_args(
         // (DESIGN ›A type is a comptime value‹, 12 September 2026), and
         // nothing else: a number into one would travel as an address.
         if pty == types.type_ {
-            if !is_type_valued(types, *arg) {
+            let ok = match read::read_kind(types, *arg) {
+                read::Read::Identity => true,
+                read::Read::Container(c) => c == types.type_,
+                _ => false,
+            };
+            if !ok {
                 return Err(ParseError::TypeMismatch);
             }
             continue;

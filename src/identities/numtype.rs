@@ -295,38 +295,15 @@ pub(crate) unsafe fn is_scalar_type(type_node: DyadPtr) -> bool {
         return false;
     }
     let v = (*type_node).value;
+    // A type with no record is no scalar. This used to answer `true` so that
+    // an undefined placeholder read as an 8-byte container; the reading rule
+    // names that case itself now (`Read::Container`, `Read::Undefined`), and
+    // its debug assertion has shown no such type reaches a type slot (#82).
     if v.is_null() {
-        return true;
+        return false;
     }
     let tag = *(v as *const u8);
     tag < VOID_TAG || tag == ADDR_TAG
-}
-
-/// [`is_scalar_type`] with the null case decided: a *declared* logos that may
-/// be a record logos. A record logos is never a scalar — its [`RECORD_TAG`]
-/// (23) sits past the scalar range, so the ordinary tag read excludes it
-/// (since issue #47 a record logos carries a tagged layout record like every
-/// other logos, so no identity-based exclusion is needed).
-///
-/// [`RECORD_TAG`]: super::meta::RECORD_TAG
-///
-/// # Safety
-/// `type_node` must be null or a valid logos node from the store.
-pub(crate) unsafe fn is_scalar_place_type(type_node: DyadPtr) -> bool {
-    !type_node.is_null() && is_scalar_type(type_node)
-}
-
-/// The `NumType` of a logos node, or `I32` for a fixed-width scalar logos without a
-/// `NumType` tag (e.g. `bool`, physically an i32).
-///
-/// # Safety
-/// `type_node` must be a valid logos node from the store.
-pub(crate) unsafe fn numtype_of_type(type_node: DyadPtr) -> NumType {
-    if (*type_node).value.is_null() {
-        NumType::I32
-    } else {
-        of_type_node(type_node)
-    }
 }
 
 /// Read the scalar stored at `slot`, typed by `type_node`, into the `i64`
@@ -338,7 +315,7 @@ pub(crate) unsafe fn numtype_of_type(type_node: DyadPtr) -> NumType {
 pub(crate) unsafe fn read_scalar(type_node: DyadPtr, slot: *const u8) -> i64 {
     use std::ptr::read_unaligned as rd;
     use NumType::*;
-    match numtype_of_type(type_node) {
+    match of_type_node(type_node) {
         I8 => i64::from(rd(slot as *const i8)),
         I16 => i64::from(rd(slot as *const i16)),
         I32 => i64::from(rd(slot as *const i32)),
@@ -358,7 +335,7 @@ pub(crate) unsafe fn read_scalar(type_node: DyadPtr, slot: *const u8) -> i64 {
 /// # Safety
 /// `type_node` is a valid logos node; `slot` points at storage of that logos's width.
 pub(crate) unsafe fn write_scalar(type_node: DyadPtr, slot: *mut u8, bits: i64) {
-    write_scalar_nt(numtype_of_type(type_node), slot, bits)
+    write_scalar_nt(of_type_node(type_node), slot, bits)
 }
 
 /// [`write_scalar`] with the width already resolved to a `NumType` — the form a

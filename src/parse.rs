@@ -2134,12 +2134,14 @@ impl<'a> Parser<'a> {
                         // *layout* waits on a runtime type is the thing that
                         // stays refused". Named, rather than left to fall
                         // through as two stray cells.
-                        if crate::identities::type_identity_of(&types, d).is_some() {
-                            Some(d)
-                        } else if crate::identities::is_type_valued(&types, d) {
-                            return Err(ParseError::TypeKnownOnlyAtRun);
-                        } else {
-                            None
+                        match crate::identities::read::read_kind(&types, d) {
+                            crate::identities::read::Read::Identity => Some(d),
+                            crate::identities::read::Read::Container(t)
+                                if t == types.type_ || t == types.dyad_ =>
+                            {
+                                return Err(ParseError::TypeKnownOnlyAtRun);
+                            }
+                            _ => None,
                         }
                     }
                 }
@@ -2547,8 +2549,8 @@ impl<'a> Parser<'a> {
             .map(|&f| {
                 // SAFETY: `f` is the field dyad just built.
                 let logos = unsafe { (*f).ty };
-                if unsafe { crate::identities::numtype::is_scalar_place_type(logos) } {
-                    unsafe { crate::identities::numtype::numtype_of_type(logos) }.bytes() as u64
+                if unsafe { crate::identities::numtype::is_scalar_type(logos) } {
+                    unsafe { crate::identities::numtype::of_type_node(logos) }.bytes() as u64
                 } else {
                     8
                 }
@@ -3457,7 +3459,10 @@ impl<'a> Parser<'a> {
             // it runs, so a type reached at runtime can still be followed to
             // its fields, which is the reflection of *Metareflection from
             // within the language*" (#52). Until that runs, saying so.
-            if crate::identities::is_type_valued(&self.types, lhs) {
+            if matches!(
+                crate::identities::read::read_kind(&self.types, lhs),
+                crate::identities::read::Read::Container(t) if t == self.types.type_ || t == self.types.dyad_
+            ) {
                 return Err(ParseError::TypeKnownOnlyAtRun);
             }
             if name == "type" {

@@ -724,7 +724,7 @@ impl Runtime {
             };
             let slot = base.add(off);
             let ty = (*param).ty;
-            if crate::identities::numtype::is_scalar_place_type(ty) {
+            if crate::identities::numtype::is_scalar_type(ty) {
                 crate::identities::numtype::write_scalar(ty, slot, bits);
             } else {
                 std::ptr::write_unaligned(slot as *mut i64, bits);
