@@ -22,6 +22,7 @@
 use std::cell::Cell;
 
 use crate::dyad::{frame_ref, Dyad, DyadPtr};
+use crate::identities::read::{read_kind, Dispatch, Read};
 use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
 
 /// The signature of a seed-native shim — what a `seed-native` callable's entry
@@ -277,12 +278,14 @@ impl FrameStack {
 /// parse-assigned byte offsets.
 pub struct Runtime {
     fn_type: DyadPtr,
-    /// `rational_number`: a data leaf of this logos is molded to its `i32` value
-    /// when read, rather than read raw through the generic i32 layout.
-    rational: DyadPtr,
     /// The `record` type: a use of a name stores its record, read through to
     /// the dyad it names on every evaluation (the reading rule).
     record_: DyadPtr,
+    /// The core handles the reading rule reads — the record type it hops
+    /// through and the `fn` type it must compare before any record is read
+    /// ([`crate::identities::read::read_kind`]). The named handles above are
+    /// the same values, kept until the sweep retires them (#82).
+    types: crate::parse::CoreTypes,
     /// `defer`: a scope body expression of this logos is not run in the value
     /// pass — [`crate::identities::scope`] holds it for LIFO execution at scope
     /// exit (issue #49). Held here so the sequence native recognizes it.
@@ -332,8 +335,8 @@ impl Runtime {
     pub fn new(types: crate::parse::CoreTypes) -> Self {
         Runtime {
             fn_type: types.fn_type,
-            rational: types.rational,
             record_: types.record_,
+            types,
             defer_type: std::ptr::null_mut(),
             live_allocs: 0,
             stack: FrameStack::new(),
@@ -576,11 +579,14 @@ impl Runtime {
         }
     }
 
-    /// Run `node`: read its operation (its `logos`). If the operation is a
-    /// function (its own logos is `fn`), apply it — jump to its installed code
-    /// or walk its `body`. Otherwise consult the node's op slot: a resolved
-    /// application jumps to the callable leaf its constructor stored there;
-    /// anything without one is data, read through its logos's layout.
+    /// Run `node`: ask the reading rule what it is
+    /// ([`crate::identities::read::read_kind`], DESIGN ›Declarations are
+    /// immutable by default‹: "the type defines how the value is read") and do
+    /// that one thing. An executable node is dispatched — a call is applied,
+    /// an application jumps to the callable leaf its constructor stored in its
+    /// op slot — and everything else is data read the way its type says. The
+    /// decision is made once, in `read_kind`, and the compiler asks the same
+    /// question in the same order.
     ///
     /// # Safety
     /// `node` must be a valid dyad from the store (address = id). `run`
@@ -592,120 +598,53 @@ impl Runtime {
         // The reading rule first: a use of a name is its record, and running
         // it runs the dyad it names (DESIGN ›The dyad's read surface‹).
         let node = self.through(node);
-        let op = (*node).ty;
-        // A bare parameter (`fn (a)`) has no declared logos; its frame slot holds
-        // the full i64 bit-container the call bound. Checked before anything
-        // reads through the null logos.
-        if op.is_null() {
-            return self.read_container(node);
-        }
-        if (*op).ty == self.fn_type {
-            self.apply(op, node)
-        } else {
-            // A fn literal is an inert declaration statement (its work happened at
-            // parse) and yields unit, the same precedent as `-> void`. Checked
-            // before the op-slot read below: a *compiled* fn literal's fourth slot
-            // holds its callable, and evaluating the declaration must not jump to it.
-            if op == self.fn_type {
-                return Ok(0);
+        match read_kind(&self.types, node) {
+            // A value of a function is a call; a node typed by a type that
+            // carries a `code` is a call of that code (›Execution is function
+            // application‹).
+            Read::Executable(Dispatch::Call(f)) => self.apply(f, node),
+            // An application: jump to the callable leaf its constructor stored
+            // in its op slot (issue #44). Dispatch flows through the node, not
+            // a table; the identity carries only its record.
+            Read::Executable(Dispatch::Leaf(leaf)) => {
+                // SAFETY: a seed-native callable's entry is a `RunFn` shim
+                // address, minted only by the registration loops.
+                let entry = std::mem::transmute::<usize, RunFn>(
+                    crate::identities::callable::entry_of(leaf),
+                );
+                entry(self, node)
             }
-            // A logos node standing as a value carries its identity AS its value: its
-            // bits are its own address. So a `-> logos` function, or an `if` that
-            // yields a logos, returns the logos it produced (roadmap #30), and `x := i32`
-            // still binds a name to one. The `logos : logos` root is the store's one
-            // self-classified node, so `op == (*op).ty` recognizes every logos node
-            // (numeric logos, the root, `bool`, `void`, pointer and record logos — a
-            // record *instance* has `op ==` its record logos, not the root, and is
-            // handled by the lower branch). A *place* classified by a logos — a
-            // logos-valued parameter, or a top-level box — is not a logos standing
-            // as a value: its slot holds the bound logos's address, read as the
-            // container. Every place carries a tag, which is what tells the two
-            // apart (›GLOBAL_TAG‹); before that only a frame place could be told,
-            // so only a parameter could hold a type.
-            if op == (*op).ty {
-                if crate::dyad::is_place((*node).value) {
-                    return self.read_container(node);
+            // An operand record with nothing in its op slot: the tape's path
+            // markers, or a node built without a leaf. Refused as data.
+            Read::Executable(Dispatch::None) => Err(RunError::BadValue),
+            // Prose, or a fn literal standing as a statement: unit, the same
+            // precedent as `-> void`.
+            Read::Unit => Ok(0),
+            // A logos standing as a value carries its identity AS its value:
+            // its bits are its own address (roadmap #30).
+            Read::Identity => Ok(node as i64),
+            // A dyad view (#52): its value IS the viewed node's address.
+            Read::Address => Ok((*node).value as i64),
+            // A place holding a node address — a `type ?` or `dyad ?` box, a
+            // bare parameter's slot — reads its 8-byte container.
+            Read::Container => self.read_container(node),
+            // A rational literal molds to its integer value (a fraction like
+            // 3.14 has none: UncomputableLiteral, not a bad read).
+            Read::Literal => crate::identities::rational::mold(node)
+                .map(i64::from)
+                .ok_or(RunError::UncomputableLiteral),
+            // A numeric, bool, or pointer value: read at its type's width from
+            // its storage — a declared place, or a literal's untagged blob.
+            Read::Scalar(_) => {
+                let slot = self.place_addr(node).ok_or(RunError::BadValue)?;
+                if slot.is_null() {
+                    return Err(RunError::BadValue);
                 }
-                return Ok(node as i64);
+                Ok(crate::identities::numtype::read_scalar((*node).ty, slot))
             }
-            // A dyad view (#52) is parse-time data whose value IS the viewed
-            // node's address; its run value is that address, mirroring a logos
-            // node standing as a value.
-            if crate::identities::meta::kind_of(op) == Some(crate::identities::meta::DYAD_TAG) {
-                // A dyad *place* — the `dyad ?` box — holds the address in its
-                // storage; a dyad *value* is the address. Same distinction as
-                // for a type, and the same answer: the tag says which.
-                if crate::dyad::is_place((*node).value) {
-                    return self.read_container(node);
-                }
-                return Ok((*node).value as i64);
-            }
-            // `node` is data or a migrated application. A rational literal is
-            // molded to its i32 value (a fraction like 3.14 has none:
-            // UncomputableLiteral, not a bad read).
-            if (*node).ty == self.rational {
-                return crate::identities::rational::mold(node)
-                    .map(i64::from)
-                    .ok_or(RunError::UncomputableLiteral);
-            }
-            // A type carrying a `code` runs as a call of that function on the
-            // node's operand run (#63; DESIGN ›Execution is function
-            // application‹: "if the type carries a `code`, run that function
-            // on it"). A *place* of such a type (a frame slot, never an
-            // operand run) is not one and falls through.
-            if crate::identities::meta::is_record_type(op)
-                && crate::dyad::frame_ref((*node).value).is_none()
-            {
-                let code = crate::identities::meta::code_of(op);
-                if !code.is_null() {
-                    return self.apply(code, node);
-                }
-            }
-            // A record instance is not a scalar; its fields are read through
-            // `.` places, never the whole value, so it must not reach the
-            // op-slot read below.
-            if crate::identities::meta::is_record_type(op) {
-                return Err(RunError::BadValue);
-            }
-            // The op slot (issue #44): a migrated node's last fixed slot holds
-            // its resolved callable leaf — read the leaf, jump to its entry
-            // with the node. Dispatch flows through the node, not a table; the
-            // identity carries only its record.
-            if let Some(idx) = crate::identities::meta::op_slot_of(op) {
-                let slots = (*node).value as *const DyadPtr;
-                if !slots.is_null() {
-                    let leaf = *slots.add(idx);
-                    if !leaf.is_null() && crate::identities::callable::is_callable(leaf) {
-                        // SAFETY: a seed-native callable's entry is a `RunFn`
-                        // shim address, minted only by the registration loops.
-                        let entry = std::mem::transmute::<usize, RunFn>(
-                            crate::identities::callable::entry_of(leaf),
-                        );
-                        return entry(self, node);
-                    }
-                }
-            }
-            // Prose is data, invisible to value flow: a comment node forced
-            // directly yields unit, off its graph tag (no run entry exists).
-            if crate::identities::numtype::is_comment_type((*node).ty) {
-                return Ok(0);
-            }
-            // The text substance (a string node) and unit have no scalar to
-            // read; refuse rather than reinterpret their bytes — except a frame
-            // place, a parameter slot of a non-scalar declared logos, which
-            // holds the container its call bound.
-            if !crate::identities::numtype::is_scalar_type((*node).ty) {
-                if crate::dyad::is_place((*node).value) {
-                    return self.read_container(node);
-                }
-                return Err(RunError::BadValue);
-            }
-            let slot = self.place_addr(node).ok_or(RunError::BadValue)?;
-            if slot.is_null() {
-                return Err(RunError::BadValue);
-            }
-            // Read the scalar at its logos's width into the i64 bit-container.
-            Ok(crate::identities::numtype::read_scalar((*node).ty, slot))
+            // A record instance is read by field or by address, never whole;
+            // text and unit have no scalar; a hole holds nothing yet.
+            Read::Aggregate | Read::Opaque | Read::Undefined => Err(RunError::BadValue),
         }
     }
 
