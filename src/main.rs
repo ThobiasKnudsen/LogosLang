@@ -57,8 +57,11 @@ unsafe fn is_statement_node(core: &Core, node: seed::dyad::DyadPtr) -> bool {
     // the tag is what tells the two apart (DESIGN ›A type is a comptime
     // value‹, 12 September 2026).
     if logos == core.type_ {
-        return !seed::dyad::is_place((*named).value);
+        return seed::identities::read::read_kind(&core.types(), named)
+            == seed::identities::read::Read::Identity;
     }
+    // The rest is a result-type question — what an expression yields — which
+    // is `numtype_of`'s, not the reading rule's (#82's second half).
     logos == core.declare_
         || logos == core.assign
         || logos == core.storeptr_

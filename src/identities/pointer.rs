@@ -239,8 +239,11 @@ pub(crate) unsafe fn build_storeptr(
 ) -> Result<DyadPtr, ParseError> {
     let (ptr_expr, pointee, _) = deref_parts(deref);
     let off_node = *(((*deref).value as *const DyadPtr).add(2));
-    let pointer_pointee = numtype::is_pointer_type(pointee);
-    if !pointer_pointee && !super::is_numtype_node(types, pointee) {
+    // What a store through this pointer writes is what a place of the pointee
+    // reads as (#82): a scalar at its width, or an address.
+    let pointee_read = unsafe { super::read::place_layout(types, pointee) };
+    let pointer_pointee = matches!(pointee_read, Some((super::read::Read::Pointer(_), _)));
+    if !pointer_pointee && !matches!(pointee_read, Some((super::read::Read::Scalar(_), _))) {
         return Err(ParseError::BadAssignTarget);
     }
     let rhs = if (*types.through(rhs)).ty == types.rational {
@@ -266,7 +269,12 @@ fn run_deref(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a deref node; its parts are valid dyads.
     unsafe {
         let (ptr_expr, pointee, off) = deref_parts(node);
-        if !numtype::is_scalar_type(pointee) {
+        // A whole-value read through the pointer needs a pointee that reads
+        // whole — a scalar or an address; a record is read by field (#82).
+        if !matches!(
+            super::read::place_layout(rt.types(), pointee),
+            Some((super::read::Read::Scalar(_) | super::read::Read::Pointer(_), _))
+        ) {
             return Err(RunError::BadValue);
         }
         // The base is the pointer's own value: a hole-declared `p := @i32 ?`
@@ -310,7 +318,10 @@ fn lower_deref(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a deref node; its parts are valid dyads.
     unsafe {
         let (ptr_expr, pointee, off) = deref_parts(node);
-        if !numtype::is_scalar_type(pointee) {
+        if !matches!(
+            super::read::place_layout(lw.types(), pointee),
+            Some((super::read::Read::Scalar(_) | super::read::Read::Pointer(_), _))
+        ) {
             return Err(CompileError::BadValue);
         }
         let addr = lw.lower(ptr_expr)?;

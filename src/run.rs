@@ -277,10 +277,8 @@ impl FrameStack {
 /// in-flight interpreted call's frame — its parameters and locals at their
 /// parse-assigned byte offsets.
 pub struct Runtime {
-    fn_type: DyadPtr,
     /// The `record` type: a use of a name stores its record, read through to
     /// the dyad it names on every evaluation (the reading rule).
-    record_: DyadPtr,
     /// The core handles the reading rule reads — the record type it hops
     /// through and the `fn` type it must compare before any record is read
     /// ([`crate::identities::read::read_kind`]). The named handles above are
@@ -334,8 +332,6 @@ impl Runtime {
     /// [`Runtime::with_compiler`].
     pub fn new(types: crate::parse::CoreTypes) -> Self {
         Runtime {
-            fn_type: types.fn_type,
-            record_: types.record_,
             types,
             defer_type: std::ptr::null_mut(),
             live_allocs: 0,
@@ -431,7 +427,7 @@ impl Runtime {
         let Some(cx) = &self.compiler else {
             return Err(RunError::CompilerUnavailable);
         };
-        if (*fn_node).ty != self.fn_type {
+        if (*fn_node).ty != self.types.fn_type {
             return Err(RunError::BadValue);
         }
         let fields = (*fn_node).value as *const DyadPtr;
@@ -466,12 +462,18 @@ impl Runtime {
     /// # Safety
     /// `p` must be null or a valid dyad from the store.
     /// The `record` type, for a native telling a use (a record) from a node.
+    /// The core handles this runtime reads by — for a native's run to ask the
+    /// reading rule ([`crate::identities::read`]) the way `run` itself does.
+    pub(crate) fn types(&self) -> &crate::parse::CoreTypes {
+        &self.types
+    }
+
     pub(crate) fn record_ty(&self) -> DyadPtr {
-        self.record_
+        self.types.record_
     }
 
     pub(crate) unsafe fn through(&self, p: DyadPtr) -> DyadPtr {
-        crate::record::through(self.record_, p)
+        crate::record::through(self.types.record_, p)
     }
 
     pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> Option<*mut u8> {

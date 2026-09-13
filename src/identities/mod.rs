@@ -1131,12 +1131,16 @@ pub(crate) unsafe fn check_store_type(
     target_ty: DyadPtr,
     rhs: DyadPtr,
 ) -> Result<(), ParseError> {
-    let ok = if numtype::is_pointer_type(target_ty) {
-        matches!(numtype_of(types, rhs),
-            Operand::Pointer(p) if pointee_types_match(numtype::pointee_of(target_ty), p))
-    } else {
-        matches!(numtype_of(types, rhs),
-            Operand::Concrete(nt) if nt == numtype::of_type_node(target_ty))
+    // What the target reads as decides what it takes (#82): an address whose
+    // pointee matches, or a scalar of the same width and kind.
+    let ok = match read::place_layout(types, target_ty) {
+        Some((read::Read::Pointer(tp), _)) => {
+            matches!(numtype_of(types, rhs), Operand::Pointer(p) if pointee_types_match(tp, p))
+        }
+        Some((read::Read::Scalar(nt), _)) => {
+            matches!(numtype_of(types, rhs), Operand::Concrete(c) if c == nt)
+        }
+        _ => false,
     };
     if ok {
         Ok(())
@@ -1342,62 +1346,59 @@ pub(crate) unsafe fn commit_call_args(
             break;
         };
         let pty = (*param).ty;
-        if !pty.is_null() && numtype::is_pointer_type(pty) {
+        // A bare `name` parameter accepts any dyad (DESIGN ›A function's
+        // surface‹): nothing to check.
+        if pty.is_null() {
+            continue;
+        }
+        // What the parameter's place reads as says what an argument may be
+        // (#82). A record or a code-carrying type has no whole read here and
+        // is checked where that logos is built (#115).
+        match read::place_layout(types, pty) {
             // A pointer parameter takes only a pointer to the same pointee — a
             // committed literal here would be dereferenced as a wild address.
-            match numtype_of(types, *arg) {
-                Operand::Pointer(pointee) if pointee == numtype::pointee_of(pty) => {}
+            Some((read::Read::Pointer(pp), _)) => match numtype_of(types, *arg) {
+                Operand::Pointer(pointee) if pointee == pp => {}
                 _ => return Err(ParseError::TypeMismatch),
+            },
+            // A `dyad` parameter takes any node-valued argument — an identity,
+            // a view, any declared box — the general box as a parameter
+            // (DESIGN ›A type is a comptime value‹, 12 September 2026).
+            Some((read::Read::Container(t), _)) if t == types.dyad_ => {
+                let ok = match read::read_kind(types, *arg) {
+                    read::Read::Identity | read::Read::Address => true,
+                    read::Read::Container(c) => !c.is_null(),
+                    _ => false,
+                };
+                if !ok {
+                    return Err(ParseError::TypeMismatch);
+                }
             }
-            continue;
-        }
-        // A `dyad` parameter takes any node-valued argument: the general box
-        // as a parameter (DESIGN ›A type is a comptime value‹, 12 September
-        // 2026).
-        if pty == types.dyad_ {
-            let ok = matches!(
-                read::read_kind(types, *arg),
-                read::Read::Identity | read::Read::Address | read::Read::Container(_)
-            ) && !matches!(read::read_kind(types, *arg), read::Read::Container(c) if c.is_null());
-            if !ok {
-                return Err(ParseError::TypeMismatch);
+            // A `type` parameter takes a type value, identity or `type` box,
+            // and nothing else: a number into one would travel as an address.
+            Some((read::Read::Container(t), _)) if t == types.type_ => {
+                let ok = match read::read_kind(types, *arg) {
+                    read::Read::Identity => true,
+                    read::Read::Container(c) => c == types.type_,
+                    _ => false,
+                };
+                if !ok {
+                    return Err(ParseError::TypeMismatch);
+                }
             }
-            continue;
-        }
-        // A `type` parameter takes a type value, identity or place alike
-        // (DESIGN ›A type is a comptime value‹, 12 September 2026), and
-        // nothing else: a number into one would travel as an address.
-        if pty == types.type_ {
-            let ok = match read::read_kind(types, *arg) {
-                read::Read::Identity => true,
-                read::Read::Container(c) => c == types.type_,
-                _ => false,
-            };
-            if !ok {
-                return Err(ParseError::TypeMismatch);
-            }
-            continue;
-        }
-        if !is_numtype_node(types, pty) {
-            // A bare `name` parameter accepts any dyad (DESIGN ›A function's
-            // surface‹), and a parameter of a record or `fn` logos is checked
-            // where that logos is built, not here.
-            continue;
-        }
-        if (*types.through(*arg)).ty == types.rational {
-            let nt = numtype::of_type_node(pty);
-            *arg = commit_if_literal(store, types, *arg, &Operand::Literal, pty, nt)?;
-        } else {
-            // Anything that is not a literal must already be the parameter's
-            // logos. DESIGN ›A function's surface‹ rules that the parameter
-            // list *is* a record type whose fields are `name := T ?` and that
+            // A scalar parameter: a literal commits to it (the typed slot);
+            // anything else must already be its logos — the store a typed
+            // place takes, no implicit coercion (DESIGN ›A function's surface‹:
             // "the caller's positional arguments are the parameter list's
-            // holes, in order", so filling one is the store a typed place
-            // takes — the very check `=` makes ([`check_store_type`]), with no
-            // implicit coercion. Until this, every non-literal argument passed
-            // untouched: `f(i32)` printed the type node's bits and `f(g)`
-            // printed 0 (#83).
-            check_store_type(types, pty, *arg)?;
+            // holes, in order").
+            Some((read::Read::Scalar(nt), _)) => {
+                if (*types.through(*arg)).ty == types.rational {
+                    *arg = commit_if_literal(store, types, *arg, &Operand::Literal, pty, nt)?;
+                } else {
+                    check_store_type(types, pty, *arg)?;
+                }
+            }
+            _ => {}
         }
     }
     Ok(())

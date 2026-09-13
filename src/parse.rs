@@ -3817,10 +3817,13 @@ impl<'a> Parser<'a> {
         } else {
             (*read).ty
         };
-        if ptr_ty.is_null() || !crate::identities::numtype::is_pointer_type(ptr_ty) {
+        // The left side's type must be a pointer type, by the rule (#82); the
+        // pointee rides on the answer.
+        let Some((crate::identities::read::Read::Pointer(pointee), _)) =
+            crate::identities::read::place_layout(&self.types, ptr_ty)
+        else {
             return Err(ParseError::UnsupportedOperands);
-        }
-        let pointee = crate::identities::numtype::pointee_of(ptr_ty);
+        };
         let types = self.types;
         Ok(crate::identities::pointer::build_deref(self.store, &types, lhs, pointee, 0))
     }
@@ -5192,6 +5195,10 @@ impl<'a> Parser<'a> {
         self.settled_type(cell.identity(&self.types))
     }
 
+    ///
+    /// Constructor *dispatch*, not a value read: this ladder and its siblings
+    /// (`precedence_of_cell`, `assoc_of_cell`, `slot_of`, `build_call`) are
+    /// #99's, left as they are by the reading rule (#82).
     fn ctor_of(&self, id: DyadPtr) -> Option<ConstructFn> {
         // SAFETY: `id` is a resolved dyad from the store.
         unsafe {

@@ -150,7 +150,10 @@ pub(crate) unsafe fn build_ctor(
     ops.push(types.ops.construct_);
     for (&arg, &(field, nt, _)) in args.iter().zip(&fields) {
         let fty = (*field).ty;
-        let field_ptr = numtype::is_pointer_type(fty);
+        // What the field reads as — a scalar or an address — says what may
+        // fill it (#82).
+        let field_read = super::read::place_layout(types, fty);
+        let field_ptr = matches!(field_read, Some((super::read::Read::Pointer(_), _)));
         let arg = match numtype_of(types, arg) {
             Operand::Literal => {
                 if field_ptr {
@@ -160,7 +163,8 @@ pub(crate) unsafe fn build_ctor(
                 commit_if_literal(store, types, arg, &Operand::Literal, fty, nt)?
             }
             Operand::Pointer(pointee) => {
-                if !field_ptr || numtype::pointee_of(fty) != pointee {
+                if !matches!(field_read, Some((super::read::Read::Pointer(fp), _)) if fp == pointee)
+                {
                     return Err(ParseError::TypeMismatch);
                 }
                 arg
