@@ -4416,7 +4416,17 @@ mod tests {
     fn assigning_into_a_comptime_binding_is_rejected() {
         // `x := 5` binds a comptime rational (no machine storage); writing its
         // value slot would corrupt the fraction, so `=` demands a typed variable.
-        assert_eq!(parse_err("( x := 5, x = 7 )"), ParseError::BadAssignTarget);
+        // The refusal names the literal, so the message can say what to declare.
+        assert_eq!(
+            parse_err("( x := 5, x = 7 )"),
+            ParseError::AssignToLiteral(Box::new("5".into()))
+        );
+        assert_eq!(
+            parse_err("( x := 5/2, x = 7 )"),
+            ParseError::AssignToLiteral(Box::new("5/2".into()))
+        );
+        // A literal standing bare as the target is the same refusal.
+        assert_eq!(parse_err("( 5 = 7 )"), ParseError::AssignToLiteral(Box::new("5".into())));
     }
 
     #[test]

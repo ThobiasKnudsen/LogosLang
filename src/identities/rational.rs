@@ -262,6 +262,21 @@ fn gcd(mut a: u64, mut b: u64) -> u64 {
 
 /// Read a rational node's stored fraction `(num, den)`.
 ///
+/// The literal as it would be spelled: `5`, `-3`, `5/2`. For messages that
+/// name a literal the user wrote; a fraction prints as the reduced pair the
+/// node carries.
+///
+/// # Safety
+/// As [`read_fraction`].
+pub(crate) unsafe fn spell(node: DyadPtr) -> String {
+    let (num, den) = read_fraction(node);
+    if den == 1 {
+        num.to_string()
+    } else {
+        format!("{num}/{den}")
+    }
+}
+
 /// # Safety
 /// `node` must be a rational literal built by [`build`]: its `value` points at the
 /// 16-byte `[num, den]` blob.

@@ -111,8 +111,10 @@ pub(super) fn build(
     // yields a node — a type, a box, a view — since what it holds is asked
     // afterwards, `a:dyad.type == type`. A number into either would leave
     // bits every later reader follows as an address. Nothing else has storage
-    // an `=` may write: a comptime binding has none, a literal's untagged
-    // storage is not a place (writing `i32 5 = 3` into it used to be
+    // an `=` may write: a comptime binding has none (and says so: `x := 5`
+    // then `x = 6` is the one refusal a newcomer meets first, so it names the
+    // literal and the typed declaration that makes a place), a literal's
+    // untagged storage is not a place (writing `i32 5 = 3` into it used to be
     // accepted), a bare parameter's container is not assignable, and a record
     // instance is written by field (#115).
     // SAFETY: `lhs_d`/`rhs` are reduced dyads from the store.
@@ -141,6 +143,12 @@ pub(super) fn build(
             return Ok(store.alloc_raw(op, value));
         }
         Read::Scalar(_) | Read::Pointer(_) if marked => {}
+        // SAFETY: a `Literal` read is a rational node with its fraction blob.
+        Read::Literal => {
+            return Err(ParseError::AssignToLiteral(Box::new(unsafe {
+                super::rational::spell(lhs_d)
+            })))
+        }
         _ => return Err(ParseError::BadAssignTarget),
     }
     // A literal into a pointer would become a wild address.

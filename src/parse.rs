@@ -1368,6 +1368,12 @@ pub enum ParseError {
     /// (`:=`-bound rational) binding has no machine storage to write — writing its
     /// value slot would corrupt the fraction — and nothing else has storage yet.
     BadAssignTarget,
+    /// The assignment target is a bare literal: `x := 5` binds the name to the
+    /// number itself (DESIGN ›Numbers‹: a literal stays `rational`, "committing
+    /// to a concrete type only when it finally lands in a classified slot"), so
+    /// there is no storage for `x = 6` to write. Carries the literal's spelling
+    /// so the message can point at the typed declaration that makes a place.
+    AssignToLiteral(Box<String>),
     /// A gate word (`pub`) was not followed by a declaration: a gate fills a
     /// declare node's gate slot, so anything else leaves it nothing to mark.
     GateNeedsDeclaration,

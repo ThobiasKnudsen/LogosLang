@@ -78,6 +78,11 @@ pub fn parse_message(e: &ParseError) -> String {
             "a statement yields no value and cannot stand here".into()
         }
         ParseError::BadAssignTarget => "this is not an assignable place".into(),
+        ParseError::AssignToLiteral(lit) => format!(
+            "`{lit}` is a literal with no storage: `x := {lit}` names the number \
+             itself, so `=` has nothing to write into. Declare a type, as in \
+             `x := i32 5`, to make a place"
+        ),
         ParseError::GateNeedsDeclaration => {
             "`pub` must be followed by a declaration".into()
         }

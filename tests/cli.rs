@@ -992,6 +992,10 @@ fn only_a_marked_place_is_written_or_addressed() {
               code = fn (a := i32 ?, b := i32 ?) -> i32 ( a * b ) )";
     for (src, expect) in [
         ("i32 5 = 3\n", "not an assignable place"),
+        // The first refusal a newcomer meets: `a := 5` binds the number, not
+        // a place. The message names the literal and the declaration to write.
+        ("a := 5\na = 6\n", "`5` is a literal with no storage"),
+        ("a := 5\na = 6\n", "as in `x := i32 5`"),
         ("x := &(i32 5)\n", "needs a variable"),
         (&format!("{pw}\np := &(2 pw 3)\n"), "needs a variable"),
     ] {
