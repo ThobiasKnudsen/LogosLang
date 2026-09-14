@@ -184,11 +184,22 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
         echoes.is_empty() && stderr.contains("a type body's own declaration failed"),
         "stderr: {stderr}"
     );
-    // `lex_rank` (ruled 10 September 2026, #113): the order among pattern
-    // spellings competing at one text position, a stored slot the seed reads
-    // for nothing yet; 0 on every identity whose body did not set it.
-    let (echoes, stderr) = repl(b"r := type (lex_rank = 3)\nr.lex_rank\n+.lex_rank\n");
+    // `lex_rank` (ruled 10 September 2026, #113; on the record since 14
+    // September 2026, #122): the order among spellings competing at one text
+    // position. A body's `lex_rank = …` writes the record of the name being
+    // declared, `r:lex_rank` reads it, and it is not a member of the type.
+    let (echoes, stderr) = repl(b"r := type (lex_rank = 3)\nr:lex_rank\n+:lex_rank\nr.lex_rank\n");
     assert_eq!(echoes, ["3.0", "0.0"], "stderr: {stderr}");
+    assert!(!stderr.is_empty(), "`.lex_rank` is no member of a type");
+    // A rank is the name's, never the thing's: a second name for `r` starts
+    // at the default, and a name's rank may be written on the name after the
+    // fact. A body with no name to write is refused.
+    let (echoes, stderr) = repl(
+        b"r := type (lex_rank = 3)\ns := r\ns:lex_rank\ns:lex_rank = 7\ns:lex_rank\nr:lex_rank\n",
+    );
+    assert_eq!(echoes, ["0.0", "7.0", "3.0"], "stderr: {stderr}");
+    let (_echoes, stderr) = repl(b"f := fn (t := type ?) -> void ( )\nf(type (lex_rank = 1))\n");
+    assert!(stderr.contains("lex_rank is the name's"), "stderr: {stderr}");
     // The superseded spelling is no slot: inside a body it is an unknown name.
     let (echoes, stderr) = repl(b"s := type (precedence = 5)\n");
     assert!(echoes.is_empty() && stderr.contains("unknown name"), "stderr: {stderr}");

@@ -44,12 +44,12 @@
 //! live is the one that will answer permitted.
 //!
 //! A record is a value (DESIGN ›The dyad's read surface‹, ruled 8 September
-//! 2026): a dyad of type `record` whose value points at these six fields,
+//! 2026): a dyad of type `record` whose value points at these seven fields,
 //! allocated in the store so its address is stable for the run. The trie holds
 //! that dyad's address, a use of the name stores it in its operand slot, `:`
 //! reads its fields, and reading it as a value yields what the dyad it names
 //! yields (the reading rule, applied by the interpreter and the lowering).
-//! Six pointers laid out in declaration order, `#[repr(C)]`, so the `record`
+//! Six pointers and an `f64` laid out in declaration order, `#[repr(C)]`, so the `record`
 //! type's field offsets are the struct's.
 
 use crate::dyad::DyadPtr;
@@ -60,7 +60,7 @@ use super::Cx;
 /// One candidate for a spelling: the dyad it denotes, the scope it was
 /// declared in, its range of life within that scope's body, and its gate set.
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Record {
     /// The dyad this name denotes (`a:dyad`).
     pub dyad: DyadPtr,
@@ -83,11 +83,19 @@ pub struct Record {
     /// the record only learns to give it back"). The pattern text for a
     /// pattern identity. Null only on a record a test builds by hand.
     pub name: DyadPtr,
+    /// The spelling's `lex_rank` (`a:lex_rank`; DESIGN ›The constructor is a
+    /// field‹, ruled 14 September 2026: "it ranks a *spelling* against the
+    /// other spellings that could match at a text position, and a second
+    /// name for the same identity … is a different spelling with its own
+    /// rank, so the slot is name data and lives on the record"). `0` by
+    /// default; the two fresh-spelling patterns carry `-1`. Read by the
+    /// lexer at every match ([`crate::parse::ScopeStack::select`]).
+    pub lex_rank: f64,
 }
 
 impl Record {
     /// A new, live, ungated `record` pairing `dyad` with its declaring `scope`
-    /// under the spelling `name`.
+    /// under the spelling `name`, at the default lex rank.
     pub fn new(dyad: DyadPtr, scope: DyadPtr, name: DyadPtr) -> Self {
         Record {
             dyad,
@@ -96,6 +104,7 @@ impl Record {
             end: std::ptr::null_mut(),
             gate: std::ptr::null_mut(),
             name,
+            lex_rank: 0.0,
         }
     }
 
@@ -139,18 +148,25 @@ pub unsafe fn through(record_ty: DyadPtr, p: DyadPtr) -> DyadPtr {
 }
 
 /// Give the `record` type its layout and spelling, at the end of the build:
-/// a field scope holding the six names, each field an `@dyad` place (`name`
-/// too, #120: no place of type `string` exists, so the `:` read is what
-/// hands the name back as a string container), the `fields` array, and the
-/// `RECORD_TAG` layout with `size_bytes` = the struct's forty-eight. Every
-/// record dyad minted earlier already carries this type; only its definition
-/// waited for `dyad`, `@`, and `array` to exist. The seed's `.` and `:` field
-/// reads then serve a record like any user record (`resolve_field`,
-/// `instance::layout`), which is what makes `a:scope` an ordinary field read.
-pub(super) fn register_type(cx: &mut Cx, scope_ty: DyadPtr, array_ty: DyadPtr, dyad_ty: DyadPtr) {
+/// a field scope holding the seven names — six `@dyad` places (`name` too,
+/// #120: no place of type `string` exists, so the `:` read is what hands the
+/// name back as a string container) and `lex_rank`, an `f64` place (#122) —
+/// the `fields` array, and the `RECORD_TAG` layout with `size_bytes` = the
+/// struct's fifty-six. Every record dyad minted earlier already carries this
+/// type; only its definition waited for `dyad`, `@`, and `array` to exist.
+/// The seed's `.` and `:` field reads then serve a record like any user
+/// record (`resolve_field`, `instance::layout`), which is what makes
+/// `a:scope` an ordinary field read.
+pub(super) fn register_type(
+    cx: &mut Cx,
+    scope_ty: DyadPtr,
+    array_ty: DyadPtr,
+    dyad_ty: DyadPtr,
+    f64_ty: DyadPtr,
+) {
     let record_ = cx.record_;
     let scope = cx.store.alloc_raw(scope_ty, std::ptr::null_mut());
-    let mut fields = Vec::with_capacity(6);
+    let mut fields = Vec::with_capacity(7);
     for name in ["dyad", "scope", "start", "end", "gate"] {
         let at_dyad = super::pointer::make_pointer_type(cx.store, cx.type_, dyad_ty);
         let field = cx.store.alloc_raw(at_dyad, std::ptr::null_mut());
@@ -164,6 +180,9 @@ pub(super) fn register_type(cx: &mut Cx, scope_ty: DyadPtr, array_ty: DyadPtr, d
     let name_field = cx.store.alloc_raw(at_dyad, std::ptr::null_mut());
     cx.declare_in(scope, "name", name_field);
     fields.push(name_field);
+    let rank_field = cx.store.alloc_raw(f64_ty, std::ptr::null_mut());
+    cx.declare_in(scope, "lex_rank", rank_field);
+    fields.push(rank_field);
     debug_assert_eq!(fields.len() * 8, std::mem::size_of::<Record>());
     let fields_arr = super::array::build(cx.store, array_ty, &fields);
     let layout = super::meta::record_layout(

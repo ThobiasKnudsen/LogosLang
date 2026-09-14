@@ -562,9 +562,6 @@ pub struct ScopeStack {
     /// that run again or later*): the loop would read a dead name on its next
     /// pass, and a function may own only what its parameters hand it.
     barriers: Vec<usize>,
-    /// The `type` root ([`ScopeStack::set_lexing`], null in a bare stack),
-    /// to read a spelling's `lex_rank` off its identity's record.
-    type_: DyadPtr,
 }
 
 impl Default for ScopeStack {
@@ -582,34 +579,6 @@ impl ScopeStack {
             journal: Vec::new(),
             pending: Vec::new(),
             barriers: Vec::new(),
-            type_: std::ptr::null_mut(),
-        }
-    }
-
-    /// Hand the stack the `type` root, so lexing can read a spelling's
-    /// `lex_rank` off its identity's record.
-    pub fn set_lexing(&mut self, type_: DyadPtr) {
-        self.type_ = type_;
-    }
-
-    /// The `lex_rank` a spelling denoting `id` carries: its record's when `id`
-    /// is a type with a record head, the default `0` for every other identity
-    /// (a place, a function, a bare stack that was never told the root).
-    fn lex_rank_of(&self, id: DyadPtr) -> f64 {
-        if id.is_null() || self.type_.is_null() {
-            return 0.0;
-        }
-        // SAFETY: `id` is a dyad from the store (a record's `dyad`); a
-        // frame-tagged value is never dereferenced.
-        unsafe {
-            if (*id).ty == self.type_
-                && crate::dyad::frame_ref((*id).value).is_none()
-                && crate::identities::meta::kind_of(id).is_some()
-            {
-                crate::identities::meta::lex_rank_of(id)
-            } else {
-                0.0
-            }
         }
     }
 
@@ -793,7 +762,9 @@ impl ScopeStack {
         let mut tied = false;
         for (record, matched, fresh) in cands {
             let f = fields(record);
-            let rank = self.lex_rank_of(f.dyad);
+            // The spelling's own rank, off its record (#122): a second name
+            // for one identity ranks on its own.
+            let rank = f.lex_rank;
             let better = match &best {
                 None => true,
                 Some((r, n, _)) => rank > *r || (rank == *r && matched > *n),
@@ -1272,7 +1243,8 @@ impl SlotKind {
 struct OpenType {
     scope: DyadPtr,
     parse_rank: f64,
-    /// Set by a `lex_rank = …` line; written into the head at the close.
+    /// Set by a `lex_rank = …` line; written onto the record of the
+    /// declaration this body is the value of at the close (#122).
     lex_rank: Option<f64>,
     assoc: Assoc,
     ctor: DyadPtr,
@@ -1398,6 +1370,9 @@ pub enum ParseError {
     /// `destructor = …`: a Logos-written destructor, which `drop` cannot run
     /// yet — refused rather than accepted and never run.
     DestructorNotYet,
+    /// `lex_rank = …` in a type body that is not the value of a declaration:
+    /// the rank is the name's (#122), and here there is no name.
+    LexRankNeedsName,
     /// `code = …` with a value that is not a function (#63).
     BadCodeSlot,
     /// An operator lacked a reduced operand on one side.
@@ -1723,6 +1698,12 @@ pub struct Parser<'a> {
     /// signature onto it before the body parses, so a recursive self-call resolves
     /// its parameter and return logos instead of the unbound-placeholder defaults.
     pending_fn: DyadPtr,
+    /// The records of the declarations whose right side is being driven,
+    /// innermost last: what a `lex_rank = …` line in a `type (…)` body
+    /// writes (#122) — the seed's stand-in for the reach DESIGN records open
+    /// (how a definition writes a record field from inside `:=`), kept
+    /// because a pattern identity has no other spelling to be written on.
+    filling: Vec<DyadPtr>,
     /// A stack of open function frames, one per enclosing function body being
     /// parsed. Empty at top level, where declarations get absolute global storage
     /// that persists across REPL lines; non-empty inside a function, where each
@@ -1815,8 +1796,6 @@ impl<'a> Parser<'a> {
         types: CoreTypes,
         scopes: ScopeStack,
     ) -> Self {
-        let mut scopes = scopes;
-        scopes.set_lexing(types.type_);
         // The store is attached before it moves into the parser: the parser
         // makes no use of it while the runtime runs (the natives are the only
         // writers meanwhile), which is what keeps the raw handle sound.
@@ -1831,6 +1810,7 @@ impl<'a> Parser<'a> {
             trie,
             types,
             pending_fn: std::ptr::null_mut(),
+            filling: Vec::new(),
             lifted: Vec::new(),
             queued: std::collections::VecDeque::new(),
             discovering: false,
@@ -2819,8 +2799,16 @@ impl<'a> Parser<'a> {
         );
         let node = self.store.alloc_raw(id, layout.cast());
         if let Some(rank) = def.lex_rank {
-            // SAFETY: `node` was just allocated above with the record `layout`.
-            unsafe { crate::identities::meta::set_lex_rank(node, rank) };
+            // The rank is the name's, not the type's (#122): it goes on the
+            // record of the declaration this body is the value of. A body
+            // standing nowhere a name is being declared has no record to
+            // write, the checked error.
+            let Some(&record) = self.filling.last() else {
+                return Err(ParseError::LexRankNeedsName);
+            };
+            // SAFETY: `record` is a record dyad `:=` minted before driving
+            // its value, and it is live for the whole drive.
+            unsafe { Record::of(record).lex_rank = rank };
         }
         if !def.ctor.is_null() {
             // SAFETY: `node` was just built; nothing has read its slot.
@@ -4659,10 +4647,14 @@ impl<'a> Parser<'a> {
             }
         };
         // If the value opens with a `fn` literal, parse_fn publishes its
-        // signature onto the placeholder before the body parses.
+        // signature onto the placeholder before the body parses. The record
+        // is the one a `lex_rank = …` line in the value writes (#122).
         self.pending_fn = placeholder;
-        let value = self.parse_expression()?;
+        self.filling.push(record);
+        let value = self.parse_expression();
+        self.filling.pop();
         self.pending_fn = std::ptr::null_mut();
+        let value = value?;
         // A bare name as the value is its record (a use); the fixpoint
         // inspects the dyad behind it and keeps `value` as what the
         // initializer stores.
@@ -4945,7 +4937,6 @@ impl<'a> Parser<'a> {
         let root = *self.scopes.open.first().expect("an import site has an open root scope");
         let section = self.store.alloc_raw(self.types.scope, std::ptr::null_mut());
         let mut nested = ScopeStack::new();
-        nested.set_lexing(self.types.type_);
         nested.push(root);
         nested.push(section);
 
@@ -5145,6 +5136,12 @@ impl<'a> Parser<'a> {
                 let place = crate::dyad::global_place(addr);
                 return Ok(self.store.alloc_raw(types.string_, place));
             }
+            // `a:lex_rank` (#122): an `f64` place a user may write,
+            // `pow:lex_rank = …`, so it carries the place mark `=` asks for.
+            if name == "lex_rank" {
+                let place = crate::dyad::global_place(addr);
+                return Ok(self.store.alloc_raw((*field).ty, place));
+            }
             return Ok(self.store.alloc_raw((*field).ty, addr));
         }
         let value = match name {
@@ -5228,9 +5225,9 @@ impl<'a> Parser<'a> {
             "parse_rank" => {
                 Ok(self.scalar_value(NumType::F64, meta::parse_rank_of(logos).to_bits() as i64))
             }
-            "lex_rank" => {
-                Ok(self.scalar_value(NumType::F64, meta::lex_rank_of(logos).to_bits() as i64))
-            }
+            // `lex_rank` is not the type's: it is the name's record's,
+            // `^:lex_rank` (#122), so `.lex_rank` falls to the unknown-member
+            // error below.
             // Associativity's values are the two identities `left` and
             // `right` (DESIGN ›The constructor is a field‹).
             "associativity" => Ok(match meta::assoc_of(logos) {

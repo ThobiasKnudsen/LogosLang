@@ -8,11 +8,14 @@
 //! run, `[^A-Za-z0-9_\s()\[\],«»#]+` — are identities of the language start
 //! beside the five names … each constructing the fresh null-slotted dyad").
 //!
-//! Both carry a `lex_rank` below the default every declared spelling reads, so
-//! they match only where nothing declared does: `@` beats the run `@@`, a
-//! declared `a` beats the run `a`, and the word pattern alone reaches past `a`
-//! to `ab2` (›A language is a section with an authored start‹: unknown
-//! spellings "may stand only on the left of `:=`"). Their construction — a
+//! Both carry a `lex_rank` below the default every declared spelling reads —
+//! on their records, where every spelling's rank lives (ruled 14 September
+//! 2026, #122) — so they match only where nothing declared does: `@` beats
+//! the run `@@`, a declared `a` beats the run `a`, and the word pattern alone
+//! reaches past `a` to `ab2` (›A language is a section with an authored
+//! start‹: unknown spellings "may stand only on the left of `:=`"). Their
+//! ranks are set here, in the start, until DESIGN spells how a definition
+//! writes its record's rank from inside `:=`. Their construction — a
 //! fresh dyad with both slots undefined, its spelling kept in the cell's span
 //! — happens when the cell is lexed ([`crate::parse::ScopeStack::lex`] names
 //! the winner, `Parser::lex_cell` mints the dyad), the same act a constructor
@@ -46,9 +49,9 @@ pub(super) fn register(cx: &mut Cx) {
     let mut mint = |pattern: &str| {
         let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
         let id = cx.store.alloc_raw(cx.type_, record);
-        // SAFETY: `id` was just allocated above with the record `record`.
-        unsafe { meta::set_lex_rank(id, FRESH_LEX_RANK) };
-        cx.declare(pattern, id);
+        let entry = cx.declare(pattern, id);
+        // SAFETY: `entry` is the record dyad `declare` just minted.
+        unsafe { crate::record::Record::of(entry).lex_rank = FRESH_LEX_RANK };
     };
     mint(WORD);
     mint(SYMBOL);

@@ -257,9 +257,11 @@ pub struct Core {
     /// `left` and `right` — associativity's two values.
     pub left_: DyadPtr,
     pub right_: DyadPtr,
-    /// The six slot markers a type body declares (`parse_rank`, `lex_rank`,
+    /// The six slot markers a type body may write (`parse_rank`, `lex_rank`,
     /// `associativity`, `constructor`, `destructor`, `code`), in
-    /// [`SLOT_NAMES`] order.
+    /// [`SLOT_NAMES`] order. Five fill the type's own value; `lex_rank`
+    /// writes the record `:=` is filling (#122), the seed's stand-in for the
+    /// reach DESIGN records open.
     pub slots: [DyadPtr; 6],
     /// `->` — the return-logos arrow (parse-only).
     pub arrow_: DyadPtr,
@@ -468,7 +470,7 @@ impl Core {
         // surface‹, 8 September 2026).
         // `parsing_tape` and the four affordances as identities (#60).
         let tape = tape::register(&mut cx, &callables, scope_, array_, void);
-        record::register_type(&mut cx, scope_, array_, dyad_);
+        record::register_type(&mut cx, scope_, array_, dyad_, numtypes[NumType::F64 as usize]);
         op_leaves.scope_ = scope::register_exec(&mut cx, scope_, &callables);
         // An item that ran in the pass keeps its result beside it (R3, #88).
         let (ran_, ran_leaf) = ran::register(&mut cx, &callables);

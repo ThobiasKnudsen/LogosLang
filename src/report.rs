@@ -165,6 +165,11 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::DestructorNotYet => {
             "a destructor written in Logos is not run by drop yet".into()
         }
+        ParseError::LexRankNeedsName => {
+            "lex_rank is the name's: write it in a declaration, `x := type (lex_rank = …)`, \
+             or on the name, `x:lex_rank = …`"
+                .into()
+        }
         ParseError::ConstructorFailed(msg) => {
             format!("this identity's constructor failed while parsing: {msg}")
         }

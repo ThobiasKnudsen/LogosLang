@@ -97,8 +97,18 @@ impl Store {
     /// run of five pointers, which that arena already keeps 8-aligned and at a
     /// stable address, so no third arena is needed.
     pub fn alloc_record(&mut self, rec: Record) -> *mut Record {
-        self.alloc_operands(&[rec.dyad, rec.scope, rec.start, rec.end, rec.gate, rec.name])
-            as *mut Record
+        // Seven eight-byte words in the struct's `#[repr(C)]` order; the
+        // rank travels as its bit pattern in a pointer-sized word, which is
+        // what the `f64` field at that offset reads back.
+        self.alloc_operands(&[
+            rec.dyad,
+            rec.scope,
+            rec.start,
+            rec.end,
+            rec.gate,
+            rec.name,
+            rec.lex_rank.to_bits() as usize as DyadPtr,
+        ]) as *mut Record
     }
 
     /// Store literal bytes (e.g. a numeric literal's digits, or a variable's
