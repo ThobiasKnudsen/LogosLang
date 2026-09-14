@@ -15,7 +15,8 @@ parsing_tape := type (
     # token wrapper — and is_constructed is the tape's own record, a list parallel to the cells, never a field of
     # the dyad (ruled 2 September 2026). tape[k] lexes lazily on demand; a constructor is handed a re-centered
     # view, tape[0] being its own cell, negative offsets its left context, positive its right. the tape runs
-    # nothing and has four affordances: tape[k], is_constructed, insert, remove. disposable, rebuilt from source.
+    # nothing and has four affordances: tape[k], is_constructed, insert, remove, plus the spelling list beside the flag
+    # (ruled 14 September 2026). disposable, rebuilt from source.
     constructor = fn (tape := parsing_tape ?) -> void ( ? )
     instance (
         code := string ?                              # the source not yet lexed
@@ -23,8 +24,14 @@ parsing_tape := type (
         cells := doublylinkedlist @dyad ()            # a resolved cell is the record the trie returned (a dyad of type record), a constructed cell its dyad: one pointer type serves both (ruled 8 September 2026)
         is_constructed := doublylinkedlist bool ()    # parallel to cells; read tape.is_constructed[k] (ruled 9 September 2026: the flag is the
                                                       # tape's own list, so the read is that list's element, never a field of the dyad)
+        spelling := doublylinkedlist string ()        # parallel to cells; read tape.spelling[k] (ruled 14 September 2026): the text the cell was
+                                                      # lexed from, «» for a cell nothing lexed. how := learns a fresh name (tape.spelling[-1]) and
+                                                      # a literal's constructor its digits (tape.spelling[0]); the record knows only its own
+                                                      # spelling (a:name), never what was matched here
         center := @dyad ?                             # tape[0]: the center is a node of the list (DESIGN; the seed's list ruled 9 September 2026)
-        insert := fn (k := i64 ?, cells := array @dyad ?) -> void ( ? )   # splice cells in: the macro mechanism
+        insert := fn (k := i64 ?, cells := parsing_tape ?) -> void ( ? )   # splice a fragment in: the macro mechanism. lex «…» returns a
+                                                                          # parsing_tape, cells with flags and spellings (ruled 14 September 2026:
+                                                                          # a bare array @dyad has no place for the text a cell was lexed from)
         remove := fn (k := i64 ?) -> void ( ? )                           # drop a cell before it lexes or after
         # tape[k]: the instance's constructor consumes the [ ] to its right (ruled 9 September 2026: [ is ( in
         # square brackets, its interior any expression); tape[k]:dyad is the cell, tape[k]:dyad.type = T a fresh
@@ -135,6 +142,9 @@ record of a {         # the trie entry (id_context renamed record, 7 September 2
     start -> (the := node that declared a)
     end -> null                                        # to scope end, unless own a / drop a ends the name earlier
     gate -> [read own scope, write own scope while null, mut]   # ordered set, grants and vetoes; lock would seal it
+    name -> «a»                                        # the spelling the trie holds; a:name (ruled 14 September 2026: the record is the lex level,
+                                                       # every fact tied to the name; the dyad is the other level, and := binds only that)
+    lex_rank -> 0                                      # ranks the spelling at a text position; name data, never crosses := (14 September 2026)
 }
 a {                   # the dyad: type and value, nothing else; a:dyad reaches it, a:scope and a:gate read the record
     type -> i32
