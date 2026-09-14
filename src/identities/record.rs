@@ -44,12 +44,12 @@
 //! live is the one that will answer permitted.
 //!
 //! A record is a value (DESIGN ›The dyad's read surface‹, ruled 8 September
-//! 2026): a dyad of type `record` whose value points at these five fields,
+//! 2026): a dyad of type `record` whose value points at these six fields,
 //! allocated in the store so its address is stable for the run. The trie holds
 //! that dyad's address, a use of the name stores it in its operand slot, `:`
 //! reads its fields, and reading it as a value yields what the dyad it names
 //! yields (the reading rule, applied by the interpreter and the lowering).
-//! Five pointers laid out in declaration order, `#[repr(C)]`, so the `record`
+//! Six pointers laid out in declaration order, `#[repr(C)]`, so the `record`
 //! type's field offsets are the struct's.
 
 use crate::dyad::DyadPtr;
@@ -77,17 +77,25 @@ pub struct Record {
     /// The name's gate set; null while the name has none, which in v0.1.0 is
     /// always.
     pub gate: DyadPtr,
+    /// The spelling the trie holds for this name, as a string node (`a:name`;
+    /// DESIGN ›The dyad's read surface‹, ruled 14 September 2026: "the record
+    /// holds every fact tied to the name … The trie already keys on it, so
+    /// the record only learns to give it back"). The pattern text for a
+    /// pattern identity. Null only on a record a test builds by hand.
+    pub name: DyadPtr,
 }
 
 impl Record {
-    /// A new, live, ungated `record` pairing `dyad` with its declaring `scope`.
-    pub fn new(dyad: DyadPtr, scope: DyadPtr) -> Self {
+    /// A new, live, ungated `record` pairing `dyad` with its declaring `scope`
+    /// under the spelling `name`.
+    pub fn new(dyad: DyadPtr, scope: DyadPtr, name: DyadPtr) -> Self {
         Record {
             dyad,
             scope,
             start: std::ptr::null_mut(),
             end: std::ptr::null_mut(),
             gate: std::ptr::null_mut(),
+            name,
         }
     }
 
@@ -131,22 +139,31 @@ pub unsafe fn through(record_ty: DyadPtr, p: DyadPtr) -> DyadPtr {
 }
 
 /// Give the `record` type its layout and spelling, at the end of the build:
-/// a field scope holding the five names, each field an `@dyad` place, the
-/// `fields` array, and the `RECORD_TAG` layout with `size_bytes` = the struct's
-/// forty. Every record dyad minted earlier already carries this type; only its
-/// definition waited for `dyad`, `@`, and `array` to exist. The seed's `.` and
-/// `:` field reads then serve a record like any user record (`resolve_field`,
+/// a field scope holding the six names, each field an `@dyad` place (`name`
+/// too, #120: no place of type `string` exists, so the `:` read is what
+/// hands the name back as a string container), the `fields` array, and the
+/// `RECORD_TAG` layout with `size_bytes` = the struct's forty-eight. Every
+/// record dyad minted earlier already carries this type; only its definition
+/// waited for `dyad`, `@`, and `array` to exist. The seed's `.` and `:` field
+/// reads then serve a record like any user record (`resolve_field`,
 /// `instance::layout`), which is what makes `a:scope` an ordinary field read.
 pub(super) fn register_type(cx: &mut Cx, scope_ty: DyadPtr, array_ty: DyadPtr, dyad_ty: DyadPtr) {
     let record_ = cx.record_;
     let scope = cx.store.alloc_raw(scope_ty, std::ptr::null_mut());
-    let mut fields = Vec::with_capacity(5);
+    let mut fields = Vec::with_capacity(6);
     for name in ["dyad", "scope", "start", "end", "gate"] {
         let at_dyad = super::pointer::make_pointer_type(cx.store, cx.type_, dyad_ty);
         let field = cx.store.alloc_raw(at_dyad, std::ptr::null_mut());
         cx.declare_in(scope, name, field);
         fields.push(field);
     }
+    // `name` is laid out as an `@dyad` place like the five (no place of type
+    // `string` exists, `read::place_layout`); the `:` read hands it back as
+    // the string container it holds (`Parser::record_read`).
+    let at_dyad = super::pointer::make_pointer_type(cx.store, cx.type_, dyad_ty);
+    let name_field = cx.store.alloc_raw(at_dyad, std::ptr::null_mut());
+    cx.declare_in(scope, "name", name_field);
+    fields.push(name_field);
     debug_assert_eq!(fields.len() * 8, std::mem::size_of::<Record>());
     let fields_arr = super::array::build(cx.store, array_ty, &fields);
     let layout = super::meta::record_layout(

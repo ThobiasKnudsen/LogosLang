@@ -298,6 +298,26 @@ fn a_constructor_written_in_logos_runs_during_the_parse() {
 }
 
 #[test]
+fn a_record_carries_its_spelling() {
+    // DESIGN ›The dyad's read surface‹ (ruled 14 September 2026, #120):
+    // "`x:name` is the spelling the trie holds for `x` … readable wherever `:`
+    // reaches". A declared name, a core identity, and — inside a constructor
+    // — the record a cell holds (`tape[-1]:name`), while a constructed node,
+    // having no record, has no name: the same checked error as `a:type`.
+    let (echoes, stderr) = repl(b"x := 5\nx:name\nif:name\n");
+    assert_eq!(echoes, ["x", "if"], "stderr: {stderr}");
+    let (_echoes, stderr) = repl(b"a := i32 1\n(a + 1):name\n");
+    assert!(stderr.contains("expected a field name"), "stderr: {stderr}");
+    // A postfix `sp` that makes its cell the name of the identity on its
+    // left, in a body nothing runs (a string has no storage to read yet).
+    let (echoes, stderr) = repl(
+        b"sp := type (constructor = fn (tape := parsing_tape ?) -> void ( tape[0] = tape[-1]:name, tape.remove(-1) ))\n\
+          x := 1\nf := fn () -> void ( x sp )\n5\n",
+    );
+    assert_eq!(echoes, ["5"], "stderr: {stderr}");
+}
+
+#[test]
 fn a_type_body_refuses_what_is_not_its_own() {
     // `:=` on a slot name is the no-shadowing error; a member may not shadow
     // an outer name; `instance` belongs in a body, once; a line that would

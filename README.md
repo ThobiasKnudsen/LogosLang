@@ -94,7 +94,7 @@ pick(0) == i32                 # true
 
 ### Reflection
 
-`.` reads the fields a value's type defines, and a value's type is not one of them. To read the cell itself, ask for the dyad view with `:`, which reads a name's record rather than its value: `x:dyad` is the cell, `x:scope` the scope `x` was declared in.
+`.` reads the fields a value's type defines, and a value's type is not one of them. To read the cell itself, ask for the dyad view with `:`, which reads a name's record rather than its value: `x:dyad` is the cell, `x:scope` the scope `x` was declared in, `x:name` its spelling.
 
 ```logos
 x := i32 5,

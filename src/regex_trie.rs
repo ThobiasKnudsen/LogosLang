@@ -640,7 +640,7 @@ mod tests {
 
     /// A record dyad in `scope` for `identity`: leaked, like the dyads above.
     fn rec(identity: DyadPtr, scope: DyadPtr) -> DyadPtr {
-        let fields = Box::into_raw(Box::new(Record::new(identity, scope)));
+        let fields = Box::into_raw(Box::new(Record::new(identity, scope, std::ptr::null_mut())));
         Box::into_raw(Box::new(Dyad { ty: std::ptr::null_mut(), value: fields as *mut u8 }))
     }
 

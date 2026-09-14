@@ -97,7 +97,8 @@ impl Store {
     /// run of five pointers, which that arena already keeps 8-aligned and at a
     /// stable address, so no third arena is needed.
     pub fn alloc_record(&mut self, rec: Record) -> *mut Record {
-        self.alloc_operands(&[rec.dyad, rec.scope, rec.start, rec.end, rec.gate]) as *mut Record
+        self.alloc_operands(&[rec.dyad, rec.scope, rec.start, rec.end, rec.gate, rec.name])
+            as *mut Record
     }
 
     /// Store literal bytes (e.g. a numeric literal's digits, or a variable's

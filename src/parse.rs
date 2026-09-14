@@ -4165,6 +4165,13 @@ impl<'a> Parser<'a> {
     /// errors of [`ScopeStack::declare`], reported at `at`, the name's own
     /// offset in the source, so the caret lands on the name and not where the
     /// declaration happened to end.
+    /// Mint the record for `identity` declared in `scope` under `spelling`:
+    /// the six fields, the spelling as a string node (`a:name`, #120).
+    fn mint_record(&mut self, identity: DyadPtr, scope: DyadPtr, spelling: &[u8]) -> DyadPtr {
+        let name = crate::identities::string::build_text(self.store, self.types.string_, spelling);
+        Record::alloc(self.store, self.types.record_, Record::new(identity, scope, name))
+    }
+
     pub(crate) fn declare_name(
         &mut self,
         name: &str,
@@ -4172,7 +4179,7 @@ impl<'a> Parser<'a> {
         at: usize,
     ) -> Result<DyadPtr, ParseError> {
         let scope = self.scopes.current().expect("declare needs an open scope");
-        let record = Record::alloc(self.store, self.types.record_, Record::new(identity, scope));
+        let record = self.mint_record(identity, scope, name.as_bytes());
         // SAFETY: `record` was minted by `Record::alloc` just above.
         if let Err(e) = unsafe { self.scopes.declare(self.trie, name, record) } {
             self.pos = at;
@@ -4190,7 +4197,7 @@ impl<'a> Parser<'a> {
         at: usize,
     ) -> Result<DyadPtr, ParseError> {
         let scope = self.scopes.current().expect("declare needs an open scope");
-        let record = Record::alloc(self.store, self.types.record_, Record::new(identity, scope));
+        let record = self.mint_record(identity, scope, key.as_bytes());
         // SAFETY: `record` was minted by `Record::alloc` just above.
         if let Err(e) = unsafe { self.scopes.declare_pattern(self.trie, key, record) } {
             self.pos = at;
@@ -4209,7 +4216,7 @@ impl<'a> Parser<'a> {
         at: usize,
     ) -> Result<DyadPtr, ParseError> {
         let scope = self.scopes.current().expect("declare needs an open scope");
-        let record = Record::alloc(self.store, self.types.record_, Record::new(identity, scope));
+        let record = self.mint_record(identity, scope, name.as_bytes());
         // SAFETY: `record` was minted by `Record::alloc` just above.
         if let Err(e) = unsafe { self.scopes.declare_field(self.trie, name, record) } {
             self.pos = at;
@@ -5111,6 +5118,11 @@ impl<'a> Parser<'a> {
             if name == "dyad" {
                 return Ok(crate::identities::tape::build_slot_dyad(self.store, &types, lhs));
             }
+            // `t[k]:name` (#120): the spelling of the record the cell holds,
+            // read when the constructor runs.
+            if name == "name" {
+                return Ok(crate::identities::tape::build_slot_name(self.store, &types, lhs));
+            }
             return Err(ParseError::ExpectedField);
         }
         if (*lhs).ty == types.record_ {
@@ -5123,6 +5135,16 @@ impl<'a> Parser<'a> {
             }
             let (field, offset) = self.resolve_field(types.record_, nstart, nlen)?;
             let addr = (*lhs).value.wrapping_add(offset);
+            // `a:name` (#120): the slot holds the name's string node, and the
+            // read is that string — a `string`-typed place over the slot,
+            // marked as one so the reading rule sees the container it is
+            // (no place of type `string` exists in a layout, which is why
+            // the field itself is laid out `@dyad`). The display shows the
+            // text; nothing else reads a string yet.
+            if name == "name" {
+                let place = crate::dyad::global_place(addr);
+                return Ok(self.store.alloc_raw(types.string_, place));
+            }
             return Ok(self.store.alloc_raw((*field).ty, addr));
         }
         let value = match name {
@@ -5833,7 +5855,7 @@ mod tests {
     }
 
     fn rec_in(identity: DyadPtr, scope: DyadPtr) -> DyadPtr {
-        let fields = Box::into_raw(Box::new(Record::new(identity, scope)));
+        let fields = Box::into_raw(Box::new(Record::new(identity, scope, std::ptr::null_mut())));
         Box::into_raw(Box::new(crate::dyad::Dyad {
             ty: std::ptr::null_mut(),
             value: fields as *mut u8,
@@ -6019,8 +6041,11 @@ mod tests {
             );
             let squared = store.alloc_raw(types.type_, layout);
             crate::identities::meta::install_constructor(squared, c);
-            let rec =
-                Record::alloc(&mut store, core.record_, Record::new(squared, core.root_scope));
+            let rec = Record::alloc(
+                &mut store,
+                core.record_,
+                Record::new(squared, core.root_scope, std::ptr::null_mut()),
+            );
             let mut s = s;
             s.declare(&mut trie, "squared", rec).unwrap();
             s
@@ -6074,7 +6099,11 @@ mod tests {
             let storage = store.alloc_bytes(&(tape as usize as u64).to_ne_bytes());
             // Marked as storage, as the parser marks every place it allocates.
             let t = store.alloc_raw(core.tape.parsing_tape, crate::dyad::global_place(storage));
-            let rec = Record::alloc(&mut store, core.record_, Record::new(t, core.root_scope));
+            let rec = Record::alloc(
+                &mut store,
+                core.record_,
+                Record::new(t, core.root_scope, std::ptr::null_mut()),
+            );
             scopes.declare(&mut trie, "t", rec).unwrap();
 
             // `t[k]:dyad` reads the cell through its record: the `+` identity.
@@ -6162,7 +6191,11 @@ mod tests {
             let storage = store.alloc_bytes(&(tape as usize as u64).to_ne_bytes());
             // Marked as storage, as the parser marks every place it allocates.
             let t = store.alloc_raw(core.tape.parsing_tape, crate::dyad::global_place(storage));
-            let rec = Record::alloc(&mut store, core.record_, Record::new(t, core.root_scope));
+            let rec = Record::alloc(
+                &mut store,
+                core.record_,
+                Record::new(t, core.root_scope, std::ptr::null_mut()),
+            );
             scopes.declare(&mut trie, "t", rec).unwrap();
 
             let (v, s) = go("t.is_constructed[1]", &mut store, &mut trie, types, scopes);
@@ -6174,6 +6207,10 @@ mod tests {
             assert_eq!(crate::identities::string::text(v as DyadPtr), b"+");
             let (v, s) = go("t.spelling[0]", &mut store, &mut trie, types, s);
             assert_eq!(crate::identities::string::text(v as DyadPtr), b"a");
+            // `t[k]:name` (#120): the spelling of the record a cell holds —
+            // `+`'s record answers «+»; the identity's name, not the match.
+            let (v, s) = go("t[1]:name", &mut store, &mut trie, types, s);
+            assert_eq!(crate::identities::string::text(v as DyadPtr), b"+");
             let (v, s) = go("t.remove(1)", &mut store, &mut trie, types, s);
             assert_eq!(v as DyadPtr, plus, "remove yields the cell it took");
             assert_eq!((*tape).len(), 2);

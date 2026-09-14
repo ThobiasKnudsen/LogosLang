@@ -21,12 +21,17 @@ use crate::dyad::DyadPtr;
 use crate::parse::{Constructed, ParseError, Parser, ParsingTape};
 use crate::store::Store;
 
-/// Register `string`: its [`STRING_TAG`] logos node and the `«…»` literal pattern
-/// (no escapes yet, so a `»` cannot occur inside the text; unanchored, like the
-/// rational pattern, so the lexer longest-matches a prefix).
+/// Register `string`: fill the [`STRING_TAG`] record into the logos node the
+/// build minted first (every record's `name` is a string node, so the type
+/// exists before the first declaration; #120) and declare the `«…»` literal
+/// pattern (no escapes yet, so a `»` cannot occur inside the text; unanchored,
+/// like the rational pattern, so the lexer longest-matches a prefix).
 pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, STRING_TAG, meta::prec::LITERAL);
-    let id = cx.store.alloc_raw(cx.type_, record);
+    let id = cx.string_;
+    // SAFETY: `id` is the string logos node the build allocated, its value
+    // null until now.
+    unsafe { (*id).value = record };
     cx.declare("«[^»]*»", id);
     cx.metas.insert(id, construct);
     id

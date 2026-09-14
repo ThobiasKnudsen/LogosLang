@@ -61,6 +61,10 @@ pub struct TapeIds {
     /// dyad it names (#61).
     pub slot_dyad: DyadPtr,
     pub slot_dyad_leaf: DyadPtr,
+    /// `t[k]:name`: the spelling of the record the cell holds, a string
+    /// node (#120).
+    pub slot_name: DyadPtr,
+    pub slot_name_leaf: DyadPtr,
     /// `t[k]:dyad.type`: the cell's type, read; as `=`'s target, the retype.
     pub cell_type: DyadPtr,
     pub cell_type_leaf: DyadPtr,
@@ -126,6 +130,7 @@ pub(super) fn register(
     let (remove, remove_leaf) = op(cx, &["tape", "k", "op"], run_remove);
     let (recenter, recenter_leaf) = op(cx, &["tape", "k", "op"], run_recenter);
     let (slot_dyad, slot_dyad_leaf) = op(cx, &["tape", "k", "op"], run_slot_dyad);
+    let (slot_name, slot_name_leaf) = op(cx, &["tape", "k", "op"], run_slot_name);
     let (cell_type, cell_type_leaf) = op(cx, &["tape", "k", "op"], run_cell_type);
     let (retype, retype_leaf) = op(cx, &["tape", "k", "type", "op"], run_retype);
     // The path markers carry the slot and run to nothing: no leaf.
@@ -179,6 +184,8 @@ pub(super) fn register(
         recenter_leaf,
         slot_dyad,
         slot_dyad_leaf,
+        slot_name,
+        slot_name_leaf,
         cell_type,
         cell_type_leaf,
         cell_value,
@@ -292,6 +299,19 @@ pub(crate) unsafe fn build_slot_dyad(
 ) -> DyadPtr {
     let (recv, k) = slot_parts(slot);
     node(store, types.tape.slot_dyad, types.tape.slot_dyad_leaf, &[recv, k])
+}
+
+/// `t[k]:name` (#120): the spelling of the record the slot holds.
+///
+/// # Safety
+/// `slot` must be a slot node from [`build_slot`].
+pub(crate) unsafe fn build_slot_name(
+    store: &mut Store,
+    types: &CoreTypes,
+    slot: DyadPtr,
+) -> DyadPtr {
+    let (recv, k) = slot_parts(slot);
+    node(store, types.tape.slot_name, types.tape.slot_name_leaf, &[recv, k])
 }
 
 /// `t[k]:dyad.type`: the cell's type.
@@ -523,6 +543,30 @@ fn run_slot_dyad(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             Some((_, _, cell)) => Ok(cell as i64),
             None => Err(RunError::BadValue),
         }
+    }
+}
+
+/// `t[k]:name` (#120): the spelling of the record the cell holds, as its
+/// string node — the identity's name, never the appearance's text (that is
+/// `t.spelling[k]`). A cell holding no record — a fresh spelling's dyad, a
+/// constructed node — has no name: the checked error, as `a:type` is.
+fn run_slot_name(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    unsafe {
+        let ops = (*node).value as *const DyadPtr;
+        let tape = tape_of(rt, *ops)?;
+        let k = rt.run(*ops.add(1))? as isize;
+        let Some(c) = (*tape).at(k).copied() else {
+            return Err(RunError::BadValue);
+        };
+        let record = c.record(rt.types());
+        if record.is_null() {
+            return Err(RunError::BadValue);
+        }
+        let name = crate::record::Record::of(record).name;
+        if name.is_null() {
+            return Err(RunError::BadValue);
+        }
+        Ok(name as i64)
     }
 }
 

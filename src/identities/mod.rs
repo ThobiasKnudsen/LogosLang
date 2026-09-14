@@ -298,6 +298,11 @@ impl Core {
         // layout — five `@dyad` fields — is filled at the end of the build,
         // once `dyad` and `@` exist (`record::register_type`).
         let record_ = store.alloc_raw(type_, std::ptr::null_mut());
+        // `string` is minted beside it, for the same reason: every record
+        // carries its spelling as a string node (`a:name`, #120), so the type
+        // must exist before the first declaration; its own record and the
+        // `«…»` pattern are filled in by `string::register` below.
+        let string_ = store.alloc_raw(type_, std::ptr::null_mut());
         let fn_type = fn_mod::register(store, type_);
 
         // Then the behaviour-bearing identities, via a shared build context.
@@ -308,7 +313,7 @@ impl Core {
             fn_type,
             root_scope,
             record_,
-            string_: std::ptr::null_mut(),
+            string_,
             metas: HashMap::new(),
             lower: HashMap::new(),
         };
@@ -338,8 +343,7 @@ impl Core {
         // The text substance: `«…»` string literals and the comment nodes a
         // statement-level `#` builds over them. Registered before the operators,
         // whose records name their operands with string nodes.
-        let string_ = string::register(&mut cx);
-        cx.string_ = string_;
+        string::register(&mut cx);
         let comment_ = comment::register(&mut cx);
         let regex_ = regex_mod::register(&mut cx);
         // The callable machinery: the `callable`/`convention` logos and the two
@@ -658,9 +662,9 @@ pub(crate) struct Cx<'a> {
     /// The `record` type, minted first so every declaration can allocate its
     /// record dyad (`Cx::declare`).
     record_: DyadPtr,
-    /// The `string` logos, once registered (null before): an operand record's role
-    /// names are string nodes, so the identities registered after it can name
-    /// their operands as graph data.
+    /// The `string` logos, minted before any declaration (its record and the
+    /// `«…»` pattern filled in by `string::register`): every record's `name`
+    /// is a string node, and an operand record's role names are too.
     string_: DyadPtr,
     metas: HashMap<DyadPtr, ConstructFn>,
     lower: LowerTable,
@@ -679,7 +683,8 @@ impl Cx<'_> {
     /// built record type live in that type's own scope, exactly as
     /// `Parser::parse_record` declares a user record's fields.
     pub(crate) fn declare_in(&mut self, scope: DyadPtr, spelling: &str, id: DyadPtr) -> DyadPtr {
-        let record = Record::alloc(self.store, self.record_, Record::new(id, scope));
+        let name = string::build_text(self.store, self.string_, spelling.as_bytes());
+        let record = Record::alloc(self.store, self.record_, Record::new(id, scope, name));
         self.trie.insert(spelling, record);
         record
     }
@@ -809,6 +814,7 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
         || logos == types.tape.slot_dyad
         || logos == types.tape.cell_type
         || logos == types.tape.spelling
+        || logos == types.tape.slot_name
     {
         return Operand::Pointer(types.dyad_);
     }
@@ -1225,6 +1231,11 @@ pub unsafe fn display_value(types: &CoreTypes, node: DyadPtr, bits: i64) -> Stri
                 if ty == types.type_ { "type ?" } else { "dyad ?" }.to_string()
             } else if type_identity_of(types, held).is_some() {
                 type_name(types, held)
+            } else if (*held).ty == types.string_ {
+                // A `string` place — a record's `name` (#120) — shows its
+                // text: the one string read the seed has until strings are
+                // live values.
+                String::from_utf8_lossy(string::text(held)).into_owned()
             } else {
                 "dyad".to_string()
             }
@@ -1634,7 +1645,11 @@ mod tests {
     /// legitimate for a variable a test declares but never writes — reading it
     /// is the checked `BadValue` those tests pin.
     fn test_record(record_ty: DyadPtr, identity: DyadPtr) -> DyadPtr {
-        let fields = Box::into_raw(Box::new(Record::new(identity, std::ptr::null_mut())));
+        let fields = Box::into_raw(Box::new(Record::new(
+            identity,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )));
         Box::into_raw(Box::new(crate::dyad::Dyad { ty: record_ty, value: fields as *mut u8 }))
     }
 

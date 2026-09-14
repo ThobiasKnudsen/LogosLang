@@ -4,9 +4,10 @@
 //! `:`, the record read (DESIGN ›The dyad's read surface‹, ruled 7–8 September
 //! 2026): "`:` reads a name's record and `.` reads a thing's own fields". A
 //! declared name's record — one per name, the trie entry — holds `dyad`,
-//! `scope`, `start`, `end`, and `gate`, so `a:scope` is where `a` was
-//! declared and `a:dyad` its cell, the dyad view, whose own two fields keep
-//! their names: `a:dyad.type`, `a:dyad.value`. `:` is the field read on the
+//! `scope`, `start`, `end`, `gate`, and `name` (14 September 2026, #120), so
+//! `a:scope` is where `a` was declared, `a:name` its spelling, and `a:dyad`
+//! its cell, the dyad view, whose own two fields keep their names:
+//! `a:dyad.type`, `a:dyad.value`. `:` is the field read on the
 //! record itself, bypassing its reading rule — which is why it is a second
 //! operator beside `.`, and the one reader of an operand that does not hop
 //! through a record. A constructed node, having no record, answers `:` from
