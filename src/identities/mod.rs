@@ -802,8 +802,14 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
     // A tape's element read and the cell reads through it (#60, #61) yield a
     // cell's address: `t[k]`, `t[k]:dyad`, and `t[k]:dyad.type` are `@dyad`
     // values, so a write or an `insert` stores what they yield, never their
-    // own address.
-    if logos == types.tape.slot || logos == types.tape.slot_dyad || logos == types.tape.cell_type {
+    // own address. `t.spelling[k]` (#121) yields a string node the same way,
+    // the seed's form of a string value until strings are live: written into
+    // a cell, the cell is that string.
+    if logos == types.tape.slot
+        || logos == types.tape.slot_dyad
+        || logos == types.tape.cell_type
+        || logos == types.tape.spelling
+    {
         return Operand::Pointer(types.dyad_);
     }
     // A conversion's result is its target logos (stored at operand[2]).

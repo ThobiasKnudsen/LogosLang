@@ -281,6 +281,20 @@ fn a_constructor_written_in_logos_runs_during_the_parse() {
         b"bad := type (constructor = fn (tape := parsing_tape ?) -> void ( tape[5] ))\nx := bad\n",
     );
     assert!(stderr.contains("constructor failed"), "stderr: {stderr}");
+    // `tape.spelling[k]` (#121, ruled 14 September 2026): a keyword whose
+    // constructor makes its cell its own lexed text. The cell sits in a body
+    // nothing runs, since a string has no storage to read yet, and the
+    // session goes on; off the tape the read is the checked error like any
+    // tape read.
+    let (echoes, stderr) = repl(
+        b"named := type (constructor = fn (tape := parsing_tape ?) -> void ( tape[0] = tape.spelling[0] ))\n\
+          f := fn () -> void ( named )\n5\n",
+    );
+    assert_eq!(echoes, ["5"], "stderr: {stderr}");
+    let (_echoes, stderr) = repl(
+        b"bad2 := type (constructor = fn (tape := parsing_tape ?) -> void ( tape.spelling[5] ))\nx := bad2\n",
+    );
+    assert!(stderr.contains("constructor failed"), "stderr: {stderr}");
 }
 
 #[test]

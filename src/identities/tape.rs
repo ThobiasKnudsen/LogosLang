@@ -17,7 +17,10 @@
 //! read, a place `=` may write (`t[0] = dyad (…)` replaces the cell's pointer
 //! and marks it constructed), `t.is_constructed[k]` the flag (its spelling
 //! ruled 9 September 2026: the flag is the tape's own list, so the read is
-//! that list's element), `t.insert(k, cell)`, `t.remove(k)`, `t.recenter(k)`.
+//! that list's element), `t.spelling[k]` the text the cell was lexed from
+//! (ruled 14 September 2026 by the flag's own reason: the tape's second
+//! list, parallel to the cells; #121), `t.insert(k, cell)`, `t.remove(k)`,
+//! `t.recenter(k)`.
 //! A member call passes its receiver as an address expression, the seed's
 //! form of a member declared in the instance scope reading the instance's
 //! fields bare (›The constructor is a field‹). A cell handed in — `insert`'s
@@ -44,6 +47,10 @@ pub struct TapeIds {
     pub write_leaf: DyadPtr,
     pub is_constructed: DyadPtr,
     pub is_constructed_leaf: DyadPtr,
+    /// `t.spelling[k]`: the text the cell was lexed from, as a string node
+    /// (#121).
+    pub spelling: DyadPtr,
+    pub spelling_leaf: DyadPtr,
     pub insert: DyadPtr,
     pub insert_leaf: DyadPtr,
     pub remove: DyadPtr,
@@ -114,6 +121,7 @@ pub(super) fn register(
     let (slot, slot_leaf) = op(cx, &["tape", "k", "op"], run_slot);
     let (write, write_leaf) = op(cx, &["tape", "k", "cell", "op"], run_write);
     let (is_constructed, is_constructed_leaf) = op(cx, &["tape", "k", "op"], run_is_constructed);
+    let (spelling, spelling_leaf) = op(cx, &["tape", "k", "op"], run_spelling);
     let (insert, insert_leaf) = op(cx, &["tape", "k", "cell", "op"], run_insert);
     let (remove, remove_leaf) = op(cx, &["tape", "k", "op"], run_remove);
     let (recenter, recenter_leaf) = op(cx, &["tape", "k", "op"], run_recenter);
@@ -146,6 +154,7 @@ pub(super) fn register(
     let append_leaf = callable::mint_native(cx.store, cs.callable, run_append, cs.seed_native);
     for (name, id) in [
         ("is_constructed", is_constructed),
+        ("spelling", spelling),
         ("insert", insert),
         ("remove", remove),
         ("recenter", recenter),
@@ -160,6 +169,8 @@ pub(super) fn register(
         write_leaf,
         is_constructed,
         is_constructed_leaf,
+        spelling,
+        spelling_leaf,
         insert,
         insert_leaf,
         remove,
@@ -183,6 +194,7 @@ pub(super) fn register(
 pub(crate) fn member(ids: &TapeIds, name: &str) -> Option<(DyadPtr, DyadPtr)> {
     match name {
         "is_constructed" => Some((ids.is_constructed, ids.is_constructed_leaf)),
+        "spelling" => Some((ids.spelling, ids.spelling_leaf)),
         "insert" => Some((ids.insert, ids.insert_leaf)),
         "remove" => Some((ids.remove, ids.remove_leaf)),
         "recenter" => Some((ids.recenter, ids.recenter_leaf)),
@@ -348,7 +360,8 @@ pub(crate) unsafe fn build_append(
 }
 
 /// A member call or indexed member read on a tape: `t.remove(k)`,
-/// `t.insert(k, cell)`, `t.recenter(k)`, `t.is_constructed[k]`.
+/// `t.insert(k, cell)`, `t.recenter(k)`, `t.is_constructed[k]`,
+/// `t.spelling[k]`.
 ///
 /// # Safety
 /// `args` must be reduced dyads from the store.
@@ -435,6 +448,28 @@ fn run_is_constructed(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> 
             Some(flag) => Ok(i64::from(flag)),
             None => Err(RunError::BadValue),
         }
+    }
+}
+
+/// `t.spelling[k]`: the text the cell was lexed from, as a string node
+/// (DESIGN ›The scope's constructor is the driver‹, ruled 14 September 2026:
+/// "the spelling is the tape's second list, parallel to the cells exactly as
+/// the flag is, so the read is that list's element … A cell nothing lexed —
+/// one a constructor built or spliced — answers the empty text … and the
+/// text stays readable after the cell is constructed"). Off the tape it is
+/// the checked error, as `is_constructed` is. The node is built into the
+/// parser's store, as a retype's cell is, so the read needs one attached.
+fn run_spelling(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    unsafe {
+        let ops = (*node).value as *const DyadPtr;
+        let tape = tape_of(rt, *ops)?;
+        let k = rt.run(*ops.add(1))? as isize;
+        let Some(text) = (*tape).spelling(k) else {
+            return Err(RunError::BadValue);
+        };
+        let string_ty = rt.types().string_;
+        let store = rt.store()?;
+        Ok(super::string::build_text(store, string_ty, text.as_bytes()) as i64)
     }
 }
 

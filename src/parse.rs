@@ -142,12 +142,45 @@ pub struct ParsingTape {
     /// was removed, or on an empty tape).
     center: Option<usize>,
     len: usize,
+    /// The text the cells' spans index: the parser's source for a tape it
+    /// lexes into ([`ParsingTape::over`]), none for a hand-built tape. What
+    /// `tape.spelling[k]` reads through (DESIGN ›The scope's constructor is
+    /// the driver‹, 14 September 2026: the spelling is "the tape's second
+    /// list, parallel to the cells exactly as the flag is"); the sketch's
+    /// `code` field, the source the tape lexes.
+    source: Option<std::ptr::NonNull<str>>,
 }
 
 impl ParsingTape {
-    /// An empty tape.
+    /// An empty tape with no text: its cells answer the empty spelling.
     pub fn new() -> Self {
-        ParsingTape { nodes: Vec::new(), head: None, tail: None, center: None, len: 0 }
+        ParsingTape {
+            nodes: Vec::new(),
+            head: None,
+            tail: None,
+            center: None,
+            len: 0,
+            source: None,
+        }
+    }
+
+    /// An empty tape over `source`, the text its lexed cells will span.
+    /// `source` must outlive the tape and every read of it: the parser's
+    /// source lives for the whole parse a tape belongs to, and the natives
+    /// that read a spelling run inside that parse.
+    pub fn over(source: &str) -> Self {
+        ParsingTape { source: Some(std::ptr::NonNull::from(source)), ..ParsingTape::new() }
+    }
+
+    /// The text this tape's cells were lexed from; empty for a tape that
+    /// never lexed.
+    pub fn text(&self) -> &str {
+        match self.source {
+            // SAFETY: `over` took a `&str` that outlives the tape (its
+            // contract), so the pointer is live for as long as `self` is.
+            Some(p) => unsafe { p.as_ref() },
+            None => "",
+        }
     }
 
     /// A tape over `cells`, center on the first.
@@ -257,6 +290,18 @@ impl ParsingTape {
     /// Whether the cell at `offset` is constructed, or `None` off the tape.
     pub fn is_constructed(&self, offset: isize) -> Option<bool> {
         self.at(offset).map(|c| c.constructed)
+    }
+
+    /// The text the cell at `offset` was lexed from — `tape.spelling[k]`,
+    /// the tape's second per-cell fact beside the flag (DESIGN ›The scope's
+    /// constructor is the driver‹, ruled 14 September 2026): the empty text
+    /// for a cell nothing lexed, one a constructor built or spliced, so a
+    /// constructor can test for a lexed cell with one read and no fault; or
+    /// `None` off the tape. The text stays after the cell is constructed,
+    /// since a write keeps the span.
+    pub fn spelling(&self, offset: isize) -> Option<&str> {
+        let c = self.at(offset)?;
+        Some(self.text().get(c.start..c.end()).unwrap_or(""))
     }
 
     /// The center as a handle, to be put back after a lazy read moved it.
@@ -2095,7 +2140,7 @@ impl<'a> Parser<'a> {
         let Some(construct) = self.construct_of(id) else {
             return Ok(None);
         };
-        let mut tape = ParsingTape::new();
+        let mut tape = ParsingTape::over(self.source);
         tape.push(Cell::unconstructed(id, start, len));
         match construct(self, id, &mut tape)? {
             Constructed::Placed => Ok(tape.cell(0).filter(|c| c.constructed).map(|c| c.dyad)),
@@ -2431,7 +2476,7 @@ impl<'a> Parser<'a> {
         if n == 0 {
             return Ok(None);
         }
-        let mut left = ParsingTape::new();
+        let mut left = ParsingTape::over(tape.text());
         for i in 0..n {
             left.push(*tape.cell(i).expect("in range"));
         }
@@ -3680,13 +3725,13 @@ impl<'a> Parser<'a> {
         // (the address is runtime; the offset and the field's logos are not).
         // A tape's natives (#60): a member of `parsing_tape`'s own scope that
         // is not a laid-out field — `t.remove(k)`, `t.insert(k, cell)`,
-        // `t.recenter(k)`, and the indexed `t.is_constructed[k]` — built as a
-        // call with the receiver's address first.
+        // `t.recenter(k)`, and the indexed `t.is_constructed[k]` and
+        // `t.spelling[k]` — built as a call with the receiver's address first.
         if let Some(recv) = crate::identities::tape::receiver_addr(self.store, &self.types, lhs) {
             let name = &self.source[nstart..nstart + nlen];
             if let Some((op, leaf)) = crate::identities::tape::member(&self.types.tape, name) {
                 let types = self.types;
-                if op == types.tape.is_constructed {
+                if op == types.tape.is_constructed || op == types.tape.spelling {
                     let k = key.ok_or(ParseError::ExpectedIndexBracket)?;
                     let node = crate::identities::tape::build_member(
                         self.store,
@@ -4469,7 +4514,7 @@ impl<'a> Parser<'a> {
             if self.pos >= self.source.len() || self.at_close() {
                 return None;
             }
-            let mut tape = ParsingTape::new();
+            let mut tape = ParsingTape::over(self.source);
             let boundary = match self.lex_segment(&mut tape) {
                 Ok(b) => b,
                 Err(e) => return Some(Err(e)),
@@ -6015,7 +6060,7 @@ mod tests {
         scopes.push(core.root_scope);
 
         let tape = {
-            let mut tape = ParsingTape::new();
+            let mut tape = ParsingTape::over("a + b");
             let mut p = Parser::new("a + b", &mut store, &mut trie, types, scopes);
             p.lex_segment(&mut tape).unwrap();
             scopes = p.into_scopes();
@@ -6100,7 +6145,7 @@ mod tests {
         scopes.push(core.root_scope);
 
         let tape = {
-            let mut tape = ParsingTape::new();
+            let mut tape = ParsingTape::over("a + b");
             let mut p = Parser::new("a + b", &mut store, &mut trie, types, scopes);
             p.lex_segment(&mut tape).unwrap();
             scopes = p.into_scopes();
@@ -6122,6 +6167,13 @@ mod tests {
 
             let (v, s) = go("t.is_constructed[1]", &mut store, &mut trie, types, scopes);
             assert_eq!(v, 0);
+            // `t.spelling[k]` (#121, ruled 14 September 2026): the text the
+            // cell was lexed from, a string node — the tape's second list
+            // beside the flag, read as that list's element.
+            let (v, s) = go("t.spelling[1]", &mut store, &mut trie, types, s);
+            assert_eq!(crate::identities::string::text(v as DyadPtr), b"+");
+            let (v, s) = go("t.spelling[0]", &mut store, &mut trie, types, s);
+            assert_eq!(crate::identities::string::text(v as DyadPtr), b"a");
             let (v, s) = go("t.remove(1)", &mut store, &mut trie, types, s);
             assert_eq!(v as DyadPtr, plus, "remove yields the cell it took");
             assert_eq!((*tape).len(), 2);
@@ -6148,6 +6200,12 @@ mod tests {
             assert_eq!(v as DyadPtr, c0.dyad, "the element read yields the cell");
             let (v, s) = go("t.is_constructed[0]", &mut store, &mut trie, types, s);
             assert_eq!(v, 1);
+            let (v, s) = go("t.spelling[0]", &mut store, &mut trie, types, s);
+            assert_eq!(
+                crate::identities::string::text(v as DyadPtr),
+                b"a",
+                "the text stays after the cell is constructed"
+            );
 
             let (_, s) = go("t.insert(0, dyad (i32, 9))", &mut store, &mut trie, types, s);
             assert_eq!((*tape).len(), 3);
@@ -6156,6 +6214,12 @@ mod tests {
             let (v, s) = go("t[0]", &mut store, &mut trie, types, s);
             assert_eq!((*(v as DyadPtr)).ty, core.i32_, "the inserted cell, now the center");
             assert_ne!(v as DyadPtr, c0.dyad);
+            let (v, s) = go("t.spelling[0]", &mut store, &mut trie, types, s);
+            assert_eq!(
+                crate::identities::string::text(v as DyadPtr),
+                b"",
+                "a cell nothing lexed answers the empty text"
+            );
 
             // A use of a name handed in stays unconstructed: it is its record.
             let (_, s) = go("t[0] = t", &mut store, &mut trie, types, s);
