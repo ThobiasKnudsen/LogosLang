@@ -93,6 +93,10 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::InsertTakesTape => {
             "`insert` splices a tape: give it a `lex «…»` fragment or a parsing_tape value".into()
         }
+        ParseError::CellLeftUnconstructed(name) => format!(
+            "the constructor of `{name}` edited the tape but left its own cell unconstructed: \
+             construct it (`tape[0] = …`), remove it, or leave the tape untouched to decline"
+        ),
         ParseError::BadPattern(why) => format!("this pattern does not compile: {why}"),
         ParseError::ImportInRuntimeBody => {
             "`import` loads at parse time, so it cannot stand inside a \

@@ -161,6 +161,10 @@ struct Node {
     cell: Cell,
     prev: Option<usize>,
     next: Option<usize>,
+    /// Whether the node is on the list: a removed node stays in the arena,
+    /// unlinked, so a handle to it ([`ParsingTape::mark`]) can still say
+    /// that its cell is gone.
+    linked: bool,
 }
 
 /// The working frontier of a scope: a doubly linked list of cells with a
@@ -180,12 +184,46 @@ pub struct ParsingTape {
     /// was removed, or on an empty tape).
     center: Option<usize>,
     len: usize,
+    /// How many times the frontier was edited — a cell linked, unlinked,
+    /// placed, or written. What tells a decline ("the frontier untouched",
+    /// DESIGN ›The scope's constructor is the driver‹) from a constructor
+    /// that edited the tape and left its own cell unconstructed (#81).
+    edits: u64,
 }
 
 impl ParsingTape {
     /// An empty tape.
     pub fn new() -> Self {
-        ParsingTape { nodes: Vec::new(), head: None, tail: None, center: None, len: 0 }
+        ParsingTape { nodes: Vec::new(), head: None, tail: None, center: None, len: 0, edits: 0 }
+    }
+
+    /// The edit count: unchanged across a call means the frontier was not
+    /// touched.
+    pub fn edits(&self) -> u64 {
+        self.edits
+    }
+
+    /// The cell a handle from [`ParsingTape::mark`] names, or `None` when
+    /// that cell has been removed since — how the driver judges a
+    /// constructor's outcome on the construct's own cell, whatever the
+    /// center is after the call (#81).
+    pub fn cell_at_mark(&self, mark: Option<usize>) -> Option<&Cell> {
+        let n = mark?;
+        self.nodes[n].linked.then(|| &self.nodes[n].cell)
+    }
+
+    /// Overwrite the cell at `offset` in place — a native's `tape[k] = …`
+    /// — replacing its pointer and flag and keeping its spelling ("the text
+    /// stays readable after the cell is constructed"). `false` off the tape.
+    pub fn write(&mut self, offset: isize, cell: Cell) -> bool {
+        let Some(c) = self.at_mut(offset) else {
+            return false;
+        };
+        c.dyad = cell.dyad;
+        c.constructed = cell.constructed;
+        c.bracket = false;
+        self.edits += 1;
+        true
     }
 
     /// A tape over `cells`, center on the first.
@@ -326,7 +364,7 @@ impl ParsingTape {
     }
 
     fn alloc(&mut self, cell: Cell) -> usize {
-        self.nodes.push(Node { cell, prev: None, next: None });
+        self.nodes.push(Node { cell, prev: None, next: None, linked: false });
         self.nodes.len() - 1
     }
 
@@ -353,7 +391,9 @@ impl ParsingTape {
                 self.tail = Some(n);
             }
         }
+        self.nodes[n].linked = true;
         self.len += 1;
+        self.edits += 1;
     }
 
     /// The node an insertion at cursor-relative `offset` lands before: the
@@ -400,7 +440,7 @@ impl ParsingTape {
     /// removing any other cell leaves it where it is.
     pub fn remove(&mut self, offset: isize) -> Option<Cell> {
         let n = self.node_at(offset)?;
-        let Node { cell, prev, next } = self.nodes[n];
+        let Node { cell, prev, next, .. } = self.nodes[n];
         match prev {
             Some(p) => self.nodes[p].next = next,
             None => self.head = next,
@@ -414,7 +454,9 @@ impl ParsingTape {
         }
         self.nodes[n].prev = None;
         self.nodes[n].next = None;
+        self.nodes[n].linked = false;
         self.len -= 1;
+        self.edits += 1;
         Some(cell)
     }
 
@@ -439,6 +481,7 @@ impl ParsingTape {
         cell.dyad = dyad;
         cell.constructed = true;
         cell.bracket = false;
+        self.edits += 1;
     }
 
     /// Replace `(`'s own cell with the group it built, marked as a bracket.
@@ -1475,6 +1518,12 @@ pub enum ParseError {
     /// splices a tape into a tape (DESIGN ›Text is the quote‹, 14 September
     /// 2026), a `lex «…»` fragment or a `parsing_tape` value.
     InsertTakesTape,
+    /// A constructor edited the tape and returned with its own cell still
+    /// unconstructed and still its own identity (#81): neither a decline
+    /// (the frontier untouched) nor a construction — "an unfinished
+    /// construct", the checked error rather than a second run. Carries the
+    /// cell's spelling.
+    CellLeftUnconstructed(Box<String>),
     /// The pattern a `regex «…»` quotes does not compile (the regex engine's
     /// reason), or is empty. Reported at the quote, at the definition, since
     /// the index compiles a branch only on first lookup.
@@ -5590,11 +5639,17 @@ impl<'a> Parser<'a> {
     }
 
     /// Run `construct` for the cell at the tape's cursor and settle the
-    /// outcome on the cell: a Decline, or a Placed that left the token
-    /// standing, makes the cell stand as its own value (DESIGN ›The
-    /// constructor is a field‹: "a constructor that runs and finds nothing to
-    /// consume declines, the frontier untouched" — `i32` before a `,`). There
-    /// is no holding and no re-invocation.
+    /// outcome on that cell (DESIGN ›The scope's constructor is the driver‹:
+    /// "A constructor's outcome is read off its cell — constructed, or
+    /// declined (the frontier untouched, the identity standing as its own
+    /// value — `i32` before a `,`) — while an error (an operand missing, an
+    /// unfinished construct) returns … There is no holding and no
+    /// re-invocation"). The cell is judged by its handle, whatever the
+    /// center is after the call (#81): a constructor's re-centering is its
+    /// own view of the tape, so the center is put back on the cell while it
+    /// stands. Progress is the driver's invariant, not the constructor's —
+    /// the cell is constructed, gone, another token, or standing as its
+    /// value, or the call is the checked error; nothing is run twice.
     fn run_ctor(
         &mut self,
         construct: ConstructFn,
@@ -5602,23 +5657,33 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
         discovery: bool,
     ) -> Result<(), ParseError> {
-        let start = tape.start_of(tape.cursor());
+        let own = tape.mark();
+        let edits = tape.edits();
         let was = std::mem::replace(&mut self.discovering, discovery);
         let outcome = construct(self, id, tape);
         self.discovering = was;
         let outcome = outcome?;
-        // The same token, at the same offset: a splice that moved the cursor
-        // onto a later cell of the same identity (`5 + 20 + 12`) is not it.
-        let standing = matches!(tape.at(0), Some(c) if !c.constructed && self.cell_identity(c) == id)
-            && tape.start_of(tape.cursor()) == start;
-        if matches!(outcome, Constructed::Decline) || standing {
-            // The identity stands as its own value: the use of its name, its
-            // record, when the cell was lexed from a spelling.
-            let value = self.stand_as_value(tape, id);
-            if tape.at(0).is_some() {
-                tape.place(value);
-            }
+        // Removed itself: the splice is the outcome, and `remove` moved the
+        // center to the next cell.
+        let Some(cell) = tape.cell_at_mark(own).copied() else {
+            return Ok(());
+        };
+        tape.restore(own);
+        // Constructed, or rewritten to another token ("what it built it
+        // leaves at the cursor (a dyad, or another token)"), which the
+        // driver constructs as its own.
+        if cell.constructed || self.cell_identity(&cell) != id {
+            return Ok(());
         }
+        let declined = matches!(outcome, Constructed::Decline) || tape.edits() == edits;
+        if !declined {
+            self.pos = cell.start;
+            return Err(ParseError::CellLeftUnconstructed(Box::new(cell.spelling().to_string())));
+        }
+        // The identity stands as its own value: the use of its name, its
+        // record, when the cell was lexed from a spelling.
+        let value = self.stand_as_value(tape, id);
+        tape.place(value);
         Ok(())
     }
 
@@ -6146,6 +6211,32 @@ mod tests {
             lex_fragment(&scopes, &trie, &mut store, "«").is_err(),
             "nothing spells a lone quote mark"
         );
+    }
+
+    #[test]
+    fn a_handle_outlives_the_center_and_counts_edits() {
+        // #81: the driver judges a constructor's outcome by the handle of
+        // the construct's own cell, not by whatever the center is after
+        // the call. A handle answers the cell while it is linked and `None`
+        // once removed; the edit count tells an untouched frontier from an
+        // edited one, whichever way the center moved.
+        let mut t = ParsingTape::from_cells(dyad_cells(&[10, 11, 12]));
+        t.set_cursor(1);
+        let own = t.mark();
+        let edits = t.edits();
+        t.recenter(1);
+        assert_eq!(t.cell_at_mark(own).map(|c| c.dyad), Some(dyad(11)));
+        assert_eq!(t.edits(), edits, "moving the center is not an edit");
+        t.restore(own);
+        assert_eq!(t.at(0).unwrap().dyad, dyad(11));
+        t.write(0, Cell::built(dyad(7)));
+        assert!(t.cell_at_mark(own).unwrap().constructed);
+        assert_eq!(t.edits(), edits + 1, "a write is an edit");
+        t.insert(1, Cell::built(dyad(8)));
+        assert_eq!(t.edits(), edits + 2, "a splice is an edit");
+        t.remove(0);
+        assert!(t.cell_at_mark(own).is_none(), "a removed cell is gone by its handle");
+        assert_eq!(t.edits(), edits + 3);
     }
 
     #[test]

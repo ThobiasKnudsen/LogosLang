@@ -464,12 +464,9 @@ fn run_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let k = rt.run(*ops.add(1))? as isize;
         let dyad = rt.run(*ops.add(2))? as DyadPtr;
         let cell = cell_of(rt, dyad);
-        let Some(c) = (*tape).at_mut(k) else {
+        if !(*tape).write(k, cell) {
             return Err(RunError::BadValue);
-        };
-        c.dyad = cell.dyad;
-        c.constructed = cell.constructed;
-        c.bracket = false;
+        }
         Ok(0)
     }
 }
@@ -626,12 +623,9 @@ fn run_retype(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let store = rt.store()?;
         let run = store.alloc_operands(&[std::ptr::null_mut()]);
         let cell = store.alloc_raw(ty, run);
-        let Some(c) = (*tape).at_mut(k) else {
+        if !(*tape).write(k, Cell::built(cell)) {
             return Err(RunError::BadValue);
-        };
-        c.dyad = cell;
-        c.constructed = true;
-        c.bracket = false;
+        }
         Ok(cell as i64)
     }
 }

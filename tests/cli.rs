@@ -1219,3 +1219,44 @@ fn lex_splices_text_built_fragments() {
     assert!(stderr.contains("`lex` must be followed by a «…» quote"), "stderr: {stderr}");
     assert!(stderr.contains("`insert` splices a tape"), "stderr: {stderr}");
 }
+
+#[test]
+fn a_constructors_outcome_is_read_off_its_own_cell() {
+    // #81; DESIGN ›The scope's constructor is the driver‹: "A constructor's
+    // outcome is read off its cell — constructed, or declined (the frontier
+    // untouched, the identity standing as its own value) … There is no
+    // holding and no re-invocation." A constructor that only moves the
+    // center — onto the next cell, the previous, or off the tape — has
+    // declined: the driver judges its own cell by handle and puts the
+    // center back, where it used to find the same cell again forever.
+    let (echoes, stderr) = repl(
+        b"r1 := type (constructor = fn (tape := parsing_tape ?) -> void ( tape.recenter(1) ))\n\
+          r2 := type (constructor = fn (tape := parsing_tape ?) -> void ( tape.recenter(-1) ))\n\
+          r3 := type (constructor = fn (tape := parsing_tape ?) -> void ( tape.recenter(99) ))\n\
+          a := r1\nb := r2\nc := r3\na:dyad.type == type\nb:dyad.type == type\nc:dyad.type == type\n",
+    );
+    assert_eq!(echoes, ["true", "true", "true"], "stderr: {stderr}");
+    // "what it built it leaves at the cursor (a dyad, or another token)": a
+    // cell rewritten to a use of another name is that name's, and the
+    // driver constructs it as its own — `as_i32` becomes `i32`, so
+    // `as_i32 5` is `i32 5`.
+    let (echoes, stderr) = repl(
+        b"as_i32 := type (constructor = fn (tape := parsing_tape ?) -> void ( tape[0] = i32 ))\n\
+          x := as_i32 5\nx + 1\n",
+    );
+    assert_eq!(echoes, ["6"], "stderr: {stderr}");
+    // A constructor that edits the tape and returns with its own cell
+    // still unconstructed is "an unfinished construct": the checked error,
+    // named for the cell, never a second run.
+    let (_echoes, stderr) = repl(
+        "half := type (constructor = fn (tape := parsing_tape ?) -> void ( tape.insert(1, lex «/ 2») ))\n\
+          8 half\n"
+            .as_bytes(),
+    );
+    assert!(
+        stderr.contains(
+            "the constructor of `half` edited the tape but left its own cell unconstructed"
+        ),
+        "stderr: {stderr}"
+    );
+}
