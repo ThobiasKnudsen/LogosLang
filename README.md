@@ -141,7 +141,7 @@ logos import ./lib.logos                 # run a file top to bottom
 logos 'import ./lib.logos, double(21)'   # ...and call something it exposes
 ```
 
-There is no `main`. The top level is the program, and the file's last value is its result. An imported file runs inside its own scope and sees only the built-in names and its own imports, never the importer's, so it means the same thing wherever it is imported. A file loads once per run, and an import cycle is an error. Today's seed exposes only the names a file marks `pub`, spelled `pub name := …` in the seed. The ruled spelling is `name := pub …`, and the v0.1.0 preview drops gates entirely: every top-level name is visible, and `pub` and `mut` land together after it.
+There is no `main`. The top level is the program, and the file's last value is its result. An imported file runs inside its own scope and sees only the built-in names and its own imports, never the importer's, so it means the same thing wherever it is imported. A file loads once per run, and an import cycle is an error. Today's seed exposes only the names a file marks `pub`, spelled `pub name := …`, which is also the ruled spelling; the v0.1.0 preview drops gates entirely: every top-level name is visible, and `pub` and `mut` land together after it.
 
 ## Defining the language from inside
 

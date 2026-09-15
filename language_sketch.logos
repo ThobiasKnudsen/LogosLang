@@ -40,18 +40,16 @@ parsing_tape := type (
 )
 
 mut := type (
-    # a gate word (DESIGN ›mut is a gate on the record‹, ruled 5-7 September 2026): a prefix constructor on the value at
-    # the head of a declaration's right side, x := mut 5, x := pub mut i32 5. It adds the entry «write allowed from the
-    # declaring scope and its descendants» to the gate set of the record := is filling; gates combine as grants and
-    # vetoes, ? being silence; lock seals the set, immut x removes this entry. Legal only where a record is being filled
-    # (a := right side, a field or parameter declaration, a return type); on a constructed node, f(mut i32 5), it is the
-    # checked error, a constructed node having no record. mut T as a TYPE is superseded: a type never carries mutability.
-    constructor = fn (tape := parsing_tape ?) -> void (
-        target := ?                       # the record the enclosing := is filling; how a gate word reaches it is not yet spelled
-        if target == ?
-            error «mut on a value that no declaration receives»
-        ?                                 # append the write entry to target:gate — a write at :gate, permitted while the set holds no lock
-    )
+    # a gate word (DESIGN ›mut is a gate on the record‹, ruled 5-7 September 2026; its place ruled 15 September 2026): a
+    # prefix word on the NAME, left of :=, mut x := 5, pub mut x := i32 5, superseding the right-side x := mut 5 of
+    # 5 September. It is the entry «write allowed from the declaring scope and its descendants»; the record := fills
+    # takes it where the gate word and := meet on the tape, on the name's side, so mut never reaches across := (the
+    # target := ? this body once held is gone with that). gates combine as grants and vetoes, ? being silence; lock
+    # seals the set, immut x removes this entry. Standing anywhere else, f(mut i32 5), it is a gate value where none is
+    # accepted, the checked error. mut T as a TYPE is superseded: a type never carries mutability.
+    # open (15 September 2026): whether := reads the gate words left of its name (then mut needs no constructor and
+    # stands as its own value, as lex does) or mut reads the declaration to its right (the seed's pub today); and a
+    # gated return type, which has no name to stand beside.
 )
 
 p1 := conjecture ( a + a -> 2 * a ) where ( a:dyad.type is number )           # value rule: licenses rewriting a+a into 2*a; no proof = an assumption where cited, an axiom where a scope registers it
@@ -135,7 +133,7 @@ xor := ?
 not := ?
 
 
-a := mut i32 32       # mut gates a's record, never the type (5 September 2026); the dyad is two pointers, no phase, no mutability bit
+mut a := i32 32       # mut gates a's record, never the type (5 September 2026), standing beside the name (15 September 2026); the dyad is two pointers, no phase, no mutability bit
 record of a {         # the trie entry (id_context renamed record, 7 September 2026): one per declared name, itself a dyad of type record
     dyad -> a
     scope -> (the scope a was declared in)
