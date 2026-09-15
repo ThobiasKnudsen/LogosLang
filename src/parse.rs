@@ -2604,16 +2604,7 @@ impl<'a> Parser<'a> {
         };
         let node = match base {
             None => self.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut()),
-            Some(mut t) => {
-                let mut depth = 0usize;
-                while matches!(tape.at(-2 - depth as isize), Some(a) if !a.constructed && a.identity(&types) == types.at_)
-                {
-                    depth += 1;
-                }
-                for _ in 0..depth {
-                    t = crate::identities::pointer::make_pointer_type(self.store, types.type_, t);
-                }
-                // SAFETY: `t` is a type node from the store.
+            Some(t) => {
                 // The place's width comes from the reading rule asked of the
                 // type (`place_layout`, #82): the same table a read of the
                 // place consults, so allocation and read cannot disagree. A
@@ -2633,9 +2624,7 @@ impl<'a> Parser<'a> {
                     };
                     self.alloc_local(t, width)
                 };
-                for _ in 0..(1 + depth) {
-                    tape.remove(-1);
-                }
+                tape.remove(-1);
                 self.holes.insert(place);
                 place
             }
