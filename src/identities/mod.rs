@@ -1412,8 +1412,11 @@ pub(crate) unsafe fn commit_call_args(
         match read::place_layout(types, pty) {
             // A pointer parameter takes only a pointer to the same pointee — a
             // committed literal here would be dereferenced as a wild address.
+            // Pointees compare as types, not nodes (`pointee_types_match`):
+            // pointer types are minted per spelling, so a `@@i32` parameter's
+            // pointee and a `@@i32` argument's are two nodes for one type.
             Some((read::Read::Pointer(pp), _)) => match numtype_of(types, *arg) {
-                Operand::Pointer(pointee) if pointee == pp => {}
+                Operand::Pointer(pointee) if pointee_types_match(pp, pointee) => {}
                 _ => return Err(ParseError::TypeMismatch),
             },
             // A `dyad` parameter takes any node-valued argument — an identity,

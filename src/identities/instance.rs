@@ -163,7 +163,9 @@ pub(crate) unsafe fn build_ctor(
                 commit_if_literal(store, types, arg, &Operand::Literal, fty, nt)?
             }
             Operand::Pointer(pointee) => {
-                if !matches!(field_read, Some((super::read::Read::Pointer(fp), _)) if fp == pointee)
+                // Pointees compare as types, not nodes: pointer types are
+                // minted per spelling (`super::pointee_types_match`).
+                if !matches!(field_read, Some((super::read::Read::Pointer(fp), _)) if super::pointee_types_match(fp, pointee))
                 {
                     return Err(ParseError::TypeMismatch);
                 }

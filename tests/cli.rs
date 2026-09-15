@@ -1323,6 +1323,31 @@ fn a_pointer_type_applies_to_any_type() {
 }
 
 #[test]
+fn a_pointer_parameter_takes_a_pointer_of_the_same_type_however_spelled() {
+    // DESIGN ›Pointer types are prefix `@T`‹: "`@i32` is a pointer to an
+    // i32, composing as `@@i32`". The seed mints a pointer type per
+    // spelling, so a `@@i32` parameter's pointee and a `@@i32` argument's
+    // are two nodes describing one type; the call and the record construction
+    // compare them as types, as a store into a pointer place already did.
+    // `@i32` into `@@i32` is still the mismatch, in both.
+    let (echoes, stderr) = repl(
+        "x := i32 7\n\
+         px := &x\n\
+         q := &px\n\
+         f := fn (p := @@i32 ?) -> i32 ( p@@ )\n\
+         f(q)\n\
+         f(px)\n\
+         pt := type (instance (h := @@i32 ?))\n\
+         v := pt(q)\n\
+         v.h@@\n\
+         w := pt(px)\n"
+            .as_bytes(),
+    );
+    assert_eq!(echoes, ["7", "7"], "stderr: {stderr}");
+    assert_eq!(stderr.matches("these types do not match").count(), 2, "stderr: {stderr}");
+}
+
+#[test]
 fn a_constructors_outcome_is_read_off_its_own_cell() {
     // #81; DESIGN ›The scope's constructor is the driver‹: "A constructor's
     // outcome is read off its cell — constructed, or declined (the frontier
