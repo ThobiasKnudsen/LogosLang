@@ -89,6 +89,10 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::DoubleGate => "this declaration is already marked `pub`".into(),
         ParseError::ExpectedPath => "`import` must be followed by a file path".into(),
         ParseError::ExpectedPattern => "`regex` must be followed by a «…» pattern".into(),
+        ParseError::ExpectedQuote => "`lex` must be followed by a «…» quote".into(),
+        ParseError::InsertTakesTape => {
+            "`insert` splices a tape: give it a `lex «…»` fragment or a parsing_tape value".into()
+        }
         ParseError::BadPattern(why) => format!("this pattern does not compile: {why}"),
         ParseError::ImportInRuntimeBody => {
             "`import` loads at parse time, so it cannot stand inside a \
@@ -210,7 +214,7 @@ pub fn parse_message(e: &ParseError) -> String {
 }
 
 /// The human sentence for a name-resolution error.
-fn resolve_message(e: &ResolveError) -> String {
+pub(crate) fn resolve_message(e: &ResolveError) -> String {
     match e {
         ResolveError::Unknown(n) if n.is_empty() => "unknown name".into(),
         ResolveError::Unknown(n) => format!("unknown name `{n}`"),
@@ -250,6 +254,8 @@ pub fn run_message(e: &RunError) -> String {
         RunError::CompileFailed(msg) => format!("compile() failed: {msg}"),
         RunError::Faulted(msg) => format!("the interpreter stopped inside compiled code: {msg}"),
         RunError::NoStore => "a cell can be built only inside a constructor the parser runs".into(),
+        RunError::NoLexer => "`lex` can run only where the parser runs it".into(),
+        RunError::Lex(why) => format!("this text will not lex: {why}"),
         RunError::NullPointer => "this pointer holds nothing yet".into(),
         RunError::CallDepth => {
             format!(

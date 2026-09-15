@@ -85,6 +85,7 @@ mod if_mod;
 pub mod import;
 pub(crate) mod instance;
 mod le;
+pub mod lex;
 #[path = "logos.rs"]
 mod logos_mod;
 mod lt;
@@ -227,6 +228,8 @@ pub struct Core {
     pub colon_: DyadPtr,
     /// `parsing_tape` and the tape's natives (#60).
     pub tape: tape::TapeIds,
+    /// `lex`, the lexer as an identity, and its run leaf (#62).
+    pub lex: lex::LexIds,
     /// `index`, the passive node a `[i]` cell carries.
     pub index_: DyadPtr,
     /// `array` (of `dyad@`), the seed's first array form: a sequence's
@@ -470,6 +473,9 @@ impl Core {
         // surface‹, 8 September 2026).
         // `parsing_tape` and the four affordances as identities (#60).
         let tape = tape::register(&mut cx, &callables, scope_, array_, void);
+        // `lex`, the lexer as an identity (#62): its node runs the lexer and
+        // yields a fragment `insert` splices.
+        let lex = lex::register(&mut cx, &callables);
         record::register_type(&mut cx, scope_, array_, dyad_, numtypes[NumType::F64 as usize]);
         op_leaves.scope_ = scope::register_exec(&mut cx, scope_, &callables);
         // An item that ran in the pass keeps its result beside it (R3, #88).
@@ -550,6 +556,7 @@ impl Core {
             record_,
             colon_,
             tape,
+            lex,
             index_,
             callable_: callables.callable,
             convention_: callables.convention,
@@ -607,6 +614,7 @@ impl Core {
             record_: self.record_,
             colon_: self.colon_,
             tape: self.tape,
+            lex: self.lex,
             index_: self.index_,
             construct_: self.construct_,
             string_: self.string_,

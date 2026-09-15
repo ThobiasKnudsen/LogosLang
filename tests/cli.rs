@@ -1181,3 +1181,41 @@ fn a_name_error_names_the_name_and_points_at_it() {
     assert!(stderr.contains("unknown name `zz`"), "stderr: {stderr}");
     assert!(stderr.contains("<repl>:1:3: error: `q` is already declared"), "stderr: {stderr}");
 }
+
+#[test]
+fn lex_splices_text_built_fragments() {
+    // DESIGN ›Text is the quote‹ (#62): "`lex` returns a tape fragment … the
+    // cells the lexer would have put on the frontier … unconstructed, no
+    // constructor woken … a group is what a macro splices, `tape.insert(i,
+    // lex «(a, b)»)`". A postfix `twice` whose constructor splices `* 2`
+    // after its own cell and removes itself: the driver then constructs the
+    // spliced cells as if they had been written — the literal `2` from the
+    // text the spliced cell carries (`lex «5»` carries «5»), `*` over its
+    // operands. Above `+` on the axis, so `3 + 4 twice` doubles the 4.
+    let (echoes, stderr) = repl(
+        "twice := type (parse_rank = *.parse_rank + 1, constructor = fn (tape := parsing_tape ?) -> void ( tape.insert(1, lex «* 2»), tape.remove(0) ))\n\
+          5 twice\n3 + 4 twice\n"
+            .as_bytes(),
+    );
+    assert_eq!(echoes, ["10", "11"], "stderr: {stderr}");
+    // "text that names nothing lexes to a fresh dyad with both slots
+    // `undefined` … constructing it later being the ordinary unknown-name
+    // error": a spliced fresh spelling left on the tape is that error at
+    // the boundary. A fragment made at the top level, its names fresh,
+    // errs in nothing while nothing constructs it.
+    let (echoes, stderr) = repl(
+        "t := lex «(a, b)»\n5\n\
+          bad := type (constructor = fn (tape := parsing_tape ?) -> void ( tape.insert(1, lex «zz»), tape.remove(0) ))\n\
+          x := bad\n"
+            .as_bytes(),
+    );
+    assert_eq!(echoes, ["5"], "stderr: {stderr}");
+    assert!(stderr.contains("unknown name `zz`"), "stderr: {stderr}");
+    // `lex` reads its own quote, as `regex` does; `insert` takes a tape.
+    let (_echoes, stderr) = repl(
+        b"y := lex 5\n\
+          bad2 := type (constructor = fn (tape := parsing_tape ?) -> void ( tape.insert(1, dyad (i32, 1)) ))\n",
+    );
+    assert!(stderr.contains("`lex` must be followed by a «…» quote"), "stderr: {stderr}");
+    assert!(stderr.contains("`insert` splices a tape"), "stderr: {stderr}");
+}

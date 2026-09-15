@@ -44,9 +44,12 @@ use crate::store::Store;
 /// the trie resolved for the spelling, or a fresh dyad with both slots null
 /// for a spelling the trie does not know (`:=` fills it); constructed, the
 /// node the constructor built — plus the tape's own two facts about the
-/// cell, whether it is constructed and the source span it was lexed at (the
-/// derived source map's seed-side stand-in). Never a token wrapper: the
-/// identity a cell denotes is read through its record ([`Cell::identity`]).
+/// cell, whether it is constructed and the text it was lexed from
+/// (`tape.spelling[k]`, ruled 14 September 2026; the span doubles as the
+/// derived source map's seed-side stand-in). The text rides on the cell so a
+/// cell `lex «…»` lexed and `insert` spliced keeps its spelling on the tape
+/// it lands on (#62). Never a token wrapper: the identity a cell denotes is
+/// read through its record ([`Cell::identity`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cell {
     /// The record, the fresh dyad, or the node.
@@ -60,22 +63,57 @@ pub struct Cell {
     /// group to its expression (`parse_sequence`), which loses that type; the
     /// mark goes when the unwrap goes.
     pub bracket: bool,
-    /// Byte offset of the cell's spelling in the source (0 for a cell that
-    /// was never lexed: a spliced-in or parser-minted one).
+    /// The text the cell was lexed from — the parser's source, or the string
+    /// a `lex «…»` ran over — which `start..start + len` indexes; `None` for
+    /// a cell nothing lexed (a constructor-built or parser-minted one), which
+    /// answers the empty spelling. The text outlives every read of the cell:
+    /// a source lives for its parse, a string's bytes for the store.
+    text: Option<std::ptr::NonNull<str>>,
+    /// Byte offset of the cell's spelling in its text (0 for a cell that
+    /// was never lexed).
     pub start: usize,
     /// Byte length of that spelling.
     pub len: usize,
 }
 
 impl Cell {
-    /// An unconstructed cell over `start..start + len` pointing at `dyad`.
-    pub fn unconstructed(dyad: DyadPtr, start: usize, len: usize) -> Self {
-        Cell { dyad, constructed: false, bracket: false, start, len }
+    /// An unconstructed cell pointing at `dyad`, lexed from `text` at
+    /// `start..start + len`.
+    pub fn lexed(dyad: DyadPtr, text: &str, start: usize, len: usize) -> Self {
+        Cell {
+            dyad,
+            constructed: false,
+            bracket: false,
+            text: Some(std::ptr::NonNull::from(text)),
+            start,
+            len,
+        }
     }
 
     /// A constructed cell holding `dyad`, with no spelling of its own.
     pub fn built(dyad: DyadPtr) -> Self {
-        Cell { dyad, constructed: true, bracket: false, start: 0, len: 0 }
+        Cell { dyad, constructed: true, bracket: false, text: None, start: 0, len: 0 }
+    }
+
+    /// An unconstructed cell holding `dyad` with no spelling of its own: what
+    /// a native puts on the tape for a record handed in by value.
+    pub fn unlexed(dyad: DyadPtr) -> Self {
+        Cell { constructed: false, ..Cell::built(dyad) }
+    }
+
+    /// The text this cell was lexed from — `tape.spelling[k]`, the tape's
+    /// second per-cell fact beside the flag (DESIGN ›The scope's constructor
+    /// is the driver‹, ruled 14 September 2026): the empty text for a cell
+    /// nothing lexed, so a constructor can test for a lexed cell with one
+    /// read and no fault. The text stays after the cell is constructed, since
+    /// a write keeps the span.
+    pub fn spelling(&self) -> &str {
+        match self.text {
+            // SAFETY: `lexed` took a `&str` that outlives the cell (its
+            // contract), so the pointer is live for as long as `self` is.
+            Some(p) => unsafe { p.as_ref() }.get(self.start..self.end()).unwrap_or(""),
+            None => "",
+        }
     }
 
     /// One past the cell's last byte.
@@ -142,45 +180,12 @@ pub struct ParsingTape {
     /// was removed, or on an empty tape).
     center: Option<usize>,
     len: usize,
-    /// The text the cells' spans index: the parser's source for a tape it
-    /// lexes into ([`ParsingTape::over`]), none for a hand-built tape. What
-    /// `tape.spelling[k]` reads through (DESIGN ›The scope's constructor is
-    /// the driver‹, 14 September 2026: the spelling is "the tape's second
-    /// list, parallel to the cells exactly as the flag is"); the sketch's
-    /// `code` field, the source the tape lexes.
-    source: Option<std::ptr::NonNull<str>>,
 }
 
 impl ParsingTape {
-    /// An empty tape with no text: its cells answer the empty spelling.
+    /// An empty tape.
     pub fn new() -> Self {
-        ParsingTape {
-            nodes: Vec::new(),
-            head: None,
-            tail: None,
-            center: None,
-            len: 0,
-            source: None,
-        }
-    }
-
-    /// An empty tape over `source`, the text its lexed cells will span.
-    /// `source` must outlive the tape and every read of it: the parser's
-    /// source lives for the whole parse a tape belongs to, and the natives
-    /// that read a spelling run inside that parse.
-    pub fn over(source: &str) -> Self {
-        ParsingTape { source: Some(std::ptr::NonNull::from(source)), ..ParsingTape::new() }
-    }
-
-    /// The text this tape's cells were lexed from; empty for a tape that
-    /// never lexed.
-    pub fn text(&self) -> &str {
-        match self.source {
-            // SAFETY: `over` took a `&str` that outlives the tape (its
-            // contract), so the pointer is live for as long as `self` is.
-            Some(p) => unsafe { p.as_ref() },
-            None => "",
-        }
+        ParsingTape { nodes: Vec::new(), head: None, tail: None, center: None, len: 0 }
     }
 
     /// A tape over `cells`, center on the first.
@@ -292,16 +297,22 @@ impl ParsingTape {
         self.at(offset).map(|c| c.constructed)
     }
 
-    /// The text the cell at `offset` was lexed from — `tape.spelling[k]`,
-    /// the tape's second per-cell fact beside the flag (DESIGN ›The scope's
-    /// constructor is the driver‹, ruled 14 September 2026): the empty text
-    /// for a cell nothing lexed, one a constructor built or spliced, so a
-    /// constructor can test for a lexed cell with one read and no fault; or
-    /// `None` off the tape. The text stays after the cell is constructed,
-    /// since a write keeps the span.
+    /// The text the cell at `offset` was lexed from — `tape.spelling[k]`
+    /// ([`Cell::spelling`]) — or `None` off the tape.
     pub fn spelling(&self, offset: isize) -> Option<&str> {
-        let c = self.at(offset)?;
-        Some(self.text().get(c.start..c.end()).unwrap_or(""))
+        self.at(offset).map(Cell::spelling)
+    }
+
+    /// Every cell in tape order, copied out: the snapshot `splice` takes of
+    /// a fragment, so a tape may be spliced into itself.
+    pub fn cells(&self) -> Vec<Cell> {
+        let mut out = Vec::with_capacity(self.len);
+        let mut n = self.head;
+        while let Some(k) = n {
+            out.push(self.nodes[k].cell);
+            n = self.nodes[k].next;
+        }
+        out
     }
 
     /// The center as a handle, to be put back after a lazy read moved it.
@@ -345,27 +356,43 @@ impl ParsingTape {
         self.len += 1;
     }
 
+    /// The node an insertion at cursor-relative `offset` lands before: the
+    /// cell there, the head past the left end, the end (`None`) past the
+    /// right end or on a tape whose center is past the end.
+    fn anchor(&self, offset: isize) -> Option<usize> {
+        if self.center.is_none() && offset >= 0 {
+            return None;
+        }
+        match self.node_at(offset) {
+            Some(a) => Some(a),
+            None if offset < 0 => self.head,
+            None => None,
+        }
+    }
+
     /// Splice `cell` in at cursor-relative `offset`: before the cell there,
     /// so `insert(0, ..)` lands just left of the center and `insert(1, ..)`
     /// just right of it; past either end it lands at that end. The center
     /// keeps pointing at the same cell.
     pub fn insert(&mut self, offset: isize, cell: Cell) {
-        let n = self.alloc(cell);
-        if self.head.is_none() {
-            self.link_before(None, n);
-            self.center = Some(n);
-            return;
-        }
-        let at = if self.center.is_none() && offset >= 0 {
-            None
-        } else {
-            match self.node_at(offset) {
-                Some(a) => Some(a),
-                None if offset < 0 => self.head,
-                None => None,
+        self.splice(offset, vec![cell]);
+    }
+
+    /// Splice `cells` in, in order, at cursor-relative `offset` — the place
+    /// [`ParsingTape::insert`] puts one cell — with their flags and
+    /// spellings: `tape.insert(k, lex «…»)`, "`insert` splices a tape into a
+    /// tape" (DESIGN ›Text is the quote‹, 14 September 2026). On an empty
+    /// tape the first cell becomes the center.
+    pub fn splice(&mut self, offset: isize, cells: Vec<Cell>) {
+        let empty = self.head.is_none();
+        let at = self.anchor(offset);
+        for cell in cells {
+            let n = self.alloc(cell);
+            self.link_before(at, n);
+            if empty && self.center.is_none() {
+                self.center = Some(n);
             }
-        };
-        self.link_before(at, n);
+        }
     }
 
     /// Unlink and return the cell at cursor-relative `offset`. Removing the
@@ -398,10 +425,10 @@ impl ParsingTape {
         self.center = Some(n);
     }
 
-    /// The construct's own spelling — the center cell's span. How an atom
-    /// constructor reaches its matched text.
-    pub fn own_span(&self) -> Option<(usize, usize)> {
-        self.at(0).filter(|c| !c.constructed).map(|c| (c.start, c.len))
+    /// The construct's own spelling — the center cell's text, while the cell
+    /// is unconstructed. How an atom constructor reaches its matched text.
+    pub fn own_text(&self) -> Option<&str> {
+        self.at(0).filter(|c| !c.constructed).map(Cell::spelling)
     }
 
     /// Replace the center cell's dyad with the node the constructor built and
@@ -1053,6 +1080,9 @@ pub struct CoreTypes {
     pub string_: DyadPtr,
     /// `regex`: the reader whose node, left of `:=`, declares a pattern (#114).
     pub regex_: DyadPtr,
+    /// `lex` and its run leaf: the lexer as an identity, whose node lexes its
+    /// quote into a tape fragment when it runs (#62).
+    pub lex: crate::identities::lex::LexIds,
     /// `comment`: the prose-node logos a statement-level `#` builds; reflectable
     /// graph structure, invisible to value flow.
     pub comment_: DyadPtr,
@@ -1439,6 +1469,12 @@ pub enum ParseError {
     ExpectedPath,
     /// A `regex` was not followed by a `«…»` quote (#114).
     ExpectedPattern,
+    /// A `lex` was not followed by a `«…»` quote (#62).
+    ExpectedQuote,
+    /// `tape.insert(k, …)` was handed something that is not a tape: `insert`
+    /// splices a tape into a tape (DESIGN ›Text is the quote‹, 14 September
+    /// 2026), a `lex «…»` fragment or a `parsing_tape` value.
+    InsertTakesTape,
     /// The pattern a `regex «…»` quotes does not compile (the regex engine's
     /// reason), or is empty. Reported at the quote, at the definition, since
     /// the index compiles a branch only on first lookup.
@@ -1773,6 +1809,61 @@ pub struct Parser<'a> {
     lower: Option<&'a crate::compile::LowerTable>,
 }
 
+/// One token off `text` at `pos` — the lex step the driver and `lex «…»`
+/// share (#62): whitespace skipped, the spelling the open scopes and the
+/// index resolve at the start of the rest ([`ScopeStack::lex`]), as a cell
+/// over `text` with the position after it. A spelling the index knows only
+/// through a fresh-spelling pattern (#110) mints its fresh dyad with both
+/// slots null into `store` — the pattern's construction, done at the lex.
+/// `None` at the end of the text. `text` must outlive every read of the
+/// cell ([`Cell::lexed`]).
+pub(crate) fn lex_token(
+    scopes: &ScopeStack,
+    trie: &RegexTrie,
+    store: &mut Store,
+    text: &str,
+    pos: usize,
+) -> Result<Option<(Cell, usize)>, ResolveError> {
+    let bytes = text.as_bytes();
+    let mut start = pos;
+    while start < bytes.len() && bytes[start].is_ascii_whitespace() {
+        start += 1;
+    }
+    if start >= bytes.len() {
+        return Ok(None);
+    }
+    let r = scopes.lex(trie, &text[start..])?;
+    let dyad = if r.fresh {
+        store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut())
+    } else {
+        r.record
+    };
+    Ok(Some((Cell::lexed(dyad, text, start, r.matched), start + r.matched)))
+}
+
+/// The lexer over a string, as `lex «…»` runs it (#62; DESIGN ›Text is the
+/// quote‹: "the cells the lexer would have put on the frontier, each a
+/// pointer to the record the trie resolved at the lex site … unconstructed,
+/// no constructor woken"): every token of `text` as an unconstructed cell
+/// with its spelling, on a fresh tape centered on its first cell — the
+/// fragment `insert` splices. `text` must outlive the fragment's reads: a
+/// string node's bytes live for the store.
+pub(crate) fn lex_fragment(
+    scopes: &ScopeStack,
+    trie: &RegexTrie,
+    store: &mut Store,
+    text: &str,
+) -> Result<ParsingTape, ResolveError> {
+    let mut tape = ParsingTape::new();
+    let mut pos = 0;
+    while let Some((cell, next)) = lex_token(scopes, trie, store, text, pos)? {
+        tape.push(cell);
+        pos = next;
+    }
+    tape.set_cursor(0);
+    Ok(tape)
+}
+
 /// One enclosing function body being parsed: the byte-size accumulator its
 /// parameter and local declarations claim offsets from. Parameters claim the
 /// frame's first offsets (a call frame is an instance of its function — DESIGN
@@ -1847,7 +1938,24 @@ impl<'a> Parser<'a> {
         if (*node).ty == self.types.ran_ {
             return Ok(crate::identities::ran::value_of(node));
         }
-        self.rt.run(node).map_err(ParseError::Run)
+        self.run_on_pass(node).map_err(ParseError::Run)
+    }
+
+    /// Run `node` on the pass's runtime with the lexer attached (#62): a
+    /// `lex «…»` inside what runs resolves against the scopes open now — for
+    /// a constructor, the appearance's — and the index, the seed's reading
+    /// of "the record the trie resolved at the lex site" (DESIGN ›Text is
+    /// the quote‹). The parser reads neither the scopes nor the index while
+    /// the runtime runs, which keeps the raw handles sound, and takes them
+    /// back before its next step.
+    ///
+    /// # Safety
+    /// `node` must be a valid dyad this parser built into its store.
+    unsafe fn run_on_pass(&mut self, node: DyadPtr) -> Result<i64, crate::run::RunError> {
+        self.rt.attach_lexer(&self.scopes, self.trie);
+        let out = self.rt.run(node);
+        self.rt.detach_lexer();
+        out
     }
 
     /// The root scope's exit (issue #49): run the teardowns the top level's
@@ -1875,13 +1983,6 @@ impl<'a> Parser<'a> {
     /// with [`Parser::with_imports`]).
     pub fn take_imports(&mut self) -> Imports {
         std::mem::take(&mut self.imports)
-    }
-
-    /// The source being parsed — how a constructor reads its own token's span
-    /// (the returned `&'a str` outlives the `&self` borrow, so a span slice and
-    /// a later `&mut self` service call compose).
-    pub(crate) fn source(&self) -> &'a str {
-        self.source
     }
 
     /// The store the constructors allocate into.
@@ -1992,7 +2093,7 @@ impl<'a> Parser<'a> {
                 if crate::identities::numtype::is_comment_type(ty) || ty == self.types.defer_ {
                     continue;
                 }
-                let bits = self.rt.run(node).map_err(ParseError::Run)?;
+                let bits = self.run_on_pass(node).map_err(ParseError::Run)?;
                 if matches!(
                     crate::identities::read::read_kind(&self.types, node),
                     crate::identities::read::Read::Executable(_)
@@ -2120,8 +2221,8 @@ impl<'a> Parser<'a> {
         let Some(construct) = self.construct_of(id) else {
             return Ok(None);
         };
-        let mut tape = ParsingTape::over(self.source);
-        tape.push(Cell::unconstructed(id, start, len));
+        let mut tape = ParsingTape::new();
+        tape.push(Cell::lexed(id, self.source, start, len));
         match construct(self, id, &mut tape)? {
             Constructed::Placed => Ok(tape.cell(0).filter(|c| c.constructed).map(|c| c.dyad)),
             Constructed::Decline => Ok(None),
@@ -2176,7 +2277,7 @@ impl<'a> Parser<'a> {
         let call = build_call(self.store, f, &[handle]);
         // SAFETY: `call` was just built into the store; the tape and the
         // store are reached only through the natives until `run` returns.
-        unsafe { self.rt.run(call) }
+        unsafe { self.run_on_pass(call) }
             .map_err(|e| ParseError::ConstructorFailed(Box::new(crate::report::run_message(&e))))?;
         Ok(Constructed::Placed)
     }
@@ -2407,8 +2508,7 @@ impl<'a> Parser<'a> {
             c if c.constructed => Ok(c.dyad),
             c => {
                 let (id, record) = if c.is_fresh() {
-                    let source = self.source;
-                    match self.scopes.resolve(self.trie, &source[c.start..]) {
+                    match self.scopes.resolve(self.trie, c.spelling()) {
                         Ok(r) => (r.identity, r.record),
                         Err(e) => {
                             self.pos = c.start;
@@ -2456,7 +2556,7 @@ impl<'a> Parser<'a> {
         if n == 0 {
             return Ok(None);
         }
-        let mut left = ParsingTape::over(tape.text());
+        let mut left = ParsingTape::new();
         for i in 0..n {
             left.push(*tape.cell(i).expect("in range"));
         }
@@ -2947,7 +3047,7 @@ impl<'a> Parser<'a> {
             Some(_) => {
                 self.drain()?;
                 // SAFETY: as above.
-                unsafe { self.rt.run(value) }.map_err(|_| ParseError::NonComptimeRank)?
+                unsafe { self.run_on_pass(value) }.map_err(|_| ParseError::NonComptimeRank)?
             }
         };
         Ok(match nt {
@@ -3976,7 +4076,7 @@ impl<'a> Parser<'a> {
         // The pass needs the identity now: what stands before the call runs
         // first, so the call reads committed state.
         self.drain()?;
-        let bits = self.rt.run(call).map_err(|_| ParseError::NonComptimeTypeCall)?;
+        let bits = self.run_on_pass(call).map_err(|_| ParseError::NonComptimeTypeCall)?;
         let node = bits as usize as DyadPtr;
         // The bits are read as a node address, so they must be one. A `-> type`
         // body whose tail is not a type is already refused at the definition
@@ -4098,8 +4198,7 @@ impl<'a> Parser<'a> {
         let (node, ended) = if cell.constructed {
             (cell.dyad, None)
         } else {
-            let source = self.source;
-            let r = match self.scopes.resolve(self.trie, &source[cell.start..]) {
+            let r = match self.scopes.resolve(self.trie, cell.spelling()) {
                 Ok(r) => r,
                 Err(e) => {
                     self.pos = cell.start;
@@ -4509,7 +4608,7 @@ impl<'a> Parser<'a> {
             if self.pos >= self.source.len() || self.at_close() {
                 return None;
             }
-            let mut tape = ParsingTape::over(self.source);
+            let mut tape = ParsingTape::new();
             let boundary = match self.lex_segment(&mut tape) {
                 Ok(b) => b,
                 Err(e) => return Some(Err(e)),
@@ -4608,17 +4707,14 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        // `source` is `&'a str` (Copy), independent of the `&mut self` the
-        // declaration and value parse then need (as in `parse_record`).
-        let source = self.source;
-        let owned;
-        let name: &str = match &pattern {
-            Some(bytes) => {
-                owned = String::from_utf8_lossy(bytes).into_owned();
-                &owned
-            }
-            None => &source[tok.start..tok.start + tok.len],
+        // The name is copied out: the cell's text is the parser's own source
+        // or a fragment's, independent of the `&mut self` the declaration and
+        // value parse then need, and of the fresh dyad written below.
+        let name: String = match &pattern {
+            Some(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+            None => tok.spelling().to_string(),
         };
+        let name: &str = &name;
         // The placeholder: for an unknown spelling, the fresh dyad the cell
         // already holds — "`:=` fills that dyad" (DESIGN ›The scope's
         // constructor is the driver‹) — or a fresh one when the spelling is
@@ -4895,6 +4991,34 @@ impl<'a> Parser<'a> {
             return Err(ParseError::BadPattern(reason));
         }
         let node = crate::identities::string::build_text(self.store, self.types.regex_, &pattern);
+        tape.place(node);
+        Ok(Constructed::Placed)
+    }
+
+    /// `lex`'s constructor body (#62; DESIGN ›Text is the quote‹: "the lexer
+    /// itself, entered as an ordinary identity, applied to a string";
+    /// ›The scope's constructor is the driver‹: "`regex` is an ordinary
+    /// identity that reads its own quote, as `lex` does"): read the `«…»` to
+    /// the right at discovery and place the node that lexes it when it runs
+    /// — "there is no comptime/runtime distinction for `lex`: it turns any
+    /// string into unconstructed identities whenever it runs", so the text
+    /// is read here and the cells are made at each run, against the scopes
+    /// open then ([`Parser::run_on_pass`]).
+    pub(crate) fn construct_lex(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        self.skip_whitespace();
+        let source = self.source;
+        let start = self.pos;
+        if !source[start..].starts_with('«') {
+            return Err(ParseError::ExpectedQuote);
+        }
+        let r = self.scopes.resolve(self.trie, &source[start..]).map_err(ParseError::Resolve)?;
+        self.pos += r.matched;
+        let quote =
+            self.construct_leaf(r.identity, start, r.matched)?.ok_or(ParseError::ExpectedQuote)?;
+        let node = crate::identities::lex::build(self.store, &self.types, quote);
         tape.place(node);
         Ok(Constructed::Placed)
     }
@@ -5303,58 +5427,41 @@ impl<'a> Parser<'a> {
         self.store.alloc_raw(ty, storage)
     }
 
-    /// One lex step: the next token as a tape cell with its source offset, or
-    /// `None` at the end of input. Only whitespace is skipped — `#` is an
-    /// identity, constructed at discovery like any literal. A spelling the
-    /// trie does not know becomes a fresh-name cell (null identity, its span
-    /// kept), declared by a following `:=` or reported at the boundary.
+    /// One lex step of the driver: the next token of the source as a tape
+    /// cell with its offset ([`lex_token`]), or `None` at the end of input.
+    /// `#` is an identity, constructed at discovery like any literal. A
+    /// spelling the trie does not know becomes a fresh-name cell (null
+    /// identity, its spelling kept), declared by a following `:=` or reported
+    /// at the boundary. The stuck point of a failed lex is the token's start.
     fn lex_cell(&mut self) -> Result<Option<(Cell, usize)>, ParseError> {
         self.skip_whitespace();
-        if self.pos >= self.source.len() {
-            return Ok(None);
-        }
         let source = self.source;
-        let start = self.pos;
-        match self.scopes.lex(self.trie, &source[start..]) {
-            // A spelling the index knows only through a fresh-spelling pattern
-            // (#110): a fresh dyad with both slots null, its spelling kept in
-            // the cell's span — the pattern's construction, done at the lex.
-            Ok(r) if r.fresh => {
-                self.pos = start + r.matched;
-                let fresh = self.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut());
-                Ok(Some((Cell::unconstructed(fresh, start, r.matched), start)))
+        let Some((cell, next)) = lex_token(&self.scopes, self.trie, self.store, source, self.pos)
+            .map_err(ParseError::Resolve)?
+        else {
+            return Ok(None);
+        };
+        self.pos = next;
+        // A box — a place holding a node, `type ?` or `dyad ?` — is read by
+        // the pass wherever it stands as an operand ([`Self::settled_type`]),
+        // and the read is honest only if everything parsed before it has
+        // run. So where parse order is run order, its cell is the point the
+        // pass runs to ([`Self::drain`]). A box that turns out to be an
+        // assignment's target ran what stood before it a little early; that
+        // is the same order, and the item being parsed has not begun.
+        if self.runtime_depth == 0 && !cell.is_fresh() {
+            // SAFETY: the record the trie resolved is a dyad from the store.
+            let is_box = unsafe {
+                matches!(
+                    crate::identities::read::read_kind(&self.types, cell.identity(&self.types)),
+                    crate::identities::read::Read::Container(t) if !t.is_null()
+                )
+            };
+            if is_box {
+                self.drain()?;
             }
-            Ok(r) => {
-                self.pos = start + r.matched;
-                // A box — a place holding a node, `type ?` or `dyad ?` — is
-                // read by the pass wherever it stands as an operand
-                // ([`Self::settled_type`]), and the read is honest only if
-                // everything parsed before it has run. So where parse order is
-                // run order, its cell is the point the pass runs to
-                // ([`Self::drain`]). A box that turns out to be an assignment's
-                // target ran what stood before it a little early; that is the
-                // same order, and the item being parsed has not begun.
-                if self.runtime_depth == 0 {
-                    // SAFETY: the record the trie resolved is a dyad from the
-                    // store.
-                    let is_box = unsafe {
-                        matches!(
-                            crate::identities::read::read_kind(
-                                &self.types,
-                                self.types.through(r.record)
-                            ),
-                            crate::identities::read::Read::Container(t) if !t.is_null()
-                        )
-                    };
-                    if is_box {
-                        self.drain()?;
-                    }
-                }
-                // The cell is the record the trie resolved.
-                Ok(Some((Cell::unconstructed(r.record, start, r.matched), start)))
-            }
-            Err(e) => Err(ParseError::Resolve(e)),
         }
+        Ok(Some((cell, cell.start)))
     }
 
     /// The constructor an appearance of `id` runs, or `None` for an inert
@@ -5939,11 +6046,12 @@ mod tests {
         // dyad, their spans kept tape-side) and constructed nodes on one
         // frontier, told apart by the tape's own flag, never by the dyad.
         let mut t = ParsingTape::new();
-        t.insert(0, Cell::unconstructed(dyad(3), 0, 3));
+        t.insert(0, Cell::lexed(dyad(3), "abc", 0, 3));
         t.insert(1, Cell::built(dyad(7)));
         assert_eq!(t.is_constructed(0), Some(false));
         assert_eq!(t.is_constructed(1), Some(true));
-        assert_eq!(t.own_span(), Some((0, 3)));
+        assert_eq!(t.own_text(), Some("abc"));
+        assert_eq!(t.spelling(1), Some(""), "a built cell answers the empty text");
         assert_eq!(t.at(1).unwrap().dyad, dyad(7));
         assert_eq!(t.len(), 2);
     }
@@ -5954,9 +6062,9 @@ mod tests {
         // tape (the mechanism behind token-rewriting operators); `place`
         // marks it constructed, and `reduce_here` spans the triple.
         let mut t = ParsingTape::from_cells(vec![
-            Cell::unconstructed(dyad(1), 0, 1),
-            Cell::unconstructed(dyad(2), 2, 1),
-            Cell::unconstructed(dyad(3), 4, 1),
+            Cell::lexed(dyad(1), "a b c", 0, 1),
+            Cell::lexed(dyad(2), "a b c", 2, 1),
+            Cell::lexed(dyad(3), "a b c", 4, 1),
         ]);
         t.set_cursor(1);
         t.at_mut(1).unwrap().len = 2;
@@ -5983,9 +6091,93 @@ mod tests {
         let node = p.parse_expression().unwrap_or_else(|e| panic!("{src}: {e:?}"));
         let scopes = p.into_scopes();
         let mut rt = crate::run::Runtime::new(types).with_store(store);
+        rt.attach_lexer(&scopes, trie);
         // SAFETY: `node` was just parsed into the store.
         let v = unsafe { rt.run(node) }.unwrap_or_else(|e| panic!("{src}: {e:?}"));
         (v, scopes)
+    }
+
+    #[test]
+    fn lex_hands_back_the_tape_unconstructed() {
+        // DESIGN ›Text is the quote‹ (#62): `lex «+»` is a one-cell fragment
+        // whose cell points at `+`'s record with «+» as its spelling; `lex
+        // «(a, b)»` is the five cells the lexer would have put on the
+        // frontier, no constructor woken; text that names nothing lexes to a
+        // fresh dyad with both slots undefined, its spelling kept.
+        use crate::identities::Core;
+        use crate::regex_trie::RegexTrie;
+        use crate::store::Store;
+
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let types = core.types();
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+
+        let plus = lex_fragment(&scopes, &trie, &mut store, "+").unwrap();
+        assert_eq!(plus.len(), 1);
+        let cell = *plus.at(0).unwrap();
+        assert!(!cell.constructed);
+        assert_eq!(cell.identity(&types), types.plus, "the cell points at `+`'s record");
+        assert!(!cell.record(&types).is_null());
+        assert_eq!(plus.spelling(0), Some("+"));
+
+        let group = lex_fragment(&scopes, &trie, &mut store, "(a, b)").unwrap();
+        let cells = group.cells();
+        assert_eq!(cells.len(), 5, "a group is its tokens, the bracket not woken");
+        assert!(cells.iter().all(|c| !c.constructed));
+        assert_eq!(cells[0].identity(&types), types.open_);
+        assert_eq!(cells[2].identity(&types), types.sep_);
+        assert_eq!(cells[4].identity(&types), types.close_);
+        assert!(cells[1].is_fresh() && cells[3].is_fresh(), "names nothing declared are fresh");
+        assert_eq!(cells[1].spelling(), "a");
+        assert_eq!(cells[3].spelling(), "b");
+        assert_eq!(group.cursor(), 0, "the fragment is centered on its first cell");
+
+        let five = lex_fragment(&scopes, &trie, &mut store, " 5 ").unwrap();
+        assert_eq!(five.len(), 1);
+        assert_eq!(five.at(0).unwrap().identity(&types), types.rational);
+        assert_eq!(five.spelling(0), Some("5"), "`lex «5»` carries «5»");
+
+        let none = lex_fragment(&scopes, &trie, &mut store, "  ").unwrap();
+        assert!(none.is_empty());
+        assert!(
+            lex_fragment(&scopes, &trie, &mut store, "«").is_err(),
+            "nothing spells a lone quote mark"
+        );
+    }
+
+    #[test]
+    fn a_fragment_splices_in_order_with_its_spellings() {
+        // `tape.insert(k, lex «…»)` splices the fragment's cells, flags and
+        // spellings (DESIGN ›Text is the quote‹, 14 September 2026), in
+        // order, where one cell would land — and a tape spliced into itself
+        // is copied first.
+        let frag = vec![Cell::lexed(dyad(1), "x y", 0, 1), Cell::lexed(dyad(2), "x y", 2, 1)];
+        let mut t = ParsingTape::from_cells(dyad_cells(&[10, 11]));
+        t.splice(1, frag.clone());
+        let ids: Vec<_> = t.cells().iter().map(|c| c.dyad).collect();
+        assert_eq!(ids, vec![dyad(10), dyad(1), dyad(2), dyad(11)]);
+        assert_eq!(t.spelling(1), Some("x"));
+        assert_eq!(t.spelling(2), Some("y"));
+        assert_eq!(t.cursor(), 0, "the center keeps pointing at the same cell");
+
+        let mut t = ParsingTape::from_cells(dyad_cells(&[10]));
+        t.splice(0, frag.clone());
+        let ids: Vec<_> = t.cells().iter().map(|c| c.dyad).collect();
+        assert_eq!(ids, vec![dyad(1), dyad(2), dyad(10)]);
+
+        let mut empty = ParsingTape::new();
+        empty.splice(3, frag.clone());
+        assert_eq!(empty.len(), 2);
+        assert_eq!(empty.cursor(), 0, "on an empty tape the first cell becomes the center");
+
+        let mut t = ParsingTape::from_cells(dyad_cells(&[10, 11]));
+        let own = t.cells();
+        t.splice(2, own);
+        let ids: Vec<_> = t.cells().iter().map(|c| c.dyad).collect();
+        assert_eq!(ids, vec![dyad(10), dyad(11), dyad(10), dyad(11)]);
     }
 
     #[test]
@@ -6082,7 +6274,7 @@ mod tests {
         scopes.push(core.root_scope);
 
         let tape = {
-            let mut tape = ParsingTape::over("a + b");
+            let mut tape = ParsingTape::new();
             let mut p = Parser::new("a + b", &mut store, &mut trie, types, scopes);
             p.lex_segment(&mut tape).unwrap();
             scopes = p.into_scopes();
@@ -6171,7 +6363,7 @@ mod tests {
         scopes.push(core.root_scope);
 
         let tape = {
-            let mut tape = ParsingTape::over("a + b");
+            let mut tape = ParsingTape::new();
             let mut p = Parser::new("a + b", &mut store, &mut trie, types, scopes);
             p.lex_segment(&mut tape).unwrap();
             scopes = p.into_scopes();
@@ -6241,19 +6433,35 @@ mod tests {
                 "the text stays after the cell is constructed"
             );
 
-            let (_, s) = go("t.insert(0, dyad (i32, 9))", &mut store, &mut trie, types, s);
+            // `insert` splices a tape (ruled 14 September 2026, #62): the
+            // fragment `lex «…»` hands back, its cell unconstructed with the
+            // text it was lexed from; a write then constructs it in place,
+            // and the text stays.
+            let (_, s) = go("t.insert(0, lex «9»)", &mut store, &mut trie, types, s);
             assert_eq!((*tape).len(), 3);
             assert_eq!((*tape).at(0).unwrap().dyad, c0.dyad, "the center stays on its cell");
             let (_, s) = go("t.recenter(-1)", &mut store, &mut trie, types, s);
+            let (v, s) = go("t.is_constructed[0]", &mut store, &mut trie, types, s);
+            assert_eq!(v, 0, "a spliced cell is unconstructed");
             let (v, s) = go("t[0]", &mut store, &mut trie, types, s);
-            assert_eq!((*(v as DyadPtr)).ty, core.i32_, "the inserted cell, now the center");
-            assert_ne!(v as DyadPtr, c0.dyad);
+            assert_eq!((*(v as DyadPtr)).ty, core.record_, "the spliced cell is a record");
+            assert_eq!(types.through(v as DyadPtr), core.rational, "the number pattern's");
             let (v, s) = go("t.spelling[0]", &mut store, &mut trie, types, s);
             assert_eq!(
                 crate::identities::string::text(v as DyadPtr),
-                b"",
-                "a cell nothing lexed answers the empty text"
+                b"9",
+                "a spliced cell keeps the text it was lexed from"
             );
+            let (_, s) = go("t[0] = dyad (i32, 9)", &mut store, &mut trie, types, s);
+            let (v, s) = go("t[0]", &mut store, &mut trie, types, s);
+            assert_eq!((*(v as DyadPtr)).ty, core.i32_, "the written cell, now the center");
+            assert_ne!(v as DyadPtr, c0.dyad);
+            let (v, s) = go("t.spelling[0]", &mut store, &mut trie, types, s);
+            assert_eq!(crate::identities::string::text(v as DyadPtr), b"9");
+            // Anything but a tape is refused at the call.
+            let mut p = Parser::new("t.insert(0, dyad (i32, 9))", &mut store, &mut trie, types, s);
+            assert_eq!(p.parse_expression().unwrap_err(), ParseError::InsertTakesTape);
+            let s = p.into_scopes();
 
             // A use of a name handed in stays unconstructed: it is its record.
             let (_, s) = go("t[0] = t", &mut store, &mut trie, types, s);

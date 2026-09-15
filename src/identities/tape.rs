@@ -19,16 +19,19 @@
 //! ruled 9 September 2026: the flag is the tape's own list, so the read is
 //! that list's element), `t.spelling[k]` the text the cell was lexed from
 //! (ruled 14 September 2026 by the flag's own reason: the tape's second
-//! list, parallel to the cells; #121), `t.insert(k, cell)`, `t.remove(k)`,
-//! `t.recenter(k)`.
+//! list, parallel to the cells; #121), `t.insert(k, cells)` — "`insert`
+//! splices a tape into a tape" (›Text is the quote‹, 14 September 2026),
+//! the fragment `lex «…»` hands back (#62) or a `parsing_tape` value, with
+//! its cells' flags and spellings — `t.remove(k)`, `t.recenter(k)`.
 //! A member call passes its receiver as an address expression, the seed's
 //! form of a member declared in the instance scope reading the instance's
-//! fields bare (›The constructor is a field‹). A cell handed in — `insert`'s
-//! cell, the value of a write — travels as an `@dyad` address value: a
-//! record for a use of a name (the cell stays unconstructed), a node
-//! otherwise (constructed). The natives run interpreted; a read past the
-//! lexed frontier at run time is the checked error until `lex` (#62) puts
-//! the lexer in the runtime. Nothing here lowers.
+//! fields bare (›The constructor is a field‹). The cell a write hands in
+//! travels as an `@dyad` address value: a record for a use of a name (the
+//! cell stays unconstructed), a node otherwise (constructed). The natives
+//! run interpreted; a `tape[k]` read past the lexed frontier at run time is
+//! the checked error — the lexer is in the runtime for `lex` (#62), but
+//! lexing the driver's own source from inside a constructor would re-enter
+//! the driver, which nothing has ruled. Nothing here lowers.
 
 use super::callable::{self, Callables};
 use super::{meta, numtype_of, Cx, Operand};
@@ -126,7 +129,7 @@ pub(super) fn register(
     let (write, write_leaf) = op(cx, &["tape", "k", "cell", "op"], run_write);
     let (is_constructed, is_constructed_leaf) = op(cx, &["tape", "k", "op"], run_is_constructed);
     let (spelling, spelling_leaf) = op(cx, &["tape", "k", "op"], run_spelling);
-    let (insert, insert_leaf) = op(cx, &["tape", "k", "cell", "op"], run_insert);
+    let (insert, insert_leaf) = op(cx, &["tape", "k", "cells", "op"], run_insert);
     let (remove, remove_leaf) = op(cx, &["tape", "k", "op"], run_remove);
     let (recenter, recenter_leaf) = op(cx, &["tape", "k", "op"], run_recenter);
     let (slot_dyad, slot_dyad_leaf) = op(cx, &["tape", "k", "op"], run_slot_dyad);
@@ -380,8 +383,12 @@ pub(crate) unsafe fn build_append(
 }
 
 /// A member call or indexed member read on a tape: `t.remove(k)`,
-/// `t.insert(k, cell)`, `t.recenter(k)`, `t.is_constructed[k]`,
-/// `t.spelling[k]`.
+/// `t.insert(k, cells)`, `t.recenter(k)`, `t.is_constructed[k]`,
+/// `t.spelling[k]`. `insert` takes a tape (DESIGN ›Text is the quote‹, 14
+/// September 2026: "`insert` splices a tape into a tape"; the sketch's
+/// `cells := parsing_tape ?`): a `lex «…»` node as it stands, its run
+/// yielding the fragment's handle, or a `parsing_tape` place by its address
+/// as a receiver passes; anything else is the checked error.
 ///
 /// # Safety
 /// `args` must be reduced dyads from the store.
@@ -395,11 +402,16 @@ pub(crate) unsafe fn build_member(
 ) -> Result<DyadPtr, ParseError> {
     let ids = &types.tape;
     if op == ids.insert {
-        let [k, cell] = args[..] else {
+        let [k, cells] = args[..] else {
             return Err(ParseError::CtorArity);
         };
-        let cell = cell_arg(store, types, cell);
-        return Ok(node(store, op, leaf, &[recv, k, cell]));
+        let cells = if super::lex::is_fragment(types, cells) {
+            cells
+        } else {
+            let d = types.through(cells);
+            receiver_addr(store, types, d).ok_or(ParseError::InsertTakesTape)?
+        };
+        return Ok(node(store, op, leaf, &[recv, k, cells]));
     }
     let [k] = args[..] else {
         return Err(ParseError::CtorArity);
@@ -424,8 +436,11 @@ unsafe fn tape_of(rt: &mut Runtime, recv: DyadPtr) -> Result<*mut ParsingTape, R
 /// A cell handed in as an address value: a record stays unconstructed (a
 /// use of a name), a node is constructed.
 unsafe fn cell_of(rt: &Runtime, dyad: DyadPtr) -> Cell {
-    let constructed = !dyad.is_null() && (*dyad).ty != rt.record_ty();
-    Cell { dyad, constructed, bracket: false, start: 0, len: 0 }
+    if !dyad.is_null() && (*dyad).ty != rt.record_ty() {
+        Cell::built(dyad)
+    } else {
+        Cell::unlexed(dyad)
+    }
 }
 
 fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
@@ -433,8 +448,8 @@ fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let ops = (*node).value as *const DyadPtr;
         let tape = tape_of(rt, *ops)?;
         let k = rt.run(*ops.add(1))? as isize;
-        // A read past the frontier lexes lazily at parse time; at run time,
-        // with no lexer in the runtime (#62), it is the checked error.
+        // A read past the frontier lexes lazily at parse time; at run time
+        // it is the checked error (see the module doc).
         match (*tape).at(k) {
             Some(c) => Ok(c.dyad as i64),
             None => Err(RunError::BadValue),
@@ -493,14 +508,28 @@ fn run_spelling(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
+/// `t.insert(k, cells)`: splice a tape's cells, flags and spellings in where
+/// one cell would land (DESIGN ›Text is the quote‹, 14 September 2026:
+/// "`insert` splices a tape into a tape"; `tape.insert(i, lex «(a, b)»)`).
+/// The fragment is a `lex «…»` node, run for its handle, or a
+/// `parsing_tape` place, read as a receiver is; its cells are copied out
+/// first, so a tape spliced into itself is well-defined.
 fn run_insert(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         let tape = tape_of(rt, *ops)?;
         let k = rt.run(*ops.add(1))? as isize;
-        let dyad = rt.run(*ops.add(2))? as DyadPtr;
-        let cell = cell_of(rt, dyad);
-        (*tape).insert(k, cell);
+        let arg = *ops.add(2);
+        let frag = if super::lex::is_fragment(rt.types(), arg) {
+            rt.run(arg)? as *mut ParsingTape
+        } else {
+            tape_of(rt, arg)?
+        };
+        if frag.is_null() {
+            return Err(RunError::BadValue);
+        }
+        let cells = (*frag).cells();
+        (*tape).splice(k, cells);
         Ok(0)
     }
 }

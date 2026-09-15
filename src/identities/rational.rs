@@ -46,8 +46,7 @@ fn construct(
     id: DyadPtr,
     tape: &mut ParsingTape,
 ) -> Result<Constructed, ParseError> {
-    let (start, len) = tape.own_span().ok_or(ParseError::BadLiteral)?;
-    let span = &p.source()[start..start + len];
+    let span = tape.own_text().ok_or(ParseError::BadLiteral)?;
     let node = build(p.store(), id, span)?;
     // A `-` directly to the left with no completed operand before it is the
     // negative literal, folded now, at discovery (DESIGN ›Numeric literals‹:

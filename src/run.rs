@@ -74,6 +74,14 @@ pub enum RunError {
     /// follow one lifecycle‹: "`undefined` is the hole ... and reading it is a
     /// checked error, never undefined behavior".
     NullPointer,
+    /// `lex «…»` ran under a runtime with no lexer attached (#62): only the
+    /// parser, which owns the scopes and the index, hands them in around
+    /// what it runs.
+    NoLexer,
+    /// `lex «…»` met text nothing spells — a spelling outside every literal
+    /// and pattern, or two spellings tied for it; the resolve error's own
+    /// sentence, boxed as [`RunError::CompileFailed`]'s is.
+    Lex(Box<String>),
 }
 
 thread_local! {
@@ -311,6 +319,29 @@ pub struct Runtime {
     /// graph, allocated where every other node is. Absent elsewhere, so a
     /// native that needs it fails with [`RunError::NoStore`].
     store: Option<std::ptr::NonNull<crate::store::Store>>,
+    /// The lexer `lex «…»` runs (#62), attached by [`Runtime::attach_lexer`]
+    /// around each run the parser makes: the scopes open at that moment and
+    /// the name index — "the record the trie resolved at the lex site"
+    /// (DESIGN ›Text is the quote‹), the lex site being wherever `lex` runs.
+    /// Absent elsewhere, so `lex` fails with [`RunError::NoLexer`].
+    lexer: Option<Lexer>,
+    /// The tape fragments `lex «…»` built, owned here for the runtime's life
+    /// — the seed's form of "the fragment is graph owned like any other
+    /// value of the scope that made it" (DESIGN ›Text is the quote‹): the
+    /// pass that made it keeps it. Each is boxed because its handle is
+    /// what `lex` yields, and a fragment must stay put while the vector
+    /// grows.
+    #[allow(clippy::vec_box)]
+    fragments: Vec<Box<crate::parse::ParsingTape>>,
+}
+
+/// What `lex «…»` lexes against (#62): raw handles to the parser's scope
+/// stack and name index, held only while the parser runs something and
+/// reads neither itself (see [`Runtime::attach_lexer`]).
+#[derive(Clone, Copy)]
+struct Lexer {
+    scopes: std::ptr::NonNull<crate::parse::ScopeStack>,
+    trie: std::ptr::NonNull<crate::regex_trie::RegexTrie>,
 }
 
 /// The compiler context a runtime carries to serve `f.compile()`. The lower
@@ -339,7 +370,54 @@ impl Runtime {
             activations: Vec::new(),
             compiler: None,
             store: None,
+            lexer: None,
+            fragments: Vec::new(),
         }
+    }
+
+    /// Attach the lexer `lex «…»` runs against (#62): the parser's open
+    /// scopes and name index, handed in around each run it makes and taken
+    /// back with [`Runtime::detach_lexer`] before its next step. The parser
+    /// reads neither while the runtime runs (the natives read the scopes and
+    /// the index, and write only the store), which is what keeps the raw
+    /// handles sound.
+    pub(crate) fn attach_lexer(
+        &mut self,
+        scopes: &crate::parse::ScopeStack,
+        trie: &crate::regex_trie::RegexTrie,
+    ) {
+        self.lexer = Some(Lexer {
+            scopes: std::ptr::NonNull::from(scopes),
+            trie: std::ptr::NonNull::from(trie),
+        });
+    }
+
+    /// Take the lexer back: `lex` fails with [`RunError::NoLexer`] until the
+    /// next [`Runtime::attach_lexer`].
+    pub(crate) fn detach_lexer(&mut self) {
+        self.lexer = None;
+    }
+
+    /// `lex «…»`'s work (#62): lex `text` against the attached scopes and
+    /// index into a fresh fragment — every token an unconstructed cell with
+    /// its spelling, a fresh dyad for a spelling nothing declared, minted
+    /// into the attached store — and yield its handle, the `parsing_tape`
+    /// value `insert` splices. The fragment lives as long as this runtime.
+    pub(crate) fn lex(&mut self, text: &str) -> Result<*mut crate::parse::ParsingTape, RunError> {
+        let Some(lexer) = self.lexer else {
+            return Err(RunError::NoLexer);
+        };
+        let store = self.store()?;
+        // SAFETY: `attach_lexer` took live references the parser keeps
+        // untouched while this runtime runs, and `detach_lexer` clears them
+        // before the parser moves on.
+        let (scopes, trie) = unsafe { (lexer.scopes.as_ref(), lexer.trie.as_ref()) };
+        let tape = crate::parse::lex_fragment(scopes, trie, store, text)
+            .map_err(|e| RunError::Lex(Box::new(crate::report::resolve_message(&e))))?;
+        let mut tape = Box::new(tape);
+        let handle: *mut crate::parse::ParsingTape = &mut *tape;
+        self.fragments.push(tape);
+        Ok(handle)
     }
 
     /// Attach the store the graph-building natives allocate into. The parser
