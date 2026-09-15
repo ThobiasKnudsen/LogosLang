@@ -47,9 +47,13 @@ mut := type (
     # target := ? this body once held is gone with that). gates combine as grants and vetoes, ? being silence; lock
     # seals the set, immut x removes this entry. Standing anywhere else, f(mut i32 5), it is a gate value where none is
     # accepted, the checked error. mut T as a TYPE is superseded: a type never carries mutability.
-    # open (15 September 2026): whether := reads the gate words left of its name (then mut needs no constructor and
-    # stands as its own value, as lex does) or mut reads the declaration to its right (the seed's pub today); and a
-    # gated return type, which has no name to stand beside.
+    # ruled 15 September 2026: a gate word reads the declaration to its right, each gate its own constructor, so
+    # pub mut x := 5 is pub reading mut reading x := 5. open: a gated return type, which has no name to stand beside.
+    constructor = fn (tape := parsing_tape ?) -> void (
+        ?                                 # drive the declaration to the right (its name, then :=, or another gate word first); when it
+                                          # stands constructed at tape[1], append the write entry to its name's gate set, a write at
+                                          # :gate, permitted while the set holds no lock; nothing declared there is the checked error
+    )
 )
 
 p1 := conjecture ( a + a -> 2 * a ) where ( a:dyad.type is number )           # value rule: licenses rewriting a+a into 2*a; no proof = an assumption where cited, an axiom where a scope registers it
