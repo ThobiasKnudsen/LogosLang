@@ -79,6 +79,7 @@ pub(crate) mod fresh;
 mod gate;
 mod ge;
 mod gt;
+pub mod here;
 mod hole;
 #[path = "if.rs"]
 mod if_mod;
@@ -105,7 +106,7 @@ pub(crate) mod rational;
 mod regex_mod;
 #[path = "return.rs"]
 mod return_mod;
-mod scope;
+pub(crate) mod scope;
 pub(crate) mod string;
 pub mod tape;
 mod times;
@@ -230,6 +231,8 @@ pub struct Core {
     pub tape: tape::TapeIds,
     /// `lex`, the lexer as an identity, and its run leaf (#62).
     pub lex: lex::LexIds,
+    /// `here` and `caller`, and the two `.scope` nodes (#123).
+    pub here: here::HereIds,
     /// `index`, the passive node a `[i]` cell carries.
     pub index_: DyadPtr,
     /// `array` (of `dyad@`), the seed's first array form: a sequence's
@@ -476,6 +479,9 @@ impl Core {
         // `lex`, the lexer as an identity (#62): its node runs the lexer and
         // yields a fragment `insert` splices.
         let lex = lex::register(&mut cx, &callables);
+        // `here` and `caller` (#123): where a line is written, where it was
+        // called from.
+        let here = here::register(&mut cx, &callables);
         record::register_type(&mut cx, scope_, array_, dyad_, numtypes[NumType::F64 as usize]);
         op_leaves.scope_ = scope::register_exec(&mut cx, scope_, &callables);
         // An item that ran in the pass keeps its result beside it (R3, #88).
@@ -557,6 +563,7 @@ impl Core {
             colon_,
             tape,
             lex,
+            here,
             index_,
             callable_: callables.callable,
             convention_: callables.convention,
@@ -615,6 +622,7 @@ impl Core {
             colon_: self.colon_,
             tape: self.tape,
             lex: self.lex,
+            here: self.here,
             index_: self.index_,
             construct_: self.construct_,
             string_: self.string_,
@@ -825,6 +833,12 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
         || logos == types.tape.cell_type
         || logos == types.tape.spelling
         || logos == types.tape.slot_name
+    {
+        return Operand::Pointer(types.dyad_);
+    }
+    // `here`, `caller.scope`, and a scope's `.scope` (#123) yield a node's
+    // address: an `@dyad` value, as `x:scope` is.
+    if logos == types.here.here || logos == types.here.caller_scope || logos == types.here.scope_of
     {
         return Operand::Pointer(types.dyad_);
     }
@@ -1528,8 +1542,8 @@ unsafe fn walk_tail(
     // is invisible to value flow). The expressions live behind the array node in
     // the sequence's first slot; the tail commits in place there.
     if (*node).ty == types.scope {
-        if !(*node).value.is_null() {
-            let arr = *((*node).value as *const DyadPtr);
+        let arr = scope::exprs_array(node);
+        if !arr.is_null() {
             let (len, data) = array::parts(arr);
             let data = data as *mut DyadPtr;
             let mut i = len;

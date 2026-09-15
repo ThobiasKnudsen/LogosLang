@@ -67,6 +67,17 @@ fn build(
         let value = store.alloc_operands(&[lhs, rhs, types.ops.cmp_leaf(CmpOp::Ne, NumType::I64)]);
         return Ok(store.alloc_raw(ne, value));
     }
+    // Two addresses compare as addresses (DESIGN ›Declarations are immutable
+    // by default‹: "`&x` and `&y` differ"; #123: which of a function's scopes
+    // one stands in is found "comparing its scopes' addresses with the scope
+    // at hand"). Pointer arithmetic stays refused below.
+    // SAFETY: as above.
+    let pointer =
+        |n: DyadPtr| unsafe { matches!(super::numtype_of(types, n), super::Operand::Pointer(_)) };
+    if pointer(lhs) && pointer(rhs) {
+        let value = store.alloc_operands(&[lhs, rhs, types.ops.cmp_leaf(CmpOp::Ne, NumType::I64)]);
+        return Ok(store.alloc_raw(ne, value));
+    }
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let ([lhs, rhs], nt) = unsafe { resolve_binary(store, types, lhs, rhs) }?;
     let value = store.alloc_operands(&[lhs, rhs, types.ops.cmp_leaf(CmpOp::Ne, nt)]);

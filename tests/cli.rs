@@ -1221,6 +1221,38 @@ fn lex_splices_text_built_fragments() {
 }
 
 #[test]
+fn caller_scope_is_the_use_site_and_here_scope_the_body() {
+    // #123; DESIGN ›Meta-navigation walks the graph‹: "inside a constructor
+    // `caller.scope` is the scope the tape belongs to, the use site, and
+    // `here.scope` the constructor's own body, the definition site … Both
+    // stand inside a constructor". A constructor that writes the scope of
+    // its appearance into a top-level place and removes itself: applied in
+    // g's body while g is defined, it sees g's body, whose enclosing scope
+    // is g's parameter scope, whose enclosing scope is the root — `here.scope`
+    // at the top. `here.scope` inside h's body is h's body, read when h runs.
+    let (echoes, stderr) = repl(
+        "seen := here.scope\n\
+         w := type (constructor = fn (tape := parsing_tape ?) -> void ( seen = caller.scope, tape.remove(0) ))\n\
+         g := fn () -> i32 ( 1 w )\n\
+         seen == here.scope\n\
+         seen.scope.scope == here.scope\n\
+         g()\n\
+         h := fn () -> i32 ( seen = here.scope, 2 )\n\
+         h()\n\
+         seen.scope.scope == here.scope\n"
+            .as_bytes(),
+    );
+    assert_eq!(echoes, ["false", "true", "1", "2", "true"], "stderr: {stderr}");
+    // Outside a constructor `caller.scope` is the checked error, the seed's
+    // stand-in for the per-call read of an ordinary function; `caller` alone
+    // has no value form in the seed.
+    let (_echoes, stderr) = repl(b"caller.scope\n");
+    assert!(stderr.contains("`caller` can be read only inside a constructor"), "stderr: {stderr}");
+    let (_echoes, stderr) = repl(b"caller\n");
+    assert!(stderr.contains("read `caller.scope`"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_constructors_outcome_is_read_off_its_own_cell() {
     // #81; DESIGN ›The scope's constructor is the driver‹: "A constructor's
     // outcome is read off its cell — constructed, or declined (the frontier

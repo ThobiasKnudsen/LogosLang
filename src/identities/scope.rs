@@ -11,14 +11,23 @@
 //! [`ScopeStack`](crate::parse::ScopeStack) keys on its address, so the root
 //! scope, each record/parameter-list scope, and each block are typed `scope` —
 //! and, for a multi-expression block, the *sequence node* itself. A scope *is*
-//! an array (settled, July 2026): its value is `[exprs, op]` — an
+//! an array (settled, July 2026): its value is `[exprs, op, parent]` — an
 //! [`array`](super::array) node holding the expression list behind one
-//! indirection (never inline in the node), and the sequence native's leaf in
-//! the op slot — run in order and yielding the trailing expression (DESIGN ›A
-//! scope's value is what it evaluates to‹). A record/parameter scope keeps an
-//! undefined value. The grant-bearing `gate` role (visibility and access;
-//! DESIGN ›Read and write are one mechanism‹) is deferred. `scope` is created
-//! internally by the parser, never written in source, so it needs no spelling.
+//! indirection (never inline in the node), the sequence native's leaf in the
+//! op slot — run in order and yielding the trailing expression (DESIGN ›A
+//! scope's value is what it evaluates to‹) — and, since 15 September 2026
+//! (#123), **the enclosing scope**: "A scope node carries its enclosing
+//! scope: the parent link, null at the arche, and only it … the open-scope
+//! membership set is a cache over the link" (DESIGN ›Meta-navigation‹). The
+//! link is set when the scope is minted ([`mint`]), before anything inside
+//! it is parsed, so a constructor running inside walks up over settled
+//! structure; the expression list and the leaf are filled when the block
+//! closes ([`fill`]). A record/parameter scope keeps its first two slots
+//! null. The root scope and a type's member scope are minted with no value
+//! at all and enclose nothing. The grant-bearing `gate` role (visibility and
+//! access; DESIGN ›Read and write are one mechanism‹) is deferred. `scope` is
+//! created internally by the parser, never written in source, so it needs no
+//! spelling.
 
 use cranelift_codegen::ir::Value;
 
@@ -43,14 +52,68 @@ pub(super) fn register_exec(cx: &mut Cx, scope_: DyadPtr, cs: &Callables) -> Dya
     callable::mint_native(cx.store, cs.callable, run, cs.seed_native)
 }
 
-/// The expression array of a sequence node (`value` is `[exprs, op]`).
+/// The slots of a scope node's value, `[exprs, op, parent]`.
+const EXPRS: usize = 0;
+const OP: usize = 1;
+const PARENT: usize = 2;
+
+/// Mint a scope node carrying its enclosing scope (`parent`, null at the
+/// arche) and nothing else yet: the block's membership key while it parses,
+/// and the sequence node itself once [`fill`] gives it its expressions.
+pub(crate) fn mint(store: &mut Store, scope_ty: DyadPtr, parent: DyadPtr) -> DyadPtr {
+    let value = store.alloc_operands(&[std::ptr::null_mut(), std::ptr::null_mut(), parent]);
+    store.alloc_raw(scope_ty, value)
+}
+
+/// Make a minted scope the sequence node of `exprs`, an [`array`](super::array)
+/// node, run by the leaf `op`.
 ///
 /// # Safety
-/// `node` must be a sequence node as `Parser::parse_sequence` builds it, with a
-/// non-null value; the store must outlive the returned slice.
-unsafe fn exprs<'a>(node: DyadPtr) -> &'a [DyadPtr] {
-    let arr = *((*node).value as *const DyadPtr);
-    array::items(arr)
+/// `node` must be a scope [`mint`] built; nothing else may hold its slots.
+pub(crate) unsafe fn fill(node: DyadPtr, exprs: DyadPtr, op: DyadPtr) {
+    let slots = (*node).value as *mut DyadPtr;
+    *slots.add(EXPRS) = exprs;
+    *slots.add(OP) = op;
+}
+
+/// The expression array node of a scope, or null for one that is no
+/// sequence — a record or parameter scope, or one minted with no value.
+///
+/// # Safety
+/// `node` must be a scope node from the store.
+pub(crate) unsafe fn exprs_array(node: DyadPtr) -> DyadPtr {
+    if (*node).value.is_null() {
+        return std::ptr::null_mut();
+    }
+    *((*node).value as *const DyadPtr).add(EXPRS)
+}
+
+/// The expressions of a sequence node, or `None` for a scope that is no
+/// sequence.
+///
+/// # Safety
+/// `node` must be a scope node from the store; the store must outlive the
+/// returned slice.
+pub(crate) unsafe fn exprs_of<'a>(node: DyadPtr) -> Option<&'a [DyadPtr]> {
+    let arr = exprs_array(node);
+    if arr.is_null() {
+        None
+    } else {
+        Some(array::items(arr))
+    }
+}
+
+/// The enclosing scope of a scope node, the parent link (#123): null at the
+/// arche, and on a scope minted with no value (the root, a type's member
+/// scope).
+///
+/// # Safety
+/// `node` must be a scope node from the store.
+pub(crate) unsafe fn parent_of(node: DyadPtr) -> DyadPtr {
+    if (*node).value.is_null() {
+        return std::ptr::null_mut();
+    }
+    *((*node).value as *const DyadPtr).add(PARENT)
 }
 
 /// Run: each expression in order, for effect; the trailing one's value is the
@@ -61,13 +124,13 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a sequence node whose first slot is its expression
     // array (as `Parser::parse_sequence` builds; it never builds it empty).
     unsafe {
-        if (*node).value.is_null() {
+        let Some(exprs) = exprs_of(node) else {
             return Err(RunError::BadValue);
-        }
+        };
         let defer_ty = rt.defer_type();
         let mut last = 0i64;
         let mut defers: Vec<DyadPtr> = Vec::new();
-        for &expr in exprs(node) {
+        for &expr in exprs {
             let logos = (*expr).ty;
             // A comment node is prose — reflectable structure invisible to value
             // flow: never run, never the tail.
@@ -97,11 +160,11 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: as [`run`].
     unsafe {
-        if (*node).value.is_null() {
+        let Some(exprs) = exprs_of(node) else {
             return Err(CompileError::BadValue);
-        }
+        };
         let mut last = None;
-        for &expr in exprs(node) {
+        for &expr in exprs {
             // Prose is not lowered; see [`run`].
             if !super::numtype::is_comment_type((*expr).ty) {
                 last = Some(lw.lower(expr)?);

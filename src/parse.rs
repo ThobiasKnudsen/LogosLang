@@ -609,8 +609,10 @@ pub(crate) struct Ended {
 }
 
 /// The parse-time scope stack: the chain of open scopes with an O(1) membership
-/// set. This is the parser's own spine (the graph's ancestor chain during
-/// elaboration); a scope is identified by its dyad address. Resolution filters a
+/// set — a cache over the parent link every scope node carries since #123
+/// (DESIGN ›Meta-navigation‹: "the open-scope membership set is a cache over
+/// the link, which the seed's `ScopeStack.open` is to become"); a scope is
+/// identified by its dyad address. Resolution filters a
 /// spelling's candidates in the name index down to the one whose declaring scope
 /// is open and whose range covers the frontier (DESIGN ›Name resolution is
 /// scope-filtered‹: live = declared, scope open, not yet made dead by `own` or
@@ -1126,6 +1128,9 @@ pub struct CoreTypes {
     /// `lex` and its run leaf: the lexer as an identity, whose node lexes its
     /// quote into a tape fragment when it runs (#62).
     pub lex: crate::identities::lex::LexIds,
+    /// `here` and `caller`, and the two nodes `.scope` builds over them and
+    /// over a scope address (#123).
+    pub here: crate::identities::here::HereIds,
     /// `comment`: the prose-node logos a statement-level `#` builds; reflectable
     /// graph structure, invisible to value flow.
     pub comment_: DyadPtr,
@@ -1685,19 +1690,15 @@ pub(crate) unsafe fn bool_literal_value(types: &CoreTypes, node: DyadPtr) -> Opt
 }
 
 /// The trailing *value* expression of a sequence node
-/// `{type: scope, value: [exprs, op]}` — trailing comment nodes are prose, not
-/// the tail — or `None` for a scope with no expression array (a
+/// `{type: scope, value: [exprs, op, parent]}` — trailing comment nodes are
+/// prose, not the tail — or `None` for a scope with no expression array (a
 /// record/parameter-list scope).
 ///
 /// # Safety
 /// `node` must be a valid dyad from the store; a non-null value must be the
-/// `[exprs, op]` pair as built by [`Parser::parse_sequence`].
+/// `[exprs, op, parent]` triple as [`Parser::parse_sequence`] fills it.
 pub(crate) unsafe fn last_sequence_expr(node: DyadPtr) -> Option<DyadPtr> {
-    if (*node).value.is_null() {
-        return None;
-    }
-    let arr = *((*node).value as *const DyadPtr);
-    crate::identities::array::items(arr)
+    crate::identities::scope::exprs_of(node)?
         .iter()
         .rev()
         .find(|&&e| !crate::identities::numtype::is_comment_type((*e).ty))
@@ -2245,12 +2246,14 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `scope` must be a node from the store.
     pub(crate) unsafe fn args_of(&self, scope: DyadPtr) -> Vec<DyadPtr> {
-        if (*scope).ty != self.types.scope || (*scope).value.is_null() {
+        if (*scope).ty != self.types.scope {
             return vec![scope];
         }
-        let arr = *((*scope).value as *const DyadPtr);
+        let Some(items) = crate::identities::scope::exprs_of(scope) else {
+            return vec![scope];
+        };
         let defer_ = self.types.defer_;
-        crate::identities::array::items(arr)
+        items
             .iter()
             .copied()
             .filter(|&e| !crate::identities::numtype::is_comment_type((*e).ty) && (*e).ty != defer_)
@@ -2326,8 +2329,11 @@ impl<'a> Parser<'a> {
         let call = build_call(self.store, f, &[handle]);
         // SAFETY: `call` was just built into the store; the tape and the
         // store are reached only through the natives until `run` returns.
-        unsafe { self.run_on_pass(call) }
-            .map_err(|e| ParseError::ConstructorFailed(Box::new(crate::report::run_message(&e))))?;
+        // Inside the call, `caller.scope` reads the pass's position (#123).
+        self.rt.enter_constructor();
+        let out = unsafe { self.run_on_pass(call) };
+        self.rt.leave_constructor();
+        out.map_err(|e| ParseError::ConstructorFailed(Box::new(crate::report::run_message(&e))))?;
         Ok(Constructed::Placed)
     }
 
@@ -2794,8 +2800,7 @@ impl<'a> Parser<'a> {
         self.expect_open()?;
         // The record's own scope: a `scope`-typed node keyed by address for
         // open-scope membership. Field names are declared into it.
-        let scope = self.store.alloc_raw(self.types.scope, std::ptr::null_mut());
-        self.scopes.push(scope);
+        let scope = self.open_scope();
 
         let mut fields = Vec::new();
         loop {
@@ -2884,8 +2889,7 @@ impl<'a> Parser<'a> {
     /// constructor installed in its slot.
     pub fn parse_type_body(&mut self, id: DyadPtr) -> Result<DyadPtr, ParseError> {
         self.expect_open()?;
-        let scope = self.store.alloc_raw(self.types.scope, std::ptr::null_mut());
-        self.scopes.push(scope);
+        let scope = self.open_scope();
         let slots = self.types.slots;
         let at = self.pos;
         for (name, marker) in SLOT_NAMES.iter().zip(slots) {
@@ -3677,7 +3681,8 @@ impl<'a> Parser<'a> {
         // SAFETY: `logos` is a numtype node from resolve_loop_parts.
         let width = unsafe { crate::identities::numtype::of_type_node(logos) }.bytes();
         let var = self.alloc_local(logos, width);
-        let scope = self.store.alloc_raw(types.scope, std::ptr::null_mut());
+        let parent = self.scopes.current().unwrap_or(std::ptr::null_mut());
+        let scope = crate::identities::scope::mint(self.store, types.scope, parent);
         // A repeated body: a name declared outside it may not be moved or
         // dropped inside; the loop variable, declared in the scope pushed next,
         // is inside.
@@ -3785,6 +3790,30 @@ impl<'a> Parser<'a> {
             }
             if (*lhs).ty == self.types.dyad_ {
                 return self.view_member(lhs, name).map(|n| (n, 0));
+            }
+            // `here.scope`, `caller.scope`, and a scope's own `.scope` (#123;
+            // DESIGN ›Meta-navigation‹: "`here.scope` the scope that spot is
+            // in, `here.scope.scope` the one above, and so up to the arche").
+            // `here` knows its scope at the appearance, so the read folds to
+            // the address value `x:scope` yields; `caller` reads the pass, so
+            // its `.scope` is a node run inside a constructor; and `.scope`
+            // over any scope address reads the parent link when it runs.
+            let h = self.types.here;
+            if (*lhs).ty == h.here || (*lhs).ty == h.caller {
+                if name != "scope" {
+                    return Err(ParseError::BadReflectRead);
+                }
+                let node = if (*lhs).ty == h.here {
+                    let scope = crate::identities::here::scope_of_here(lhs);
+                    self.address_value(self.types.dyad_, scope)
+                } else {
+                    crate::identities::here::build_caller_scope(self.store, &self.types)
+                };
+                return Ok((node, 0));
+            }
+            if name == "scope" && crate::identities::here::yields_scope_address(&self.types, lhs) {
+                let node = crate::identities::here::build_scope_of(self.store, &self.types, lhs);
+                return Ok((node, 0));
             }
             if crate::identities::is_type_value(&self.types, lhs) {
                 let n = self.logos_member(lhs, name, index)?;
@@ -4516,6 +4545,18 @@ impl<'a> Parser<'a> {
     /// `return` in a non-tail position is rejected ([`ParseError::EarlyReturn`]):
     /// v1 `return` is the tail yield, and running one without exiting would be
     /// silently wrong.
+    /// Open a scope: mint its node carrying the scope now open as its
+    /// enclosing scope (#123; DESIGN ›Meta-navigation‹: "A scope node carries
+    /// its enclosing scope: the parent link, null at the arche") and push it.
+    /// The link is set before anything inside is parsed, so a constructor
+    /// running inside walks up over settled structure; the stack is the cache.
+    fn open_scope(&mut self) -> DyadPtr {
+        let parent = self.scopes.current().unwrap_or(std::ptr::null_mut());
+        let scope = crate::identities::scope::mint(self.store, self.types.scope, parent);
+        self.scopes.push(scope);
+        scope
+    }
+
     pub fn parse_sequence(&mut self) -> Result<DyadPtr, ParseError> {
         // The block's scope node: the membership key while parsing and, when the
         // sequence is real, the sequence node itself.
@@ -4525,8 +4566,7 @@ impl<'a> Parser<'a> {
         if self.open.len() >= MAX_BRACKET_DEPTH {
             return Err(ParseError::TooDeep);
         }
-        let scope = self.store.alloc_raw(self.types.scope, std::ptr::null_mut());
-        self.scopes.push(scope);
+        let scope = self.open_scope();
         self.open.push(OpenScope::default());
         let mut exprs = Vec::new();
         // The places this scope's own teardowns will free — what the escape check
@@ -4575,10 +4615,9 @@ impl<'a> Parser<'a> {
             // `fn () -> …` with no parameters read by its own parser.
             (0, _) => {
                 let arr = crate::identities::array::build(self.store, self.types.array_, &exprs);
-                let value = self.store.alloc_operands(&[arr, self.types.ops.scope_]);
-                // SAFETY: `scope` was just allocated and is unaliased.
+                // SAFETY: `scope` was minted by `open_scope` above and is unaliased.
                 unsafe {
-                    (*scope).value = value;
+                    crate::identities::scope::fill(scope, arr, self.types.ops.scope_);
                 }
                 Ok(scope)
             }
@@ -4621,10 +4660,9 @@ impl<'a> Parser<'a> {
                 // indirection (its own array node), never inline in the scope's
                 // value, which is the `[exprs, op]` pair.
                 let arr = crate::identities::array::build(self.store, self.types.array_, &exprs);
-                let value = self.store.alloc_operands(&[arr, self.types.ops.scope_]);
-                // SAFETY: `scope` was just allocated and is unaliased.
+                // SAFETY: `scope` was minted by `open_scope` above and is unaliased.
                 unsafe {
-                    (*scope).value = value;
+                    crate::identities::scope::fill(scope, arr, self.types.ops.scope_);
                 }
                 Ok(scope)
             }
@@ -5072,6 +5110,34 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
+    /// `here`'s constructor (#123; DESIGN ›Meta-navigation‹: "`here` is the
+    /// spot a line stands at and `here.scope` the scope that spot is in"):
+    /// the node placed at discovery carries the scope open at its appearance
+    /// — the body a line is written in, and inside a constructor's body that
+    /// body, the definition site; the use site is `caller.scope`.
+    pub(crate) fn construct_here(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        let scope = self.scopes.current().unwrap_or(std::ptr::null_mut());
+        let node = crate::identities::here::build_here(self.store, &self.types, scope);
+        tape.place(node);
+        Ok(Constructed::Placed)
+    }
+
+    /// `caller`'s constructor (#123; DESIGN ›Meta-navigation‹: "`caller` is
+    /// the same for the call … for a constructor the appearance of its
+    /// identity"): the node whose `.scope` reads the pass's position when a
+    /// constructor runs it ([`crate::run::Runtime::pass_scope`]).
+    pub(crate) fn construct_caller(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        let node = crate::identities::here::build_caller(self.store, &self.types);
+        tape.place(node);
+        Ok(Constructed::Placed)
+    }
+
     /// Load `path_text` (#58): resolve against [`Parser::dir`] (file-relative;
     /// the working directory when the importer is the command line or REPL),
     /// enforce once-per-run and the DAG rule, and on a first load parse and
@@ -5108,7 +5174,7 @@ impl<'a> Parser<'a> {
         // The file's own section: a fresh stack of the root (ambient names)
         // plus a fresh scope node the file's declarations land in.
         let root = *self.scopes.open.first().expect("an import site has an open root scope");
-        let section = self.store.alloc_raw(self.types.scope, std::ptr::null_mut());
+        let section = crate::identities::scope::mint(self.store, self.types.scope, root);
         let mut nested = ScopeStack::new();
         nested.push(root);
         nested.push(section);
@@ -6160,6 +6226,67 @@ mod tests {
         // SAFETY: `node` was just parsed into the store.
         let v = unsafe { rt.run(node) }.unwrap_or_else(|e| panic!("{src}: {e:?}"));
         (v, scopes)
+    }
+
+    #[test]
+    fn a_scope_carries_its_enclosing_scope() {
+        // #123; DESIGN ›Meta-navigation walks the graph‹: "A scope node
+        // carries its enclosing scope: the parent link, null at the arche,
+        // and only it".
+        let mut store = crate::store::Store::new();
+        let mut trie = crate::regex_trie::RegexTrie::new();
+        let core = crate::identities::Core::build(&mut store, &mut trie);
+        let types = core.types();
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let mut p = Parser::new("(1, 2, (3, 4))", &mut store, &mut trie, types, scopes);
+        let outer = p.parse_expression().unwrap();
+        // SAFETY: the nodes were just parsed into the store.
+        unsafe {
+            use crate::identities::scope::{exprs_of, parent_of};
+            assert_eq!((*outer).ty, types.scope);
+            let inner = exprs_of(outer).expect("a sequence")[2];
+            assert_eq!((*inner).ty, types.scope);
+            assert_eq!(parent_of(inner), outer);
+            assert_eq!(parent_of(outer), core.root_scope);
+            assert!(parent_of(core.root_scope).is_null(), "the arche encloses nothing");
+        }
+    }
+
+    #[test]
+    fn here_is_where_the_line_is_written() {
+        // #123; DESIGN ›Meta-navigation walks the graph‹: "`here` is the spot
+        // a line stands at and `here.scope` the scope that spot is in,
+        // `here.scope.scope` the one above, and so up to the arche, whose
+        // `.scope` is null".
+        let mut store = crate::store::Store::new();
+        let mut trie = crate::regex_trie::RegexTrie::new();
+        let core = crate::identities::Core::build(&mut store, &mut trie);
+        let types = core.types();
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let (root, scopes) = go("here.scope", &mut store, &mut trie, types, scopes);
+        assert_eq!(root as usize, core.root_scope as usize);
+        let (above, scopes) = go("here.scope.scope", &mut store, &mut trie, types, scopes);
+        assert_eq!(above, 0, "the arche has no enclosing scope");
+        // Past the arche is the checked error, never a dereference.
+        let mut p = Parser::new("here.scope.scope.scope", &mut store, &mut trie, types, scopes);
+        let node = p.parse_expression().unwrap();
+        let scopes = p.into_scopes();
+        let mut rt = crate::run::Runtime::new(types).with_store(&mut store);
+        rt.attach_lexer(&scopes, &trie);
+        // SAFETY: `node` was just parsed into the store.
+        let err = unsafe { rt.run(node) }.unwrap_err();
+        assert_eq!(err, crate::run::RunError::NullPointer);
+        // `caller.scope` outside a constructor is the checked error: the
+        // seed's stand-in for the per-call read of an ordinary function.
+        let mut p = Parser::new("caller.scope", &mut store, &mut trie, types, scopes);
+        let node = p.parse_expression().unwrap();
+        let scopes = p.into_scopes();
+        let mut rt = crate::run::Runtime::new(types).with_store(&mut store);
+        rt.attach_lexer(&scopes, &trie);
+        // SAFETY: as above.
+        assert_eq!(unsafe { rt.run(node) }.unwrap_err(), crate::run::RunError::NoCaller);
     }
 
     #[test]

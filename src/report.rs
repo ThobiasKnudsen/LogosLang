@@ -260,6 +260,12 @@ pub fn run_message(e: &RunError) -> String {
         RunError::NoStore => "a cell can be built only inside a constructor the parser runs".into(),
         RunError::NoLexer => "`lex` can run only where the parser runs it".into(),
         RunError::Lex(why) => format!("this text will not lex: {why}"),
+        RunError::NoCaller => {
+            "`caller` can be read only inside a constructor the parser runs".into()
+        }
+        RunError::CallerSpot => {
+            "`caller` alone is not a value the seed reads; read `caller.scope`".into()
+        }
         RunError::NullPointer => "this pointer holds nothing yet".into(),
         RunError::CallDepth => {
             format!(

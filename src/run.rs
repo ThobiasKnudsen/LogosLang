@@ -82,6 +82,13 @@ pub enum RunError {
     /// and pattern, or two spellings tied for it; the resolve error's own
     /// sentence, boxed as [`RunError::CompileFailed`]'s is.
     Lex(Box<String>),
+    /// `caller.scope` ran outside a Logos constructor's run (#123): the seed
+    /// answers the pass's position only there, an ordinary function's
+    /// `caller` being a per-call fact it does not yet elaborate.
+    NoCaller,
+    /// `caller` was read as a value (#123): the appearance's spot has no
+    /// value form in the seed, which reads `caller.scope` only.
+    CallerSpot,
 }
 
 thread_local! {
@@ -333,6 +340,10 @@ pub struct Runtime {
     /// grows.
     #[allow(clippy::vec_box)]
     fragments: Vec<Box<crate::parse::ParsingTape>>,
+    /// How many Logos constructors the parser is running through this
+    /// runtime (#123): `caller.scope` reads the pass's position only inside
+    /// one ([`Runtime::pass_scope`]).
+    constructing: u32,
 }
 
 /// What `lex «…»` lexes against (#62): raw handles to the parser's scope
@@ -372,6 +383,7 @@ impl Runtime {
             store: None,
             lexer: None,
             fragments: Vec::new(),
+            constructing: 0,
         }
     }
 
@@ -396,6 +408,38 @@ impl Runtime {
     /// next [`Runtime::attach_lexer`].
     pub(crate) fn detach_lexer(&mut self) {
         self.lexer = None;
+    }
+
+    /// Enter a Logos constructor's run (#123): until the matching
+    /// [`Runtime::leave_constructor`], `caller.scope` answers
+    /// ([`Runtime::pass_scope`]).
+    pub(crate) fn enter_constructor(&mut self) {
+        self.constructing += 1;
+    }
+
+    /// Leave a Logos constructor's run.
+    pub(crate) fn leave_constructor(&mut self) {
+        self.constructing -= 1;
+    }
+
+    /// The scope open at the pass's position — the appearance a constructor
+    /// is building — for `caller.scope` (#123; DESIGN ›Meta-navigation‹: "for
+    /// a constructor the appearance of its identity … so inside a constructor
+    /// `caller.scope` is the scope the tape belongs to, the use site").
+    /// Outside a constructor's run it is [`RunError::NoCaller`]: an ordinary
+    /// function's `caller` is a per-call fact the seed does not yet elaborate.
+    pub(crate) fn pass_scope(&self) -> Result<DyadPtr, RunError> {
+        let Some(lexer) = self.lexer else {
+            return Err(RunError::NoCaller);
+        };
+        if self.constructing == 0 {
+            return Err(RunError::NoCaller);
+        }
+        // SAFETY: `attach_lexer` took live references the parser keeps
+        // untouched while this runtime runs, and `detach_lexer` clears them
+        // before the parser moves on.
+        let scopes = unsafe { lexer.scopes.as_ref() };
+        Ok(scopes.current().unwrap_or(std::ptr::null_mut()))
     }
 
     /// `lex «…»`'s work (#62): lex `text` against the attached scopes and
