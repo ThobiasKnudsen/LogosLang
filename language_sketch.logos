@@ -56,8 +56,10 @@ mut := type (
     # pub mut x := 5 is pub reading mut reading x := 5. open: a gated return type, which has no name to stand beside.
     constructor = fn (tape := parsing_tape ?) -> void (
         ?                                 # drive the declaration to the right (its name, then :=, or another gate word first); when it
-                                          # stands constructed at tape[1], append the write entry to its name's gate set, a write at
-                                          # :gate, permitted while the set holds no lock; nothing declared there is the checked error
+                                          # stands constructed at tape[1], this mut node is the gate: a body node referring to that name
+                                          # (ruled 15 September 2026), its creation a write at the name's :gate voted on by the gates
+                                          # already standing there (none refuses while no lock), and the name's record caches it;
+                                          # nothing declared there is the checked error
     )
 )
 
