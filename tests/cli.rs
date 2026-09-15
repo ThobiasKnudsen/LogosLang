@@ -1284,6 +1284,45 @@ fn caller_scope_is_the_use_site_and_here_scope_the_body() {
 }
 
 #[test]
+fn a_pointer_type_applies_to_any_type() {
+    // #124; DESIGN ›Pointer types are prefix `@T`‹: "`@i32` is a pointer to
+    // an i32, composing as `@@i32` and applying to any type (`@point`,
+    // `@dyad`)", and ›Substrate vocabulary‹: "`@void` is a type-erased
+    // address whose interpretation comes from elsewhere". A `@dyad` place
+    // takes a scope address (`here.scope`, `x:scope`), a `@dyad` parameter
+    // takes one, and `.scope` over the place reads the parent link: the
+    // argument bracket `here.scope` was written in, whose enclosing scope is
+    // g's body, then g's parameter scope, then the root. `@void` declares as
+    // a place and as a parameter.
+    let (echoes, stderr) = repl(
+        "p := @dyad ?\n\
+         p = here.scope\n\
+         p == here.scope\n\
+         f := fn (s := @dyad ?) -> i32 ( p = s, 1 )\n\
+         x := i32 5\n\
+         f(x:scope)\n\
+         p == here.scope\n\
+         g := fn () -> i32 ( f(here.scope) )\n\
+         g()\n\
+         p.scope.scope.scope == here.scope\n\
+         v := @void ?\n\
+         t := fn (s := @void ?) -> i32 ( 1 )\n"
+            .as_bytes(),
+    );
+    assert_eq!(echoes, ["true", "1", "true", "1", "true"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+    // The base must be a type: a place or a literal is refused as an operand
+    // `@` cannot compute over, and the place's bytes are never read as a
+    // record (this used to crash).
+    let (_echoes, stderr) = repl(b"x := i32 5\nq := @x ?\nq := @5 ?\n");
+    assert_eq!(
+        stderr.matches("this operator cannot compute over these operands").count(),
+        2,
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
 fn a_constructors_outcome_is_read_off_its_own_cell() {
     // #81; DESIGN ›The scope's constructor is the driver‹: "A constructor's
     // outcome is read off its cell — constructed, or declined (the frontier

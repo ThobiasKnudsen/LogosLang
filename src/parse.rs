@@ -4565,8 +4565,13 @@ impl<'a> Parser<'a> {
     }
 
     /// The prefix `@` over cells: every further `@` cell to the right, then
-    /// the base logos cell — a resolved logos name (`@i32`, `@@point`) — built
-    /// into the pointer logos; the consumed cells are spliced out.
+    /// the base type cell — any type identity (`@i32`, `@@point`, `@dyad`,
+    /// `@void`; DESIGN ›Pointer types are prefix `@T`‹: "`@i32` is a pointer
+    /// to an i32, composing as `@@i32` and applying to any type (`@point`,
+    /// `@dyad`)") — built into the pointer type; the consumed cells are
+    /// spliced out. What a place of `@T` reads as never depends on `T`
+    /// (`place_layout`: eight bytes, an address), so nothing more is asked of
+    /// the base; a place, a literal, or a fresh name is refused (#124).
     pub(crate) fn construct_pointer_type(
         &mut self,
         tape: &mut ParsingTape,
@@ -4583,12 +4588,7 @@ impl<'a> Parser<'a> {
         let base = self.operand_dyad(cell)?;
         // SAFETY: `base` is a resolved dyad from the store. A pointer type as
         // the base is an inner `@` already constructed at discovery (`@@point`).
-        let is_type = unsafe {
-            crate::identities::is_numtype_node(&self.types, base)
-                || crate::identities::meta::is_record_type(base)
-                || crate::identities::numtype::is_pointer_type(base)
-        };
-        if !is_type {
+        if !unsafe { crate::identities::is_type_value(&self.types, base) } {
             return Err(ParseError::UnsupportedOperands);
         }
         tape.remove(1);
