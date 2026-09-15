@@ -502,6 +502,37 @@ fn the_repl_reuses_a_name_after_drop() {
 }
 
 #[test]
+fn the_repl_refuses_a_call_whose_body_reads_a_dropped_name() {
+    // #125 (DESIGN ›`own` and `drop` are static‹, 15 September 2026): a call
+    // is a use of every outer name the callee's body reads, so `climb()`
+    // after `drop n` is the dead-name error at the call, and stays so after
+    // `n := …` redeclares the spelling; a function declared after the new
+    // `n` counts in it.
+    let (echoes, stderr) = repl(
+        b"n := i32 0\nclimb := fn () -> i32 ( n = n + 1, n )\nclimb()\nclimb()\ndrop n\n\
+          climb()\nn := i32 10\nclimb()\nclimb2 := fn () -> i32 ( n = n + 1, n )\nclimb2()\n",
+    );
+    assert_eq!(echoes, ["1", "2", "11"], "stderr: {stderr}");
+    assert_eq!(
+        stderr.matches("<repl>:1:1: error: `n` is dead here").count(),
+        2,
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn an_imported_function_may_read_its_own_sections_private_names() {
+    // #125: `bump` reads `helper`, a private name of the imported section.
+    // The section is on no caller's stack, but its names live for the run
+    // (DESIGN ›Importing is dropping the text there‹: importers "share the
+    // one loaded scope and its identities"), so the call is a use of a live
+    // name, not an out-of-scope one.
+    let out = logos().arg("import tests/fixtures/lib_helper.logos, bump(41)").output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
+}
+
+#[test]
 fn a_failed_repl_line_restores_a_moved_name() {
     // A line that moves `a` out and then fails is rolled back whole: the dead
     // mark lifts with the line's declarations, so `a` reads on the next line

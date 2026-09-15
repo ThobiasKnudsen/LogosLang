@@ -492,21 +492,44 @@ mod tests {
     }
 
     #[test]
-    fn an_fn_value_reflects_all_five_slots() {
+    fn an_fn_value_reflects_all_six_slots() {
         // The fn record must agree with the value parse_fn builds: [input,
-        // output, body, bcode, frame]. The frame slot (the activation-record
-        // byte size) joined in the activation-records work, and a generic
-        // walker reads slots off the record — a stale four-role record would
-        // hide the fifth slot from reflection.
+        // output, body, bcode, frame, outer]. The frame slot (the
+        // activation-record byte size) joined in the activation-records work
+        // and the outer slot in #125, and a generic walker reads slots off the
+        // record — a stale record would hide a trailing slot from reflection.
         let (_store, core, roots) = parse_all(&["fn (n := i32 ?) -> i32 ( x := n, x )"]);
         // SAFETY: the root is the fn value just parsed, from the store.
         let Shape::Tuple { slots } = (unsafe { describe(&core.types(), roots[0]) }) else {
             panic!("an fn value reads as its fixed slots");
         };
         let roles: Vec<&[u8]> = slots.iter().map(|s| unsafe { text_of(s.role) }).collect();
-        assert_eq!(roles, [b"input" as &[u8], b"output", b"body", b"bcode", b"frame"]);
+        assert_eq!(roles, [b"input" as &[u8], b"output", b"body", b"bcode", b"frame", b"outer"]);
         // This fn has a local, so its frame slot holds a real size leaf.
         assert!(!slots[4].node.is_null(), "a fn with locals carries its frame size");
+        // Its body reads `:=` from outside the function, so the outer slot
+        // holds the list; `n` and `x` are its own and stay off it.
+        assert!(!slots[5].node.is_null(), "a fn whose body reads an outer name lists it");
+    }
+
+    #[test]
+    fn the_outer_slot_lists_exactly_the_names_read_from_outside() {
+        // #125: the list holds the records the body resolved from outside the
+        // function — the outer `n`, and the identities it dispatches — each
+        // once, and never the function's own parameter or local.
+        let (_store, _core, roots) =
+            parse_all(&["n := i32 0", "fn (a := i32 ?) -> i32 ( b := a, n + b + n )"]);
+        // SAFETY: the second root is the fn value just parsed; its list holds
+        // record dyads, whose `name` is a string node.
+        let mut names: Vec<String> = unsafe { crate::parse::fn_outer(roots[1]) }
+            .iter()
+            .map(|&r| unsafe {
+                let name = crate::identities::record::Record::of(r).name;
+                String::from_utf8_lossy(text_of(name)).into_owned()
+            })
+            .collect();
+        names.sort();
+        assert_eq!(names, ["+", ":=", "n"]);
     }
 
     /// A box holding a node address describes as the container it is, not as
@@ -584,7 +607,7 @@ mod tests {
             assert_eq!(meta::kind_of(core.ran_), Some(meta::TUPLE_TAG));
             assert_eq!(meta::kind_of(core.array_), Some(meta::ARRAY_TAG));
             assert_eq!(meta::kind_of(core.fn_type), Some(meta::TUPLE_TAG));
-            assert_eq!(meta::arity_of(core.fn_type), crate::parse::FN_FRAME + 1);
+            assert_eq!(meta::arity_of(core.fn_type), crate::parse::FN_OUTER + 1);
         }
     }
 

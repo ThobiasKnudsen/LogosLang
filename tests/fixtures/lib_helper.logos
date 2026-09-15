@@ -1,0 +1,4 @@
+# a library whose pub function reads a private sibling (#125): the section's
+# names live for the run, so a call from the importer is a use of a live name
+helper := fn (x := i32 ?) -> i32 ( x + 1 ),
+pub bump := fn (x := i32 ?) -> i32 ( helper(x) )

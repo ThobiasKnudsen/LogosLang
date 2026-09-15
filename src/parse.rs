@@ -686,10 +686,16 @@ impl ScopeStack {
     /// body that runs again or later — i.e. a barrier began after `scope` was
     /// pushed — so that `own`/`drop` of it here is refused.
     pub fn crosses_barrier(&self, scope: DyadPtr) -> bool {
-        let Some(idx) = self.open.iter().position(|&s| s == scope) else {
+        let Some(idx) = self.position(scope) else {
             return false;
         };
         self.barriers.iter().any(|&b| b > idx)
+    }
+
+    /// The depth at which `scope` is open — its index from the root — or
+    /// `None` when it is not on the stack.
+    pub fn position(&self, scope: DyadPtr) -> Option<usize> {
+        self.open.iter().position(|&s| s == scope)
     }
 
     /// The innermost open scope.
@@ -1237,6 +1243,14 @@ pub const FN_BCODE: usize = 3;
 /// Cranelift stack slot. A trailing slot, so every reader of
 /// `FN_INPUT..=FN_BCODE` is unaffected.
 pub const FN_FRAME: usize = 4;
+/// See [`FN_INPUT`]. The outer names the body reads: an `array` of their
+/// records — every record the body's parse resolved from outside the
+/// function, in first-read order — or null when it reads none. Filled by the
+/// parse the body already makes and read at every call (#125; DESIGN ›`own`
+/// and `drop` are static‹: "A call is a use of every outer name the callee's
+/// body reads … The list is the function's own, filled by the parse it
+/// already makes"). A trailing slot, like `FN_FRAME`.
+pub const FN_OUTER: usize = 5;
 
 /// The activation-record byte size a function node declares in its [`FN_FRAME`]
 /// slot: the `u64` the slot's leaf holds, or `0` when the slot is null (no
@@ -1244,13 +1258,34 @@ pub const FN_FRAME: usize = 4;
 ///
 /// # Safety
 /// `fn_node` must be a function node whose value is `[input, output, body,
-/// bcode, frame]` as [`Parser::parse_fn`] builds it.
+/// bcode, frame, outer]` as [`Parser::parse_fn`] builds it.
 pub unsafe fn fn_frame_size(fn_node: DyadPtr) -> usize {
     let frame = *((*fn_node).value as *const DyadPtr).add(FN_FRAME);
     if frame.is_null() {
         0
     } else {
         std::ptr::read_unaligned((*frame).value as *const u64) as usize
+    }
+}
+
+/// The records of the outer names a function node's body reads, from its
+/// [`FN_OUTER`] slot: empty for a function that reads none, and for a
+/// declaration's placeholder whose value is still being parsed (a recursive
+/// self-call inside the body has nothing to check yet).
+///
+/// # Safety
+/// `fn_node` must be a function node: its value null, or the operands
+/// [`Parser::parse_fn`] builds (the early signature included).
+pub unsafe fn fn_outer<'a>(fn_node: DyadPtr) -> &'a [DyadPtr] {
+    let fields = (*fn_node).value as *const DyadPtr;
+    if fields.is_null() {
+        return &[];
+    }
+    let outer = *fields.add(FN_OUTER);
+    if outer.is_null() {
+        &[]
+    } else {
+        crate::identities::array::items(outer)
     }
 }
 
@@ -1754,6 +1789,13 @@ fn build_call(store: &mut Store, callee: DyadPtr, args: &[DyadPtr]) -> DyadPtr {
 #[derive(Debug, Default)]
 pub struct Imports {
     entries: HashMap<PathBuf, ImportState>,
+    /// The section scope each loaded file's declarations landed in. A
+    /// section's names live for the run once declared — "all importers …
+    /// share the one loaded scope and its identities" (DESIGN ›Importing is
+    /// dropping the text there‹) — so a call of a `pub` function whose body
+    /// reads a private sibling is a use of a live name from anywhere, though
+    /// the section is on no caller's stack ([`Parser::check_call_reads`]).
+    sections: HashSet<DyadPtr>,
 }
 
 #[derive(Debug)]
@@ -1923,6 +1965,14 @@ struct OpenFn {
     /// Bytes claimed so far by this function's parameters and frame-relative
     /// locals.
     size: usize,
+    /// The scope depth the function's barrier begins at: a name declared in a
+    /// scope below it is a name from outside the function.
+    below: usize,
+    /// The records of the outer names the body has read so far, in
+    /// first-read order, each once — the function's [`FN_OUTER`] list
+    /// (#125), filled by [`Parser::note_outer_read`] as the body's parse
+    /// resolves them.
+    outer: Vec<DyadPtr>,
 }
 
 impl<'a> Parser<'a> {
@@ -2084,6 +2134,88 @@ impl<'a> Parser<'a> {
             if depth != self.frames.len() {
                 return Err(ParseError::CapturedLocal);
             }
+        }
+        Ok(())
+    }
+
+    /// The body being parsed has read the name `record` (null: no name). For
+    /// every open function whose barrier the record's declaring scope lies
+    /// below, the read is of a name from outside that function, and the
+    /// record joins its [`FN_OUTER`] list — once (#125; DESIGN ›`own` and
+    /// `drop` are static‹: "a function's body resolves the names outside it
+    /// when it is parsed, so the function knows which outer names it reads").
+    /// A nested function's read of a name outside both functions joins both
+    /// lists: a call of the outer runs the inner. A record whose scope is on
+    /// no stack — a section's name, reached through a call — lies below every
+    /// function.
+    fn note_outer_read(&mut self, record: DyadPtr) {
+        if record.is_null() || self.frames.is_empty() {
+            return;
+        }
+        // SAFETY: a non-null record here came from the resolver or from a
+        // function's own list: a record dyad from the store.
+        let scope = unsafe { Record::of(record).scope };
+        let depth = self.scopes.position(scope).unwrap_or(0);
+        for frame in &mut self.frames {
+            if depth < frame.below && !frame.outer.contains(&record) {
+                frame.outer.push(record);
+            }
+        }
+    }
+
+    /// A call is a use of every outer name the callee's body reads (#125;
+    /// DESIGN ›`own` and `drop` are static‹, ruled 15 September 2026:
+    /// "calling it at a point is a use of each of them at that point … the
+    /// check is a range lookup per outer name at each call, at elaboration").
+    /// `callee` is what the node runs: a function node, or a type carrying a
+    /// `code` (whose code is the function); anything else runs no body and
+    /// passes. Each listed record is checked as a bare use of the name here
+    /// would be — its scope open (or a section's, whose names live for the
+    /// run), and not made dead by an `own` or `drop` — the existing
+    /// dead-name and out-of-scope errors; a redeclared spelling is another
+    /// record, so the body's name stays the dead one. And as a use, each
+    /// name joins the lists of the functions being parsed, so a call of a
+    /// caller is a use of what its callee reads.
+    pub(crate) fn check_call_reads(&mut self, callee: DyadPtr) -> Result<(), ParseError> {
+        if callee.is_null() {
+            return Ok(());
+        }
+        // SAFETY: `callee` is a dyad from the store — a constructed node's
+        // type, or a resolved callee.
+        let function = unsafe {
+            if (*callee).ty == self.types.fn_type {
+                callee
+            } else if crate::identities::meta::is_record_type(callee) {
+                crate::identities::meta::code_of(callee)
+            } else {
+                return Ok(());
+            }
+        };
+        if function.is_null() {
+            return Ok(());
+        }
+        // SAFETY: `function` is a function node; its list holds record dyads.
+        let outer = unsafe { fn_outer(function) };
+        for &record in outer {
+            // SAFETY: as above.
+            let fields = unsafe { *Record::of(record) };
+            let name = || {
+                if fields.name.is_null() {
+                    String::new()
+                } else {
+                    // SAFETY: a record's `name` is a string node.
+                    String::from_utf8_lossy(unsafe { crate::identities::string::text(fields.name) })
+                        .into_owned()
+                }
+            };
+            if !self.scopes.is_open(fields.scope) && !self.imports.sections.contains(&fields.scope)
+            {
+                return Err(ParseError::Resolve(ResolveError::OutOfScope(name())));
+            }
+            if fields.is_dead() {
+                return Err(ParseError::Resolve(ResolveError::Dead(name())));
+            }
+            self.note_outer_read(record);
         }
         Ok(())
     }
@@ -2322,6 +2454,14 @@ impl<'a> Parser<'a> {
     ) -> Result<Constructed, ParseError> {
         // A constructor runs now, by nature; what stands before it runs first.
         self.drain()?;
+        // Its run is a call: a use of every outer name its body reads (#125),
+        // refused at the identity's own cell.
+        if let Err(e) = self.check_call_reads(f) {
+            if let Some(c) = tape.at(0) {
+                self.pos = c.start;
+            }
+            return Err(e);
+        }
         let handle = self.scalar_value(
             crate::identities::numtype::NumType::U64,
             tape as *mut ParsingTape as usize as i64,
@@ -2575,6 +2715,7 @@ impl<'a> Parser<'a> {
                 };
                 // SAFETY: `id` is a resolved dyad from the store.
                 unsafe { self.check_capture(id)? };
+                self.note_outer_read(record);
                 Ok(if record.is_null() { id } else { record })
             }
         }
@@ -3240,8 +3381,10 @@ impl<'a> Parser<'a> {
         // full 8-byte i64 bit-container the call convention already passes.
         // The body's local declarations then claim the offsets after these; a
         // nested `fn` literal pushes its own frame, so its state never lands
-        // in this one.
-        self.frames.push(OpenFn { size: 0 });
+        // in this one. The barrier pushed below begins at the current scope
+        // depth — nothing between here and it opens a scope — so a record
+        // declared at a lesser depth is a name from outside the function.
+        self.frames.push(OpenFn { size: 0, below: self.scopes.depth(), outer: Vec::new() });
         let depth = self.frames.len();
         // SAFETY: `input` is the record just built; its record stores the
         // fields array, and each parameter's value slot is still the null
@@ -3288,6 +3431,7 @@ impl<'a> Parser<'a> {
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
+                std::ptr::null_mut(),
             ]);
             // SAFETY: `declared` is the just-declared placeholder; nothing has read
             // a value from it yet, and the fixpoint overwrites it when the value
@@ -3326,7 +3470,8 @@ impl<'a> Parser<'a> {
         if unsafe { crate::identities::drop_model::is_owning_value(&self.types, body) } {
             return Err(ParseError::OwnershipAcrossReturn);
         }
-        let frame_size = self.frames.pop().expect("parse_fn pushed a frame").size;
+        let OpenFn { size: frame_size, outer, .. } =
+            self.frames.pop().expect("parse_fn pushed a frame");
 
         // A comptime-rational tail expression commits to the declared return logos here
         // (the typed slot), so `fn () -> i64 ( 2000000000 + 2000000000 )` returns i64
@@ -3346,7 +3491,16 @@ impl<'a> Parser<'a> {
             let u64_ty = self.types.numtypes[crate::identities::NumType::U64 as usize];
             self.store.alloc_raw(u64_ty, bytes)
         };
-        let value = self.store.alloc_operands(&[input, output, body, std::ptr::null_mut(), frame]);
+        // FN_OUTER holds the records of the outer names the body read, which
+        // every call of the function is a use of (#125) — null when it read
+        // none.
+        let outer = if outer.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            crate::identities::array::build(self.store, self.types.array_, &outer)
+        };
+        let value =
+            self.store.alloc_operands(&[input, output, body, std::ptr::null_mut(), frame, outer]);
         Ok(self.store.alloc_raw(fn_type, value))
     }
 
@@ -4295,6 +4449,7 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
+            self.note_outer_read(r.record);
             (r.identity, ended)
         };
         // SAFETY: `node` is a resolved dyad from the store.
@@ -4524,9 +4679,12 @@ impl<'a> Parser<'a> {
             // A call whose callee returns a logos is resolved NOW, at comptime:
             // run it and substitute the concrete logos it produces (roadmap
             // #30), so the result flows as an ordinary logos value through
-            // `==`, `:=`, `.logos`, and display. SAFETY: `callee`/`call` are
-            // reduced dyads.
+            // `==`, `:=`, `.logos`, and display. It runs before the driver
+            // judges the cell, so the outer-name check runs here first: a
+            // body that reads a dead name must not run (#125). SAFETY:
+            // `callee`/`call` are reduced dyads.
             if unsafe { self.returns_type(callee) } {
+                self.check_call_reads(callee)?;
                 unsafe { self.eval_type_call(call) }
             } else {
                 Ok(call)
@@ -5175,6 +5333,7 @@ impl<'a> Parser<'a> {
         // plus a fresh scope node the file's declarations land in.
         let root = *self.scopes.open.first().expect("an import site has an open root scope");
         let section = crate::identities::scope::mint(self.store, self.types.scope, root);
+        self.imports.sections.insert(section);
         let mut nested = ScopeStack::new();
         nested.push(root);
         nested.push(section);
@@ -5725,6 +5884,12 @@ impl<'a> Parser<'a> {
     ) -> Result<(), ParseError> {
         let own = tape.mark();
         let edits = tape.edits();
+        // Dispatching the cell's identity is the body's read of its name — a
+        // callee, an operator, a keyword alike (#125).
+        if let Some(c) = tape.at(0) {
+            let record = c.record(&self.types);
+            self.note_outer_read(record);
+        }
         let was = std::mem::replace(&mut self.discovering, discovery);
         let outcome = construct(self, id, tape);
         self.discovering = was;
@@ -5735,10 +5900,26 @@ impl<'a> Parser<'a> {
             return Ok(());
         };
         tape.restore(own);
-        // Constructed, or rewritten to another token ("what it built it
-        // leaves at the cursor (a dyad, or another token)"), which the
-        // driver constructs as its own.
-        if cell.constructed || self.cell_identity(&cell) != id {
+        // Constructed: a node that runs a function's body — a call, or a
+        // node of a type carrying a `code` — is a use of every outer name
+        // that body reads, checked here where the node comes to exist,
+        // whichever constructor built it (#125). The error points at the
+        // construct's own token: the callee of `climb()`, the `^` of `2 ^ 3`.
+        if cell.constructed {
+            if !cell.dyad.is_null() {
+                // SAFETY: a constructed cell holds a node from the store.
+                let callee = unsafe { (*cell.dyad).ty };
+                if let Err(e) = self.check_call_reads(callee) {
+                    self.pos = cell.start;
+                    return Err(e);
+                }
+            }
+            return Ok(());
+        }
+        // Rewritten to another token ("what it built it leaves at the cursor
+        // (a dyad, or another token)"), which the driver constructs as its
+        // own.
+        if self.cell_identity(&cell) != id {
             return Ok(());
         }
         let declined = matches!(outcome, Constructed::Decline) || tape.edits() == edits;

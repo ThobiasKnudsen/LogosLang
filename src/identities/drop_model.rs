@@ -872,6 +872,106 @@ mod tests {
     }
 
     #[test]
+    fn a_call_is_a_use_of_the_outer_names_the_body_reads() {
+        // #125 (DESIGN ›`own` and `drop` are static‹, 15 September 2026): "a
+        // function's body resolves the names outside it when it is parsed, so
+        // the function knows which outer names it reads, and calling it at a
+        // point is a use of each of them at that point". The call before the
+        // drop is fine; after `drop n` the call is the dead-name error at the
+        // call, though the body itself parsed clean.
+        assert_eq!(
+            parse_err(
+                "n := i32 0,\nclimb := fn () -> i32 ( n = n + 1, n ),\nclimb(),\ndrop n,\nclimb()"
+            ),
+            ParseError::Resolve(ResolveError::Dead("n".into()))
+        );
+        // Redeclaring the spelling does not revive the body's name: that is
+        // the earlier record, dead. A function that should read the new name
+        // is declared again after it, and counts in it.
+        assert_eq!(
+            parse_err("n := i32 0,\nclimb := fn () -> i32 ( n ),\ndrop n,\nn := i32 10,\nclimb()"),
+            ParseError::Resolve(ResolveError::Dead("n".into()))
+        );
+        let (v, live) =
+            run("n := i32 0,\nclimb := fn () -> i32 ( n = n + 1, n ),\nclimb(),\ndrop n,\n\
+             n := i32 10,\nclimb2 := fn () -> i32 ( n = n + 1, n ),\nclimb2()");
+        assert_eq!(v, 11);
+        assert_eq!(live, 0);
+    }
+
+    #[test]
+    fn a_call_reading_a_dropped_owning_pointer_is_refused() {
+        // The reason for the rule (Thobias): a dropped name's place may hold
+        // anything — here a freed block — so a body that reads it must not
+        // run.
+        assert_eq!(
+            parse_err("p := alloc i32 5,\nf := fn () -> i32 ( p@ ),\ndrop p,\nf()"),
+            ParseError::Resolve(ResolveError::Dead("p".into()))
+        );
+        // A function that reads only its parameter is untouched by the drop.
+        let (v, live) = run(
+            "p := alloc i32 5,\nf := fn (q := @i32 ?) -> i32 ( q@ ),\nr := alloc i32 4,\ndrop p,\nf(r)",
+        );
+        assert_eq!(v, 4);
+        assert_eq!(live, 0);
+    }
+
+    #[test]
+    fn a_call_is_a_use_of_what_its_callees_read() {
+        // A call inside a body is a use of the callee's outer names at that
+        // point, so they join the caller's own list: `g` reads `n` through
+        // `climb`, and `g()` after `drop n` is refused as `climb()` is.
+        assert_eq!(
+            parse_err(
+                "n := i32 0,\nclimb := fn () -> i32 ( n ),\ng := fn () -> i32 ( climb() ),\n\
+                 drop n,\ng()"
+            ),
+            ParseError::Resolve(ResolveError::Dead("n".into()))
+        );
+        // A nested function's outer reads belong to the enclosing function's
+        // list too: a call of the outer runs the inner.
+        assert_eq!(
+            parse_err(
+                "n := i32 1,\nouter := fn () -> i32 ( inner := fn () -> i32 ( n ), inner() ),\n\
+                 drop n,\nouter()"
+            ),
+            ParseError::Resolve(ResolveError::Dead("n".into()))
+        );
+    }
+
+    #[test]
+    fn a_node_of_a_code_carrying_type_is_a_call_of_its_code() {
+        // `^`'s code reads `n`; the operator node its Logos constructor builds
+        // runs that code, so `2 ^ 3` after `drop n` is the same refusal, at
+        // the `^` — and so is a constructor-less type's applied form `sq(3)`.
+        const POW: &str = "n := i32 2,\n\
+            ^ := type (\n\
+                parse_rank = *.parse_rank + 1,\n\
+                associativity = right,\n\
+                constructor = fn (tape := parsing_tape ?) -> void (\n\
+                    tape[0]:dyad.type = ^,\n\
+                    tape[0]:dyad.value.operands.append(tape[-1] and tape[1]),\n\
+                    tape.remove(1),\n\
+                    tape.remove(-1)\n\
+                ),\n\
+                code = fn (a := i32 ?, b := i32 ?) -> i32 ( a * b * n )\n\
+            ),\n";
+        let (v, live) = run(&format!("{POW}2 ^ 3"));
+        assert_eq!(v, 12);
+        assert_eq!(live, 0);
+        assert_eq!(
+            parse_err(&format!("{POW}drop n,\n2 ^ 3")),
+            ParseError::Resolve(ResolveError::Dead("n".into()))
+        );
+        assert_eq!(
+            parse_err(&format!(
+                "{POW}sq := type ( code = fn (a := i32 ?) -> i32 ( a * n ) ),\ndrop n,\nsq(3)"
+            )),
+            ParseError::Resolve(ResolveError::Dead("n".into()))
+        );
+    }
+
+    #[test]
     fn own_hands_ownership_to_an_enclosing_binder() {
         // What `own` *can* do today: escape a block to the binder that encloses
         // it, which the parse sees. The inner place empties (its teardown

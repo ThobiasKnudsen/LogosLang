@@ -11,13 +11,15 @@
 //! [`crate::parse::Parser::parse_fn`]; here we only register the identity, its
 //! `Fn` construct, and the `->` arrow it consumes.
 //!
-//! A `fn` instance's value is its `[input, output, body, bcode, frame]` record
-//! (the params, the return logos, the reflectable body, the compiled machine code
-//! — null until [`crate::compile::compile_fn`] installs it — and the
-//! activation-record byte size, null for a function with no locals). `run` jumps
-//! to an installed `bcode` and walks `body` otherwise; only the leaf natives
-//! (`=`, `+`, `if`, …) keep their machine code in the run version's table
-//! instead (see `crate::run`).
+//! A `fn` instance's value is its `[input, output, body, bcode, frame, outer]`
+//! record (the params, the return logos, the reflectable body, the compiled
+//! machine code — null until [`crate::compile::compile_fn`] installs it — the
+//! activation-record byte size, null for a function with no locals, and the
+//! records of the outer names the body reads, null for a function that reads
+//! none, which every call is a use of — #125). `run` jumps to an installed
+//! `bcode` and walks `body` otherwise; only the leaf natives (`=`, `+`, `if`,
+//! …) keep their machine code in the run version's table instead (see
+//! `crate::run`).
 
 use super::callable::{self, Callables};
 use super::{meta, Cx};
@@ -62,16 +64,17 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
     });
 
     // `fn`'s own record, installed now that the string logos exists for the role
-    // names: an fn value is the five fixed slots `[input, output, body, bcode,
-    // frame]` — the params, the return logos, the reflectable body, the compiled
-    // callable (null until compiled), and the activation-record byte size (null
-    // for a function with no locals).
+    // names: an fn value is the six fixed slots `[input, output, body, bcode,
+    // frame, outer]` — the params, the return logos, the reflectable body, the
+    // compiled callable (null until compiled), the activation-record byte size
+    // (null for a function with no locals), and the outer names the body reads
+    // (null for a function that reads none; #125).
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
         meta::prec::READER,
         Assoc::Left,
-        &["input", "output", "body", "bcode", "frame"],
+        &["input", "output", "body", "bcode", "frame", "outer"],
     );
     // SAFETY: `fn_type` was allocated by [`register`] and nothing has read its
     // (previously null) value slot.
