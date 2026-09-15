@@ -39,6 +39,11 @@ parsing_tape := type (
     )
 )
 
+here := ?     # where this line is written: here.scope is the scope it stands in, here.scope.scope the one above, null at the arche
+caller := ?   # where it was called from: for a constructor the appearance of its identity, so caller.scope is the use site and
+              # here.scope the constructor's own body; both stand inside a constructor, the walk up being settled structure
+              # (ruled 15 September 2026, #123; a walk down stops at a section boundary, a function's scopes counting as one)
+
 mut := type (
     # a gate word (DESIGN ›mut is a gate on the record‹, ruled 5-7 September 2026; its place ruled 15 September 2026): a
     # prefix word on the NAME, left of :=, mut x := 5, pub mut x := i32 5, superseding the right-side x := mut 5 of
