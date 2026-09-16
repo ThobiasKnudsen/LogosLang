@@ -25,9 +25,9 @@
         tape.remove(1),                      # both operands consumed:
         tape.remove(-1)                      # only the ^ node remains
     ),
-    code = (                             # the power computation, lhs and rhs in scope
-        r := output 1,
-        for i in 0..rhs ( r = r * lhs ),
+    run = (                              # the power computation over this node's fields
+        r := this.output 1,
+        for 0..this.rhs ( r = r * this.lhs ),   # no index needed (ruled 17 September 2026)
         r
     )
 ),

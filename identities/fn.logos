@@ -2,10 +2,10 @@ fn := type (
     constructor = fn (tape := parsing_tape ?) -> void ( ? )
     value (
         compile := fn () -> void ( ? )       # stored once, read on instances: read own body, lower it to bcode
-        run     := fn () -> void ( ? )       # if bcode present jump to it; if bcode is NULL walk body directly. interpretation is run's null-bcode path, not a separate function
+        # run as a member is gone (17 September 2026): `run` names the body slot, and running a node is the evaluation rule with two paths, jump to bcode if present, else walk the body; interpretation is that null-bcode path, not a separate function
         input := type ?
         output := ?
-        body := ?                            # the reflectable LG body
+        body := ?                            # the reflectable LG body (the slot every type with something to run spells `run` since 17 September 2026; #127 folds fn into that shape)
         bcode := callable ?                  # the complete jump info [entry @exec, convention] (NULL until compiled)
         frame := u64 ?                       # the activation-record byte size (per-call locals), NULL when none
     )

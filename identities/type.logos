@@ -6,7 +6,7 @@ type := type (
         associativity := ?          # left or right
         constructor := fn (tape := parsing_tape ?) -> void ?
         destructor := ?
-        code := ?                   # a body over the instance's fields, where the type has something to run (DESIGN ›Execution is function application‹, 16 September 2026)
+        run := ?                    # a body over the instance's fields, what runs when a node of the type is interpreted or compiled and run (DESIGN ›Execution is function application‹, 16 and 17 September 2026; spelled code until 17 September)
     )
 
     # what type itself is: the same slots, filled
