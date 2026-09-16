@@ -1,6 +1,6 @@
 fn := type (
     constructor = fn (tape := parsing_tape ?) -> void ( ? )
-    instance (
+    value (
         compile := fn () -> void ( ? )       # stored once, read on instances: read own body, lower it to bcode
         run     := fn () -> void ( ? )       # if bcode present jump to it; if bcode is NULL walk body directly. interpretation is run's null-bcode path, not a separate function
         input := type ?

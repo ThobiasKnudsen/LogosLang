@@ -2,7 +2,7 @@ scope := type (
     constructor = fn (tape := parsing_tape ?) -> void (
 
     )
-    instance (
+    value (
         self := array dyad ()
     )
 )

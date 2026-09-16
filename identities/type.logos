@@ -1,6 +1,6 @@
 type := type (
     # what every type carries: declared here, a slot per type, filled by each type's own body with =
-    instance (
+    value (
         parse_rank := f64 ?         # construction order within a segment (spelled precedence until 10 September 2026)
         lex_rank := f64 ?           # recognizer order at a text position; only pattern spellings need one
         associativity := ?          # left or right
@@ -15,7 +15,7 @@ type := type (
     constructor = fn (tape := parsing_tape ?) -> void (
         # type reads its own bracket (ruled 3 September 2026): constructed at discovery, before the ( after it is
         # lexed, it opens the definition scope itself — so the body's bare lines fill the new identity's slots and
-        # declare its members, and its instance (…) declares what lives on instances — then drives the bracket's
+        # declare its members, and its value (…) declares what lives on instances — then drives the bracket's
         # parse exactly as ( does, with that scope open, and replaces its own cell with the finished type
         if tape[1] != lex «(»[0]
             error «type must be followed by (»

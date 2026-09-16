@@ -18,7 +18,7 @@ parsing_tape := type (
     # nothing and has four affordances: tape[k], is_constructed, insert, remove, plus the spelling list beside the flag
     # (ruled 14 September 2026). disposable, rebuilt from source.
     constructor = fn (tape := parsing_tape ?) -> void ( ? )
-    instance (
+    value (
         code := string ?                              # the source not yet lexed
         code_offset := u64 ?                          # where lexing continues
         cells := doublylinkedlist @dyad ()            # a resolved cell is the record the trie returned (a dyad of type record), a constructed cell its dyad: one pointer type serves both (ruled 8 September 2026)
@@ -128,7 +128,7 @@ bool := type ?         # a comparison's result type; an if condition must be one
 @exec := type ?
 
 callable := type (          # the complete jump info — the ONE representation of jumpable code, never a bare address
-    instance (
+    value (
         entry := @exec ?
         convention := @dyad ?    # the declared calling-convention identity
     )
@@ -560,7 +560,7 @@ Englogos (
 )
 
 struct1 := type (
-    instance (
+    value (
         x := f32 ?
         y := f32 ?
         z := f32 ?
