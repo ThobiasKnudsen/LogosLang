@@ -1,5 +1,5 @@
 scope := type (
-    constructor = fn (tape := parsing_tape ?) -> void (
+    parse = fn (tape := parsing_tape ?) -> void (
 
     )
     value (

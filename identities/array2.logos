@@ -1,14 +1,14 @@
 
 array_type := ? (
-    shared constructor = fn (tape := parsing_tape ?) -> void (
+    shared parse = fn (tape := parsing_tape ?) -> void (
 
         if not tape[1].is_constructed
-            error «id after the array being constructed is not constructed which is not valid for array.constructor»
+            error «id after the array being constructed is not constructed which is not valid for array.parse»
         if tape[1].type != type
             error «id after array is not a type»
 
         if not tape[2].is_constructed
-            error «second id after the array being constructed is not constructed, which is not valid for array.constructor»
+            error «second id after the array being constructed is not constructed, which is not valid for array.parse»
         if tape[2].type != scope
             error «second id after array does not have the type scope»
 
@@ -36,7 +36,7 @@ array := array_type (
         capacity := mut u64 0
         data := mut @void ?
 
-        shared constructor = fn (tape := mut parsing_tape ?) -> void (
+        shared parse = fn (tape := mut parsing_tape ?) -> void (
 
             if tape[1].type == square_brackets (
                 if not tape[1].is_constructed

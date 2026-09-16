@@ -4,15 +4,15 @@ type := type (
         parse_rank := f64 ?         # construction order within a segment (spelled precedence until 10 September 2026)
         lex_rank := f64 ?           # recognizer order at a text position; only pattern spellings need one
         associativity := ?          # left or right
-        constructor := fn (tape := parsing_tape ?) -> void ?
-        destructor := ?
+        parse := fn (tape := parsing_tape ?) -> void ?   # spelled constructor until 17 September 2026
+        drop := ?                   # spelled destructor until 17 September 2026; what `drop x` runs
         run := ?                    # a body over the instance's fields, what runs when a node of the type is interpreted or compiled and run (DESIGN ›Execution is function application‹, 16 and 17 September 2026; spelled code until 17 September)
     )
 
     # what type itself is: the same slots, filled
     parse_rank = f64 2.0
     associativity = left
-    constructor = fn (tape := parsing_tape ?) -> void (
+    parse = fn (tape := parsing_tape ?) -> void (
         # type reads its own bracket (ruled 3 September 2026): constructed at discovery, before the ( after it is
         # lexed, it opens the definition scope itself — so the body's bare lines fill the new identity's slots and
         # declare its members, and its value (…) declares what lives on instances — then drives the bracket's
@@ -20,7 +20,7 @@ type := type (
         if tape[1] != lex «(»[0]
             error «type must be followed by (»
         definition := scope ?                       # the new identity's own scope, open before the bracket is lexed
-        (.constructor(tape.recenter(1))             # the eager-segment loop, run inside definition
+        (.parse(tape.recenter(1))             # the eager-segment loop, run inside definition
         tape[0] = dyad (type, definition)
         tape.remove(1)
     )
