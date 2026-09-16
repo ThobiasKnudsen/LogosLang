@@ -1,20 +1,33 @@
 # The language defines itself: a power operator `^` written in ordinary Logos,
 # used in the same file, and compiled with f.compile(). An operator is a type
 # with its slots filled: where it binds (parse_rank), which way it associates,
-# how it parses (constructor, run over the parsing tape during the parse), and
-# what it computes (code, an ordinary function the node runs as a call does).
+# what a node of it holds (instance: the operands as named fields, and the
+# output the constructor defines per node), how it parses (constructor, run
+# over the parsing tape during the parse), and what it computes (code, a bare
+# body over the node's fields).
+#
+# Shape ruled 16 September 2026 (DESIGN ›Execution is function application‹).
+# The seed still runs the 4 September shape (tests/fixtures/caret.logos), so
+# `logos import ./identities/power.logos` waits on the seed catching up.
 ^ := type (
     parse_rank = *.parse_rank + 1,       # binds tighter than *
     associativity = right,               # 2 ^ 3 ^ 2 is 2 ^ (3 ^ 2)
-    constructor = fn (tape := parsing_tape ?) -> void (
-        tape[0]:dyad.type = ^,                                  # the ^ node, its operand record empty
-        tape[0]:dyad.value.operands.append(tape[-1] and tape[1]),
-        tape.remove(1),
-        tape.remove(-1)
+    instance (
+        lhs := ?,                        # the base: takes the type of the operand written into it
+        rhs := i32 ?,                    # the exponent: always an i32, a literal molds to it
+        output := type ?                 # what a ^ node yields; the constructor defines it
     ),
-    code = fn (a := i32 ?, b := i32 ?) -> i32 (               # the power computation
-        r := i32 1,
-        for i in 0..b ( r = r * a ),
+    constructor = fn (tape := parsing_tape ?) -> void (
+        tape[0]:dyad.type = ^,                                  # the ^ node, its fields empty
+        tape[0]:dyad.value.lhs = tape[-1],                      # by name, not by position
+        tape[0]:dyad.value.rhs = tape[1],
+        tape[0]:dyad.value.output = tape[-1]:dyad.type,         # the result follows the base
+        tape.remove(1),                                         # both operands consumed:
+        tape.remove(-1)                                         # only the ^ node remains
+    ),
+    code = (                             # the power computation, lhs and rhs in scope
+        r := output 1,
+        for i in 0..rhs ( r = r * lhs ),
         r
     )
 ),
