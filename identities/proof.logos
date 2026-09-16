@@ -1,11 +1,11 @@
 proof := type (
-    parse = fn (tape := parsing_tape ?) -> void (
+    parse = (
         # parses: proof ( holes…, premises…, pattern ) -> replacement ( derivation )
         # fn and proof share the -> spelling: each type's own constructor decides what may
         # follow its arrow. fn demands a type there; proof accepts any shape, or true.
         ?
     )
-    value (
+    value = (
         holes := array dyad ()    # the typed identities the rule quantifies over (a := generic_number ?)
         premises := array dyad ()    # shapes that must rewrite to true where the rule is applied
         pattern := dyad ?           # the input shape (a + a): matching binds the holes, calling in reverse.

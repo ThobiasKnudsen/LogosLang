@@ -1,6 +1,6 @@
 fn := type (
-    parse = fn (tape := parsing_tape ?) -> void ( ? )
-    value (
+    parse = ( ? )
+    value = (
         compile := fn () -> void ( ? )       # stored once, read on instances: read own body, lower it to bcode
         # run as a member is gone (17 September 2026): `run` names the body slot, and running a node is the evaluation rule with two paths, jump to bcode if present, else walk the body; interpretation is that null-bcode path, not a separate function
         input := type ?

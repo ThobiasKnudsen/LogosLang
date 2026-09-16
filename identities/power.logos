@@ -2,10 +2,11 @@
 # used in the same file, and compiled with f.compile(). An operator is a type
 # with its slots filled: where it binds (parse_rank), which way it associates,
 # what a node of it holds (value: the operands as named fields, and the
-# output the constructor defines per node), how it parses (parse, run
-# over the parsing tape during the parse, writing the node it builds as
-# `this`, short for tape[0]:dyad.value), and what it computes (code, a bare
-# body over the node's fields).
+# output its parse defines per node), how it parses (parse, a body over the
+# parsing tape `tape`, run when the spelling appears, writing the node it
+# builds as `this`, short for tape[0]:dyad.value), and what it computes
+# (run, a bare body over the node's fields). Every slot is filled with =,
+# and what = reads on its right is decided by the slot's type.
 #
 # Shape ruled 16 and 17 September 2026 (DESIGN ›Execution is function application‹).
 # The seed still runs the 4 September shape (tests/fixtures/caret.logos), so
@@ -13,12 +14,12 @@
 ^ := type (
     parse_rank = *.parse_rank + 1,       # binds tighter than *
     associativity = right,               # 2 ^ 3 ^ 2 is 2 ^ (3 ^ 2)
-    value (
+    value = (
         lhs := ?,                        # the base: takes the type of the operand written into it
         rhs := i32 ?,                    # the exponent: always an i32, a literal molds to it
         output := type ?                 # what a ^ node yields; the constructor defines it
     ),
-    parse = fn (tape := parsing_tape ?) -> void (
+    parse = (
         this.lhs = tape[-1],                 # the first write into this builds the ^ node
         this.rhs = tape[1],                  # by name, not by position
         this.output = tape[-1]:dyad.type,    # the result follows the base

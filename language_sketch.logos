@@ -17,8 +17,8 @@ parsing_tape := type (
     # view, tape[0] being its own cell, negative offsets its left context, positive its right. the tape runs
     # nothing and has four affordances: tape[k], is_constructed, insert, remove, plus the spelling list beside the flag
     # (ruled 14 September 2026). disposable, rebuilt from source.
-    parse = fn (tape := parsing_tape ?) -> void ( ? )
-    value (
+    parse = ( ? )
+    value = (
         code := string ?                              # the source not yet lexed
         code_offset := u64 ?                          # where lexing continues
         cells := doublylinkedlist @dyad ()            # a resolved cell is the record the trie returned (a dyad of type record), a constructed cell its dyad: one pointer type serves both (ruled 8 September 2026)
@@ -54,7 +54,7 @@ mut := type (
     # accepted, the checked error. mut T as a TYPE is superseded: a type never carries mutability.
     # ruled 15 September 2026: a gate word reads the declaration to its right, each gate its own constructor, so
     # pub mut x := 5 is pub reading mut reading x := 5. open: a gated return type, which has no name to stand beside.
-    parse = fn (tape := parsing_tape ?) -> void (
+    parse = (
         ?                                 # drive the declaration to the right (its name, then :=, or another gate word first); when it
                                           # stands constructed at tape[1], this mut node is the gate: a body node referring to that name
                                           # (ruled 15 September 2026), its creation a write at the name's :gate voted on by the gates
@@ -128,7 +128,7 @@ bool := type ?         # a comparison's result type; an if condition must be one
 @exec := type ?
 
 callable := type (          # the complete jump info — the ONE representation of jumpable code, never a bare address
-    value (
+    value = (
         entry := @exec ?
         convention := @dyad ?    # the declared calling-convention identity
     )
@@ -560,7 +560,7 @@ Englogos (
 )
 
 struct1 := type (
-    value (
+    value = (
         x := f32 ?
         y := f32 ?
         z := f32 ?

@@ -10,7 +10,7 @@
 ( := type (
     parse_rank = …                       # near the top of the axis; , sits above it
     associativity = left
-    parse = fn (tape := parsing_tape ?) -> void (
+    parse = (
         body := array @dyad ()
         first := 1                       # the first cell of the current segment
         i := 1

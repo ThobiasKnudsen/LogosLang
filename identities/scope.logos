@@ -1,8 +1,8 @@
 scope := type (
-    parse = fn (tape := parsing_tape ?) -> void (
+    parse = (
 
     )
-    value (
+    value = (
         self := array dyad ()
     )
 )
