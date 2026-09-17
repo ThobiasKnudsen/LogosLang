@@ -3,8 +3,8 @@
 # with its slots filled: where it binds (parse_rank), which way it associates,
 # what a node of it holds (value: the operands as named fields, and the
 # output its parse defines per node), how it parses (parse, a body over the
-# parsing tape `tape`, run when the spelling appears, writing the node it
-# builds as `this`, short for tape[0]:dyad.value), and what it computes
+# parsing tape `tape`, run when the spelling appears, building the node as
+# `this`, a fresh ^ it fills by name and places with tape[0] = this), and what it computes
 # (run, a bare body over the node's fields). Every slot is filled with =,
 # and what = reads on its right is decided by the slot's type.
 #
@@ -20,9 +20,10 @@
         output := type ?                 # what a ^ node yields; the constructor defines it
     ),
     parse = (
-        this.lhs = tape[-1],                 # the first write into this builds the ^ node
+        this.lhs = tape[-1],                 # this: a fresh ^ node, its value fields holes (ruled 18 September 2026)
         this.rhs = tape[1],                  # by name, not by position
         this.output = tape[-1]:dyad.type,    # the result follows the base
+        tape[0] = this,                      # the constructor places the node it built
         tape.remove(1),                      # both operands consumed:
         tape.remove(-1)                      # only the ^ node remains
     ),
