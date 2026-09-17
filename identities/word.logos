@@ -1,4 +1,4 @@
-type := type (
+word := word (
     # what every type carries: declared here, a slot per type, filled by each type's own body with =; what = reads on
     # its right is decided by the slot's type (ruled 17 September 2026), so a parse, run, drop or value body needs no fn
     value = (
@@ -11,19 +11,19 @@ type := type (
         value := value ?            # the declaration block of what every node of the type holds (17 September 2026)
     )
 
-    # what type itself is: the same slots, filled
+    # what word itself is: the same slots, filled
     parse_rank = f64 2.0
     associativity = left
     parse = (
-        # type reads its own bracket (ruled 3 September 2026): constructed at discovery, before the ( after it is
+        # word reads its own bracket (ruled 3 September 2026): constructed at discovery, before the ( after it is
         # lexed, it opens the definition scope itself — so the body's bare lines fill the new identity's slots and
         # declare its members, and its value = (…) declares what lives on instances — then drives the bracket's
         # parse exactly as ( does, with that scope open, and replaces its own cell with the finished type
         if tape[1] != lex «(»[0]
-            error «type must be followed by (»
+            error «word must be followed by (»
         definition := scope ?                       # the new identity's own scope, open before the bracket is lexed
         (.parse(tape.recenter(1))             # the eager-segment loop, run inside definition
-        tape[0] = dyad (type, definition)
+        tape[0] = dyad (word, definition)
         tape.remove(1)
     )
 )

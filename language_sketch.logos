@@ -8,7 +8,7 @@ assign(declare(&mut logos, «:=»), ?, ?)
 assign(declare(&mut logos, «rational_number»), type, ?)
 assign(declare(&mut logos, «[0-9]+(?:\.[0-9]+)?»), rational_number, ?)   # unanchored: the lexer longest-matches a prefix of the remaining input, so no ^…$. unsigned: the literal never carries a sign; - before a literal folds at parse, - before any other operand is negation (its constructor reads tape[-1]: a constructed operand there makes it subtraction, so a-1 stays subtraction; ruled 5 September 2026)
 
-parsing_tape := type (
+parsing_tape := word (
     # the working frontier: Logic Graph with a string extension (DESIGN ›Source becomes runnable‹, ›The scope's
     # constructor is the driver‹). a cell resolved from a spelling is the record the trie returned (tape[1]:scope,
     # tape[1]:dyad), a constructed cell is its dyad, is_constructed telling which (ruled 7 September 2026) — never a
@@ -44,7 +44,7 @@ caller := ?   # where it was called from: for a constructor the appearance of it
               # here.scope the constructor's own body; both stand inside a constructor, the walk up being settled structure
               # (ruled 15 September 2026, #123; a walk down stops at a section boundary, a function's scopes counting as one)
 
-mut := type (
+mut := word (
     # a gate word (DESIGN ›mut is a gate on the record‹, ruled 5-7 September 2026; its place ruled 15 September 2026): a
     # prefix word on the NAME, left of :=, mut x := 5, pub mut x := i32 5, superseding the right-side x := mut 5 of
     # 5 September. It is the entry «write allowed from the declaring scope and its descendants»; the record := fills
@@ -112,22 +112,22 @@ mut := ?
 [ := ?
 ] := ?
 
-string := type ?
-u8 := type ?
-u16 := type ?
-u32 := type ?
-u64 := type ?
-i8 := type ?
-i16 := type ?
-i32 := type ?
-i64 := type ?
-f32 := type ?
-f64 := type ?
-bool := type ?         # a comparison's result type; an if condition must be one
-@void := type ?
-@exec := type ?
+string := word ?
+u8 := word ?
+u16 := word ?
+u32 := word ?
+u64 := word ?
+i8 := word ?
+i16 := word ?
+i32 := word ?
+i64 := word ?
+f32 := word ?
+f64 := word ?
+bool := word ?         # a comparison's result type; an if condition must be one
+@void := word ?
+@exec := word ?
 
-callable := type (          # the complete jump info — the ONE representation of jumpable code, never a bare address
+callable := word (          # the complete jump info — the ONE representation of jumpable code, never a bare address
     value = (
         entry := @exec ?
         convention := @dyad ?    # the declared calling-convention identity
@@ -161,14 +161,14 @@ a {                   # the dyad: type and value, nothing else; a:dyad reaches i
 }
 
 i32 {
-    type -> type
+    type -> word
     value -> [what ever fields for i32 is defined as]
 }
 
-type {
-  type -> type
+word {
+  type -> word
   value -> {
-    type -> type
+    type -> word
     value -> {
       # member NAMES are record entries in the shared name index, not data
       # stored here (per-record names hashtable: rejected)
@@ -189,13 +189,13 @@ type {
               type -> {
                 type -> fn
                 value -> {
-                  input -> type (tape := parsing_tape ?)
+                  input -> word (tape := parsing_tape ?)
                   output -> void
                 }
               }
               value -> ?
             }, {
-              type -> type
+              type -> word
               value -> ?
             }, {
               type -> ?
@@ -559,7 +559,7 @@ Englogos (
     # open: trailing not here and in the perfect pair vs the ruled rightward scope
 )
 
-struct1 := type (
+struct1 := word (
     value = (
         x := f32 ?
         y := f32 ?
@@ -568,7 +568,7 @@ struct1 := type (
     )
 )
 
-type1 := type (
+type1 := word (
     parse_rank = …
     associativity = …
     parse = …

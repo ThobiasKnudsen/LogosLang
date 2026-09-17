@@ -11,13 +11,13 @@
 # Shape ruled 16 and 17 September 2026 (DESIGN ›Execution is function application‹).
 # The seed still runs the 4 September shape (tests/fixtures/caret.logos), so
 # `logos import ./identities/power.logos` waits on the seed catching up.
-^ := type (
+^ := word (
     parse_rank = *.parse_rank + 1,       # binds tighter than *
     associativity = right,               # 2 ^ 3 ^ 2 is 2 ^ (3 ^ 2)
     value = (
         lhs := ?,                        # the base: takes the type of the operand written into it
         rhs := i32 ?,                    # the exponent: always an i32, a literal molds to it
-        output := type ?                 # what a ^ node yields; the constructor defines it
+        output := word ?                 # what a ^ node yields; the constructor defines it
     ),
     parse = (
         this.lhs = tape[-1],                 # this: a fresh ^ node, its value fields holes (ruled 18 September 2026)

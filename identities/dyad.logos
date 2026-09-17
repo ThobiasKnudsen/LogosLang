@@ -1,1 +1,1 @@
-dyad := type (value (type := @dyad ?, value := @void ?))
+dyad := word (value (type := @dyad ?, value := @void ?))

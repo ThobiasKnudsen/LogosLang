@@ -1,6 +1,6 @@
 
 
-array := type (
+array := word (
     parse = (
 
         if not tape[1].is_constructed
@@ -28,8 +28,8 @@ array := type (
 
         tape[1..3].remove
     )
-    instance := type (
-        element_type := type ?
+    instance := word (
+        element_type := word ?
         size := u64 0
         capacity := u64 0
         data := @void ?

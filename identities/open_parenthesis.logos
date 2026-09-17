@@ -7,7 +7,7 @@
 # constructor taking what it needs from the fully lexed segment, left or right, any arity, with no lookahead; a
 # cell still unconstructed afterwards is the checked error. the constructed cells, in order, are the scope's
 # expressions, the array the scope dyad's value references. no holding, no re-invocation.
-( := type (
+( := word (
     parse_rank = …                       # near the top of the axis; , sits above it
     associativity = left
     parse = (
