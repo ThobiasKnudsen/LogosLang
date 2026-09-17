@@ -21,12 +21,11 @@
 //! [`crate::parse::Parser::parse_type_body`] because it needs the parser's
 //! tape, scope stack, and reentrant expression parse (DESIGN ›The constructor
 //! is a field‹, #61): a body is a scope whose bare lines fill the six slots
-//! `type` declares for every type it builds — `parse_rank`, `lex_rank`,
-//! `associativity`, `constructor`, `destructor`, `code`, filled with `=` — or
-//! declare its own members,
-//! and whose `instance (…)` block holds the per-instance fields. Here we only
-//! create the root, attach its constructor, and register what the body
-//! consumes: `,`, `instance`, the two associativity values `left` and
+//! `type` declares for every type it builds — [`SLOT_NAMES`], filled with
+//! `=` — or declare its own members, its `value = (…)` slot holding the
+//! per-instance fields. Here we only create the root, attach its
+//! constructor, and register what the body consumes: `,`, the two
+//! associativity values `left` and
 //! `right` (identities of type `type`, like a keyword, ruled 9 September
 //! 2026), and the six slot markers.
 
@@ -47,9 +46,9 @@ pub(super) fn register_root(store: &mut Store) -> DyadPtr {
 }
 
 /// Spell the root, attach its constructor, and register what a definition
-/// body consumes: `,`, `instance`, `left`, `right`, and the six slot
+/// body consumes: `,`, `left`, `right`, and the six slot
 /// markers, returned in that order.
-pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, [DyadPtr; 6]) {
+pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, [DyadPtr; 6]) {
     // The spelling: `type` resolves to the root as a first-class value (DESIGN
     // ›Substrate vocabulary‹, ruled 4 September 2026: `type` is the ground and
     // the definition keyword, `logos` names the language). `logos` stays a
@@ -78,14 +77,6 @@ pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPt
         Ok(crate::parse::Constructed::Placed)
     });
 
-    // `instance (…)`: the per-instance fields of the type being defined,
-    // read at discovery like every bracket reader (the word itself recorded
-    // as open, 2 September 2026).
-    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::READER);
-    let instance_ = cx.store.alloc_raw(cx.type_, record);
-    cx.declare("instance", instance_);
-    cx.metas.insert(instance_, |p, id, tape| p.construct_instance_block(id, tape));
-
     // `left` and `right`: associativity's two values, identities of type
     // `type` with nothing behind them — a type's own record, not a
     // delimiter's, so each stands as an operand (`^.associativity == right`).
@@ -110,5 +101,5 @@ pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPt
     let comma = cx.store.alloc_raw(cx.type_, record);
     cx.declare(",", comma);
 
-    (comma, instance_, left_, right_, slots)
+    (comma, left_, right_, slots)
 }

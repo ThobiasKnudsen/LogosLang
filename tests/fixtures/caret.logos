@@ -9,7 +9,7 @@
 ^ := type (
     parse_rank = *.parse_rank + 1,
     associativity = right,
-    constructor = fn (tape := parsing_tape ?) -> void (
+    parse = fn (tape := parsing_tape ?) -> void (
         tape[0]:dyad.type = ^,
         tape[0]:dyad.value.operands.append(tape[-1] and tape[1]),
         tape.remove(1),

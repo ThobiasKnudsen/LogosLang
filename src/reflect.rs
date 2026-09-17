@@ -466,7 +466,7 @@ mod tests {
         scopes.push(core.root_scope);
         let node = {
             let mut p = Parser::new(
-                "logos (instance (alpha := i32 ?, beta := i32 ?))",
+                "logos (value = (alpha := i32 ?, beta := i32 ?))",
                 &mut store,
                 &mut trie,
                 core.types(),
@@ -646,7 +646,7 @@ mod tests {
     fn describe_reads_a_program_from_the_graph_alone() {
         let (_store, core, roots) = parse_all(&[
             "x := i32 41",
-            "point := logos (instance (a := i32 ?, b := i64 ?))",
+            "point := logos (value = (a := i32 ?, b := i64 ?))",
             "pt := point(3, 4)",
             "x = x + 1",
             // A runtime condition (`x` is a place): a comptime-known one would
@@ -805,7 +805,7 @@ mod tests {
     #[test]
     fn the_whole_store_describes() {
         let (store, core, _roots) = parse_all(&[
-            "point := logos (instance (a := i32 ?, b := i64 ?))",
+            "point := logos (value = (a := i32 ?, b := i64 ?))",
             "pt := point(3, 4)",
             "q := &pt",
             "f := fn (v := i64 ?) -> i64 ( if (v < 2) ( 1 ) else ( v * 2 ) )",

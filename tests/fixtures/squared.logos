@@ -9,7 +9,7 @@ sq := fn (a := i32 ?) -> i32 ( a * a ),
 squared := type (
     parse_rank = *.parse_rank + 1,
     associativity = left,
-    constructor = fn (tape := parsing_tape ?) -> void (
+    parse = fn (tape := parsing_tape ?) -> void (
         tape[0]:dyad.type = sq,
         tape[0]:dyad.value.operands.append(tape[-1]),
         tape.remove(-1)
@@ -20,7 +20,7 @@ add := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ),
 plus2 := type (
     parse_rank = +.parse_rank,
     associativity = left,
-    constructor = fn (tape := parsing_tape ?) -> void (
+    parse = fn (tape := parsing_tape ?) -> void (
         tape[0]:dyad.type = add,
         tape[0]:dyad.value.operands.append(tape[-1] and tape[1]),
         tape.remove(1),

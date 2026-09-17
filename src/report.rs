@@ -140,11 +140,10 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::TypeBodyLine => {
-            "a type body line fills a slot (`parse_rank = …`), declares a member (`y := …`), or opens `instance (…)`"
+            "a type body line fills a slot (`parse_rank = …`, `value = (…)`) or declares a member (`y := …`)"
                 .into()
         }
-        ParseError::InstanceOutsideType => "`instance (…)` belongs inside a type body".into(),
-        ParseError::DoubleInstance => "a type body has one `instance (…)` block".into(),
+        ParseError::DoubleInstance => "a type body has one `value = (…)` block".into(),
         ParseError::DeferInTypeBody => "a type body cannot own what needs a teardown".into(),
         ParseError::TypeKnownOnlyAtRun => {
             "which type this is is known only when the program runs, and this needs it now".into()
@@ -167,12 +166,9 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::BadAssociativity => "associativity is `left` or `right`".into(),
         ParseError::BadConstructorSignature => {
-            "a constructor is `fn (tape := parsing_tape ?) -> void (…)`".into()
+            "`parse` is `fn (tape := parsing_tape ?) -> void (…)`".into()
         }
         ParseError::BadCodeSlot => "`code` must be a function".into(),
-        ParseError::DestructorNotYet => {
-            "a destructor written in Logos is not run by drop yet".into()
-        }
         ParseError::LexRankNeedsName => {
             "lex_rank is the name's: write it in a declaration, `x := type (lex_rank = …)`, \
              or on the name, `x:lex_rank = …`"

@@ -978,7 +978,7 @@ impl ScopeStack {
     /// Declare `name` denoting the record in the current scope, checked
     /// against its *siblings* alone (DESIGN ›The constructor is a field‹:
     /// "a field's declaration is checked only against its siblings", so
-    /// `x := 1, p := type (instance (x := i32 ?))` is legal): a live record
+    /// `x := 1, p := type (value = (x := i32 ?))` is legal): a live record
     /// of the spelling in this very scope is [`ResolveError::Shadowed`]; one
     /// in an enclosing scope stands beside it, both live only until this
     /// scope closes — and a field's type names no sibling, so nothing inside
@@ -1192,12 +1192,11 @@ pub struct CoreTypes {
     pub close_sq_: DyadPtr,
     /// `,` — the one explicit separator.
     pub sep_: DyadPtr,
-    /// `instance` — the per-instance block of a type body (#61).
-    pub instance_: DyadPtr,
     /// `left` and `right` — associativity's two values.
     pub left_: DyadPtr,
     pub right_: DyadPtr,
-    /// The six slot markers a type body declares, in [`SLOT_NAMES`] order.
+    /// The six slot markers a type body declares, in [`SLOT_NAMES`] order:
+    /// the bare-lines slots and `value`, whose fill is the field list.
     pub slots: [DyadPtr; 6],
     /// `->` — the return-logos arrow.
     pub arrow_: DyadPtr,
@@ -1290,15 +1289,21 @@ pub unsafe fn fn_outer<'a>(fn_node: DyadPtr) -> &'a [DyadPtr] {
 }
 
 /// The six slots `type` declares for every type it builds, in the order the
-/// markers on [`CoreTypes::slots`] and [`SlotKind`] follow: the five of DESIGN
-/// ›The constructor is a field‹ and `code`, the one ›Execution is function
-/// application‹ adds (ruled 4 September 2026: "one more slot, `code`, with an
-/// ordinary function"). The two passages have not been reconciled: where
-/// `code` is stored is open (Thobias, 10 September 2026: "for now it is at
-/// least stored in fn"), so the seed keeps it in the record head beside the
-/// constructor as its own placement, not the spec's.
+/// markers on [`CoreTypes::slots`] and [`SlotKind`] follow (DESIGN ›The
+/// constructor is a field‹: "`parse_rank`, `lex_rank`, `associativity`,
+/// `parse`, `drop`, `run`, and `value` are places `type` declares"). The
+/// seed spells the constructor slot `parse` (#130) and the body slot `code`
+/// until #126 renames it `run`; `value` is the field list of every node
+/// (#128), filled before `=` reads its right side
+/// ([`Parser::value_block_fill`]). The `drop` slot has no spelling here yet:
+/// `drop` is also the statement keyword, and a marker for it in the body
+/// scope would meet the keyword's live record — two candidates, which
+/// ›Name resolution is scope-filtered‹ rules impossible — so its spelling
+/// waits on that ruling (#130). Where `code` is stored is open (Thobias, 10
+/// September 2026: "for now it is at least stored in fn"), so the seed keeps
+/// it in the record head beside the constructor as its own placement.
 pub const SLOT_NAMES: [&str; 6] =
-    ["parse_rank", "lex_rank", "associativity", "constructor", "destructor", "code"];
+    ["parse_rank", "lex_rank", "associativity", "parse", "code", "value"];
 
 /// How deep scopes may nest before the parse is refused (#80). Each open
 /// bracket recurses `parse_sequence` -> `parse_next` -> `parse_expression` ->
@@ -1310,8 +1315,8 @@ pub const SLOT_NAMES: [&str; 6] =
 pub const MAX_BRACKET_DEPTH: usize = 2_000;
 
 /// What a line of a `type (…)` body is (DESIGN ›The constructor is a field‹:
-/// a body line fills a slot, declares a member, opens `instance (…)`, or is
-/// prose). Anything else is [`ParseError::TypeBodyLine`].
+/// a body line fills a slot, `value = (…)` among them, declares a member,
+/// or is prose). Anything else is [`ParseError::TypeBodyLine`].
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BodyLine {
     /// A comment.
@@ -1319,8 +1324,6 @@ enum BodyLine {
     /// A declaration — a member of the type's own, or a slot fill, which is
     /// the declare node [`Parser::slot_fill`] yields.
     Declare,
-    /// The `instance` identity: its block, or the bare word.
-    Instance,
     /// None of those.
     Other,
 }
@@ -1331,9 +1334,9 @@ pub enum SlotKind {
     ParseRank = 0,
     LexRank = 1,
     Associativity = 2,
-    Constructor = 3,
-    Destructor = 4,
-    Code = 5,
+    Parse = 3,
+    Code = 4,
+    Value = 5,
 }
 
 impl SlotKind {
@@ -1343,16 +1346,16 @@ impl SlotKind {
             0 => SlotKind::ParseRank,
             1 => SlotKind::LexRank,
             2 => SlotKind::Associativity,
-            3 => SlotKind::Constructor,
-            4 => SlotKind::Destructor,
-            _ => SlotKind::Code,
+            3 => SlotKind::Parse,
+            4 => SlotKind::Code,
+            _ => SlotKind::Value,
         }
     }
 }
 
 /// A `type (…)` definition being parsed (#61): its body scope, and what its
 /// lines have filled so far — the head the type node takes at the close, the
-/// constructor to install, and the `instance (…)` block's layout.
+/// constructor to install, and the `value = (…)` block's layout.
 struct OpenType {
     scope: DyadPtr,
     parse_rank: f64,
@@ -1446,11 +1449,9 @@ pub enum ParseError {
     /// self-directing pass‹): the run error, reported by the drivers as one.
     Run(crate::run::RunError),
     /// A line of a `type (…)` body that neither fills a slot, declares a
-    /// member, opens `instance (…)`, nor is prose (#61).
+    /// member, lays out its instances (`value = (…)`), nor is prose (#61).
     TypeBodyLine,
-    /// `instance (…)` written outside a type body's own lines.
-    InstanceOutsideType,
-    /// A second `instance (…)` block in one type body.
+    /// A second `value = (…)` block in one type body.
     DoubleInstance,
     /// A binding in a type body inserted a teardown, which no scope exit runs.
     DeferInTypeBody,
@@ -1477,12 +1478,9 @@ pub enum ParseError {
     NonComptimeRank,
     /// `associativity = …` with something other than `left` or `right`.
     BadAssociativity,
-    /// `constructor = …` with something other than a function taking the
-    /// tape by value.
+    /// `parse = …` with something other than a function taking the tape by
+    /// value (the seed's shape until #126).
     BadConstructorSignature,
-    /// `destructor = …`: a Logos-written destructor, which `drop` cannot run
-    /// yet — refused rather than accepted and never run.
-    DestructorNotYet,
     /// `lex_rank = …` in a type body that is not the value of a declaration:
     /// the rank is the name's (#122), and here there is no name.
     LexRankNeedsName,
@@ -1849,7 +1847,7 @@ pub struct Parser<'a> {
     runtime_depth: u32,
     /// The type definitions open around the current position, innermost
     /// last (#61): a `type (…)` body pushes one while its lines parse, and
-    /// the slot fills and the `instance (…)` block write into it.
+    /// the slot fills and the `value = (…)` block write into it.
     definitions: Vec<OpenType>,
     /// The open scopes, innermost last; the base entry is the top level. Each
     /// carries the constructor-inserted teardowns its bindings pushed (issue
@@ -2924,7 +2922,7 @@ impl<'a> Parser<'a> {
     /// array, and the packed size. A `fn`'s parameter list checks each name
     /// against every open scope (the body reopens the list's scope, so a
     /// parameter may not shadow a name the body could still mean); an
-    /// `instance (…)` block's fields are checked against their siblings alone
+    /// `value = (…)` block's fields are checked against their siblings alone
     /// (`relaxed`; DESIGN ›The constructor is a field‹).
     fn parse_field_list(&mut self, relaxed: bool) -> Result<(DyadPtr, DyadPtr, u64), ParseError> {
         self.expect_open()?;
@@ -3005,13 +3003,13 @@ impl<'a> Parser<'a> {
     /// `type (…)`'s body (DESIGN ›The constructor is a field‹, #61): an
     /// ordinary scope whose bare lines "belong to the identity itself — they
     /// fill its own slots (its constructor, its parse_rank) and may declare
-    /// new members that live on it", while its `instance (…)` block holds
+    /// new members that live on it", while its `value = (…)` block holds
     /// what lives on instances. The six slots `type` declares for every
-    /// type it builds — `parse_rank`, `lex_rank`, `associativity`,
-    /// `constructor`, `destructor`, `code` — are declared first, as records over the shared markers,
-    /// so `parse_rank := 5` is the no-shadowing error and `parse_rank = …`
-    /// the fill ([`Parser::slot_fill`]). Every other line must declare a
-    /// member, open the instance block, or be prose: a type body is
+    /// type it builds — [`SLOT_NAMES`] — are declared first, as records over
+    /// the shared markers, so `parse_rank := 5` is the no-shadowing error and
+    /// `parse_rank = …` the fill ([`Parser::slot_fill`], the `value` block's
+    /// [`Parser::value_block_fill`]). Every other line must declare a
+    /// member or be prose: a type body is
     /// definition-time code and nothing runs it later, so a line that would
     /// only run is refused. The type node then carries the instance layout,
     /// this scope as its body (members read `g.y`), the parse_rank and
@@ -3035,7 +3033,7 @@ impl<'a> Parser<'a> {
             instance: None,
         });
         // A `fn` literal on a slot's right side must not claim the enclosing
-        // declaration's placeholder (`x := type (constructor = fn …)`).
+        // declaration's placeholder (`x := type (parse = fn …)`).
         let suppressed = self.take_pending_fn();
         // The body's declarations are pending until its close, whatever
         // encloses it: a type is comptime and its members are stored at the
@@ -3127,57 +3125,46 @@ impl<'a> Parser<'a> {
                     BodyLine::Prose
                 } else if ty == self.types.declare_ {
                     BodyLine::Declare
-                } else if self.types.through(item) == self.types.instance_ {
-                    BodyLine::Instance
                 } else {
                     BodyLine::Other
                 }
             };
             match kind {
-                BodyLine::Other => return Err(ParseError::TypeBodyLine),
-                // `instance` without its bracket stood as a bare value and was
-                // silently accepted as a no-op; it declares nothing, so it is
+                // A bare `value` line stands as the marker and declares nothing,
                 // the same error as any other line that declares nothing (#87).
-                BodyLine::Instance => {
-                    if self.definitions.last().is_none_or(|d| d.instance.is_none()) {
-                        return Err(ParseError::TypeBodyLine);
-                    }
-                }
+                BodyLine::Other => return Err(ParseError::TypeBodyLine),
                 BodyLine::Prose | BodyLine::Declare => {}
             }
         }
         Ok(())
     }
 
-    /// `instance`'s constructor: inside a type body's own lines, the block
-    /// of per-instance fields (`name := T ?`, a place per instance), parsed
-    /// as a field list checked against its siblings alone; the identity then
-    /// stands as its value, the line's item. Anywhere else the block has no
-    /// type to belong to.
-    pub(crate) fn construct_instance_block(
-        &mut self,
-        id: DyadPtr,
-        tape: &mut ParsingTape,
-    ) -> Result<Constructed, ParseError> {
-        if !(self.discovering() && self.at_open()) {
-            let value = self.stand_as_value(tape, id);
-            tape.place(value);
-            return Ok(Constructed::Placed);
-        }
-        let Some(def) = self.definitions.last() else {
-            return Err(ParseError::InstanceOutsideType);
-        };
-        if self.scopes.current() != Some(def.scope) {
-            return Err(ParseError::InstanceOutsideType);
-        }
+    /// `value = (…)`'s fill (#128; DESIGN ›The constructor is a field‹: the
+    /// `value` block "saying what the value slot of every node of it holds",
+    /// "a slot filled with `=` like the rest"): the block of per-instance
+    /// fields (`name := T ?`, a place per instance), parsed as a field list
+    /// checked against its siblings alone. `=` calls this before reading its
+    /// right side, since the bracket is a field list, not an expression. The
+    /// line's item is a declare node over the marker itself, whose null type
+    /// the declaration's run skips.
+    pub(crate) fn value_block_fill(&mut self) -> Result<DyadPtr, ParseError> {
+        let def = self.definitions.last().expect("slot_of found an open definition");
         if def.instance.is_some() {
             return Err(ParseError::DoubleInstance);
         }
         let instance = self.parse_field_list(true)?;
         self.definitions.last_mut().expect("checked above").instance = Some(instance);
-        let value = self.stand_as_value(tape, id);
-        tape.place(value);
-        Ok(Constructed::Placed)
+        let types = self.types;
+        let name = SLOT_NAMES[SlotKind::Value as usize];
+        let name_node =
+            crate::identities::string::build_text(self.store, types.string_, name.as_bytes());
+        Ok(crate::identities::declare::build(
+            self.store,
+            types.declare_,
+            types.ops.declare_,
+            name_node,
+            types.slots[SlotKind::Value as usize],
+        ))
     }
 
     /// Which slot of the type being defined `target` names, if any: a record
@@ -3208,10 +3195,10 @@ impl<'a> Parser<'a> {
     /// is the value's number, run now — `*.parse_rank + 1` is comptime field
     /// arithmetic — so it must be known at the definition (the seed's form of
     /// "resolved by the operator's first use"); the associativity is `left`
-    /// or `right`; the constructor a function taking the tape by value; a
-    /// destructor is refused, since `drop` runs only the seed's own. The fill
-    /// is a silent statement, the declare node the type variable's fill
-    /// yields.
+    /// or `right`; the constructor (`parse`) a function taking the tape by
+    /// value; the `value` block is filled before the right side is read
+    /// ([`Parser::value_block_fill`]), so it never arrives here. The fill is
+    /// a silent statement, the declare node the type variable's fill yields.
     /// The number a rank slot's right side stands for: a literal molds to
     /// f64 without running; a concrete expression runs now, on the pass's
     /// runtime, after everything parsed before it (a rank may read a
@@ -3276,7 +3263,7 @@ impl<'a> Parser<'a> {
                     return Err(ParseError::BadAssociativity);
                 };
             }
-            SlotKind::Constructor => {
+            SlotKind::Parse => {
                 // SAFETY: `read` is a reduced dyad; a fn node's value is its
                 // five slots, its input a record whose fields are the params.
                 let takes_tape = unsafe {
@@ -3293,7 +3280,7 @@ impl<'a> Parser<'a> {
                 }
                 def.ctor = read;
             }
-            SlotKind::Destructor => return Err(ParseError::DestructorNotYet),
+            SlotKind::Value => return Err(ParseError::TypeBodyLine),
             // `code = fn …`: the function a node of the type runs and compiles
             // as (#63; DESIGN ›Execution is function application‹).
             SlotKind::Code => {
@@ -5621,9 +5608,9 @@ impl<'a> Parser<'a> {
                 Assoc::Left => self.types.left_,
                 Assoc::Right => self.types.right_,
             }),
-            // The constructor: the Logos function a body filled the slot
-            // with (#61), or the view of a native leaf.
-            "constructor" => {
+            // The constructor, `parse` (#130): the Logos function a body
+            // filled the slot with (#61), or the view of a native leaf.
+            "parse" => {
                 let c = meta::constructor_of(logos);
                 if c.is_null() {
                     return Err(ParseError::BadReflectRead);
@@ -5641,13 +5628,6 @@ impl<'a> Parser<'a> {
                     return Err(ParseError::BadReflectRead);
                 }
                 Ok(c)
-            }
-            "destructor" => {
-                let d = meta::destructor_of(logos);
-                if d.is_null() {
-                    return Err(ParseError::BadReflectRead);
-                }
-                Ok(self.store.alloc_raw(self.types.dyad_, d as *mut u8))
             }
             "fields" if meta::is_record_type(logos) => {
                 Ok(self.store.alloc_raw(self.types.dyad_, meta::record_fields_of(logos) as *mut u8))
