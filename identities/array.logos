@@ -1,55 +1,60 @@
-
-
+# The language defines itself: the array collection written in ordinary Logos, in the shape
+# power.logos has (DESIGN ›Execution is function application‹ and ›The constructor is a field‹,
+# 16 to 18 September 2026). An array carries two constructors, and both are licensed:
+#   parse = (…) in the body's bare lines fills array's OWN parse slot, the per-instance slot that
+#   `word` declares so that every type supplies its own. It runs when the spelling `array` appears,
+#   `array i32 (1, 2, 3)`, builds the node as `this`, and places it with tape[0] = this.
+#   parse := parse (…) inside value = (…) is the constructor of array's INSTANCES. A member of the
+#   value block whose value is defined and never mut is stored once (the Two-muts rule; the word
+#   `shared` is retired), so one behaviour serves every array node: it runs when a node appears,
+#   `a[2]`, consumes the `[…]` to its right, and emits the bounds check as residual code (DESIGN:
+#   "the collection's instance constructor consumes that constructed node").
+# Open, not ruled, spelled here as stand-ins:
+#   the instance slot is named after its type, and `:=` declares its name before it reads its
+#     value, so the right-hand `parse` would meet the new field (the `x := f(own x)` rule of
+#     3 September 2026); word.logos has the same shape in `parse := parse ?`;
+#   what `this` binds to in an instance constructor: the 18 September amendment says a fresh node
+#     of the type being defined, which an element access has no use for; the node that appeared
+#     is tape[0], and `this` goes unused below;
+#   `array i32` alone as an interned type and `a := array i32 ?` as a declaration (DESIGN
+#     ›Representation‹, the generic chooser): this constructor still demands the element group;
+#   `[`'s own layout (`[ := ?` in the sketch): the field `index` is assumed;
+#   the parse_rank number, and the missing drop slot (data is alloc'd and never freed; #130).
+# The seed's array is array-of-@dyad with no spelling and no element access (src/identities/array.rs).
 array := word (
-    parse = (
-
-        if not tape[1].is_constructed
-            error «id after the array being constructed is not constructed which is not valid for array.parse»
-        if tape[1].type != type
-            error «id after array is not a type»
-
-        if not tape[2].is_constructed
-            error «second id after the array being constructed is not constructed, which is not valid for array.parse»
-        if tape[2].type != scope
-            error «second id after array does not have the type scope»
-
-        (Check if all elements in the scope is convertable to the tape[1] type)
-
-        tape[0].type = array
-        tape[0].value(
-            element_type = tape[1]
-            size = tape[2].value.size
-            capacity = (2^n where n := u8 ? and 2^(n-1) < size <= 2^n)
-            data = alloc(element_type.value.size * capacity)
-            for i in 0..tape[2].size
-                (@element_type(data) + i)@ = tape[2].elements[i]
-        )
-        tape[0].is_constructed = true
-
-        tape[1..3].remove
-    )
-    instance := word (
-        element_type := word ?
-        size := u64 0
-        capacity := u64 0
-        data := @void ?
-
-        shared parse = (
-
-            if tape[1].type == square_brackets (
-                if not tape[1].is_constructed
-                    error «id after an array-instance is square_brackets but is not constructed which is invalid and should be impossible because you never get square_brackets before «[» and «]» is constructed»
-                if not tape[1].type.index ⊆ tape[0].type.size
-                    error «type of index in square_brackets is not a subset of equal to the type of the size of the array instance, meaning the index could be out of range in the array»
-                # since the value of index and size ofthe array cannot be determined statically we have to return a codeblock that rather run when these values are known
+    parse_rank = …,                          # above the juxtaposition level, so array takes i32 before i32 could take the group as a conversion (ruled 2 September 2026); word supplies no default
+    associativity = right,                   # a prefix reader: among equals the rightmost runs first, so a nested array builds inside out
+    value = (
+        element_type := word ?,              # the type every element has
+        size := u64 ?,                       # a hole is a place per node; `u64 0` would be stored once under the Two-muts rule
+        capacity := u64 ?,
+        data := @void ?,
+        parse := parse (                     # the instances' constructor, stored once: runs when an array node appears
+            if tape[1]:dyad.type == lex «[»[0]:dyad (        # a [ … ] to the right, constructed at discovery as ( is
+                index := tape[1]:dyad.value.index,
+                arr := tape[0],
+                if not index:dyad.type ⊆ arr:dyad.value.size:dyad.type
+                    error «type of index in square_brackets is not a subset of or equal to the type of the size of the array instance, meaning the index could be out of range in the array»,
+                # index and size are not known statically: the access is residual code, a scope that runs when they are
                 tape[0] = scope (
-                    if tape[1].value >= tape[0].value.size
-                        error «type of index in square_brackets is not a subset of equal to the type of the size of the array instance, meaning the index could be out of range in the array»
-                    # instead of writing tape[0].value three times we can write it only once here. last @ is dereferencing
-                    tape[0].value(pointer + size * element_type.size_bytes)@
-                )
-                tape[1].remove
-            )
+                    if index >= arr:dyad.value.size error «index out of range: the index is at or past the array's size»,
+                    (@arr:dyad.value.element_type (arr:dyad.value.data) + index)@      # the last @ dereferences
+                ),
+                tape.remove(1)               # the [ … ] is consumed; the access scope stands where the array node stood
+            )                                # no [ to the right: nothing to consume, the constructor declines, the frontier untouched
         )
+    ),
+    parse = (                                # array's own constructor: `array i32 (1, 2, 3)`
+        if tape[1]:dyad.type != word error «id after array is not a type»,
+        if tape[2]:dyad.type != scope error «second id after array does not have the type scope»,
+        # (check that every element of the scope converts to the element type)
+        this.element_type = tape[1],         # this: a fresh array node, its value fields holes (ruled 18 September 2026)
+        this.size = tape[2]:dyad.value.size, # the scope's value is the array of its expressions
+        this.capacity = (2^n where n := u8 ? and 2^(n-1) < this.size <= 2^n),   # the least power of two at or above size, in the older sketch's words
+        this.data = alloc (this.element_type.size_bytes * this.capacity),
+        for i in 0..this.size ( (@this.element_type (this.data) + i)@ = tape[2]:dyad.value[i] ),
+        tape[0] = this,                      # the constructor places the node it built
+        tape.remove(1),                      # the type and the group are consumed:
+        tape.remove(1)                       # only the array node remains
     )
 )
