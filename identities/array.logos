@@ -4,12 +4,17 @@
 # flag left false, so the driver runs the mint's own parse in turn (ruled 19 September 2026).
 #
 # The mint is a type like any other, read in two halves. Its BARE lines say how its own spelling parses:
-# a group to its right becomes an array node, nothing to its right leaves the type standing (`t := array i32`,
-# `a := array i32 ?`). Its VALUE block says what its NODES hold and how they behave, every line marked
-# shared (one place for every node) or left per node (ruled 19 September 2026): the fields it declares, and
-# the predeclared slots it fills, the drop that frees the elements and the nodes' own parse trio, which runs
-# when an array node appears on the tape and consumes a [k] to its right. No run: an array node used plainly is its own value, and a field read such
-# as (a ^ b).lhs never runs anything.
+# a group to its right becomes an array instance; nothing to its right and it sets its flag and stands as itself,
+# the type (`t := array i32`, `a := array i32 ?`; ruled 19 September 2026: "it should rather just be itself in
+# constructed state"). Its INSTANCE block says what its INSTANCES hold and do, every line marked shared (one
+# place for every instance) or left per instance (ruled 19 September 2026): the fields it declares, and the
+# predeclared slots it fills, the drop that frees the elements and the instances' own parse trio, which runs
+# when an array instance appears on the tape and consumes a [k] to its right, or sets its flag and stands when
+# nothing follows (`a = b`). A body in the instance block reached through an instance — a.size_bytes(), the
+# instances' parse woken by a's appearance, drop — binds `this` to that instance and reads its fields as
+# this.size (ruled 19 September 2026); the fields this. reaches are declared above the body. In the type's own
+# parse `this` is the fresh instance being built (18 September 2026). No run: an array used plainly is its own
+# value, and a field read such as (a ^ b).lhs never runs anything.
 #
 # Open, spelled here with stand-ins:
 #   the parse_rank numbers (…);
@@ -20,10 +25,6 @@
 #   one `drop` word (ruled 19 September 2026): its parse looks right; `=` there means the slot
 #     fill, anything else is the statement dropping what follows, so `drop x` works in every scope and the
 #     predeclared slot names are the core words themselves, never a second declaration;
-#   bare field names inside an instance-block body run through a node (size_bytes, the nodes' parse) are that
-#     node's fields: one sentence pending in DESIGN;
-#   a constructor that finds nothing to consume sets its flag and changes nothing (proposed 19 September,
-#     not ruled), which is what lets the mint stand as a type and an array node stand as itself;
 #   `alloc n of T` is the 8 September respelling, wording pending; `⊆` on types and the trailing @ for the
 #     dereference are the older sketch's spellings.
 # The seed's array is array-of-@dyad with no spelling and no element access (src/identities/array.rs).
@@ -42,27 +43,27 @@ get_mint := fn (t := type ?) -> type (
                 # (check that every expression of the group converts to element_type)
                 this.size = tape[1]:dyad.value.size,                 # this: a fresh node of the mint, its fields at their defaults
                 this.capacity = next_power_of_two(this.size),        # a helper, not written here
-                this.ptr = alloc this.capacity of element_type,
+                this.ptr = alloc this.capacity of this.element_type,
                 for i in 0..this.size ( (this.ptr + i)@ = tape[1]:dyad.value[i] ),
                 tape[0] = this,                                      # the node stands where the type stood
                 tape.remove(1)                                       # the group is consumed
             ),
-            tape.is_constructed[0] = true                            # done either way: with no group the mint stands as the type
+            tape.is_constructed[0] = true                            # done either way: with no group the mint stands as the type (ruled 19 September 2026)
         ),
 
         instance = (
             # what every array node holds
-            shared element_type := t,        # one place per mint, read a:dyad.type.element_type outside and bare in the bodies below
+            shared element_type := t,        # one place per mint, read a:dyad.type.element_type outside and this.element_type in the bodies below
             mut ptr := @element_type ?,      # the elements, owned by the node; mut because growth reallocates
             mut size := u64 0,               # per-node defaults: unmarked is a place per node, and 0 is not null, so growth needs mut
             mut capacity := u64 0,
-            shared size_bytes := fn () -> u64 (size * element_type.size_bytes),           # a.size_bytes(): the node's fields by name
-            shared capacity_bytes := fn () -> u64 (capacity * element_type.size_bytes),
+            shared size_bytes := fn () -> u64 (this.size * this.element_type.size_bytes),         # a.size_bytes(): this is a (ruled 19 September 2026)
+            shared capacity_bytes := fn () -> u64 (this.capacity * this.element_type.size_bytes),
 
             # how every array node is torn down: an authored parse gets an authored drop
             shared drop = (
-                for i in 0..size ( drop (ptr + i)@ ),                # the elements first, each by its own type's drop (nothing for plain numbers); one drop word: with = to its right it names the slot, otherwise it drops what follows (ruled 19 September 2026)
-                free ptr
+                for i in 0..this.size ( drop (this.ptr + i)@ ),                # the elements first, each by its own type's drop (nothing for plain numbers); one drop word: with = to its right it names the slot, otherwise it drops what follows (ruled 19 September 2026)
+                free this.ptr
             ),
 
             # how an array node parses when it appears on the tape: a [k] to its right is an element access
@@ -71,16 +72,16 @@ get_mint := fn (t := type ?) -> type (
             shared parse = (
                 if tape[1]:dyad.type == square_brackets (            # the [ … ] node, constructed at discovery as ( is
                     index := tape[1]:dyad.value.index,
-                    if not index:dyad.type ⊆ size:dyad.type
+                    if not index:dyad.type ⊆ this.size:dyad.type
                         error «the index type is not within the size type, so the index could lie outside the array»,
                     # index and size are not known statically: the access is residual code, a scope that runs when they are
                     tape[0] = scope (
-                        if index >= size error «index out of range: the index is at or past the array's size»,
-                        (ptr + index)@
+                        if index >= this.size error «index out of range: the index is at or past the array's size»,
+                        (this.ptr + index)@
                     ),
                     tape.remove(1)                                   # the [k] is consumed; the access stands where the node stood
                 ),
-                tape.is_constructed[0] = true                        # done either way: with no [ to its right the node stands as itself, `a = b`
+                tape.is_constructed[0] = true                        # done either way: with no [ to its right the instance stands as itself, `a = b` (ruled 19 September 2026)
             )
         )
     )
