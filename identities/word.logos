@@ -24,6 +24,7 @@ word := word (
         definition := scope ?                       # the new identity's own scope, open before the bracket is lexed
         (.parse(tape.recenter(1))             # the eager-segment loop, run inside definition
         tape[0] = dyad (word, definition)
+        tape.is_constructed[0] = true               # the constructor sets the flag itself; a write never does (ruled 19 September 2026)
         tape.remove(1)
     )
 )

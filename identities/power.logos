@@ -24,6 +24,7 @@
         this.rhs = tape[1],                  # by name, not by position
         this.output = tape[-1]:dyad.type,    # the result follows the base
         tape[0] = this,                      # the constructor places the node it built
+        tape.is_constructed[0] = true,       # and says so itself: a write to tape[k] never sets the flag (ruled 19 September 2026)
         tape.remove(1),                      # both operands consumed:
         tape.remove(-1)                      # only the ^ node remains
     ),

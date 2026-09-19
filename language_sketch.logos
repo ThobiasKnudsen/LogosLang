@@ -24,6 +24,8 @@ parsing_tape := word (
         cells := doublylinkedlist @dyad ()            # a resolved cell is the record the trie returned (a dyad of type record), a constructed cell its dyad: one pointer type serves both (ruled 8 September 2026)
         is_constructed := doublylinkedlist bool ()    # parallel to cells; read tape.is_constructed[k] (ruled 9 September 2026: the flag is the
                                                       # tape's own list, so the read is that list's element, never a field of the dyad)
+                                                      # written true only by the cell's own constructor, tape.is_constructed[0] = true, when it has constructed
+                                                      # something; a write to tape[k] never sets it (ruled 19 September 2026)
         spelling := doublylinkedlist string ()        # parallel to cells; read tape.spelling[k] (ruled 14 September 2026): the text the cell was
                                                       # lexed from, «» for a cell nothing lexed. how := learns a fresh name (tape.spelling[-1]) and
                                                       # a literal's constructor its digits (tape.spelling[0]); the record knows only its own

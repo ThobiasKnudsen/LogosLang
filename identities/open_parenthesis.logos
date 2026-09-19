@@ -36,6 +36,7 @@
             i = i + 1
         )
         tape[0] = dyad (scope, body)     # replace the opener's own cell with the finished scope
+        tape.is_constructed[0] = true    # the constructor sets the flag itself; a write never does (ruled 19 September 2026)
         for k in 1..i+1 ( tape.remove(1) )   # the interior and the closer are consumed
     )
 )
