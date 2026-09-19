@@ -51,8 +51,21 @@ fn construct(
     id: DyadPtr,
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, ParseError> {
-    let Some(target) = p.construct_left(tape)? else {
-        return Err(ParseError::MissingOperand);
+    let types = p.types();
+    // `drop = …`: the one `drop` word stands aside when `=` follows it (DESIGN
+    // ›The constructor is a field‹, 19 September 2026), so `=` takes the
+    // keyword's own use as the slot's name without constructing it — a lone
+    // `drop` constructed on its own would read an operand to its right.
+    let target = match tape.at(-1) {
+        Some(c) if tape.cursor() == 1 && !c.constructed && c.identity(&types) == types.drop_ => {
+            let record = c.dyad;
+            tape.remove(-1);
+            record
+        }
+        _ => match p.construct_left(tape)? {
+            Some(target) => target,
+            None => return Err(ParseError::MissingOperand),
+        },
     };
     let slot = p.slot_of(target);
     if slot.is_some() && !p.filling_definition() {
