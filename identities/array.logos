@@ -29,75 +29,68 @@
 #     dereference are the older sketch's spellings.
 # The seed's array is array-of-@dyad with no spelling and no element access (src/identities/array.rs).
 
-array_mints := hashmap type -> type          # the memo: one mint per element type, looked up by == (type identities are interned)
+array_mints := hashmap type -> type
 
 get_mint := fn (t := type ?) -> type (
     mut mint := array_mints[t]
-    if mint != ? return mint                 # a miss yields a hole; the trailing expression is the result
+    if mint != ? return mint
     mint = type (
-        # how the spelling `array t` itself parses
-        parse_rank = …,                      # the call level: the mint reads its right as f(…) does
+        parse_rank = …,
         associativity = left,
         parse = (
-            if tape[1]:dyad.type == scope (                          # `array i32 (1, 2, 3)`: the group becomes a node
-                # (check that every expression of the group converts to element_type)
-                this.size = tape[1]:dyad.value.size,                 # this: a fresh node of the mint, its fields at their defaults
-                this.capacity = next_power_of_two(this.size),        # a helper, not written here
+            if tape[1]:dyad.type == scope (
+                this.size = tape[1]:dyad.value.size,
+                this.capacity = next_power_of_two(this.size),
                 this.ptr = alloc this.capacity of this.element_type,
                 for i in 0..this.size ( (this.ptr + i)@ = tape[1]:dyad.value[i] ),
-                tape[0] = this,                                      # the node stands where the type stood
-                tape.remove(1)                                       # the group is consumed
+                tape[0] = this,
+                tape.remove(1)
             ),
-            tape.is_constructed[0] = true                            # done either way: with no group the mint stands as the type (ruled 19 September 2026)
+            tape.is_constructed[0] = true
         ),
 
         instance = (
-            # what every array node holds
-            shared element_type := t,        # one place per mint, read a:dyad.type.element_type outside and this.element_type in the bodies below
-            mut ptr := @element_type ?,      # the elements, owned by the node; mut because growth reallocates
-            mut size := u64 0,               # per-node defaults: unmarked is a place per node, and 0 is not null, so growth needs mut
+            shared element_type := t,
+            mut ptr := @element_type ?,
+            mut size := u64 0,
             mut capacity := u64 0,
-            shared size_bytes := fn () -> u64 (this.size * this.element_type.size_bytes),         # a.size_bytes(): this is a (ruled 19 September 2026)
+            shared size_bytes := fn () -> u64 (this.size * this.element_type.size_bytes),
             shared capacity_bytes := fn () -> u64 (this.capacity * this.element_type.size_bytes),
 
-            # how every array node is torn down: an authored parse gets an authored drop
             shared drop = (
-                for i in 0..this.size ( drop (this.ptr + i)@ ),                # the elements first, each by its own type's drop (nothing for plain numbers); one drop word: with = to its right it names the slot, otherwise it drops what follows (ruled 19 September 2026)
+                for i in 0..this.size ( drop (this.ptr + i)@ ),
                 free this.ptr
             ),
 
-            # how an array node parses when it appears on the tape: a [k] to its right is an element access
-            shared parse_rank = …,           # the tight-read level, above every operator, so a[2] + 1 reads the access first
+            shared parse_rank = …,
             shared associativity = left,
             shared parse = (
-                if tape[1]:dyad.type == square_brackets (            # the [ … ] node, constructed at discovery as ( is
+                if tape[1]:dyad.type == square_brackets (
                     index := tape[1]:dyad.value.index,
                     if not index:dyad.type ⊆ this.size:dyad.type
                         error «the index type is not within the size type, so the index could lie outside the array»,
-                    # index and size are not known statically: the access is residual code, a scope that runs when they are
                     tape[0] = scope (
                         if index >= this.size error «index out of range: the index is at or past the array's size»,
                         (this.ptr + index)@
                     ),
-                    tape.remove(1)                                   # the [k] is consumed; the access stands where the node stood
+                    tape.remove(1)
                 ),
-                tape.is_constructed[0] = true                        # done either way: with no [ to its right the instance stands as itself, `a = b` (ruled 19 September 2026)
+                tape.is_constructed[0] = true
             )
         )
     )
-    array_mints[t] = mint                    # an element write is =; only a name stands left of :=
+    array_mints[t] = mint
     mint
 )
 
 pub array := type (
-    parse_rank = …,                          # above the juxtaposition level, so array takes i32 before i32 could take the group as a conversion (ruled 2 September 2026)
-    associativity = right,                   # a prefix reader: among equals the rightmost runs first, so a nested array builds inside out
-    parse = (                                # the chooser: `array i32` is one type, minted once
+    parse_rank = …,
+    associativity = right,
+    parse = (
         if tape[1]:dyad.type != type
             error «id after array is not a type»,
         t := tape[1]:dyad,
-        tape[0] = get_mint(t),               # the mint is placed, not finished
-        tape.remove(1)                       # the element type is consumed
-        # tape.is_constructed[0] stays false: the driver runs the mint's own parse in turn (ruled 19 September 2026)
+        tape[0] = get_mint(t),
+        tape.remove(1)
     )
 )

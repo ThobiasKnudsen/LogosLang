@@ -20,28 +20,25 @@
 # (tests/fixtures/caret.logos), so `logos import ./identities/power.logos`
 # waits on the seed catching up.
 ^ := type (
-    # how the spelling ^ itself parses
-    parse_rank = *.parse_rank + 1,       # binds tighter than *
-    associativity = right,               # 2 ^ 3 ^ 2 is 2 ^ (3 ^ 2)
+    parse_rank = *.parse_rank + 1,
+    associativity = right,
     parse = (
-        this.lhs = tape[-1],                 # this: a fresh ^ node, its value fields holes (ruled 18 September 2026)
-        this.rhs = tape[1],                  # by name, not by position
-        this.output = tape[-1]:dyad.type,    # the result follows the base
-        tape[0] = this,                      # the constructor places the node it built
-        tape.is_constructed[0] = true,       # and says so itself: a write to tape[k] never sets the flag (ruled 19 September 2026)
-        tape.remove(1),                      # both operands consumed:
-        tape.remove(-1)                      # only the ^ node remains
+        this.lhs = tape[-1],
+        this.rhs = tape[1],
+        this.output = tape[-1]:dyad.type,
+        tape[0] = this,
+        tape.is_constructed[0] = true,
+        tape.remove(1),
+        tape.remove(-1)
     ),
 
     instance = (
-        # what every ^ node holds
-        lhs := ?,                        # the base: takes the type of the operand written into it
-        rhs := i32 ?,                    # the exponent: always an i32, a literal molds to it
-        output := type ?,                # what this node yields; the parse above writes it
-        # how every ^ node behaves when used plainly: one run for all of them
+        lhs := ?,
+        rhs := i32 ?,
+        output := type ?,
         shared run = (
-            r := this.output 1,          # this: the node the body runs over (ruled 18 September 2026)
-            for 0..this.rhs ( r = r * this.lhs ),   # no index needed (ruled 17 September 2026)
+            r := this.output 1,
+            for 0..this.rhs ( r = r * this.lhs ),
             r
         )
     )

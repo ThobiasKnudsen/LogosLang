@@ -8,35 +8,34 @@
 # cell still unconstructed afterwards is the checked error. the constructed cells, in order, are the scope's
 # expressions, the array the scope dyad's value references. no holding, no re-invocation.
 ( := type (
-    parse_rank = …                       # near the top of the axis; , sits above it
+    parse_rank = …
     associativity = left
     parse = (
         body := array @dyad ()
-        first := 1                       # the first cell of the current segment
+        first := 1
         i := 1
         while true (
-            cell := tape[i]              # lexes the next token on demand
+            cell := tape[i]
             if cell == lex «)»[0] or cell == lex «,»[0] (
-                # segment boundary: construct what was lexed since the previous one, highest parse_rank first
                 while true (
-                    k := highest_unconstructed(tape, first, i)      # ties broken by associativity; ? when none is left
+                    k := highest_unconstructed(tape, first, i)
                     if k == ? break
-                    tape[k].parse(tape.recenter(k))           # the constructor edits the tape in place
+                    tape[k].parse(tape.recenter(k))
                 )
                 for k in first..i (
-                    if not tape.is_constructed[k]                   # flag-read spelling open, see parsing_tape
+                    if not tape.is_constructed[k]
                         error «unconstructed cell at a segment boundary»
                     body.push(tape[k])
                 )
                 if cell == lex «)»[0] break
                 first = i + 1
             ) else if cell.parse_rank >= (.parse_rank (
-                cell.parse(tape.recenter(i))                  # constructed at discovery, before the next token lexes
+                cell.parse(tape.recenter(i))
             )
             i = i + 1
         )
-        tape[0] = dyad (scope, body)     # replace the opener's own cell with the finished scope
-        tape.is_constructed[0] = true    # the constructor sets the flag itself; a write never does (ruled 19 September 2026)
-        for k in 1..i+1 ( tape.remove(1) )   # the interior and the closer are consumed
+        tape[0] = dyad (scope, body)
+        tape.is_constructed[0] = true
+        for k in 1..i+1 ( tape.remove(1) )
     )
 )

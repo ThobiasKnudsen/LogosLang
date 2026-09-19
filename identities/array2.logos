@@ -43,11 +43,9 @@ array := array_type (
                     error «id after an array-instance is square_brackets but is not constructed which is invalid and should be impossible because you never get square_brackets before «[» and «]» is constructed»
                 if not tape[1].type.index ⊆ tape[0].type.size
                     error «type of index in square_brackets is not a subset of equal to the type of the size of the array instance, meaning the index could be out of range in the array»
-                # since the value of index and size ofthe array cannot be determined statically we have to return a codeblock that rather run when these values are known
                 tape[0] = scope (
                     if tape[1].value >= tape[0].value.size
                         error «type of index in square_brackets is not a subset of equal to the type of the size of the array instance, meaning the index could be out of range in the array»
-                    # instead of writing tape[0].value three times we can write it only once here. last @ is dereferencing
                     tape[0].value(pointer + size * element_type.size_bytes)@
                 )
                 tape[1].remove

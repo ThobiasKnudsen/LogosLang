@@ -8,30 +8,23 @@
 # `parse := parse ?` names the slot after its type here and nowhere else: the ground is hand-built by the seed,
 # and nothing predeclares the slots for it. lex_rank is not here: it lives on the record (14 September 2026).
 type := type (
-    # how the spelling `type` itself parses
-    parse_rank = f64 2.0                 # at or above ('s, so a definition is constructed at discovery, before its bracket is lexed (ruled 3 September 2026)
+    parse_rank = f64 2.0
     associativity = left
     parse = (
         if tape[1] != lex «(»[0]
             error «type must be followed by (»
-        # this: a fresh type, every slot below a hole. The bracket is driven as the definition scope of this, so a
-        # bare `parse_rank = …` line inside it fills this.parse_rank and `instance = (…)` fills this.instance; a bare
-        # `:=` line there is the checked error (ruled 19 September 2026)
-        (.parse(tape.recenter(1))         # the eager-segment loop, run over the bracket with this as the open definition
-        tape[0] = this                    # the finished type stands where `type` stood
-        tape.is_constructed[0] = true     # and says so itself (ruled 19 September 2026)
-        tape.remove(1)                    # the bracket is consumed
+        (.parse(tape.recenter(1))
+        tape[0] = this
+        tape.is_constructed[0] = true
+        tape.remove(1)
     )
 
     instance = (
-        # what every type holds and does. Each slot is a place per type (unmarked): every type fills its own. type
-        # itself fills the first three on its bare lines above and leaves run, drop and instance empty: a type used
-        # plainly is its own value, nothing frees a type, and type's instances are declared right here
-        parse_rank := f64 ?         # construction order within a segment (spelled precedence until 10 September 2026)
-        associativity := ?          # left or right
-        parse := parse ?            # a body over the tape, run when the type's spelling appears; binds `tape` and `this`, the fresh instance it builds and places
-        run := run ?                # a body over `this`, run when an instance of the type is used plainly (a field read runs nothing)
-        drop := drop ?              # a body over `this`, what `drop x` runs on an instance; one drop word (19 September 2026)
-        instance := instance ?      # the block of what every instance of the type holds and does (spelled value 17 to 19 September 2026)
+        parse_rank := f64 ?
+        associativity := ?
+        parse := parse ?
+        run := run ?
+        drop := drop ?
+        instance := instance ?
     )
 )
