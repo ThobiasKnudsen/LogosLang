@@ -1,33 +1,37 @@
+# The ground, written in ordinary Logos: `type` is an instance of itself (`type : type`, the self-loop every
+# classification chain ends in) and the definition keyword, `x := type ( … )`. Like every type it is read in
+# two halves (ruled 19 September 2026, DESIGN ›The constructor is a field‹). Its BARE lines say how its own
+# spelling parses: `type` reads its own bracket and turns it into a new type. Its INSTANCE block says what
+# every instance, that is every type, holds and does: the predeclared slots, written out here once and left
+# unfilled. Every other instance block starts with these same slots and fills them with `=`, on its bare lines
+# for itself and inside its instance block for its instances; type.logos alone declares them, which is why
+# `parse := parse ?` names the slot after its type here and nowhere else: the ground is hand-built by the seed,
+# and nothing predeclares the slots for it. lex_rank is not here: it lives on the record (14 September 2026).
 type := type (
-    # what every type carries: declared here, a slot per type, filled by each type's own body with =; what = reads on
-    # its right is decided by the slot's type (ruled 17 September 2026), so a parse, run, drop or value body needs no fn
-    instance = (
-        # these are the slots every instance block starts with, predeclared and unfilled (ruled 19 September 2026,
-        # DESIGN ›The constructor is a field‹); type alone writes them out; every other type fills them with =, on its
-        # bare lines for itself and in its instance block for its instances. lex_rank is not here: it lives on the
-        # record (14 September 2026)
-        parse_rank := f64 ?         # construction order within a segment (spelled precedence until 10 September 2026)
-        associativity := ?          # left or right
-        parse := parse ?            # a body over the tape; parse declares `tape` (centred on the appearance) and `this` (a fresh node of the type, placed by the body) into it; spelled constructor until 17 September 2026
-        drop := drop ?              # a body over `this`; spelled destructor until 17 September 2026; what `drop x` runs
-        run := run ?                # a body over the instance's fields, what runs when a node of the type is interpreted or compiled and run (DESIGN ›Execution is function application‹, 16 and 17 September 2026; spelled code until 17 September)
-        instance := instance ?      # the block of what every instance of the type holds and does (spelled value 17 to 19 September 2026)
-    )
-
-    # what type itself is: the same slots, filled
-    parse_rank = f64 2.0
+    # how the spelling `type` itself parses
+    parse_rank = f64 2.0                 # at or above ('s, so a definition is constructed at discovery, before its bracket is lexed (ruled 3 September 2026)
     associativity = left
     parse = (
-        # type reads its own bracket (ruled 3 September 2026): constructed at discovery, before the ( after it is
-        # lexed, it opens the definition scope itself — so the body's bare lines fill the new identity's slots and
-        # declare its members, and its instance = (…) declares what lives on instances — then drives the bracket's
-        # parse exactly as ( does, with that scope open, and replaces its own cell with the finished type
         if tape[1] != lex «(»[0]
             error «type must be followed by (»
-        definition := scope ?                       # the new identity's own scope, open before the bracket is lexed
-        (.parse(tape.recenter(1))             # the eager-segment loop, run inside definition
-        tape[0] = dyad (type, definition)
-        tape.is_constructed[0] = true               # the constructor sets the flag itself; a write never does (ruled 19 September 2026)
-        tape.remove(1)
+        # this: a fresh type, every slot below a hole. The bracket is driven as the definition scope of this, so a
+        # bare `parse_rank = …` line inside it fills this.parse_rank and `instance = (…)` fills this.instance; a bare
+        # `:=` line there is the checked error (ruled 19 September 2026)
+        (.parse(tape.recenter(1))         # the eager-segment loop, run over the bracket with this as the open definition
+        tape[0] = this                    # the finished type stands where `type` stood
+        tape.is_constructed[0] = true     # and says so itself (ruled 19 September 2026)
+        tape.remove(1)                    # the bracket is consumed
+    )
+
+    instance = (
+        # what every type holds and does. Each slot is a place per type (unmarked): every type fills its own. type
+        # itself fills the first three on its bare lines above and leaves run, drop and instance empty: a type used
+        # plainly is its own value, nothing frees a type, and type's instances are declared right here
+        parse_rank := f64 ?         # construction order within a segment (spelled precedence until 10 September 2026)
+        associativity := ?          # left or right
+        parse := parse ?            # a body over the tape, run when the type's spelling appears; binds `tape` and `this`, the fresh instance it builds and places
+        run := run ?                # a body over `this`, run when an instance of the type is used plainly (a field read runs nothing)
+        drop := drop ?              # a body over `this`, what `drop x` runs on an instance; one drop word (19 September 2026)
+        instance := instance ?      # the block of what every instance of the type holds and does (spelled value 17 to 19 September 2026)
     )
 )
