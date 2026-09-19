@@ -16,7 +16,7 @@
 # parse `this` is the fresh instance being built (18 September 2026). No run: an array used plainly is its own
 # value, and a field read such as (a ^ b).lhs never runs anything.
 #
-# Open, spelled here with stand-ins:
+# Stand-ins, and the rulings this file leans on:
 #   the parse_rank numbers (…);
 #   the slots of an instance block are PREDECLARED (ruled 19 September 2026, DESIGN ›The constructor is a field‹):
 #     every instance block starts with the same slots type's own declares (parse_rank, associativity, parse, run,
