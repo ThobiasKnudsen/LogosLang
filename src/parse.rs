@@ -1288,22 +1288,21 @@ pub unsafe fn fn_outer<'a>(fn_node: DyadPtr) -> &'a [DyadPtr] {
     }
 }
 
-/// The six slots `type` declares for every type it builds, in the order the
-/// markers on [`CoreTypes::slots`] and [`SlotKind`] follow (DESIGN ›The
-/// constructor is a field‹: "`parse_rank`, `lex_rank`, `associativity`,
-/// `parse`, `drop`, `run`, and `instance` are places `type` declares"). The
-/// seed spells the constructor slot `parse` (#130) and the body slot `code`
-/// until #126 renames it `run`; `instance` is the field list of every instance
-/// (#128; spelled `value` from 17 to 19 September 2026), filled before `=` reads its right side
-/// ([`Parser::instance_block_fill`]). The `drop` slot has no spelling here yet:
-/// `drop` is also the statement keyword, and a marker for it in the body
-/// scope would meet the keyword's live record — two candidates, which
-/// ›Name resolution is scope-filtered‹ rules impossible — so its spelling
-/// waits on that ruling (#130). Where `code` is stored is open (Thobias, 10
-/// September 2026: "for now it is at least stored in fn"), so the seed keeps
-/// it in the record head beside the constructor as its own placement.
+/// The slot words, in the order the identities on [`CoreTypes::slots`] and
+/// [`SlotKind`] follow (DESIGN ›The constructor is a field‹, 19 September
+/// 2026: "the slot names are the core words themselves, never a second
+/// declaration in the block's scope"; "`parse_rank`, `lex_rank`,
+/// `associativity`, `parse`, `drop`, `run`, and `instance` are places `type`
+/// declares"). `drop` is not here: it is the statement keyword, one word,
+/// whose constructor stands aside when `=` follows it ([`SlotKind::Drop`]).
+/// `lex_rank` is the seed's stand-in for writing a name's rank in its body
+/// (#122). `instance` is the field list of every instance (#128; spelled
+/// `value` from 17 to 19 September 2026), read before `=` reads its right
+/// side ([`Parser::instance_block_fill`]). `run` (spelled `code` until #133
+/// slice 4) is filled inside the instance block, `shared run = (…)`, and kept
+/// in the record head beside the constructor.
 pub const SLOT_NAMES: [&str; 6] =
-    ["parse_rank", "lex_rank", "associativity", "parse", "code", "instance"];
+    ["parse_rank", "lex_rank", "associativity", "parse", "run", "instance"];
 
 /// How deep scopes may nest before the parse is refused (#80). Each open
 /// bracket recurses `parse_sequence` -> `parse_next` -> `parse_expression` ->
@@ -1335,8 +1334,11 @@ pub enum SlotKind {
     LexRank = 1,
     Associativity = 2,
     Parse = 3,
-    Code = 4,
+    Run = 4,
     Instance = 5,
+    /// The `drop` keyword standing left of `=`: a slot with no spelling in
+    /// [`SLOT_NAMES`], since the word is the statement's.
+    Drop = 6,
 }
 
 impl SlotKind {
@@ -1347,7 +1349,7 @@ impl SlotKind {
             1 => SlotKind::LexRank,
             2 => SlotKind::Associativity,
             3 => SlotKind::Parse,
-            4 => SlotKind::Code,
+            4 => SlotKind::Run,
             _ => SlotKind::Instance,
         }
     }
@@ -1364,9 +1366,15 @@ struct OpenType {
     lex_rank: Option<f64>,
     assoc: Assoc,
     ctor: DyadPtr,
-    /// Set by a `code = …` line: the fn a node of the type runs as (#63).
-    code: DyadPtr,
+    /// Set by a `shared run = …` line in the instance block: the fn an
+    /// instance of the type runs as (#63; #133 slice 4).
+    run: DyadPtr,
     instance: Option<(DyadPtr, DyadPtr, u64)>,
+    /// True while a `shared` line of the instance block is being parsed
+    /// ([`Parser::shared_member`]): a slot fill there is the instances' slot,
+    /// on a bare line the type's own (DESIGN ›The constructor is a field‹,
+    /// 19 September 2026).
+    in_block: bool,
 }
 
 /// Whether a constructor applied. A constructor never hands a result to a
@@ -1460,6 +1468,17 @@ pub enum ParseError {
     SharedOutsideInstanceBlock,
     /// `shared` not followed by a `name := value` declaration.
     SharedNeedsDeclaration,
+    /// A slot word left of `=` where no type is being defined.
+    SlotOutsideDefinition,
+    /// A bare `run = …` line: a type's own run, which nothing in the seed
+    /// runs; an instance's run is `shared run = (…)` in the block.
+    OwnRunNotInSeed,
+    /// The instances' parse trio (or a nested `instance`) in the block.
+    InstanceSlotNotInSeed,
+    /// A `drop = …` fill, on a bare line or in the block.
+    DropSlotNotInSeed,
+    /// A slot word inside the instance block without `shared`.
+    InstanceSlotNeedsShared,
     /// A binding in a type body inserted a teardown, which no scope exit runs.
     DeferInTypeBody,
     /// A type body's own declaration failed while running at the definition
@@ -1492,7 +1511,7 @@ pub enum ParseError {
     /// the rank is the name's (#122), and here there is no name.
     LexRankNeedsName,
     /// `code = …` with a value that is not a function (#63).
-    BadCodeSlot,
+    BadRunSlot,
     /// An operator lacked a reduced operand on one side.
     MissingOperand,
     /// The tape did not reduce to a single dyad (a dangling operator or operand).
@@ -2958,6 +2977,12 @@ impl<'a> Parser<'a> {
                 self.shared_member(start)?;
                 continue;
             }
+            // A slot fill inside the block is written `shared run = (…)`: an
+            // unmarked one would be a per-instance default, not in the seed.
+            if relaxed && (name == "drop" || SLOT_NAMES.contains(&name)) {
+                self.pos = start;
+                return Err(ParseError::InstanceSlotNeedsShared);
+            }
             // `name := T ?` declares the field's type through the hole `?`
             // built (DESIGN ›A function's surface‹: fields written `name :=
             // T ?`); a bare name leaves the field's type slot undefined.
@@ -3036,7 +3061,9 @@ impl<'a> Parser<'a> {
             }
         };
         let field_scope = self.scopes.pop().expect("the field list's scope is open");
+        self.definitions.last_mut().expect("checked above").in_block = true;
         let item = self.parse_next();
+        self.definitions.last_mut().expect("checked above").in_block = false;
         self.scopes.push(field_scope);
         let item = match item {
             Some(item) => item?,
@@ -3045,8 +3072,10 @@ impl<'a> Parser<'a> {
                 return Err(ParseError::SharedNeedsDeclaration);
             }
         };
+        // A member declaration or a slot fill, both declare nodes; anything
+        // else is not what `shared` marks.
         // SAFETY: `item` is a reduced dyad just parsed.
-        let declares = unsafe { (*item).ty } == self.types.declare_ && !self.is_slot_fill(item);
+        let declares = unsafe { (*item).ty } == self.types.declare_;
         if !declares {
             self.pos = at;
             return Err(ParseError::SharedNeedsDeclaration);
@@ -3071,10 +3100,10 @@ impl<'a> Parser<'a> {
     /// checked error — while its `instance = (…)` block holds what lives on
     /// instances, a `shared` member stored once among them. The six slots `type` declares for every
     /// type it builds — [`SLOT_NAMES`] — are declared first, as records over
-    /// the shared markers, so `parse_rank := 5` is the no-shadowing error and
-    /// `parse_rank = …` the fill ([`Parser::slot_fill`], the `value` block's
-    /// [`Parser::instance_block_fill`]). Every other line must declare a
-    /// member or be prose: a type body is
+    /// (the slot words are root identities, so `parse_rank := 5` is the
+    /// no-shadowing error and `parse_rank = …` the fill, [`Parser::slot_fill`],
+    /// the instance block's [`Parser::instance_block_fill`]). Every other line
+    /// must be prose: a type body is
     /// definition-time code and nothing runs it later, so a line that would
     /// only run is refused. The type node then carries the instance layout,
     /// this scope as its body (members read `g.y`), the parse_rank and
@@ -3083,19 +3112,15 @@ impl<'a> Parser<'a> {
     pub fn parse_type_body(&mut self, id: DyadPtr) -> Result<DyadPtr, ParseError> {
         self.expect_open()?;
         let scope = self.open_scope();
-        let slots = self.types.slots;
-        let at = self.pos;
-        for (name, marker) in SLOT_NAMES.iter().zip(slots) {
-            self.declare_field_name(name, marker, at)?;
-        }
         self.definitions.push(OpenType {
             scope,
             parse_rank: crate::identities::meta::prec::APPLY,
             lex_rank: None,
             assoc: Assoc::Left,
             ctor: std::ptr::null_mut(),
-            code: std::ptr::null_mut(),
+            run: std::ptr::null_mut(),
             instance: None,
+            in_block: false,
         });
         // A `fn` literal on a slot's right side must not claim the enclosing
         // declaration's placeholder (`x := type (parse = fn …)`).
@@ -3160,9 +3185,9 @@ impl<'a> Parser<'a> {
             // SAFETY: `node` was just built; nothing has read its slot.
             unsafe { crate::identities::meta::install_constructor(node, def.ctor) };
         }
-        if !def.code.is_null() {
-            // SAFETY: as above; `def.code` is the fn node the body's fill checked.
-            unsafe { crate::identities::meta::install_code(node, def.code) };
+        if !def.run.is_null() {
+            // SAFETY: as above; `def.run` is the fn node the body's fill checked.
+            unsafe { crate::identities::meta::install_code(node, def.run) };
         }
         Ok(node)
     }
@@ -3244,21 +3269,28 @@ impl<'a> Parser<'a> {
     /// `parse_rank = 3` inside a constructor's body is that function's own
     /// business, not the enclosing type's.
     pub(crate) fn slot_of(&self, target: DyadPtr) -> Option<SlotKind> {
-        let def = self.definitions.last()?;
-        if self.scopes.current() != Some(def.scope) {
-            return None;
-        }
+        // The word arrives as the record of its use, or as the identity
+        // itself when its own constructor stood aside (`drop`).
         // SAFETY: `target` is a reduced dyad from the store.
         unsafe {
-            if (*target).ty != self.types.record_ {
-                return None;
+            let id =
+                if (*target).ty == self.types.record_ { Record::of(target).dyad } else { target };
+            if id == self.types.drop_ {
+                return Some(SlotKind::Drop);
             }
-            let r = Record::of(target);
-            if r.scope != def.scope {
-                return None;
-            }
-            self.types.slots.iter().position(|&m| m == r.dyad).map(SlotKind::of)
+            self.types.slots.iter().position(|&m| m == id).map(SlotKind::of)
         }
+    }
+
+    /// Whether `=` here fills a slot of the type being defined: the current
+    /// scope is the innermost open definition's own (DESIGN ›The constructor
+    /// is a field‹, 19 September 2026: "`=` with a slot word on its left fills
+    /// the innermost enclosing definition's slot on a bare line and its
+    /// instances' slot inside the block, and outside any definition it is the
+    /// checked error"). A `parse_rank = 3` inside a constructor's body is
+    /// that function's own business, refused.
+    pub(crate) fn filling_definition(&self) -> bool {
+        self.definitions.last().is_some_and(|def| self.scopes.current() == Some(def.scope))
     }
 
     /// Fill a slot of the type being defined (DESIGN ›The constructor is a
@@ -3304,6 +3336,19 @@ impl<'a> Parser<'a> {
         value: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
+        // Which slot a fill reaches (DESIGN ›The constructor is a field‹, 19
+        // September 2026): inside the instance block, `shared run = (…)` is
+        // the instances' run; the instances' parse trio and drop there, and a
+        // type's own run or drop on a bare line, are not in the seed yet
+        // (#133), each refused with its own message.
+        let in_block = self.definitions.last().expect("slot_of found an open definition").in_block;
+        match kind {
+            SlotKind::Drop => return Err(ParseError::DropSlotNotInSeed),
+            SlotKind::Run if !in_block => return Err(ParseError::OwnRunNotInSeed),
+            SlotKind::Run => {}
+            _ if in_block => return Err(ParseError::InstanceSlotNotInSeed),
+            _ => {}
+        }
         // SAFETY: `value` is a reduced dyad from the store.
         let read = unsafe { types.through(value) };
         // A rank is a number the pass needs now; computed before the open
@@ -3351,15 +3396,16 @@ impl<'a> Parser<'a> {
                 }
                 def.ctor = read;
             }
-            SlotKind::Instance => return Err(ParseError::TypeBodyLine),
-            // `code = fn …`: the function a node of the type runs and compiles
-            // as (#63; DESIGN ›Execution is function application‹).
-            SlotKind::Code => {
+            SlotKind::Instance | SlotKind::Drop => return Err(ParseError::TypeBodyLine),
+            // `shared run = fn …`: the function an instance of the type runs
+            // and compiles as (#63; DESIGN ›Execution is function
+            // application‹). An fn until #133 slice 5 reads a bare body.
+            SlotKind::Run => {
                 // SAFETY: `read` is a reduced dyad from the store.
                 if unsafe { (*read).ty } != types.fn_type {
-                    return Err(ParseError::BadCodeSlot);
+                    return Err(ParseError::BadRunSlot);
                 }
-                def.code = read;
+                def.run = read;
             }
         }
         let name = SLOT_NAMES[kind as usize];
@@ -5691,9 +5737,9 @@ impl<'a> Parser<'a> {
                 }
                 Ok(self.store.alloc_raw(self.types.dyad_, c as *mut u8))
             }
-            // The code: the function a node of the type runs as (#63), the
-            // fn node itself, so `t.code.compile()` compiles it.
-            "code" => {
+            // The run: the function an instance of the type runs as (#63),
+            // the fn node itself, so `t.run.compile()` compiles it.
+            "run" => {
                 let c = meta::code_of(logos);
                 if c.is_null() {
                     return Err(ParseError::BadReflectRead);

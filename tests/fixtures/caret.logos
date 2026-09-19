@@ -2,7 +2,7 @@
 # application‹: "if the type carries a `code`, run that function on it"): a
 # power operator `^` defined with `type` in Logos and used in the same file,
 # right-associative, binding tighter than `*`, its constructor written in
-# Logos and its `code` slot holding the power computation, so the operator
+# Logos and its instances' `run` slot holding the power computation, so the operator
 # is the operation. `^` is a fresh symbol spelling (#110): nothing declared
 # it before its `:=`, and once declared it lexes glued to its operands
 # (`x^3`). The pinned demo itself is examples/power.logos.
@@ -15,10 +15,12 @@
         tape.remove(1),
         tape.remove(-1)
     ),
-    code = fn (a := i32 ?, b := i32 ?) -> i32 (
-        r := i32 1,
-        for i in 0..b ( r = r * a ),
-        r
+    instance = (
+        shared run = fn (a := i32 ?, b := i32 ?) -> i32 (
+            r := i32 1,
+            for i in 0..b ( r = r * a ),
+            r
+        )
     )
 ),
 f := fn (x := i32 ?) -> i32 ( x^3 + 1 ),

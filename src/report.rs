@@ -176,7 +176,20 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::BadConstructorSignature => {
             "`parse` is `fn (tape := parsing_tape ?) -> void (…)`".into()
         }
-        ParseError::BadCodeSlot => "`code` must be a function".into(),
+        ParseError::BadRunSlot => "`run` must be a function (a bare body waits on #133)".into(),
+        ParseError::SlotOutsideDefinition => {
+            "a slot word (`parse_rank`, `associativity`, `parse`, `run`, `drop`, `instance`) stands left of `=` only inside a type body".into()
+        }
+        ParseError::OwnRunNotInSeed => {
+            "a type's own `run` is not in the seed; an instance's run is `shared run = (…)` inside `instance = (…)`".into()
+        }
+        ParseError::InstanceSlotNotInSeed => {
+            "inside `instance = (…)` only `shared run = (…)` fills a slot yet; the instances' parse trio is not in the seed (#133)".into()
+        }
+        ParseError::DropSlotNotInSeed => "the `drop` slot is not in the seed yet (#133)".into(),
+        ParseError::InstanceSlotNeedsShared => {
+            "a slot fill inside `instance = (…)` is written `shared run = (…)`; an unmarked fill would be a per-instance default, not in the seed".into()
+        }
         ParseError::LexRankNeedsName => {
             "lex_rank is the name's: write it in a declaration, `x := type (lex_rank = …)`, \
              or on the name, `x:lex_rank = …`"

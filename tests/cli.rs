@@ -215,8 +215,8 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
     // The superseded spelling is no slot: inside a body it is an unknown name.
     let (echoes, stderr) = repl(b"s := type (precedence = 5)\n");
     assert!(echoes.is_empty() && stderr.contains("unknown name"), "stderr: {stderr}");
-    // `code` holds a function and nothing else (#63).
-    let (echoes, stderr) = repl(b"c := type (code = 5)\n");
+    // `run` holds a function and nothing else (#63; a bare body waits on #133).
+    let (echoes, stderr) = repl(b"c := type (instance = (shared run = 5))\n");
     assert!(echoes.is_empty() && stderr.contains("must be a function"), "stderr: {stderr}");
     let (echoes, stderr) =
         repl(b"x := 1\np := type (instance = (x := i32 ?))\nq := p(2)\nq.x\nx\n");
@@ -354,6 +354,16 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"g := type (y := 3)\n", "inside `instance"),
         (b"g := type (instance = (shared))\n", "followed by a declaration"),
         (b"f := fn (shared a := i32 ?) -> void ( a )\n", "nowhere else"),
+        // The slot words are core identities (19 September 2026): left of `=`
+        // outside a type body they are refused; a type's own `run`, the
+        // instances' parse trio and the `drop` slot are not in the seed yet,
+        // and a slot fill inside the block is marked `shared`.
+        (b"parse_rank = 3\n", "only inside a type body"),
+        (b"d := i32 5\ndrop = 3\n", "only inside a type body"),
+        (b"t := type (run = fn () -> i32 ( 1 ))\n", "`shared run = (…)`"),
+        (b"t := type (instance = (run = 5))\n", "marked"),
+        (b"t := type (instance = (shared parse_rank = 5))\n", "not in the seed"),
+        (b"t := type (instance = (shared drop = 5))\n", "not in the seed"),
         (b"t := type (5)\n", "a type body line"),
         // A bare `instance` line declares nothing: the slot name used to
         // stand as a bare value and pass as a silent no-op (#87).
@@ -1085,7 +1095,7 @@ fn only_a_marked_place_is_written_or_addressed() {
     let pw = "pw := type ( parse_rank = *.parse_rank + 1, associativity = right, \
               parse = fn (tape := parsing_tape ?) -> void ( tape[0]:dyad.type = pw, \
               tape[0]:dyad.value.operands.append(tape[-1] and tape[1]), tape.remove(1), tape.remove(-1) ), \
-              code = fn (a := i32 ?, b := i32 ?) -> i32 ( a * b ) )";
+              instance = ( shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( a * b ) ) )";
     for (src, expect) in [
         ("i32 5 = 3\n", "not an assignable place"),
         // The first refusal a newcomer meets: `a := 5` binds the number, not

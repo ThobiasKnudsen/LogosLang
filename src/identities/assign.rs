@@ -41,9 +41,9 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 
 /// `=`'s constructor: at discovery, the place to its left (the cells since
 /// the boundary, constructed to one — [`crate::parse::Parser::construct_left`]),
-/// then its right side driven to the boundary. Over one of the six slots of
-/// the type being defined, the slot's fill
-/// ([`crate::parse::Parser::slot_fill`], #61); over `value`, the field list
+/// then its right side driven to the boundary. Over a slot word inside the
+/// type being defined, the slot's fill
+/// ([`crate::parse::Parser::slot_fill`], #61); over `instance`, the field list
 /// is read in place of an expression
 /// ([`crate::parse::Parser::instance_block_fill`], #128).
 fn construct(
@@ -55,6 +55,9 @@ fn construct(
         return Err(ParseError::MissingOperand);
     };
     let slot = p.slot_of(target);
+    if slot.is_some() && !p.filling_definition() {
+        return Err(ParseError::SlotOutsideDefinition);
+    }
     if slot == Some(crate::parse::SlotKind::Instance) {
         let node = p.instance_block_fill()?;
         tape.place(node);

@@ -4135,11 +4135,12 @@ mod tests {
              tape.remove(1),\n\
              tape.remove(-1)\n\
          ),\n\
-         code = fn (a := i32 ?, b := i32 ?) -> i32 ( r := i32 1, for i in 0..b ( r = r * a ), r )\n\
+         instance = ( shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( r := i32 1, for i in 0..b ( r = r * a ), r ) )\n\
         ),\n";
 
     /// A code-carrying type with no constructor of its own: applied like a fn.
-    const SQ_TYPE: &str = "sq2 := type ( code = fn (a := i32 ?) -> i32 ( a * a ) ),\n";
+    const SQ_TYPE: &str =
+        "sq2 := type ( instance = ( shared run = fn (a := i32 ?) -> i32 ( a * a ) ) ),\n";
 
     #[test]
     fn a_type_with_code_runs_as_a_call_of_it() {
@@ -4159,17 +4160,17 @@ mod tests {
     #[test]
     fn a_type_with_code_compiles_as_a_call_of_it() {
         // The caller compiles to a direct call once the code is compiled (the
-        // uncompiled-callee boundary is #65); both tiers agree. `.code` is the
-        // fn itself, which is what `pw.code.compile()` compiles.
+        // uncompiled-callee boundary is #65); both tiers agree. `.run` is the
+        // fn itself, which is what `pw.run.compile()` compiles.
         assert_eq!(
             run_script(&format!(
-                "{POW_TYPE}f := fn (x := i32 ?) -> i32 ( x pw 3 + 1 ),\na := f(2),\npw.code.compile(), f.compile(),\na + f(2)"
+                "{POW_TYPE}f := fn (x := i32 ?) -> i32 ( x pw 3 + 1 ),\na := f(2),\npw.run.compile(), f.compile(),\na + f(2)"
             )),
             18
         );
         assert_eq!(
             run_script(&format!(
-                "{SQ_TYPE}f := fn (x := i32 ?) -> i32 ( sq2(x) + 1 ),\nsq2.code.compile(), f.compile(),\nf(4)"
+                "{SQ_TYPE}f := fn (x := i32 ?) -> i32 ( sq2(x) + 1 ),\nsq2.run.compile(), f.compile(),\nf(4)"
             )),
             17
         );
@@ -4187,7 +4188,7 @@ mod tests {
     fn a_code_slot_holds_a_function_and_types_no_place() {
         // `code = 5` is refused; a hole typed by a code-carrying type has no
         // place, exactly as `f ?` has none (a value of it is a call node).
-        assert_eq!(parse_err("t := type (code = 5)"), ParseError::BadCodeSlot);
+        assert_eq!(parse_err("t := type (instance = (shared run = 5))"), ParseError::BadRunSlot);
         assert_eq!(parse_err_after(&[POW_TYPE], "p := pw ?"), ParseError::NonNumericDeclaredType);
     }
 

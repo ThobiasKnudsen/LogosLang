@@ -89,10 +89,14 @@ pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, [DyadP
     let left_ = side(cx, "left");
     let right_ = side(cx, "right");
 
-    // The six slot markers: what the slot names denote inside a body
-    // (declared there per definition), never spelled outside one. Both slots
-    // undefined, so a read or an ordinary `=` on them is refused at parse.
-    let slots = SLOT_NAMES.map(|_| cx.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut()));
+    // The slot words (DESIGN ›The constructor is a field‹, 19 September 2026:
+    // "the slot names are the core words themselves, never a second
+    // declaration in the block's scope, so a lookup has one candidate"): six
+    // identities spelled once at the root, inert like `left` and `right`, so
+    // each stands as a value anywhere, and `=` with one on its left inside a
+    // type body is that slot's fill ([`crate::parse::Parser::slot_of`]);
+    // `drop` is the statement keyword itself, whose constructor looks right.
+    let slots = SLOT_NAMES.map(|name| side(cx, name));
 
     // `:` is no declaration operator (DESIGN ›Declarations are immutable by
     // default‹, ruled 2 September 2026): `key := T ?` is the valueless form,

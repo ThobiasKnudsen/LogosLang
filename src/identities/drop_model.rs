@@ -137,8 +137,22 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     // its type"): an owning place gets the teardown node, anything else an
     // inert `drop` node — the emptying is the parse-time dead mark, and the
     // run-time write is not needed, since no later use can observe the place.
-    let drop_ =
-        keyword(cx, "drop", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
+    let drop_ = keyword(
+        cx,
+        "drop",
+        meta::prec::PREFIX,
+        &["place", "pointee", "op"],
+        |p, _id, tape| {
+            // One `drop` word (DESIGN ›The constructor is a field‹, 19
+            // September 2026: "its parse looks right — `=` there and it
+            // stands as the slot being filled, anything else and it drops
+            // what follows"): with `=` to its right it declines, and `=`
+            // takes it as the slot's name.
+            let types = p.types();
+            if matches!(p.cell_at(tape, 1)?, Some(c) if !c.constructed && c.identity(&types) == types.assign)
+            {
+                return Ok(crate::parse::Constructed::Decline);
+            }
             let (place, ended) = p.place_operand_cell(tape, true)?;
             let types = p.types();
             let node = if is_owning_place(place) {
@@ -151,7 +165,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
                 p.mark_dead(ended, node);
             }
             Ok(crate::parse::Constructed::Placed)
-        });
+        },
+    );
     cx.lower.insert(drop_, lower_drop);
     let drop_leaf = callable::mint_native(cx.store, cs.callable, run_drop, cs.seed_native);
 
@@ -954,7 +969,7 @@ mod tests {
                     tape.remove(1),\n\
                     tape.remove(-1)\n\
                 ),\n\
-                code = fn (a := i32 ?, b := i32 ?) -> i32 ( a * b * n )\n\
+                instance = ( shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( a * b * n ) )\n\
             ),\n";
         let (v, live) = run(&format!("{POW}2 ^ 3"));
         assert_eq!(v, 12);
@@ -965,7 +980,7 @@ mod tests {
         );
         assert_eq!(
             parse_err(&format!(
-                "{POW}sq := type ( code = fn (a := i32 ?) -> i32 ( a * n ) ),\ndrop n,\nsq(3)"
+                "{POW}sq := type ( instance = ( shared run = fn (a := i32 ?) -> i32 ( a * n ) ) ),\ndrop n,\nsq(3)"
             )),
             ParseError::Resolve(ResolveError::Dead("n".into()))
         );

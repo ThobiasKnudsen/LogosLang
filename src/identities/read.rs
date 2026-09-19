@@ -321,9 +321,9 @@ mod tests {
             for &n in &types.numtypes {
                 assert_eq!(read_kind(&types, n), Read::Identity);
             }
-            // The six slot markers have null slots on both sides.
+            // The slot words are identities like `left` and `right`.
             for &m in &types.slots {
-                assert_eq!(read_kind(&types, m), Read::Undefined);
+                assert_eq!(read_kind(&types, m), Read::Identity);
             }
         }
     }
@@ -414,7 +414,7 @@ mod tests {
                      tape.remove(1),\n\
                      tape.remove(-1)\n\
                  ),\n\
-                 code = fn (a := i32 ?, b := i32 ?) -> i32 ( a )\n\
+                 instance = ( shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( a ) )\n\
              ),\n\
              2 pw 3",
         );
@@ -460,7 +460,7 @@ mod tests {
         // place, since a node of it is a call.
         let (_store, core, exprs) = parse_seq(
             "w := type ( instance = (x := i64 ?, y := i64 ?) ),\n\
-             c := type ( code = fn (a := i32 ?) -> i32 ( a ) )",
+             c := type ( instance = ( shared run = fn (a := i32 ?) -> i32 ( a ) ) )",
         );
         let types = core.types();
         // SAFETY: the declared identities were just parsed.
