@@ -577,23 +577,18 @@ impl Runtime {
     ///
     /// # Safety
     /// `node` must be a valid place node.
-    /// The reading rule: a record operand yields the dyad it names (DESIGN
-    /// ›The dyad's read surface‹, 8 September 2026), one pointer compare per
-    /// interpreted operand read; compiled code bakes the address instead.
-    ///
-    /// # Safety
-    /// `p` must be null or a valid dyad from the store.
-    /// The `record` type, for a native telling a use (a record) from a node.
     /// The core handles this runtime reads by — for a native's run to ask the
     /// reading rule ([`crate::identities::read`]) the way `run` itself does.
     pub(crate) fn types(&self) -> &crate::parse::CoreTypes {
         &self.types
     }
 
-    pub(crate) fn record_ty(&self) -> DyadPtr {
-        self.types.record_
-    }
-
+    /// The reading rule: a record operand yields the dyad it names (DESIGN
+    /// ›The dyad's read surface‹, 8 September 2026), one pointer compare per
+    /// interpreted operand read; compiled code bakes the address instead.
+    ///
+    /// # Safety
+    /// `p` must be null or a valid dyad from the store.
     pub(crate) unsafe fn through(&self, p: DyadPtr) -> DyadPtr {
         crate::record::through(self.types.record_, p)
     }

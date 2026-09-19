@@ -109,6 +109,7 @@ mod return_mod;
 pub(crate) mod scope;
 pub(crate) mod string;
 pub mod tape;
+pub mod this;
 mod times;
 #[path = "while.rs"]
 mod while_mod;
@@ -229,6 +230,9 @@ pub struct Core {
     pub colon_: DyadPtr,
     /// `parsing_tape` and the tape's natives (#60).
     pub tape: tape::TapeIds,
+    /// `this` in a parse body: the node being built, its slots read and
+    /// written by field name (#133 slice 6).
+    pub this: this::ThisIds,
     /// `lex`, the lexer as an identity, and its run leaf (#62).
     pub lex: lex::LexIds,
     /// `here` and `caller`, and the two `.scope` nodes (#123).
@@ -476,6 +480,7 @@ impl Core {
         // surface‹, 8 September 2026).
         // `parsing_tape` and the four affordances as identities (#60).
         let tape = tape::register(&mut cx, &callables, scope_, array_, void);
+        let this = this::register(&mut cx, &callables);
         // `lex`, the lexer as an identity (#62): its node runs the lexer and
         // yields a fragment `insert` splices.
         let lex = lex::register(&mut cx, &callables);
@@ -562,6 +567,7 @@ impl Core {
             record_,
             colon_,
             tape,
+            this,
             lex,
             here,
             index_,
@@ -622,6 +628,7 @@ impl Core {
             colon_: self.colon_,
             void_: self.void,
             tape: self.tape,
+            this: self.this,
             lex: self.lex,
             here: self.here,
             index_: self.index_,
@@ -829,11 +836,14 @@ pub(crate) unsafe fn numtype_of(types: &CoreTypes, node: DyadPtr) -> Operand {
     // own address. `t.spelling[k]` (#121) yields a string node the same way,
     // the seed's form of a string value until strings are live: written into
     // a cell, the cell is that string.
+    // `this.f` in a parse body (#133 slice 6) yields the node a slot holds,
+    // the same way.
     if logos == types.tape.slot
         || logos == types.tape.slot_dyad
         || logos == types.tape.cell_type
         || logos == types.tape.spelling
         || logos == types.tape.slot_name
+        || logos == types.this.slot
     {
         return Operand::Pointer(types.dyad_);
     }
@@ -4132,15 +4142,17 @@ mod tests {
     /// Logos: the shape of the v0.1.0 demo (#63), spelled with a word so the
     /// script needs no fresh symbol.
     const POW_TYPE: &str = "pw := type (\n\
+         instance = ( a := ?, b := ?, shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( r := i32 1, for i in 0..b ( r = r * a ), r ) ),\n\
          parse_rank = *.parse_rank + 1,\n\
          associativity = right,\n\
          parse = (\n\
-             tape[0]:dyad.type = pw,\n\
-             tape[0]:dyad.value.operands.append(tape[-1] and tape[1]),\n\
+             this.a = tape[-1],\n\
+             this.b = tape[1],\n\
+             tape[0] = this,\n\
+             tape.is_constructed[0] = true,\n\
              tape.remove(1),\n\
              tape.remove(-1)\n\
-         ),\n\
-         instance = ( shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( r := i32 1, for i in 0..b ( r = r * a ), r ) )\n\
+         )\n\
         ),\n";
 
     /// A code-carrying type with no constructor of its own: applied like a fn.

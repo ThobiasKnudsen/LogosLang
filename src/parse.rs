@@ -95,12 +95,6 @@ impl Cell {
         Cell { dyad, constructed: true, bracket: false, text: None, start: 0, len: 0 }
     }
 
-    /// An unconstructed cell holding `dyad` with no spelling of its own: what
-    /// a native puts on the tape for a record handed in by value.
-    pub fn unlexed(dyad: DyadPtr) -> Self {
-        Cell { constructed: false, ..Cell::built(dyad) }
-    }
-
     /// The text this cell was lexed from — `tape.spelling[k]`, the tape's
     /// second per-cell fact beside the flag (DESIGN ›The scope's constructor
     /// is the driver‹, ruled 14 September 2026): the empty text for a cell
@@ -212,16 +206,29 @@ impl ParsingTape {
         self.nodes[n].linked.then(|| &self.nodes[n].cell)
     }
 
-    /// Overwrite the cell at `offset` in place — a native's `tape[k] = …`
-    /// — replacing its pointer and flag and keeping its spelling ("the text
-    /// stays readable after the cell is constructed"). `false` off the tape.
-    pub fn write(&mut self, offset: isize, cell: Cell) -> bool {
+    /// Replace the pointer of the cell at `offset` — a native's `tape[k] =
+    /// …` — and nothing more: the flag stays, the spelling stays ("the text
+    /// stays readable after the cell is constructed"; DESIGN, 19 September
+    /// 2026: "the write replaces the pointer and nothing more"). `false` off
+    /// the tape.
+    pub fn set_dyad(&mut self, offset: isize, dyad: DyadPtr) -> bool {
         let Some(c) = self.at_mut(offset) else {
             return false;
         };
-        c.dyad = cell.dyad;
-        c.constructed = cell.constructed;
+        c.dyad = dyad;
         c.bracket = false;
+        self.edits += 1;
+        true
+    }
+
+    /// Set the flag of the cell at `offset` — a native's `tape.is_constructed[k]
+    /// = flag`, the constructor's own word that its cell is done (19
+    /// September 2026). `false` off the tape.
+    pub fn set_constructed(&mut self, offset: isize, flag: bool) -> bool {
+        let Some(c) = self.at_mut(offset) else {
+            return false;
+        };
+        c.constructed = flag;
         self.edits += 1;
         true
     }
@@ -1139,6 +1146,9 @@ pub struct CoreTypes {
     pub void_: DyadPtr,
     /// `parsing_tape` and the tape's natives (#60).
     pub tape: crate::identities::tape::TapeIds,
+    /// `this` in a parse body: the slot read and write over the node being
+    /// built (#133 slice 6).
+    pub this: crate::identities::this::ThisIds,
     /// `index`: the passive node a `[i]` cell carries — its interior, one
     /// expression parsed as any bracket's.
     pub index_: DyadPtr,
@@ -1408,6 +1418,10 @@ struct OpenType {
     /// field-type set (#133 slice 8).
     run_body: DyadPtr,
     instance: Option<(DyadPtr, DyadPtr, u64)>,
+    /// The hidden `this` parameter of the `parse` body being read, while it
+    /// is read ([`Parser::slot_body_fill`]); null otherwise. `.` on it reads a
+    /// field of the node being built ([`Parser::this_field`]).
+    this_param: DyadPtr,
     /// True while a `shared` line of the instance block is being parsed
     /// ([`Parser::shared_member`]): a slot fill there is the instances' slot,
     /// on a bare line the type's own (DESIGN ›The constructor is a field‹,
@@ -1444,7 +1458,7 @@ fn logos_constructor(
 ) -> Result<Constructed, ParseError> {
     // SAFETY: `id` is the identity whose slot `construct_of` just read.
     let f = unsafe { crate::identities::meta::constructor_of(id) };
-    p.run_logos_ctor(f, tape)
+    p.run_logos_ctor(f, id, tape)
 }
 
 /// The application constructor as a [`ConstructFn`] (see
@@ -1555,6 +1569,13 @@ pub enum ParseError {
     /// constructs that body into a node yet (#133 slice 8), so the call
     /// would be a record instance that silently never runs.
     RunBodyHeld,
+    /// `this.f` in a parse body of a type with no `instance = (…)` block
+    /// above it: there is no field to reach.
+    ThisNeedsInstanceBlock,
+    /// `this.f` naming no field of the instance block; carries `f`.
+    ThisFieldUnknown(Box<String>),
+    /// `tape.is_constructed[k] = v` with a `v` that is no bool.
+    FlagTakesBool,
     /// An operator lacked a reduced operand on one side.
     MissingOperand,
     /// The tape did not reduce to a single dyad (a dangling operator or operand).
@@ -2532,6 +2553,7 @@ impl<'a> Parser<'a> {
     pub(crate) fn run_logos_ctor(
         &mut self,
         f: DyadPtr,
+        owner: DyadPtr,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
         // A constructor runs now, by nature; what stands before it runs first.
@@ -2548,7 +2570,36 @@ impl<'a> Parser<'a> {
             crate::identities::numtype::NumType::U64,
             tape as *mut ParsingTape as usize as i64,
         );
-        let call = build_call(self.store, f, &[handle]);
+        // `this`: a fresh node of the type being defined, minted per run
+        // (DESIGN, 18 September 2026: "`this` in `parse` is a fresh node of
+        // the type being defined … its `value` block stands instantiated
+        // with every hole its own, never tied to a cell"): the operand run
+        // a node of `owner` runs as, one null slot per instance field, the
+        // constructor filling them by name and placing the node itself. A
+        // body read bare takes it as its second parameter; the wrapped
+        // `fn (tape := parsing_tape ?)` form (until #133 slice 9) takes the
+        // tape alone.
+        // SAFETY: `f` is the fn node the slot fill checked; `owner` is the
+        // record type whose slot holds it.
+        let args = unsafe {
+            let input = *((*f).value as *const DyadPtr).add(FN_INPUT);
+            let params =
+                crate::identities::array::items(crate::identities::meta::record_fields_of(input));
+            if params.len() == 2 {
+                let fields = crate::identities::array::items(
+                    crate::identities::meta::record_fields_of(owner),
+                );
+                let slots = vec![std::ptr::null_mut(); fields.len() + 1];
+                let run = self.store.alloc_operands(&slots);
+                let this = self.store.alloc_raw(owner, run);
+                let this_arg = self
+                    .scalar_value(crate::identities::numtype::NumType::U64, this as usize as i64);
+                vec![handle, this_arg]
+            } else {
+                vec![handle]
+            }
+        };
+        let call = build_call(self.store, f, &args);
         // SAFETY: `call` was just built into the store; the tape and the
         // store are reached only through the natives until `run` returns.
         // Inside the call, `caller.scope` reads the pass's position (#123).
@@ -3236,6 +3287,7 @@ impl<'a> Parser<'a> {
             run: std::ptr::null_mut(),
             run_body: std::ptr::null_mut(),
             instance: None,
+            this_param: std::ptr::null_mut(),
             in_block: false,
         });
         // A `fn` literal on a slot's right side must not claim the enclosing
@@ -3514,7 +3566,10 @@ impl<'a> Parser<'a> {
                         let params = crate::identities::array::items(
                             crate::identities::meta::record_fields_of(input),
                         );
-                        params.len() == 1 && (*params[0]).ty == types.tape.parsing_tape
+                        // The wrapped form takes the tape alone; a body read
+                        // bare takes `tape` and `this` ([`Parser::slot_body_fill`]).
+                        (params.len() == 1 || (params.len() == 2 && (*params[1]).ty == types.dyad_))
+                            && (*params[0]).ty == types.tape.parsing_tape
                     }
                 };
                 if !takes_tape {
@@ -3581,13 +3636,23 @@ impl<'a> Parser<'a> {
             SlotKind::Parse if in_block => Err(ParseError::InstanceSlotNotInSeed),
             SlotKind::Parse => {
                 let at = self.pos;
-                let input = self.hidden_param_record("tape", types.tape.parsing_tape, at)?;
-                // SAFETY: `input` was just built, its parameter unplaced; no
+                // The two names `parse` declares into its body: `tape`, the
+                // tape centred on the appearance, and `this`, the fresh node
+                // (a `dyad ?` place holding it; [`crate::identities::this`]).
+                let (input, params) = self.hidden_param_record(
+                    &[("tape", types.tape.parsing_tape), ("this", types.dyad_)],
+                    at,
+                )?;
+                let def = self.definitions.last_mut().expect("checked above");
+                def.this_param = params[1];
+                // SAFETY: `input` was just built, its parameters unplaced; no
                 // declaration's placeholder is being filled.
                 let f = unsafe {
-                    self.fn_over_body(types.fn_type, input, types.void_, std::ptr::null_mut())?
+                    self.fn_over_body(types.fn_type, input, types.void_, std::ptr::null_mut())
                 };
-                self.slot_fill(SlotKind::Parse, f)
+                self.definitions.last_mut().expect("checked above").this_param =
+                    std::ptr::null_mut();
+                self.slot_fill(SlotKind::Parse, f?)
             }
             // A type's own run, what runs when the type itself is used
             // plainly, is not in the seed (#133), as for the wrapped form.
@@ -3622,38 +3687,72 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// A parameter record `( name := ty ? )` no text spelled: the input of a
-    /// slot body's function, its one parameter the name the slot's type
-    /// declares into the body (`tape` for `parse`). Built as
-    /// [`Parser::parse_field_list`] builds a `fn`'s list — the name declared
+    /// A parameter record `( name := ty ?, … )` no text spelled: the input of
+    /// a slot body's function, its parameters the names the slot's type
+    /// declares into the body (`tape` and `this` for `parse`). Built as
+    /// [`Parser::parse_field_list`] builds a `fn`'s list — each name declared
     /// in the record's own scope and checked against every open scope, since
-    /// the body reopens that scope — the field's value slot left null for
-    /// [`Parser::fn_over_body`] to place in the frame. `at` is where a
-    /// shadowing error is reported: the `=` the body stands after.
+    /// the body reopens that scope — the fields' value slots left null for
+    /// [`Parser::fn_over_body`] to place in the frame. Returns the record and
+    /// its fields in order. `at` is where a shadowing error is reported: the
+    /// `=` the body stands after.
     fn hidden_param_record(
         &mut self,
-        name: &str,
-        ty: DyadPtr,
+        params: &[(&str, DyadPtr)],
         at: usize,
-    ) -> Result<DyadPtr, ParseError> {
+    ) -> Result<(DyadPtr, Vec<DyadPtr>), ParseError> {
         let scope = self.open_scope();
-        let field = self.store.alloc_raw(ty, std::ptr::null_mut());
-        let declared = self.declare_name(name, field, at);
+        let mut fields = Vec::with_capacity(params.len());
+        let mut declared = Ok(());
+        for &(name, ty) in params {
+            let field = self.store.alloc_raw(ty, std::ptr::null_mut());
+            declared = declared.and_then(|()| self.declare_name(name, field, at).map(|_| ()));
+            fields.push(field);
+        }
         self.scopes.pop();
         declared?;
-        let fields = crate::identities::array::build(self.store, self.types.array_, &[field]);
-        // SAFETY: `ty` is a type node from the store.
-        let size_bytes = unsafe { field_width(ty) };
+        let fields_arr = crate::identities::array::build(self.store, self.types.array_, &fields);
+        // SAFETY: each `ty` is a type node from the store.
+        let size_bytes = fields.iter().map(|&f| unsafe { field_width((*f).ty) }).sum();
         let record = crate::identities::meta::record_layout(
             self.store,
             scope,
-            fields,
+            fields_arr,
             size_bytes,
             std::ptr::null_mut(),
             crate::identities::meta::prec::APPLY,
             Assoc::Left,
         );
-        Ok(self.store.alloc_raw(self.types.type_, record.cast()))
+        Ok((self.store.alloc_raw(self.types.type_, record.cast()), fields))
+    }
+
+    /// `this.f` in a parse body: the slot of the node being built that the
+    /// instance field `f` names (DESIGN, 16 September 2026: "the constructor
+    /// connects each operand to a field by name"; 20 September 2026: "the
+    /// instance block stands before any body that reads `this.f` … a name is
+    /// declared before its use as everywhere else"). `f` resolves in the
+    /// block's own scope alone; its index among the fields is the slot.
+    fn this_field(&mut self, name: &str, at: usize) -> Result<DyadPtr, ParseError> {
+        let def = self.definitions.last().expect("this_param is set inside a definition");
+        let this = def.this_param;
+        let Some((scope, fields, _)) = def.instance else {
+            self.pos = at;
+            return Err(ParseError::ThisNeedsInstanceBlock);
+        };
+        let mut field_scope = ScopeStack::new();
+        field_scope.push(scope);
+        let field = field_scope.resolve(self.trie, name).map(|r| r.identity);
+        // SAFETY: `fields` is the block's array node, its items the field dyads.
+        let index = field.ok().and_then(|f| {
+            unsafe { crate::identities::array::items(fields) }.iter().position(|&x| x == f)
+        });
+        let Some(index) = index else {
+            self.pos = at;
+            return Err(ParseError::ThisFieldUnknown(Box::new(name.to_string())));
+        };
+        let k = self.scalar_value(crate::identities::numtype::NumType::U64, index as i64);
+        let types = self.types;
+        Ok(crate::identities::this::build_slot(self.store, &types, this, k))
     }
 
     /// The text inside the `( … )` at the cursor, consumed with its brackets
@@ -4295,53 +4394,25 @@ impl<'a> Parser<'a> {
             // member reads then need.
             let source = self.source;
             let name = &source[nstart..nstart + nlen];
-            // The path from a tape cell to its operand record (#61, ruled 9
-            // September 2026): `t[k]:dyad.type`, read or written; `.value`
-            // then `.operands` then `.append(…)`, the two steps markers the
-            // next read consumes.
-            let tt = self.types.tape;
-            if (*lhs).ty == tt.slot_dyad {
+            // `this.f` inside a parse body: a field of the node being built
+            // (#133 slice 6), before the dyad view below, since `this` is a
+            // `dyad ?` place.
+            if let Some(def) = self.definitions.last() {
+                if !def.this_param.is_null() && lhs == def.this_param {
+                    return self.this_field(name, nstart).map(|n| (n, 0));
+                }
+            }
+            // `t[k]:dyad.type`: the cell's type, read (#61). The write through
+            // it, the retype, and `.value.operands.append(…)` were the 4
+            // September shape, deleted with `this` (ruled 20 September 2026).
+            if (*lhs).ty == self.types.tape.slot_dyad {
                 let types = self.types;
                 return match name {
                     "type" => {
                         Ok((crate::identities::tape::build_cell_type(self.store, &types, lhs), 0))
                     }
-                    "value" => Ok((
-                        crate::identities::tape::build_cell_marker(self.store, tt.cell_value, lhs),
-                        0,
-                    )),
                     _ => Err(ParseError::BadReflectRead),
                 };
-            }
-            if (*lhs).ty == tt.cell_value {
-                if name == "operands" {
-                    return Ok((
-                        crate::identities::tape::build_cell_marker(
-                            self.store,
-                            tt.cell_operands,
-                            lhs,
-                        ),
-                        0,
-                    ));
-                }
-                return Err(ParseError::BadReflectRead);
-            }
-            if (*lhs).ty == tt.cell_operands {
-                if name != "append" {
-                    return Err(ParseError::BadReflectRead);
-                }
-                let args = call.ok_or(ParseError::ExpectedOpen)?;
-                let types = self.types;
-                // An and-group among the arguments distributes: every leaf
-                // is appended, in order.
-                let mut items = Vec::new();
-                for a in args {
-                    self.and_leaves(a, &mut items);
-                }
-                return Ok((
-                    crate::identities::tape::build_append(self.store, &types, lhs, &items),
-                    1,
-                ));
             }
             if (*lhs).ty == self.types.dyad_ {
                 return self.view_member(lhs, name).map(|n| (n, 0));
@@ -4504,23 +4575,6 @@ impl<'a> Parser<'a> {
         let (field, offset) = self.resolve_field(record_logos, nstart, nlen)?;
         let addr = (*lhs).value.wrapping_add(offset);
         Ok((self.store.alloc_raw((*field).ty, addr), 0))
-    }
-
-    /// The leaves of an and-group, in order; a node that is no group is its
-    /// own one leaf (DESIGN: every operator distributes over an and/or group
-    /// until a boolean — the seed's `and` over non-booleans, [`crate::identities::and`]).
-    fn and_leaves(&self, node: DyadPtr, out: &mut Vec<DyadPtr>) {
-        // SAFETY: `node` is a reduced dyad from the store.
-        unsafe {
-            let n = self.types.through(node);
-            if (*n).ty == self.types.and_ && !is_bool_result(&self.types, n) {
-                let ops = (*n).value as *const DyadPtr;
-                self.and_leaves(*ops, out);
-                self.and_leaves(*ops.add(1), out);
-            } else {
-                out.push(node);
-            }
-        }
     }
 
     /// `.`'s constructor: the member read of `tape[-1]` named by the cell to
@@ -6291,6 +6345,7 @@ impl<'a> Parser<'a> {
     ) -> Result<(), ParseError> {
         let own = tape.mark();
         let edits = tape.edits();
+        let logos = self.is_logos_ctor(id);
         // Dispatching the cell's identity is the body's read of its name — a
         // callee, an operator, a keyword alike (#125).
         if let Some(c) = tape.at(0) {
@@ -6307,12 +6362,28 @@ impl<'a> Parser<'a> {
             return Ok(());
         };
         tape.restore(own);
-        // Constructed: a node that runs a function's body — a call, or a
-        // node of a type carrying a `code` — is a use of every outer name
-        // that body reads, checked here where the node comes to exist,
-        // whichever constructor built it (#125). The error points at the
-        // construct's own token: the callee of `climb()`, the `^` of `2 ^ 3`.
+        // The driver's rule (DESIGN ›Execution is function application‹,
+        // ruled 19 September 2026): "flag true, done; flag false and the cell
+        // holds another identity than the one whose `parse` ran, that
+        // identity's turn; flag false and the same identity, the checked
+        // error, a constructor that neither finished nor handed on" — and
+        // "a constructor that finds nothing to consume sets its flag and
+        // stands as itself". A constructor written in Rust says the last with
+        // `Decline` (or by leaving the frontier untouched), and the driver
+        // sets the flag for it.
+        let same = self.cell_identity(&cell) == id;
         if cell.constructed {
+            if same {
+                // The flag set on the untouched cell: the identity stands as
+                // its own value, the use of its name the cell already holds.
+                return Ok(());
+            }
+            // Constructed: a node that runs a function's body — a call, or a
+            // node of a type carrying a `run` — is a use of every outer name
+            // that body reads, checked here where the node comes to exist,
+            // whichever constructor built it (#125). The error points at the
+            // construct's own token: the callee of `climb()`, the `^` of
+            // `2 ^ 3`.
             if !cell.dyad.is_null() {
                 // SAFETY: a constructed cell holds a node from the store.
                 let callee = unsafe { (*cell.dyad).ty };
@@ -6323,13 +6394,19 @@ impl<'a> Parser<'a> {
             }
             return Ok(());
         }
-        // Rewritten to another token ("what it built it leaves at the cursor
-        // (a dyad, or another token)"), which the driver constructs as its
-        // own.
-        if self.cell_identity(&cell) != id {
-            return Ok(());
+        if !same {
+            // Handed on to another identity ("what it built it leaves at the
+            // cursor (a dyad, or another token)"), which the driver constructs
+            // as its own, or reads as the use of its name. A value that is no
+            // identity has no turn to take: the constructor should have set
+            // the flag.
+            if self.is_identity_node(self.cell_identity(&cell)) {
+                return Ok(());
+            }
+            self.pos = cell.start;
+            return Err(ParseError::CellLeftUnconstructed(Box::new(cell.spelling().to_string())));
         }
-        let declined = matches!(outcome, Constructed::Decline) || tape.edits() == edits;
+        let declined = matches!(outcome, Constructed::Decline) || (!logos && tape.edits() == edits);
         if !declined {
             self.pos = cell.start;
             return Err(ParseError::CellLeftUnconstructed(Box::new(cell.spelling().to_string())));
@@ -6339,6 +6416,36 @@ impl<'a> Parser<'a> {
         let value = self.stand_as_value(tape, id);
         tape.place(value);
         Ok(())
+    }
+
+    /// Whether `id`'s constructor is written in Logos — a `fn` node in its
+    /// slot ([`Parser::construct_of`]) — and so is judged by the flag alone.
+    fn is_logos_ctor(&self, id: DyadPtr) -> bool {
+        // SAFETY: `id` is a resolved dyad from the store; the slot is read
+        // only where a record head exists.
+        unsafe {
+            !id.is_null()
+                && (*id).ty == self.types.type_
+                && crate::identities::meta::kind_of(id).is_some()
+                && crate::identities::meta::is_record_type(id)
+                && {
+                    let leaf = crate::identities::meta::constructor_of(id);
+                    !leaf.is_null() && (*leaf).ty == self.types.fn_type
+                }
+        }
+    }
+
+    /// Whether `d` is an identity a cell may be handed on to: a function
+    /// value, or a type node with a record head — what [`Parser::ctor_of`]
+    /// dispatches on, and what the boundary reads as the use of a name.
+    fn is_identity_node(&self, d: DyadPtr) -> bool {
+        // SAFETY: `d` is null or a resolved dyad from the store.
+        unsafe {
+            !d.is_null()
+                && ((*d).ty == self.types.fn_type
+                    || ((*d).ty == self.types.type_
+                        && crate::identities::meta::kind_of(d).is_some()))
+        }
     }
 
     /// Lex one segment onto `tape`: every cell up to the next `,`, `)`, or
@@ -6944,14 +7051,18 @@ mod tests {
         assert_eq!(t.edits(), edits, "moving the center is not an edit");
         t.restore(own);
         assert_eq!(t.at(0).unwrap().dyad, dyad(11));
-        t.write(0, Cell::built(dyad(7)));
-        assert!(t.cell_at_mark(own).unwrap().constructed);
+        t.set_dyad(0, dyad(7));
+        assert!(t.cell_at_mark(own).unwrap().constructed, "a write keeps the flag");
+        assert_eq!(t.cell_at_mark(own).unwrap().dyad, dyad(7));
         assert_eq!(t.edits(), edits + 1, "a write is an edit");
+        t.set_constructed(0, false);
+        assert!(!t.cell_at_mark(own).unwrap().constructed, "the flag is its own write");
+        assert_eq!(t.edits(), edits + 2, "a flag write is an edit");
         t.insert(1, Cell::built(dyad(8)));
-        assert_eq!(t.edits(), edits + 2, "a splice is an edit");
+        assert_eq!(t.edits(), edits + 3, "a splice is an edit");
         t.remove(0);
         assert!(t.cell_at_mark(own).is_none(), "a removed cell is gone by its handle");
-        assert_eq!(t.edits(), edits + 3);
+        assert_eq!(t.edits(), edits + 4);
     }
 
     #[test]
@@ -6990,11 +7101,12 @@ mod tests {
     fn a_logos_constructor_runs_when_its_identity_appears() {
         // DESIGN ›The constructor is a field‹: "an appearance of X runs X's
         // `constructor` field" (#61). A postfix `squared`, its constructor
-        // written in Logos and taking the tape by value, its parse_rank one
-        // above `*`'s: the driver runs it at the boundary, and what it
-        // leaves — the call `sq(x)` — runs and compiles as any call.
+        // written in Logos, its parse_rank one above `*`'s: the driver runs
+        // it at the boundary, and what it leaves — a `squared` node whose
+        // `run` calls `sq` — runs and compiles as any call. The constructor
+        // is the 18 and 19 September 2026 shape (#133 slice 6): `this` filled
+        // by field name, placed, and marked done by the constructor itself.
         use crate::identities::Core;
-        use crate::record::Record;
         use crate::regex_trie::RegexTrie;
         use crate::store::Store;
 
@@ -7008,43 +7120,16 @@ mod tests {
         let (_, s) =
             go("sq := fn (a := i32 ?) -> i32 ( a * a )", &mut store, &mut trie, types, scopes);
         let (_, s) = go(
-            "c := fn (tape := parsing_tape ?) -> void ( \
-                tape[0]:dyad.type = sq, \
-                tape[0]:dyad.value.operands.append(tape[-1]), \
-                tape.remove(-1) )",
+            "squared := type ( \
+                instance = ( a := ?, shared run = fn (a := i32 ?) -> i32 ( sq(a) ) ), \
+                parse_rank = *.parse_rank + 1, \
+                parse = ( this.a = tape[-1], tape[0] = this, tape.is_constructed[0] = true, \
+                          tape.remove(-1) ) )",
             &mut store,
             &mut trie,
             types,
             s,
         );
-        // `squared`: a record type with no fields, the constructor slot
-        // holding `c` and the parse_rank one above `*`'s — what a `type (…)`
-        // body fills in the next step.
-        // SAFETY: the nodes are from the store just built.
-        let s = unsafe {
-            let c = types.through(s.resolve(&trie, "c").unwrap().record);
-            let scope = store.alloc_raw(types.scope, std::ptr::null_mut());
-            let fields = crate::identities::array::build(&mut store, types.array_, &[]);
-            let layout = crate::identities::meta::record_layout(
-                &mut store,
-                scope,
-                fields,
-                0,
-                std::ptr::null_mut(),
-                crate::identities::meta::prec::MULTIPLICATIVE + 1.0,
-                Assoc::Left,
-            );
-            let squared = store.alloc_raw(types.type_, layout);
-            crate::identities::meta::install_constructor(squared, c);
-            let rec = Record::alloc(
-                &mut store,
-                core.record_,
-                Record::new(squared, core.root_scope, std::ptr::null_mut()),
-            );
-            let mut s = s;
-            s.declare(&mut trie, "squared", rec).unwrap();
-            s
-        };
 
         let (_, s) = go("x := i32 5", &mut store, &mut trie, types, s);
         let (v, s) = go("x squared", &mut store, &mut trie, types, s);
@@ -7061,12 +7146,12 @@ mod tests {
 
     #[test]
     fn a_constructor_writes_a_cell_from_logos() {
-        // The operand-record spelling ruled 9 September 2026 (#61): a
-        // constructor retypes its own cell, `tape[0]:dyad.type = g`, which
-        // initializes the value so `.operands` is valid, then appends the
-        // operands, `tape[0]:dyad.value.operands.append(tape[-1] and
-        // tape[1])`, the and-group distributing. A tape over `a + b`,
-        // centered on the `+`, edited from Logos into the call `g(a, b)`.
+        // The write and the flag are two lines (DESIGN ›Execution is function
+        // application‹, 19 September 2026: "the write replaces the pointer and
+        // nothing more; the constructor sets the flag itself,
+        // `tape.is_constructed[0] = true`"). A tape over `a + b`, centered on
+        // the `+`, edited from Logos: `t[0] = g` points the cell at `g` and
+        // leaves it unconstructed, `t.is_constructed[0] = true` marks it.
         use crate::identities::Core;
         use crate::record::Record;
         use crate::regex_trie::RegexTrie;
@@ -7089,7 +7174,6 @@ mod tests {
         };
         // SAFETY: `tape` is a live box the natives write through.
         unsafe {
-            let (a_rec, b_rec) = ((*tape).at(-1).unwrap().dyad, (*tape).at(1).unwrap().dyad);
             let plus = (*tape).at(0).unwrap().dyad;
             let storage = store.alloc_bytes(&(tape as usize as u64).to_ne_bytes());
             // Marked as storage, as the parser marks every place it allocates.
@@ -7114,36 +7198,25 @@ mod tests {
                 types,
                 s,
             );
-            let (v, s) = go("t[0]:dyad.type = g", &mut store, &mut trie, types, s);
+            let (_, s) = go("t[0] = g", &mut store, &mut trie, types, s);
             let c = *(*tape).at(0).unwrap();
-            assert!(c.constructed, "a retyped cell is constructed");
-            assert_eq!(v as DyadPtr, c.dyad, "the retype yields the new cell");
-            assert_ne!(c.dyad, plus, "the identity itself is never written through");
+            assert!(!c.constructed, "a write never sets the flag");
+            assert_ne!(c.dyad, plus, "the pointer is replaced");
             assert_eq!(
-                (*c.dyad).ty,
+                types.through(c.dyad),
                 types.through(s.resolve(&trie, "g").unwrap().record),
-                "typed by g itself"
+                "the cell now names g"
             );
-            assert!((*((*c.dyad).value as *const DyadPtr)).is_null(), "an empty operand record");
-
-            let (_, s) = go(
-                "t[0]:dyad.value.operands.append(t[-1] and t[1])",
-                &mut store,
-                &mut trie,
-                types,
-                s,
-            );
-            let ops = (*c.dyad).value as *const DyadPtr;
-            assert_eq!((*ops, *ops.add(1), *ops.add(2)), (a_rec, b_rec, std::ptr::null_mut()));
-            let (_, s) =
-                go("t[0]:dyad.value.operands.append(t[1])", &mut store, &mut trie, types, s);
-            let ops = (*c.dyad).value as *const DyadPtr;
-            assert_eq!((*ops.add(2), *ops.add(3)), (b_rec, std::ptr::null_mut()));
+            let (v, s) = go("t.is_constructed[0]", &mut store, &mut trie, types, s);
+            assert_eq!(v, 0);
+            let (_, s) = go("t.is_constructed[0] = true", &mut store, &mut trie, types, s);
+            assert!((*tape).at(0).unwrap().constructed, "the flag is the constructor's line");
+            let (v, s) = go("t.is_constructed[0]", &mut store, &mut trie, types, s);
+            assert_eq!(v, 1);
 
             let (_, s) = go("t.remove(1)", &mut store, &mut trie, types, s);
             let (_, _s) = go("t.remove(-1)", &mut store, &mut trie, types, s);
             assert_eq!((*tape).len(), 1);
-            assert_eq!((*tape).at(0).unwrap().dyad, c.dyad);
 
             drop(Box::from_raw(tape));
         }
@@ -7226,12 +7299,13 @@ mod tests {
 
             let (_, s) = go("t[0] = dyad (i32, 7)", &mut store, &mut trie, types, s);
             let c0 = *(*tape).at(0).unwrap();
-            assert!(c0.constructed, "a written cell is constructed");
+            assert!(!c0.constructed, "a write replaces the pointer and nothing more");
             assert_eq!((*c0.dyad).ty, core.i32_);
             let (v, s) = go("t[0]", &mut store, &mut trie, types, s);
             assert_eq!(v as DyadPtr, c0.dyad, "the element read yields the cell");
+            let (_, s) = go("t.is_constructed[0] = true", &mut store, &mut trie, types, s);
             let (v, s) = go("t.is_constructed[0]", &mut store, &mut trie, types, s);
-            assert_eq!(v, 1);
+            assert_eq!(v, 1, "the flag is the constructor's own write");
             let (v, s) = go("t.spelling[0]", &mut store, &mut trie, types, s);
             assert_eq!(
                 crate::identities::string::text(v as DyadPtr),
@@ -7241,8 +7315,8 @@ mod tests {
 
             // `insert` splices a tape (ruled 14 September 2026, #62): the
             // fragment `lex «…»` hands back, its cell unconstructed with the
-            // text it was lexed from; a write then constructs it in place,
-            // and the text stays.
+            // text it was lexed from; a write then repoints it in place, and
+            // the text stays.
             let (_, s) = go("t.insert(0, lex «9»)", &mut store, &mut trie, types, s);
             assert_eq!((*tape).len(), 3);
             assert_eq!((*tape).at(0).unwrap().dyad, c0.dyad, "the center stays on its cell");
@@ -7269,7 +7343,7 @@ mod tests {
             assert_eq!(p.parse_expression().unwrap_err(), ParseError::InsertTakesTape);
             let s = p.into_scopes();
 
-            // A use of a name handed in stays unconstructed: it is its record.
+            // A use of a name handed in is its record; the flag is untouched.
             let (_, s) = go("t[0] = t", &mut store, &mut trie, types, s);
             assert!(!(*tape).at(0).unwrap().constructed);
             assert_eq!((*tape).at(0).unwrap().dyad, rec);

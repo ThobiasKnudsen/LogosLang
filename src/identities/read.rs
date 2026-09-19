@@ -94,10 +94,9 @@ pub enum Dispatch {
     /// stored in the node's op slot, already checked to be one. The compiler
     /// keys its lowering table on the node's type, which it has in hand.
     Leaf(DyadPtr),
-    /// An operand record with no leaf in its op slot — the tape's path markers
-    /// `cell_value` and `cell_operands`, or a node built without one. Today
-    /// this fell off the end of the interpreter's ladder; now it is a named
-    /// refusal.
+    /// An operand record with no leaf in its op slot — a node built without
+    /// one. Today this fell off the end of the interpreter's ladder; now it
+    /// is a named refusal.
     None,
 }
 
@@ -406,15 +405,17 @@ mod tests {
     fn a_code_carrying_type_is_a_call_and_a_leafless_record_is_named() {
         let (mut store, core, exprs) = parse_seq(
             "pw := type (\n\
+                 instance = ( a := ?, b := ?, shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( a ) ),\n\
                  parse_rank = *.parse_rank + 1,\n\
                  associativity = right,\n\
                  parse = (\n\
-                     tape[0]:dyad.type = pw,\n\
-                     tape[0]:dyad.value.operands.append(tape[-1] and tape[1]),\n\
+                     this.a = tape[-1],\n\
+                     this.b = tape[1],\n\
+                     tape[0] = this,\n\
+                     tape.is_constructed[0] = true,\n\
                      tape.remove(1),\n\
                      tape.remove(-1)\n\
-                 ),\n\
-                 instance = ( shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( a ) )\n\
+                 )\n\
              ),\n\
              2 pw 3",
         );

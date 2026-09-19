@@ -1,28 +1,36 @@
 # The v0.1.0 demo's operator, stressed (#63, DESIGN ›Execution is function
-# application‹: "if the type carries a `code`, run that function on it"): a
+# application‹: "if the type carries a `run`, run that function on it"): a
 # power operator `^` defined with `type` in Logos and used in the same file,
 # right-associative, binding tighter than `*`, its constructor written in
-# Logos and its instances' `run` slot holding the power computation, so the operator
-# is the operation. `^` is a fresh symbol spelling (#110): nothing declared
-# it before its `:=`, and once declared it lexes glued to its operands
-# (`x^3`). `parse = (…)` is a bare body over the tape (#133 slice 5); `run`
-# still wears the 4 September `fn` wrapper until its bare body runs (#133
-# slice 8). The pinned demo itself is identities/power.logos.
+# Logos and its instances' `run` slot holding the power computation, so the
+# operator is the operation. `^` is a fresh symbol spelling (#110): nothing
+# declared it before its `:=`, and once declared it lexes glued to its
+# operands (`x^3`). The constructor is the 18 and 19 September 2026 shape
+# (#133 slice 6): `this` is the fresh `^` node, filled by field name from the
+# cells around it, placed with `tape[0] = this`, and marked done by the
+# constructor's own `tape.is_constructed[0] = true`. `run` still wears the 4
+# September `fn` wrapper until its bare body runs (#133 slice 8); its
+# parameters are the instance fields in order. The pinned demo itself is
+# identities/power.logos.
 ^ := type (
-    parse_rank = *.parse_rank + 1,
-    associativity = right,
-    parse = (
-        tape[0]:dyad.type = ^,
-        tape[0]:dyad.value.operands.append(tape[-1] and tape[1]),
-        tape.remove(1),
-        tape.remove(-1)
-    ),
     instance = (
+        lhs := ?,
+        rhs := ?,
         shared run = fn (a := i32 ?, b := i32 ?) -> i32 (
             r := i32 1,
             for i in 0..b ( r = r * a ),
             r
         )
+    ),
+    parse_rank = *.parse_rank + 1,
+    associativity = right,
+    parse = (
+        this.lhs = tape[-1],
+        this.rhs = tape[1],
+        tape[0] = this,
+        tape.is_constructed[0] = true,
+        tape.remove(1),
+        tape.remove(-1)
     )
 ),
 f := fn (x := i32 ?) -> i32 ( x^3 + 1 ),

@@ -302,10 +302,13 @@ fn a_constructor_written_in_logos_runs_during_the_parse() {
     let out = logos().args(["import", "tests/fixtures/squared.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "92\n");
-    // A constructor that touches nothing declines: the identity stands as
-    // its own value (DESIGN ›The scope's constructor is the driver‹).
+    // A constructor that finds nothing to consume sets its flag and stands
+    // as itself (DESIGN ›Execution is function application‹, ruled 19
+    // September 2026: "it should rather just be itself in constructed
+    // state"); the wrapped `fn (tape …)` form is still read (until #133
+    // slice 9).
     let (echoes, stderr) = repl(
-        b"noop := type (parse = fn (tape := parsing_tape ?) -> void ( tape.recenter(0) ))\n\
+        b"noop := type (parse = fn (tape := parsing_tape ?) -> void ( tape.is_constructed[0] = true ))\n\
           t := noop\nt:dyad.type == type\nnoop.parse_rank\n",
     );
     assert_eq!(echoes, ["true", "91.0"], "stderr: {stderr}");
@@ -318,7 +321,7 @@ fn a_constructor_written_in_logos_runs_during_the_parse() {
     // session goes on; off the tape the read is the checked error like any
     // tape read.
     let (echoes, stderr) = repl(
-        b"named := type (parse = ( tape[0] = tape.spelling[0] ))\n\
+        b"named := type (parse = ( tape[0] = tape.spelling[0], tape.is_constructed[0] = true ))\n\
           f := fn () -> void ( named )\n5\n",
     );
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
@@ -340,7 +343,7 @@ fn a_record_carries_its_spelling() {
     // A postfix `sp` that makes its cell the name of the identity on its
     // left, in a body nothing runs (a string has no storage to read yet).
     let (echoes, stderr) = repl(
-        b"sp := type (parse = ( tape[0] = tape[-1]:name, tape.remove(-1) ))\n\
+        b"sp := type (parse = ( tape[0] = tape[-1]:name, tape.is_constructed[0] = true, tape.remove(-1) ))\n\
           x := 1\nf := fn () -> void ( x sp )\n5\n",
     );
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
@@ -357,12 +360,29 @@ fn a_slot_body_is_read_bare() {
     // hidden name is declared as a parameter is, so an outer `tape` the body
     // could still mean is the shadowing error, as it was for the wrapper.
     let (echoes, stderr) = repl(
-        b"sp := type (parse = ( tape[0] = tape[-1]:name, tape.remove(-1) ))\n\
+        b"sp := type (parse = ( tape[0] = tape[-1]:name, tape.is_constructed[0] = true, tape.remove(-1) ))\n\
           x := 1\nf := fn () -> void ( x sp )\n5\n",
     );
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
     let (_echoes, stderr) = repl(b"tape := 1\nsp := type (parse = ( tape.recenter(0) ))\n");
     assert!(stderr.contains("shadowed"), "stderr: {stderr}");
+    // `this` (#133 slice 6; DESIGN, 18 September 2026: "`this` in `parse` is
+    // a fresh node of the type being defined … the constructor fills it by
+    // name, `this.lhs = tape[-1]`, and places it with the tape's ordinary
+    // write, `tape[0] = this`"; 19 September 2026: "followed by
+    // `tape.is_constructed[0] = true`"): the node's fields are the instance
+    // block's, in order, and the run's parameters read them in that order.
+    // `this` is a name only a parse body knows: outside one it is out of
+    // scope, as any name declared in a closed scope is.
+    let (echoes, stderr) = repl(
+        b"minus := type (instance = (a := ?, b := ?, shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( a - b )), \
+          parse_rank = +.parse_rank, associativity = left, \
+          parse = ( this.a = tape[-1], this.b = tape[1], tape[0] = this, tape.is_constructed[0] = true, \
+          tape.remove(1), tape.remove(-1) ))\n\
+          7 minus 2\n10 minus 2 minus 3\nf := fn (x := i32 ?) -> i32 ( x minus 1 )\nf.compile()\nf(9)\nthis\n",
+    );
+    assert_eq!(echoes, ["5", "5", "8"], "stderr: {stderr}");
+    assert!(stderr.contains("`this` is not in scope"), "stderr: {stderr}");
     // A `run` body is a body over `this`, whose fields' types no definition
     // knows (DESIGN ›Deferral is authored‹, 20 September 2026: "the body is
     // held as its lexed tape … and constructed once per field-type set when
@@ -414,6 +434,14 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"t := type (instance = (shared parse = ( tape.recenter(0) )))\n", "other slots"),
         (b"t := type (instance = (shared instance = (a := i32 ?)))\n", "other slots"),
         (b"t := type (instance = (shared drop = 5))\n", "`drop` slot"),
+        // `this.f` reaches a field the instance block above declared, and
+        // nothing else (20 September 2026: the block comes first).
+        (b"t := type (parse = ( this.a = tape[-1] ))\n", "declares none"),
+        (b"t := type (instance = (a := ?), parse = ( this.b = tape[-1] ))\n", "no field `b`"),
+        (
+            b"t := type (instance = (a := ?), parse = ( tape.is_constructed[0] = 5 ))\n",
+            "takes a bool",
+        ),
         // One block, one no-shadowing rule (19 September 2026): a field and a
         // `shared` member may not share a name, in either order; and `shared`
         // is the mark, never a field's name.
@@ -1152,10 +1180,10 @@ fn only_a_marked_place_is_written_or_addressed() {
     // storage as an assignment target, the same as an `&` operand, and an
     // application of a code-carrying type — whose "address" was a pointer into
     // the graph that faulted on the first read.
-    let pw = "pw := type ( parse_rank = *.parse_rank + 1, associativity = right, \
-              parse = ( tape[0]:dyad.type = pw, \
-              tape[0]:dyad.value.operands.append(tape[-1] and tape[1]), tape.remove(1), tape.remove(-1) ), \
-              instance = ( shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( a * b ) ) )";
+    let pw = "pw := type ( instance = ( a := ?, b := ?, shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( a * b ) ), \
+              parse_rank = *.parse_rank + 1, associativity = right, \
+              parse = ( this.a = tape[-1], this.b = tape[1], tape[0] = this, \
+              tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
     for (src, expect) in [
         ("i32 5 = 3\n", "not an assignable place"),
         // The first refusal a newcomer meets: `a := 5` binds the number, not
@@ -1432,23 +1460,41 @@ fn a_pointer_parameter_takes_a_pointer_of_the_same_type_however_spelled() {
 #[test]
 fn a_constructors_outcome_is_read_off_its_own_cell() {
     // #81; DESIGN ›The scope's constructor is the driver‹: "A constructor's
-    // outcome is read off its cell — constructed, or declined (the frontier
-    // untouched, the identity standing as its own value) … There is no
-    // holding and no re-invocation." A constructor that only moves the
-    // center — onto the next cell, the previous, or off the tape — has
-    // declined: the driver judges its own cell by handle and puts the
-    // center back, where it used to find the same cell again forever.
+    // outcome is read off its cell … There is no holding and no
+    // re-invocation." The driver judges its own cell by handle and puts the
+    // center back, wherever a constructor moved it — onto the next cell, the
+    // previous, or off the tape — so it never finds the same cell again
+    // forever. What it reads there is the flag (›Execution is function
+    // application‹, ruled 19 September 2026): "flag true, done; flag false
+    // and the cell holds another identity than the one whose `parse` ran,
+    // that identity's turn; flag false and the same identity, the checked
+    // error, a constructor that neither finished nor handed on" — and "a
+    // constructor that finds nothing to consume sets its flag and stands as
+    // itself".
     let (echoes, stderr) = repl(
-        b"r1 := type (parse = ( tape.recenter(1) ))\n\
-          r2 := type (parse = ( tape.recenter(-1) ))\n\
-          r3 := type (parse = ( tape.recenter(99) ))\n\
+        b"r1 := type (parse = ( tape.is_constructed[0] = true, tape.recenter(1) ))\n\
+          r2 := type (parse = ( tape.is_constructed[0] = true, tape.recenter(-1) ))\n\
+          r3 := type (parse = ( tape.is_constructed[0] = true, tape.recenter(99) ))\n\
           a := r1\nb := r2\nc := r3\na:dyad.type == type\nb:dyad.type == type\nc:dyad.type == type\n",
     );
     assert_eq!(echoes, ["true", "true", "true"], "stderr: {stderr}");
+    // Only moving the center, or writing a value into the cell without the
+    // flag, is the stall: the same identity still there, unfinished.
+    for src in [
+        &b"r4 := type (parse = ( tape.recenter(1) ))\nx := r4\n"[..],
+        b"r5 := type (parse = ( tape[0] = tape.spelling[0] ))\nf := fn () -> void ( r5 )\n",
+    ] {
+        let (_echoes, stderr) = repl(src);
+        assert!(
+            stderr.contains("left its own cell unconstructed"),
+            "{}: stderr: {stderr}",
+            String::from_utf8_lossy(src)
+        );
+    }
     // "what it built it leaves at the cursor (a dyad, or another token)": a
-    // cell rewritten to a use of another name is that name's, and the
-    // driver constructs it as its own — `as_i32` becomes `i32`, so
-    // `as_i32 5` is `i32 5`.
+    // cell handed on to another identity, the flag left false, is that
+    // identity's turn, and the driver constructs it as its own — `as_i32`
+    // becomes `i32`, so `as_i32 5` is `i32 5`.
     let (echoes, stderr) = repl(
         b"as_i32 := type (parse = ( tape[0] = i32 ))\n\
           x := as_i32 5\nx + 1\n",

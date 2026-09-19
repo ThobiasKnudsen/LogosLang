@@ -95,7 +95,8 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::CellLeftUnconstructed(name) => format!(
             "the constructor of `{name}` edited the tape but left its own cell unconstructed: \
-             construct it (`tape[0] = …`), remove it, or leave the tape untouched to decline"
+             place what it built and set `tape.is_constructed[0] = true`, hand the cell to \
+             another identity, remove it, or set the flag on the untouched cell to stand as itself"
         ),
         ParseError::BadPattern(why) => format!("this pattern does not compile: {why}"),
         ParseError::ImportInRuntimeBody => {
@@ -178,6 +179,15 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::BadRunSlot => {
             "`run` is a bare body, `shared run = (…)`, or until #133 slice 9 a function".into()
+        }
+        ParseError::ThisNeedsInstanceBlock => {
+            "`this.f` reads a field of the node being built, and this type declares none: write the `instance = (…)` block above the body".into()
+        }
+        ParseError::ThisFieldUnknown(name) => {
+            format!("`this.{name}`: no field `{name}` is declared in the `instance = (…)` block above")
+        }
+        ParseError::FlagTakesBool => {
+            "`tape.is_constructed[k] = …` takes a bool, `true` or `false`".into()
         }
         ParseError::RunBodyHeld => {
             "this type's `run` is held as its lexed body; a node that constructs and runs it is not in the seed yet (#133 slice 8)".into()

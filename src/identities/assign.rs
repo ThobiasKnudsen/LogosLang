@@ -128,13 +128,22 @@ pub(super) fn build(
     // the reading rule.
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let (lhs_d, rhs_d) = unsafe { (types.through(lhs), types.through(rhs)) };
-    // `t[k] = cell`: a tape slot as the target (#60); `t[k]:dyad.type = T`:
-    // the cell's type as the target, the retype (#61).
+    // `t[k] = cell`: a tape slot as the target (#60), the pointer replaced and
+    // nothing more; `t.is_constructed[k] = flag`: the flag, the constructor's
+    // own word (19 September 2026); `this.f = v`: a field of the node being
+    // built, the operand's graph (#133 slice 6).
     if unsafe { (*lhs_d).ty } == types.tape.slot {
         return Ok(unsafe { super::tape::build_write(store, types, lhs_d, rhs) });
     }
-    if unsafe { (*lhs_d).ty } == types.tape.cell_type {
-        return Ok(unsafe { super::tape::build_retype(store, types, lhs_d, rhs) });
+    if unsafe { (*lhs_d).ty } == types.tape.is_constructed {
+        // SAFETY: `rhs` is a reduced dyad from the store.
+        if !unsafe { crate::parse::is_bool_result(types, rhs) } {
+            return Err(ParseError::FlagTakesBool);
+        }
+        return Ok(unsafe { super::tape::build_flag_write(store, types, lhs_d, rhs) });
+    }
+    if unsafe { (*lhs_d).ty } == types.this.slot {
+        return Ok(unsafe { super::this::build_write(store, types, lhs_d, rhs) });
     }
     if unsafe { (*lhs_d).ty } == types.deref_ {
         return unsafe { super::pointer::build_storeptr(store, types, lhs_d, rhs) };

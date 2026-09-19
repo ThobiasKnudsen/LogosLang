@@ -149,22 +149,28 @@ This is what the first public preview is built to show. An operator is a type wi
 
 ```logos
 ^ := type (
-    parse_rank = *.parse_rank + 1,       # binds tighter than *
+    instance = (
+        lhs := ?,                            # the operands: one field per cell consumed
+        rhs := ?,
+        shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( ? )  # the power computation
+    ),
+    parse_rank = *.parse_rank + 1,           # binds tighter than *
     associativity = right,
-    parse = fn (tape := parsing_tape ?) -> void (
-        tape[0]:dyad.type = ^,                                  # the ^ node, its operand record empty
-        tape[0]:dyad.value.operands.append(tape[-1] and tape[1]),
+    parse = (                                # runs at every appearance of ^
+        this.lhs = tape[-1],                 # this: the fresh ^ node, filled by name
+        this.rhs = tape[1],
+        tape[0] = this,                      # placed in its own cell
+        tape.is_constructed[0] = true,       # and marked done, by the constructor itself
         tape.remove(1),
         tape.remove(-1)
-    ),
-    code = fn (a := i32 ?, b := i32 ?) -> i32 ( ? )            # the power computation
+    )
 ),
 f := fn (x := i32 ?) -> i32 ( x ^ 3 + 1 ),
 f.compile(),
 f(2)
 ```
 
-The parser hands every constructor the *parsing tape*, the cells around it: `tape[0]` is its own cell, negative offsets are to its left, positive to its right, and it may read, write, insert, and remove, and read the text a cell was lexed from, `tape.spelling[k]`. Text is the quote: `lex «…»` is the lexer as an identity, handing back the text's cells unconstructed as a tape fragment, and `tape.insert(k, lex «* 2»)` splices them in with their spellings, so a constructor can write code as text and let the driver construct it. Assigning a cell's type makes a fresh node of that type with an empty operand record, which the constructor then fills. Precedence is one number per identity, so a new operator slots between any two existing ones by writing its number relative to theirs. `fn` is the shorthand for a type whose parse_rank, associativity, and constructor are the defaults of a call. Everything above runs today except the `code` slot: an operator that is its own operation is the next step, and until it lands a constructor builds a call of an ordinary function, as `tests/fixtures/squared.logos` does.
+The parser hands every constructor the *parsing tape*, the cells around it: `tape[0]` is its own cell, negative offsets are to its left, positive to its right, and it may read, write, insert, and remove, and read the text a cell was lexed from, `tape.spelling[k]`. Text is the quote: `lex «…»` is the lexer as an identity, handing back the text's cells unconstructed as a tape fragment, and `tape.insert(k, lex «* 2»)` splices them in with their spellings, so a constructor can write code as text and let the driver construct it. `this` is the fresh node the constructor builds, its fields the instance block's; a write into a cell replaces the pointer and nothing more, and the constructor says when its cell is done with `tape.is_constructed[0] = true`. Precedence is one number per identity, so a new operator slots between any two existing ones by writing its number relative to theirs. `fn` is the shorthand for a type whose parse_rank, associativity, and constructor are the defaults of a call. Everything above runs today with `run` wrapped in `fn` as shown; the bare `shared run = (…)` body over the fields is the next step (issue #133).
 
 ## What runs today, and what does not
 

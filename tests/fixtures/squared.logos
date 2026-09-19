@@ -1,30 +1,35 @@
 # A postfix operator defined in Logos and used in the same file (issue #61;
 # DESIGN ›The constructor is a field‹: an appearance of `squared` runs its
-# constructor, written here, during the parse). Its constructor retypes its
-# own cell into a call of `sq` and takes the cell to its left as the
-# operand; its parse_rank sits one above `*`'s, so `2 * x squared` squares
-# first. A `run` slot (#63) would make `squared` its own operation; this
-# file keeps the other shape a constructor may build, a call of a function.
-# `parse = (…)` is a bare body over the tape, `tape` a word inside it (#133
-# slice 5).
+# constructor, written here, during the parse). Its constructor takes the
+# cell to its left as the operand — `this.a = tape[-1]`, the fresh `squared`
+# node filled by field name, placed with `tape[0] = this` and marked done
+# by the constructor itself (#133 slice 6) — and its parse_rank sits one
+# above `*`'s, so `2 * x squared` squares first. Its `run` calls an ordinary
+# function, `sq`, so a node of `squared` is the other shape a constructor
+# may build: an operation that is a call.
 sq := fn (a := i32 ?) -> i32 ( a * a ),
 squared := type (
+    instance = ( a := ?, shared run = fn (a := i32 ?) -> i32 ( sq(a) ) ),
     parse_rank = *.parse_rank + 1,
     associativity = left,
     parse = (
-        tape[0]:dyad.type = sq,
-        tape[0]:dyad.value.operands.append(tape[-1]),
+        this.a = tape[-1],
+        tape[0] = this,
+        tape.is_constructed[0] = true,
         tape.remove(-1)
     )
 ),
-# A binary one: the and-group appends both operands.
+# A binary one: both cells, by name.
 add := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ),
 plus2 := type (
+    instance = ( a := ?, b := ?, shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( add(a, b) ) ),
     parse_rank = +.parse_rank,
     associativity = left,
     parse = (
-        tape[0]:dyad.type = add,
-        tape[0]:dyad.value.operands.append(tape[-1] and tape[1]),
+        this.a = tape[-1],
+        this.b = tape[1],
+        tape[0] = this,
+        tape.is_constructed[0] = true,
         tape.remove(1),
         tape.remove(-1)
     )

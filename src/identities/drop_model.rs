@@ -952,15 +952,17 @@ mod tests {
         // the `^` — and so is a constructor-less type's applied form `sq(3)`.
         const POW: &str = "n := i32 2,\n\
             ^ := type (\n\
+                instance = ( a := ?, b := ?, shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( a * b * n ) ),\n\
                 parse_rank = *.parse_rank + 1,\n\
                 associativity = right,\n\
                 parse = (\n\
-                    tape[0]:dyad.type = ^,\n\
-                    tape[0]:dyad.value.operands.append(tape[-1] and tape[1]),\n\
+                    this.a = tape[-1],\n\
+                    this.b = tape[1],\n\
+                    tape[0] = this,\n\
+                    tape.is_constructed[0] = true,\n\
                     tape.remove(1),\n\
                     tape.remove(-1)\n\
-                ),\n\
-                instance = ( shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( a * b * n ) )\n\
+                )\n\
             ),\n";
         let (v, live) = run(&format!("{POW}2 ^ 3"));
         assert_eq!(v, 12);

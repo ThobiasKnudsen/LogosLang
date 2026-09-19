@@ -17,10 +17,11 @@
 # instance block's slots are predeclared: every instance block starts with the
 # slots type's own declares, unfilled, and the type fills them with `=`, so
 # the two halves use one form and no line names a slot type. The seed reads
-# `parse = (…)` bare and holds `shared run = (…)` as its lexed body (#133
-# slice 5); `this`, the explicit flag, the index-less `for`, and the run's
-# construction per field-type set (#133 slices 6 to 8) are still to come, so
-# `logos import ./identities/power.logos` stops at the first `this`.
+# `parse = (…)` bare with `this` and the explicit flag, and holds `shared run
+# = (…)` as its lexed body (#133 slices 5 and 6); the index-less `for` and
+# the run's construction per field-type set (#133 slices 7 and 8) are still
+# to come, so `logos import ./identities/power.logos` builds the `^` node
+# and stops where `+` meets it, its run not yet constructed.
 # The instance block comes first in every type body (ruled 20 September 2026): a body's this.f names a field declared above it.
 ^ := type (
     instance = (

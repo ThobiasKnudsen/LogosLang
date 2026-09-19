@@ -14,10 +14,13 @@
 //! them behind the one handle, its cells and flags being the list's own).
 //! An instance is a cheap view: copying it copies the handle, sharing the
 //! cells. The affordances are natives bound to the type — `t[k]` the element
-//! read, a place `=` may write (`t[0] = dyad (…)` replaces the cell's pointer
-//! and marks it constructed), `t.is_constructed[k]` the flag (its spelling
-//! ruled 9 September 2026: the flag is the tape's own list, so the read is
-//! that list's element), `t.spelling[k]` the text the cell was lexed from
+//! read, a place `=` may write (`t[0] = this` replaces the cell's pointer and
+//! nothing more), `t.is_constructed[k]` the flag (its spelling ruled 9
+//! September 2026: the flag is the tape's own list, so the read is that
+//! list's element; a place `=` may write since 19 September 2026: "the
+//! constructor sets the flag itself, `tape.is_constructed[0] = true`, when
+//! it has constructed something, and no write to `tape[k]` ever sets it"),
+//! `t.spelling[k]` the text the cell was lexed from
 //! (ruled 14 September 2026 by the flag's own reason: the tape's second
 //! list, parallel to the cells; #121), `t.insert(k, cells)` — "`insert`
 //! splices a tape into a tape" (›Text is the quote‹, 14 September 2026),
@@ -26,8 +29,8 @@
 //! A member call passes its receiver as an address expression, the seed's
 //! form of a member declared in the instance scope reading the instance's
 //! fields bare (›The constructor is a field‹). The cell a write hands in
-//! travels as an `@dyad` address value: a record for a use of a name (the
-//! cell stays unconstructed), a node otherwise (constructed). The natives
+//! travels as an `@dyad` address value: a record for a use of a name, a node
+//! otherwise; the flag is the constructor's to set. The natives
 //! run interpreted; a `tape[k]` read past the lexed frontier at run time is
 //! the checked error — the lexer is in the runtime for `lex` (#62), but
 //! lexing the driver's own source from inside a constructor would re-enter
@@ -36,7 +39,7 @@
 use super::callable::{self, Callables};
 use super::{meta, numtype_of, Cx, Operand};
 use crate::dyad::DyadPtr;
-use crate::parse::{Cell, CoreTypes, ParseError, ParsingTape};
+use crate::parse::{CoreTypes, ParseError, ParsingTape};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -50,6 +53,10 @@ pub struct TapeIds {
     pub write_leaf: DyadPtr,
     pub is_constructed: DyadPtr,
     pub is_constructed_leaf: DyadPtr,
+    /// `t.is_constructed[k] = flag`: the write behind the flag read (#133
+    /// slice 6).
+    pub flag_write: DyadPtr,
+    pub flag_write_leaf: DyadPtr,
     /// `t.spelling[k]`: the text the cell was lexed from, as a string node
     /// (#121).
     pub spelling: DyadPtr,
@@ -68,22 +75,9 @@ pub struct TapeIds {
     /// node (#120).
     pub slot_name: DyadPtr,
     pub slot_name_leaf: DyadPtr,
-    /// `t[k]:dyad.type`: the cell's type, read; as `=`'s target, the retype.
+    /// `t[k]:dyad.type`: the cell's type, read.
     pub cell_type: DyadPtr,
     pub cell_type_leaf: DyadPtr,
-    /// `t[k]:dyad.value` and `.value.operands`: the steps of the path to the
-    /// cell's operand record, markers the next read consumes; standing alone
-    /// they run to nothing.
-    pub cell_value: DyadPtr,
-    pub cell_operands: DyadPtr,
-    /// `t[k]:dyad.type = T`: a fresh cell of type `T` with an empty operand
-    /// record, written into the slot.
-    pub retype: DyadPtr,
-    pub retype_leaf: DyadPtr,
-    /// `t[k]:dyad.value.operands.append(…)`: the operand record grown by the
-    /// cells appended.
-    pub append: DyadPtr,
-    pub append_leaf: DyadPtr,
 }
 
 /// Register `parsing_tape` and its natives. The members are declared in the
@@ -128,6 +122,7 @@ pub(super) fn register(
     let (slot, slot_leaf) = op(cx, &["tape", "k", "op"], run_slot);
     let (write, write_leaf) = op(cx, &["tape", "k", "cell", "op"], run_write);
     let (is_constructed, is_constructed_leaf) = op(cx, &["tape", "k", "op"], run_is_constructed);
+    let (flag_write, flag_write_leaf) = op(cx, &["tape", "k", "flag", "op"], run_flag_write);
     let (spelling, spelling_leaf) = op(cx, &["tape", "k", "op"], run_spelling);
     let (insert, insert_leaf) = op(cx, &["tape", "k", "cells", "op"], run_insert);
     let (remove, remove_leaf) = op(cx, &["tape", "k", "op"], run_remove);
@@ -135,31 +130,6 @@ pub(super) fn register(
     let (slot_dyad, slot_dyad_leaf) = op(cx, &["tape", "k", "op"], run_slot_dyad);
     let (slot_name, slot_name_leaf) = op(cx, &["tape", "k", "op"], run_slot_name);
     let (cell_type, cell_type_leaf) = op(cx, &["tape", "k", "op"], run_cell_type);
-    let (retype, retype_leaf) = op(cx, &["tape", "k", "type", "op"], run_retype);
-    // The path markers carry the slot and run to nothing: no leaf.
-    let marker = |cx: &mut Cx| {
-        let record = meta::operand_record(
-            cx,
-            meta::TUPLE_TAG,
-            meta::prec::INERT,
-            crate::parse::Assoc::Left,
-            &["tape", "k", "op"],
-        );
-        cx.store.alloc_raw(cx.type_, record)
-    };
-    let cell_value = marker(cx);
-    let cell_operands = marker(cx);
-    // `append` is variadic: `[tape, k, op, cell…, null]`, the op slot fixed
-    // at 2 and the cells the list's tail.
-    let record = meta::operand_record(
-        cx,
-        meta::LIST_TAG,
-        meta::prec::INERT,
-        crate::parse::Assoc::Left,
-        &["tape", "k", "op"],
-    );
-    let append = cx.store.alloc_raw(cx.type_, record);
-    let append_leaf = callable::mint_native(cx.store, cs.callable, run_append, cs.seed_native);
     for (name, id) in [
         ("is_constructed", is_constructed),
         ("spelling", spelling),
@@ -177,6 +147,8 @@ pub(super) fn register(
         write_leaf,
         is_constructed,
         is_constructed_leaf,
+        flag_write,
+        flag_write_leaf,
         spelling,
         spelling_leaf,
         insert,
@@ -191,12 +163,6 @@ pub(super) fn register(
         slot_name_leaf,
         cell_type,
         cell_type_leaf,
-        cell_value,
-        cell_operands,
-        retype,
-        retype_leaf,
-        append,
-        append_leaf,
     }
 }
 
@@ -255,11 +221,19 @@ pub(crate) fn build_slot(
 }
 
 /// A cell handed to a native: a value that already yields a cell's address
-/// (a slot read, a cell read through it) passes as it stands; any other node
-/// is handed *by identity*, its own address as an `@dyad` value.
+/// (a slot read, a cell read through it, a `dyad ?` place holding a node —
+/// `this` in a parse body) passes as it stands; any other node is handed *by
+/// identity*, its own address as an `@dyad` value.
 fn cell_arg(store: &mut Store, types: &CoreTypes, cell: DyadPtr) -> DyadPtr {
     // SAFETY: `cell` is a reduced dyad from the store.
-    if matches!(unsafe { numtype_of(types, cell) }, Operand::Pointer(p) if p == types.dyad_) {
+    let yields_node = unsafe {
+        matches!(numtype_of(types, cell), Operand::Pointer(p) if p == types.dyad_)
+            || matches!(
+                super::read::read_kind(types, types.through(cell)),
+                super::read::Read::Container(t) if t == types.dyad_
+            )
+    };
+    if yields_node {
         cell
     } else {
         super::pointer::address_value(store, types, types.dyad_, cell)
@@ -330,56 +304,21 @@ pub(crate) unsafe fn build_cell_type(
     node(store, types.tape.cell_type, types.tape.cell_type_leaf, &[recv, k])
 }
 
-/// `t[k]:dyad.value` or `.value.operands`: a step of the path, carrying the
-/// slot for the read that completes it.
+/// `t.is_constructed[k] = flag`: the write behind a flag-read target
+/// (DESIGN ›Execution is function application‹, 19 September 2026: "the
+/// constructor sets the flag itself, `tape.is_constructed[0] = true`, when it
+/// has constructed something"). `flag` is a bool, checked by `=`.
 ///
 /// # Safety
-/// `over` must be a node from [`build_slot_dyad`] or this builder.
-pub(crate) unsafe fn build_cell_marker(
-    store: &mut Store,
-    marker: DyadPtr,
-    over: DyadPtr,
-) -> DyadPtr {
-    let (recv, k) = slot_parts(over);
-    node(store, marker, std::ptr::null_mut(), &[recv, k])
-}
-
-/// `t[k]:dyad.type = T`: the retype behind a cell-type target. `T` is
-/// stored as it stands — a use of a name is its record — and read through at
-/// run, so a type named inside its own definition body resolves to the
-/// finished type when the constructor runs.
-///
-/// # Safety
-/// `cell_type` must be a node from [`build_cell_type`].
-pub(crate) unsafe fn build_retype(
+/// `flag_read` must be a node [`build_member`] built for `is_constructed`.
+pub(crate) unsafe fn build_flag_write(
     store: &mut Store,
     types: &CoreTypes,
-    cell_type: DyadPtr,
-    ty: DyadPtr,
+    flag_read: DyadPtr,
+    flag: DyadPtr,
 ) -> DyadPtr {
-    let (recv, k) = slot_parts(cell_type);
-    node(store, types.tape.retype, types.tape.retype_leaf, &[recv, k, ty])
-}
-
-/// `t[k]:dyad.value.operands.append(cell, …)`: `[tape, k, op, cell…, null]`.
-///
-/// # Safety
-/// `cell_operands` must be a node from [`build_cell_marker`]; `items` reduced
-/// dyads from the store.
-pub(crate) unsafe fn build_append(
-    store: &mut Store,
-    types: &CoreTypes,
-    cell_operands: DyadPtr,
-    items: &[DyadPtr],
-) -> DyadPtr {
-    let (recv, k) = slot_parts(cell_operands);
-    let mut v = vec![recv, k, types.tape.append_leaf];
-    for &item in items {
-        v.push(cell_arg(store, types, item));
-    }
-    v.push(std::ptr::null_mut());
-    let value = store.alloc_operands(&v);
-    store.alloc_raw(types.tape.append, value)
+    let (recv, k) = slot_parts(flag_read);
+    node(store, types.tape.flag_write, types.tape.flag_write_leaf, &[recv, k, flag])
 }
 
 /// A member call or indexed member read on a tape: `t.remove(k)`,
@@ -433,16 +372,6 @@ unsafe fn tape_of(rt: &mut Runtime, recv: DyadPtr) -> Result<*mut ParsingTape, R
     Ok(tape)
 }
 
-/// A cell handed in as an address value: a record stays unconstructed (a
-/// use of a name), a node is constructed.
-unsafe fn cell_of(rt: &Runtime, dyad: DyadPtr) -> Cell {
-    if !dyad.is_null() && (*dyad).ty != rt.record_ty() {
-        Cell::built(dyad)
-    } else {
-        Cell::unlexed(dyad)
-    }
-}
-
 fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     unsafe {
         let ops = (*node).value as *const DyadPtr;
@@ -457,14 +386,31 @@ fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
+/// `t[k] = cell`: the pointer replaced and nothing more (DESIGN, 19
+/// September 2026: "the write replaces the pointer and nothing more … no
+/// write to `tape[k]` ever sets it"); the flag is the constructor's line.
 fn run_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         let tape = tape_of(rt, *ops)?;
         let k = rt.run(*ops.add(1))? as isize;
         let dyad = rt.run(*ops.add(2))? as DyadPtr;
-        let cell = cell_of(rt, dyad);
-        if !(*tape).write(k, cell) {
+        if !(*tape).set_dyad(k, dyad) {
+            return Err(RunError::BadValue);
+        }
+        Ok(0)
+    }
+}
+
+/// `t.is_constructed[k] = flag`: the flag set or cleared by the constructor
+/// (19 September 2026). Off the tape it is the checked error, as the read is.
+fn run_flag_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    unsafe {
+        let ops = (*node).value as *const DyadPtr;
+        let tape = tape_of(rt, *ops)?;
+        let k = rt.run(*ops.add(1))? as isize;
+        let flag = rt.run(*ops.add(2))? != 0;
+        if !(*tape).set_constructed(k, flag) {
             return Err(RunError::BadValue);
         }
         Ok(0)
@@ -603,66 +549,5 @@ fn run_cell_type(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             Some((_, _, cell)) => Ok((*cell).ty as i64),
             None => Err(RunError::BadValue),
         }
-    }
-}
-
-/// `t[k]:dyad.type = T` (ruled 9 September 2026: "when assigning the type of
-/// a dyad the value should be automatically initialized so that .operands is
-/// valid and available"): a fresh cell of type `T` whose value is an empty
-/// operand record — the null-terminated run a call's arguments travel in,
-/// the shape a `code`-carrying type runs as (#63) — replaces what the slot
-/// held, constructed. A write through the identity the slot pointed at would
-/// reclassify it for the whole program (DESIGN ›The scope's constructor is
-/// the driver‹), so the cell is new.
-fn run_retype(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    unsafe {
-        let ops = (*node).value as *const DyadPtr;
-        let tape = tape_of(rt, *ops)?;
-        let k = rt.run(*ops.add(1))? as isize;
-        let ty = rt.through(*ops.add(2));
-        let store = rt.store()?;
-        let run = store.alloc_operands(&[std::ptr::null_mut()]);
-        let cell = store.alloc_raw(ty, run);
-        if !(*tape).write(k, Cell::built(cell)) {
-            return Err(RunError::BadValue);
-        }
-        Ok(cell as i64)
-    }
-}
-
-/// `t[k]:dyad.value.operands.append(cell, …)`: the constructed cell's operand
-/// run, grown by the cells given — each as it stands, the record for a use
-/// of a name (DESIGN ›The dyad's read surface‹: a use points at its record).
-/// The run is reallocated whole; the old one stays in the store, as every
-/// superseded node does.
-fn run_append(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    unsafe {
-        let ops = (*node).value as *const DyadPtr;
-        let tape = tape_of(rt, *ops)?;
-        let k = rt.run(*ops.add(1))? as isize;
-        let Some(c) = (*tape).at(k).copied() else {
-            return Err(RunError::BadValue);
-        };
-        if !c.constructed {
-            return Err(RunError::BadValue);
-        }
-        let cell = c.dyad;
-        let mut run = Vec::new();
-        let old = (*cell).value as *const DyadPtr;
-        if !old.is_null() {
-            let mut i = 0;
-            while !(*old.add(i)).is_null() {
-                run.push(*old.add(i));
-                i += 1;
-            }
-        }
-        let mut i = 3;
-        while !(*ops.add(i)).is_null() {
-            run.push(rt.run(*ops.add(i))? as DyadPtr);
-            i += 1;
-        }
-        run.push(std::ptr::null_mut());
-        (*cell).value = rt.store()?.alloc_operands(&run);
-        Ok(0)
     }
 }
