@@ -174,9 +174,14 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::BadAssociativity => "associativity is `left` or `right`".into(),
         ParseError::BadConstructorSignature => {
-            "`parse` is `fn (tape := parsing_tape ?) -> void (…)`".into()
+            "`parse` is a bare body over the tape, `parse = (…)`, or until #133 slice 9 the function `fn (tape := parsing_tape ?) -> void (…)`".into()
         }
-        ParseError::BadRunSlot => "`run` must be a function (a bare body waits on #133)".into(),
+        ParseError::BadRunSlot => {
+            "`run` is a bare body, `shared run = (…)`, or until #133 slice 9 a function".into()
+        }
+        ParseError::RunBodyHeld => {
+            "this type's `run` is held as its lexed body; a node that constructs and runs it is not in the seed yet (#133 slice 8)".into()
+        }
         ParseError::SlotOutsideDefinition => {
             "a slot word (`parse_rank`, `associativity`, `parse`, `run`, `drop`, `instance`) stands left of `=` only inside a type body".into()
         }

@@ -963,7 +963,7 @@ mod tests {
             ^ := type (\n\
                 parse_rank = *.parse_rank + 1,\n\
                 associativity = right,\n\
-                parse = fn (tape := parsing_tape ?) -> void (\n\
+                parse = (\n\
                     tape[0]:dyad.type = ^,\n\
                     tape[0]:dyad.value.operands.append(tape[-1] and tape[1]),\n\
                     tape.remove(1),\n\

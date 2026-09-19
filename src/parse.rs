@@ -1119,6 +1119,8 @@ pub struct CoreTypes {
     pub record_: DyadPtr,
     /// `:`: the record read (#70).
     pub colon_: DyadPtr,
+    /// `void`, the unit type: what a `parse` body yields, `-> void`.
+    pub void_: DyadPtr,
     /// `parsing_tape` and the tape's natives (#60).
     pub tape: crate::identities::tape::TapeIds,
     /// `index`: the passive node a `[i]` cell carries — its interior, one
@@ -1188,6 +1190,8 @@ pub struct CoreTypes {
     pub open_: DyadPtr,
     /// `)` — the closing paren token.
     pub close_: DyadPtr,
+    /// `[` — the opening square bracket.
+    pub open_sq_: DyadPtr,
     /// `]` — the closing square bracket.
     pub close_sq_: DyadPtr,
     /// `,` — the one explicit separator.
@@ -1366,9 +1370,15 @@ struct OpenType {
     lex_rank: Option<f64>,
     assoc: Assoc,
     ctor: DyadPtr,
-    /// Set by a `shared run = …` line in the instance block: the fn an
-    /// instance of the type runs as (#63; #133 slice 4).
+    /// Set by a `shared run = fn …` line in the instance block: the fn an
+    /// instance of the type runs as (#63; #133 slice 4) — the 4 September
+    /// shape, kept until the bare body runs (#133 slice 9).
     run: DyadPtr,
+    /// Set by a `shared run = (…)` line in the instance block: the body held
+    /// as its lexed text, the `lex` node [`Parser::slot_body_fill`] built
+    /// (#133 slice 5), installed on the type for the construction per
+    /// field-type set (#133 slice 8).
+    run_body: DyadPtr,
     instance: Option<(DyadPtr, DyadPtr, u64)>,
     /// True while a `shared` line of the instance block is being parsed
     /// ([`Parser::shared_member`]): a slot fill there is the instances' slot,
@@ -1512,6 +1522,10 @@ pub enum ParseError {
     LexRankNeedsName,
     /// `code = …` with a value that is not a function (#63).
     BadRunSlot,
+    /// A type whose `run` is a held body applied to arguments: nothing
+    /// constructs that body into a node yet (#133 slice 8), so the call
+    /// would be a record instance that silently never runs.
+    RunBodyHeld,
     /// An operator lacked a reduced operand on one side.
     MissingOperand,
     /// The tape did not reduce to a single dyad (a dangling operator or operand).
@@ -1997,6 +2011,21 @@ struct OpenFn {
     /// (#125), filled by [`Parser::note_outer_read`] as the body's parse
     /// resolves them.
     outer: Vec<DyadPtr>,
+}
+
+/// The bytes a field of `logos` packs at in a record's layout and claims in a
+/// frame: a scalar at its own width, anything else — a bare or type-valued
+/// name, a record, the parsing tape — the 8-byte container the call
+/// convention passes ([`Parser::parse_field_list`], [`Parser::fn_over_body`]).
+///
+/// # Safety
+/// `logos` must be null or a type node from the store.
+unsafe fn field_width(logos: DyadPtr) -> u64 {
+    if crate::identities::numtype::is_scalar_type(logos) {
+        crate::identities::numtype::of_type_node(logos).bytes() as u64
+    } else {
+        8
+    }
 }
 
 impl<'a> Parser<'a> {
@@ -3027,18 +3056,9 @@ impl<'a> Parser<'a> {
         // logos's width and anything else (a bare or logos-valued name, only
         // meaningful for parameter lists) as the 8-byte container — the same
         // width rule parameters claim frame offsets by.
-        let size_bytes: u64 = fields
-            .iter()
-            .map(|&f| {
-                // SAFETY: `f` is the field dyad just built.
-                let logos = unsafe { (*f).ty };
-                if unsafe { crate::identities::numtype::is_scalar_type(logos) } {
-                    unsafe { crate::identities::numtype::of_type_node(logos) }.bytes() as u64
-                } else {
-                    8
-                }
-            })
-            .sum();
+        // SAFETY: each field is the dyad just built, its type null or a type
+        // node.
+        let size_bytes: u64 = fields.iter().map(|&f| unsafe { field_width((*f).ty) }).sum();
         let fields_arr = crate::identities::array::build(self.store, self.types.array_, &fields);
         Ok((scope, fields_arr, size_bytes))
     }
@@ -3119,6 +3139,7 @@ impl<'a> Parser<'a> {
             assoc: Assoc::Left,
             ctor: std::ptr::null_mut(),
             run: std::ptr::null_mut(),
+            run_body: std::ptr::null_mut(),
             instance: None,
             in_block: false,
         });
@@ -3188,6 +3209,10 @@ impl<'a> Parser<'a> {
         if !def.run.is_null() {
             // SAFETY: as above; `def.run` is the fn node the body's fill checked.
             unsafe { crate::identities::meta::install_code(node, def.run) };
+        }
+        if !def.run_body.is_null() {
+            // SAFETY: as above; `def.run_body` is the `lex` node the fill built.
+            unsafe { crate::identities::meta::install_run_body(node, def.run_body) };
         }
         Ok(node)
     }
@@ -3399,7 +3424,9 @@ impl<'a> Parser<'a> {
             SlotKind::Instance | SlotKind::Drop => return Err(ParseError::TypeBodyLine),
             // `shared run = fn …`: the function an instance of the type runs
             // and compiles as (#63; DESIGN ›Execution is function
-            // application‹). An fn until #133 slice 5 reads a bare body.
+            // application‹) — the 4 September shape, kept beside the bare
+            // body ([`Parser::slot_body_fill`]) until that body runs (#133
+            // slice 9).
             SlotKind::Run => {
                 // SAFETY: `read` is a reduced dyad from the store.
                 if unsafe { (*read).ty } != types.fn_type {
@@ -3418,6 +3445,163 @@ impl<'a> Parser<'a> {
             name_node,
             value,
         ))
+    }
+
+    /// `parse = (…)` and `shared run = (…)`: a slot body read bare (#133
+    /// slice 5; DESIGN ›Execution is function application‹, 17 September
+    /// 2026: "`=` drives its right side … and constructs it by the left
+    /// place's type's `parse`, so `parse = ( … )` with a place of type
+    /// `parse` on the left reads the bracket as a deferred parse body, `run =
+    /// ( … )` as a deferred run body … the `fn (tape := parsing_tape ?) ->
+    /// void` wrapper a parse slot carried is gone, `tape` being a word inside
+    /// `parse` as `this` is … so a slot body has no parameter list at all").
+    /// `=` calls this in place of reading an expression when a body slot
+    /// stands on its left and a `(` on its right
+    /// ([`crate::identities::assign`]).
+    ///
+    /// `parse`: the body is read as `fn`'s is, over a hidden parameter record
+    /// declaring `tape` as the parsing tape, so the function it yields is the
+    /// one the explicit wrapper yielded and the constructor runs unchanged
+    /// ([`Parser::run_logos_ctor`]). `run`: the body is held, not read — it
+    /// is a body over `this`, whose fields' types no definition knows (DESIGN
+    /// ›Deferral is authored‹, 20 September 2026: "the body is held as its
+    /// lexed tape … and constructed once per field-type set when a node
+    /// supplies the types"), and the seed holds it as the one tape-fragment
+    /// value it has, the `lex` node over the body's text, since its `(` reads
+    /// a bracket from text. Building a node that constructs and runs it is
+    /// #133 slice 8; until then the type's `run` reads as that fragment and
+    /// applying the type is refused ([`ParseError::RunBodyHeld`]).
+    pub(crate) fn slot_body_fill(&mut self, kind: SlotKind) -> Result<DyadPtr, ParseError> {
+        let types = self.types;
+        let in_block = self.definitions.last().expect("slot_of found an open definition").in_block;
+        match kind {
+            // The instances' own parse is not in the seed (#133), as for the
+            // wrapped form.
+            SlotKind::Parse if in_block => Err(ParseError::InstanceSlotNotInSeed),
+            SlotKind::Parse => {
+                let at = self.pos;
+                let input = self.hidden_param_record("tape", types.tape.parsing_tape, at)?;
+                // SAFETY: `input` was just built, its parameter unplaced; no
+                // declaration's placeholder is being filled.
+                let f = unsafe {
+                    self.fn_over_body(types.fn_type, input, types.void_, std::ptr::null_mut())?
+                };
+                self.slot_fill(SlotKind::Parse, f)
+            }
+            // A type's own run, what runs when the type itself is used
+            // plainly, is not in the seed (#133), as for the wrapped form.
+            SlotKind::Run if !in_block => Err(ParseError::OwnRunNotInSeed),
+            SlotKind::Run => {
+                let (start, len) = self.body_text_extent()?;
+                let source = self.source;
+                let text = crate::identities::string::build_text(
+                    self.store,
+                    types.string_,
+                    &source.as_bytes()[start..start + len],
+                );
+                let body = crate::identities::lex::build(self.store, &types, text);
+                self.definitions.last_mut().expect("checked above").run_body = body;
+                // The line's item: a declare node over the slot word, as the
+                // instance block's is ([`Parser::instance_block_fill`]).
+                let name = SLOT_NAMES[SlotKind::Run as usize];
+                let name_node = crate::identities::string::build_text(
+                    self.store,
+                    types.string_,
+                    name.as_bytes(),
+                );
+                Ok(crate::identities::declare::build(
+                    self.store,
+                    types.declare_,
+                    types.ops.declare_,
+                    name_node,
+                    types.slots[SlotKind::Run as usize],
+                ))
+            }
+            _ => unreachable!("`=` reads a bare body for `parse` and `run` only"),
+        }
+    }
+
+    /// A parameter record `( name := ty ? )` no text spelled: the input of a
+    /// slot body's function, its one parameter the name the slot's type
+    /// declares into the body (`tape` for `parse`). Built as
+    /// [`Parser::parse_field_list`] builds a `fn`'s list — the name declared
+    /// in the record's own scope and checked against every open scope, since
+    /// the body reopens that scope — the field's value slot left null for
+    /// [`Parser::fn_over_body`] to place in the frame. `at` is where a
+    /// shadowing error is reported: the `=` the body stands after.
+    fn hidden_param_record(
+        &mut self,
+        name: &str,
+        ty: DyadPtr,
+        at: usize,
+    ) -> Result<DyadPtr, ParseError> {
+        let scope = self.open_scope();
+        let field = self.store.alloc_raw(ty, std::ptr::null_mut());
+        let declared = self.declare_name(name, field, at);
+        self.scopes.pop();
+        declared?;
+        let fields = crate::identities::array::build(self.store, self.types.array_, &[field]);
+        // SAFETY: `ty` is a type node from the store.
+        let size_bytes = unsafe { field_width(ty) };
+        let record = crate::identities::meta::record_layout(
+            self.store,
+            scope,
+            fields,
+            size_bytes,
+            std::ptr::null_mut(),
+            crate::identities::meta::prec::APPLY,
+            Assoc::Left,
+        );
+        Ok(self.store.alloc_raw(self.types.type_, record.cast()))
+    }
+
+    /// The text inside the `( … )` at the cursor, consumed with its brackets
+    /// and constructed by nothing: `(start, len)` into the source. The end is
+    /// the `)` closing the opener, found by lexing token by token with the
+    /// index and counting the brackets between — a `«…»` quote is one token,
+    /// so a bracket inside it is text, and a `#` comment is passed over as
+    /// the comment constructor reads it, to its line's end or its quote's —
+    /// so that what is held is what the driver would have read. A body that
+    /// never closes is [`ParseError::UnclosedBracket`].
+    fn body_text_extent(&mut self) -> Result<(usize, usize), ParseError> {
+        self.expect_open()?;
+        let source = self.source;
+        let bytes = source.as_bytes();
+        let start = self.pos;
+        let mut depth = 0usize;
+        loop {
+            self.skip_whitespace();
+            if self.pos >= bytes.len() {
+                return Err(ParseError::UnclosedBracket);
+            }
+            if bytes[self.pos] == b'#' {
+                self.pos += 1;
+                while self.pos < bytes.len() && matches!(bytes[self.pos], b' ' | b'\t') {
+                    self.pos += 1;
+                }
+                // The line form ends at the newline; the string form, `#
+                // «…»`, is the quote token the lexer reads next.
+                if !source[self.pos..].starts_with('«') {
+                    while self.pos < bytes.len() && bytes[self.pos] != b'\n' {
+                        self.pos += 1;
+                    }
+                    continue;
+                }
+            }
+            let r = self.scopes.lex(self.trie, &source[self.pos..]).map_err(ParseError::Resolve)?;
+            let id = if r.fresh { std::ptr::null_mut() } else { r.identity };
+            if id == self.types.open_ || id == self.types.open_sq_ {
+                depth += 1;
+            } else if id == self.types.close_ || id == self.types.close_sq_ {
+                if depth == 0 {
+                    let len = self.pos - start;
+                    self.pos += r.matched;
+                    return Ok((start, len));
+                }
+                depth -= 1;
+            }
+            self.pos += r.matched;
+        }
     }
 
     /// Parse a function literal `fn ( params ) -> ret ( body )` (DESIGN ›A
@@ -3463,7 +3647,30 @@ impl<'a> Parser<'a> {
             // SAFETY: `out` is a reduced dyad from the store.
             unsafe { self.types.through(out) }
         };
+        // SAFETY: `input` was just built by `parse_record`; `declared` is the
+        // caller's placeholder under this function's own contract.
+        unsafe { self.fn_over_body(fn_type, input, output, declared) }
+    }
 
+    /// The function node over the `( body )` at the cursor, given its
+    /// signature: `input` a parameter record whose fields are still unplaced
+    /// (as [`Parser::parse_record`] leaves them) and `output` the return type
+    /// identity. The half of [`Parser::parse_fn`] after the signature, shared
+    /// with a slot body read bare ([`Parser::slot_body_fill`]): the frame is
+    /// opened and the parameters placed in it, the body parsed deferred with
+    /// the parameter scope reopened, and the node `[input, output, body,
+    /// bcode, frame, outer]` built.
+    ///
+    /// # Safety
+    /// `input` must be a record node whose parameters' value slots are still
+    /// null; `declared` as for [`Parser::parse_fn`].
+    unsafe fn fn_over_body(
+        &mut self,
+        fn_type: DyadPtr,
+        input: DyadPtr,
+        output: DyadPtr,
+        declared: DyadPtr,
+    ) -> Result<DyadPtr, ParseError> {
         // Open this function's frame and give the parameters its first per-call
         // byte offsets — a call frame is an instance of its function, so a
         // parameter resolves to a frame slot exactly as a local does (DESIGN
@@ -4738,6 +4945,12 @@ impl<'a> Parser<'a> {
             }
             Ok(build_call(self.store, callee, &args))
         } else if unsafe { crate::identities::meta::is_record_type(callee) } {
+            // A type whose `run` is a held body has nothing that builds a node
+            // running it yet (#133 slice 8); an instance of its fields alone
+            // would stand for a call that never runs, so it is refused.
+            if !unsafe { crate::identities::meta::run_body_of(callee) }.is_null() {
+                return Err(ParseError::RunBodyHeld);
+            }
             // A record logos applied to its field values constructs an
             // instance — the constructor doctrine, like `i32(a)`.
             let types = self.types;
@@ -5741,10 +5954,17 @@ impl<'a> Parser<'a> {
             // the fn node itself, so `t.run.compile()` compiles it.
             "run" => {
                 let c = meta::code_of(logos);
-                if c.is_null() {
+                if !c.is_null() {
+                    return Ok(c);
+                }
+                // A body held as its lexed text (#133 slice 5): the `lex`
+                // node, the seed's tape-fragment value, until a node of the
+                // type constructs it.
+                let held = meta::run_body_of(logos);
+                if held.is_null() {
                     return Err(ParseError::BadReflectRead);
                 }
-                Ok(c)
+                Ok(held)
             }
             "fields" if meta::is_record_type(logos) => {
                 Ok(self.store.alloc_raw(self.types.dyad_, meta::record_fields_of(logos) as *mut u8))

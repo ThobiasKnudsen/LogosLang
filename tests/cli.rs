@@ -215,9 +215,9 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
     // The superseded spelling is no slot: inside a body it is an unknown name.
     let (echoes, stderr) = repl(b"s := type (precedence = 5)\n");
     assert!(echoes.is_empty() && stderr.contains("unknown name"), "stderr: {stderr}");
-    // `run` holds a function and nothing else (#63; a bare body waits on #133).
+    // `run` holds a bare body or, until #133 slice 9, a function (#63).
     let (echoes, stderr) = repl(b"c := type (instance = (shared run = 5))\n");
-    assert!(echoes.is_empty() && stderr.contains("must be a function"), "stderr: {stderr}");
+    assert!(echoes.is_empty() && stderr.contains("`shared run = (…)`"), "stderr: {stderr}");
     let (echoes, stderr) =
         repl(b"x := 1\np := type (instance = (x := i32 ?))\nq := p(2)\nq.x\nx\n");
     assert_eq!(echoes, ["2", "1"], "stderr: {stderr}");
@@ -286,8 +286,10 @@ fn a_pattern_spelling_is_declared_through_regex() {
 #[test]
 fn a_constructor_written_in_logos_runs_during_the_parse() {
     // Issue #61's done-when: a file defines a type with `parse_rank = …`,
-    // `associativity = …`, and a `parse = fn (tape) -> void (…)`, and a
-    // later appearance in the same file runs that constructor during the
+    // `associativity = …`, and a `parse = (…)` body over the tape (a bare
+    // body since #133 slice 5; the `fn (tape := parsing_tape ?) -> void`
+    // wrapper `noop` below still wears is read too, until #133 slice 9), and
+    // a later appearance in the same file runs that constructor during the
     // parse — here a postfix `squared` and an infix `plus2`, the nodes they
     // build calling like any other, interpreted and compiled.
     let out = logos().args(["import", "tests/fixtures/squared.logos"]).output().unwrap();
@@ -301,8 +303,7 @@ fn a_constructor_written_in_logos_runs_during_the_parse() {
     );
     assert_eq!(echoes, ["true", "91.0"], "stderr: {stderr}");
     // A constructor that fails is the checked error, reported at the appearance.
-    let (_echoes, stderr) =
-        repl(b"bad := type (parse = fn (tape := parsing_tape ?) -> void ( tape[5] ))\nx := bad\n");
+    let (_echoes, stderr) = repl(b"bad := type (parse = ( tape[5] ))\nx := bad\n");
     assert!(stderr.contains("constructor failed"), "stderr: {stderr}");
     // `tape.spelling[k]` (#121, ruled 14 September 2026): a keyword whose
     // constructor makes its cell its own lexed text. The cell sits in a body
@@ -310,13 +311,11 @@ fn a_constructor_written_in_logos_runs_during_the_parse() {
     // session goes on; off the tape the read is the checked error like any
     // tape read.
     let (echoes, stderr) = repl(
-        b"named := type (parse = fn (tape := parsing_tape ?) -> void ( tape[0] = tape.spelling[0] ))\n\
+        b"named := type (parse = ( tape[0] = tape.spelling[0] ))\n\
           f := fn () -> void ( named )\n5\n",
     );
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
-    let (_echoes, stderr) = repl(
-        b"bad2 := type (parse = fn (tape := parsing_tape ?) -> void ( tape.spelling[5] ))\nx := bad2\n",
-    );
+    let (_echoes, stderr) = repl(b"bad2 := type (parse = ( tape.spelling[5] ))\nx := bad2\n");
     assert!(stderr.contains("constructor failed"), "stderr: {stderr}");
 }
 
@@ -334,10 +333,49 @@ fn a_record_carries_its_spelling() {
     // A postfix `sp` that makes its cell the name of the identity on its
     // left, in a body nothing runs (a string has no storage to read yet).
     let (echoes, stderr) = repl(
-        b"sp := type (parse = fn (tape := parsing_tape ?) -> void ( tape[0] = tape[-1]:name, tape.remove(-1) ))\n\
+        b"sp := type (parse = ( tape[0] = tape[-1]:name, tape.remove(-1) ))\n\
           x := 1\nf := fn () -> void ( x sp )\n5\n",
     );
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
+}
+
+#[test]
+fn a_slot_body_is_read_bare() {
+    // #133 slice 5 (DESIGN ›Execution is function application‹, 17 September
+    // 2026: "`parse = ( … )` with a place of type `parse` on the left reads
+    // the bracket as a deferred parse body, `run = ( … )` as a deferred run
+    // body … the `fn (tape := parsing_tape ?) -> void` wrapper a parse slot
+    // carried is gone, `tape` being a word inside `parse`"). A `parse` body
+    // is read over a hidden `tape` and the constructor runs as before; the
+    // hidden name is declared as a parameter is, so an outer `tape` the body
+    // could still mean is the shadowing error, as it was for the wrapper.
+    let (echoes, stderr) = repl(
+        b"sp := type (parse = ( tape[0] = tape[-1]:name, tape.remove(-1) ))\n\
+          x := 1\nf := fn () -> void ( x sp )\n5\n",
+    );
+    assert_eq!(echoes, ["5"], "stderr: {stderr}");
+    let (_echoes, stderr) = repl(b"tape := 1\nsp := type (parse = ( tape.recenter(0) ))\n");
+    assert!(stderr.contains("shadowed"), "stderr: {stderr}");
+    // A `run` body is a body over `this`, whose fields' types no definition
+    // knows (DESIGN ›Deferral is authored‹, 20 September 2026: "the body is
+    // held as its lexed tape … and constructed once per field-type set when
+    // a node supplies the types"): the seed holds it as the fragment `lex`
+    // yields, read back as `t.run`. Its extent is found by the index: a
+    // bracket inside a quote is text, a comment's text is passed over to
+    // its quote's end or its line's, and nested brackets pair up.
+    let (echoes, stderr) = repl(
+        b"t := type (instance = (a := i32 ?, shared run = ( s := \xc2\xaba ) b\xc2\xbb, \
+          # \xc2\xab ) \xc2\xbb (( x[0] ), 5 ))))\n\
+          t.run:dyad.type == (lex \xc2\xabx\xc2\xbb):dyad.type\n",
+    );
+    assert_eq!(echoes, ["true"], "stderr: {stderr}");
+    let out = logos()
+        .args(["t := type (instance = (shared run = ( x[0], # c ) d\n5 ))),\n\
+                t.run:dyad.type == (lex «x»):dyad.type"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "true\n");
 }
 
 #[test]
@@ -361,8 +399,10 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"parse_rank = 3\n", "only inside a type body"),
         (b"d := i32 5\ndrop = 3\n", "only inside a type body"),
         (b"t := type (run = fn () -> i32 ( 1 ))\n", "`shared run = (…)`"),
+        (b"t := type (run = ( 1 ))\n", "`shared run = (…)`"),
         (b"t := type (instance = (run = 5))\n", "marked"),
         (b"t := type (instance = (shared parse_rank = 5))\n", "not in the seed"),
+        (b"t := type (instance = (shared parse = ( tape.recenter(0) )))\n", "not in the seed"),
         (b"t := type (instance = (shared drop = 5))\n", "not in the seed"),
         (b"t := type (5)\n", "a type body line"),
         // A bare `instance` line declares nothing: the slot name used to
@@ -370,6 +410,10 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"t := type (instance)\n", "a type body line"),
         (b"t := type (associativity = 5)\n", "`left` or `right`"),
         (b"t := type (parse = fn (a := i32 ?) -> void ( a = 1 ))\n", "parsing_tape"),
+        (b"t := type (parse = 5)\n", "`parse = (…)`"),
+        (b"t := type (instance = (shared run = 5))\n", "`shared run = (…)`"),
+        (b"t := type (instance = (shared run = ( 5 )))\nt(1)\n", "held as its lexed body"),
+        (b"t := type (instance = (shared run = ( 5 )),\n", "never closed"),
         (
             b"g := fn (n := i32 ?) -> type ( type (parse_rank = n) )\n",
             "known when the type is defined",
@@ -1093,7 +1137,7 @@ fn only_a_marked_place_is_written_or_addressed() {
     // application of a code-carrying type — whose "address" was a pointer into
     // the graph that faulted on the first read.
     let pw = "pw := type ( parse_rank = *.parse_rank + 1, associativity = right, \
-              parse = fn (tape := parsing_tape ?) -> void ( tape[0]:dyad.type = pw, \
+              parse = ( tape[0]:dyad.type = pw, \
               tape[0]:dyad.value.operands.append(tape[-1] and tape[1]), tape.remove(1), tape.remove(-1) ), \
               instance = ( shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( a * b ) ) )";
     for (src, expect) in [
@@ -1246,7 +1290,7 @@ fn lex_splices_text_built_fragments() {
     // text the spliced cell carries (`lex «5»` carries «5»), `*` over its
     // operands. Above `+` on the axis, so `3 + 4 twice` doubles the 4.
     let (echoes, stderr) = repl(
-        "twice := type (parse_rank = *.parse_rank + 1, parse = fn (tape := parsing_tape ?) -> void ( tape.insert(1, lex «* 2»), tape.remove(0) ))\n\
+        "twice := type (parse_rank = *.parse_rank + 1, parse = ( tape.insert(1, lex «* 2»), tape.remove(0) ))\n\
           5 twice\n3 + 4 twice\n"
             .as_bytes(),
     );
@@ -1258,7 +1302,7 @@ fn lex_splices_text_built_fragments() {
     // errs in nothing while nothing constructs it.
     let (echoes, stderr) = repl(
         "t := lex «(a, b)»\n5\n\
-          bad := type (parse = fn (tape := parsing_tape ?) -> void ( tape.insert(1, lex «zz»), tape.remove(0) ))\n\
+          bad := type (parse = ( tape.insert(1, lex «zz»), tape.remove(0) ))\n\
           x := bad\n"
             .as_bytes(),
     );
@@ -1267,7 +1311,7 @@ fn lex_splices_text_built_fragments() {
     // `lex` reads its own quote, as `regex` does; `insert` takes a tape.
     let (_echoes, stderr) = repl(
         b"y := lex 5\n\
-          bad2 := type (parse = fn (tape := parsing_tape ?) -> void ( tape.insert(1, dyad (i32, 1)) ))\n",
+          bad2 := type (parse = ( tape.insert(1, dyad (i32, 1)) ))\n",
     );
     assert!(stderr.contains("`lex` must be followed by a «…» quote"), "stderr: {stderr}");
     assert!(stderr.contains("`insert` splices a tape"), "stderr: {stderr}");
@@ -1285,7 +1329,7 @@ fn caller_scope_is_the_use_site_and_here_scope_the_body() {
     // at the top. `here.scope` inside h's body is h's body, read when h runs.
     let (echoes, stderr) = repl(
         "seen := here.scope\n\
-         w := type (parse = fn (tape := parsing_tape ?) -> void ( seen = caller.scope, tape.remove(0) ))\n\
+         w := type (parse = ( seen = caller.scope, tape.remove(0) ))\n\
          g := fn () -> i32 ( 1 w )\n\
          seen == here.scope\n\
          seen.scope.scope == here.scope\n\
@@ -1379,9 +1423,9 @@ fn a_constructors_outcome_is_read_off_its_own_cell() {
     // declined: the driver judges its own cell by handle and puts the
     // center back, where it used to find the same cell again forever.
     let (echoes, stderr) = repl(
-        b"r1 := type (parse = fn (tape := parsing_tape ?) -> void ( tape.recenter(1) ))\n\
-          r2 := type (parse = fn (tape := parsing_tape ?) -> void ( tape.recenter(-1) ))\n\
-          r3 := type (parse = fn (tape := parsing_tape ?) -> void ( tape.recenter(99) ))\n\
+        b"r1 := type (parse = ( tape.recenter(1) ))\n\
+          r2 := type (parse = ( tape.recenter(-1) ))\n\
+          r3 := type (parse = ( tape.recenter(99) ))\n\
           a := r1\nb := r2\nc := r3\na:dyad.type == type\nb:dyad.type == type\nc:dyad.type == type\n",
     );
     assert_eq!(echoes, ["true", "true", "true"], "stderr: {stderr}");
@@ -1390,7 +1434,7 @@ fn a_constructors_outcome_is_read_off_its_own_cell() {
     // driver constructs it as its own — `as_i32` becomes `i32`, so
     // `as_i32 5` is `i32 5`.
     let (echoes, stderr) = repl(
-        b"as_i32 := type (parse = fn (tape := parsing_tape ?) -> void ( tape[0] = i32 ))\n\
+        b"as_i32 := type (parse = ( tape[0] = i32 ))\n\
           x := as_i32 5\nx + 1\n",
     );
     assert_eq!(echoes, ["6"], "stderr: {stderr}");
@@ -1398,7 +1442,7 @@ fn a_constructors_outcome_is_read_off_its_own_cell() {
     // still unconstructed is "an unfinished construct": the checked error,
     // named for the cell, never a second run.
     let (_echoes, stderr) = repl(
-        "half := type (parse = fn (tape := parsing_tape ?) -> void ( tape.insert(1, lex «/ 2») ))\n\
+        "half := type (parse = ( tape.insert(1, lex «/ 2») ))\n\
           8 half\n"
             .as_bytes(),
     );

@@ -36,7 +36,7 @@ use crate::store::Store;
 pub(super) fn register(
     cx: &mut Cx,
     cs: &Callables,
-) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
+) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::operand_record(
         cx,
         meta::LIST_TAG,
@@ -78,7 +78,7 @@ pub(super) fn register(
     );
     let index_ = cx.store.alloc_raw(cx.type_, record);
 
-    (construct, leaf, dot, index_, close_sq)
+    (construct, leaf, dot, index_, open_sq, close_sq)
 }
 
 /// A record's fields as `(type node, width tag, byte offset)` triples, and

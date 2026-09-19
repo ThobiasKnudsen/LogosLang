@@ -254,6 +254,8 @@ pub struct Core {
     pub open_: DyadPtr,
     /// `)` — the closing paren token (parse-only).
     pub close_: DyadPtr,
+    /// `[` — the opening square bracket (parse-only).
+    pub open_sq_: DyadPtr,
     /// `]` — the closing square bracket (parse-only).
     pub close_sq_: DyadPtr,
     /// `,` — the one explicit separator (parse-only).
@@ -447,7 +449,7 @@ impl Core {
         // The two fresh-spelling patterns, ranked below every declared spelling.
         fresh::register(&mut cx);
         // Struct instances: the construction statement and the `.` field access.
-        let (construct_, construct_leaf, dot_, index_, close_sq_) =
+        let (construct_, construct_leaf, dot_, index_, open_sq_, close_sq_) =
             instance::register(&mut cx, &callables);
         op_leaves.construct_ = construct_leaf;
         // Pointers: the `@`/`&` tokens and the deref/storeptr identities.
@@ -570,6 +572,7 @@ impl Core {
             conv_seed_parse: callables.seed_parse,
             open_,
             close_,
+            open_sq_,
             close_sq_,
             sep_,
             left_,
@@ -617,6 +620,7 @@ impl Core {
             dyad_: self.dyad_,
             record_: self.record_,
             colon_: self.colon_,
+            void_: self.void,
             tape: self.tape,
             lex: self.lex,
             here: self.here,
@@ -647,6 +651,7 @@ impl Core {
             conv_container: self.conv_container_i64,
             open_: self.open_,
             close_: self.close_,
+            open_sq_: self.open_sq_,
             close_sq_: self.close_sq_,
             sep_: self.sep_,
             left_: self.left_,
@@ -4129,7 +4134,7 @@ mod tests {
     const POW_TYPE: &str = "pw := type (\n\
          parse_rank = *.parse_rank + 1,\n\
          associativity = right,\n\
-         parse = fn (tape := parsing_tape ?) -> void (\n\
+         parse = (\n\
              tape[0]:dyad.type = pw,\n\
              tape[0]:dyad.value.operands.append(tape[-1] and tape[1]),\n\
              tape.remove(1),\n\

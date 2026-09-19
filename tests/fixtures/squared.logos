@@ -3,13 +3,15 @@
 # constructor, written here, during the parse). Its constructor retypes its
 # own cell into a call of `sq` and takes the cell to its left as the
 # operand; its parse_rank sits one above `*`'s, so `2 * x squared` squares
-# first. A `code` slot (#63) would make `squared` its own operation; this
+# first. A `run` slot (#63) would make `squared` its own operation; this
 # file keeps the other shape a constructor may build, a call of a function.
+# `parse = (…)` is a bare body over the tape, `tape` a word inside it (#133
+# slice 5).
 sq := fn (a := i32 ?) -> i32 ( a * a ),
 squared := type (
     parse_rank = *.parse_rank + 1,
     associativity = left,
-    parse = fn (tape := parsing_tape ?) -> void (
+    parse = (
         tape[0]:dyad.type = sq,
         tape[0]:dyad.value.operands.append(tape[-1]),
         tape.remove(-1)
@@ -20,7 +22,7 @@ add := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ),
 plus2 := type (
     parse_rank = +.parse_rank,
     associativity = left,
-    parse = fn (tape := parsing_tape ?) -> void (
+    parse = (
         tape[0]:dyad.type = add,
         tape[0]:dyad.value.operands.append(tape[-1] and tape[1]),
         tape.remove(1),

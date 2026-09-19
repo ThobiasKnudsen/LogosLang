@@ -5,11 +5,13 @@
 # Logos and its instances' `run` slot holding the power computation, so the operator
 # is the operation. `^` is a fresh symbol spelling (#110): nothing declared
 # it before its `:=`, and once declared it lexes glued to its operands
-# (`x^3`). The pinned demo itself is examples/power.logos.
+# (`x^3`). `parse = (…)` is a bare body over the tape (#133 slice 5); `run`
+# still wears the 4 September `fn` wrapper until its bare body runs (#133
+# slice 8). The pinned demo itself is identities/power.logos.
 ^ := type (
     parse_rank = *.parse_rank + 1,
     associativity = right,
-    parse = fn (tape := parsing_tape ?) -> void (
+    parse = (
         tape[0]:dyad.type = ^,
         tape[0]:dyad.value.operands.append(tape[-1] and tape[1]),
         tape.remove(1),

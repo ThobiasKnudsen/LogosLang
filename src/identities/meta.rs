@@ -34,7 +34,9 @@
 //! [18..26]   u64  destructor  (0: undefined until drop semantics exist)
 //! [26..34]   u64  code — the `fn` node a type body's `code = …` filled (#63):
 //!                 what a node of the type runs and compiles as, or 0
-//! [34..]     payload, per kind:
+//! [34..42]   u64  run body — the lexed body a `shared run = (…)` line held
+//!                 (#133 slice 5), constructed per field-type set later, or 0
+//! [42..]     payload, per kind:
 //!              ADDR              pointee logos node (`dyad@`)
 //!              TUPLE/LIST         u8 arity, then arity × `dyad@` role-name strings
 //! ```
@@ -121,9 +123,15 @@ const DTOR_OFF: usize = 18;
 /// before it left the head on 14 September 2026 (#122): a rank is the
 /// spelling's, so it lives on the name's record.
 const CODE_OFF: usize = 26;
+/// Byte offset of the held run body (DESIGN ›Deferral is authored‹, 20
+/// September 2026: "the body is held as its lexed tape … and constructed
+/// once per field-type set when a node supplies the types"; #133 slice 5).
+/// Kept beside the code slot rather than in it, so every reader of a type's
+/// `run` as a function ([`code_of`]) keeps finding a function or nothing.
+const RUN_BODY_OFF: usize = 34;
 /// Byte offset of the kind-specific payload (a pointer logos's pointee, or an
 /// operand record's arity + roles).
-pub(crate) const PAYLOAD_OFF: usize = 34;
+pub(crate) const PAYLOAD_OFF: usize = 42;
 
 /// The one parse_rank axis every identity is placed on (DESIGN ›The scope's
 /// constructor is the driver‹, ruled 30 August 2026: "Every identity nameable
@@ -301,7 +309,8 @@ fn header(kind: u8, assoc: Assoc, parse_rank: f64) -> [u8; PAYLOAD_OFF] {
     };
     h[PREC_OFF..CTOR_OFF].copy_from_slice(&parse_rank.to_ne_bytes());
     // CTOR_OFF..DTOR_OFF and DTOR_OFF..CODE_OFF stay zero: reserved; the code
-    // at CODE_OFF..PAYLOAD_OFF is null until a type body sets it.
+    // at CODE_OFF..RUN_BODY_OFF and the held run body at
+    // RUN_BODY_OFF..PAYLOAD_OFF are null until a type body sets them.
     let _ = DTOR_OFF;
     h
 }
@@ -368,6 +377,28 @@ pub(crate) unsafe fn code_of(id: DyadPtr) -> DyadPtr {
 /// `id` must carry a record and `f` must be a `fn` node from the store.
 pub(crate) unsafe fn install_code(id: DyadPtr, f: DyadPtr) {
     std::ptr::write_unaligned((*id).value.add(CODE_OFF) as *mut DyadPtr, f);
+}
+
+/// The run body a type's `shared run = (…)` line held (#133 slice 5): the
+/// `lex «…»` node over the body's text — the seed's one tape-fragment value,
+/// what `lex` yields — or null for a type whose run is a function
+/// ([`code_of`]) or absent. Nothing runs it yet: a node of the type
+/// constructs it once per field-type set when its fields' types are known
+/// (DESIGN ›Deferral is authored‹, 20 September 2026; #133 slice 8).
+///
+/// # Safety
+/// As [`parse_rank_of`].
+pub(crate) unsafe fn run_body_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned((*id).value.add(RUN_BODY_OFF) as *const DyadPtr)
+}
+
+/// Install `body` (a `lex` node) as `id`'s held run body — the type body's
+/// writer, run once at the close while the record is under construction.
+///
+/// # Safety
+/// `id` must carry a record and `body` must be a `lex` node from the store.
+pub(crate) unsafe fn install_run_body(id: DyadPtr, body: DyadPtr) {
+    std::ptr::write_unaligned((*id).value.add(RUN_BODY_OFF) as *mut DyadPtr, body);
 }
 
 /// The record kind of `id`, or `None` where there is no record to read: a

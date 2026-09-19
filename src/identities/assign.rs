@@ -45,7 +45,9 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 /// type being defined, the slot's fill
 /// ([`crate::parse::Parser::slot_fill`], #61); over `instance`, the field list
 /// is read in place of an expression
-/// ([`crate::parse::Parser::instance_block_fill`], #128).
+/// ([`crate::parse::Parser::instance_block_fill`], #128); over `parse` or
+/// `run` with a bracket to the right, the bracket is read as a bare body
+/// ([`crate::parse::Parser::slot_body_fill`], #133 slice 5).
 fn construct(
     p: &mut crate::parse::Parser,
     id: DyadPtr,
@@ -73,6 +75,20 @@ fn construct(
     }
     if slot == Some(crate::parse::SlotKind::Instance) {
         let node = p.instance_block_fill()?;
+        tape.place(node);
+        return Ok(crate::parse::Constructed::Placed);
+    }
+    // A body slot with a bracket to its right reads the bracket as a bare
+    // body, deferred (#133 slice 5; DESIGN ›Execution is function
+    // application‹, 17 September 2026: "`parse = ( … )` with a place of type
+    // `parse` on the left reads the bracket as a deferred parse body, `run =
+    // ( … )` as a deferred run body"). Anything else to the right is read as
+    // an expression: the `fn …` the slots took until then, kept until the
+    // bare `run` body runs (#133 slice 9).
+    if matches!(slot, Some(crate::parse::SlotKind::Parse | crate::parse::SlotKind::Run))
+        && p.at_open()
+    {
+        let node = p.slot_body_fill(slot.expect("matched above"))?;
         tape.place(node);
         return Ok(crate::parse::Constructed::Placed);
     }
