@@ -1,37 +1,102 @@
+# The language defines itself: the array collection written in ordinary Logos, in the shape ruled 18 and
+# 19 September 2026. array is a chooser: its parse consumes the element type, fetches or mints the concrete
+# type `array i32` (one per element type, interned in array_mints) and places it in its own cell with the
+# flag left false, so the driver runs the mint's own parse in turn (ruled 19 September 2026).
+#
+# The mint is a type like any other, read in two halves. Its BARE lines say how its own spelling parses:
+# a group to its right becomes an array node, nothing to its right leaves the type standing (`t := array i32`,
+# `a := array i32 ?`). Its VALUE block says what its NODES hold and how they behave, every line marked
+# shared (one place for every node) or left per node (ruled 19 September 2026): the fields it declares, and
+# the predeclared slots it fills, the drop that frees the elements and the nodes' own parse trio, which runs
+# when an array node appears on the tape and consumes a [k] to its right. No run: an array node used plainly is its own value, and a field read such
+# as (a ^ b).lhs never runs anything.
+#
+# Open, spelled here with stand-ins:
+#   the parse_rank numbers (…);
+#   the slots of an instance block are PREDECLARED (ruled 19 September 2026, DESIGN ›The constructor is a field‹):
+#     every instance block starts with the same slots type's own declares (parse_rank, associativity, parse, run,
+#     drop, instance), unfilled; a type fills them with `=`, `shared` for one place across its instances, unmarked
+#     for a per-instance default; so no line here declares a slot and no right side names a slot type;
+#   one `drop` word (ruled 19 September 2026): its parse looks right; `=` there means the slot
+#     fill, anything else is the statement dropping what follows, so `drop x` works in every scope and the
+#     predeclared slot names are the core words themselves, never a second declaration;
+#   bare field names inside an instance-block body run through a node (size_bytes, the nodes' parse) are that
+#     node's fields: one sentence pending in DESIGN;
+#   a constructor that finds nothing to consume sets its flag and changes nothing (proposed 19 September,
+#     not ruled), which is what lets the mint stand as a type and an array node stand as itself;
+#   `alloc n of T` is the 8 September respelling, wording pending; `⊆` on types and the trailing @ for the
+#     dereference are the older sketch's spellings.
+# The seed's array is array-of-@dyad with no spelling and no element access (src/identities/array.rs).
 
-array_mints := hashmap word -> word
+array_mints := hashmap type -> type          # the memo: one mint per element type, looked up by == (type identities are interned)
 
-get_mint := fn (t := word ?) -> word (
+get_mint := fn (t := type ?) -> type (
     mut mint := array_mints[t]
-    if mint != ? return mint                # the trailing expression is the result; an if body alone falls through
-    mint = word (
-        value = (
-            shared parse_rank = ?,
-            shared associativity = right,
-            shared parse =
-            shared element_type := word t,
+    if mint != ? return mint                 # a miss yields a hole; the trailing expression is the result
+    mint = type (
+        # how the spelling `array t` itself parses
+        parse_rank = …,                      # the call level: the mint reads its right as f(…) does
+        associativity = left,
+        parse = (
+            if tape[1]:dyad.type == scope (                          # `array i32 (1, 2, 3)`: the group becomes a node
+                # (check that every expression of the group converts to element_type)
+                this.size = tape[1]:dyad.value.size,                 # this: a fresh node of the mint, its fields at their defaults
+                this.capacity = next_power_of_two(this.size),        # a helper, not written here
+                this.ptr = alloc this.capacity of element_type,
+                for i in 0..this.size ( (this.ptr + i)@ = tape[1]:dyad.value[i] ),
+                tape[0] = this,                                      # the node stands where the type stood
+                tape.remove(1)                                       # the group is consumed
+            ),
+            tape.is_constructed[0] = true                            # done either way: with no group the mint stands as the type
+        ),
 
-            mut ptr := @element_type ?,         # ? makes it a place per node; without it ptr would alias the pointer TYPE (x := T is an alias, x := T ? a declaration); mut because growth reallocates
-            mut size := u64 0,                   # a place per node with a default (ruled 19 September 2026); mut because 0 is not null and the default gate writes only while null
+        instance = (
+            # what every array node holds
+            shared element_type := t,        # one place per mint, read a:dyad.type.element_type outside and bare in the bodies below
+            mut ptr := @element_type ?,      # the elements, owned by the node; mut because growth reallocates
+            mut size := u64 0,               # per-node defaults: unmarked is a place per node, and 0 is not null, so growth needs mut
             mut capacity := u64 0,
+            shared size_bytes := fn () -> u64 (size * element_type.size_bytes),           # a.size_bytes(): the node's fields by name
+            shared capacity_bytes := fn () -> u64 (capacity * element_type.size_bytes),
 
-            shared size_bytes := fn () -> u64 (size * element_type.size_bytes)
-            shared capacity_bytes := fn () -> u64 (capacity * element_type.size_bytes)
+            # how every array node is torn down: an authored parse gets an authored drop
+            shared drop = (
+                for i in 0..size ( drop (ptr + i)@ ),                # the elements first, each by its own type's drop (nothing for plain numbers); one drop word: with = to its right it names the slot, otherwise it drops what follows (ruled 19 September 2026)
+                free ptr
+            ),
+
+            # how an array node parses when it appears on the tape: a [k] to its right is an element access
+            shared parse_rank = …,           # the tight-read level, above every operator, so a[2] + 1 reads the access first
+            shared associativity = left,
+            shared parse = (
+                if tape[1]:dyad.type == square_brackets (            # the [ … ] node, constructed at discovery as ( is
+                    index := tape[1]:dyad.value.index,
+                    if not index:dyad.type ⊆ size:dyad.type
+                        error «the index type is not within the size type, so the index could lie outside the array»,
+                    # index and size are not known statically: the access is residual code, a scope that runs when they are
+                    tape[0] = scope (
+                        if index >= size error «index out of range: the index is at or past the array's size»,
+                        (ptr + index)@
+                    ),
+                    tape.remove(1)                                   # the [k] is consumed; the access stands where the node stood
+                ),
+                tape.is_constructed[0] = true                        # done either way: with no [ to its right the node stands as itself, `a = b`
+            )
         )
     )
-    array_mints[t] = mint                   # an element write is =; only a name stands left of := (ruled 4 September 2026)
+    array_mints[t] = mint                    # an element write is =; only a name stands left of :=
     mint
 )
 
-pub array := word (
-    parse_rank = …,                          # above the juxtaposition level, so array takes i32 before i32 could take the group as a conversion (ruled 2 September 2026); word supplies no default
+pub array := type (
+    parse_rank = …,                          # above the juxtaposition level, so array takes i32 before i32 could take the group as a conversion (ruled 2 September 2026)
     associativity = right,                   # a prefix reader: among equals the rightmost runs first, so a nested array builds inside out
-    parse = (                                # the chooser: `array i32` is one word, minted once
-        if tape[1]:dyad.type != word
+    parse = (                                # the chooser: `array i32` is one type, minted once
+        if tape[1]:dyad.type != type
             error «id after array is not a type»,
         t := tape[1]:dyad,
-        tape[0] = get_mint(t),
-        tape.remove(1),                      # the element type is consumed
-        # tape.is_constructed[0] is left false on purpose: the mint is placed, not finished, and the driver runs its parse in turn (ruled 19 September 2026)
+        tape[0] = get_mint(t),               # the mint is placed, not finished
+        tape.remove(1)                       # the element type is consumed
+        # tape.is_constructed[0] stays false: the driver runs the mint's own parse in turn (ruled 19 September 2026)
     )
 )

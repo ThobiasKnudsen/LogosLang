@@ -1,8 +1,8 @@
-scope := word (
+scope := type (
     parse = (
 
     )
-    value = (
+    instance = (
         self := array dyad ()
     )
 )

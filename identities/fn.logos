@@ -1,11 +1,15 @@
-fn := word (
-    parse = ( ? )
-    value = (
-        shared compile := fn () -> void ( ? )   # stored once, read on instances (marked shared, 19 September 2026): read own body, lower it to bcode
-        # run as a member is gone (17 September 2026): `run` names the body slot, and running a node is the evaluation rule with two paths, jump to bcode if present, else walk the body; interpretation is that null-bcode path, not a separate function
-        input := word ?
+fn := type (
+    parse = ( ? )                            # reads the parameter list, -> T and the body; builds the function as `this`, writes the body into this.run, places it and sets the flag
+    instance = (
+        # the predeclared slots stand here unfilled (ruled 19 September 2026): run is left PER INSTANCE, since each
+        # function's body is its own, written by fn's parse into this.run; a function value standing on the tape
+        # parses a call, f(2), the same way for all of them, so that trio is shared
+        shared parse_rank = …                # the call level
+        shared associativity = left
+        shared parse = ( ? )                 # `f(2)`: consume the group to the right, build the call node, place it, set the flag
+        shared compile := fn () -> void ( ? )   # stored once, read on instances (marked shared, 19 September 2026): read own run, lower it to bcode
+        input := type ?
         output := ?
-        body := ?                            # the reflectable LG body (the slot every type with something to run spells `run` since 17 September 2026; #127 folds fn into that shape)
         bcode := callable ?                  # the complete jump info [entry @exec, convention] (NULL until compiled)
         frame := u64 ?                       # the activation-record byte size (per-call locals), NULL when none
     )

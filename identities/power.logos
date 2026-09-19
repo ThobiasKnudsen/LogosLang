@@ -1,24 +1,28 @@
 # The language defines itself: a power operator `^` written in ordinary Logos,
-# used in the same file, and compiled with f.compile(). An operator is a type
-# with its slots filled: where it binds (parse_rank), which way it associates,
-# what a node of it holds (value: the operands as named fields, and the
-# output its parse defines per node), how it parses (parse, a body over the
-# parsing tape `tape`, run when the spelling appears, building the node as
-# `this`, a fresh ^ it fills by name and places with tape[0] = this), and what it computes
-# (run, a bare body over the node's fields). Every slot is filled with =,
-# and what = reads on its right is decided by the slot's type.
+# used in the same file, and compiled with f.compile().
 #
-# Shape ruled 16 and 17 September 2026 (DESIGN ›Execution is function application‹).
-# The seed still runs the 4 September shape (tests/fixtures/caret.logos), so
-# `logos import ./identities/power.logos` waits on the seed catching up.
-^ := word (
+# An operator is a type read in two halves. Its BARE lines say how its own
+# spelling parses: where it binds (parse_rank), which way it associates, and
+# what happens when `^` stands on the tape (parse, a body over the parsing
+# tape `tape`, building the node as `this`, a fresh ^ it fills by name and
+# places with tape[0] = this, then marks constructed itself). Its VALUE block
+# says what its NODES hold and how they behave: the operands as named fields,
+# the output the parse writes per node, and the run every node shares, the
+# bare body that computes the power when a ^ node is used plainly. A field
+# read such as (a ^ b).lhs walks into the node and runs nothing.
+#
+# Shape RULED 19 September 2026 (DESIGN ›The constructor is a field‹): run is
+# filled inside the instance block, `shared run = (…)`; a bare `run = (…)`
+# would fill ^'s own run, what runs when the type itself is used plainly. The
+# instance block's slots are predeclared: every instance block starts with the
+# slots type's own declares, unfilled, and the type fills them with `=`, so
+# the two halves use one form and no line names a slot type. The seed still runs the 4 September shape
+# (tests/fixtures/caret.logos), so `logos import ./identities/power.logos`
+# waits on the seed catching up.
+^ := type (
+    # how the spelling ^ itself parses
     parse_rank = *.parse_rank + 1,       # binds tighter than *
     associativity = right,               # 2 ^ 3 ^ 2 is 2 ^ (3 ^ 2)
-    value = (
-        lhs := ?,                        # the base: takes the type of the operand written into it
-        rhs := i32 ?,                    # the exponent: always an i32, a literal molds to it
-        output := word ?                 # what a ^ node yields; the constructor defines it
-    ),
     parse = (
         this.lhs = tape[-1],                 # this: a fresh ^ node, its value fields holes (ruled 18 September 2026)
         this.rhs = tape[1],                  # by name, not by position
@@ -28,10 +32,18 @@
         tape.remove(1),                      # both operands consumed:
         tape.remove(-1)                      # only the ^ node remains
     ),
-    run = (                              # the power computation over this node's fields
-        r := this.output 1,
-        for 0..this.rhs ( r = r * this.lhs ),   # no index needed (ruled 17 September 2026)
-        r
+
+    instance = (
+        # what every ^ node holds
+        lhs := ?,                        # the base: takes the type of the operand written into it
+        rhs := i32 ?,                    # the exponent: always an i32, a literal molds to it
+        output := type ?,                # what this node yields; the parse above writes it
+        # how every ^ node behaves when used plainly: one run for all of them
+        shared run = (
+            r := this.output 1,          # this: the node the body runs over (ruled 18 September 2026)
+            for 0..this.rhs ( r = r * this.lhs ),   # no index needed (ruled 17 September 2026)
+            r
+        )
     )
 ),
 f := fn (x := i32 ?) -> i32 ( x ^ 3 + 1 ),

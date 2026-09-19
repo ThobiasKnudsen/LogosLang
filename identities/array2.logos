@@ -30,8 +30,8 @@ array_type := ? (
 )
 
 array := array_type (
-    instance := word (
-        element_type := word ?
+    instance := type (
+        element_type := type ?
         size := mut u64 0
         capacity := mut u64 0
         data := mut @void ?

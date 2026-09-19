@@ -1,29 +1,32 @@
-word := word (
+type := type (
     # what every type carries: declared here, a slot per type, filled by each type's own body with =; what = reads on
     # its right is decided by the slot's type (ruled 17 September 2026), so a parse, run, drop or value body needs no fn
-    value = (
+    instance = (
+        # these are the slots every instance block starts with, predeclared and unfilled (ruled 19 September 2026,
+        # DESIGN ›The constructor is a field‹); type alone writes them out; every other type fills them with =, on its
+        # bare lines for itself and in its instance block for its instances. lex_rank is not here: it lives on the
+        # record (14 September 2026)
         parse_rank := f64 ?         # construction order within a segment (spelled precedence until 10 September 2026)
-        lex_rank := f64 ?           # recognizer order at a text position; only pattern spellings need one
         associativity := ?          # left or right
         parse := parse ?            # a body over the tape; parse declares `tape` (centred on the appearance) and `this` (a fresh node of the type, placed by the body) into it; spelled constructor until 17 September 2026
         drop := drop ?              # a body over `this`; spelled destructor until 17 September 2026; what `drop x` runs
         run := run ?                # a body over the instance's fields, what runs when a node of the type is interpreted or compiled and run (DESIGN ›Execution is function application‹, 16 and 17 September 2026; spelled code until 17 September)
-        value := value ?            # the declaration block of what every node of the type holds (17 September 2026)
+        instance := instance ?      # the block of what every instance of the type holds and does (spelled value 17 to 19 September 2026)
     )
 
-    # what word itself is: the same slots, filled
+    # what type itself is: the same slots, filled
     parse_rank = f64 2.0
     associativity = left
     parse = (
-        # word reads its own bracket (ruled 3 September 2026): constructed at discovery, before the ( after it is
+        # type reads its own bracket (ruled 3 September 2026): constructed at discovery, before the ( after it is
         # lexed, it opens the definition scope itself — so the body's bare lines fill the new identity's slots and
-        # declare its members, and its value = (…) declares what lives on instances — then drives the bracket's
+        # declare its members, and its instance = (…) declares what lives on instances — then drives the bracket's
         # parse exactly as ( does, with that scope open, and replaces its own cell with the finished type
         if tape[1] != lex «(»[0]
-            error «word must be followed by (»
+            error «type must be followed by (»
         definition := scope ?                       # the new identity's own scope, open before the bracket is lexed
         (.parse(tape.recenter(1))             # the eager-segment loop, run inside definition
-        tape[0] = dyad (word, definition)
+        tape[0] = dyad (type, definition)
         tape.is_constructed[0] = true               # the constructor sets the flag itself; a write never does (ruled 19 September 2026)
         tape.remove(1)
     )
