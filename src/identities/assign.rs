@@ -45,7 +45,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 /// the type being defined, the slot's fill
 /// ([`crate::parse::Parser::slot_fill`], #61); over `value`, the field list
 /// is read in place of an expression
-/// ([`crate::parse::Parser::value_block_fill`], #128).
+/// ([`crate::parse::Parser::instance_block_fill`], #128).
 fn construct(
     p: &mut crate::parse::Parser,
     id: DyadPtr,
@@ -55,8 +55,8 @@ fn construct(
         return Err(ParseError::MissingOperand);
     };
     let slot = p.slot_of(target);
-    if slot == Some(crate::parse::SlotKind::Value) {
-        let node = p.value_block_fill()?;
+    if slot == Some(crate::parse::SlotKind::Instance) {
+        let node = p.instance_block_fill()?;
         tape.place(node);
         return Ok(crate::parse::Constructed::Placed);
     }

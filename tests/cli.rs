@@ -161,7 +161,7 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
     // declares are filled with `=` — the parse_rank spelled relative, the
     // associativity one of the two identities `left` and `right` (of type
     // `type`, like a keyword, ruled 9 September 2026) — bare `:=` lines are
-    // the type's own members, read `g.y`, and `value = (…)` holds the
+    // the type's own members, read `g.y`, and `instance = (…)` holds the
     // per-instance fields, checked against their siblings alone.
     let (echoes, stderr) = repl(
         b"t := type (parse_rank = *.parse_rank + 1, associativity = right)\n\
@@ -206,7 +206,8 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
     // `code` holds a function and nothing else (#63).
     let (echoes, stderr) = repl(b"c := type (code = 5)\n");
     assert!(echoes.is_empty() && stderr.contains("must be a function"), "stderr: {stderr}");
-    let (echoes, stderr) = repl(b"x := 1\np := type (value = (x := i32 ?))\nq := p(2)\nq.x\nx\n");
+    let (echoes, stderr) =
+        repl(b"x := 1\np := type (instance = (x := i32 ?))\nq := p(2)\nq.x\nx\n");
     assert_eq!(echoes, ["2", "1"], "stderr: {stderr}");
 }
 
@@ -222,7 +223,7 @@ fn any_spelling_the_index_can_hold_is_nameable() {
     // own column.
     let (echoes, stderr) = repl(
         b"^ := i32 5\n^ + 1\na := i32 1\nab2 := i32 2\nab2 + a\nx := i32 5\nx=-1\nx\n\
-          p := type (value = (v := i32 ?))\nq := p(7)\nr := &q\nrr := &r\nrr@@.v\nx^2\n",
+          p := type (instance = (v := i32 ?))\nq := p(7)\nr := &q\nrr := &r\nrr@@.v\nx^2\n",
     );
     assert_eq!(echoes, ["6", "3", "-1", "7"], "stderr: {stderr}");
     // The fresh `^` is the leftover cell of its line, reported at its column.
@@ -335,11 +336,11 @@ fn a_type_body_refuses_what_is_not_its_own() {
     for (src, expect) in [
         (&b"t := type (parse_rank := 5)\n"[..], "shadowed"),
         (b"y := 1\ng := type (y := 3)\n", "shadowed"),
-        (b"t := type (value = (a := i32 ?), value = (b := i32 ?))\n", "one `value"),
+        (b"t := type (instance = (a := i32 ?), instance = (b := i32 ?))\n", "one `instance"),
         (b"t := type (5)\n", "a type body line"),
-        // A bare `value` line declares nothing: `instance` used to stand as
-        // a bare value and pass as a silent no-op (#87).
-        (b"t := type (value)\n", "a type body line"),
+        // A bare `instance` line declares nothing: the slot name used to
+        // stand as a bare value and pass as a silent no-op (#87).
+        (b"t := type (instance)\n", "a type body line"),
         (b"t := type (associativity = 5)\n", "`left` or `right`"),
         (b"t := type (parse = fn (a := i32 ?) -> void ( a = 1 ))\n", "parsing_tape"),
         (
@@ -920,11 +921,11 @@ fn a_field_the_record_has_not_is_the_same_error_as_an_undeclared_dot_field() {
             .join("`…`")
     }
     let (_e, via_record) = repl(b"x := i32 5\nx:type\n");
-    let (_e, via_dot) = repl(b"p := type (value = (a := i32 ?))\nq := p(1)\nq.scope\n");
+    let (_e, via_dot) = repl(b"p := type (instance = (a := i32 ?))\nq := p(1)\nq.scope\n");
     assert_eq!(message(&via_record), message(&via_dot), "record: {via_record}\ndot: {via_dot}");
     assert!(via_record.contains("not in scope"), "stderr: {via_record}");
     let (_e, via_record) = repl(b"x := i32 5\nx:nonexistent\n");
-    let (_e, via_dot) = repl(b"p := type (value = (a := i32 ?))\nq := p(1)\nq.nonexistent\n");
+    let (_e, via_dot) = repl(b"p := type (instance = (a := i32 ?))\nq := p(1)\nq.nonexistent\n");
     assert_eq!(message(&via_record), message(&via_dot), "record: {via_record}\ndot: {via_dot}");
     assert!(via_record.contains("unknown name"), "stderr: {via_record}");
 }
@@ -965,7 +966,7 @@ fn assignment_returns_nothing() {
     let (_e, stderr) = repl(b"a := i32 1\ny := (a = 2) + 1\n");
     assert!(!stderr.is_empty(), "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        b"p := type (value = (v := i32 ?))\nq := p(1)\nq.v = 3\nq.v\na := i32 1\na = a + 1\na\n",
+        b"p := type (instance = (v := i32 ?))\nq := p(1)\nq.v = 3\nq.v\na := i32 1\na = a + 1\na\n",
     );
     assert_eq!(echoes, ["3", "2"], "stderr: {stderr}");
 }
@@ -977,7 +978,7 @@ fn a_tight_read_lexes_its_right_cell_on_demand_and_stops_at_a_boundary() {
     // by the `tape[1]` read inside the constructor; a lazy read never crosses
     // a `,` or a closer, and an inner `@` constructs before the outer one.
     let (echoes, stderr) = repl(
-        b"x := i32 5\n(x:end, 3)\np := type (value = (a := i32 ?))\nq := p(1)\n(q.a, 2)\nq.a\n\
+        b"x := i32 5\n(x:end, 3)\np := type (instance = (a := i32 ?))\nq := p(1)\n(q.a, 2)\nq.a\n\
           r := &q\nr@.a\npp := &r\npp@@.a\nx:dyad.type == i32\n",
     );
     assert_eq!(echoes, ["3", "2", "1", "1", "1", "true"], "stderr: {stderr}");
@@ -1084,7 +1085,7 @@ fn only_a_marked_place_is_written_or_addressed() {
     // a type box written from an identity or another type box, a dyad box
     // written from a view.
     let (echoes, stderr) = repl(
-        b"x := i32 5\nx = 6\np := &x\np@\nw := type (value = (y := i64 ?))\nq := w(7)\nr := &q\nr@.y\n\
+        b"x := i32 5\nx = 6\np := &x\np@\nw := type (instance = (y := i64 ?))\nq := w(7)\nr := &q\nr@.y\n\
           a := type ?\nb := type ?\na = i32\nb = a\nb == i32\nd := dyad ?\nd = x:dyad\nd:dyad.type == i32\n",
     );
     assert_eq!(echoes, ["6", "7", "true", "true"], "stderr: {stderr}");
@@ -1136,7 +1137,7 @@ fn a_dyad_is_built_from_a_type_and_a_value() {
         &b"dyad (bool, 0)\n"[..],
         b"p := dyad (@i32, 5)\n",
         b"dyad (void, 0)\n",
-        b"g := type (value = (x := i32 ?))\ndyad (g, 5)\n",
+        b"g := type (instance = (x := i32 ?))\ndyad (g, 5)\n",
     ] {
         let (echoes, stderr) = repl(src);
         assert!(
@@ -1331,7 +1332,7 @@ fn a_pointer_parameter_takes_a_pointer_of_the_same_type_however_spelled() {
          f := fn (p := @@i32 ?) -> i32 ( p@@ )\n\
          f(q)\n\
          f(px)\n\
-         pt := type (value = (h := @@i32 ?))\n\
+         pt := type (instance = (h := @@i32 ?))\n\
          v := pt(q)\n\
          v.h@@\n\
          w := pt(px)\n"

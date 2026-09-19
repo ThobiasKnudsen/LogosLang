@@ -22,7 +22,7 @@
 //! tape, scope stack, and reentrant expression parse (DESIGN ›The constructor
 //! is a field‹, #61): a body is a scope whose bare lines fill the six slots
 //! `type` declares for every type it builds — [`SLOT_NAMES`], filled with
-//! `=` — or declare its own members, its `value = (…)` slot holding the
+//! `=` — or declare its own members, its `instance = (…)` slot holding the
 //! per-instance fields. Here we only create the root, attach its
 //! constructor, and register what the body consumes: `,`, the two
 //! associativity values `left` and

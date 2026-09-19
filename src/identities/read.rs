@@ -335,7 +335,7 @@ mod tests {
              p := &x,\n\
              a := type ?,\n\
              d := dyad ?,\n\
-             w := type ( value = (y := i64 ?) ),\n\
+             w := type ( instance = (y := i64 ?) ),\n\
              q := w(7),\n\
              f := fn (n := i32 ?, b) -> i32 ( n ),\n\
              true,\n\
@@ -459,7 +459,7 @@ mod tests {
         // A record type is an aggregate of its size; a code-carrying one has no
         // place, since a node of it is a call.
         let (_store, core, exprs) = parse_seq(
-            "w := type ( value = (x := i64 ?, y := i64 ?) ),\n\
+            "w := type ( instance = (x := i64 ?, y := i64 ?) ),\n\
              c := type ( code = fn (a := i32 ?) -> i32 ( a ) )",
         );
         let types = core.types();

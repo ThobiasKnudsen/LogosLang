@@ -2107,7 +2107,7 @@ mod tests {
 
         let node = {
             let mut p = Parser::new(
-                "logos (value = (x := i32 ?, y := i32 ?))",
+                "logos (instance = (x := i32 ?, y := i32 ?))",
                 &mut store,
                 &mut trie,
                 core.types(),
@@ -2152,7 +2152,7 @@ mod tests {
 
         let node = {
             let mut p =
-                Parser::new("logos (value = (t))", &mut store, &mut trie, core.types(), scopes);
+                Parser::new("logos (instance = (t))", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
 
@@ -2208,7 +2208,7 @@ mod tests {
         scopes.push(core.root_scope);
         let node = {
             let mut p = Parser::new(
-                "logos (value = (x := i32 ?))",
+                "logos (instance = (x := i32 ?))",
                 &mut store,
                 &mut trie,
                 core.types(),
@@ -2545,7 +2545,7 @@ mod tests {
         scopes.push(core.root_scope);
         let root = {
             let mut p = Parser::new(
-                "double := fn (x := i32 ?) -> i32 ( x + x ),\npoint := logos (value = (a := i32 ?)),\ndouble(21)",
+                "double := fn (x := i32 ?) -> i32 ( x + x ),\npoint := logos (instance = (a := i32 ?)),\ndouble(21)",
                 &mut store,
                 &mut trie,
                 core.types(),
@@ -3749,7 +3749,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "holder := logos (value = (r := @i32 ?))",
+                "holder := logos (instance = (r := @i32 ?))",
                 &mut store,
                 &mut trie,
                 core.types(),
@@ -4295,7 +4295,9 @@ mod tests {
         // the member intercept fires only when the lhs is fn-typed, so the
         // spelling is not globally reserved (unlike `.logos`).
         assert_eq!(
-            run_script("point := logos (value = (compile := i32 ?)),\np := point(7),\np.compile"),
+            run_script(
+                "point := logos (instance = (compile := i32 ?)),\np := point(7),\np.compile"
+            ),
             7
         );
     }
@@ -4352,12 +4354,12 @@ mod tests {
         assert_eq!(p.parse_expression(), Err(ParseError::TypeMismatch));
     }
 
-    /// Declare `point := logos (value = (x := i32 ?, y := i32 ?))` in the root scope.
+    /// Declare `point := logos (instance = (x := i32 ?, y := i32 ?))` in the root scope.
     fn declare_point(store: &mut Store, trie: &mut RegexTrie, core: &Core) {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(
-            "point := logos (value = (x := i32 ?, y := i32 ?))",
+            "point := logos (instance = (x := i32 ?, y := i32 ?))",
             store,
             trie,
             core.types(),
@@ -4412,7 +4414,7 @@ mod tests {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "cell := logos (value = (a := u8 ?, b := i64 ?, c := i32 ?))",
+                "cell := logos (instance = (a := u8 ?, b := i64 ?, c := i32 ?))",
                 &mut store,
                 &mut trie,
                 core.types(),
@@ -4986,7 +4988,7 @@ mod tests {
         unsafe {
             assert_recursion_both_tiers(
                 &[
-                    "point := logos ( value = ( x := i32 ?, y := i32 ? ) )",
+                    "point := logos ( instance = ( x := i32 ?, y := i32 ? ) )",
                     "h := fn (n := i32 ?) -> i32 ( pt := point(n, 0), if (n < 1) (0) else (h(n - 1), pt.x) )",
                 ],
                 "h",

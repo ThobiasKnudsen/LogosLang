@@ -978,7 +978,7 @@ impl ScopeStack {
     /// Declare `name` denoting the record in the current scope, checked
     /// against its *siblings* alone (DESIGN ›The constructor is a field‹:
     /// "a field's declaration is checked only against its siblings", so
-    /// `x := 1, p := type (value = (x := i32 ?))` is legal): a live record
+    /// `x := 1, p := type (instance = (x := i32 ?))` is legal): a live record
     /// of the spelling in this very scope is [`ResolveError::Shadowed`]; one
     /// in an enclosing scope stands beside it, both live only until this
     /// scope closes — and a field's type names no sibling, so nothing inside
@@ -1291,11 +1291,11 @@ pub unsafe fn fn_outer<'a>(fn_node: DyadPtr) -> &'a [DyadPtr] {
 /// The six slots `type` declares for every type it builds, in the order the
 /// markers on [`CoreTypes::slots`] and [`SlotKind`] follow (DESIGN ›The
 /// constructor is a field‹: "`parse_rank`, `lex_rank`, `associativity`,
-/// `parse`, `drop`, `run`, and `value` are places `type` declares"). The
+/// `parse`, `drop`, `run`, and `instance` are places `type` declares"). The
 /// seed spells the constructor slot `parse` (#130) and the body slot `code`
-/// until #126 renames it `run`; `value` is the field list of every node
-/// (#128), filled before `=` reads its right side
-/// ([`Parser::value_block_fill`]). The `drop` slot has no spelling here yet:
+/// until #126 renames it `run`; `instance` is the field list of every instance
+/// (#128; spelled `value` from 17 to 19 September 2026), filled before `=` reads its right side
+/// ([`Parser::instance_block_fill`]). The `drop` slot has no spelling here yet:
 /// `drop` is also the statement keyword, and a marker for it in the body
 /// scope would meet the keyword's live record — two candidates, which
 /// ›Name resolution is scope-filtered‹ rules impossible — so its spelling
@@ -1303,7 +1303,7 @@ pub unsafe fn fn_outer<'a>(fn_node: DyadPtr) -> &'a [DyadPtr] {
 /// September 2026: "for now it is at least stored in fn"), so the seed keeps
 /// it in the record head beside the constructor as its own placement.
 pub const SLOT_NAMES: [&str; 6] =
-    ["parse_rank", "lex_rank", "associativity", "parse", "code", "value"];
+    ["parse_rank", "lex_rank", "associativity", "parse", "code", "instance"];
 
 /// How deep scopes may nest before the parse is refused (#80). Each open
 /// bracket recurses `parse_sequence` -> `parse_next` -> `parse_expression` ->
@@ -1315,7 +1315,7 @@ pub const SLOT_NAMES: [&str; 6] =
 pub const MAX_BRACKET_DEPTH: usize = 2_000;
 
 /// What a line of a `type (…)` body is (DESIGN ›The constructor is a field‹:
-/// a body line fills a slot, `value = (…)` among them, declares a member,
+/// a body line fills a slot, `instance = (…)` among them, declares a member,
 /// or is prose). Anything else is [`ParseError::TypeBodyLine`].
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BodyLine {
@@ -1336,7 +1336,7 @@ pub enum SlotKind {
     Associativity = 2,
     Parse = 3,
     Code = 4,
-    Value = 5,
+    Instance = 5,
 }
 
 impl SlotKind {
@@ -1348,14 +1348,14 @@ impl SlotKind {
             2 => SlotKind::Associativity,
             3 => SlotKind::Parse,
             4 => SlotKind::Code,
-            _ => SlotKind::Value,
+            _ => SlotKind::Instance,
         }
     }
 }
 
 /// A `type (…)` definition being parsed (#61): its body scope, and what its
 /// lines have filled so far — the head the type node takes at the close, the
-/// constructor to install, and the `value = (…)` block's layout.
+/// constructor to install, and the `instance = (…)` block's layout.
 struct OpenType {
     scope: DyadPtr,
     parse_rank: f64,
@@ -1449,9 +1449,9 @@ pub enum ParseError {
     /// self-directing pass‹): the run error, reported by the drivers as one.
     Run(crate::run::RunError),
     /// A line of a `type (…)` body that neither fills a slot, declares a
-    /// member, lays out its instances (`value = (…)`), nor is prose (#61).
+    /// member, lays out its instances (`instance = (…)`), nor is prose (#61).
     TypeBodyLine,
-    /// A second `value = (…)` block in one type body.
+    /// A second `instance = (…)` block in one type body.
     DoubleInstance,
     /// A binding in a type body inserted a teardown, which no scope exit runs.
     DeferInTypeBody,
@@ -1847,7 +1847,7 @@ pub struct Parser<'a> {
     runtime_depth: u32,
     /// The type definitions open around the current position, innermost
     /// last (#61): a `type (…)` body pushes one while its lines parse, and
-    /// the slot fills and the `value = (…)` block write into it.
+    /// the slot fills and the `instance = (…)` block write into it.
     definitions: Vec<OpenType>,
     /// The open scopes, innermost last; the base entry is the top level. Each
     /// carries the constructor-inserted teardowns its bindings pushed (issue
@@ -2922,7 +2922,7 @@ impl<'a> Parser<'a> {
     /// array, and the packed size. A `fn`'s parameter list checks each name
     /// against every open scope (the body reopens the list's scope, so a
     /// parameter may not shadow a name the body could still mean); an
-    /// `value = (…)` block's fields are checked against their siblings alone
+    /// `instance = (…)` block's fields are checked against their siblings alone
     /// (`relaxed`; DESIGN ›The constructor is a field‹).
     fn parse_field_list(&mut self, relaxed: bool) -> Result<(DyadPtr, DyadPtr, u64), ParseError> {
         self.expect_open()?;
@@ -3003,12 +3003,12 @@ impl<'a> Parser<'a> {
     /// `type (…)`'s body (DESIGN ›The constructor is a field‹, #61): an
     /// ordinary scope whose bare lines "belong to the identity itself — they
     /// fill its own slots (its constructor, its parse_rank) and may declare
-    /// new members that live on it", while its `value = (…)` block holds
+    /// new members that live on it", while its `instance = (…)` block holds
     /// what lives on instances. The six slots `type` declares for every
     /// type it builds — [`SLOT_NAMES`] — are declared first, as records over
     /// the shared markers, so `parse_rank := 5` is the no-shadowing error and
     /// `parse_rank = …` the fill ([`Parser::slot_fill`], the `value` block's
-    /// [`Parser::value_block_fill`]). Every other line must declare a
+    /// [`Parser::instance_block_fill`]). Every other line must declare a
     /// member or be prose: a type body is
     /// definition-time code and nothing runs it later, so a line that would
     /// only run is refused. The type node then carries the instance layout,
@@ -3139,7 +3139,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// `value = (…)`'s fill (#128; DESIGN ›The constructor is a field‹: the
+    /// `instance = (…)`'s fill (#128, spelled `value` until 19 September 2026; DESIGN ›The constructor is a field‹: the
     /// `value` block "saying what the value slot of every node of it holds",
     /// "a slot filled with `=` like the rest"): the block of per-instance
     /// fields (`name := T ?`, a place per instance), parsed as a field list
@@ -3147,7 +3147,7 @@ impl<'a> Parser<'a> {
     /// right side, since the bracket is a field list, not an expression. The
     /// line's item is a declare node over the marker itself, whose null type
     /// the declaration's run skips.
-    pub(crate) fn value_block_fill(&mut self) -> Result<DyadPtr, ParseError> {
+    pub(crate) fn instance_block_fill(&mut self) -> Result<DyadPtr, ParseError> {
         let def = self.definitions.last().expect("slot_of found an open definition");
         if def.instance.is_some() {
             return Err(ParseError::DoubleInstance);
@@ -3155,7 +3155,7 @@ impl<'a> Parser<'a> {
         let instance = self.parse_field_list(true)?;
         self.definitions.last_mut().expect("checked above").instance = Some(instance);
         let types = self.types;
-        let name = SLOT_NAMES[SlotKind::Value as usize];
+        let name = SLOT_NAMES[SlotKind::Instance as usize];
         let name_node =
             crate::identities::string::build_text(self.store, types.string_, name.as_bytes());
         Ok(crate::identities::declare::build(
@@ -3163,7 +3163,7 @@ impl<'a> Parser<'a> {
             types.declare_,
             types.ops.declare_,
             name_node,
-            types.slots[SlotKind::Value as usize],
+            types.slots[SlotKind::Instance as usize],
         ))
     }
 
@@ -3197,7 +3197,7 @@ impl<'a> Parser<'a> {
     /// "resolved by the operator's first use"); the associativity is `left`
     /// or `right`; the constructor (`parse`) a function taking the tape by
     /// value; the `value` block is filled before the right side is read
-    /// ([`Parser::value_block_fill`]), so it never arrives here. The fill is
+    /// ([`Parser::instance_block_fill`]), so it never arrives here. The fill is
     /// a silent statement, the declare node the type variable's fill yields.
     /// The number a rank slot's right side stands for: a literal molds to
     /// f64 without running; a concrete expression runs now, on the pass's
@@ -3280,7 +3280,7 @@ impl<'a> Parser<'a> {
                 }
                 def.ctor = read;
             }
-            SlotKind::Value => return Err(ParseError::TypeBodyLine),
+            SlotKind::Instance => return Err(ParseError::TypeBodyLine),
             // `code = fn …`: the function a node of the type runs and compiles
             // as (#63; DESIGN ›Execution is function application‹).
             SlotKind::Code => {

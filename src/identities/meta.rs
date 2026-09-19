@@ -91,7 +91,7 @@ pub(crate) const ARRAY_TAG: u8 = 22;
 /// filling `fields` and `size_bytes`‹), locked before first instantiation. The
 /// payload is `[scope: @dyad][fields: @dyad (an array node over the field
 /// declarations)][size_bytes: u64][body: @dyad]`, 32 bytes: the field scope
-/// (a `type (…)` body's `value = (…)`, a `fn`'s parameter list), the
+/// (a `type (…)` body's `instance = (…)`, a `fn`'s parameter list), the
 /// fields, their packed size, and the definition body's own scope — the
 /// bare lines' members, `g.y` — null where a type has no body (#61). The
 /// head carries the type's parse_rank and associativity, the call defaults

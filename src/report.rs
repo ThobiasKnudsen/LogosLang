@@ -140,10 +140,10 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::TypeBodyLine => {
-            "a type body line fills a slot (`parse_rank = …`, `value = (…)`) or declares a member (`y := …`)"
+            "a type body line fills a slot (`parse_rank = …`, `instance = (…)`) or declares a member (`y := …`)"
                 .into()
         }
-        ParseError::DoubleInstance => "a type body has one `value = (…)` block".into(),
+        ParseError::DoubleInstance => "a type body has one `instance = (…)` block".into(),
         ParseError::DeferInTypeBody => "a type body cannot own what needs a teardown".into(),
         ParseError::TypeKnownOnlyAtRun => {
             "which type this is is known only when the program runs, and this needs it now".into()
