@@ -183,13 +183,13 @@ pub fn parse_message(e: &ParseError) -> String {
             "this type's `run` is held as its lexed body; a node that constructs and runs it is not in the seed yet (#133 slice 8)".into()
         }
         ParseError::SlotOutsideDefinition => {
-            "a slot word (`parse_rank`, `associativity`, `parse`, `run`, `drop`, `instance`) stands left of `=` only inside a type body".into()
+            "a slot word (`parse_rank`, `lex_rank`, `associativity`, `parse`, `run`, `drop`, `instance`) stands left of `=` only inside a type body".into()
         }
         ParseError::OwnRunNotInSeed => {
             "a type's own `run` is not in the seed; an instance's run is `shared run = (…)` inside `instance = (…)`".into()
         }
         ParseError::InstanceSlotNotInSeed => {
-            "inside `instance = (…)` only `shared run = (…)` fills a slot yet; the instances' parse trio is not in the seed (#133)".into()
+            "inside `instance = (…)` only `shared run = (…)` fills a slot yet; the instances' other slots are not in the seed (#133)".into()
         }
         ParseError::DropSlotNotInSeed => "the `drop` slot is not in the seed yet (#133)".into(),
         ParseError::InstanceSlotNeedsShared => {

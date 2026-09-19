@@ -188,6 +188,13 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
         b"p := type (instance = (shared k := 10, v := i32 ?))\nq := p(2)\nq.v\np.k\np.size_bytes\n",
     );
     assert_eq!(echoes, ["2", "10", "4"], "stderr: {stderr}");
+    // Prose beside a `shared` line is lifted out like any segment's, before
+    // or after the declaration, and none of it is taken for a body line.
+    let (echoes, stderr) = repl(
+        b"t := type (instance = (shared # \xc2\xabnote\xc2\xbb y := 3, shared z := 4 # \xc2\xabtail\xc2\xbb, v := i32 ?))\n\
+          t.y\nt.z\nt.size_bytes\n",
+    );
+    assert_eq!(echoes, ["3", "4", "4"], "stderr: {stderr}");
     // A declaration that faults at the definition says so, and names the type
     // body it was in.
     let (echoes, stderr) =
@@ -392,18 +399,27 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"g := type (y := 3)\n", "inside `instance"),
         (b"g := type (instance = (shared))\n", "followed by a declaration"),
         (b"f := fn (shared a := i32 ?) -> void ( a )\n", "nowhere else"),
-        // The slot words are core identities (19 September 2026): left of `=`
-        // outside a type body they are refused; a type's own `run`, the
-        // instances' parse trio and the `drop` slot are not in the seed yet,
-        // and a slot fill inside the block is marked `shared`.
+        // The slot words are core identities in the seed (19 September 2026;
+        // DESIGN has them known only inside a type body, a listed
+        // divergence): left of `=` outside a type body they are refused; a
+        // type's own `run`, the instances' parse trio, their `instance` and
+        // the `drop` slot are not in the seed yet, and a slot fill inside the
+        // block is marked `shared`.
         (b"parse_rank = 3\n", "only inside a type body"),
         (b"d := i32 5\ndrop = 3\n", "only inside a type body"),
         (b"t := type (run = fn () -> i32 ( 1 ))\n", "`shared run = (…)`"),
         (b"t := type (run = ( 1 ))\n", "`shared run = (…)`"),
         (b"t := type (instance = (run = 5))\n", "marked"),
-        (b"t := type (instance = (shared parse_rank = 5))\n", "not in the seed"),
-        (b"t := type (instance = (shared parse = ( tape.recenter(0) )))\n", "not in the seed"),
-        (b"t := type (instance = (shared drop = 5))\n", "not in the seed"),
+        (b"t := type (instance = (shared parse_rank = 5))\n", "other slots"),
+        (b"t := type (instance = (shared parse = ( tape.recenter(0) )))\n", "other slots"),
+        (b"t := type (instance = (shared instance = (a := i32 ?)))\n", "other slots"),
+        (b"t := type (instance = (shared drop = 5))\n", "`drop` slot"),
+        // One block, one no-shadowing rule (19 September 2026): a field and a
+        // `shared` member may not share a name, in either order; and `shared`
+        // is the mark, never a field's name.
+        (b"p := type (instance = (y := i32 ?, shared y := 3))\n", "shadowed"),
+        (b"p := type (instance = (shared y := 3, y := i32 ?))\n", "shadowed"),
+        (b"t := type (instance = (shared := i32 ?))\n", "followed by a declaration"),
         (b"t := type (5)\n", "a type body line"),
         // A bare `instance` line declares nothing: the slot name used to
         // stand as a bare value and pass as a silent no-op (#87).

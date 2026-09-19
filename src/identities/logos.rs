@@ -20,14 +20,14 @@
 //! The definition body's parse lives in
 //! [`crate::parse::Parser::parse_type_body`] because it needs the parser's
 //! tape, scope stack, and reentrant expression parse (DESIGN ›The constructor
-//! is a field‹, #61): a body is a scope whose bare lines fill the six slots
+//! is a field‹, #61): a body is a scope whose bare lines fill the slots
 //! `type` declares for every type it builds — [`SLOT_NAMES`], filled with
-//! `=` — or declare its own members, its `instance = (…)` slot holding the
-//! per-instance fields. Here we only create the root, attach its
-//! constructor, and register what the body consumes: `,`, the two
-//! associativity values `left` and
-//! `right` (identities of type `type`, like a keyword, ruled 9 September
-//! 2026), and the six slot markers.
+//! `=` — its `instance = (…)` slot holding what lives on instances, fields
+//! and `shared` members alike; a bare `:=` line is the checked error (19
+//! September 2026). Here we only create the root, attach its constructor,
+//! and register what the body consumes: `,`, the two associativity values
+//! `left` and `right` (identities of type `type`, like a keyword, ruled 9
+//! September 2026), and the six slot words.
 
 use crate::parse::SLOT_NAMES;
 
@@ -89,13 +89,14 @@ pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, [DyadP
     let left_ = side(cx, "left");
     let right_ = side(cx, "right");
 
-    // The slot words (DESIGN ›The constructor is a field‹, 19 September 2026:
-    // "the slot names are the core words themselves, never a second
-    // declaration in the block's scope, so a lookup has one candidate"): six
-    // identities spelled once at the root, inert like `left` and `right`, so
-    // each stands as a value anywhere, and `=` with one on its left inside a
-    // type body is that slot's fill ([`crate::parse::Parser::slot_of`]);
-    // `drop` is the statement keyword itself, whose constructor looks right.
+    // The slot words: six identities spelled once at the root, inert like
+    // `left` and `right`, so each stands as a value anywhere, and `=` with
+    // one on its left inside a type body is that slot's fill
+    // ([`crate::parse::Parser::slot_of`]). This is the seed's shape and a
+    // listed divergence: DESIGN ›The constructor is a field‹ (ruled 19
+    // September 2026, later) has the words known only inside a type body —
+    // see [`SLOT_NAMES`]. `drop` is the statement keyword itself, which `=`
+    // takes as the slot's name when it stands alone to its left.
     let slots = SLOT_NAMES.map(|name| side(cx, name));
 
     // `:` is no declaration operator (DESIGN ›Declarations are immutable by

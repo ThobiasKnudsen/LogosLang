@@ -994,16 +994,8 @@ impl ScopeStack {
         record: DyadPtr,
     ) -> Result<(), ResolveError> {
         let scope = self.current().expect("declare needs an open scope");
-        match trie.get(name) {
-            Ok(m) if m.matched == name.len() => {
-                // SAFETY: every pointer the trie stores is a record dyad.
-                let fields = |r: DyadPtr| unsafe { *Record::of(r) };
-                if m.records.iter().any(|&r| fields(r).scope == scope && !fields(r).is_dead()) {
-                    return Err(ResolveError::Shadowed(name.to_string()));
-                }
-            }
-            Ok(_) | Err(RegexTrieError::NodeNotFound) => {}
-            Err(e) => return Err(ResolveError::Index(e)),
+        if self.declared_in(trie, name, scope)? {
+            return Err(ResolveError::Shadowed(name.to_string()));
         }
         // The spelling is text, whatever characters it has (`^`, `<=>`): it
         // enters the index as a literal key, never as a pattern (#110).
@@ -1014,6 +1006,30 @@ impl ScopeStack {
         self.journal.push(Journal::Declared { name: key, scope });
         self.pending.push(Pending { record, endpoint: Endpoint::Start });
         Ok(())
+    }
+
+    /// Whether a live record of the spelling `name` was declared in `scope`
+    /// itself: the sibling check of [`ScopeStack::declare_field`], run too
+    /// across the two halves of an `instance = (…)` block — its `shared`
+    /// members live in the type's own scope, its fields in the list's — so
+    /// that the block is one scope for no-shadowing (DESIGN ›The constructor
+    /// is a field‹, 19 September 2026: "the instance block being the scope
+    /// where `y` is live for `z`'s line and no-shadowing applies as before").
+    pub fn declared_in(
+        &self,
+        trie: &RegexTrie,
+        name: &str,
+        scope: DyadPtr,
+    ) -> Result<bool, ResolveError> {
+        match trie.get(name) {
+            Ok(m) if m.matched == name.len() => {
+                // SAFETY: every pointer the trie stores is a record dyad.
+                let fields = |r: DyadPtr| unsafe { *Record::of(r) };
+                Ok(m.records.iter().any(|&r| fields(r).scope == scope && !fields(r).is_dead()))
+            }
+            Ok(_) | Err(RegexTrieError::NodeNotFound) => Ok(false),
+            Err(e) => Err(ResolveError::Index(e)),
+        }
     }
 
     /// Re-point `record` at `identity`. Used by the declaration fixpoint when
@@ -1293,12 +1309,15 @@ pub unsafe fn fn_outer<'a>(fn_node: DyadPtr) -> &'a [DyadPtr] {
 }
 
 /// The slot words, in the order the identities on [`CoreTypes::slots`] and
-/// [`SlotKind`] follow (DESIGN ›The constructor is a field‹, 19 September
-/// 2026: "the slot names are the core words themselves, never a second
-/// declaration in the block's scope"; "`parse_rank`, `lex_rank`,
-/// `associativity`, `parse`, `drop`, `run`, and `instance` are places `type`
-/// declares"). `drop` is not here: it is the statement keyword, one word,
-/// whose constructor stands aside when `=` follows it ([`SlotKind::Drop`]).
+/// [`SlotKind`] follow (DESIGN ›The constructor is a field‹: "`parse_rank`,
+/// `lex_rank`, `associativity`, `parse`, `drop`, `run`, and `instance` are
+/// places `type` declares"). The seed spells them as root identities, known
+/// everywhere; DESIGN (ruled 19 September 2026, later) has them known only
+/// inside a type body, the type's own on a bare line and the instances' in
+/// the block, so a variable named `run` outside a body is legal there and a
+/// shadowing error here — a listed divergence, to be undone. `drop` is not
+/// here: it is the statement keyword, one word, which `=` takes as the slot's
+/// name when it stands alone to its left ([`SlotKind::Drop`]).
 /// `lex_rank` is the seed's stand-in for writing a name's rank in its body
 /// (#122). `instance` is the field list of every instance (#128; spelled
 /// `value` from 17 to 19 September 2026), read before `=` reads its right
@@ -1346,6 +1365,15 @@ pub enum SlotKind {
 }
 
 impl SlotKind {
+    /// The slot's spelling: its entry in [`SLOT_NAMES`], or the keyword's
+    /// own for [`SlotKind::Drop`], which has none there.
+    fn name(self) -> &'static str {
+        match self {
+            SlotKind::Drop => "drop",
+            kind => SLOT_NAMES[kind as usize],
+        }
+    }
+
     /// The slot at `i` in [`SLOT_NAMES`].
     fn of(i: usize) -> Self {
         match i {
@@ -1520,7 +1548,8 @@ pub enum ParseError {
     /// `lex_rank = …` in a type body that is not the value of a declaration:
     /// the rank is the name's (#122), and here there is no name.
     LexRankNeedsName,
-    /// `code = …` with a value that is not a function (#63).
+    /// `shared run = …` with a value that is neither a bare body nor, in the
+    /// shape kept until #133 slice 9, a function (#63).
     BadRunSlot,
     /// A type whose `run` is a held body applied to arguments: nothing
     /// constructs that body into a node yet (#133 slice 8), so the call
@@ -3039,6 +3068,21 @@ impl<'a> Parser<'a> {
             // is scope-filtered‹; a per-record names store is recorded as
             // rejected).
             if relaxed {
+                // One block, one no-shadowing rule (DESIGN ›The constructor
+                // is a field‹, 19 September 2026: the instance block is "the
+                // scope where `y` is live … and no-shadowing applies as
+                // before"): a field is checked against the `shared` members
+                // too, which live in the type's own scope
+                // ([`Parser::shared_member`]).
+                let body = self
+                    .definitions
+                    .last()
+                    .expect("a relaxed field list is an instance block")
+                    .scope;
+                if self.scopes.declared_in(self.trie, name, body).map_err(ParseError::Resolve)? {
+                    self.pos = start;
+                    return Err(ParseError::Resolve(ResolveError::Shadowed(name.to_string())));
+                }
                 self.declare_field_name(name, field, start)?;
             } else {
                 self.declare_name(name, field, start)?;
@@ -3071,7 +3115,13 @@ impl<'a> Parser<'a> {
     /// list's, so it is stored once — the storage the type's bare members had
     /// until 19 September 2026 (#87) — pending like every body line and run at
     /// the body's close; read `g.y` through the type. Reading it through an
-    /// instance, `a.y`, waits on #116 (deliberate-deferred, #133).
+    /// instance, `a.y`, waits on #116 (deliberate-deferred, #133). The block
+    /// stays one scope for no-shadowing: the member is checked against the
+    /// fields declared before it, as a field is against the members
+    /// ([`Parser::parse_field_list`]). `shared` itself is a word of the block
+    /// and never a field's name (ruled 19 September 2026, Thobias: "reserved
+    /// inside instance inside type"), so `shared := …` is the missing
+    /// declaration.
     fn shared_member(&mut self, at: usize) -> Result<(), ParseError> {
         let body = match self.definitions.last() {
             Some(def) => def.scope,
@@ -3080,37 +3130,82 @@ impl<'a> Parser<'a> {
                 return Err(ParseError::SharedOutsideInstanceBlock);
             }
         };
+        if self.consume_token(self.types.declare_tok) {
+            self.pos = at;
+            return Err(ParseError::SharedNeedsDeclaration);
+        }
         let field_scope = self.scopes.pop().expect("the field list's scope is open");
         self.definitions.last_mut().expect("checked above").in_block = true;
-        let item = self.parse_next();
+        let items = self.shared_line();
         self.definitions.last_mut().expect("checked above").in_block = false;
         self.scopes.push(field_scope);
-        let item = match item {
-            Some(item) => item?,
-            None => {
+        // The line's one declaration — a member or a slot fill, both declare
+        // nodes — with its prose lifted out beside it, as every segment's is;
+        // anything else is not what `shared` marks.
+        let mut declared = None;
+        for item in items? {
+            // SAFETY: `item` is a reduced dyad just parsed.
+            let ty = unsafe { (*item).ty };
+            if unsafe { crate::identities::numtype::is_comment_type(ty) } {
+                self.scopes.settle_item(body, item);
+            } else if ty == self.types.declare_ && declared.is_none() {
+                declared = Some(item);
+            } else {
                 self.pos = at;
                 return Err(ParseError::SharedNeedsDeclaration);
             }
-        };
-        // A member declaration or a slot fill, both declare nodes; anything
-        // else is not what `shared` marks.
-        // SAFETY: `item` is a reduced dyad just parsed.
-        let declares = unsafe { (*item).ty } == self.types.declare_;
-        if !declares {
+        }
+        let Some(item) = declared else {
             self.pos = at;
             return Err(ParseError::SharedNeedsDeclaration);
+        };
+        if !self.is_slot_fill(item) {
+            let name = std::str::from_utf8(self.declared_name(item))
+                .expect("a spelling is source text")
+                .to_string();
+            if self
+                .scopes
+                .declared_in(self.trie, &name, field_scope)
+                .map_err(ParseError::Resolve)?
+            {
+                self.pos = at;
+                return Err(ParseError::Resolve(ResolveError::Shadowed(name)));
+            }
         }
         self.scopes.settle_item(body, item);
         Ok(())
     }
 
+    /// The items of the segment after `shared`: the first [`Parser::parse_next`]
+    /// lexes and constructs it and queues what it yielded, its expression and
+    /// the prose lifted out of it; the rest are taken while they stand queued,
+    /// before anything further is lexed, so none is left for the enclosing
+    /// body's loop to take as a line of its own.
+    fn shared_line(&mut self) -> Result<Vec<DyadPtr>, ParseError> {
+        let mut items = Vec::new();
+        let Some(first) = self.parse_next() else {
+            return Ok(items);
+        };
+        items.push(first?);
+        while !self.queued.is_empty() {
+            items.push(self.parse_next().expect("a queued item comes out first")?);
+        }
+        Ok(items)
+    }
+
+    /// The spelling a declare node declares: its name string, as
+    /// `declare::build` lays the node out, the string node at 0.
+    fn declared_name(&self, item: DyadPtr) -> &[u8] {
+        // SAFETY: `item` is a declare node from the store.
+        unsafe { crate::reflect::text_of(*((*item).value as *const DyadPtr)) }
+    }
+
     /// Whether a declare node is one of the slot fills — its name a slot's
     /// ([`SLOT_NAMES`]), the node [`Parser::slot_fill`] yields — rather than a
-    /// member declaration.
+    /// member declaration. The spelling decides, which is sound while the slot
+    /// words are reserved: no `:=` can declare one.
     fn is_slot_fill(&self, item: DyadPtr) -> bool {
-        // SAFETY: `item` is a declare node as `declare::build` lays it out:
-        // the name string node sits at 0.
-        let text = unsafe { crate::reflect::text_of(*((*item).value as *const DyadPtr)) };
+        let text = self.declared_name(item);
         SLOT_NAMES.iter().any(|s| s.as_bytes() == text)
     }
 
@@ -3118,12 +3213,12 @@ impl<'a> Parser<'a> {
     /// September 2026): an ordinary scope whose bare lines fill the type's
     /// own slots (its constructor, its parse_rank) — a bare `:=` line is the
     /// checked error — while its `instance = (…)` block holds what lives on
-    /// instances, a `shared` member stored once among them. The six slots `type` declares for every
-    /// type it builds — [`SLOT_NAMES`] — are declared first, as records over
-    /// (the slot words are root identities, so `parse_rank := 5` is the
-    /// no-shadowing error and `parse_rank = …` the fill, [`Parser::slot_fill`],
-    /// the instance block's [`Parser::instance_block_fill`]). Every other line
-    /// must be prose: a type body is
+    /// instances, a `shared` member stored once among them. The slot words
+    /// ([`SLOT_NAMES`]) are root identities in the seed, so `parse_rank := 5`
+    /// is the no-shadowing error and `parse_rank = …` the fill
+    /// ([`Parser::slot_fill`], the instance block's
+    /// [`Parser::instance_block_fill`]). Every other line must be prose: a
+    /// type body is
     /// definition-time code and nothing runs it later, so a line that would
     /// only run is refused. The type node then carries the instance layout,
     /// this scope as its body (members read `g.y`), the parse_rank and
@@ -3270,13 +3365,21 @@ impl<'a> Parser<'a> {
     /// the declaration's run skips.
     pub(crate) fn instance_block_fill(&mut self) -> Result<DyadPtr, ParseError> {
         let def = self.definitions.last().expect("slot_of found an open definition");
+        // `shared instance = (…)` inside the block is the instances' own
+        // `instance` slot, not in the seed (#133): refused like their parse
+        // trio, never read and thrown away — the enclosing block is stored
+        // only when its list closes, so the double-block check below would
+        // not see it.
+        if def.in_block {
+            return Err(ParseError::InstanceSlotNotInSeed);
+        }
         if def.instance.is_some() {
             return Err(ParseError::DoubleInstance);
         }
         let instance = self.parse_field_list(true)?;
         self.definitions.last_mut().expect("checked above").instance = Some(instance);
         let types = self.types;
-        let name = SLOT_NAMES[SlotKind::Instance as usize];
+        let name = SlotKind::Instance.name();
         let name_node =
             crate::identities::string::build_text(self.store, types.string_, name.as_bytes());
         Ok(crate::identities::declare::build(
@@ -3288,11 +3391,9 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    /// Which slot of the type being defined `target` names, if any: a record
-    /// over one of the four markers, declared in the innermost open
-    /// definition's own scope, which must be the current one — a
-    /// `parse_rank = 3` inside a constructor's body is that function's own
-    /// business, not the enclosing type's.
+    /// Which slot `target` names, if any: a use of one of the slot words
+    /// ([`CoreTypes::slots`]), or of `drop`. Whether that fill reaches a type
+    /// being defined is [`Parser::filling_definition`]'s question.
     pub(crate) fn slot_of(&self, target: DyadPtr) -> Option<SlotKind> {
         // The word arrives as the record of its use, or as the identity
         // itself when its own constructor stood aside (`drop`).
@@ -3435,7 +3536,7 @@ impl<'a> Parser<'a> {
                 def.run = read;
             }
         }
-        let name = SLOT_NAMES[kind as usize];
+        let name = kind.name();
         let name_node =
             crate::identities::string::build_text(self.store, types.string_, name.as_bytes());
         Ok(crate::identities::declare::build(
@@ -3503,7 +3604,7 @@ impl<'a> Parser<'a> {
                 self.definitions.last_mut().expect("checked above").run_body = body;
                 // The line's item: a declare node over the slot word, as the
                 // instance block's is ([`Parser::instance_block_fill`]).
-                let name = SLOT_NAMES[SlotKind::Run as usize];
+                let name = SlotKind::Run.name();
                 let name_node = crate::identities::string::build_text(
                     self.store,
                     types.string_,
