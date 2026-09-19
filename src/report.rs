@@ -140,10 +140,18 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::TypeBodyLine => {
-            "a type body line fills a slot (`parse_rank = …`, `instance = (…)`) or declares a member (`y := …`)"
-                .into()
+            "a type body line fills a slot (`parse_rank = …`, `instance = (…)`) or is prose".into()
         }
         ParseError::DoubleInstance => "a type body has one `instance = (…)` block".into(),
+        ParseError::MemberOutsideInstanceBlock => {
+            "a type body's own lines only fill slots with `=`; a member, shared or per instance, is declared inside `instance = (…)`".into()
+        }
+        ParseError::SharedOutsideInstanceBlock => {
+            "`shared` marks a member inside `instance = (…)` and stands nowhere else".into()
+        }
+        ParseError::SharedNeedsDeclaration => {
+            "`shared` must be followed by a declaration, `shared name := value`".into()
+        }
         ParseError::DeferInTypeBody => "a type body cannot own what needs a teardown".into(),
         ParseError::TypeKnownOnlyAtRun => {
             "which type this is is known only when the program runs, and this needs it now".into()

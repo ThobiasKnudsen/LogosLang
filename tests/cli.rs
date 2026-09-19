@@ -157,29 +157,41 @@ fn the_view_reads_the_cell_and_operands_are_ordinary_fields() {
 
 #[test]
 fn a_type_body_fills_its_slots_and_declares_its_members() {
-    // DESIGN ›The constructor is a field‹ (#61): the six slots `type`
-    // declares are filled with `=` — the parse_rank spelled relative, the
-    // associativity one of the two identities `left` and `right` (of type
-    // `type`, like a keyword, ruled 9 September 2026) — bare `:=` lines are
-    // the type's own members, read `g.y`, and `instance = (…)` holds the
-    // per-instance fields, checked against their siblings alone.
+    // DESIGN ›The constructor is a field‹ (#61; 19 September 2026): the slots
+    // `type` declares are filled with `=` — the parse_rank spelled relative,
+    // the associativity one of the two identities `left` and `right` (of type
+    // `type`, like a keyword, ruled 9 September 2026) — and every member lives
+    // in the `instance = (…)` block: a `shared` one is stored once with the
+    // type and read `g.y`, an unmarked one is a field of every instance. A
+    // bare `:=` line in the body is the checked error.
     let (echoes, stderr) = repl(
         b"t := type (parse_rank = *.parse_rank + 1, associativity = right)\n\
           t.parse_rank\nt.associativity == right\nright:dyad.type == type\n",
     );
     assert_eq!(echoes, ["71.0", "true", "true"], "stderr: {stderr}");
-    let (echoes, stderr) = repl(b"g := type (y := 3, z := y + 3)\ng.y\ng.z\ng.parse_rank\n");
+    let (echoes, stderr) = repl(
+        b"g := type (instance = (shared y := 3, shared z := y + 3))\ng.y\ng.z\ng.parse_rank\n",
+    );
     assert_eq!(echoes, ["3", "6", "91.0"], "stderr: {stderr}");
-    // A member's initializer runs at the definition, so a *typed* member holds
-    // its value too — the body's own declarations run as they are parsed, the
-    // one pass over a type body as over a file. Before that, only the untyped
-    // comptime form worked, because it folds at parse, and `g.y` read the
-    // zeroed place (#87).
-    let (echoes, stderr) = repl(b"g := type (y := i32 7, z := i32 (y + 3))\ng.y\ng.z\ng.y + 1\n");
+    // A shared member's initializer runs at the definition, so a *typed*
+    // member holds its value too — the body's declarations run as they are
+    // parsed, the one pass over a type body as over a file. Before that, only
+    // the untyped comptime form worked, because it folds at parse, and `g.y`
+    // read the zeroed place (#87).
+    let (echoes, stderr) = repl(
+        b"g := type (instance = (shared y := i32 7, shared z := i32 (y + 3)))\ng.y\ng.z\ng.y + 1\n",
+    );
     assert_eq!(echoes, ["7", "10", "8"], "stderr: {stderr}");
+    // Shared and per-instance members share one block: the field is a place
+    // per instance and in the layout, the shared one is neither.
+    let (echoes, stderr) = repl(
+        b"p := type (instance = (shared k := 10, v := i32 ?))\nq := p(2)\nq.v\np.k\np.size_bytes\n",
+    );
+    assert_eq!(echoes, ["2", "10", "4"], "stderr: {stderr}");
     // A declaration that faults at the definition says so, and names the type
     // body it was in.
-    let (echoes, stderr) = repl(b"h := fn () -> i32 ( p := @i32 ?, p@ )\ng := type (y := h())\n");
+    let (echoes, stderr) =
+        repl(b"h := fn () -> i32 ( p := @i32 ?, p@ )\ng := type (instance = (shared y := h()))\n");
     assert!(
         echoes.is_empty() && stderr.contains("a type body's own declaration failed"),
         "stderr: {stderr}"
@@ -337,6 +349,11 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (&b"t := type (parse_rank := 5)\n"[..], "shadowed"),
         (b"y := 1\ng := type (y := 3)\n", "shadowed"),
         (b"t := type (instance = (a := i32 ?), instance = (b := i32 ?))\n", "one `instance"),
+        // A bare `:=` line is not a type body's own (19 September 2026): members
+        // go inside `instance = (…)`; `shared` marks one there and nowhere else.
+        (b"g := type (y := 3)\n", "inside `instance"),
+        (b"g := type (instance = (shared))\n", "followed by a declaration"),
+        (b"f := fn (shared a := i32 ?) -> void ( a )\n", "nowhere else"),
         (b"t := type (5)\n", "a type body line"),
         // A bare `instance` line declares nothing: the slot name used to
         // stand as a bare value and pass as a silent no-op (#87).

@@ -79,7 +79,7 @@ p := point (3, 4),
 p.x + p.y                      # 7
 ```
 
-`type` is both the root of every type chain and the keyword that defines one. The per-instance fields live in the `instance = ( … )` block; the body's own lines fill the type's slots (`parse_rank`, `associativity`, `constructor`) or declare members of the type itself, read as `point.member`. A type with per-instance fields is a record. A type whose members are all its own is a namespace.
+`type` is both the root of every type chain and the keyword that defines one. Every member lives in the `instance = ( … )` block: an unmarked one is a field of every instance, a `shared` one is stored once with the type and read as `point.member`. The body's own lines fill the type's slots (`parse_rank`, `associativity`, `parse`). A type with per-instance fields is a record. A type whose members are all shared is a namespace.
 
 ### Types are values
 

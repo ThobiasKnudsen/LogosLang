@@ -1453,6 +1453,13 @@ pub enum ParseError {
     TypeBodyLine,
     /// A second `instance = (…)` block in one type body.
     DoubleInstance,
+    /// A bare `:=` line in a type body: members are declared inside
+    /// `instance = (…)` (DESIGN ›The constructor is a field‹, 19 September 2026).
+    MemberOutsideInstanceBlock,
+    /// `shared` outside an `instance = (…)` block.
+    SharedOutsideInstanceBlock,
+    /// `shared` not followed by a `name := value` declaration.
+    SharedNeedsDeclaration,
     /// A binding in a type body inserted a teardown, which no scope exit runs.
     DeferInTypeBody,
     /// A type body's own declaration failed while running at the definition
@@ -2940,6 +2947,17 @@ impl<'a> Parser<'a> {
             // `&mut self` the reentrant logos-parse and the declaration then need.
             let source = self.source;
             let name = &source[start..start + len];
+            // `shared name := value` (DESIGN ›Two muts, and the storage
+            // partition‹, 19 September 2026): one place stored with the type,
+            // not a field of the layout — legal in an `instance = (…)` block alone.
+            if name == "shared" {
+                if !relaxed {
+                    self.pos = start;
+                    return Err(ParseError::SharedOutsideInstanceBlock);
+                }
+                self.shared_member(start)?;
+                continue;
+            }
             // `name := T ?` declares the field's type through the hole `?`
             // built (DESIGN ›A function's surface‹: fields written `name :=
             // T ?`); a bare name leaves the field's type slot undefined.
@@ -3000,11 +3018,58 @@ impl<'a> Parser<'a> {
         Ok((scope, fields_arr, size_bytes))
     }
 
-    /// `type (…)`'s body (DESIGN ›The constructor is a field‹, #61): an
-    /// ordinary scope whose bare lines "belong to the identity itself — they
-    /// fill its own slots (its constructor, its parse_rank) and may declare
-    /// new members that live on it", while its `instance = (…)` block holds
-    /// what lives on instances. The six slots `type` declares for every
+    /// `shared name := value` inside an `instance = (…)` block (DESIGN ›Two
+    /// muts, and the storage partition‹, ruled 19 September 2026: "`shared x
+    /// := …` is one place stored with the type, reached through every node
+    /// and through the type itself; an unmarked member is a place per node").
+    /// The declaration is made in the type's own body scope, not the field
+    /// list's, so it is stored once — the storage the type's bare members had
+    /// until 19 September 2026 (#87) — pending like every body line and run at
+    /// the body's close; read `g.y` through the type. Reading it through an
+    /// instance, `a.y`, waits on #116 (deliberate-deferred, #133).
+    fn shared_member(&mut self, at: usize) -> Result<(), ParseError> {
+        let body = match self.definitions.last() {
+            Some(def) => def.scope,
+            None => {
+                self.pos = at;
+                return Err(ParseError::SharedOutsideInstanceBlock);
+            }
+        };
+        let field_scope = self.scopes.pop().expect("the field list's scope is open");
+        let item = self.parse_next();
+        self.scopes.push(field_scope);
+        let item = match item {
+            Some(item) => item?,
+            None => {
+                self.pos = at;
+                return Err(ParseError::SharedNeedsDeclaration);
+            }
+        };
+        // SAFETY: `item` is a reduced dyad just parsed.
+        let declares = unsafe { (*item).ty } == self.types.declare_ && !self.is_slot_fill(item);
+        if !declares {
+            self.pos = at;
+            return Err(ParseError::SharedNeedsDeclaration);
+        }
+        self.scopes.settle_item(body, item);
+        Ok(())
+    }
+
+    /// Whether a declare node is one of the slot fills — its name a slot's
+    /// ([`SLOT_NAMES`]), the node [`Parser::slot_fill`] yields — rather than a
+    /// member declaration.
+    fn is_slot_fill(&self, item: DyadPtr) -> bool {
+        // SAFETY: `item` is a declare node as `declare::build` lays it out:
+        // the name string node sits at 0.
+        let text = unsafe { crate::reflect::text_of(*((*item).value as *const DyadPtr)) };
+        SLOT_NAMES.iter().any(|s| s.as_bytes() == text)
+    }
+
+    /// `type (…)`'s body (DESIGN ›The constructor is a field‹, #61; 19
+    /// September 2026): an ordinary scope whose bare lines fill the type's
+    /// own slots (its constructor, its parse_rank) — a bare `:=` line is the
+    /// checked error — while its `instance = (…)` block holds what lives on
+    /// instances, a `shared` member stored once among them. The six slots `type` declares for every
     /// type it builds — [`SLOT_NAMES`] — are declared first, as records over
     /// the shared markers, so `parse_rank := 5` is the no-shadowing error and
     /// `parse_rank = …` the fill ([`Parser::slot_fill`], the `value` block's
@@ -3105,16 +3170,15 @@ impl<'a> Parser<'a> {
     /// The lines of a type body, each settled as the body item of the
     /// names it declared and checked to be one of the kinds a body holds.
     fn type_body_lines(&mut self, scope: DyadPtr) -> Result<(), ParseError> {
-        // The body's own declarations run at the definition, the one pass
-        // over a type body as over a file ([`Self::run_imported`]): a member
-        // is stored once, which is what DESIGN ›The constructor is a field‹
-        // asks of a bare body line — it "may declare new members that live
-        // on it, a namespace's", read `g.y`. Without the run, a typed
-        // member's initializer never stored and `g.y` read the zeroed place
-        // (#87), while the untyped `y := 3` worked because it folds at
-        // parse. The lines are pending as they parse and run at the body's
-        // close ([`Self::parse_type_body`]); this loop only checks what each
-        // line is.
+        // The body's declarations run at the definition, the one pass over
+        // a type body as over a file ([`Self::run_imported`]): a `shared`
+        // member of the instance block ([`Self::shared_member`]) is stored
+        // once, read `g.y`. Without the run, a typed member's initializer
+        // never stored and `g.y` read the zeroed place (#87), while the
+        // untyped `y := 3` worked because it folds at parse. The lines are
+        // pending as they parse and run at the body's close
+        // ([`Self::parse_type_body`]); this loop only checks what each line
+        // is.
         while let Some(item) = self.parse_next() {
             let item = item?;
             self.scopes.settle_item(scope, item);
@@ -3130,9 +3194,16 @@ impl<'a> Parser<'a> {
                 }
             };
             match kind {
-                // A bare `value` line stands as the marker and declares nothing,
+                // A bare `instance` line stands as the marker and declares nothing,
                 // the same error as any other line that declares nothing (#87).
                 BodyLine::Other => return Err(ParseError::TypeBodyLine),
+                // A bare `:=` line is not allowed in a type body (DESIGN ›The
+                // constructor is a field‹, 19 September 2026: "a body's bare
+                // lines only fill slots with `=`, and every member, shared or
+                // per node, is declared in the `instance = (…)` block").
+                BodyLine::Declare if !self.is_slot_fill(item) => {
+                    return Err(ParseError::MemberOutsideInstanceBlock);
+                }
                 BodyLine::Prose | BodyLine::Declare => {}
             }
         }
