@@ -1,5 +1,4 @@
 fn := type (
-    parse = ( ? )
     instance = (
         shared parse_rank = …
         shared associativity = left
@@ -10,4 +9,6 @@ fn := type (
         bcode := callable ?
         frame := u64 ?
     )
+
+    parse = ( ? )
 )

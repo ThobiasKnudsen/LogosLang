@@ -7,8 +7,18 @@
 # for itself and inside its instance block for its instances; type.logos alone declares them, which is why
 # `parse := parse ?` names the slot after its type here and nowhere else: the ground is hand-built by the seed,
 # and nothing predeclares the slots for it. lex_rank is not here: it lives on the record (14 September 2026).
+# The instance block comes first in every type body (ruled 20 September 2026): a body's this.f names a field declared above it.
 
 type := type (
+    instance = (
+        parse_rank := f64 ?
+        associativity := ?
+        parse := parse ?
+        run := run ?
+        drop := drop ?
+        instance := instance ?
+    )
+
     parse_rank = f64 2.0
     associativity = left
     parse = (
@@ -18,14 +28,5 @@ type := type (
         tape[0] = this
         tape.is_constructed[0] = true
         tape.remove(1)
-    )
-
-    instance = (
-        parse_rank := f64 ?
-        associativity := ?
-        parse := parse ?
-        run := run ?
-        drop := drop ?
-        instance := instance ?
     )
 )

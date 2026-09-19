@@ -19,7 +19,19 @@
 # the two halves use one form and no line names a slot type. The seed still
 # runs the 4 September shape (tests/fixtures/caret.logos), so `logos import
 # ./identities/power.logos` waits on the seed catching up.
+# The instance block comes first in every type body (ruled 20 September 2026): a body's this.f names a field declared above it.
 ^ := type (
+    instance = (
+        lhs := ?,
+        rhs := i32 ?,
+        output := type ?,
+        shared run = (
+            r := this.output 1,
+            for 0..this.rhs ( r = r * this.lhs ),
+            r
+        )
+    ),
+
     parse_rank = *.parse_rank + 1,
     associativity = right,
     parse = (
@@ -30,17 +42,6 @@
         tape.is_constructed[0] = true,
         tape.remove(1),
         tape.remove(-1)
-    ),
-
-    instance = (
-        lhs := ?,
-        rhs := i32 ?,
-        output := type ?,
-        shared run = (
-            r := this.output 1,
-            for 0..this.rhs ( r = r * this.lhs ),
-            r
-        )
     )
 ),
 f := fn (x := i32 ?) -> i32 ( x ^ 3 + 1 ),
