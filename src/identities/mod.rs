@@ -3448,9 +3448,32 @@ mod tests {
     }
 
     #[test]
+    fn for_loop_without_an_index_both_tiers() {
+        // `for a..b (body)` with no index is the same loop without the variable
+        // (DESIGN ›The scope's constructor is the driver‹, ruled 17 September
+        // 2026; #129): the counter is a block-local no name reaches, and both
+        // tiers run the one node shape. Ten runs; five with a step of 2.
+        diff_nullary_fn("fn () -> i32 ( s := i32 0, for 0..10 ( s = s + 1 ), s )", 10);
+        diff_nullary_fn("fn () -> i32 ( s := i32 0, for 0..10..2 ( s = s + 1 ), s )", 5);
+        // A range over a name: the cell after `for` is a use, not the variable,
+        // as the end and as the start.
+        diff_typed_call(
+            "fn (n := i32 ?) -> i32 ( s := i32 0, s = 0, for 0..n ( s = s + 2 ), s )",
+            "f(4)",
+            8,
+        );
+        diff_typed_call(
+            "fn (n := i32 ?) -> i32 ( s := i32 0, s = 0, for n..(n + 3) ( s = s + 1 ), s )",
+            "f(4)",
+            3,
+        );
+    }
+
+    #[test]
     fn for_loop_shapes_are_checked() {
         // A literal non-positive step; a for as a value; a return in the body;
-        // missing `in`; a non-primary endpoint.
+        // a fresh spelling without `in`; a non-primary endpoint; a range with
+        // no `..` where `in` itself or a known name stands first.
         assert_eq!(parse_err("for i in 0..10..0 ( 1 )"), ParseError::BadStep);
         assert_eq!(parse_err("for i in 10..0..-1 ( 1 )"), ParseError::BadStep);
         assert_eq!(parse_err("fn () -> i32 ( for i in 0..3 ( 1 ) )"), ParseError::StatementAsValue);
@@ -3460,6 +3483,10 @@ mod tests {
         );
         assert_eq!(parse_err("for i 0..3 ( 1 )"), ParseError::ExpectedIn);
         assert_eq!(parse_err("for i in 0 ( 1 )"), ParseError::ExpectedRange);
+        assert_eq!(parse_err("fn () -> i32 ( for 0..3 ( 1 ) )"), ParseError::StatementAsValue);
+        assert_eq!(parse_err("for in 0..3 ( 1 )"), ParseError::ExpectedRange);
+        assert_eq!(parse_err_after(&["x := i32 0"], "for x 0..3 ( 1 )"), ParseError::ExpectedRange);
+        assert_eq!(parse_err("for (1)"), ParseError::ExpectedRange);
     }
 
     #[test]

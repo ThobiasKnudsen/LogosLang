@@ -926,6 +926,24 @@ fn a_declaration_snapshots_its_value_and_reads_are_stable() {
 }
 
 #[test]
+fn a_for_loop_needs_no_index_in_both_tiers() {
+    // `for a..b (body)` is the same loop without the variable (DESIGN ›The
+    // scope's constructor is the driver‹, 17 September 2026; #129): the body
+    // runs five times interpreted and five times compiled.
+    let (echoes, stderr) = repl(
+        b"f := fn () -> i32 ( t := i32 0, for 0..5 ( t = t + 2 ), t )\nf()\nf.compile()\nf()\n",
+    );
+    assert_eq!(echoes, ["10", "10"], "stderr: {stderr}");
+}
+
+#[test]
+fn the_no_index_example_counts_the_evens() {
+    let out = logos().args(["import", "examples/no_index.logos"]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "5");
+}
+
+#[test]
 fn a_declaration_copies_rather_than_aliases() {
     // `z := y` snapshots y's value into fresh storage; writing z must not write y.
     let (echoes, stderr) = repl(b"y := i32 1\nz := y\nz = 5\ny\nz\n");

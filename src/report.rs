@@ -126,7 +126,6 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::CtorArity => {
             "this construction's argument count does not match the fields".into()
         }
-        ParseError::ExpectedLoopVar => "expected a loop variable after `for`".into(),
         ParseError::ExpectedIn => "expected `in` after the loop variable".into(),
         ParseError::ExpectedRange => "expected a range like `0..10` here".into(),
         ParseError::BadStep => "a literal loop step must be positive".into(),

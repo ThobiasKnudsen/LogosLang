@@ -1690,9 +1690,8 @@ pub enum ParseError {
     TypeNeedsView,
     /// A record construction's argument count did not match its field count.
     CtorArity,
-    /// A `for` was not followed by a loop-variable name.
-    ExpectedLoopVar,
-    /// A `for`'s loop variable was not followed by `in`.
+    /// A `for` was followed by a fresh spelling and then not by `in`: a fresh
+    /// spelling can only be the loop variable, and the variable wants `in`.
     ExpectedIn,
     /// A `for`'s range was malformed: a missing `..`, or a range part that is not
     /// a primary (a literal, a resolved name with `.field`s, or a `( … )` scope —
@@ -3011,6 +3010,13 @@ impl<'a> Parser<'a> {
     /// spellings this way: a fresh one is not yet in the index to resolve, and
     /// a member resolves in its owner's scope, not here.
     fn lex_spelling(&mut self) -> Option<(usize, usize)> {
+        self.lex_spelling_fresh().map(|(start, len, _)| (start, len))
+    }
+
+    /// [`Parser::lex_spelling`] keeping the index's answer to whether the
+    /// spelling is fresh (nothing declared lexes there) — what a position that
+    /// may hold either a declaration or a use, `for`'s first cell, decides by.
+    fn lex_spelling_fresh(&mut self) -> Option<(usize, usize, bool)> {
         self.skip_whitespace();
         let source = self.source;
         let start = self.pos;
@@ -3022,7 +3028,7 @@ impl<'a> Parser<'a> {
         }
         let r = self.scopes.lex(self.trie, rest).ok()?;
         self.pos = start + r.matched;
-        Some((start, r.matched))
+        Some((start, r.matched, r.fresh))
     }
 
     /// Parse a `( field-list )` into a record node. `record_logos` is the identity
@@ -4258,21 +4264,20 @@ impl<'a> Parser<'a> {
         Ok(self.store.alloc_raw(while_id, value))
     }
 
-    /// Parse a counted loop `for i in a..b ( body )` / `for i in a..b..d ( body )`
-    /// (given the resolved `for` identity). The range is end-exclusive and its
-    /// parts are *primaries* ([`Parser::parse_range_operand`]) — a full expression
-    /// parse would consume the body's `(` as a call on the endpoint. The loop
-    /// variable is a fresh block-local of the range's resolved numeric logos; a
-    /// literal step must be positive ([`ParseError::BadStep`]); the loop is a
-    /// statement yielding unit, and a `return` in the body is rejected
-    /// ([`ParseError::EarlyReturn`], no unwinding to exit with).
+    /// Parse a counted loop `for i in a..b ( body )` / `for i in a..b..d ( body )`,
+    /// or the same loops with no index, `for a..b ( body )` (given the resolved
+    /// `for` identity; DESIGN ›The scope's constructor is the driver‹, ruled
+    /// 17 September 2026: "`for a..b (body)` with no index is the same loop
+    /// without the variable"; #129). The range is end-exclusive, the cells up to
+    /// the body bracket ([`Parser::drive_until_open`]). The counter is a fresh
+    /// block-local of the range's resolved numeric logos either way — declared
+    /// under the name when one is written, under no name otherwise — so both
+    /// tiers run one node shape; a literal step must be positive
+    /// ([`ParseError::BadStep`]); the loop is a statement yielding unit, and a
+    /// `return` in the body is rejected ([`ParseError::EarlyReturn`], no
+    /// unwinding to exit with).
     pub fn parse_for(&mut self, for_id: DyadPtr) -> Result<DyadPtr, ParseError> {
-        let (nstart, nlen) = self.lex_spelling().ok_or(ParseError::ExpectedLoopVar)?;
-        let source = self.source;
-        let name = &source[nstart..nstart + nlen];
-        if !self.consume_token(self.types.in_) {
-            return Err(ParseError::ExpectedIn);
-        }
+        let name = self.loop_name()?;
         // The range: the cells up to the body bracket — `start .. end` or
         // `start .. end .. step` — constructed by parse_rank, the `..` cells
         // inert delimiters read by position.
@@ -4342,7 +4347,10 @@ impl<'a> Parser<'a> {
         // is inside.
         self.scopes.push_barrier();
         self.scopes.push(scope);
-        self.declare_name(name, var, nstart)?;
+        if let Some((nstart, nlen)) = name {
+            let source = self.source;
+            self.declare_name(&source[nstart..nstart + nlen], var, nstart)?;
+        }
         // Parse-time rebinding is off inside a repeated body.
         self.runtime_depth += 1;
         self.expect_open()?;
@@ -4358,6 +4366,26 @@ impl<'a> Parser<'a> {
 
         let value = self.store.alloc_operands(&[var, start, end, step, body, self.types.ops.for_]);
         Ok(self.store.alloc_raw(for_id, value))
+    }
+
+    /// The loop variable a `for` names, if it names one: the cell after `for`
+    /// decides. A spelling followed by `in` is the name. A fresh spelling not
+    /// followed by `in` wanted it ([`ParseError::ExpectedIn`]): nothing
+    /// declared lexes there, so it can begin no range. Anything else begins
+    /// the range, and the cursor goes back for the range read to lex it.
+    fn loop_name(&mut self) -> Result<Option<(usize, usize)>, ParseError> {
+        let at = self.pos;
+        let Some((nstart, nlen, fresh)) = self.lex_spelling_fresh() else {
+            return Ok(None);
+        };
+        if self.consume_token(self.types.in_) {
+            return Ok(Some((nstart, nlen)));
+        }
+        if fresh {
+            return Err(ParseError::ExpectedIn);
+        }
+        self.pos = at;
+        Ok(None)
     }
 
     /// Resolve a field access `lhs.name` to a *place*: an ordinary numeric node

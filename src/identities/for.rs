@@ -2,20 +2,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `for i in a..b ( body )` and `for i in a..b..d ( body )`: the counted loop,
-//! with the surface the old prototype settled (examples/*.logos there). The
-//! range is **end-exclusive** (`0..10` runs 0 through 9) with an optional step
-//! `d` (default 1), and start/end/step are evaluated **once**, before the loop.
-//! The loop variable is a fresh block-local of the range's resolved numeric logos
-//! (endpoints resolve like a binary operator's operands: concrete logos must
-//! match, literals commit, all-literals default to i32). A non-positive step
-//! runs zero iterations — the guard both tiers emit — and a *literal* step must
-//! be positive at parse. Like `while`, `for` is a statement yielding unit.
+//! with the surface the old prototype settled (examples/*.logos there), and
+//! `for a..b ( body )` / `for a..b..d ( body )`, the same loop with no index
+//! (DESIGN ›The scope's constructor is the driver‹, ruled 17 September 2026:
+//! "sometimes you don't need the index"; #129). The range is **end-exclusive**
+//! (`0..10` runs 0 through 9) with an optional step `d` (default 1), and
+//! start/end/step are evaluated **once**, before the loop. The counter is a
+//! fresh block-local of the range's resolved numeric logos (endpoints resolve
+//! like a binary operator's operands: concrete logos must match, literals
+//! commit, all-literals default to i32), declared under the written name or
+//! under none. A non-positive step runs zero iterations — the guard both tiers
+//! emit — and a *literal* step must be positive at parse. Like `while`, `for`
+//! is a statement yielding unit.
 //!
-//! Node: `{type: for, value: [var, start, end, step-or-null, body]}`. The surface
-//! parse lives in [`crate::parse::Parser::parse_for`]; here we register the
-//! identity, the structural `in` and `..` tokens it consumes, and the run and
-//! lowering. Deferred, deliberately: ranges as first-class values, multi-variable
-//! and `in`-less forms, and the prototype's `gpu` loops.
+//! Node: `{type: for, value: [var, start, end, step-or-null, body]}`, one shape
+//! for both surfaces. The surface parse lives in
+//! [`crate::parse::Parser::parse_for`]; here we register the identity, the
+//! structural `in` and `..` tokens it consumes, and the run and lowering.
+//! Deferred, deliberately: ranges as first-class values, multi-variable forms,
+//! and the prototype's `gpu` loops.
 
 use cranelift_codegen::ir::Value;
 
