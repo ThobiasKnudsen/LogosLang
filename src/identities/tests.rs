@@ -28,7 +28,7 @@ fn new_core() -> (Store, RegexTrie, Core) {
 /// mark, and `=` and `&` accept only places (#82). Build the storage as
 /// `crate::dyad::global_place(store.alloc_bytes(..))`. A null value stays
 /// legitimate for a variable a test declares but never writes — reading it
-/// is the checked `BadValue` those tests pin.
+/// is the checked error those tests pin.
 fn test_record(record_ty: DyadPtr, identity: DyadPtr) -> DyadPtr {
     let fields =
         Box::into_raw(Box::new(Record::new(identity, std::ptr::null_mut(), std::ptr::null_mut())));
@@ -721,7 +721,7 @@ fn a_four_parameter_fn_compiles_and_agrees_with_the_interpreter() {
 #[test]
 fn compiling_an_uninitialized_read_errors_instead_of_crashing() {
     // A declared-but-uninitialised i32 (null storage) compiled would bake a load
-    // from address 0 and SIGSEGV; instead compilation errors with BadValue, the
+    // from address 0 and SIGSEGV; instead compilation errors with Uninitialized, the
     // same outcome the interpreter reaches.
     let (mut store, mut trie, core) = new_core();
     let mut scopes = ScopeStack::new();
@@ -734,14 +734,14 @@ fn compiling_an_uninitialized_read_errors_instead_of_crashing() {
         let mut p = Parser::new("x", &mut store, &mut trie, &core, scopes);
         p.parse_expression().unwrap()
     };
-    // Interpreter: clean BadValue.
+    // Interpreter: clean Uninitialized.
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `node` is the variable reference just parsed.
-    assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::BadValue));
-    // Compiler: BadValue, not a baked load from address 0.
+    assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::Uninitialized));
+    // Compiler: Uninitialized, not a baked load from address 0.
     // SAFETY: same node; the lowering guards the null storage.
     let compiled = unsafe { compile_nullary_i32(&core.lower, &core, node) };
-    assert!(matches!(compiled, Err(crate::compile::CompileError::BadValue)));
+    assert!(matches!(compiled, Err(crate::compile::CompileError::Uninitialized)));
 }
 
 #[test]
@@ -1055,7 +1055,7 @@ fn logical_operators_short_circuit_on_the_interpreter() {
     // decides the result. Observed via a right operand that would error (an
     // uninitialized read) but is skipped.
     let (mut store, mut trie, core) = new_core();
-    // `y`: a declared-but-uninitialized i32; reading it is a BadValue.
+    // `y`: a declared-but-uninitialized i32; reading it is Uninitialized.
     {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
@@ -1071,7 +1071,7 @@ fn logical_operators_short_circuit_on_the_interpreter() {
         let mut p = Parser::new("y < 1", rt.store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
-    assert_eq!(unsafe { rt.run(bad) }, Err(crate::run::RunError::BadValue));
+    assert_eq!(unsafe { rt.run(bad) }, Err(crate::run::RunError::Uninitialized));
 
     // `false and (y < 1)`: false left operand skips the erroring read → 0.
     let and_sc = {
@@ -1760,7 +1760,7 @@ fn string_literals_parse_and_are_inert() {
     // Inert: no scalar to read, and no operator accepts it.
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `node` is the string literal just parsed.
-    assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::BadValue));
+    assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::NoWholeRead));
     assert_eq!(parse_err("«a» + 1"), ParseError::UnsupportedOperands);
 }
 

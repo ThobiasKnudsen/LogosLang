@@ -125,7 +125,7 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // array (as `Parser::parse_sequence` builds; it never builds it empty).
     unsafe {
         let Some(exprs) = exprs_of(node) else {
-            return Err(RunError::BadValue);
+            return Err(RunError::EmptyScope);
         };
         let defer_ty = rt.types().defer_;
         let mut last = 0i64;
@@ -161,7 +161,7 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: as [`run`].
     unsafe {
         let Some(exprs) = exprs_of(node) else {
-            return Err(CompileError::BadValue);
+            return Err(CompileError::EmptyScope);
         };
         let mut last = None;
         for &expr in exprs {
@@ -170,6 +170,6 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
                 last = Some(lw.lower(expr)?);
             }
         }
-        last.ok_or(CompileError::BadValue)
+        last.ok_or(CompileError::EmptyScope)
     }
 }

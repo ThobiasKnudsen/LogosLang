@@ -424,7 +424,7 @@ fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let width = pointee_width(pointee);
         let mem = heap_alloc(width);
         if mem.is_null() {
-            return Err(RunError::BadValue);
+            return Err(RunError::OutOfMemory);
         }
         numtype::write_scalar(pointee, mem, bits);
         rt.note_alloc();
@@ -442,9 +442,9 @@ fn run_teardown(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let slots = (*node).value as *const DyadPtr;
         let place = *slots.add(TEARDOWN_PLACE);
         let pointee = *slots.add(TEARDOWN_POINTEE);
-        let slot = rt.place_addr(place).ok_or(RunError::BadValue)?;
+        let slot = rt.place_addr(place).ok_or(RunError::NoActivation)?;
         if slot.is_null() {
-            return Err(RunError::BadValue);
+            return Err(RunError::Uninitialized);
         }
         let ptr = std::ptr::read_unaligned(slot as *const i64) as u64 as *mut u8;
         if ptr.is_null() {
@@ -477,7 +477,7 @@ fn run_drop(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let place = *slots.add(TEARDOWN_PLACE);
         let dtor = meta::destructor_of((*place).ty);
         if dtor.is_null() || !callable::is_callable(dtor) {
-            return Err(RunError::BadValue);
+            return Err(RunError::NoDestructor(place));
         }
         let entry = std::mem::transmute::<usize, crate::run::RunFn>(callable::entry_of(dtor));
         entry(rt, node)
@@ -490,9 +490,9 @@ fn run_own(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an `own` node `[place, pointee, op]` from the store.
     unsafe {
         let place = *((*node).value as *const DyadPtr).add(TEARDOWN_PLACE);
-        let slot = rt.place_addr(place).ok_or(RunError::BadValue)?;
+        let slot = rt.place_addr(place).ok_or(RunError::NoActivation)?;
         if slot.is_null() {
-            return Err(RunError::BadValue);
+            return Err(RunError::Uninitialized);
         }
         let ptr = std::ptr::read_unaligned(slot as *const i64);
         std::ptr::write_unaligned(slot as *mut i64, 0); // empty the source

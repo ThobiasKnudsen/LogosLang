@@ -22,7 +22,7 @@
 //! own `.scope` — on any `@dyad` value: `here.scope.scope`,
 //! `caller.scope.scope`, `x:scope.scope` — is a [`build_scope_of`] node
 //! reading the parent link when it runs: null at the arche,
-//! [`RunError::NullPointer`] past it, [`RunError::BadValue`] over a node that
+//! [`RunError::NullPointer`] past it, [`RunError::NotANode`] over an address that
 //! is no scope. Nothing here lowers.
 
 use super::callable::{self, Callables};
@@ -166,14 +166,14 @@ fn run_scope_of(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         }
         let s = addr as usize as DyadPtr;
         if !rt.store().contains(s) {
-            return Err(RunError::BadValue);
+            return Err(RunError::NotANode(addr as usize));
         }
         let types = rt.types();
         if (*s).ty == types.here.here {
             return Ok(scope_of_here(s) as usize as i64);
         }
         if (*s).ty != types.scope {
-            return Err(RunError::BadValue);
+            return Err(RunError::NotAScope(s));
         }
         Ok(scope::parent_of(s) as usize as i64)
     }

@@ -35,8 +35,50 @@ pub type RunFn = fn(&mut Runtime<'_>, DyadPtr) -> Result<i64, RunError>;
 pub enum RunError {
     /// The operation is a function with neither `bcode` nor a `body` to walk.
     NotRunnable(DyadPtr),
-    /// A data node had no storage to read.
-    BadValue,
+    /// `f.compile()` on a value that is not a function.
+    NotAFunction(DyadPtr),
+    /// An operand record with nothing in its op slot: a node built without a
+    /// leaf to run (the tape's path markers), refused as data.
+    NoLeaf,
+    /// A function's local or parameter was read with no call in progress:
+    /// its frame does not exist (comptime evaluation touching a body).
+    NoActivation,
+    /// A place declared and never filled: its storage is null.
+    Uninitialized,
+    /// A record instance, text or hole read as one value: an instance is
+    /// read by field or by address, text and a hole have no scalar.
+    NoWholeRead,
+    /// A parameter of this function has no frame slot: a malformed fn node.
+    MalformedFn(DyadPtr),
+    /// `lex` was handed something other than a string.
+    NotText,
+    /// A tape affordance ran with no tape behind its receiver.
+    NoTape,
+    /// A tape read or write at an index the tape does not hold.
+    OffTape,
+    /// `t[k]:name` on a cell holding no named record.
+    NoName,
+    /// `insert` of a null fragment.
+    NoFragment,
+    /// `this` holds no node here, or the node has no slots.
+    NoThis,
+    /// A negative index.
+    BadIndex(i64),
+    /// A read or write through a pointer whose pointee is neither scalar nor
+    /// pointer: nothing to load at one width.
+    NotDerefable,
+    /// A construction of a type that has no field layout.
+    NoLayout(DyadPtr),
+    /// A sequence node with no expression array.
+    EmptyScope,
+    /// An address handed to `here`'s reads that is no node of the store.
+    NotANode(usize),
+    /// A node handed to `here`'s reads that is not a scope.
+    NotAScope(DyadPtr),
+    /// The allocator refused an `alloc`.
+    OutOfMemory,
+    /// A teardown of a place whose type carries no destructor.
+    NoDestructor(DyadPtr),
     /// A numeric literal has no exact `i32` value to compute — a non-integer
     /// rational (e.g. `3.14`) or an integer outside `i32` range. Reported instead
     /// of computing a wrong value or crashing.
@@ -542,7 +584,7 @@ impl<'a> Runtime<'a> {
             return Err(RunError::CompilerUnavailable);
         };
         if (*fn_node).ty != self.types.fn_type {
-            return Err(RunError::BadValue);
+            return Err(RunError::NotAFunction(fn_node));
         }
         let fields = (*fn_node).value as *const DyadPtr;
         if fields.is_null() {
@@ -564,7 +606,7 @@ impl<'a> Runtime<'a> {
     /// built inside a function, which only runs under a call), but parse-time
     /// evaluation does — a `-> logos` call whose argument touches an enclosing
     /// function's local runs before any activation exists — and every caller maps
-    /// it to a clean [`RunError::BadValue`], which the comptime path reports as
+    /// it to a clean [`RunError::NoActivation`], which the comptime path reports as
     /// not-comptime-known.
     ///
     /// # Safety
@@ -731,7 +773,7 @@ impl<'a> Runtime<'a> {
             }
             // An operand record with nothing in its op slot: the tape's path
             // markers, or a node built without a leaf. Refused as data.
-            Read::Executable(Dispatch::None) => Err(RunError::BadValue),
+            Read::Executable(Dispatch::None) => Err(RunError::NoLeaf),
             // Prose, or a fn literal standing as a statement: unit, the same
             // precedent as `-> void`.
             Read::Unit => Ok(0),
@@ -751,29 +793,29 @@ impl<'a> Runtime<'a> {
             // A numeric, bool, or pointer value: read at its type's width from
             // its storage — a declared place, or a literal's untagged blob.
             Read::Scalar(_) | Read::Pointer(_) => {
-                let slot = self.place_addr(node).ok_or(RunError::BadValue)?;
+                let slot = self.place_addr(node).ok_or(RunError::NoActivation)?;
                 if slot.is_null() {
-                    return Err(RunError::BadValue);
+                    return Err(RunError::Uninitialized);
                 }
                 Ok(crate::identities::numtype::read_scalar((*node).ty, slot))
             }
             // A record instance is read by field or by address, never whole;
             // text and unit have no scalar; a hole holds nothing yet.
-            Read::Aggregate | Read::Opaque | Read::Undefined => Err(RunError::BadValue),
+            Read::Aggregate | Read::Opaque | Read::Undefined => Err(RunError::NoWholeRead),
         }
     }
 
     /// Read a place's full 8-byte slot as the raw i64 bit-container — how a
     /// binding of no declared scalar width (a bare `name`, a place holding a
     /// type) is stored and read, in a frame or at top level alike. Not a place
-    /// at all, or no call in progress for a frame one: [`RunError::BadValue`].
+    /// at all, or no call in progress for a frame one: [`RunError::NoActivation`].
     ///
     /// # Safety
     /// `node` must be a valid dyad from the store; a frame-tagged one must carry
     /// an offset its function's frame size covers.
     unsafe fn read_container(&mut self, node: DyadPtr) -> Result<i64, RunError> {
         let node = self.through(node);
-        let slot = self.place_addr(node).ok_or(RunError::BadValue)?;
+        let slot = self.place_addr(node).ok_or(RunError::NoActivation)?;
         Ok(std::ptr::read_unaligned(slot as *const i64))
     }
 
@@ -832,7 +874,7 @@ impl<'a> Runtime<'a> {
             // A parameter without a parse-assigned slot is a malformed
             // function node (the parser always assigns one).
             let Some((_, off)) = frame_ref((*param).value) else {
-                return Err(RunError::BadValue);
+                return Err(RunError::MalformedFn(fn_node));
             };
             let slot = base.add(off);
             let ty = (*param).ty;

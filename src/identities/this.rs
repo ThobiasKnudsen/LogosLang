@@ -96,15 +96,15 @@ pub(crate) unsafe fn build_write(
 unsafe fn slot_of(rt: &mut Runtime, ops: *const DyadPtr) -> Result<*mut DyadPtr, RunError> {
     let this = rt.run(*ops)? as DyadPtr;
     if this.is_null() {
-        return Err(RunError::BadValue);
+        return Err(RunError::NoThis);
     }
     let slots = (*this).value as *mut DyadPtr;
     if slots.is_null() {
-        return Err(RunError::BadValue);
+        return Err(RunError::NoThis);
     }
     let k = rt.run(*ops.add(1))?;
     if k < 0 {
-        return Err(RunError::BadValue);
+        return Err(RunError::BadIndex(k));
     }
     Ok(slots.add(k as usize))
 }

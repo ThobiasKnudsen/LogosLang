@@ -247,7 +247,7 @@ pub(super) fn build(
 /// Lower: write the right operand into the left operand's place — a promoted
 /// frame place defines its register variable, anything else stores to its
 /// baked storage. Guards a null storage address, mirroring the interpreter's
-/// `BadValue` — without it the compiler would bake a store to address 0 and
+/// `Uninitialized` — without it the compiler would bake a store to address 0 and
 /// SIGSEGV at call time where the interpreter cleanly errors, breaking
 /// interpreter/JIT parity.
 ///
@@ -265,11 +265,11 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         let (lhs, rhs) = operands(node);
         let leaf = *((*node).value as *const DyadPtr).add(2);
         let Some(nt) = lw.types().ops.store_nt_of(leaf) else {
-            return Err(CompileError::BadValue);
+            return Err(CompileError::Internal("a store node holds a store leaf"));
         };
         let lhs = lw.through(lhs);
         if (*lhs).value.is_null() {
-            return Err(CompileError::BadValue);
+            return Err(CompileError::Uninitialized);
         }
         let v = lw.lower(rhs)?;
         lw.write_place(lhs, nt.cranelift_type(), v)?;

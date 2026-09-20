@@ -84,16 +84,16 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let string_ty = rt.types().string_;
         let mut text = rt.through(*ops);
         if text.is_null() {
-            return Err(RunError::BadValue);
+            return Err(RunError::NotText);
         }
         if (*text).ty != string_ty {
             text = rt.run(*ops)? as DyadPtr;
         }
         if text.is_null() || (*text).ty != string_ty || (*text).value.is_null() {
-            return Err(RunError::BadValue);
+            return Err(RunError::NotText);
         }
         let bytes = super::string::text(text);
-        let text = std::str::from_utf8(bytes).map_err(|_| RunError::BadValue)?;
+        let text = std::str::from_utf8(bytes).map_err(|_| RunError::NotText)?;
         Ok(rt.lex(text)? as i64)
     }
 }

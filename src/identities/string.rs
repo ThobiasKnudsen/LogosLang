@@ -8,7 +8,7 @@
 //! operations), so it exists as reflectable structure, above all as the substance
 //! of comment nodes (see [`crate::identities::comment`]). The `string` *name* and
 //! runtime reads arrive with the machinery that can hold them; until then the
-//! interpreter refuses to read a string as a scalar (`RunError::BadValue`).
+//! interpreter refuses to read a string as a scalar (`RunError::NoWholeRead`).
 //!
 //! Storage: the value points at `[len: u64][bytes]`, the native-endian length
 //! then the UTF-8 text. The type node self-describes via

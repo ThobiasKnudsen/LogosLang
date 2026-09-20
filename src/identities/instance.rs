@@ -190,11 +190,11 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         let instance = *ops;
-        let (fields, _) = layout((*instance).ty).map_err(|_| RunError::BadValue)?;
+        let (fields, _) = layout((*instance).ty).map_err(|_| RunError::NoLayout((*instance).ty))?;
         // The arguments follow the two fixed head slots (instance, op).
         for (i, &(field, _, offset)) in fields.iter().enumerate() {
             let bits = rt.run(*ops.add(i + 2))?;
-            let blob = rt.place_addr(instance).ok_or(RunError::BadValue)?;
+            let blob = rt.place_addr(instance).ok_or(RunError::NoActivation)?;
             numtype::write_scalar((*field).ty, blob.add(offset), bits);
         }
         Ok(0)
@@ -207,7 +207,8 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         let instance = *ops;
-        let (fields, _) = layout((*instance).ty).map_err(|_| CompileError::BadValue)?;
+        let (fields, _) =
+            layout((*instance).ty).map_err(|_| CompileError::NoLayout((*instance).ty))?;
         // The instance's base address, resolved once (baked absolute, or a frame
         // `stack_addr`); each field stores at its byte offset from it.
         let base = lw.place_addr(instance)?;

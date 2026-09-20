@@ -276,7 +276,29 @@ pub(crate) fn resolve_message(e: &ResolveError) -> String {
 pub fn run_message(e: &RunError) -> String {
     match e {
         RunError::NotRunnable(_) => "this is not runnable".into(),
-        RunError::BadValue => "a value here has no storage to read".into(),
+        RunError::NotAFunction(_) => "only a function can be compiled".into(),
+        RunError::NoLeaf => "this node was built with no operation to run".into(),
+        RunError::NoActivation => "a function's local was read outside any call".into(),
+        RunError::Uninitialized => "a value here has no storage to read".into(),
+        RunError::NoWholeRead => {
+            "a record, text or hole is not read as one value; read a field or take its address"
+                .into()
+        }
+        RunError::MalformedFn(_) => "a parameter of this function has no frame slot".into(),
+        RunError::NotText => "lex takes a string".into(),
+        RunError::NoTape => "there is no tape behind this receiver".into(),
+        RunError::OffTape => "this index is off the tape".into(),
+        RunError::NoName => "this cell holds no name".into(),
+        RunError::NoFragment => "insert takes a tape fragment".into(),
+        RunError::NoThis => "`this` holds no node here".into(),
+        RunError::BadIndex(k) => format!("an index cannot be negative ({k})"),
+        RunError::NotDerefable => "only a scalar or a pointer is read through a pointer".into(),
+        RunError::NoLayout(_) => "this type has no field layout to construct".into(),
+        RunError::EmptyScope => "a scope with nothing in it has no value".into(),
+        RunError::NotANode(a) => format!("the address {a:#x} is not a node of the store"),
+        RunError::NotAScope(_) => "this node is not a scope".into(),
+        RunError::OutOfMemory => "the allocator refused this alloc".into(),
+        RunError::NoDestructor(_) => "this place has no destructor to run".into(),
         RunError::UncomputableLiteral => {
             "a literal here has no exact value in the type it lands in".into()
         }
@@ -309,7 +331,12 @@ pub fn run_message(e: &RunError) -> String {
 pub fn compile_message(e: &CompileError) -> String {
     match e {
         CompileError::NotLowerable(_) => "this cannot be compiled yet".into(),
-        CompileError::BadValue => "a value here has no storage to compile against".into(),
+        CompileError::Uninitialized => "a value here has no storage to compile against".into(),
+        CompileError::NoActivation => "a function's local is compiled outside any call".into(),
+        CompileError::NotDerefable => "only a scalar or a pointer is read through a pointer".into(),
+        CompileError::NoLayout(_) => "this type has no field layout to construct".into(),
+        CompileError::EmptyScope => "a scope with nothing in it has no value".into(),
+        CompileError::Internal(what) => format!("the seed broke its own rule: {what}"),
         CompileError::UncomputableLiteral => {
             "a literal here has no exact value in the type it lands in".into()
         }

@@ -141,7 +141,7 @@ fn run_addr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an addr node; its first operand is a place.
     unsafe {
         let place = *((*node).value as *const DyadPtr);
-        Ok(rt.place_addr(place).ok_or(RunError::BadValue)? as i64)
+        Ok(rt.place_addr(place).ok_or(RunError::NoActivation)? as i64)
     }
 }
 
@@ -294,7 +294,7 @@ pub(crate) unsafe fn build_storeptr(
 
 /// Run a deref: evaluate the pointer, add the offset, read the pointee's scalar
 /// at that address. A record pointee has no whole-value read (fields go through
-/// `p@.x`), reported as a clean `BadValue`.
+/// `p@.x`), reported as a clean `NotDerefable`.
 fn run_deref(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a deref node; its parts are valid dyads.
     unsafe {
@@ -305,7 +305,7 @@ fn run_deref(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             super::read::place_layout(rt.types(), pointee),
             Some((super::read::Read::Scalar(_) | super::read::Read::Pointer(_), _))
         ) {
-            return Err(RunError::BadValue);
+            return Err(RunError::NotDerefable);
         }
         // The base is the pointer's own value: a hole-declared `p := @i32 ?`
         // reads as 0, and DESIGN ›Both slots of a dyad follow one lifecycle‹
@@ -352,7 +352,7 @@ fn lower_deref(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
             super::read::place_layout(lw.types(), pointee),
             Some((super::read::Read::Scalar(_) | super::read::Read::Pointer(_), _))
         ) {
-            return Err(CompileError::BadValue);
+            return Err(CompileError::NotDerefable);
         }
         let addr = lw.lower(ptr_expr)?;
         let ct = numtype::of_type_node(pointee).cranelift_type();

@@ -352,11 +352,11 @@ pub(crate) unsafe fn build_member(
 unsafe fn tape_of(rt: &mut Runtime, recv: DyadPtr) -> Result<*mut ParsingTape, RunError> {
     let addr = rt.run(recv)? as *const u8;
     if addr.is_null() {
-        return Err(RunError::BadValue);
+        return Err(RunError::NoTape);
     }
     let tape = std::ptr::read_unaligned(addr as *const *mut ParsingTape);
     if tape.is_null() {
-        return Err(RunError::BadValue);
+        return Err(RunError::NoTape);
     }
     Ok(tape)
 }
@@ -375,7 +375,7 @@ fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         // it is the checked error (see the module doc).
         match (*tape).at(k) {
             Some(c) => Ok(c.dyad as i64),
-            None => Err(RunError::BadValue),
+            None => Err(RunError::OffTape),
         }
     }
 }
@@ -395,7 +395,7 @@ fn run_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let k = rt.run(*ops.add(1))? as isize;
         let dyad = rt.run(*ops.add(2))? as DyadPtr;
         if !(*tape).set_dyad(k, dyad) {
-            return Err(RunError::BadValue);
+            return Err(RunError::OffTape);
         }
         Ok(0)
     }
@@ -415,7 +415,7 @@ fn run_flag_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let k = rt.run(*ops.add(1))? as isize;
         let flag = rt.run(*ops.add(2))? != 0;
         if !(*tape).set_constructed(k, flag) {
-            return Err(RunError::BadValue);
+            return Err(RunError::OffTape);
         }
         Ok(0)
     }
@@ -433,7 +433,7 @@ fn run_is_constructed(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> 
         let k = rt.run(*ops.add(1))? as isize;
         match (*tape).is_constructed(k) {
             Some(flag) => Ok(i64::from(flag)),
-            None => Err(RunError::BadValue),
+            None => Err(RunError::OffTape),
         }
     }
 }
@@ -457,7 +457,7 @@ fn run_spelling(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let tape = tape_of(rt, *ops)?;
         let k = rt.run(*ops.add(1))? as isize;
         let Some(text) = (*tape).spelling(k) else {
-            return Err(RunError::BadValue);
+            return Err(RunError::OffTape);
         };
         let string_ty = rt.types().string_;
         let store = rt.store();
@@ -488,7 +488,7 @@ fn run_insert(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             tape_of(rt, arg)?
         };
         if frag.is_null() {
-            return Err(RunError::BadValue);
+            return Err(RunError::NoFragment);
         }
         let cells = (*frag).cells();
         (*tape).splice(k, cells);
@@ -547,7 +547,7 @@ fn run_slot_dyad(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let ops = (*node).value as *const DyadPtr;
         match slot_cell(rt, ops)? {
             Some((_, _, cell)) => Ok(cell as i64),
-            None => Err(RunError::BadValue),
+            None => Err(RunError::OffTape),
         }
     }
 }
@@ -567,15 +567,15 @@ fn run_slot_name(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let tape = tape_of(rt, *ops)?;
         let k = rt.run(*ops.add(1))? as isize;
         let Some(c) = (*tape).at(k).copied() else {
-            return Err(RunError::BadValue);
+            return Err(RunError::OffTape);
         };
         let record = c.record(rt.types());
         if record.is_null() {
-            return Err(RunError::BadValue);
+            return Err(RunError::NoName);
         }
         let name = crate::record::Record::read(record).name;
         if name.is_null() {
-            return Err(RunError::BadValue);
+            return Err(RunError::NoName);
         }
         Ok(name as i64)
     }
@@ -591,7 +591,7 @@ fn run_cell_type(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let ops = (*node).value as *const DyadPtr;
         match slot_cell(rt, ops)? {
             Some((_, _, cell)) => Ok((*cell).ty as i64),
-            None => Err(RunError::BadValue),
+            None => Err(RunError::OffTape),
         }
     }
 }

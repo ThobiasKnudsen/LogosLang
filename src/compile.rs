@@ -110,9 +110,21 @@ pub enum CompileError {
     /// No lowering rule is registered for this node's operation.
     NotLowerable(DyadPtr),
     /// A node's storage address is null: a declared-but-uninitialised variable or
-    /// assignment target. The interpreter returns `RunError::BadValue` for the same
-    /// node; the compiler refuses rather than baking a load/store to address 0.
-    BadValue,
+    /// assignment target. The interpreter returns `RunError::Uninitialized` for the
+    /// same node; the compiler refuses rather than baking a load/store to address 0.
+    Uninitialized,
+    /// A function's local reached outside any call: the interpreter's
+    /// [`crate::run::RunError::NoActivation`], refused at compile time.
+    NoActivation,
+    /// A read or write through a pointer whose pointee is neither scalar nor
+    /// pointer.
+    NotDerefable,
+    /// A construction of a type that has no field layout.
+    NoLayout(DyadPtr),
+    /// A sequence with no expression array, or no expression to yield.
+    EmptyScope,
+    /// A builder's invariant the lowering found broken: a seed bug, named.
+    Internal(&'static str),
     /// A numeric literal has no exact `i32` value to compute — a non-integer
     /// rational (e.g. `3.14`) or an integer outside `i32` range. Mirrors
     /// `RunError::UncomputableLiteral`.
@@ -213,19 +225,19 @@ impl Lowerer<'_, '_> {
             },
             // A numeric, bool, or pointer value: a load at the type's width
             // from its storage. A null value slot is a comptime binding with no
-            // storage — BadValue, mirroring the interpreter. A `bool` literal
+            // storage — Uninitialized, mirroring the interpreter. A `bool` literal
             // used to bake an immediate read from its storage; it loads it now,
             // the same value by the same rule as every other scalar.
             Read::Scalar(nt) => {
                 if (*node).value.is_null() {
-                    return Err(CompileError::BadValue);
+                    return Err(CompileError::Uninitialized);
                 }
                 self.read_place(node, nt.cranelift_type())
             }
             // A pointer place: its eight-byte address, the same load at `U64`.
             Read::Pointer(_) => {
                 if (*node).value.is_null() {
-                    return Err(CompileError::BadValue);
+                    return Err(CompileError::Uninitialized);
                 }
                 self.read_place(node, NumType::U64.cranelift_type())
             }
@@ -295,7 +307,7 @@ impl Lowerer<'_, '_> {
                 // interpreter gives for the same shape (`place_addr` there is
                 // `None` with no activation), not a panic (#82, asymmetry 8).
                 let Some(slot) = self.frame_slot else {
-                    return Err(CompileError::BadValue);
+                    return Err(CompileError::NoActivation);
                 };
                 Ok(self.builder.ins().stack_addr(self.ptr_ty, slot, off as i32))
             }
@@ -468,7 +480,11 @@ impl Lowerer<'_, '_> {
         let nt = match numtype_of(self.types, lhs) {
             Operand::Concrete(nt) => nt,
             // Resolution committed both operands; anything else cannot exist here.
-            _ => return Err(CompileError::BadValue),
+            _ => {
+                return Err(CompileError::Internal(
+                    "a resolved arithmetic node has a numeric operand",
+                ))
+            }
         };
         let l = self.lower(lhs)?;
         let r = self.lower(rhs)?;
@@ -573,7 +589,9 @@ impl Lowerer<'_, '_> {
         // the builder already said so, #82 asymmetry 7).
         let leaf = *((*node).value as *const DyadPtr).add(2);
         let Some(logos) = self.types.ops.cmp_nt_of(leaf) else {
-            return Err(CompileError::BadValue);
+            return Err(CompileError::Internal(
+                "a resolved comparison node holds a comparison leaf",
+            ));
         };
         let l = self.lower(lhs)?;
         let r = self.lower(rhs)?;

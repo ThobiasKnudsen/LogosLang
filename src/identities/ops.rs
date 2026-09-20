@@ -174,9 +174,9 @@ fn store_run<const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunEr
     unsafe {
         let (lhs, rhs) = operands(node);
         let bits = rt.run(rhs)?;
-        let slot = rt.place_addr(lhs).ok_or(RunError::BadValue)?;
+        let slot = rt.place_addr(lhs).ok_or(RunError::NoActivation)?;
         if slot.is_null() {
-            return Err(RunError::BadValue);
+            return Err(RunError::Uninitialized);
         }
         write_scalar_nt(NumType::from_tag(NT), slot, bits);
         Ok(bits)
