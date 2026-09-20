@@ -90,6 +90,7 @@ pub(crate) mod rational;
 mod regex_mod;
 #[path = "return.rs"]
 mod return_mod;
+pub(crate) mod run_body;
 pub(crate) mod scope;
 pub(crate) mod string;
 pub mod tape;
@@ -218,6 +219,7 @@ pub struct Core {
     pub this: this::ThisIds,
     /// `lex`, the lexer as an identity, and its run leaf (#62).
     pub lex: lex::LexIds,
+    pub run_body: run_body::RunBodyIds,
     /// `here` and `caller`, and the two `.scope` nodes (#123).
     pub here: here::HereIds,
     /// `index`, the passive node a `[i]` cell carries.
@@ -461,6 +463,8 @@ impl Core {
         // `lex`, the lexer as an identity (#62): its node runs the lexer and
         // yields a fragment `insert` splices.
         let lex = lex::register(&mut cx, &callables);
+        // A type's held `run` body and the functions built from it (#133 slice 8).
+        let run_body = run_body::register(&mut cx);
         // `here` and `caller` (#123): where a line is written, where it was
         // called from.
         let here = here::register(&mut cx, &callables);
@@ -546,6 +550,7 @@ impl Core {
             tape,
             this,
             lex,
+            run_body,
             here,
             index_,
             callable_: callables.callable,
@@ -844,12 +849,24 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     // value (and its output has no NumType).
     // A type carrying a `code` is the call kind (#63; DESIGN ›Execution is
     // function application‹): a node of it yields what its code yields.
-    let logos =
-        if !logos.is_null() && meta::is_record_type(logos) && !meta::code_of(logos).is_null() {
-            meta::code_of(logos)
-        } else {
-            logos
-        };
+    let logos = if !logos.is_null()
+        && meta::is_record_type(logos)
+        && !meta::code_of(logos).is_null()
+    {
+        meta::code_of(logos)
+    } else if !logos.is_null() && meta::is_record_type(logos) && !meta::run_body_of(logos).is_null()
+    {
+        // A node of a type whose `run` is a held body reads as the
+        // function built for its field-type set, or as nothing until one
+        // is (#133 slice 8).
+        let spec = run_body::spec_of(node);
+        if spec.is_null() {
+            return Operand::NonNumeric;
+        }
+        spec
+    } else {
+        logos
+    };
     if !logos.is_null() && (*logos).ty == types.fn_type {
         let fields = (*logos).value as *const DyadPtr;
         if !fields.is_null() {

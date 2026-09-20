@@ -1269,10 +1269,10 @@ struct OpenType {
     /// instance of the type runs as (#63; #133 slice 4) — the 4 September
     /// shape, kept until the bare body runs (#133 slice 9).
     run: DyadPtr,
-    /// Set by a `shared run = (…)` line in the instance block: the body held
-    /// as its lexed text, the `lex` node [`Parser::slot_body_fill`] built
-    /// (#133 slice 5), installed on the type for the construction per
-    /// field-type set (#133 slice 8).
+    /// Set by a `shared run = (…)` line in the instance block: the body
+    /// lexed once into its cells, the [`crate::identities::run_body`] node
+    /// [`Parser::slot_body_fill`] built, installed on the type at the close;
+    /// a node of the type constructs it per field-type set (#133 slice 8).
     run_body: DyadPtr,
     instance: Option<(DyadPtr, DyadPtr, u64)>,
     /// The hidden `this` parameter of the `parse` body being read, while it
@@ -1424,10 +1424,14 @@ pub enum ParseError {
     /// `shared run = …` with a value that is neither a bare body nor, in the
     /// shape kept until #133 slice 9, a function (#63).
     BadRunSlot,
-    /// A type whose `run` is a held body applied to arguments: nothing
-    /// constructs that body into a node yet (#133 slice 8), so the call
-    /// would be a record instance that silently never runs.
+    /// A type whose `run` is a held body applied to arguments, `^(2, 3)`:
+    /// only the type's own `parse` fills a node's fields and output, so the
+    /// call form has no node to resolve a run for.
     RunBodyHeld,
+    /// A held run body could not be constructed for a field-type set: the
+    /// type's spelling at the use, and the failure rendered against the
+    /// body's own text.
+    RunBodyFailed { name: String, rendered: String },
     /// `this.f` in a parse body of a type with no `instance = (…)` block
     /// above it: there is no field to reach.
     ThisNeedsInstanceBlock,
@@ -1843,6 +1847,38 @@ pub struct Parser<'a> {
     /// pass hands it to its runtime so `f.compile()` at an imported top level
     /// works exactly as at the driver's own top level (one pass, one behavior).
     lower: Option<&'a crate::compile::LowerTable>,
+    /// The held run body whose cells the driver is reading now, if any.
+    feed: Option<Feed>,
+    /// The construction of a held run body in progress, if any: what
+    /// `this.f` means there.
+    run_body: Option<RunBodyCx>,
+}
+
+/// The cells of a held run body being constructed (#133 slice 8): the
+/// driver's next cell comes from here instead of the lexer, found by the
+/// cursor's position in the body's text, so a boundary's rewind of the
+/// cursor re-exposes a cell exactly as it does a token, and the readers that
+/// take raw text at the cursor (a declared name, a literal's digits, a
+/// comment's line) read the body's text where the cell stands. A cell whose
+/// spelling nothing had declared at the definition resolves now, against
+/// the construction's own scopes alone — the parameters and the body's
+/// locals, at `base_depth` and above — so a body sees what its definition
+/// saw plus what it declares itself, never the use site's names.
+struct Feed {
+    cells: Vec<Cell>,
+    next: usize,
+    base_depth: usize,
+}
+
+/// What `this.f` means inside a held run body under construction: the
+/// field's parameter place, or for a field of type `type` the type this
+/// field-type set holds in it ([`Parser::run_body_field`]).
+struct RunBodyCx {
+    this_param: DyadPtr,
+    field_scope: DyadPtr,
+    fields: Vec<DyadPtr>,
+    places: Vec<DyadPtr>,
+    key: Vec<DyadPtr>,
 }
 
 /// One token off `text` at `pos` — the lex step the driver and `lex «…»`
@@ -1973,6 +2009,8 @@ impl<'a> Parser<'a> {
             dir: PathBuf::from("."),
             imports: Imports::default(),
             lower: None,
+            feed: None,
+            run_body: None,
         }
     }
 
@@ -2264,6 +2302,13 @@ impl<'a> Parser<'a> {
     /// Consume the closing `)` that matches an opening `(`, or fail if the body
     /// ended at something else (or the end of input).
     pub(crate) fn expect_close(&mut self) -> Result<(), ParseError> {
+        if self.feed.is_some() {
+            return if self.consume_token(self.types.close_) {
+                Ok(())
+            } else {
+                Err(ParseError::UnclosedBracket)
+            };
+        }
         self.skip_whitespace();
         let source = self.source;
         if self.pos >= source.len() {
@@ -2446,7 +2491,10 @@ impl<'a> Parser<'a> {
                 let fields = crate::identities::array::items(
                     crate::identities::meta::record_fields_of(owner),
                 );
-                let slots = vec![std::ptr::null_mut(); fields.len() + 1];
+                // One slot per field, the run's terminator, and the slot the
+                // function built for the node's field-type set goes into
+                // ([`crate::identities::run_body::spec_of`], #133 slice 8).
+                let slots = vec![std::ptr::null_mut(); fields.len() + 2];
                 let run = self.rt.store.alloc_operands(&slots);
                 let this = self.rt.store.alloc_raw(owner, run);
                 let this_arg = self
@@ -2682,7 +2730,7 @@ impl<'a> Parser<'a> {
             c if c.constructed => Ok(c.dyad),
             c => {
                 let (id, record) = if c.is_fresh() {
-                    match self.scopes.resolve(self.trie, c.spelling()) {
+                    match self.resolve_fresh(c.spelling()) {
                         Ok(r) => (r.identity, r.record),
                         Err(e) => {
                             self.pos = c.start;
@@ -2812,6 +2860,9 @@ impl<'a> Parser<'a> {
     /// (`id == self.logos.else_`). `None` at end of input or when nothing
     /// resolves.
     fn peek_token(&mut self) -> Option<(DyadPtr, usize)> {
+        if self.feed.is_some() {
+            return self.feed_peek();
+        }
         self.skip_whitespace();
         let source = self.source;
         if self.pos >= source.len() {
@@ -2875,6 +2926,19 @@ impl<'a> Parser<'a> {
     /// spelling is fresh (nothing declared lexes there) — what a position that
     /// may hold either a declaration or a use, `for`'s first cell, decides by.
     fn lex_spelling_fresh(&mut self) -> Option<(usize, usize, bool)> {
+        if self.feed.is_some() {
+            let i = self.feed_index()?;
+            let spelling = self.feed.as_ref()?.cells[i].spelling();
+            let no_spelling = matches!(
+                spelling.as_bytes().first(),
+                Some(b'(' | b')' | b'[' | b']' | b',' | b'#') | None
+            ) || spelling.starts_with('«');
+            if no_spelling {
+                return None;
+            }
+            let cell = self.feed_take()?;
+            return Some((cell.start, cell.len, cell.is_fresh()));
+        }
         self.skip_whitespace();
         let source = self.source;
         let start = self.pos;
@@ -3518,7 +3582,7 @@ impl<'a> Parser<'a> {
                 // tape centred on the appearance, and `this`, the fresh node
                 // (a `dyad ?` place holding it; [`crate::identities::this`]).
                 let (input, params) = self.hidden_param_record(
-                    &[("tape", types.tape.parsing_tape), ("this", types.dyad_)],
+                    &[(Some("tape"), types.tape.parsing_tape), (Some("this"), types.dyad_)],
                     at,
                 )?;
                 let def = self.definitions.last_mut().expect("checked above");
@@ -3537,14 +3601,25 @@ impl<'a> Parser<'a> {
             // plainly, is not in the seed (#133), as for the wrapped form.
             SlotKind::Run if !in_block => Err(ParseError::OwnRunNotInSeed),
             SlotKind::Run => {
+                // The body with its brackets, copied into the store — a
+                // source may not outlive the type (a REPL line), the store
+                // does — and lexed once, now, against the scopes open here
+                // (DESIGN ›Deferral is authored‹, 20 September 2026: "lexed
+                // at the definition"); the cells are what the type holds.
                 let (start, len) = self.body_text_extent()?;
                 let source = self.source;
                 let text = crate::identities::string::build_text(
                     self.rt.store,
                     types.string_,
-                    &source.as_bytes()[start..start + len],
+                    &source.as_bytes()[start - 1..start + len + 1],
                 );
-                let body = crate::identities::lex::build(self.rt.store, types, text);
+                // SAFETY: `text` is the string node just built; its bytes
+                // live for the store.
+                let held = unsafe { crate::identities::string::text(text) };
+                let held = std::str::from_utf8(held).expect("copied from the source text");
+                let fragment = self.lex_body_fragment(held)?;
+                let cells = Box::into_raw(Box::new(fragment));
+                let body = crate::identities::run_body::build(self.rt.store, types, text, cells);
                 self.definitions.last_mut().expect("checked above").run_body = body;
                 // The line's item: a declare node over the slot word, as the
                 // instance block's is ([`Parser::instance_block_fill`]).
@@ -3577,7 +3652,7 @@ impl<'a> Parser<'a> {
     /// `=` the body stands after.
     fn hidden_param_record(
         &mut self,
-        params: &[(&str, DyadPtr)],
+        params: &[(Option<&str>, DyadPtr)],
         at: usize,
     ) -> Result<(DyadPtr, Vec<DyadPtr>), ParseError> {
         let scope = self.open_scope();
@@ -3585,7 +3660,11 @@ impl<'a> Parser<'a> {
         let mut declared = Ok(());
         for &(name, ty) in params {
             let field = self.rt.store.alloc_raw(ty, std::ptr::null_mut());
-            declared = declared.and_then(|()| self.declare_name(name, field, at).map(|_| ()));
+            // A parameter with no name is a place the body reaches another
+            // way — a run body's field, through `this.f`.
+            if let Some(name) = name {
+                declared = declared.and_then(|()| self.declare_name(name, field, at).map(|_| ()));
+            }
             fields.push(field);
         }
         self.scopes.pop();
@@ -3631,6 +3710,284 @@ impl<'a> Parser<'a> {
         let k = self.scalar_value(crate::identities::numtype::NumType::U64, index as i64);
         let types = self.types;
         Ok(crate::identities::this::build_slot(self.rt.store, types, this, k))
+    }
+
+    /// `this.f` in a run body under construction: the field's parameter
+    /// place — the frame place the node's operand is evaluated into, the
+    /// second of a field's two moments (DESIGN ›Execution is function
+    /// application‹, item 4: "a field is filled at run, per evaluation, the
+    /// node's storage being its frame") — or, for a field of type `type`,
+    /// the type this field-type set holds in it, so `this.output 1` reads
+    /// `i32 1` where the set's output is `i32` (#133 slice 8: "a field of
+    /// type `type` whose value is known at that construction folds to the
+    /// identity"). `f` resolves in the instance block's scope alone, as in a
+    /// parse body.
+    fn run_body_field(&mut self, name: &str, at: usize) -> Result<DyadPtr, ParseError> {
+        let (field_scope, fields, places, key) = {
+            let rb = self.run_body.as_ref().expect("this_param is set while a run body is built");
+            (rb.field_scope, rb.fields.clone(), rb.places.clone(), rb.key.clone())
+        };
+        let mut scope = ScopeStack::new();
+        scope.push(field_scope);
+        let index = scope
+            .resolve(self.trie, name)
+            .ok()
+            .and_then(|r| fields.iter().position(|&f| f == r.identity));
+        let Some(i) = index else {
+            self.pos = at;
+            return Err(ParseError::ThisFieldUnknown(Box::new(name.to_string())));
+        };
+        // SAFETY: the fields are the instance block's declaration dyads.
+        let is_type = unsafe { (*fields[i]).ty } == self.types.type_;
+        Ok(if is_type { key[i] } else { places[i] })
+    }
+
+    /// The run of a node whose type holds its `run` as a lexed body (#133
+    /// slice 8; DESIGN ›Deferral is authored‹, 20 September 2026:
+    /// "constructed once per field-type set when a node supplies the types …
+    /// kept on the type for every later `^` over i32"): the node's field-type
+    /// set is read off its slots ([`Parser::field_type_key`]), the function
+    /// built for that set is found on the type or built now
+    /// ([`Parser::construct_run_body`]), and the node points at it through
+    /// the slot after its operand run ([`crate::identities::run_body::spec_of`]).
+    /// A field whose type is not yet known leaves the slot empty: the node
+    /// neither runs nor lowers until this runs again with the type at hand
+    /// (ruled 20 September 2026: the choice is a function of the field
+    /// types, rerun when a type arrives).
+    ///
+    /// # Safety
+    /// `node` must be the node [`Parser::run_logos_ctor`] minted for a type
+    /// whose record carries a run body, `[field…, null, spec]`.
+    pub(crate) unsafe fn resolve_specialization(
+        &mut self,
+        node: DyadPtr,
+        at: usize,
+        spelling: &str,
+    ) -> Result<(), ParseError> {
+        let ty = (*node).ty;
+        let held = crate::identities::meta::run_body_of(ty);
+        if held.is_null() {
+            return Ok(());
+        }
+        let Some(key) = self.field_type_key(ty, node)? else {
+            return Ok(());
+        };
+        let mut spec = crate::identities::run_body::lookup(held, &key);
+        if spec.is_null() {
+            spec = self.construct_run_body(ty, held, &key, at, spelling)?;
+        }
+        crate::identities::run_body::set_spec(node, spec);
+        Ok(())
+    }
+
+    /// The field-type set a node was built with, one type per instance
+    /// field in order (DESIGN ›Execution is function application‹, item 4:
+    /// "the field's type decides how the operand is used: `rhs := i32 ?`
+    /// evaluates the operand into an i32 (an uncommitted literal molds to it
+    /// as a call argument does) … a hole with no type, `lhs := ?`, takes the
+    /// type of the first value written into it"): a typed field is its type,
+    /// a literal written into it committed to that type in the slot; a field
+    /// of type `type` is the type it holds; an untyped hole is the type of
+    /// what the constructor wrote — a concrete number's type, or
+    /// `rational_number` for a bare literal (ruled 20 September 2026: the
+    /// literal's type, no silent i32). `None` while some field's type is
+    /// not yet known.
+    ///
+    /// # Safety
+    /// As [`Parser::resolve_specialization`]; `ty` the node's type.
+    unsafe fn field_type_key(
+        &mut self,
+        ty: DyadPtr,
+        node: DyadPtr,
+    ) -> Result<Option<Vec<DyadPtr>>, ParseError> {
+        use crate::identities::{numtype_of, Operand};
+        let types = self.types;
+        let fields = crate::identities::array::items(crate::identities::meta::record_fields_of(ty));
+        let slots = (*node).value as *mut DyadPtr;
+        let mut key = Vec::with_capacity(fields.len());
+        for (i, &field) in fields.iter().enumerate() {
+            let declared = (*field).ty;
+            let slot = *slots.add(i);
+            if slot.is_null() {
+                return Ok(None);
+            }
+            let entry = if declared == types.type_ {
+                let held = types.through(slot);
+                if !crate::identities::is_type_value(types, held) {
+                    return Ok(None);
+                }
+                held
+            } else if !declared.is_null() {
+                if matches!(numtype_of(types, slot), Operand::Literal)
+                    && crate::identities::is_numtype_node(types, declared)
+                {
+                    let lit = types.through(slot);
+                    *slots.add(i) =
+                        crate::identities::commit_literal_to(self.rt.store, types, lit, declared)?;
+                }
+                declared
+            } else {
+                match numtype_of(types, slot) {
+                    Operand::Concrete(nt) => types.numtypes[nt as usize],
+                    Operand::Literal => types.rational,
+                    Operand::Pointer(_) | Operand::NonNumeric => return Ok(None),
+                }
+            };
+            key.push(entry);
+        }
+        Ok(Some(key))
+    }
+
+    /// Build the function a held run body is, for one field-type set. The
+    /// body's cells, lexed once at the definition, are constructed now, the
+    /// parser reading its next cell from them ([`Feed`]) with the type's own
+    /// scopes open — the scope its body was written in and that scope's
+    /// ancestors, never the use site's — over hidden parameters: `this`, and
+    /// one unnamed place per field typed by the set, so `this.f` in the body
+    /// is the field's place ([`Parser::run_body_field`]) and the function's
+    /// parameters are the node's operands in order, which is what lets a
+    /// node run and lower as a call of it ([`crate::run::Runtime::apply`],
+    /// [`crate::compile::Lowerer::lower_call_to`]). The function is entered
+    /// on the type before the body is read, so a use of the type inside its
+    /// own body over the same set resolves to it, as a recursive `fn` reads
+    /// its own early signature; its value is filled in when the body is
+    /// built, and a failed construction leaves nothing behind. The state the
+    /// pass keeps per source is swapped out and back as an import's is.
+    ///
+    /// # Safety
+    /// `ty` must carry a record whose run body is `held`; `key` one type per
+    /// instance field.
+    unsafe fn construct_run_body(
+        &mut self,
+        ty: DyadPtr,
+        held: DyadPtr,
+        key: &[DyadPtr],
+        at: usize,
+        spelling: &str,
+    ) -> Result<DyadPtr, ParseError> {
+        let types = self.types;
+        let text = crate::identities::run_body::text_of(held);
+        let mut cells = (*crate::identities::run_body::cells_of(held)).cells();
+        // A fresh cell's dyad is the placeholder a `:=` in the body fills, so
+        // each construction gets its own, and the held cells stay as lexed.
+        for cell in &mut cells {
+            if cell.is_fresh() {
+                cell.dyad = self.rt.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut());
+            }
+        }
+        let mut chain = Vec::new();
+        let mut scope =
+            crate::identities::scope::parent_of(crate::identities::meta::record_scope_of(ty));
+        while !scope.is_null() {
+            chain.push(scope);
+            scope = crate::identities::scope::parent_of(scope);
+        }
+        let mut nested = ScopeStack::new();
+        for &scope in chain.iter().rev() {
+            nested.push(scope);
+        }
+        let base_depth = nested.depth();
+        let spec = self.rt.store.alloc_raw(types.fn_type, std::ptr::null_mut());
+        crate::identities::run_body::insert(self.rt.store, types, held, key, spec);
+
+        let saved_source = std::mem::replace(&mut self.source, text);
+        let saved_pos = std::mem::replace(&mut self.pos, 0);
+        let saved_scopes = std::mem::replace(&mut self.scopes, nested);
+        let saved_frames = std::mem::take(&mut self.frames);
+        let saved_definitions = std::mem::take(&mut self.definitions);
+        let saved_pending_fn = std::mem::replace(&mut self.pending_fn, std::ptr::null_mut());
+        let saved_runtime_depth = std::mem::replace(&mut self.runtime_depth, 0);
+        let saved_lex_mode = self.lex_mode.take();
+        let saved_lifted = std::mem::take(&mut self.lifted);
+        let saved_queued = std::mem::take(&mut self.queued);
+        let saved_discovering = std::mem::replace(&mut self.discovering, false);
+        let saved_run_body = self.run_body.take();
+        let saved_feed = self.feed.replace(Feed { cells, next: 0, base_depth });
+
+        let inner = self.construct_run_body_in(ty, key);
+        let inner_pos = self.pos;
+
+        self.source = saved_source;
+        self.pos = saved_pos;
+        self.scopes = saved_scopes;
+        self.frames = saved_frames;
+        self.definitions = saved_definitions;
+        self.pending_fn = saved_pending_fn;
+        self.runtime_depth = saved_runtime_depth;
+        self.lex_mode = saved_lex_mode;
+        self.lifted = saved_lifted;
+        self.queued = saved_queued;
+        self.discovering = saved_discovering;
+        self.run_body = saved_run_body;
+        self.feed = saved_feed;
+
+        match inner {
+            Ok(f) => {
+                (*spec).value = (*f).value;
+                Ok(spec)
+            }
+            Err(e) => {
+                crate::identities::run_body::remove(self.rt.store, types, held, key);
+                self.pos = at;
+                Err(ParseError::RunBodyFailed {
+                    name: spelling.to_string(),
+                    rendered: crate::report::render(
+                        &format!("run body of `{spelling}`"),
+                        text,
+                        inner_pos,
+                        &crate::report::parse_message(&e),
+                    ),
+                })
+            }
+        }
+    }
+
+    /// The construction itself, over the swapped-in state
+    /// ([`Parser::construct_run_body`]): the hidden parameter record, the
+    /// function's return type — the type the set holds in the field named
+    /// `output`, or `void` when the type declares none (DESIGN ›Execution is
+    /// function application‹, item 5: "the output is per node and the
+    /// constructor defines it") — and the body read as a function's.
+    ///
+    /// # Safety
+    /// As [`Parser::construct_run_body`].
+    unsafe fn construct_run_body_in(
+        &mut self,
+        ty: DyadPtr,
+        key: &[DyadPtr],
+    ) -> Result<DyadPtr, ParseError> {
+        let types = self.types;
+        let field_scope = crate::identities::meta::record_scope_of(ty);
+        let fields =
+            crate::identities::array::items(crate::identities::meta::record_fields_of(ty)).to_vec();
+        // The parameters are the fields alone, in order, unnamed: a node's
+        // operands are its fields, and its call passes exactly those.
+        let mut params: Vec<(Option<&str>, DyadPtr)> = Vec::with_capacity(fields.len());
+        for (i, &field) in fields.iter().enumerate() {
+            let ty = if (*field).ty == types.type_ { types.type_ } else { key[i] };
+            params.push((None, ty));
+        }
+        let mut scope = ScopeStack::new();
+        scope.push(field_scope);
+        let output = scope
+            .resolve(self.trie, "output")
+            .ok()
+            .and_then(|r| fields.iter().position(|&f| f == r.identity))
+            .filter(|&i| (*fields[i]).ty == types.type_)
+            .map_or(types.void_, |i| key[i]);
+        let (input, places) = self.hidden_param_record(&params, 0)?;
+        // `this` is a name of the body, not a parameter: a marker the `.`
+        // constructor recognizes ([`Parser::field_access`]), declared in the
+        // parameter scope the body reopens.
+        let this = self.rt.store.alloc_raw(types.dyad_, std::ptr::null_mut());
+        let param_scope = crate::identities::meta::record_scope_of(input);
+        self.scopes.push(param_scope);
+        let declared = self.declare_name("this", this, 0);
+        self.scopes.pop();
+        declared?;
+        self.run_body =
+            Some(RunBodyCx { this_param: this, field_scope, fields, places, key: key.to_vec() });
+        self.fn_over_body(types.fn_type, input, output, std::ptr::null_mut())
     }
 
     /// The text inside the `( … )` at the cursor, consumed with its brackets
@@ -4315,6 +4672,11 @@ impl<'a> Parser<'a> {
                     return self.this_field(name, nstart).map(|n| (n, 0));
                 }
             }
+            // `this.f` inside a held run body being constructed: the field's
+            // place in the function being built (#133 slice 8).
+            if self.run_body.as_ref().is_some_and(|rb| lhs == rb.this_param) {
+                return self.run_body_field(name, nstart).map(|n| (n, 0));
+            }
             // `t[k]:dyad.type`: the cell's type, read (#61). The write through
             // it, the retype, and `.value.operands.append(…)` were the 4
             // September shape, deleted with `this` (ruled 20 September 2026).
@@ -4538,7 +4900,20 @@ impl<'a> Parser<'a> {
             tape.remove(1);
         }
         tape.remove(-1);
-        tape.place(node);
+        // A type identity a run body's `this.f` folded to stands as its own
+        // unconstructed cell — the driver's "another identity's turn" — so
+        // it reads its right side as anywhere else: `this.output 1` is
+        // `i32 1` where the set's output is `i32` (#133 slice 8).
+        // SAFETY: `node` is a node from the store.
+        let folded_type = self.run_body.is_some()
+            && unsafe {
+                (*node).ty == self.types.type_ && crate::identities::meta::kind_of(node).is_some()
+            };
+        if folded_type {
+            tape.set_dyad(0, node);
+        } else {
+            tape.place(node);
+        }
         Ok(Constructed::Placed)
     }
 
@@ -6128,6 +6503,9 @@ impl<'a> Parser<'a> {
     /// identity, its spelling kept), declared by a following `:=` or reported
     /// at the boundary. The stuck point of a failed lex is the token's start.
     fn lex_cell(&mut self) -> Result<Option<(Cell, usize)>, ParseError> {
+        if self.feed.is_some() {
+            return Ok(self.feed_take().map(|c| (c, c.start)));
+        }
         self.skip_whitespace();
         let source = self.source;
         let Some((cell, next)) =
@@ -6216,6 +6594,105 @@ impl<'a> Parser<'a> {
     /// to the pass, which is what the driver dispatches on.
     fn cell_identity(&self, cell: &Cell) -> DyadPtr {
         self.settled_type(cell.identity(self.types))
+    }
+
+    /// The index of the held cell the cursor stands on, if it stands on one
+    /// ([`Feed`]): whitespace skipped, the cell whose spelling starts at the
+    /// cursor. The running index is corrected either way, since a boundary
+    /// rewinds the cursor.
+    fn feed_index(&mut self) -> Option<usize> {
+        self.skip_whitespace();
+        let pos = self.pos;
+        let feed = self.feed.as_mut()?;
+        while feed.next > 0 && feed.cells[feed.next - 1].start >= pos {
+            feed.next -= 1;
+        }
+        while feed.next < feed.cells.len() && feed.cells[feed.next].start < pos {
+            feed.next += 1;
+        }
+        (feed.next < feed.cells.len() && feed.cells[feed.next].start == pos).then_some(feed.next)
+    }
+
+    /// Resolve a spelling that was fresh when its cell was lexed. Under a
+    /// held body's construction ([`Feed`]) only the body's own names count —
+    /// the parameters and the locals it declares, at the feed's base depth
+    /// and above — since the body was lexed at its definition and a name
+    /// declared after it, in a scope the body is written in, is not one it
+    /// could see; elsewhere, the open scopes as usual.
+    fn resolve_fresh(&self, spelling: &str) -> Result<Resolved, ResolveError> {
+        let r = self.scopes.resolve(self.trie, spelling)?;
+        if let Some(feed) = &self.feed {
+            if !self.scopes.position(r.scope).is_some_and(|p| p >= feed.base_depth) {
+                return Err(ResolveError::Unknown(spelling.to_string()));
+            }
+        }
+        Ok(r)
+    }
+
+    /// Resolve a held cell whose spelling nothing had declared at the
+    /// definition ([`Parser::resolve_fresh`]); an unresolved one stays fresh
+    /// for the boundary to report.
+    fn feed_resolve(&self, cell: &mut Cell) {
+        if !cell.is_fresh() {
+            return;
+        }
+        if let Ok(r) = self.resolve_fresh(cell.spelling()) {
+            if r.matched == cell.len {
+                cell.dyad = r.record;
+            }
+        }
+    }
+
+    /// Take the held cell at the cursor, the cursor moving past it.
+    fn feed_take(&mut self) -> Option<Cell> {
+        let i = self.feed_index()?;
+        let mut cell = self.feed.as_ref()?.cells[i];
+        self.feed.as_mut()?.next = i + 1;
+        self.pos = cell.end();
+        self.feed_resolve(&mut cell);
+        Some(cell)
+    }
+
+    /// [`Parser::peek_token`] over the held cells.
+    fn feed_peek(&mut self) -> Option<(DyadPtr, usize)> {
+        let i = self.feed_index()?;
+        let mut cell = self.feed.as_ref()?.cells[i];
+        self.feed_resolve(&mut cell);
+        if cell.is_fresh() {
+            return None;
+        }
+        Some((cell.identity(self.types), cell.len))
+    }
+
+    /// Lex a held run body's text once, at the definition, into the fragment
+    /// the type holds (#133 slice 8): every token an unconstructed cell with
+    /// its spelling, brackets included; a `#` comment's text is passed over
+    /// as its constructor will read it at the construction, to the line's
+    /// end, or left as the quote that follows. `text` must live for the run:
+    /// a string node's bytes do.
+    fn lex_body_fragment(&mut self, text: &'static str) -> Result<ParsingTape, ParseError> {
+        let mut tape = ParsingTape::new();
+        let mut pos = 0;
+        while let Some((cell, next)) = lex_token(&self.scopes, self.trie, self.rt.store, text, pos)
+            .map_err(ParseError::Resolve)?
+        {
+            pos = next;
+            let is_hash = cell.spelling() == "#";
+            tape.push(cell);
+            if is_hash {
+                let bytes = text.as_bytes();
+                while pos < bytes.len() && matches!(bytes[pos], b' ' | b'\t') {
+                    pos += 1;
+                }
+                if !text[pos..].starts_with('«') {
+                    while pos < bytes.len() && bytes[pos] != b'\n' {
+                        pos += 1;
+                    }
+                }
+            }
+        }
+        tape.set_cursor(0);
+        Ok(tape)
     }
 
     /// The constructor an appearance of `id` runs, or `None` for an inert
@@ -6343,6 +6820,15 @@ impl<'a> Parser<'a> {
                 // The flag set on the untouched cell: the identity stands as
                 // its own value, the use of its name the cell already holds.
                 return Ok(());
+            }
+            // A Logos-written constructor placed its node: the node's run is
+            // the function built for its field-type set (#133 slice 8).
+            // SAFETY: a constructed cell's dyad is a node from the store.
+            if logos && !cell.dyad.is_null() && unsafe { (*cell.dyad).ty } == id {
+                let spelling = cell.spelling().to_string();
+                // SAFETY: the node is the one `run_logos_ctor` minted for
+                // `id`, `[field…, null, spec]`.
+                unsafe { self.resolve_specialization(cell.dyad, cell.start, &spelling)? };
             }
             // Constructed: a node that runs a function's body — a call, or a
             // node of a type carrying a `run` — is a use of every outer name

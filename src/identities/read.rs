@@ -159,6 +159,18 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
             let code = meta::code_of(op);
             if !place && !code.is_null() {
                 Read::Executable(Dispatch::Call(code))
+            } else if !place && !meta::run_body_of(op).is_null() {
+                // A node of a type whose `run` is a held body runs as the
+                // function built for its field-type set, and not at all
+                // until one is written into it (#133 slice 8; DESIGN
+                // ›Deferral is authored‹: the unresolved op slot "does not
+                // lower until resolved").
+                let spec = super::run_body::spec_of(node);
+                if spec.is_null() {
+                    Read::Executable(Dispatch::None)
+                } else {
+                    Read::Executable(Dispatch::Call(spec))
+                }
             } else {
                 Read::Aggregate
             }

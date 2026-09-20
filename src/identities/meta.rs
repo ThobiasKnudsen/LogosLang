@@ -385,12 +385,10 @@ pub(crate) unsafe fn install_code(id: DyadPtr, f: DyadPtr) {
     std::ptr::write_unaligned((*id).value.add(CODE_OFF) as *mut DyadPtr, f);
 }
 
-/// The run body a type's `shared run = (…)` line held (#133 slice 5): the
-/// `lex «…»` node over the body's text — the seed's one tape-fragment value,
-/// what `lex` yields — or null for a type whose run is a function
-/// ([`code_of`]) or absent. Nothing runs it yet: a node of the type
-/// constructs it once per field-type set when its fields' types are known
-/// (DESIGN ›Deferral is authored‹, 20 September 2026; #133 slice 8).
+/// The run body a type's `shared run = (…)` line held (#133 slices 5 and 8):
+/// the [`super::run_body`] node over the body's cells, lexed once at the
+/// definition, and the functions constructed from them per field-type set —
+/// or null for a type whose run is a function ([`code_of`]) or absent.
 ///
 /// # Safety
 /// As [`parse_rank_of`].
@@ -398,11 +396,12 @@ pub(crate) unsafe fn run_body_of(id: DyadPtr) -> DyadPtr {
     std::ptr::read_unaligned((*id).value.add(RUN_BODY_OFF) as *const DyadPtr)
 }
 
-/// Install `body` (a `lex` node) as `id`'s held run body — the type body's
-/// writer, run once at the close while the record is under construction.
+/// Install `body` (a [`super::run_body`] node) as `id`'s held run body — the
+/// type body's writer, run once at the close while the record is under
+/// construction.
 ///
 /// # Safety
-/// `id` must carry a record and `body` must be a `lex` node from the store.
+/// `id` must carry a record and `body` must be a run-body node from the store.
 pub(crate) unsafe fn install_run_body(id: DyadPtr, body: DyadPtr) {
     std::ptr::write_unaligned((*id).value.add(RUN_BODY_OFF) as *mut DyadPtr, body);
 }

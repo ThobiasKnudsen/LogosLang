@@ -284,11 +284,93 @@ fn any_spelling_the_index_can_hold_is_nameable() {
 /// field-type set; until then `this` in that body is an unknown name, so the
 /// test is the promise slice 1 made, ignored, not a passing stand-in.
 #[test]
-#[ignore = "identities/power.logos runs when #133 slice 8 lands"]
 fn the_power_demo_prints_nine() {
+    // `^`'s bare `shared run = (…)` body is lexed once at the definition and
+    // constructed for i32 operands when `x ^ 3` is built (DESIGN ›Deferral
+    // is authored‹, 20 September 2026; #133 slice 8); f.compile() lowers the
+    // node as a call of that constructed function.
     let out = logos().args(["import", "identities/power.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "9\n");
+}
+
+/// The power operator with the bare run body, on one line for the REPL.
+const POWER: &str = "^ := type ( instance = ( lhs := ?, rhs := i32 ?, output := type ?, \
+    shared run = ( r := this.output 1, for 0..this.rhs ( r = r * this.lhs ), r ) ), \
+    parse_rank = *.parse_rank + 1, associativity = right, \
+    parse = ( this.lhs = tape[-1], this.rhs = tape[1], this.output = tape[-1]:dyad.type, \
+    tape[0] = this, tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
+
+#[test]
+fn a_held_run_body_is_constructed_once_per_field_type_set_in_both_tiers() {
+    // One definition, two sets in one function: `a ^ 2` over i32 and `b ^ 2`
+    // over i64 each get their own constructed body, and the compiled function
+    // agrees with the interpreted one. 9 + 16.
+    let src =
+        format!("{POWER}, h := fn (a := i32 ?, b := i64 ?) -> i64 ( i64(a ^ 2) + b ^ 2 ), h(3, 4)");
+    let out = logos().args([&src]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "25");
+    let src = format!(
+        "{POWER}, h := fn (a := i32 ?, b := i64 ?) -> i64 ( i64(a ^ 2) + b ^ 2 ), \
+         h.compile(), h(3, 4)"
+    );
+    let out = logos().args([&src]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "25");
+}
+
+#[test]
+fn a_constructed_run_body_is_kept_on_the_type_across_repl_lines() {
+    // The functions built from the held body live on the type, so a later
+    // line — its own parser — finds the i32 body built by the first use
+    // and never re-lexes the definition: 4, then 27 through compiled code.
+    let (echoes, stderr) = repl(
+        format!(
+            "{POWER}\nf := fn (x := i32 ?) -> i32 ( x ^ 2 )\nf(2)\n\
+             g := fn (x := i32 ?) -> i32 ( x ^ 3 )\ng.compile()\ng(3)\n"
+        )
+        .as_bytes(),
+    );
+    assert_eq!(echoes, ["4", "27"], "stderr: {stderr}");
+}
+
+#[test]
+fn a_run_body_sees_its_definition_and_its_own_locals_only() {
+    // The body's cells resolve as at the definition: a name declared before
+    // the type is read, and one declared after it is unknown inside the body
+    // — the construction fails at the use, rendered against the body's text.
+    let before = format!(
+        "k := i32 2, {}, f := fn (x := i32 ?) -> i32 ( x ^ 2 ), f(5)",
+        POWER.replace("r = r * this.lhs", "r = r * this.lhs * k")
+    );
+    let out = logos().args([&before]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "100");
+    let after = format!(
+        "{}, k := i32 2, f := fn (x := i32 ?) -> i32 ( x ^ 2 ), f(5)",
+        POWER.replace("r = r * this.lhs", "r = r * this.lhs * k")
+    );
+    let out = logos().args([&after]).output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("the run body of `^` could not be constructed"), "stderr: {stderr}");
+    assert!(stderr.contains("run body of `^`:1:"), "stderr: {stderr}");
+    assert!(stderr.contains("unknown name `k`"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_run_body_over_bare_literal_operands_is_a_rational_specialization() {
+    // A bare literal written into `lhs := ?` gives the field type
+    // `rational_number` (ruled 20 September 2026: the literal's type, no
+    // silent i32), a set of its own. Its body needs `rational_number 1` and
+    // `*` over a rational place, which the seed does not have yet (#133
+    // slice 8, part 4): today the construction fails at that line.
+    let src = format!("{POWER}, 2 ^ 3");
+    let out = logos().args([&src]).output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("the run body of `^` could not be constructed"), "stderr: {stderr}");
 }
 
 #[test]
@@ -422,19 +504,19 @@ fn a_slot_body_is_read_bare() {
     // A `run` body is a body over `this`, whose fields' types no definition
     // knows (DESIGN ›Deferral is authored‹, 20 September 2026: "the body is
     // held as its lexed tape … and constructed once per field-type set when
-    // a node supplies the types"): the seed holds it as the fragment `lex`
-    // yields, read back as `t.run`. Its extent is found by the index: a
+    // a node supplies the types"): the seed lexes it once into the cells the
+    // type holds. Its extent is found by the index: a
     // bracket inside a quote is text, a comment's text is passed over to
     // its quote's end or its line's, and nested brackets pair up.
     let (echoes, stderr) = repl(
         b"t := type (instance = (a := i32 ?, shared run = ( s := \xc2\xaba ) b\xc2\xbb, \
           # \xc2\xab ) \xc2\xbb (( x[0] ), 5 ))))\n\
-          t.run:dyad.type == (lex \xc2\xabx\xc2\xbb):dyad.type\n",
+          t:dyad.type == type\n",
     );
     assert_eq!(echoes, ["true"], "stderr: {stderr}");
     let out = logos()
         .args(["t := type (instance = (shared run = ( x[0], # c ) d\n5 ))),\n\
-                t.run:dyad.type == (lex «x»):dyad.type"])
+                t:dyad.type == type"])
         .output()
         .unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -492,7 +574,7 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"t := type (parse = fn (a := i32 ?) -> void ( a = 1 ))\n", "parsing_tape"),
         (b"t := type (parse = 5)\n", "`parse = (…)`"),
         (b"t := type (instance = (shared run = 5))\n", "`shared run = (…)`"),
-        (b"t := type (instance = (shared run = ( 5 )))\nt(1)\n", "held as its lexed body"),
+        (b"t := type (instance = (shared run = ( 5 )))\nt(1)\n", "the call form of a type"),
         (b"t := type (instance = (shared run = ( 5 )),\n", "never closed"),
         (
             b"g := fn (n := i32 ?) -> type ( type (parse_rank = n) )\n",

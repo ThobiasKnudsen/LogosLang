@@ -956,6 +956,13 @@ impl Lowerer<'_, '_> {
             while !(*args.add(i)).is_null() {
                 let arg = *args.add(i);
                 let v = self.lower(arg)?;
+                // A value already at the container's width — a type value or
+                // an address, baked as `i64` — rides as it is.
+                if self.builder.func.dfg.value_type(v) == types::I64 {
+                    args64.push(v);
+                    i += 1;
+                    continue;
+                }
                 let nt = match numtype_of(self.types, arg) {
                     Operand::Concrete(nt) => nt,
                     // A pointer rides the container as its 8-byte address.

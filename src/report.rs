@@ -203,7 +203,10 @@ pub fn parse_message(e: &ParseError) -> String {
             "`tape.is_constructed[k] = …` takes a bool, `true` or `false`".into()
         }
         ParseError::RunBodyHeld => {
-            "this type's `run` is held as its lexed body; a node that constructs and runs it is not in the seed yet (#133 slice 8)".into()
+            "the call form of a type whose `run` is a held body is not in the seed; write the node through the type's own spelling".into()
+        }
+        ParseError::RunBodyFailed { name, rendered } => {
+            format!("the run body of `{name}` could not be constructed for these field types:\n{rendered}")
         }
         ParseError::SlotOutsideDefinition => {
             "a slot word (`parse_rank`, `lex_rank`, `associativity`, `parse`, `run`, `drop`, `instance`) stands left of `=` only inside a type body".into()
