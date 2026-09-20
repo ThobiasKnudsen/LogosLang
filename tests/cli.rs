@@ -111,6 +111,29 @@ fn an_import_cycle_is_a_checked_error() {
 }
 
 #[test]
+fn an_import_failure_reports_the_outer_position_then_the_inner_one() {
+    // #106: the inner file's rendering rode inside the outer message, and
+    // the outer text and caret were printed after it, detached. Each block
+    // now reads top down: the import line with its caret, then the inner
+    // file's own header, line and caret.
+    let out = logos().arg("import tests/fixtures/broken.logos").output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert!(
+        lines[0].contains("import of `tests/fixtures/broken.logos` failed"),
+        "stderr: {stderr}"
+    );
+    assert!(lines[1].contains("import tests/fixtures/broken.logos"), "stderr: {stderr}");
+    assert!(lines[2].trim_end().ends_with('^'), "stderr: {stderr}");
+    assert!(lines[3].starts_with("tests/fixtures/broken.logos:2:"), "stderr: {stderr}");
+    assert!(
+        lines[4].contains("nothing_here") && lines[5].trim_end().ends_with('^'),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
 fn a_repeat_import_is_idempotent() {
     // Once per run: the second import finds the loaded file and republishing
     // the same identities is not a shadowing error.

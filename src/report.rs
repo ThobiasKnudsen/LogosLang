@@ -41,7 +41,21 @@ pub fn render(file: &str, source: &str, offset: usize, message: &str) -> String 
     let text = source.lines().nth(line - 1).unwrap_or("");
     let pad: String =
         text.chars().take(col - 1).map(|c| if c == '\t' { '\t' } else { ' ' }).collect();
-    format!("{file}:{line}:{col}: error: {message}\n  {text}\n  {pad}^")
+    // A message of several lines — an import's failure carrying the inner
+    // file's own rendering — heads this block with its first line and
+    // follows the caret with the rest, so each block reads top down: the
+    // outer position, then the inner one under it, never an outer caret
+    // dangling below an inner block (#106).
+    let (first, rest) = match message.split_once('\n') {
+        Some((first, rest)) => (first, Some(rest)),
+        None => (message, None),
+    };
+    let mut out = format!("{file}:{line}:{col}: error: {first}\n  {text}\n  {pad}^");
+    if let Some(rest) = rest {
+        out.push('\n');
+        out.push_str(rest);
+    }
+    out
 }
 
 /// The human sentence for a parse error.
