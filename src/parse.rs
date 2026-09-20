@@ -1005,9 +1005,6 @@ struct OpenType {
     lex_rank: Option<f64>,
     assoc: Assoc,
     ctor: DyadPtr,
-    /// From a `shared run = fn …` line: stand-in for #133, the `code = fn`
-    /// shape kept until the bare body runs.
-    run: DyadPtr,
     /// From a `shared run = (…)` line: the body lexed once into its cells; a
     /// node of the type constructs it per field-type set.
     run_body: DyadPtr,
@@ -1116,19 +1113,14 @@ pub enum ParseError {
     NonComptimeRank,
     /// `associativity = …` with something other than `left` or `right`.
     BadAssociativity,
-    /// `parse = …` with something other than a function taking the tape by
-    /// value (stand-in for #126).
-    BadConstructorSignature,
     /// `lex_rank = …` in a type body that is not a declaration's value: the
     /// rank is the name's, and here there is no name.
     LexRankNeedsName,
-    /// `shared run = …` with a value that is neither a bare body nor a
-    /// function (stand-in for #133).
-    BadRunSlot,
-    /// A type whose `run` is a held body applied to arguments: only the
-    /// type's own `parse` fills a node's fields, so the call form has no node
-    /// to resolve a run for (stand-in for #133).
-    RunBodyHeld,
+    /// `parse = …` or `shared run = …` with anything but a bracket on its right.
+    SlotNeedsBody(SlotKind),
+    /// A type with a `run` applied to arguments, `sq(3)`: only its `parse`
+    /// fills a node's fields and output, so the call form builds no node.
+    RunTypeApplied,
     /// A held run body could not be constructed for a field-type set; carries
     /// the type's spelling at the use and the failure rendered against the
     /// body's text.
@@ -1722,20 +1714,11 @@ impl<'a> Parser<'a> {
             return Ok(());
         }
         // SAFETY: `callee` is a dyad from the store.
-        let function = unsafe {
-            if (*callee).ty == self.types.fn_type {
-                callee
-            } else if crate::identities::meta::is_record_type(callee) {
-                crate::identities::meta::code_of(callee)
-            } else {
-                return Ok(());
-            }
-        };
-        if function.is_null() {
+        if unsafe { (*callee).ty } != self.types.fn_type {
             return Ok(());
         }
-        // SAFETY: `function` is a function node; its list holds record dyads.
-        let outer = unsafe { fn_outer(function) };
+        // SAFETY: `callee` is a function node; its list holds record dyads.
+        let outer = unsafe { fn_outer(callee) };
         for &record in outer {
             // SAFETY: a function's outer list holds record dyads from the store.
             let fields = unsafe { Record::read(record) };
@@ -1969,30 +1952,19 @@ impl<'a> Parser<'a> {
             crate::identities::numtype::NumType::U64,
             tape as *mut ParsingTape as usize as i64,
         );
-        // A bare body takes `this` as its second parameter: a fresh node of
-        // `owner` per run, one null slot per field, filled by name. The wrapped
-        // `fn (tape := …)` form (stand-in for #133) takes the tape alone.
-        // SAFETY: `f` is the fn node the slot fill checked; `owner` the record type whose slot holds it.
-        let args = unsafe {
-            let input = *((*f).value as *const DyadPtr).add(FN_INPUT);
-            let params =
-                crate::identities::array::items(crate::identities::meta::record_fields_of(input));
-            if params.len() == 2 {
-                let fields = crate::identities::array::items(
-                    crate::identities::meta::record_fields_of(owner),
-                );
-                // One slot per field, the run's terminator, and the slot for the node's field-type set.
-                let slots = vec![std::ptr::null_mut(); fields.len() + 2];
-                let run = self.rt.store.alloc_operands(&slots);
-                let this = self.rt.store.alloc_raw(owner, run);
-                let this_arg = self
-                    .scalar_value(crate::identities::numtype::NumType::U64, this as usize as i64);
-                vec![handle, this_arg]
-            } else {
-                vec![handle]
-            }
+        // `this`: a fresh node of `owner` per run, one null slot per field,
+        // filled by name; then the run's terminator and the slot for the
+        // node's field-type set.
+        // SAFETY: `owner` is the record type whose slot holds `f`.
+        let n_fields = unsafe {
+            crate::identities::array::items(crate::identities::meta::record_fields_of(owner)).len()
         };
-        let call = build_call(self.rt.store, f, &args);
+        let slots = vec![std::ptr::null_mut(); n_fields + 2];
+        let run = self.rt.store.alloc_operands(&slots);
+        let this = self.rt.store.alloc_raw(owner, run);
+        let this_arg =
+            self.scalar_value(crate::identities::numtype::NumType::U64, this as usize as i64);
+        let call = build_call(self.rt.store, f, &[handle, this_arg]);
         // Inside the call, `caller.scope` reads the pass's position.
         self.rt.enter_constructor();
         // SAFETY: `call` was just built into the store; the tape and the store are reached only through the natives until `run` returns.
@@ -2568,7 +2540,6 @@ impl<'a> Parser<'a> {
             lex_rank: None,
             assoc: Assoc::Left,
             ctor: std::ptr::null_mut(),
-            run: std::ptr::null_mut(),
             run_body: std::ptr::null_mut(),
             instance: None,
             this_param: std::ptr::null_mut(),
@@ -2631,10 +2602,6 @@ impl<'a> Parser<'a> {
         if !def.ctor.is_null() {
             // SAFETY: `node` was just built; nothing has read its slot.
             unsafe { crate::identities::meta::install_constructor(node, def.ctor) };
-        }
-        if !def.run.is_null() {
-            // SAFETY: `node` was just built; `def.run` is the fn node the body's fill checked.
-            unsafe { crate::identities::meta::install_code(node, def.run) };
         }
         if !def.run_body.is_null() {
             // SAFETY: `node` was just built; `def.run_body` is the `lex` node the fill built.
@@ -2758,8 +2725,8 @@ impl<'a> Parser<'a> {
     }
 
     /// A slot `type` declared is filled with `=` (DESIGN ›The constructor is
-    /// a field‹): the parse_rank must be known at the definition, the
-    /// constructor takes the tape by value; the fill is a silent statement.
+    /// a field‹): the parse_rank must be known at the definition; a body slot
+    /// takes a bracket, `slot_body_fill`'s; the fill is a silent statement.
     ///
     /// # Safety
     /// `value` must be a dyad from the store.
@@ -2776,7 +2743,8 @@ impl<'a> Parser<'a> {
         match kind {
             SlotKind::Drop => return Err(ParseError::DropSlotNotInSeed),
             SlotKind::Run if !in_block => return Err(ParseError::OwnRunNotInSeed),
-            SlotKind::Run => {}
+            SlotKind::Parse if in_block => return Err(ParseError::InstanceSlotNotInSeed),
+            SlotKind::Parse | SlotKind::Run => return Err(ParseError::SlotNeedsBody(kind)),
             _ if in_block => return Err(ParseError::InstanceSlotNotInSeed),
             _ => {}
         }
@@ -2809,50 +2777,30 @@ impl<'a> Parser<'a> {
                     return Err(ParseError::BadAssociativity);
                 };
             }
-            SlotKind::Parse => {
-                // SAFETY: `read` is a reduced dyad; a fn node's value is its slots, its input a record of the params.
-                let takes_tape = unsafe {
-                    (*read).ty == types.fn_type && {
-                        let input = *((*read).value as *const DyadPtr).add(FN_INPUT);
-                        let params = crate::identities::array::items(
-                            crate::identities::meta::record_fields_of(input),
-                        );
-                        // The wrapped form takes the tape alone; a body read
-                        // bare takes `tape` and `this`.
-                        (params.len() == 1 || (params.len() == 2 && (*params[1]).ty == types.dyad_))
-                            && (*params[0]).ty == types.tape.parsing_tape
-                    }
-                };
-                if !takes_tape {
-                    return Err(ParseError::BadConstructorSignature);
-                }
-                def.ctor = read;
-            }
-            SlotKind::Instance | SlotKind::Drop => {
+            SlotKind::Parse | SlotKind::Run | SlotKind::Instance | SlotKind::Drop => {
                 unreachable!(
-                    "`drop` returned above; `instance` is routed to instance_block_fill by `=`"
+                    "body slots and `drop` returned above; `instance` is routed to instance_block_fill by `=`"
                 )
             }
-            // `shared run = fn …`: stand-in for #133, the `code = fn` shape
-            // kept beside the bare body until that body runs.
-            SlotKind::Run => {
-                // SAFETY: `read` is a reduced dyad from the store.
-                if unsafe { (*read).ty } != types.fn_type {
-                    return Err(ParseError::BadRunSlot);
-                }
-                def.run = read;
-            }
         }
-        let name = kind.name();
-        let name_node =
-            crate::identities::string::build_text(self.rt.store, types.string_, name.as_bytes());
-        Ok(crate::identities::declare::build(
+        Ok(self.slot_declare(kind, value))
+    }
+
+    /// The line's item for a slot fill: a declare node over the slot word.
+    fn slot_declare(&mut self, kind: SlotKind, value: DyadPtr) -> DyadPtr {
+        let types = self.types;
+        let name_node = crate::identities::string::build_text(
+            self.rt.store,
+            types.string_,
+            kind.name().as_bytes(),
+        );
+        crate::identities::declare::build(
             self.rt.store,
             types.declare_,
             types.ops.declare_,
             name_node,
             value,
-        ))
+        )
     }
 
     /// A slot body read bare, no parameter list (DESIGN ›Execution is function
@@ -2877,10 +2825,11 @@ impl<'a> Parser<'a> {
                 let f = unsafe {
                     self.fn_over_body(types.fn_type, input, types.void_, std::ptr::null_mut())
                 };
-                self.definitions.last_mut().expect("checked above").this_param =
-                    std::ptr::null_mut();
-                // SAFETY: `f` is the fn node just built over the body.
-                unsafe { self.slot_fill(SlotKind::Parse, f?) }
+                let def = self.definitions.last_mut().expect("checked above");
+                def.this_param = std::ptr::null_mut();
+                let f = f?;
+                def.ctor = f;
+                Ok(self.slot_declare(SlotKind::Parse, f))
             }
             SlotKind::Run if !in_block => Err(ParseError::OwnRunNotInSeed),
             SlotKind::Run => {
@@ -2901,21 +2850,7 @@ impl<'a> Parser<'a> {
                 let cells = Box::into_raw(Box::new(fragment));
                 let body = crate::identities::run_body::build(self.rt.store, types, text, cells);
                 self.definitions.last_mut().expect("checked above").run_body = body;
-                // The line's item: a declare node over the slot word, as the
-                // instance block's is.
-                let name = SlotKind::Run.name();
-                let name_node = crate::identities::string::build_text(
-                    self.rt.store,
-                    types.string_,
-                    name.as_bytes(),
-                );
-                Ok(crate::identities::declare::build(
-                    self.rt.store,
-                    types.declare_,
-                    types.ops.declare_,
-                    name_node,
-                    types.slots[SlotKind::Run as usize],
-                ))
+                Ok(self.slot_declare(SlotKind::Run, types.slots[SlotKind::Run as usize]))
             }
             _ => unreachable!("`=` reads a bare body for `parse` and `run` only"),
         }
@@ -3032,6 +2967,12 @@ impl<'a> Parser<'a> {
             spec = self.construct_run_body(ty, held, &key, at, spelling)?;
         }
         crate::identities::run_body::set_spec(node, spec);
+        // The node is a call of the function: a use of every outer name the
+        // body reads, checked before a comptime node runs it.
+        if let Err(e) = self.check_call_reads(spec) {
+            self.pos = at;
+            return Err(e);
+        }
         self.fold_comptime_node(ty, node, spec)
     }
 
@@ -4410,41 +4351,20 @@ impl<'a> Parser<'a> {
                 return Err(ParseError::UnboundOwningValue);
             }
         }
-        // SAFETY: `callee` is a resolved dyad from the store; a record type carries the record `code_of` and `run_body_of` read.
+        // SAFETY: `callee` is a resolved dyad from the store; a record type carries the record `run_body_of` reads.
         let (is_numtype, is_record) = unsafe {
             (
                 crate::identities::is_numtype_node(self.types, callee),
                 crate::identities::meta::is_record_type(callee),
             )
         };
-        let (code, run_body) = if is_record {
-            // SAFETY: `callee` is a record type node.
-            unsafe {
-                (
-                    crate::identities::meta::code_of(callee),
-                    crate::identities::meta::run_body_of(callee),
-                )
-            }
-        } else {
-            (std::ptr::null_mut(), std::ptr::null_mut())
-        };
         if is_numtype {
             // SAFETY: `callee` is a numtype node; `args` are reduced dyads.
             unsafe { crate::identities::build_cast(self.rt.store, self.types, callee, &args) }
-        } else if is_record && !code.is_null() {
-            // A type carrying a `code` applied to arguments is a call of that
-            // function, the node typed by the type (DESIGN ›Execution is
-            // function application‹): `^(2, 3)` is the node `2 ^ 3` builds.
-            let types = self.types;
-            let mut args = args;
-            // SAFETY: `callee` is a record type node with a code; `args` are reduced dyads from the store.
-            unsafe { crate::identities::commit_call_args(self.rt.store, types, code, &mut args)? };
-            Ok(build_call(self.rt.store, callee, &args))
         } else if is_record {
-            // A type whose `run` is a held body has nothing that builds a node
-            // running it yet (stand-in for #133).
-            if !run_body.is_null() {
-                return Err(ParseError::RunBodyHeld);
+            // SAFETY: `callee` is a record type node.
+            if unsafe { !crate::identities::meta::run_body_of(callee).is_null() } {
+                return Err(ParseError::RunTypeApplied);
             }
             // A record type applied to its field values constructs an
             // instance, like `i32(a)`.
@@ -5305,14 +5225,7 @@ impl<'a> Parser<'a> {
                 }
                 Ok(self.rt.store.alloc_raw(self.types.dyad_, c as *mut u8))
             }
-            // The fn node itself, so `t.run.compile()` compiles it.
             "run" => {
-                let c = meta::code_of(logos);
-                if !c.is_null() {
-                    return Ok(c);
-                }
-                // A body held as its lexed text: the `lex` node, until a node
-                // of the type constructs it.
                 let held = meta::run_body_of(logos);
                 if held.is_null() {
                     return Err(ParseError::BadReflectRead);
@@ -6280,10 +6193,10 @@ mod tests {
             go("sq := fn (a := i32 ?) -> i32 ( a * a )", &mut store, &mut trie, types, scopes);
         let (_, s) = go(
             "squared := type ( \
-                instance = ( a := ?, shared run = fn (a := i32 ?) -> i32 ( sq(a) ) ), \
+                instance = ( a := i32 ?, output := type ?, shared run = ( sq(this.a) ) ), \
                 parse_rank = *.parse_rank + 1, \
-                parse = ( this.a = tape[-1], tape[0] = this, tape.is_constructed[0] = true, \
-                          tape.remove(-1) ) )",
+                parse = ( this.a = tape[-1], this.output = i32, tape[0] = this, \
+                          tape.is_constructed[0] = true, tape.remove(-1) ) )",
             &mut store,
             &mut trie,
             types,

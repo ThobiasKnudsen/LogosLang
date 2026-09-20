@@ -98,12 +98,9 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
             }
         }
         meta::RECORD_TAG => {
-            let code = meta::code_of(op);
-            if !place && !code.is_null() {
-                Read::Executable(Dispatch::Call(code))
-            } else if !place && !meta::run_body_of(op).is_null() {
-                // A held `run` body: the node runs as the function built for its field-type
-                // set, and not at all until one exists.
+            if !place && !meta::run_body_of(op).is_null() {
+                // The node runs as the function built for its field-type set,
+                // and not at all until one exists.
                 let spec = super::run_body::spec_of(node);
                 if spec.is_null() {
                     Read::Executable(Dispatch::None)
@@ -185,7 +182,8 @@ pub unsafe fn place_layout(types: &Core, t: DyadPtr) -> Option<(Read, usize)> {
         ADDR_TAG => Some((Read::Pointer(numtype::pointee_of(t)), 8)),
         meta::TYPEREC_TAG | meta::DYAD_TAG => Some((Read::Container(t), 8)),
         meta::RECORD_TAG => {
-            if !meta::code_of(t).is_null() {
+            // A node of a type with a run is a call, so the type has no place.
+            if !meta::run_body_of(t).is_null() {
                 return None;
             }
             Some((Read::Aggregate, (meta::record_size_of(t) as usize).max(1)))
@@ -322,32 +320,34 @@ mod tests {
     }
 
     #[test]
-    fn a_code_carrying_type_is_a_call_and_a_leafless_record_is_named() {
+    fn a_node_of_a_run_type_is_a_call_of_its_function_and_a_leafless_record_is_named() {
         let (mut store, core, exprs) = parse_seq(
             "pw := type (\n\
-                 instance = ( a := ?, b := ?, shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( a ) ),\n\
+                 instance = ( a := ?, b := i32 ?, output := type ?, shared run = ( this.a ) ),\n\
                  parse_rank = *.parse_rank + 1,\n\
                  associativity = right,\n\
                  parse = (\n\
                      this.a = tape[-1],\n\
                      this.b = tape[1],\n\
+                     this.output = tape[-1]:dyad.type,\n\
                      tape[0] = this,\n\
                      tape.is_constructed[0] = true,\n\
                      tape.remove(1),\n\
                      tape.remove(-1)\n\
                  )\n\
              ),\n\
-             2 pw 3",
+             x := i32 2,\n\
+             x pw 3",
         );
         let types = &core;
         // SAFETY: nodes just parsed; the hand-built node below is well-formed.
         unsafe {
             let pw = declare::declared_of(exprs[0]);
             assert_eq!(read_kind(types, pw), Read::Identity);
-            let code = meta::code_of(pw);
-            assert!(!code.is_null());
-            assert_eq!(read_kind(types, exprs[1]), Read::Executable(Dispatch::Call(code)));
-            let value = store.alloc_operands(&[exprs[1], exprs[1], std::ptr::null_mut()]);
+            let spec = crate::identities::run_body::spec_of(exprs[2]);
+            assert!(!spec.is_null());
+            assert_eq!(read_kind(types, exprs[2]), Read::Executable(Dispatch::Call(spec)));
+            let value = store.alloc_operands(&[exprs[2], exprs[2], std::ptr::null_mut()]);
             let leafless = store.alloc_raw(core.plus, value);
             assert_eq!(read_kind(types, leafless), Read::Executable(Dispatch::None));
         }
@@ -376,7 +376,7 @@ mod tests {
         }
         let (_store, core, exprs) = parse_seq(
             "w := type ( instance = (x := i64 ?, y := i64 ?) ),\n\
-             c := type ( instance = ( shared run = fn (a := i32 ?) -> i32 ( a ) ) )",
+             c := type ( instance = ( a := i32 ?, shared run = ( this.a ) ) )",
         );
         let types = &core;
         // SAFETY: the declared identities were just parsed.

@@ -6,7 +6,7 @@
 
 use super::*;
 use crate::compile::{compile_fn, compile_nullary_i32};
-use crate::parse::{Parser, ScopeStack, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
+use crate::parse::{Parser, ScopeStack, SlotKind, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
 use crate::run::Runtime;
 
 fn new_core() -> (Store, RegexTrie, Core) {
@@ -1950,12 +1950,13 @@ fn compile_member_before_and_after_agree() {
 
 /// A power operator defined in Logos, spelled with a word so the script needs no fresh symbol.
 const POW_TYPE: &str = "pw := type (\n\
-     instance = ( a := ?, b := ?, shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( r := i32 1, for i in 0..b ( r = r * a ), r ) ),\n\
+     instance = ( a := ?, b := i32 ?, output := type ?, shared run = ( r := this.output 1, for 0..this.b ( r = r * this.a ), r ) ),\n\
      parse_rank = *.parse_rank + 1,\n\
      associativity = right,\n\
      parse = (\n\
          this.a = tape[-1],\n\
          this.b = tape[1],\n\
+         this.output = tape[-1]:dyad.type,\n\
          tape[0] = this,\n\
          tape.is_constructed[0] = true,\n\
          tape.remove(1),\n\
@@ -1963,32 +1964,29 @@ const POW_TYPE: &str = "pw := type (\n\
      )\n\
     ),\n";
 
-/// A code-carrying type with no constructor of its own: applied like a fn.
-const SQ_TYPE: &str =
-    "sq2 := type ( instance = ( shared run = fn (a := i32 ?) -> i32 ( a * a ) ) ),\n";
-
 #[test]
-fn a_type_with_code_runs_as_a_call_of_it() {
+fn a_node_of_a_run_type_runs_the_function_built_for_its_fields() {
     assert_eq!(run_script(&format!("{POW_TYPE}2 pw 10 + 1")), 1025);
     assert_eq!(run_script(&format!("{POW_TYPE}2 pw 3 pw 2")), 512);
-    assert_eq!(run_script(&format!("{SQ_TYPE}sq2(5) + 1")), 26);
+    // A type with a run and no parse of its own has no call form.
+    assert_eq!(
+        parse_err_after(
+            &["sq2 := type ( instance = ( a := i32 ?, shared run = ( this.a * this.a ) ) )"],
+            "sq2(5)"
+        ),
+        ParseError::RunTypeApplied
+    );
 }
 
 #[test]
-fn a_type_with_code_compiles_as_a_call_of_it() {
+fn a_node_of_a_run_type_compiles_as_a_call_of_its_function() {
+    // Only the caller compiles; the node's function stays interpreted behind the boundary.
     assert_eq!(
         run_script(&format!(
-            "{POW_TYPE}f := fn (x := i32 ?) -> i32 ( x pw 3 + 1 ),\na := f(2),\npw.run.compile(), f.compile(),\na + f(2)"
+            "{POW_TYPE}f := fn (x := i32 ?) -> i32 ( x pw 3 + 1 ),\na := f(2),\nf.compile(),\na + f(2)"
         )),
         18
     );
-    assert_eq!(
-        run_script(&format!(
-            "{SQ_TYPE}f := fn (x := i32 ?) -> i32 ( sq2(x) + 1 ),\nsq2.run.compile(), f.compile(),\nf(4)"
-        )),
-        17
-    );
-    // Only the caller compiles; the operator's code stays interpreted behind the boundary.
     assert_eq!(
         run_script(&format!(
             "{POW_TYPE}f := fn (x := i32 ?) -> i32 ( x pw 3 + 1 ),\nf.compile(),\nf(2)"
@@ -1998,8 +1996,16 @@ fn a_type_with_code_compiles_as_a_call_of_it() {
 }
 
 #[test]
-fn a_code_slot_holds_a_function_and_types_no_place() {
-    assert_eq!(parse_err("t := type (instance = (shared run = 5))"), ParseError::BadRunSlot);
+fn a_body_slot_takes_a_bracket_and_a_run_type_has_no_place() {
+    assert_eq!(
+        parse_err("t := type (instance = (shared run = 5))"),
+        ParseError::SlotNeedsBody(SlotKind::Run)
+    );
+    assert_eq!(parse_err("t := type (parse = 5)"), ParseError::SlotNeedsBody(SlotKind::Parse));
+    assert_eq!(
+        parse_err("t := type (parse = fn (tape := parsing_tape ?) -> void ( tape.recenter(0) ))"),
+        ParseError::SlotNeedsBody(SlotKind::Parse)
+    );
     assert_eq!(parse_err_after(&[POW_TYPE], "p := pw ?"), ParseError::NonNumericDeclaredType);
 }
 

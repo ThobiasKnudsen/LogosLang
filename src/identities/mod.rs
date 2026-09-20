@@ -618,24 +618,18 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
         };
     }
     // A call yields the callee's return type; a placeholder with no published signature
-    // falls back to i32. A type carrying `run` code is the call kind.
-    let logos = if !logos.is_null()
-        && meta::is_record_type(logos)
-        && !meta::code_of(logos).is_null()
-    {
-        meta::code_of(logos)
-    } else if !logos.is_null() && meta::is_record_type(logos) && !meta::run_body_of(logos).is_null()
-    {
-        // A held `run` body reads as the function built for this node's field types,
-        // or as nothing until one exists.
-        let spec = run_body::spec_of(node);
-        if spec.is_null() {
-            return Operand::NonNumeric;
-        }
-        spec
-    } else {
-        logos
-    };
+    // falls back to i32. A node of a type with a run reads as the function built for
+    // its field types, or as nothing until one exists.
+    let logos =
+        if !logos.is_null() && meta::is_record_type(logos) && !meta::run_body_of(logos).is_null() {
+            let spec = run_body::spec_of(node);
+            if spec.is_null() {
+                return Operand::NonNumeric;
+            }
+            spec
+        } else {
+            logos
+        };
     if !logos.is_null() && (*logos).ty == types.fn_type {
         let fields = (*logos).value as *const DyadPtr;
         if !fields.is_null() {

@@ -145,20 +145,26 @@ There is no `main`. The top level is the program, and the file's last value is i
 
 ## Defining the language from inside
 
-This is what the first public preview is built to show. An operator is a type with five slots filled: where it binds, which way it associates, how it parses, and what it computes.
+This is what the first public preview is built to show. An operator is a type with its slots filled: what its instances hold and compute, where it binds, which way it associates, and how it parses.
 
 ```logos
 ^ := type (
     instance = (
         lhs := ?,                            # the operands: one field per cell consumed
-        rhs := ?,
-        shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( ? )  # the power computation
+        rhs := i32 ?,
+        output := type ?,                    # the result type, written per node by parse
+        shared run = (                       # what every ^ node computes, over its fields
+            r := this.output 1,
+            for 0..this.rhs ( r = r * this.lhs ),
+            r
+        )
     ),
     parse_rank = *.parse_rank + 1,           # binds tighter than *
     associativity = right,
     parse = (                                # runs at every appearance of ^
         this.lhs = tape[-1],                 # this: the fresh ^ node, filled by name
         this.rhs = tape[1],
+        this.output = tape[-1]:dyad.type,    # the result follows the base's type
         tape[0] = this,                      # placed in its own cell
         tape.is_constructed[0] = true,       # and marked done, by the constructor itself
         tape.remove(1),
@@ -170,7 +176,7 @@ f.compile(),
 f(2)
 ```
 
-The parser hands every constructor the *parsing tape*, the cells around it: `tape[0]` is its own cell, negative offsets are to its left, positive to its right, and it may read, write, insert, and remove, and read the text a cell was lexed from, `tape.spelling[k]`. Text is the quote: `lex «…»` is the lexer as an identity, handing back the text's cells unconstructed as a tape fragment, and `tape.insert(k, lex «* 2»)` splices them in with their spellings, so a constructor can write code as text and let the driver construct it. `this` is the fresh node the constructor builds, its fields the instance block's; a write into a cell replaces the pointer and nothing more, and the constructor says when its cell is done with `tape.is_constructed[0] = true`. Precedence is one number per identity, so a new operator slots between any two existing ones by writing its number relative to theirs. `fn` is the shorthand for a type whose parse_rank, associativity, and constructor are the defaults of a call. Everything above runs today; the bare `shared run = (…)` body over the fields runs too, lexed once at the definition and constructed once per field-type set (#133 slice 8), and the `fn` wrapper shown is still accepted until the block is respelled (#133 slice 9).
+The parser hands every constructor the *parsing tape*, the cells around it: `tape[0]` is its own cell, negative offsets are to its left, positive to its right, and it may read, write, insert, and remove, and read the text a cell was lexed from, `tape.spelling[k]`. Text is the quote: `lex «…»` is the lexer as an identity, handing back the text's cells unconstructed as a tape fragment, and `tape.insert(k, lex «* 2»)` splices them in with their spellings, so a constructor can write code as text and let the driver construct it. `this` is the fresh node the constructor builds, its fields the instance block's; a write into a cell replaces the pointer and nothing more, and the constructor says when its cell is done with `tape.is_constructed[0] = true`. Precedence is one number per identity, so a new operator slots between any two existing ones by writing its number relative to theirs. `fn` is the shorthand for a type whose parse_rank, associativity, and constructor are the defaults of a call. Everything above runs today. A slot body has no parameter list: `parse` runs over `tape` and `this`, and `shared run = (…)` is lexed once at the definition and constructed once per set of field types a node is built with, so `^` over i32 and over f64 is one definition.
 
 ## What runs today, and what does not
 

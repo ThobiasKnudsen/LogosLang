@@ -1,19 +1,19 @@
-# A postfix operator defined in Logos and used in the same file (issue #61;
-# DESIGN ›The constructor is a field‹: an appearance of `squared` runs its
-# constructor, written here, during the parse). Its constructor takes the
-# cell to its left as the operand — `this.a = tape[-1]`, the fresh `squared`
-# node filled by field name, placed with `tape[0] = this` and marked done
-# by the constructor itself (#133 slice 6) — and its parse_rank sits one
-# above `*`'s, so `2 * x squared` squares first. Its `run` calls an ordinary
-# function, `sq`, so a node of `squared` is the other shape a constructor
-# may build: an operation that is a call.
+# A postfix operator defined in Logos and used in the same file: an
+# appearance of `squared` runs its parse, written here, during the parse.
+# The parse takes the cell to its left as the operand, `this.a = tape[-1]`,
+# the fresh `squared` node filled by field name, placed with `tape[0] = this`
+# and marked done by the parse itself; its parse_rank sits one above `*`'s,
+# so `2 * x squared` squares first. Its run calls an ordinary function, `sq`,
+# so a node of `squared` is the other shape a parse may build: an operation
+# that is a call, its output the function's.
 sq := fn (a := i32 ?) -> i32 ( a * a ),
 squared := type (
-    instance = ( a := ?, shared run = fn (a := i32 ?) -> i32 ( sq(a) ) ),
+    instance = ( a := i32 ?, output := type ?, shared run = ( sq(this.a) ) ),
     parse_rank = *.parse_rank + 1,
     associativity = left,
     parse = (
         this.a = tape[-1],
+        this.output = i32,
         tape[0] = this,
         tape.is_constructed[0] = true,
         tape.remove(-1)
@@ -22,12 +22,13 @@ squared := type (
 # A binary one: both cells, by name.
 add := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ),
 plus2 := type (
-    instance = ( a := ?, b := ?, shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( add(a, b) ) ),
+    instance = ( a := i32 ?, b := i32 ?, output := type ?, shared run = ( add(this.a, this.b) ) ),
     parse_rank = +.parse_rank,
     associativity = left,
     parse = (
         this.a = tape[-1],
         this.b = tape[1],
+        this.output = i32,
         tape[0] = this,
         tape.is_constructed[0] = true,
         tape.remove(1),

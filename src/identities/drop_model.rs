@@ -752,15 +752,16 @@ mod tests {
     }
 
     #[test]
-    fn a_node_of_a_code_carrying_type_is_a_call_of_its_code() {
+    fn a_node_of_a_run_type_is_a_use_of_every_name_its_body_reads() {
         const POW: &str = "n := i32 2,\n\
             ^ := type (\n\
-                instance = ( a := ?, b := ?, shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( a * b * n ) ),\n\
+                instance = ( a := i32 ?, b := i32 ?, output := type ?, shared run = ( this.a * this.b * n ) ),\n\
                 parse_rank = *.parse_rank + 1,\n\
                 associativity = right,\n\
                 parse = (\n\
                     this.a = tape[-1],\n\
                     this.b = tape[1],\n\
+                    this.output = i32,\n\
                     tape[0] = this,\n\
                     tape.is_constructed[0] = true,\n\
                     tape.remove(1),\n\
@@ -770,14 +771,13 @@ mod tests {
         let (v, live) = run(&format!("{POW}2 ^ 3"));
         assert_eq!(v, 12);
         assert_eq!(live, 0);
+        // Whether the body is constructed after the drop or was built before it.
         assert_eq!(
             parse_err(&format!("{POW}drop n,\n2 ^ 3")),
             ParseError::Resolve(ResolveError::Dead("n".into()))
         );
         assert_eq!(
-            parse_err(&format!(
-                "{POW}sq := type ( instance = ( shared run = fn (a := i32 ?) -> i32 ( a * n ) ) ),\ndrop n,\nsq(3)"
-            )),
+            parse_err(&format!("{POW}2 ^ 3,\ndrop n,\n2 ^ 3")),
             ParseError::Resolve(ResolveError::Dead("n".into()))
         );
     }

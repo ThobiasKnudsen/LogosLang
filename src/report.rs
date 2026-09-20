@@ -6,7 +6,7 @@
 //! All diagnostic text lives here; nothing prints a raw node address.
 
 use crate::compile::CompileError;
-use crate::parse::{ParseError, ResolveError};
+use crate::parse::{ParseError, ResolveError, SlotKind};
 use crate::regex_trie::RegexTrieError;
 use crate::run::RunError;
 
@@ -172,11 +172,11 @@ pub fn parse_message(e: &ParseError) -> String {
             "a parse_rank must be a number known when the type is defined".into()
         }
         ParseError::BadAssociativity => "associativity is `left` or `right`".into(),
-        ParseError::BadConstructorSignature => {
-            "`parse` is a bare body over the tape, `parse = (…)`, or until #133 slice 9 the function `fn (tape := parsing_tape ?) -> void (…)`".into()
+        ParseError::SlotNeedsBody(SlotKind::Parse) => {
+            "`parse` is a bare body over the tape, `parse = (…)`".into()
         }
-        ParseError::BadRunSlot => {
-            "`run` is a bare body, `shared run = (…)`, or until #133 slice 9 a function".into()
+        ParseError::SlotNeedsBody(_) => {
+            "`run` is a bare body over the instance's fields, `shared run = (…)`".into()
         }
         ParseError::ThisNeedsInstanceBlock => {
             "`this.f` reads a field of the node being built, and this type declares none: write the `instance = (…)` block above the body".into()
@@ -187,8 +187,8 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::FlagTakesBool => {
             "`tape.is_constructed[k] = …` takes a bool, `true` or `false`".into()
         }
-        ParseError::RunBodyHeld => {
-            "the call form of a type whose `run` is a held body is not in the seed; write the node through the type's own spelling".into()
+        ParseError::RunTypeApplied => {
+            "the call form of a type with a `run` is not in the seed: only its `parse` fills a node's fields and output, so write the node through the type's own spelling".into()
         }
         ParseError::RunBodyFailed { name, rendered } => {
             format!("the run body of `{name}` could not be constructed for these field types:\n{rendered}")

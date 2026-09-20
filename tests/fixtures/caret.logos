@@ -1,24 +1,17 @@
-# The v0.1.0 demo's operator, stressed (#63, DESIGN ›Execution is function
-# application‹: "if the type carries a `run`, run that function on it"): a
-# power operator `^` defined with `type` in Logos and used in the same file,
-# right-associative, binding tighter than `*`, its constructor written in
-# Logos and its instances' `run` slot holding the power computation, so the
-# operator is the operation. `^` is a fresh symbol spelling (#110): nothing
+# The v0.1.0 demo's operator, stressed: a power operator `^` defined with
+# `type` in Logos and used in the same file, right-associative, binding
+# tighter than `*`, its parse and its instances' run both written in Logos,
+# so the operator is the operation. `^` is a fresh symbol spelling: nothing
 # declared it before its `:=`, and once declared it lexes glued to its
-# operands (`x^3`). The constructor is the 18 and 19 September 2026 shape
-# (#133 slice 6): `this` is the fresh `^` node, filled by field name from the
-# cells around it, placed with `tape[0] = this`, and marked done by the
-# constructor's own `tape.is_constructed[0] = true`. `run` still wears the 4
-# September `fn` wrapper until its bare body runs (#133 slice 8); its
-# parameters are the instance fields in order. The pinned demo itself is
-# identities/power.logos.
+# operands (`x^3`). The pinned demo itself is identities/power.logos.
 ^ := type (
     instance = (
         lhs := ?,
-        rhs := ?,
-        shared run = fn (a := i32 ?, b := i32 ?) -> i32 (
-            r := i32 1,
-            for i in 0..b ( r = r * a ),
+        rhs := i32 ?,
+        output := type ?,
+        shared run = (
+            r := this.output 1,
+            for 0..this.rhs ( r = r * this.lhs ),
             r
         )
     ),
@@ -27,6 +20,7 @@
     parse = (
         this.lhs = tape[-1],
         this.rhs = tape[1],
+        this.output = tape[-1]:dyad.type,
         tape[0] = this,
         tape.is_constructed[0] = true,
         tape.remove(1),

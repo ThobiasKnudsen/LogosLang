@@ -348,9 +348,9 @@ fn a_constructor_written_in_logos_runs_during_the_parse() {
     let out = logos().args(["import", "tests/fixtures/squared.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "92\n");
-    // The `fn (tape := parsing_tape ?)` wrapper is still read: stand-in for #133.
+    // A parse that consumes nothing sets its flag and stands as itself.
     let (echoes, stderr) = repl(
-        b"noop := type (parse = fn (tape := parsing_tape ?) -> void ( tape.is_constructed[0] = true ))\n\
+        b"noop := type (parse = ( tape.is_constructed[0] = true ))\n\
           t := noop\nt:dyad.type == type\nnoop.parse_rank\n",
     );
     assert_eq!(echoes, ["true", "91.0"], "stderr: {stderr}");
@@ -389,10 +389,10 @@ fn a_slot_body_is_read_bare() {
     let (_echoes, stderr) = repl(b"tape := 1\nsp := type (parse = ( tape.recenter(0) ))\n");
     assert!(stderr.contains("shadowed"), "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        b"minus := type (instance = (a := ?, b := ?, shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( a - b )), \
+        b"minus := type (instance = (a := i32 ?, b := i32 ?, output := type ?, shared run = ( this.a - this.b )), \
           parse_rank = +.parse_rank, associativity = left, \
-          parse = ( this.a = tape[-1], this.b = tape[1], tape[0] = this, tape.is_constructed[0] = true, \
-          tape.remove(1), tape.remove(-1) ))\n\
+          parse = ( this.a = tape[-1], this.b = tape[1], this.output = i32, tape[0] = this, \
+          tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ))\n\
           7 minus 2\n10 minus 2 minus 3\nf := fn (x := i32 ?) -> i32 ( x minus 1 )\nf.compile()\nf(9)\nthis\n",
     );
     assert_eq!(echoes, ["5", "5", "8"], "stderr: {stderr}");
@@ -424,7 +424,6 @@ fn a_type_body_refuses_what_is_not_its_own() {
         // Stand-in: the slot words are core identities in the seed, not names known only inside a type body.
         (b"parse_rank = 3\n", "only inside a type body"),
         (b"d := i32 5\ndrop = 3\n", "only inside a type body"),
-        (b"t := type (run = fn () -> i32 ( 1 ))\n", "`shared run = (…)`"),
         (b"t := type (run = ( 1 ))\n", "`shared run = (…)`"),
         (b"t := type (instance = (run = 5))\n", "marked"),
         (b"t := type (instance = (shared parse_rank = 5))\n", "other slots"),
@@ -443,7 +442,7 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"t := type (5)\n", "a type body line"),
         (b"t := type (instance)\n", "a type body line"),
         (b"t := type (associativity = 5)\n", "`left` or `right`"),
-        (b"t := type (parse = fn (a := i32 ?) -> void ( a = 1 ))\n", "parsing_tape"),
+        (b"t := type (parse = fn (a := i32 ?) -> void ( a = 1 ))\n", "`parse = (…)`"),
         (b"t := type (parse = 5)\n", "`parse = (…)`"),
         (b"t := type (instance = (shared run = 5))\n", "`shared run = (…)`"),
         (b"t := type (instance = (shared run = ( 5 )))\nt(1)\n", "the call form of a type"),
@@ -1028,9 +1027,9 @@ fn the_dyad_box_holds_any_node_and_says_what_it_holds() {
 
 #[test]
 fn only_a_marked_place_is_written_or_addressed() {
-    let pw = "pw := type ( instance = ( a := ?, b := ?, shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( a * b ) ), \
+    let pw = "pw := type ( instance = ( a := i32 ?, b := i32 ?, output := type ?, shared run = ( this.a * this.b ) ), \
               parse_rank = *.parse_rank + 1, associativity = right, \
-              parse = ( this.a = tape[-1], this.b = tape[1], tape[0] = this, \
+              parse = ( this.a = tape[-1], this.b = tape[1], this.output = i32, tape[0] = this, \
               tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
     for (src, expect) in [
         ("i32 5 = 3\n", "not an assignable place"),

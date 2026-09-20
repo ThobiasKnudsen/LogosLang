@@ -59,13 +59,11 @@ const ASSOC_OFF: usize = 1;
 const PREC_OFF: usize = 2;
 const CTOR_OFF: usize = 10;
 const DTOR_OFF: usize = 18;
-const CODE_OFF: usize = 26;
-/// Beside the code slot rather than in it, so every reader of a type's `run` as a
-/// function (`code_of`) keeps finding a function or nothing.
-const RUN_BODY_OFF: usize = 34;
+/// The lexed `run` body with its constructed functions.
+const RUN_BODY_OFF: usize = 26;
 /// The interned `@T` of this type, so two spellings of `@i32` are one node.
-const POINTER_TYPE_OFF: usize = 42;
-pub(crate) const PAYLOAD_OFF: usize = 50;
+const POINTER_TYPE_OFF: usize = 34;
+pub(crate) const PAYLOAD_OFF: usize = 42;
 
 /// The one parse_rank axis. Higher binds tighter. A constructor at or above `OPEN`
 /// runs at discovery, one below at the segment boundary, highest first, associativity
@@ -235,22 +233,8 @@ pub(crate) unsafe fn install_destructor(id: DyadPtr, leaf: DyadPtr) {
     std::ptr::write_unaligned((*id).value.add(DTOR_OFF) as *mut DyadPtr, leaf);
 }
 
-/// The `fn` node a node of the type runs and compiles as, or null.
-///
-/// # Safety
-/// As `parse_rank_of`.
-pub(crate) unsafe fn code_of(id: DyadPtr) -> DyadPtr {
-    std::ptr::read_unaligned((*id).value.add(CODE_OFF) as *const DyadPtr)
-}
-
-/// # Safety
-/// `id` must carry a record and `f` must be a `fn` node from the store.
-pub(crate) unsafe fn install_code(id: DyadPtr, f: DyadPtr) {
-    std::ptr::write_unaligned((*id).value.add(CODE_OFF) as *mut DyadPtr, f);
-}
-
 /// The lexed body a `shared run = (…)` line held, constructed per field-type set;
-/// null for a type whose run is a function or absent.
+/// null for a type with no run.
 ///
 /// # Safety
 /// As `parse_rank_of`.
