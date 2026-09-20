@@ -255,6 +255,19 @@ fn any_spelling_the_index_can_hold_is_nameable() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "539\n");
 }
 
+/// The demo in the ruled shape (#133): `^` with its instance block, its
+/// `parse` over `this` and the tape, and its `shared run` body over the
+/// fields. It prints 9 once slice 8 constructs the held run body per
+/// field-type set; until then `this` in that body is an unknown name, so the
+/// test is the promise slice 1 made, ignored, not a passing stand-in.
+#[test]
+#[ignore = "identities/power.logos runs when #133 slice 8 lands"]
+fn the_power_demo_prints_nine() {
+    let out = logos().args(["import", "identities/power.logos"]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "9\n");
+}
+
 #[test]
 fn a_pattern_spelling_is_declared_through_regex() {
     // DESIGN ›The scope's constructor is the driver‹ (ruled 10 September 2026,

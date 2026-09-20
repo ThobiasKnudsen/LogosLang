@@ -487,7 +487,11 @@ mod tests {
             // …and not from the root scope, where it is filtered out.
             let mut outer = ScopeStack::new();
             outer.push(core.root_scope);
-            assert!(outer.resolve(&trie, "alpha").is_err());
+            // Declared, but not reachable from the root: out of scope, never unknown.
+            assert!(matches!(
+                outer.resolve(&trie, "alpha"),
+                Err(crate::parse::ResolveError::OutOfScope(_))
+            ));
         }
     }
 
