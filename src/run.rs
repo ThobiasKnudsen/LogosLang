@@ -28,7 +28,7 @@ use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
 /// The signature of a seed-native shim — what a `seed-native` callable's entry
 /// points at. Takes the application node and returns its scalar result,
 /// recursing on operands via [`Runtime::run`].
-pub type RunFn = fn(&mut Runtime, DyadPtr) -> Result<i64, RunError>;
+pub type RunFn = fn(&mut Runtime<'_>, DyadPtr) -> Result<i64, RunError>;
 
 /// Why a run failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,10 +57,6 @@ pub enum RunError {
     /// box so the error enum keeps its one-word payload — `run` recurses
     /// deeply, and every frame carries a `Result` of this logos.
     CompileFailed(Box<String>),
-    /// A native that builds graph — a constructor's cell writes (#61) — ran
-    /// under a runtime with no store attached: only the parser, which owns the
-    /// store, hands it in for the constructors it invokes.
-    NoStore,
     /// The interpreter panicked while running an uncompiled callee under
     /// compiled code (#65): a seed bug, carried back across the machine-code
     /// boundary as a checked error rather than an abort; the panic's message.
@@ -97,7 +93,7 @@ thread_local! {
     /// ([`interpret_call`]) finds it. Null outside such a jump. Re-derived at
     /// each jump and restored after it, never cached: a nested jump (compiled
     /// f, interpreted g, compiled f again) sees the same runtime at each level.
-    static CURRENT: Cell<*mut Runtime> = const { Cell::new(std::ptr::null_mut()) };
+    static CURRENT: Cell<*mut Runtime<'static>> = const { Cell::new(std::ptr::null_mut()) };
     /// The checked error an interpreted callee raised under compiled code,
     /// parked here because an `extern "C"` function cannot return it; the
     /// runtime reads it back the moment the machine code returns.
@@ -291,7 +287,7 @@ impl FrameStack {
 /// call stack (each `run` is a frame); the explicit [`FrameStack`] holds each
 /// in-flight interpreted call's frame — its parameters and locals at their
 /// parse-assigned byte offsets.
-pub struct Runtime {
+pub struct Runtime<'a> {
     /// The `record` type: a use of a name stores its record, read through to
     /// the dyad it names on every evaluation (the reading rule).
     /// The core handles the reading rule reads — the record type it hops
@@ -299,10 +295,6 @@ pub struct Runtime {
     /// ([`crate::identities::read::read_kind`]). The named handles above are
     /// the same values, kept until the sweep retires them (#82).
     types: crate::parse::CoreTypes,
-    /// `defer`: a scope body expression of this logos is not run in the value
-    /// pass — [`crate::identities::scope`] holds it for LIFO execution at scope
-    /// exit (issue #49). Held here so the sequence native recognizes it.
-    defer_type: DyadPtr,
     /// Live heap allocations (issue #49): `alloc` increments, `free` decrements.
     /// Not a correctness mechanism — the null-place drop flag prevents double
     /// frees — but an observable one, so tests assert a program frees what it
@@ -315,22 +307,22 @@ pub struct Runtime {
     /// each call having its own frame is what makes recursion work.
     activations: Vec<*mut u8>,
     /// What `f.compile()` needs, attached by [`Runtime::with_compiler`]: the
-    /// lowering table and the core handles. Absent (the default, and always at
-    /// parse-time evaluation), a compile node fails with
-    /// [`RunError::CompilerUnavailable`] instead of compiling behind the open
-    /// pass's back.
-    compiler: Option<CompilerCx>,
-    /// The store a Logos-written constructor builds into, attached by
-    /// [`Runtime::with_store`] for the parser's invocations (#61): the cell a
-    /// `tape[k]:dyad.type = T` makes and the operand run `append` grows are
-    /// graph, allocated where every other node is. Absent elsewhere, so a
-    /// native that needs it fails with [`RunError::NoStore`].
-    store: Option<std::ptr::NonNull<crate::store::Store>>,
-    /// The lexer `lex «…»` runs (#62), attached by [`Runtime::attach_lexer`]
-    /// around each run the parser makes: the scopes open at that moment and
-    /// the name index — "the record the trie resolved at the lex site"
-    /// (DESIGN ›Text is the quote‹), the lex site being wherever `lex` runs.
-    /// Absent elsewhere, so `lex` fails with [`RunError::NoLexer`].
+    /// lowering table (`Core::lower`), borrowed for the runtime's life. Absent
+    /// (the default, and always at parse-time evaluation), a compile node
+    /// fails with [`RunError::CompilerUnavailable`] instead of compiling
+    /// behind the open pass's back.
+    compiler: Option<&'a crate::compile::LowerTable>,
+    /// The store every node lives in, borrowed for the runtime's life: what
+    /// a Logos-written constructor builds into (#61) and what `lex` mints
+    /// fresh dyads into (#62). The parser owns its runtime and reaches the
+    /// store through it, so the one `&mut Store` is visible to the borrow
+    /// checker instead of being a raw handle two owners shared.
+    pub(crate) store: &'a mut crate::store::Store,
+    /// The lexer `lex «…»` runs (#62), set only inside [`Runtime::lexing`]:
+    /// the scopes open at that moment and the name index — "the record the
+    /// trie resolved at the lex site" (DESIGN ›Text is the quote‹), the lex
+    /// site being wherever `lex` runs. Absent elsewhere, so `lex` fails with
+    /// [`RunError::NoLexer`].
     lexer: Option<Lexer>,
     /// The tape fragments `lex «…»` built, owned here for the runtime's life
     /// — the seed's form of "the fragment is graph owned like any other
@@ -346,68 +338,66 @@ pub struct Runtime {
     constructing: u32,
 }
 
-/// What `lex «…»` lexes against (#62): raw handles to the parser's scope
-/// stack and name index, held only while the parser runs something and
-/// reads neither itself (see [`Runtime::attach_lexer`]).
+/// What `lex «…»` lexes against (#62): the parser's scope stack and name
+/// index. Raw, because the parser owns both and the runtime inside it, so no
+/// lifetime can tie a field of the runtime to them; set only by
+/// [`Runtime::lexing`], which borrows both for the call it makes and clears
+/// the handles when that call returns or unwinds. Every read of them is
+/// inside such a call.
 #[derive(Clone, Copy)]
 struct Lexer {
     scopes: std::ptr::NonNull<crate::parse::ScopeStack>,
     trie: std::ptr::NonNull<crate::regex_trie::RegexTrie>,
 }
 
-/// The compiler context a runtime carries to serve `f.compile()`. The lower
-/// table is held as a raw pointer because the runtime and the `Core` that owns
-/// the table live side by side in the driver, with no lifetime to name.
-struct CompilerCx {
-    /// The lowering table (`Core::lower`). Must outlive the runtime.
-    lower: *const crate::compile::LowerTable,
-    /// The core handles compilation resolves logos against.
-    types: crate::parse::CoreTypes,
+/// Clears the lexer when a [`Runtime::lexing`] call ends, by return or by
+/// unwinding, so the handles never outlive the borrows they were taken from.
+struct Detach<'r, 'a>(&'r mut Runtime<'a>);
+
+impl Drop for Detach<'_, '_> {
+    fn drop(&mut self) {
+        self.0.lexer = None;
+    }
 }
 
-impl Runtime {
+impl<'a> Runtime<'a> {
     /// A runtime recognizing functions by `fn_type` (record instances are
     /// recognized by their logos's stored layout record), molding `rational`
     /// leaves on read, with an empty activation stack (its first chunk is
     /// claimed lazily, at the first call that needs a frame). Everything
     /// executable is reached through the graph. No compiler is attached; see
     /// [`Runtime::with_compiler`].
-    pub fn new(types: crate::parse::CoreTypes) -> Self {
+    pub fn new(types: crate::parse::CoreTypes, store: &'a mut crate::store::Store) -> Self {
         Runtime {
             types,
-            defer_type: std::ptr::null_mut(),
             live_allocs: 0,
             stack: FrameStack::new(),
             activations: Vec::new(),
             compiler: None,
-            store: None,
+            store,
             lexer: None,
             fragments: Vec::new(),
             constructing: 0,
         }
     }
 
-    /// Attach the lexer `lex «…»` runs against (#62): the parser's open
-    /// scopes and name index, handed in around each run it makes and taken
-    /// back with [`Runtime::detach_lexer`] before its next step. The parser
-    /// reads neither while the runtime runs (the natives read the scopes and
-    /// the index, and write only the store), which is what keeps the raw
-    /// handles sound.
-    pub(crate) fn attach_lexer(
+    /// Run `f` with the lexer `lex «…»` needs (#62) attached: the parser's
+    /// open scopes and name index, borrowed for exactly this call, so nothing
+    /// can move or mutate them while a native reads them, and cleared when
+    /// the call returns or unwinds ([`Detach`]). The parser wraps each run it
+    /// makes in this.
+    pub(crate) fn lexing<R>(
         &mut self,
         scopes: &crate::parse::ScopeStack,
         trie: &crate::regex_trie::RegexTrie,
-    ) {
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
         self.lexer = Some(Lexer {
             scopes: std::ptr::NonNull::from(scopes),
             trie: std::ptr::NonNull::from(trie),
         });
-    }
-
-    /// Take the lexer back: `lex` fails with [`RunError::NoLexer`] until the
-    /// next [`Runtime::attach_lexer`].
-    pub(crate) fn detach_lexer(&mut self) {
-        self.lexer = None;
+        let guard = Detach(self);
+        f(guard.0)
     }
 
     /// Enter a Logos constructor's run (#123): until the matching
@@ -435,9 +425,8 @@ impl Runtime {
         if self.constructing == 0 {
             return Err(RunError::NoCaller);
         }
-        // SAFETY: `attach_lexer` took live references the parser keeps
-        // untouched while this runtime runs, and `detach_lexer` clears them
-        // before the parser moves on.
+        // SAFETY: `lexer` is set only inside `lexing`, whose borrows of the
+        // scopes and the index outlive this call.
         let scopes = unsafe { lexer.scopes.as_ref() };
         Ok(scopes.current().unwrap_or(std::ptr::null_mut()))
     }
@@ -451,12 +440,10 @@ impl Runtime {
         let Some(lexer) = self.lexer else {
             return Err(RunError::NoLexer);
         };
-        let store = self.store()?;
-        // SAFETY: `attach_lexer` took live references the parser keeps
-        // untouched while this runtime runs, and `detach_lexer` clears them
-        // before the parser moves on.
+        // SAFETY: `lexer` is set only inside `lexing`, whose borrows of the
+        // scopes and the index outlive this call.
         let (scopes, trie) = unsafe { (lexer.scopes.as_ref(), lexer.trie.as_ref()) };
-        let tape = crate::parse::lex_fragment(scopes, trie, store, text)
+        let tape = crate::parse::lex_fragment(scopes, trie, self.store, text)
             .map_err(|e| RunError::Lex(Box::new(crate::report::resolve_message(&e))))?;
         let mut tape = Box::new(tape);
         let handle: *mut crate::parse::ParsingTape = &mut *tape;
@@ -464,40 +451,9 @@ impl Runtime {
         Ok(handle)
     }
 
-    /// Attach the store the graph-building natives allocate into. The parser
-    /// hands its own store in around a constructor call and makes no use of
-    /// it until the call returns (the natives are the only writers meanwhile),
-    /// which is what keeps the raw handle sound. A builder, like
-    /// [`Runtime::with_compiler`].
-    pub fn with_store(mut self, store: &mut crate::store::Store) -> Self {
-        self.store = Some(std::ptr::NonNull::from(store));
-        self
-    }
-
-    /// The attached store, or [`RunError::NoStore`].
-    pub(crate) fn store(&mut self) -> Result<&mut crate::store::Store, RunError> {
-        match self.store {
-            // SAFETY: `with_store` took a live `&mut Store` whose owner makes
-            // no use of it while this runtime runs.
-            Some(mut p) => Ok(unsafe { p.as_mut() }),
-            None => Err(RunError::NoStore),
-        }
-    }
-
-    /// Set the `defer` identity, enabling the scope-exit teardown pass (issue
-    /// #49). Left null by [`Runtime::new`] — a null never matches a real node's
-    /// logos, so a runtime that never sees `defer` needs no wiring; the file
-    /// driver and the drop-model tests set it. A builder, like
-    /// [`Runtime::with_compiler`].
-    pub fn with_defer_type(mut self, defer_type: DyadPtr) -> Self {
-        self.defer_type = defer_type;
-        self
-    }
-
-    /// `defer`, so the sequence native ([`crate::identities::scope`]) can hold a
-    /// `defer` body expression for scope-exit execution instead of running it.
-    pub(crate) fn defer_type(&self) -> DyadPtr {
-        self.defer_type
+    /// The store the graph-building natives allocate into.
+    pub(crate) fn store(&mut self) -> &mut crate::store::Store {
+        self.store
     }
 
     /// Note a heap allocation (issue #49): `alloc` calls this after allocating.
@@ -517,17 +473,17 @@ impl Runtime {
         self.live_allocs
     }
 
-    /// Attach the compiler context, enabling `f.compile()` under this runtime.
-    /// `lower` is `Core::lower`; the caller keeps the `Core` (and the store)
-    /// alive for the runtime's whole life, which the driver's structure already
-    /// guarantees — runtime and engine are siblings dropped together.
-    pub fn with_compiler(
-        mut self,
-        lower: &crate::compile::LowerTable,
-        types: crate::parse::CoreTypes,
-    ) -> Self {
-        self.compiler = Some(CompilerCx { lower, types });
+    /// Attach the lowering table (`Core::lower`), enabling `f.compile()` under
+    /// this runtime. A builder; [`Runtime::set_compiler`] is the same on a
+    /// runtime already built.
+    pub fn with_compiler(mut self, lower: &'a crate::compile::LowerTable) -> Self {
+        self.compiler = Some(lower);
         self
+    }
+
+    /// Attach the lowering table to a runtime already built.
+    pub(crate) fn set_compiler(&mut self, lower: &'a crate::compile::LowerTable) {
+        self.compiler = Some(lower);
     }
 
     /// `f.compile()`: lower `fn_node`'s body to machine code and install the
@@ -540,13 +496,13 @@ impl Runtime {
     ///
     /// # Safety
     /// `fn_node` must be a valid dyad and `code_leaf` a callable value, both
-    /// from the store; the compiler context's table and logos must be live.
+    /// from the store.
     pub(crate) unsafe fn compile_member(
         &mut self,
         fn_node: DyadPtr,
         code_leaf: DyadPtr,
     ) -> Result<(), RunError> {
-        let Some(cx) = &self.compiler else {
+        let Some(lower) = self.compiler else {
             return Err(RunError::CompilerUnavailable);
         };
         if (*fn_node).ty != self.types.fn_type {
@@ -556,7 +512,7 @@ impl Runtime {
         if fields.is_null() {
             return Err(RunError::NotRunnable(fn_node));
         }
-        crate::compile::compile_into(&*cx.lower, cx.types, fn_node, code_leaf)
+        crate::compile::compile_into(lower, self.types, fn_node, code_leaf)
             .map_err(|e| RunError::CompileFailed(Box::new(crate::report::compile_message(&e))))
     }
 
@@ -688,7 +644,10 @@ impl Runtime {
     /// `entry` must be live machine code of `args.len()` `i64` parameters
     /// returning `i64`, as the seed compiles.
     unsafe fn call_compiled(&mut self, entry: *const u8, args: &[i64]) -> Result<i64, RunError> {
-        let prev = CURRENT.replace(self as *mut Runtime);
+        // The lifetime is erased at the machine-code boundary and restored
+        // below before the borrow it came from ends.
+        let this: *mut Runtime<'static> = (self as *mut Runtime<'a>).cast();
+        let prev = CURRENT.replace(this);
         let r = call_machine(entry, args);
         CURRENT.set(prev);
         let r = r?;

@@ -309,7 +309,7 @@ fn repl() -> ExitCode {
             _ => {
                 println!();
                 // Session exit: run the accumulated teardowns, newest first.
-                let mut rt = Runtime::new(engine.core.types()).with_defer_type(engine.core.defer_);
+                let mut rt = Runtime::new(engine.core.types(), &mut engine.store);
                 for defer_node in session_defers.into_iter().rev() {
                     // SAFETY: each is a `defer` node in the engine's store, which
                     // is still alive here.

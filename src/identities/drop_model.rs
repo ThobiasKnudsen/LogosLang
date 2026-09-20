@@ -532,9 +532,7 @@ mod tests {
                 Parser::new(src, &mut store, &mut trie, types, scopes).with_lower(&core.lower);
             p.parse_sequence().expect("parse")
         };
-        let mut rt = Runtime::new(core.types())
-            .with_compiler(&core.lower, types)
-            .with_defer_type(core.defer_);
+        let mut rt = Runtime::new(core.types(), &mut store).with_compiler(&core.lower);
         // SAFETY: `root` is the scope just parsed into `store`, which outlives `rt`.
         let bits = unsafe { rt.run(root) }.expect("run");
         (bits, rt.live_allocs())
@@ -1038,9 +1036,7 @@ mod tests {
                 Parser::new(src, &mut store, &mut trie, types, scopes).with_lower(&core.lower);
             p.parse_sequence().expect("parse")
         };
-        let mut rt = Runtime::new(core.types())
-            .with_compiler(&core.lower, types)
-            .with_defer_type(core.defer_);
+        let mut rt = Runtime::new(core.types(), &mut store).with_compiler(&core.lower);
         // SAFETY: `root` is the script just parsed into `store`.
         let result = unsafe { rt.run(root) };
         assert!(

@@ -127,7 +127,7 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let Some(exprs) = exprs_of(node) else {
             return Err(RunError::BadValue);
         };
-        let defer_ty = rt.defer_type();
+        let defer_ty = rt.types().defer_;
         let mut last = 0i64;
         let mut defers: Vec<DyadPtr> = Vec::new();
         for &expr in exprs {

@@ -319,7 +319,7 @@ mod tests {
         // in code stores the name's record, never the dyad, so a walker that
         // reaches a named operand holds the record and follows `dyad` to the
         // value; the interpreter reads through the reading rule.
-        let (_store, core, roots) = parse_all(&["x := i32 41", "x + 1"]);
+        let (mut store, core, roots) = parse_all(&["x := i32 41", "x + 1"]);
         let types = core.types();
         // SAFETY: all nodes were just parsed into the store.
         unsafe {
@@ -336,7 +336,7 @@ mod tests {
             // null is alive, and v0.1.0 has no gates.
             assert!(start.is_null() && end.is_null() && gate.is_null());
             assert_eq!(types.through(slots[0].node), dyad);
-            let mut rt = crate::run::Runtime::new(types);
+            let mut rt = crate::run::Runtime::new(types, &mut store);
             rt.run(roots[0]).unwrap();
             assert_eq!(rt.run(roots[1]).unwrap(), 42);
         }

@@ -165,7 +165,7 @@ fn run_scope_of(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             return Err(RunError::NullPointer);
         }
         let s = addr as usize as DyadPtr;
-        if !rt.store()?.contains(s) {
+        if !rt.store().contains(s) {
             return Err(RunError::BadValue);
         }
         let types = rt.types();

@@ -1912,7 +1912,6 @@ pub struct Parser<'a> {
     source: &'a str,
     pos: usize,
     scopes: ScopeStack,
-    store: &'a mut Store,
     trie: &'a mut RegexTrie,
     /// The core logos handles the parser logos opened nodes with (see [`CoreTypes`]).
     types: CoreTypes,
@@ -1989,7 +1988,7 @@ pub struct Parser<'a> {
     /// the store attached and the compiler when [`Parser::with_lower`]
     /// attached one. One runtime keeps the frame arena and the allocation
     /// ledger whole across the pass.
-    rt: crate::run::Runtime,
+    rt: crate::run::Runtime<'a>,
     /// The lowering table, when the driver attached one: the nested import
     /// pass hands it to its runtime so `f.compile()` at an imported top level
     /// works exactly as at the driver's own top level (one pass, one behavior).
@@ -2097,16 +2096,13 @@ impl<'a> Parser<'a> {
         types: CoreTypes,
         scopes: ScopeStack,
     ) -> Self {
-        // The store is attached before it moves into the parser: the parser
-        // makes no use of it while the runtime runs (the natives are the only
-        // writers meanwhile), which is what keeps the raw handle sound.
-        let rt =
-            crate::run::Runtime::new(types).with_defer_type(types.defer_).with_store(&mut *store);
+        // The parser owns its runtime and reaches the store through it, so
+        // the one `&mut Store` has one owner the borrow checker can see.
+        let rt = crate::run::Runtime::new(types, store);
         Parser {
             source,
             pos: 0,
             scopes,
-            store,
             rt,
             trie,
             types,
@@ -2133,8 +2129,7 @@ impl<'a> Parser<'a> {
     /// already does for the store.
     pub fn with_lower(mut self, lower: &'a crate::compile::LowerTable) -> Self {
         self.lower = Some(lower);
-        let rt = std::mem::replace(&mut self.rt, crate::run::Runtime::new(self.types));
-        self.rt = rt.with_compiler(lower, self.types);
+        self.rt.set_compiler(lower);
         self
     }
 
@@ -2162,10 +2157,8 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `node` must be a valid dyad this parser built into its store.
     unsafe fn run_on_pass(&mut self, node: DyadPtr) -> Result<i64, crate::run::RunError> {
-        self.rt.attach_lexer(&self.scopes, self.trie);
-        let out = self.rt.run(node);
-        self.rt.detach_lexer();
-        out
+        // SAFETY: as the caller's contract.
+        self.rt.lexing(&self.scopes, self.trie, |rt| unsafe { rt.run(node) })
     }
 
     /// The root scope's exit (issue #49): run the teardowns the top level's
@@ -2197,7 +2190,7 @@ impl<'a> Parser<'a> {
 
     /// The store the constructors allocate into.
     pub(crate) fn store(&mut self) -> &mut Store {
-        self.store
+        self.rt.store
     }
 
     /// The core logos handles (copied out, so a `&mut self` call can follow).
@@ -2218,7 +2211,7 @@ impl<'a> Parser<'a> {
             // Marked as storage, not as a definition's record: every place
             // carries a tag so the two are told apart everywhere, not only
             // where a frame exists (see [`crate::dyad::GLOBAL_TAG`]).
-            crate::dyad::global_place(self.store.alloc_bytes(&vec![0u8; width]))
+            crate::dyad::global_place(self.rt.store.alloc_bytes(&vec![0u8; width]))
         } else {
             let depth = self.frames.len();
             let frame = self.frames.last_mut().unwrap();
@@ -2226,7 +2219,7 @@ impl<'a> Parser<'a> {
             frame.size += width;
             crate::dyad::frame_place(depth, offset)
         };
-        self.store.alloc_raw(ty_node, place)
+        self.rt.store.alloc_raw(ty_node, place)
     }
 
     /// Reject a *capture*: a reference to a frame-relative place — a local or a
@@ -2390,7 +2383,7 @@ impl<'a> Parser<'a> {
                     crate::identities::read::read_kind(&self.types, node),
                     crate::identities::read::Read::Executable(_)
                 ) {
-                    crate::identities::ran::rewrite(self.store, &self.types, node, bits);
+                    crate::identities::ran::rewrite(self.rt.store, &self.types, node, bits);
                 }
             }
         }
@@ -2597,8 +2590,8 @@ impl<'a> Parser<'a> {
                     crate::identities::meta::record_fields_of(owner),
                 );
                 let slots = vec![std::ptr::null_mut(); fields.len() + 1];
-                let run = self.store.alloc_operands(&slots);
-                let this = self.store.alloc_raw(owner, run);
+                let run = self.rt.store.alloc_operands(&slots);
+                let this = self.rt.store.alloc_raw(owner, run);
                 let this_arg = self
                     .scalar_value(crate::identities::numtype::NumType::U64, this as usize as i64);
                 vec![handle, this_arg]
@@ -2606,7 +2599,7 @@ impl<'a> Parser<'a> {
                 vec![handle]
             }
         };
-        let call = build_call(self.store, f, &args);
+        let call = build_call(self.rt.store, f, &args);
         // SAFETY: `call` was just built into the store; the tape and the
         // store are reached only through the natives until `run` returns.
         // Inside the call, `caller.scope` reads the pass's position (#123).
@@ -2674,7 +2667,7 @@ impl<'a> Parser<'a> {
                 if (*read).ty != types.rational {
                     return Err(ParseError::UnsupportedOperands);
                 }
-                crate::identities::commit_literal_to(self.store, &types, read, ty)?
+                crate::identities::commit_literal_to(self.rt.store, &types, read, ty)?
             } else if scalar {
                 // `bool` is physically an i32 0/1 in storage, so the cell gets
                 // its own copy of the literal's byte. Only `true` and `false`
@@ -2683,8 +2676,8 @@ impl<'a> Parser<'a> {
                     return Err(ParseError::UnsupportedOperands);
                 }
                 let bits = std::ptr::read_unaligned((*read).value as *const i32);
-                let storage = self.store.alloc_bytes(&bits.to_ne_bytes());
-                self.store.alloc_raw(types.bool_, storage)
+                let storage = self.rt.store.alloc_bytes(&bits.to_ne_bytes());
+                self.rt.store.alloc_raw(types.bool_, storage)
             } else {
                 // Every other type reads its `.value` as bytes at its own
                 // width — a pointer as an address, `void` as nothing, a record
@@ -2743,7 +2736,7 @@ impl<'a> Parser<'a> {
             None => None,
         };
         let node = match base {
-            None => self.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut()),
+            None => self.rt.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut()),
             Some(t) => {
                 // The place's width comes from the reading rule asked of the
                 // type (`place_layout`, #82): the same table a read of the
@@ -3056,7 +3049,7 @@ impl<'a> Parser<'a> {
     pub fn parse_record(&mut self, record_logos: DyadPtr) -> Result<DyadPtr, ParseError> {
         let (scope, fields_arr, size_bytes) = self.parse_field_list(false)?;
         let record = crate::identities::meta::record_layout(
-            self.store,
+            self.rt.store,
             scope,
             fields_arr,
             size_bytes,
@@ -3064,7 +3057,7 @@ impl<'a> Parser<'a> {
             crate::identities::meta::prec::APPLY,
             Assoc::Left,
         );
-        Ok(self.store.alloc_raw(record_logos, record.cast()))
+        Ok(self.rt.store.alloc_raw(record_logos, record.cast()))
     }
 
     /// The field list `( name := T ?, name, … )`: its scope, its `fields`
@@ -3126,7 +3119,7 @@ impl<'a> Parser<'a> {
             } else {
                 std::ptr::null_mut()
             };
-            let field = self.store.alloc_raw(logos, std::ptr::null_mut());
+            let field = self.rt.store.alloc_raw(logos, std::ptr::null_mut());
             // The field's NAME is not stored on the record: declaring it here
             // puts a record in the shared name index, and resolution is
             // open-scope filtering over that one index (DESIGN ›Name resolution
@@ -3168,7 +3161,7 @@ impl<'a> Parser<'a> {
         // SAFETY: each field is the dyad just built, its type null or a type
         // node.
         let size_bytes: u64 = fields.iter().map(|&f| unsafe { field_width((*f).ty) }).sum();
-        let fields_arr = crate::identities::array::build(self.store, self.types.array_, &fields);
+        let fields_arr = crate::identities::array::build(self.rt.store, self.types.array_, &fields);
         Ok((scope, fields_arr, size_bytes))
     }
 
@@ -3338,13 +3331,13 @@ impl<'a> Parser<'a> {
         let (field_scope, fields, size_bytes) = match def.instance {
             Some(instance) => instance,
             None => {
-                let field_scope = self.store.alloc_raw(self.types.scope, std::ptr::null_mut());
-                let fields = crate::identities::array::build(self.store, self.types.array_, &[]);
+                let field_scope = self.rt.store.alloc_raw(self.types.scope, std::ptr::null_mut());
+                let fields = crate::identities::array::build(self.rt.store, self.types.array_, &[]);
                 (field_scope, fields, 0)
             }
         };
         let layout = crate::identities::meta::record_layout(
-            self.store,
+            self.rt.store,
             field_scope,
             fields,
             size_bytes,
@@ -3352,7 +3345,7 @@ impl<'a> Parser<'a> {
             def.parse_rank,
             def.assoc,
         );
-        let node = self.store.alloc_raw(id, layout.cast());
+        let node = self.rt.store.alloc_raw(id, layout.cast());
         if let Some(rank) = def.lex_rank {
             // The rank is the name's, not the type's (#122): it goes on the
             // record of the declaration this body is the value of. A body
@@ -3450,9 +3443,9 @@ impl<'a> Parser<'a> {
         let types = self.types;
         let name = SlotKind::Instance.name();
         let name_node =
-            crate::identities::string::build_text(self.store, types.string_, name.as_bytes());
+            crate::identities::string::build_text(self.rt.store, types.string_, name.as_bytes());
         Ok(crate::identities::declare::build(
-            self.store,
+            self.rt.store,
             types.declare_,
             types.ops.declare_,
             name_node,
@@ -3610,9 +3603,9 @@ impl<'a> Parser<'a> {
         }
         let name = kind.name();
         let name_node =
-            crate::identities::string::build_text(self.store, types.string_, name.as_bytes());
+            crate::identities::string::build_text(self.rt.store, types.string_, name.as_bytes());
         Ok(crate::identities::declare::build(
-            self.store,
+            self.rt.store,
             types.declare_,
             types.ops.declare_,
             name_node,
@@ -3678,22 +3671,22 @@ impl<'a> Parser<'a> {
                 let (start, len) = self.body_text_extent()?;
                 let source = self.source;
                 let text = crate::identities::string::build_text(
-                    self.store,
+                    self.rt.store,
                     types.string_,
                     &source.as_bytes()[start..start + len],
                 );
-                let body = crate::identities::lex::build(self.store, &types, text);
+                let body = crate::identities::lex::build(self.rt.store, &types, text);
                 self.definitions.last_mut().expect("checked above").run_body = body;
                 // The line's item: a declare node over the slot word, as the
                 // instance block's is ([`Parser::instance_block_fill`]).
                 let name = SlotKind::Run.name();
                 let name_node = crate::identities::string::build_text(
-                    self.store,
+                    self.rt.store,
                     types.string_,
                     name.as_bytes(),
                 );
                 Ok(crate::identities::declare::build(
-                    self.store,
+                    self.rt.store,
                     types.declare_,
                     types.ops.declare_,
                     name_node,
@@ -3722,17 +3715,17 @@ impl<'a> Parser<'a> {
         let mut fields = Vec::with_capacity(params.len());
         let mut declared = Ok(());
         for &(name, ty) in params {
-            let field = self.store.alloc_raw(ty, std::ptr::null_mut());
+            let field = self.rt.store.alloc_raw(ty, std::ptr::null_mut());
             declared = declared.and_then(|()| self.declare_name(name, field, at).map(|_| ()));
             fields.push(field);
         }
         self.scopes.pop();
         declared?;
-        let fields_arr = crate::identities::array::build(self.store, self.types.array_, &fields);
+        let fields_arr = crate::identities::array::build(self.rt.store, self.types.array_, &fields);
         // SAFETY: each `ty` is a type node from the store.
         let size_bytes = fields.iter().map(|&f| unsafe { field_width((*f).ty) }).sum();
         let record = crate::identities::meta::record_layout(
-            self.store,
+            self.rt.store,
             scope,
             fields_arr,
             size_bytes,
@@ -3740,7 +3733,7 @@ impl<'a> Parser<'a> {
             crate::identities::meta::prec::APPLY,
             Assoc::Left,
         );
-        Ok((self.store.alloc_raw(self.types.type_, record.cast()), fields))
+        Ok((self.rt.store.alloc_raw(self.types.type_, record.cast()), fields))
     }
 
     /// `this.f` in a parse body: the slot of the node being built that the
@@ -3769,7 +3762,7 @@ impl<'a> Parser<'a> {
         };
         let k = self.scalar_value(crate::identities::numtype::NumType::U64, index as i64);
         let types = self.types;
-        Ok(crate::identities::this::build_slot(self.store, &types, this, k))
+        Ok(crate::identities::this::build_slot(self.rt.store, &types, this, k))
     }
 
     /// The text inside the `( … )` at the cursor, consumed with its brackets
@@ -3942,7 +3935,7 @@ impl<'a> Parser<'a> {
         }
 
         if !declared.is_null() {
-            let early = self.store.alloc_operands(&[
+            let early = self.rt.store.alloc_operands(&[
                 input,
                 output,
                 std::ptr::null_mut(),
@@ -3995,7 +3988,7 @@ impl<'a> Parser<'a> {
         // rather than molding to the i32 default.
         // SAFETY: `body`/`output` are valid dyads just built.
         let body =
-            unsafe { crate::identities::commit_fn_body(self.store, &self.types, body, output)? };
+            unsafe { crate::identities::commit_fn_body(self.rt.store, &self.types, body, output)? };
 
         // `bcode` starts null; `compile_fn` installs the exec@ into that slot.
         // FN_FRAME holds the activation-record byte size — parameters first,
@@ -4004,9 +3997,9 @@ impl<'a> Parser<'a> {
         let frame = if frame_size == 0 {
             std::ptr::null_mut()
         } else {
-            let bytes = self.store.alloc_bytes(&(frame_size as u64).to_ne_bytes());
+            let bytes = self.rt.store.alloc_bytes(&(frame_size as u64).to_ne_bytes());
             let u64_ty = self.types.numtypes[crate::identities::NumType::U64 as usize];
-            self.store.alloc_raw(u64_ty, bytes)
+            self.rt.store.alloc_raw(u64_ty, bytes)
         };
         // FN_OUTER holds the records of the outer names the body read, which
         // every call of the function is a use of (#125) — null when it read
@@ -4014,11 +4007,17 @@ impl<'a> Parser<'a> {
         let outer = if outer.is_empty() {
             std::ptr::null_mut()
         } else {
-            crate::identities::array::build(self.store, self.types.array_, &outer)
+            crate::identities::array::build(self.rt.store, self.types.array_, &outer)
         };
-        let value =
-            self.store.alloc_operands(&[input, output, body, std::ptr::null_mut(), frame, outer]);
-        Ok(self.store.alloc_raw(fn_type, value))
+        let value = self.rt.store.alloc_operands(&[
+            input,
+            output,
+            body,
+            std::ptr::null_mut(),
+            frame,
+            outer,
+        ]);
+        Ok(self.rt.store.alloc_raw(fn_type, value))
     }
 
     /// Parse a conditional `if cond ( then )` with an optional `else ( else )`
@@ -4085,8 +4084,8 @@ impl<'a> Parser<'a> {
         };
         self.runtime_depth -= 1;
 
-        let value = self.store.alloc_operands(&[cond, then, els, self.types.ops.if_]);
-        Ok(self.store.alloc_raw(if_type, value))
+        let value = self.rt.store.alloc_operands(&[cond, then, els, self.types.ops.if_]);
+        Ok(self.rt.store.alloc_raw(if_type, value))
     }
 
     /// Resolve an `if` whose condition is already a parse-time bool (roadmap #30).
@@ -4117,9 +4116,13 @@ impl<'a> Parser<'a> {
             // to the branch's value would make the same text a value or a
             // statement depending on whether the condition is comptime-known.
             // Keep the ordinary `if` node (the then-branch parsed; it runs).
-            let value =
-                self.store.alloc_operands(&[cond, then, std::ptr::null_mut(), self.types.ops.if_]);
-            return Ok(self.store.alloc_raw(if_type, value));
+            let value = self.rt.store.alloc_operands(&[
+                cond,
+                then,
+                std::ptr::null_mut(),
+                self.types.ops.if_,
+            ]);
+            return Ok(self.rt.store.alloc_raw(if_type, value));
         }
         self.skip_group()?;
         if self.consume_else() {
@@ -4132,8 +4135,8 @@ impl<'a> Parser<'a> {
             return Ok(els);
         }
         let value =
-            self.store.alloc_operands(&[cond, cond, std::ptr::null_mut(), self.types.ops.if_]);
-        Ok(self.store.alloc_raw(if_type, value))
+            self.rt.store.alloc_operands(&[cond, cond, std::ptr::null_mut(), self.types.ops.if_]);
+        Ok(self.rt.store.alloc_raw(if_type, value))
     }
 
     /// Drop a balanced `( … )` group without parsing it — the tape's `remove`
@@ -4235,10 +4238,14 @@ impl<'a> Parser<'a> {
         // A bool-literal operand folds now (pure, nothing lost), like the
         // `==`/`and`/`or` folds — what keeps a comptime chain comptime.
         if let Some(v) = bool_literal_value(&types, operand) {
-            return Ok(crate::identities::bool_mod::literal_node(self.store, self.types.bool_, !v));
+            return Ok(crate::identities::bool_mod::literal_node(
+                self.rt.store,
+                self.types.bool_,
+                !v,
+            ));
         }
-        let value = self.store.alloc_operands(&[operand, self.types.ops.not_]);
-        Ok(self.store.alloc_raw(not_id, value))
+        let value = self.rt.store.alloc_operands(&[operand, self.types.ops.not_]);
+        Ok(self.rt.store.alloc_raw(not_id, value))
     }
 
     /// Parse a loop `while ( cond ) ( body )` (given the resolved `while` identity).
@@ -4271,8 +4278,8 @@ impl<'a> Parser<'a> {
         if unsafe { contains_return(&types, body) } {
             return Err(ParseError::EarlyReturn);
         }
-        let value = self.store.alloc_operands(&[cond, body, self.types.ops.while_]);
-        Ok(self.store.alloc_raw(while_id, value))
+        let value = self.rt.store.alloc_operands(&[cond, body, self.types.ops.while_]);
+        Ok(self.rt.store.alloc_raw(while_id, value))
     }
 
     /// Parse a counted loop `for i in a..b ( body )` / `for i in a..b..d ( body )`,
@@ -4321,7 +4328,7 @@ impl<'a> Parser<'a> {
         }
         // SAFETY: `parts` are reduced dyads just parsed.
         let logos =
-            unsafe { crate::identities::resolve_loop_parts(self.store, &types, &mut parts)? };
+            unsafe { crate::identities::resolve_loop_parts(self.rt.store, &types, &mut parts)? };
         let (start, end) = (parts[0], parts[1]);
         let step = parts.get(2).copied().unwrap_or(std::ptr::null_mut());
         if step_was_literal {
@@ -4352,7 +4359,7 @@ impl<'a> Parser<'a> {
         let width = unsafe { crate::identities::numtype::of_type_node(logos) }.bytes();
         let var = self.alloc_local(logos, width);
         let parent = self.scopes.current().unwrap_or(std::ptr::null_mut());
-        let scope = crate::identities::scope::mint(self.store, types.scope, parent);
+        let scope = crate::identities::scope::mint(self.rt.store, types.scope, parent);
         // A repeated body: a name declared outside it may not be moved or
         // dropped inside; the loop variable, declared in the scope pushed next,
         // is inside.
@@ -4375,8 +4382,9 @@ impl<'a> Parser<'a> {
             return Err(ParseError::EarlyReturn);
         }
 
-        let value = self.store.alloc_operands(&[var, start, end, step, body, self.types.ops.for_]);
-        Ok(self.store.alloc_raw(for_id, value))
+        let value =
+            self.rt.store.alloc_operands(&[var, start, end, step, body, self.types.ops.for_]);
+        Ok(self.rt.store.alloc_raw(for_id, value))
     }
 
     /// The loop variable a `for` names, if it names one: the cell after `for`
@@ -4447,9 +4455,10 @@ impl<'a> Parser<'a> {
             if (*lhs).ty == self.types.tape.slot_dyad {
                 let types = self.types;
                 return match name {
-                    "type" => {
-                        Ok((crate::identities::tape::build_cell_type(self.store, &types, lhs), 0))
-                    }
+                    "type" => Ok((
+                        crate::identities::tape::build_cell_type(self.rt.store, &types, lhs),
+                        0,
+                    )),
                     _ => Err(ParseError::BadReflectRead),
                 };
             }
@@ -4472,12 +4481,12 @@ impl<'a> Parser<'a> {
                     let scope = crate::identities::here::scope_of_here(lhs);
                     self.address_value(self.types.dyad_, scope)
                 } else {
-                    crate::identities::here::build_caller_scope(self.store, &self.types)
+                    crate::identities::here::build_caller_scope(self.rt.store, &self.types)
                 };
                 return Ok((node, 0));
             }
             if name == "scope" && crate::identities::here::yields_scope_address(&self.types, lhs) {
-                let node = crate::identities::here::build_scope_of(self.store, &self.types, lhs);
+                let node = crate::identities::here::build_scope_of(self.rt.store, &self.types, lhs);
                 return Ok((node, 0));
             }
             if crate::identities::is_type_value(&self.types, lhs) {
@@ -4543,13 +4552,13 @@ impl<'a> Parser<'a> {
                     return Err(ParseError::ExpectedOpen);
                 }
                 let code = crate::identities::callable::mint(
-                    self.store,
+                    self.rt.store,
                     self.types.callable_,
                     0,
                     self.types.conv_container,
                 );
-                let value = self.store.alloc_operands(&[lhs, code, self.types.ops.compile_]);
-                return Ok((self.store.alloc_raw(self.types.compile_, value), 1));
+                let value = self.rt.store.alloc_operands(&[lhs, code, self.types.ops.compile_]);
+                return Ok((self.rt.store.alloc_raw(self.types.compile_, value), 1));
             }
         }
         // Through a record pointer, `p@.x` folds the field offset into the deref
@@ -4558,14 +4567,15 @@ impl<'a> Parser<'a> {
         // is not a laid-out field — `t.remove(k)`, `t.insert(k, cell)`,
         // `t.recenter(k)`, and the indexed `t.is_constructed[k]` and
         // `t.spelling[k]` — built as a call with the receiver's address first.
-        if let Some(recv) = crate::identities::tape::receiver_addr(self.store, &self.types, lhs) {
+        if let Some(recv) = crate::identities::tape::receiver_addr(self.rt.store, &self.types, lhs)
+        {
             let name = &self.source[nstart..nstart + nlen];
             if let Some((op, leaf)) = crate::identities::tape::member(&self.types.tape, name) {
                 let types = self.types;
                 if op == types.tape.is_constructed || op == types.tape.spelling {
                     let k = key.ok_or(ParseError::ExpectedIndexBracket)?;
                     let node = crate::identities::tape::build_member(
-                        self.store,
+                        self.rt.store,
                         &types,
                         recv,
                         op,
@@ -4576,7 +4586,12 @@ impl<'a> Parser<'a> {
                 }
                 let args = call.ok_or(ParseError::ExpectedOpen)?;
                 let node = crate::identities::tape::build_member(
-                    self.store, &types, recv, op, leaf, &args,
+                    self.rt.store,
+                    &types,
+                    recv,
+                    op,
+                    leaf,
+                    &args,
                 )?;
                 return Ok((node, 1));
             }
@@ -4590,7 +4605,7 @@ impl<'a> Parser<'a> {
             let types = self.types;
             return Ok((
                 crate::identities::pointer::build_deref(
-                    self.store,
+                    self.rt.store,
                     &types,
                     ptr_expr,
                     (*field).ty,
@@ -4613,7 +4628,7 @@ impl<'a> Parser<'a> {
         }
         let (field, offset) = self.resolve_field(record_logos, nstart, nlen)?;
         let addr = (*lhs).value.wrapping_add(offset);
-        Ok((self.store.alloc_raw((*field).ty, addr), 0))
+        Ok((self.rt.store.alloc_raw((*field).ty, addr), 0))
     }
 
     /// `.`'s constructor: the member read of `tape[-1]` named by the cell to
@@ -4734,17 +4749,18 @@ impl<'a> Parser<'a> {
                 let types = self.types;
                 // SAFETY: `lhs` is a reduced dyad from the store.
                 if let Some(recv) =
-                    unsafe { crate::identities::tape::receiver_addr(self.store, &types, lhs) }
+                    unsafe { crate::identities::tape::receiver_addr(self.rt.store, &types, lhs) }
                 {
-                    let node = crate::identities::tape::build_slot(self.store, &types, recv, key);
+                    let node =
+                        crate::identities::tape::build_slot(self.rt.store, &types, recv, key);
                     tape.remove(-1);
                     tape.place(node);
                     return Ok(Constructed::Placed);
                 }
             }
         }
-        let value = self.store.alloc_operands(&[key, std::ptr::null_mut()]);
-        let node = self.store.alloc_raw(self.types.index_, value);
+        let value = self.rt.store.alloc_operands(&[key, std::ptr::null_mut()]);
+        let node = self.rt.store.alloc_raw(self.types.index_, value);
         tape.place(node);
         Ok(Constructed::Placed)
     }
@@ -4809,7 +4825,7 @@ impl<'a> Parser<'a> {
         // (`check_type_tail`, #76); this is the second wall, against any path
         // that ever hands back something else — bits that were never a node
         // are the checked error here, never a dereference.
-        if !self.store.contains(node) {
+        if !self.rt.store.contains(node) {
             return Err(ParseError::NonComptimeTypeCall);
         }
         if crate::identities::is_type_value(&self.types, node) {
@@ -4842,7 +4858,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::UnsupportedOperands);
         };
         let types = self.types;
-        Ok(crate::identities::pointer::build_deref(self.store, &types, lhs, pointee, 0))
+        Ok(crate::identities::pointer::build_deref(self.rt.store, &types, lhs, pointee, 0))
     }
 
     /// `&`'s constructor: the address of the place to its right — a name, or
@@ -4892,7 +4908,7 @@ impl<'a> Parser<'a> {
             // run/lower time, so a frame-relative local or parameter yields a
             // per-activation address — a different one on each recursive call,
             // exactly like C.
-            crate::identities::pointer::build_addr(self.store, &self.types, node)
+            crate::identities::pointer::build_addr(self.rt.store, &self.types, node)
         };
         tape.remove(1);
         tape.place(addr);
@@ -4982,8 +4998,9 @@ impl<'a> Parser<'a> {
     /// Mint the record for `identity` declared in `scope` under `spelling`:
     /// the six fields, the spelling as a string node (`a:name`, #120).
     fn mint_record(&mut self, identity: DyadPtr, scope: DyadPtr, spelling: &[u8]) -> DyadPtr {
-        let name = crate::identities::string::build_text(self.store, self.types.string_, spelling);
-        Record::alloc(self.store, self.types.record_, Record::new(identity, scope, name))
+        let name =
+            crate::identities::string::build_text(self.rt.store, self.types.string_, spelling);
+        Record::alloc(self.rt.store, self.types.record_, Record::new(identity, scope, name))
     }
 
     pub(crate) fn declare_name(
@@ -5088,8 +5105,11 @@ impl<'a> Parser<'a> {
         tape.remove(1);
         let mut logos = base;
         for _ in 0..depth {
-            logos =
-                crate::identities::pointer::make_pointer_type(self.store, self.types.type_, logos);
+            logos = crate::identities::pointer::make_pointer_type(
+                self.rt.store,
+                self.types.type_,
+                logos,
+            );
         }
         tape.place(logos);
         Ok(Constructed::Placed)
@@ -5120,7 +5140,7 @@ impl<'a> Parser<'a> {
         // SAFETY: `callee` is a resolved dyad from the store.
         if unsafe { crate::identities::is_numtype_node(&self.types, callee) } {
             // SAFETY: `callee` is a numtype node; `args` are reduced dyads.
-            unsafe { crate::identities::build_cast(self.store, &self.types, callee, &args) }
+            unsafe { crate::identities::build_cast(self.rt.store, &self.types, callee, &args) }
         } else if unsafe { crate::identities::meta::is_record_type(callee) }
             && !unsafe { crate::identities::meta::code_of(callee) }.is_null()
         {
@@ -5135,9 +5155,9 @@ impl<'a> Parser<'a> {
             // reduced dyads from the store.
             unsafe {
                 let code = crate::identities::meta::code_of(callee);
-                crate::identities::commit_call_args(self.store, &types, code, &mut args)?;
+                crate::identities::commit_call_args(self.rt.store, &types, code, &mut args)?;
             }
-            Ok(build_call(self.store, callee, &args))
+            Ok(build_call(self.rt.store, callee, &args))
         } else if unsafe { crate::identities::meta::is_record_type(callee) } {
             // A type whose `run` is a held body has nothing that builds a node
             // running it yet (#133 slice 8); an instance of its fields alone
@@ -5157,7 +5177,7 @@ impl<'a> Parser<'a> {
                 let (_, size) = crate::identities::instance::layout(callee)?;
                 let instance = self.alloc_local(callee, size.max(1));
                 crate::identities::instance::build_ctor(
-                    self.store,
+                    self.rt.store,
                     &types,
                     types.construct_,
                     callee,
@@ -5173,9 +5193,9 @@ impl<'a> Parser<'a> {
             let mut args = args;
             // SAFETY: `callee` and `args` are reduced dyads from the store.
             unsafe {
-                crate::identities::commit_call_args(self.store, &types, callee, &mut args)?;
+                crate::identities::commit_call_args(self.rt.store, &types, callee, &mut args)?;
             }
-            let call = build_call(self.store, callee, &args);
+            let call = build_call(self.rt.store, callee, &args);
             // A call whose callee returns a logos is resolved NOW, at comptime:
             // run it and substitute the concrete logos it produces (roadmap
             // #30), so the result flows as an ordinary logos value through
@@ -5210,7 +5230,7 @@ impl<'a> Parser<'a> {
     /// running inside walks up over settled structure; the stack is the cache.
     fn open_scope(&mut self) -> DyadPtr {
         let parent = self.scopes.current().unwrap_or(std::ptr::null_mut());
-        let scope = crate::identities::scope::mint(self.store, self.types.scope, parent);
+        let scope = crate::identities::scope::mint(self.rt.store, self.types.scope, parent);
         self.scopes.push(scope);
         scope
     }
@@ -5273,7 +5293,7 @@ impl<'a> Parser<'a> {
             // with nothing to run, yielding unit — `f()`'s argument cell, a
             // `fn () -> …` with no parameters read by its own parser.
             (0, _) => {
-                let arr = crate::identities::array::build(self.store, self.types.array_, &exprs);
+                let arr = crate::identities::array::build(self.rt.store, self.types.array_, &exprs);
                 // SAFETY: `scope` was minted by `open_scope` above and is unaliased.
                 unsafe {
                     crate::identities::scope::fill(scope, arr, self.types.ops.scope_);
@@ -5318,7 +5338,7 @@ impl<'a> Parser<'a> {
                 // A scope IS an array: the expression list lives behind one
                 // indirection (its own array node), never inline in the scope's
                 // value, which is the `[exprs, op]` pair.
-                let arr = crate::identities::array::build(self.store, self.types.array_, &exprs);
+                let arr = crate::identities::array::build(self.rt.store, self.types.array_, &exprs);
                 // SAFETY: `scope` was minted by `open_scope` above and is unaliased.
                 unsafe {
                     crate::identities::scope::fill(scope, arr, self.types.ops.scope_);
@@ -5418,9 +5438,13 @@ impl<'a> Parser<'a> {
                 self.pos += 1;
             }
             let text = source[start..self.pos].trim_end();
-            crate::identities::string::build_text(self.store, self.types.string_, text.as_bytes())
+            crate::identities::string::build_text(
+                self.rt.store,
+                self.types.string_,
+                text.as_bytes(),
+            )
         };
-        Ok(self.store.alloc_raw(self.types.comment_, text_node.cast()))
+        Ok(self.rt.store.alloc_raw(self.types.comment_, text_node.cast()))
     }
 
     /// `:=`'s constructor body: the declaration `name := value`, the name the
@@ -5473,7 +5497,7 @@ impl<'a> Parser<'a> {
             unsafe { (*tok.dyad).ty = self.types.fn_type };
             tok.dyad
         } else {
-            self.store.alloc_raw(self.types.fn_type, std::ptr::null_mut())
+            self.rt.store.alloc_raw(self.types.fn_type, std::ptr::null_mut())
         };
         let declared = if pattern.is_some() {
             self.declare_pattern(name, placeholder, tok.start)
@@ -5551,7 +5575,8 @@ impl<'a> Parser<'a> {
                 // the type-slot test above matched a box too and *rebound* `x`
                 // to `a`'s storage, so `x = f64` silently wrote `a` (#82).
                 let place = self.alloc_local(t, 8);
-                let init = crate::identities::build_box_init(self.store, &self.types, place, read)?;
+                let init =
+                    crate::identities::build_box_init(self.rt.store, &self.types, place, read)?;
                 self.scopes.rebind(record, place);
                 init
             } else if crate::identities::drop_model::is_owning_value(&self.types, value) {
@@ -5568,7 +5593,7 @@ impl<'a> Parser<'a> {
                 let pointee = crate::identities::drop_model::owning_pointee_of(&self.types, value)
                     .expect("is_owning_value implies a pointee");
                 let owning_ty = crate::identities::pointer::make_owning_pointer_type(
-                    self.store,
+                    self.rt.store,
                     self.types.type_,
                     pointee,
                     self.types.ops.teardown_,
@@ -5576,20 +5601,23 @@ impl<'a> Parser<'a> {
                 // A pointer is 8 bytes (U64-wide), whatever it points at.
                 let place = self.alloc_local(owning_ty, 8);
                 let init =
-                    crate::identities::build_scalar_init(self.store, &self.types, place, value)?;
+                    crate::identities::build_scalar_init(self.rt.store, &self.types, place, value)?;
                 self.scopes.rebind(record, place);
                 // `place` was just minted with the owning pointer logos (its
                 // destructor set), so the owning check passes; keeping it on
                 // guards against a future caller inserting a free over a borrow.
                 let free_node = crate::identities::drop_model::build_teardown(
-                    self.store,
+                    self.rt.store,
                     &self.types,
                     self.types.free_,
                     place,
                     true,
                 )?;
-                let defer_node =
-                    crate::identities::drop_model::build_defer(self.store, &self.types, free_node);
+                let defer_node = crate::identities::drop_model::build_defer(
+                    self.rt.store,
+                    &self.types,
+                    free_node,
+                );
                 self.open.last_mut().expect("a scope's defer list is open").defers.push(defer_node);
                 init
             } else if (*read).ty != self.types.rational
@@ -5610,10 +5638,10 @@ impl<'a> Parser<'a> {
                 // bare rational stays comptime (the guard above); a
                 // fn/logos/unit value keeps its own binding below.
                 let (ty_node, width) =
-                    crate::identities::scalar_binding_type(self.store, &self.types, value);
+                    crate::identities::scalar_binding_type(self.rt.store, &self.types, value);
                 let place = self.alloc_local(ty_node, width);
                 let init =
-                    crate::identities::build_scalar_init(self.store, &self.types, place, value)?;
+                    crate::identities::build_scalar_init(self.rt.store, &self.types, place, value)?;
                 self.scopes.rebind(record, place);
                 init
             } else {
@@ -5625,10 +5653,13 @@ impl<'a> Parser<'a> {
         // The declaration is graph structure, not parse vapor: the
         // expression is a declare node carrying the spelling (the
         // nominal identity's human half), the binding, and its native.
-        let name_node =
-            crate::identities::string::build_text(self.store, self.types.string_, name.as_bytes());
+        let name_node = crate::identities::string::build_text(
+            self.rt.store,
+            self.types.string_,
+            name.as_bytes(),
+        );
         let node = crate::identities::declare::build(
-            self.store,
+            self.rt.store,
             self.types.declare_,
             self.types.ops.declare_,
             name_node,
@@ -5683,10 +5714,13 @@ impl<'a> Parser<'a> {
         }
         let tail = self.import_file(&path_text)?;
         let types = self.types;
-        let path_node =
-            crate::identities::string::build_text(self.store, types.string_, path_text.as_bytes());
-        let value = self.store.alloc_operands(&[path_node, tail, types.ops.import_]);
-        let node = self.store.alloc_raw(types.import_, value);
+        let path_node = crate::identities::string::build_text(
+            self.rt.store,
+            types.string_,
+            path_text.as_bytes(),
+        );
+        let value = self.rt.store.alloc_operands(&[path_node, tail, types.ops.import_]);
+        let node = self.rt.store.alloc_raw(types.import_, value);
         tape.place(node);
         Ok(Constructed::Placed)
     }
@@ -5736,7 +5770,8 @@ impl<'a> Parser<'a> {
             self.pos = start;
             return Err(ParseError::BadPattern(reason));
         }
-        let node = crate::identities::string::build_text(self.store, self.types.regex_, &pattern);
+        let node =
+            crate::identities::string::build_text(self.rt.store, self.types.regex_, &pattern);
         tape.place(node);
         Ok(Constructed::Placed)
     }
@@ -5764,7 +5799,7 @@ impl<'a> Parser<'a> {
         self.pos += r.matched;
         let quote =
             self.construct_leaf(r.identity, start, r.matched)?.ok_or(ParseError::ExpectedQuote)?;
-        let node = crate::identities::lex::build(self.store, &self.types, quote);
+        let node = crate::identities::lex::build(self.rt.store, &self.types, quote);
         tape.place(node);
         Ok(Constructed::Placed)
     }
@@ -5779,7 +5814,7 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
         let scope = self.scopes.current().unwrap_or(std::ptr::null_mut());
-        let node = crate::identities::here::build_here(self.store, &self.types, scope);
+        let node = crate::identities::here::build_here(self.rt.store, &self.types, scope);
         tape.place(node);
         Ok(Constructed::Placed)
     }
@@ -5792,7 +5827,7 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        let node = crate::identities::here::build_caller(self.store, &self.types);
+        let node = crate::identities::here::build_caller(self.rt.store, &self.types);
         tape.place(node);
         Ok(Constructed::Placed)
     }
@@ -5833,7 +5868,7 @@ impl<'a> Parser<'a> {
         // The file's own section: a fresh stack of the root (ambient names)
         // plus a fresh scope node the file's declarations land in.
         let root = *self.scopes.open.first().expect("an import site has an open root scope");
-        let section = crate::identities::scope::mint(self.store, self.types.scope, root);
+        let section = crate::identities::scope::mint(self.rt.store, self.types.scope, root);
         self.imports.sections.insert(section);
         let mut nested = ScopeStack::new();
         nested.push(root);
@@ -6006,12 +6041,12 @@ impl<'a> Parser<'a> {
         // constructor runs — a record read through to the dyad it names.
         if (*lhs).ty == types.tape.slot {
             if name == "dyad" {
-                return Ok(crate::identities::tape::build_slot_dyad(self.store, &types, lhs));
+                return Ok(crate::identities::tape::build_slot_dyad(self.rt.store, &types, lhs));
             }
             // `t[k]:name` (#120): the spelling of the record the cell holds,
             // read when the constructor runs.
             if name == "name" {
-                return Ok(crate::identities::tape::build_slot_name(self.store, &types, lhs));
+                return Ok(crate::identities::tape::build_slot_name(self.rt.store, &types, lhs));
             }
             return Err(ParseError::ExpectedField);
         }
@@ -6021,7 +6056,7 @@ impl<'a> Parser<'a> {
                 // the name holds, and for `a := dyad ?` holding `i32` that is
                 // `type`, exactly as `x:dyad.type` for `x := i32 5` is `i32`.
                 let cell = self.settled_type(Record::read(lhs).dyad);
-                return Ok(self.store.alloc_raw(types.dyad_, cell as *mut u8));
+                return Ok(self.rt.store.alloc_raw(types.dyad_, cell as *mut u8));
             }
             let (field, offset) = self.resolve_field(types.record_, nstart, nlen)?;
             let addr = (*lhs).value.wrapping_add(offset);
@@ -6033,18 +6068,18 @@ impl<'a> Parser<'a> {
             // text; nothing else reads a string yet.
             if name == "name" {
                 let place = crate::dyad::global_place(addr);
-                return Ok(self.store.alloc_raw(types.string_, place));
+                return Ok(self.rt.store.alloc_raw(types.string_, place));
             }
             // `a:lex_rank` (#122): an `f64` place a user may write,
             // `pow:lex_rank = …`, so it carries the place mark `=` asks for.
             if name == "lex_rank" {
                 let place = crate::dyad::global_place(addr);
-                return Ok(self.store.alloc_raw((*field).ty, place));
+                return Ok(self.rt.store.alloc_raw((*field).ty, place));
             }
-            return Ok(self.store.alloc_raw((*field).ty, addr));
+            return Ok(self.rt.store.alloc_raw((*field).ty, addr));
         }
         let value = match name {
-            "dyad" => return Ok(self.store.alloc_raw(types.dyad_, lhs as *mut u8)),
+            "dyad" => return Ok(self.rt.store.alloc_raw(types.dyad_, lhs as *mut u8)),
             "scope" => self.scopes.current().unwrap_or(std::ptr::null_mut()),
             "start" | "end" | "gate" => std::ptr::null_mut(),
             _ => {
@@ -6059,7 +6094,7 @@ impl<'a> Parser<'a> {
     /// An `@pointee` value holding `addr`: a pointer-typed literal with its own
     /// eight bytes of storage, read at run time like any pointer variable.
     fn address_value(&mut self, pointee: DyadPtr, addr: DyadPtr) -> DyadPtr {
-        crate::identities::pointer::address_value(self.store, &self.types, pointee, addr)
+        crate::identities::pointer::address_value(self.rt.store, &self.types, pointee, addr)
     }
 
     /// A member read on a dyad view (#52, ›The dyad's read surface‹):
@@ -6143,7 +6178,7 @@ impl<'a> Parser<'a> {
                 if (*c).ty == self.types.fn_type {
                     return Ok(c);
                 }
-                Ok(self.store.alloc_raw(self.types.dyad_, c as *mut u8))
+                Ok(self.rt.store.alloc_raw(self.types.dyad_, c as *mut u8))
             }
             // The run: the function an instance of the type runs as (#63),
             // the fn node itself, so `t.run.compile()` compiles it.
@@ -6161,15 +6196,17 @@ impl<'a> Parser<'a> {
                 }
                 Ok(held)
             }
-            "fields" if meta::is_record_type(logos) => {
-                Ok(self.store.alloc_raw(self.types.dyad_, meta::record_fields_of(logos) as *mut u8))
-            }
+            "fields" if meta::is_record_type(logos) => Ok(self
+                .rt
+                .store
+                .alloc_raw(self.types.dyad_, meta::record_fields_of(logos) as *mut u8)),
             "size_bytes" if meta::is_record_type(logos) => {
                 Ok(self.scalar_value(NumType::I64, meta::record_size_of(logos) as i64))
             }
-            "scope" if meta::is_record_type(logos) => {
-                Ok(self.store.alloc_raw(self.types.dyad_, meta::record_scope_of(logos) as *mut u8))
-            }
+            "scope" if meta::is_record_type(logos) => Ok(self
+                .rt
+                .store
+                .alloc_raw(self.types.dyad_, meta::record_scope_of(logos) as *mut u8)),
             "type" => Err(ParseError::TypeNeedsView),
             // A member of the type's own definition body (#61; DESIGN ›The
             // constructor is a field‹: bare lines "survive as members
@@ -6198,8 +6235,8 @@ impl<'a> Parser<'a> {
         let ty = self.types.numtypes[nt as usize];
         let width = nt.bytes();
         let bytes = bits.to_ne_bytes();
-        let storage = self.store.alloc_bytes(&bytes[..width]);
-        self.store.alloc_raw(ty, storage)
+        let storage = self.rt.store.alloc_bytes(&bytes[..width]);
+        self.rt.store.alloc_raw(ty, storage)
     }
 
     /// One lex step of the driver: the next token of the source as a tape
@@ -6211,8 +6248,9 @@ impl<'a> Parser<'a> {
     fn lex_cell(&mut self) -> Result<Option<(Cell, usize)>, ParseError> {
         self.skip_whitespace();
         let source = self.source;
-        let Some((cell, next)) = lex_token(&self.scopes, self.trie, self.store, source, self.pos)
-            .map_err(ParseError::Resolve)?
+        let Some((cell, next)) =
+            lex_token(&self.scopes, self.trie, self.rt.store, source, self.pos)
+                .map_err(ParseError::Resolve)?
         else {
             return Ok(None);
         };
@@ -6284,7 +6322,7 @@ impl<'a> Parser<'a> {
                 return id;
             };
             let held = std::ptr::read_unaligned(addr as *const DyadPtr);
-            if held.is_null() || !self.store.contains(held) {
+            if held.is_null() || !self.rt.store.contains(held) {
                 return id;
             }
             // A `type ?` box may hold only an identity; a `dyad ?` box holds
@@ -6956,11 +6994,10 @@ mod tests {
         let mut p = Parser::new(src, store, trie, types, scopes);
         let node = p.parse_expression().unwrap_or_else(|e| panic!("{src}: {e:?}"));
         let scopes = p.into_scopes();
-        let mut rt = crate::run::Runtime::new(types).with_store(store);
-        rt.attach_lexer(&scopes, trie);
+        let mut rt = crate::run::Runtime::new(types, store);
         // SAFETY: `node` was just parsed into the store.
-        let v = unsafe { rt.run(node) }.unwrap_or_else(|e| panic!("{src}: {e:?}"));
-        (v, scopes)
+        let v = rt.lexing(&scopes, trie, |rt| unsafe { rt.run(node) });
+        (v.unwrap_or_else(|e| panic!("{src}: {e:?}")), scopes)
     }
 
     #[test]
@@ -7008,20 +7045,19 @@ mod tests {
         let mut p = Parser::new("here.scope.scope.scope", &mut store, &mut trie, types, scopes);
         let node = p.parse_expression().unwrap();
         let scopes = p.into_scopes();
-        let mut rt = crate::run::Runtime::new(types).with_store(&mut store);
-        rt.attach_lexer(&scopes, &trie);
+        let mut rt = crate::run::Runtime::new(types, &mut store);
         // SAFETY: `node` was just parsed into the store.
-        let err = unsafe { rt.run(node) }.unwrap_err();
+        let err = rt.lexing(&scopes, &trie, |rt| unsafe { rt.run(node) }).unwrap_err();
         assert_eq!(err, crate::run::RunError::NullPointer);
         // `caller.scope` outside a constructor is the checked error: the
         // seed's stand-in for the per-call read of an ordinary function.
         let mut p = Parser::new("caller.scope", &mut store, &mut trie, types, scopes);
         let node = p.parse_expression().unwrap();
         let scopes = p.into_scopes();
-        let mut rt = crate::run::Runtime::new(types).with_store(&mut store);
-        rt.attach_lexer(&scopes, &trie);
+        let mut rt = crate::run::Runtime::new(types, &mut store);
         // SAFETY: as above.
-        assert_eq!(unsafe { rt.run(node) }.unwrap_err(), crate::run::RunError::NoCaller);
+        let err = rt.lexing(&scopes, &trie, |rt| unsafe { rt.run(node) }).unwrap_err();
+        assert_eq!(err, crate::run::RunError::NoCaller);
     }
 
     #[test]

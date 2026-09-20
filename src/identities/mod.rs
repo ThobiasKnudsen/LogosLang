@@ -1748,7 +1748,7 @@ mod tests {
         };
 
         // run `a = a + 1`: yields 1 and leaves a holding 1.
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `root` is the valid dyad tree just parsed into `store`.
         let result = unsafe { rt.run(root) }.unwrap();
         assert_eq!(result, 1);
@@ -1785,7 +1785,7 @@ mod tests {
         // A nullary application of `main`: its logos is `main`.
         let call = store.alloc_raw(main, std::ptr::null_mut());
 
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `call`/`main`/body are valid nodes in `store`.
         let result = unsafe { rt.run(call) }.unwrap();
         assert_eq!(result, 42); // a + 1 = 41 + 1
@@ -1810,7 +1810,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
 
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `node` is the valid dyad tree just parsed.
         let result = unsafe { rt.run(node) }.unwrap();
         assert_eq!(result, 42);
@@ -1829,14 +1829,14 @@ mod tests {
             let mut p = Parser::new("return 7", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         assert_eq!(unsafe { rt.run(bare) }.unwrap(), 7);
 
         // Nested brackets group correctly.
         let nested = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new("( ( return 5 ) )", &mut store, &mut trie, core.types(), s);
+            let mut p = Parser::new("( ( return 5 ) )", rt.store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         assert_eq!(unsafe { rt.run(nested) }.unwrap(), 5);
@@ -1890,7 +1890,7 @@ mod tests {
 
         // Apply it and run: run finds no bcode for `func` and walks its body.
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `call`/`func`/body are valid nodes in `store`.
         let result = unsafe { rt.run(call) }.unwrap();
         assert_eq!(result, 42);
@@ -1965,14 +1965,14 @@ mod tests {
             p.parse_expression().unwrap()
         };
 
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // Oracle: interpret the call.
         // SAFETY: `call`/`add`/args are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
 
         // Compile `add` (installs parameterized bcode); keep the artifact alive.
         // SAFETY: `add` is the fn node just built and outlives the call.
-        let _compiled = unsafe { compile_fn(&mut store, &core.lower, core.types(), add) }.unwrap();
+        let _compiled = unsafe { compile_fn(rt.store, &core.lower, core.types(), add) }.unwrap();
         // JIT: the same `run(call)` now evaluates the arguments and calls native code.
         let jit = unsafe { rt.run(call) }.unwrap();
 
@@ -2029,7 +2029,7 @@ mod tests {
             assert_eq!((*call).ty, add);
         }
 
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `call`/`add`/args are valid nodes just parsed.
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 42);
     }
@@ -2062,7 +2062,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
 
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `call`/`add` are valid nodes just parsed.
         assert_eq!(unsafe { rt.run(call) }, Err(crate::run::RunError::ArityMismatch));
     }
@@ -2084,7 +2084,7 @@ mod tests {
         };
 
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `call`/`func`/body are valid nodes just parsed.
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 42);
     }
@@ -2255,7 +2255,7 @@ mod tests {
         };
 
         // Oracle: the interpreter, from a = 0.
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `root` is the valid tree just parsed.
         let interp = unsafe { rt.run(root) }.unwrap();
         let interp_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
@@ -2305,7 +2305,7 @@ mod tests {
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
 
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // Interpreted oracle: 0 + 5e9, and `a` now holds it.
         // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
         let interp = unsafe { rt.run(call) }.unwrap();
@@ -2315,7 +2315,7 @@ mod tests {
         // to the compiled body — and diff the result and the side effect on `a`.
         unsafe { std::ptr::write_unaligned(a_val as *mut i64, 0) };
         // SAFETY: `func`/`a` live in `store`, which outlives the call.
-        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(rt.store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         let jit_a = unsafe { std::ptr::read_unaligned(a_val as *const i64) };
 
@@ -2353,7 +2353,7 @@ mod tests {
         // The same `run`, two paths on one node: interpret first (no bcode yet),
         // then compile and run again (jumps to the installed bcode). Both diffed.
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
 
         // Interpreted: bcode is null, so `run` walks the body.
         let interp = unsafe { rt.run(call) }.unwrap();
@@ -2364,7 +2364,7 @@ mod tests {
 
         // Compile installs the exec@ on `func`; keep the artifact alive for the run.
         // SAFETY: `func` is the fn node just built and outlives the call.
-        let _compiled = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
+        let _compiled = unsafe { compile_fn(rt.store, &core.lower, core.types(), func) }.unwrap();
         unsafe {
             let bcode = *((*func).value as *const DyadPtr).add(FN_BCODE);
             assert!(!bcode.is_null()); // bcode installed on the node
@@ -2397,7 +2397,7 @@ mod tests {
             assert_eq!(rational::mold(node), None); // 157/50 has no exact i32
         }
 
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `node` is the rational literal just parsed.
         assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::UncomputableLiteral));
         // SAFETY: same node; compilation reports the same outcome as the oracle.
@@ -2418,7 +2418,7 @@ mod tests {
             let mut p = Parser::new("6.0", &mut store, &mut trie, core.types(), scopes);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `node` is the rational literal just parsed.
         assert_eq!(unsafe { rt.run(node) }.unwrap(), 6);
     }
@@ -2466,7 +2466,7 @@ mod tests {
             let mut p = Parser::new("add4(1, 2, 3, 4)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `call`/`add4`/args are valid nodes just parsed.
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 10);
     }
@@ -2490,7 +2490,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         // Interpreter: clean BadValue.
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `node` is the variable reference just parsed.
         assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::BadValue));
         // Compiler: BadValue, not a baked load from address 0.
@@ -2536,11 +2536,11 @@ mod tests {
         }
 
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `call`/`func`/body are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` is the fn node just built and outlives the call.
-        let _compiled = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
+        let _compiled = unsafe { compile_fn(rt.store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, 42);
         assert_eq!(jit, interp);
@@ -2568,7 +2568,7 @@ mod tests {
             );
             p.parse_sequence().unwrap()
         };
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `root` is the sequence just parsed; its exprs are valid.
         let interp = unsafe { rt.run(root) }.unwrap();
         assert_eq!(interp, 42);
@@ -2612,7 +2612,7 @@ mod tests {
             unsafe {
                 assert_eq!((*core.types().through(node)).ty, core.bool_);
             }
-            let mut rt = Runtime::new(core.types());
+            let mut rt = Runtime::new(core.types(), &mut store);
             // SAFETY: `node` is a valid `bool` literal.
             assert_eq!(unsafe { rt.run(node) }.unwrap(), expect);
             // SAFETY: same node; the `bool` lowering bakes its constant.
@@ -2635,11 +2635,11 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `call`/`func`/body are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` is the fn node just built and outlives the call.
-        let _compiled = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
+        let _compiled = unsafe { compile_fn(rt.store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, expect, "interpreter: {src}");
         assert_eq!(jit, interp, "jit != interpreter: {src}");
@@ -2868,13 +2868,13 @@ mod tests {
             let y = store.alloc_raw(core.i32_, std::ptr::null_mut());
             unsafe { s.declare(&mut trie, "y", test_record(core.record_, y)) }.unwrap();
         }
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
 
         // The right operand alone errors — this is what short-circuiting must skip.
         let bad = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new("y < 1", &mut store, &mut trie, core.types(), s);
+            let mut p = Parser::new("y < 1", rt.store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         assert_eq!(unsafe { rt.run(bad) }, Err(crate::run::RunError::BadValue));
@@ -2883,7 +2883,7 @@ mod tests {
         let and_sc = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new("false and y < 1", &mut store, &mut trie, core.types(), s);
+            let mut p = Parser::new("false and y < 1", rt.store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         assert_eq!(unsafe { rt.run(and_sc) }.unwrap(), 0);
@@ -2892,7 +2892,7 @@ mod tests {
         let or_sc = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new("true or y < 1", &mut store, &mut trie, core.types(), s);
+            let mut p = Parser::new("true or y < 1", rt.store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
         assert_eq!(unsafe { rt.run(or_sc) }.unwrap(), 1);
@@ -2977,12 +2977,12 @@ mod tests {
                 let mut p = Parser::new(&src, &mut store, &mut trie, core.types(), s);
                 p.parse_expression().unwrap()
             };
-            let mut rt = Runtime::new(core.types());
+            let mut rt = Runtime::new(core.types(), &mut store);
             // SAFETY: `call`/`func`/body are valid nodes just parsed.
             let interp = unsafe { rt.run(call) }.unwrap();
             // SAFETY: `func` is the fn node just built and outlives the call.
             let _compiled =
-                unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
+                unsafe { compile_fn(rt.store, &core.lower, core.types(), func) }.unwrap();
             let jit = unsafe { rt.run(call) }.unwrap();
             assert_eq!(interp, expect, "interpreter n={arg}");
             assert_eq!(jit, interp, "jit != interpreter n={arg}");
@@ -3039,7 +3039,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // Interpreted: taken bumps a to 42; from 100, not taken, a stays.
         // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 0, "unit (interpreted)");
@@ -3050,7 +3050,7 @@ mod tests {
         // Compiled: the same effect and unit on both paths.
         unsafe { std::ptr::write_unaligned(a_val as *mut i32, 41) };
         // SAFETY: `func`/`a` live in `store`, which outlives the call.
-        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(rt.store, &core.lower, core.types(), func) }.unwrap();
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 0, "unit (compiled)");
         assert_eq!(unsafe { std::ptr::read_unaligned(a_val as *const i32) }, 42);
         unsafe { std::ptr::write_unaligned(a_val as *mut i32, 100) };
@@ -3099,7 +3099,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // Interpreted: outer condition false -> else-branch -> a = 7.
         // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 0);
@@ -3107,7 +3107,7 @@ mod tests {
         // Compiled: reset and diff the same effect.
         unsafe { std::ptr::write_unaligned(a_val as *mut i32, 5) };
         // SAFETY: `func`/`a` live in `store`, which outlives the call.
-        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(rt.store, &core.lower, core.types(), func) }.unwrap();
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 0);
         assert_eq!(unsafe { std::ptr::read_unaligned(a_val as *const i32) }, 7);
     }
@@ -3168,11 +3168,11 @@ mod tests {
 
         // SAFETY: `mul` is the fn node just built and outlives every call.
         let _c_mul = unsafe { compile_fn(&mut store, &core.lower, core.types(), mul) }.unwrap();
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `call`/`outer` are valid nodes; the callee's artifact is alive.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `outer` is the fn node just built; both artifacts stay alive.
-        let _c_outer = unsafe { compile_fn(&mut store, &core.lower, core.types(), outer) }.unwrap();
+        let _c_outer = unsafe { compile_fn(rt.store, &core.lower, core.types(), outer) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
 
         assert_eq!(interp, 6_000_000_000, "interpreter over compiled callee");
@@ -3215,11 +3215,11 @@ mod tests {
 
         // SAFETY: `g` is the fn node just built and outlives every call.
         let _c_g = unsafe { compile_fn(&mut store, &core.lower, core.types(), g) }.unwrap();
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `call`/`outer`/`a` are valid nodes; the callee's artifact is alive.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `outer` is the fn node just built; both artifacts stay alive.
-        let _c_outer = unsafe { compile_fn(&mut store, &core.lower, core.types(), outer) }.unwrap();
+        let _c_outer = unsafe { compile_fn(rt.store, &core.lower, core.types(), outer) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
 
         assert_eq!(interp, 3.0f64.to_bits() as i64, "interpreter over compiled callee");
@@ -3256,13 +3256,13 @@ mod tests {
             let mut p = Parser::new("s(3)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // Oracle: interpret the recursion (bcode not installed yet).
         // SAFETY: `call` applies the bound `s` to a literal.
         let interp = unsafe { rt.run(call) }.unwrap();
         // Compile (installs bcode; the artifact must outlive the compiled call).
         // SAFETY: `s_fn` is the fn node just built and outlives every call.
-        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), s_fn) }.unwrap();
+        let _c = unsafe { compile_fn(rt.store, &core.lower, core.types(), s_fn) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, 4_000_000_000, "interpreter");
         assert_eq!(jit, interp, "compiled recursion != interpreter");
@@ -3363,11 +3363,11 @@ mod tests {
             let mut p = Parser::new("fact(20)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `call` applies the bound `fact` to a literal.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `fact` outlives every call; the artifact stays alive for the run.
-        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), fact) }.unwrap();
+        let _c = unsafe { compile_fn(rt.store, &core.lower, core.types(), fact) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, 2_432_902_008_176_640_000, "interpreter 20!");
         assert_eq!(jit, interp, "compiled 20! != interpreter");
@@ -3606,7 +3606,7 @@ mod tests {
             assert_eq!(crate::identities::string::text(node), b"hello world");
         }
         // Inert: no scalar to read, and no operator accepts it.
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `node` is the string literal just parsed.
         assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::BadValue));
         assert_eq!(parse_err("«a» + 1"), ParseError::UnsupportedOperands);
@@ -3652,11 +3652,11 @@ mod tests {
             assert_eq!(crate::identities::string::text((*c2).value.cast()), b"checked twice");
         }
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `call`/`func`/body are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` outlives the call; the artifact stays alive.
-        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(rt.store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, 42);
         assert_eq!(jit, interp);
@@ -3725,13 +3725,13 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `call`/`func`/`incr` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // Compile the callee first (the caller's call bakes its address).
         // SAFETY: both fn nodes outlive the calls; the artifacts stay alive.
-        let _c_incr = unsafe { compile_fn(&mut store, &core.lower, core.types(), incr) }.unwrap();
-        let _c_func = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
+        let _c_incr = unsafe { compile_fn(rt.store, &core.lower, core.types(), incr) }.unwrap();
+        let _c_func = unsafe { compile_fn(rt.store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, 42);
         assert_eq!(jit, interp);
@@ -3770,12 +3770,12 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // x: 3 + 10 = 13 (via q@.x); y: 4 + 1 = 5 (via fp@); 13 + 5 = 18.
         // SAFETY: `call`/`func` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` outlives the call; the artifact stays alive.
-        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(rt.store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, 18);
         assert_eq!(jit, interp);
@@ -3812,11 +3812,11 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `call`/`func` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` outlives the call; the artifact stays alive.
-        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(rt.store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, 8);
         assert_eq!(jit, interp);
@@ -4095,7 +4095,7 @@ mod tests {
                 .with_lower(&core.lower);
             p.parse_sequence().unwrap()
         };
-        let mut rt = Runtime::new(core.types()).with_compiler(&core.lower, core.types());
+        let mut rt = Runtime::new(core.types(), &mut store).with_compiler(&core.lower);
         // SAFETY: `root` is the sequence just parsed; its exprs are valid.
         unsafe { rt.run(root) }
     }
@@ -4437,12 +4437,12 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // 3 + 36 = 39; 39 + 4 + 2 = 45.
         // SAFETY: `call`/`func` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` outlives the call; the artifact stays alive.
-        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(rt.store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, 45);
         assert_eq!(jit, interp);
@@ -4486,11 +4486,11 @@ mod tests {
             let mut p = Parser::new("f(5000000000)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `call`/`func` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` outlives the call; the artifact stays alive.
-        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(rt.store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, 5_000_000_207);
         assert_eq!(jit, interp);
@@ -4568,7 +4568,7 @@ mod tests {
             let mut p = Parser::new("( x := 5, x + 1 )", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `node` is the sequence just parsed.
         assert_eq!(unsafe { rt.run(node) }.unwrap(), 6);
         // SAFETY: same node; the sequence lowering yields its trailing value.
@@ -4653,7 +4653,7 @@ mod tests {
         };
         // The reference is x's record; it names the bound node.
         assert_eq!(unsafe { core.types().through(x_ref) }, bound);
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `x_ref`/`decl` are valid nodes just parsed.
         unsafe {
             assert_eq!(rt.run(x_ref).unwrap(), 5);
@@ -4697,7 +4697,7 @@ mod tests {
         // SAFETY: `value` is the u64 value node the read just built.
         unsafe {
             assert_eq!((*value).ty, core.numtypes[NumType::U64 as usize]);
-            let mut rt = Runtime::new(core.types());
+            let mut rt = Runtime::new(core.types(), &mut store);
             // The raw value slot of a place holds its storage *marked* as a
             // place (`GLOBAL_TAG`, 44ea208): that mark is part of what is in the
             // slot, and the view shows the slot, not the address behind it.
@@ -4737,7 +4737,7 @@ mod tests {
             let mut p = Parser::new("x + 1", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `decl`/`x_ref` are valid nodes just parsed.
         unsafe {
             assert_eq!(rt.run(decl).unwrap(), 0);
@@ -4877,7 +4877,7 @@ mod tests {
                 let mut p = Parser::new(&src, &mut store, &mut trie, core.types(), s);
                 p.parse_expression().unwrap()
             };
-            let mut rt = Runtime::new(core.types());
+            let mut rt = Runtime::new(core.types(), &mut store);
             // SAFETY: `call` applies the bound `fact` to a literal.
             assert_eq!(unsafe { rt.run(call) }.unwrap(), expect, "fact({arg})");
         }
@@ -4912,13 +4912,13 @@ mod tests {
         let cases = [(0i64, 1i64), (1, 1), (5, 120), (7, 5040)];
 
         // Oracle: interpret each call (bcode not yet installed → body walk).
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         for &(arg, expect) in &cases {
             let call = {
                 let mut s = ScopeStack::new();
                 s.push(core.root_scope);
                 let src = format!("fact({arg})");
-                let mut p = Parser::new(&src, &mut store, &mut trie, core.types(), s);
+                let mut p = Parser::new(&src, rt.store, &mut trie, core.types(), s);
                 p.parse_expression().unwrap()
             };
             // SAFETY: `call` applies the bound `fact` to a literal.
@@ -4927,7 +4927,7 @@ mod tests {
 
         // Compile `fact` once; the self-call is installed as a machine call.
         // SAFETY: `fact` is the fn node just built and outlives every call.
-        let _compiled = unsafe { compile_fn(&mut store, &core.lower, core.types(), fact) }.unwrap();
+        let _compiled = unsafe { compile_fn(rt.store, &core.lower, core.types(), fact) }.unwrap();
         // SAFETY: reading the installed bcode slot of the fn node.
         unsafe {
             let bcode = *((*fact).value as *const DyadPtr).add(FN_BCODE);
@@ -4940,7 +4940,7 @@ mod tests {
                 let mut s = ScopeStack::new();
                 s.push(core.root_scope);
                 let src = format!("fact({arg})");
-                let mut p = Parser::new(&src, &mut store, &mut trie, core.types(), s);
+                let mut p = Parser::new(&src, rt.store, &mut trie, core.types(), s);
                 p.parse_expression().unwrap()
             };
             // SAFETY: `_compiled` is alive; `call` applies the compiled `fact`.
@@ -4979,17 +4979,17 @@ mod tests {
         };
 
         // Oracle: interpret every case (no bcode yet → body walk).
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         for &(arg, expect) in cases {
-            let call = parse_call(&mut store, &mut trie, arg);
+            let call = parse_call(rt.store, &mut trie, arg);
             assert_eq!(rt.run(call).unwrap(), expect, "interpreter {name}({arg})");
         }
 
         // Compile the function, then rerun every case: the self-call becomes a
         // machine call and the locals live in the compiled stack frame.
-        let _compiled = compile_fn(&mut store, &core.lower, core.types(), f).unwrap();
+        let _compiled = compile_fn(rt.store, &core.lower, core.types(), f).unwrap();
         for &(arg, expect) in cases {
-            let call = parse_call(&mut store, &mut trie, arg);
+            let call = parse_call(rt.store, &mut trie, arg);
             assert_eq!(rt.run(call).unwrap(), expect, "jit {name}({arg})");
         }
     }
@@ -5120,7 +5120,7 @@ mod tests {
             let mut p = Parser::new("outer(5)", &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `call` applies the bound `outer` to a literal.
         assert_eq!(unsafe { rt.run(call) }.unwrap(), 11, "outer(5)");
     }
@@ -5191,12 +5191,12 @@ mod tests {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         let mut result = 0;
         for line in ["x := i32 7", "y := i32 9", "p := &x", "p@", "p = &y", "p@"] {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            let mut p = Parser::new(line, &mut store, &mut trie, core.types(), s);
+            let mut p = Parser::new(line, rt.store, &mut trie, core.types(), s);
             let node = p.parse_expression().unwrap();
             // SAFETY: `node` is the reduced dyad just parsed.
             result = unsafe { rt.run(node) }.unwrap();
@@ -5240,7 +5240,7 @@ mod tests {
         let _compiled_add =
             unsafe { compile_fn(&mut store, &core.lower, core.types(), add) }.unwrap();
 
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // Oracle: interpret `outer` (its body calls the already-compiled `add`).
         // SAFETY: `call`/`outer`/`add` are valid nodes; `_compiled_add` is alive.
         let interp = unsafe { rt.run(call) }.unwrap();
@@ -5248,7 +5248,7 @@ mod tests {
         // Compile `outer`: `add(40, 2)` becomes a call_indirect to `add`'s address.
         // SAFETY: `outer` is the fn node just built; both compiled artifacts are alive.
         let _compiled_outer =
-            unsafe { compile_fn(&mut store, &core.lower, core.types(), outer) }.unwrap();
+            unsafe { compile_fn(rt.store, &core.lower, core.types(), outer) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
 
         assert_eq!(interp, 42);
@@ -5274,11 +5274,11 @@ mod tests {
             let mut p = Parser::new(call_src, &mut store, &mut trie, core.types(), s);
             p.parse_expression().unwrap()
         };
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `call`/`func` are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` is the fn node just built; the artifact outlives the call.
-        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(rt.store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, expect, "interpreter: {fn_src} / {call_src}");
         assert_eq!(jit, interp, "jit != interpreter: {fn_src} / {call_src}");
@@ -5336,11 +5336,11 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func`/`a` live in `store`, which outlives the call.
-        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(rt.store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, expect, "interpreter: {fn_src}");
         assert_eq!(jit, interp, "jit != interpreter: {fn_src}");
@@ -5502,7 +5502,7 @@ mod tests {
             p.parse_expression().unwrap()
         };
         let call = store.alloc_raw(func, std::ptr::null_mut());
-        let mut rt = Runtime::new(core.types());
+        let mut rt = Runtime::new(core.types(), &mut store);
         // Interpreted: yields unit 0, leaves a = 42.
         // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
         let interp = unsafe { rt.run(call) }.unwrap();
@@ -5510,7 +5510,7 @@ mod tests {
         // Reset a, compile (installs bcode), run again — jumps to the compiled body.
         unsafe { std::ptr::write_unaligned(a_val as *mut i32, 41) };
         // SAFETY: `func`/`a` live in `store`, which outlives the call.
-        let _c = unsafe { compile_fn(&mut store, &core.lower, core.types(), func) }.unwrap();
+        let _c = unsafe { compile_fn(rt.store, &core.lower, core.types(), func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         let jit_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
         assert_eq!(interp, 0, "void yields unit (interpreted)");

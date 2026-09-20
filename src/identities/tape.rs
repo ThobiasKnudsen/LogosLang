@@ -446,7 +446,7 @@ fn run_spelling(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             return Err(RunError::BadValue);
         };
         let string_ty = rt.types().string_;
-        let store = rt.store()?;
+        let store = rt.store();
         Ok(super::string::build_text(store, string_ty, text.as_bytes()) as i64)
     }
 }

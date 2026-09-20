@@ -141,13 +141,13 @@ mod tests {
             let mut p = Parser::new("x == 1", &mut store, &mut trie, types, scopes);
             (decl, p.parse_expression().unwrap())
         };
-        let mut rt = Runtime::new(types);
+        let mut rt = Runtime::new(types, &mut store);
         // SAFETY: both nodes were just parsed into `store`, which outlives `rt`.
         unsafe {
             rt.run(decl).unwrap();
             let bits = rt.run(cmp).unwrap();
             assert_eq!(bits, 1);
-            let ran = build(&mut store, &types, cmp, bits);
+            let ran = build(rt.store, &types, cmp, bits);
             // The reading rule: an operand record dispatching to the leaf.
             assert_eq!(read_kind(&types, ran), Read::Executable(Dispatch::Leaf(types.ops.ran_)));
             // Its run is the cell read; its value is at hand without a run.
@@ -161,7 +161,7 @@ mod tests {
             assert_eq!(display_value(&types, ran, 1), "true");
             // Rewriting in place: the old address now reads as the ran form,
             // and the item lives on behind it.
-            rewrite(&mut store, &types, cmp, 1);
+            rewrite(rt.store, &types, cmp, 1);
             assert_eq!((*cmp).ty, types.ran_);
             assert_eq!((*expr_of(&types, cmp)).ty, types.eq);
             assert_eq!(rt.run(cmp).unwrap(), 1);

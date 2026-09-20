@@ -288,7 +288,6 @@ pub fn run_message(e: &RunError) -> String {
         }
         RunError::CompileFailed(msg) => format!("compile() failed: {msg}"),
         RunError::Faulted(msg) => format!("the interpreter stopped inside compiled code: {msg}"),
-        RunError::NoStore => "a cell can be built only inside a constructor the parser runs".into(),
         RunError::NoLexer => "`lex` can run only where the parser runs it".into(),
         RunError::Lex(why) => format!("this text will not lex: {why}"),
         RunError::NoCaller => {
