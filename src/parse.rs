@@ -2336,10 +2336,11 @@ impl<'a> Parser<'a> {
     /// graph, no table anywhere. `None` for an undefined constructor (a
     /// delimiter token, a data logos).
     fn construct_of(&self, id: DyadPtr) -> Option<ConstructFn> {
-        // SAFETY: `id` is a resolved identity; every constructor leaf is
-        // minted from a `ConstructFn` at registration (`Core::build`) — one
-        // convention, one signature, so the transmute is exact; a Logos
-        // function in the slot is a dyad, told apart by its type.
+        // SAFETY: `id` is a resolved identity; a constructor leaf is minted
+        // from a `ConstructFn` at registration (`Core::build`) under the
+        // `seed-parse` convention, and that convention is checked before
+        // the transmute, so the signature is exact; a Logos function in the
+        // slot is a dyad, told apart by its type.
         unsafe {
             let leaf = crate::identities::meta::constructor_of(id);
             if leaf.is_null() {
@@ -2350,6 +2351,13 @@ impl<'a> Parser<'a> {
             if (*leaf).ty == self.types.fn_type {
                 return Some(logos_constructor);
             }
+            // A leaf under any other convention would be jumped to with the
+            // wrong signature: the one bug this check turns into a message.
+            assert_eq!(
+                crate::identities::callable::convention_of(leaf),
+                self.types.conv_seed_parse,
+                "a constructor leaf must carry the seed-parse convention"
+            );
             let entry = crate::identities::callable::entry_of(leaf);
             Some(std::mem::transmute::<usize, ConstructFn>(entry))
         }

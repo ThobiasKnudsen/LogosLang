@@ -147,22 +147,38 @@ pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *
         eprintln!("logos: compiled code reached an uncompiled function with no runtime to run it");
         std::process::abort();
     }
+    // SAFETY: `rt` was set by the runtime around this very jump and is live
+    // for its duration.
+    let saved = unsafe { ((*rt).activations.len(), (*rt).stack.mark(), (*rt).constructing) };
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: `rt` was set by the runtime around this very jump and is
-        // live for its duration; `argv` holds `argc` containers the compiled
+        // SAFETY: as above; `argv` holds `argc` containers the compiled
         // caller stored; `fn_node` is the fn node the caller baked.
         unsafe {
             let args = if argc == 0 { &[][..] } else { std::slice::from_raw_parts(argv, argc) };
             (*rt).apply_values(fn_node, args)
         }
     }));
+    // An error or a panic left the interpreter mid-call: its activations,
+    // frame bytes and constructor count are unwound here, since the machine
+    // code runs on with the 0 below and may call back in before the parked
+    // error surfaces.
+    let restore = || {
+        // SAFETY: as above.
+        unsafe {
+            (*rt).activations.truncate(saved.0);
+            (*rt).stack.release(saved.1);
+            (*rt).constructing = saved.2;
+        }
+    };
     match outcome {
         Ok(Ok(v)) => v,
         Ok(Err(e)) => {
+            restore();
             PENDING.set(Some(e));
             0
         }
         Err(panic) => {
+            restore();
             let msg = panic
                 .downcast_ref::<String>()
                 .cloned()
@@ -650,6 +666,9 @@ impl<'a> Runtime<'a> {
         // below before the borrow it came from ends.
         let this: *mut Runtime<'static> = (self as *mut Runtime<'a>).cast();
         let prev = CURRENT.replace(this);
+        // A park left by machine code that ran with no runtime to report to
+        // (the test-only `Compiled::call`) must not surface as this call's.
+        PENDING.set(None);
         let r = call_machine(entry, args);
         CURRENT.set(prev);
         let r = r?;
