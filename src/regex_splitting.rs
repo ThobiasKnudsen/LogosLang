@@ -1,19 +1,14 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! Splitting a regex pattern into literal-prefix paths and residual regex
-//! segments — a port of `regex_splitting.zig`.
-//!
-//! A pattern becomes a list of *paths* (alternation produces several); each path
-//! is an ordered list of [`Segment`]s, every segment either a pure literal run
-//! (pushed into the trie byte-by-byte) or a residual regex chunk (kept as a
-//! regex branch). Rust ownership replaces the Zig allocator/deinit bookkeeping,
-//! so the logic is the same while the memory plumbing is gone.
+//! Splitting a regex pattern into literal runs and residual regex segments for
+//! the trie: alternation yields several paths, each an ordered list of
+//! [`Segment`]s.
 
-/// Cap on path explosion from cartesian alternation, matching the Zig original.
+/// Cap on path explosion from cartesian alternation.
 const MAX_PATHS: usize = 1000;
 
-/// One piece of a split pattern: either a literal run or a residual regex chunk.
+/// A literal run or a residual regex chunk.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Segment {
     pub str: String,
@@ -33,10 +28,8 @@ fn bytes_to_string(b: &[u8]) -> String {
     String::from_utf8_lossy(b).into_owned()
 }
 
-/// The byte length of the UTF-8 sequence `lead` begins. Literal arms must consume
-/// whole sequences and copy their raw bytes: `lead as char` would re-read a
-/// non-ASCII byte as its own codepoint and re-encode it as *different* bytes
-/// (0xC2 would become 0xC3 0x82), corrupting any multibyte literal such as `«`.
+/// Literal arms consume whole UTF-8 sequences and copy their raw bytes: `lead
+/// as char` would re-encode a non-ASCII byte as different bytes, corrupting `«`.
 fn utf8_len(lead: u8) -> usize {
     match lead {
         b if b < 0x80 => 1,
@@ -46,8 +39,7 @@ fn utf8_len(lead: u8) -> usize {
     }
 }
 
-/// A literal has no regex metacharacters; such patterns bypass splitting and
-/// go straight into the trie's literal byte-path.
+/// No regex metacharacters: such patterns go straight to the trie's byte-path.
 pub fn is_pure_literal(s: &str) -> bool {
     for &c in s.as_bytes() {
         match c {
@@ -59,7 +51,7 @@ pub fn is_pure_literal(s: &str) -> bool {
     true
 }
 
-/// Decode a base quantifier into `(min, max)`, `usize::MAX` standing for infinity.
+/// `(min, max)` of a quantifier, `usize::MAX` standing for infinity.
 fn get_quant_n(q: &str) -> (usize, usize) {
     const INF: usize = usize::MAX;
     match q {
@@ -85,8 +77,7 @@ fn get_quant_n(q: &str) -> (usize, usize) {
     (0, 0)
 }
 
-/// Collapse adjacent segments of the same kind into one (so a run of single
-/// literal chars becomes one literal segment).
+/// A run of single literal chars becomes one literal segment.
 fn merge_adjacent(path: &mut Vec<Segment>) {
     if path.is_empty() {
         return;
@@ -157,8 +148,7 @@ fn parse_atom(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
                 }
             }
             _ => {
-                // An escaped literal char: byte-preserving and multibyte-aware
-                // (the sketch's `\«` escape reaches here); see [`utf8_len`].
+                // An escaped literal char, byte-preserving; see `utf8_len`.
                 let start = *pos - 1;
                 let end = (start + utf8_len(esc)).min(s.len());
                 *pos = end;
@@ -238,7 +228,7 @@ fn parse_atom(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
                 return result;
             }
         }
-        // Standard (capturing) group: parse its contents, drop the parens.
+        // A capturing group: parse its contents, drop the parens.
         let mut paths = parse_re(s, pos);
         if *pos < s.len() && s[*pos] == b')' {
             *pos += 1;
@@ -254,8 +244,7 @@ fn parse_atom(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
         result.push(vec![Segment::rx(&(c as char).to_string())]);
         result
     } else {
-        // A plain literal char: consume the whole UTF-8 sequence, byte-preserving
-        // (see [`utf8_len`]).
+        // A plain literal char: the whole UTF-8 sequence, byte-preserving.
         let end = (*pos + utf8_len(c)).min(s.len());
         let lit = bytes_to_string(&s[*pos..end]);
         *pos = end;
@@ -311,7 +300,7 @@ fn parse_term(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
     let (min, max) = get_quant_n(&quant_str);
 
     if min == 0 && max == 0 {
-        // Degenerate quantifier (e.g. `{0}`): carry the remainder as a regex tail.
+        // A degenerate quantifier (`{0}`): carry the remainder as a regex tail.
         let tail = bytes_to_string(&s[quant_begin..]);
         let mut paths = paths;
         for path in paths.iter_mut() {
@@ -321,10 +310,8 @@ fn parse_term(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
         return paths;
     }
 
-    // Small fixed repetition: expand by cartesian product. Bounded by MAX_PATHS
-    // each round (as parse_concat's alternation is) so a pathological pattern like
-    // `(a|b|c|d|e){9}` cannot blow up to millions of paths before any cap applies;
-    // the expansion is truncated rather than allowed to explode.
+    // Small fixed repetition expands by cartesian product, bounded by MAX_PATHS
+    // each round so `(a|b|c|d|e){9}` cannot explode before the cap applies.
     if max != usize::MAX && max == min && min > 0 && min < 10 {
         let mut repeated: Vec<Vec<Segment>> = vec![Vec::new()];
         for _ in 0..min {
@@ -350,11 +337,8 @@ fn parse_term(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
     for p in &paths {
         let mut np = p.clone();
         if let Some(last) = np.last_mut() {
-            // A multi-char *literal* segment is a capturing group's merged contents
-            // (e.g. `(ab)`); attaching the quantifier bare would misparse `(ab)+`
-            // as `ab+` (`a` then `b+`), so wrap it in a non-capturing group. A
-            // single char or an already-regex atom (`[0-9]`, `\d`, `(?:…)`) quantifies
-            // correctly as-is.
+            // A multi-char literal is a merged group (`(ab)`): quantified bare it
+            // would misparse `(ab)+` as `ab+`, so it is wrapped.
             if last.is_lit && last.str.len() > 1 {
                 last.str = format!("(?:{}){}", last.str, full_quant);
             } else {
@@ -368,7 +352,7 @@ fn parse_term(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
         new_paths.push(np);
     }
     if min == 0 {
-        // Optional: append the empty path last so longer alternatives win first.
+        // The empty path last, so longer alternatives win first.
         new_paths.push(Vec::new());
     }
     new_paths
@@ -429,8 +413,7 @@ fn parse_re(s: &[u8], pos: &mut usize) -> Vec<Vec<Segment>> {
     parse_alt(s, pos)
 }
 
-/// Split `pattern` into the paths the trie inserts. Pure literals short-circuit
-/// to a single one-segment path.
+/// The paths the trie inserts for `pattern`; a pure literal is one one-segment path.
 pub fn regex_splitting(pattern: &str) -> Vec<Vec<Segment>> {
     if is_pure_literal(pattern) {
         return vec![vec![Segment::lit(pattern)]];
@@ -483,7 +466,6 @@ mod tests {
 
     #[test]
     fn literal_prefix_then_regex() {
-        // `ab[0-9]+` -> one path: literal "ab" then regex "[0-9]+".
         assert_eq!(regex_splitting("ab[0-9]+"), vec![vec![lit("ab"), rx("[0-9]+")]]);
     }
 
@@ -494,8 +476,7 @@ mod tests {
 
     #[test]
     fn optional_appends_empty_path_last() {
-        // `ab?` -> the `?` makes `b` a regex segment (`b?`), giving the full path
-        // then the shorter "a" path (empty tail appended last so longer wins).
+        // The empty tail is appended last, so the longer path wins.
         assert_eq!(regex_splitting("ab?"), vec![vec![lit("a"), rx("b?")], vec![lit("a")]]);
     }
 
@@ -506,14 +487,11 @@ mod tests {
 
     #[test]
     fn capturing_group_repetition_keeps_grouping() {
-        // `(ab)+` must not degrade to `ab+` (`a` then `b+`); the group's contents
-        // are wrapped so the quantifier applies to the whole unit.
         assert_eq!(regex_splitting("(ab)+"), vec![vec![rx("(?:ab)+")]]);
     }
 
     #[test]
     fn single_char_and_class_repetition_are_left_bare() {
-        // A single char or a char class is already one unit — no wrapping.
         assert_eq!(regex_splitting("ab?"), vec![vec![lit("a"), rx("b?")], vec![lit("a")]]);
         assert_eq!(regex_splitting("[0-9]+"), vec![vec![rx("[0-9]+")]]);
     }

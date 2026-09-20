@@ -1,23 +1,10 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `run`: execute a node.
-//!
-//! `run` is one primitive with no tables (DESIGN ›The callable ground is
-//! `@exec`‹; issue #44): read a node's operation (its `logos`). A *user*
-//! function applies — jump to its installed code or walk its `body`
-//! (interpretation is just the null-code path). Everything else consults the
-//! node's own *op slot*: the last fixed slot of its type's record holds the
-//! [`callable`](crate::identities::callable) leaf its constructor resolved at
-//! parse time (`add_i32` for a `+` node, `if_native` for an `if`), and run
-//! jumps to that leaf's entry with the node. No HashMap is consulted anywhere;
-//! dispatch flows through the graph, and alternative run versions live where
-//! versions live — versioned scopes — not in swapped tables. Identities carry
-//! only their shared-member *records* (the reflectable parse_rank/layout data,
-//! see [`crate::identities::meta`]), never code; a node with no code to reach
-//! is data, read through its type's layout. v1 scalar values ride an `i64`
-//! bit-container, read and written at their type's width (see
-//! `crate::identities::numtype`).
+//! `run`: execute a node. One primitive with no tables: a user function
+//! applies (a jump to installed code, or a walk of its body); everything else
+//! jumps to the callable leaf in its op slot. Scalars ride an `i64` bit-container.
+//! DESIGN ›The callable ground is `@exec`‹.
 
 use std::cell::Cell;
 
@@ -25,49 +12,43 @@ use crate::dyad::{frame_ref, Dyad, DyadPtr};
 use crate::identities::read::{read_kind, Dispatch, Read};
 use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
 
-/// The signature of a seed-native shim — what a `seed-native` callable's entry
-/// points at. Takes the application node and returns its scalar result,
-/// recursing on operands via [`Runtime::run`].
+/// What a `seed-native` callable's entry points at: takes the application
+/// node, returns its scalar result.
 pub type RunFn = fn(&mut Runtime<'_>, DyadPtr) -> Result<i64, RunError>;
 
-/// Why a run failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunError {
-    /// The operation is a function with neither `bcode` nor a `body` to walk.
+    /// A function with neither `bcode` nor a `body`.
     NotRunnable(DyadPtr),
     /// `f.compile()` on a value that is not a function.
     NotAFunction(DyadPtr),
-    /// An operand record with nothing in its op slot: a node built without a
-    /// leaf to run (the tape's path markers), refused as data.
+    /// An operand record with nothing in its op slot (the tape's path markers).
     NoLeaf,
-    /// A function's local or parameter was read with no call in progress:
-    /// its frame does not exist (comptime evaluation touching a body).
+    /// A frame place read with no call in progress.
     NoActivation,
-    /// A place declared and never filled: its storage is null.
+    /// A place declared and never filled.
     Uninitialized,
-    /// A record instance, text or hole read as one value: an instance is
-    /// read by field or by address, text and a hole have no scalar.
+    /// A record instance, text or hole read as one value.
     NoWholeRead,
-    /// A parameter of this function has no frame slot: a malformed fn node.
+    /// A parameter with no frame slot.
     MalformedFn(DyadPtr),
-    /// `lex` was handed something other than a string.
+    /// `lex` handed something other than a string.
     NotText,
-    /// A tape affordance ran with no tape behind its receiver.
+    /// A tape affordance with no tape behind its receiver.
     NoTape,
-    /// A tape read or write at an index the tape does not hold.
+    /// A tape index the tape does not hold.
     OffTape,
     /// `t[k]:name` on a cell holding no named record.
     NoName,
     /// `insert` of a null fragment.
     NoFragment,
-    /// `this` holds no node here, or the node has no slots.
+    /// `this` holds no node, or the node has no slots.
     NoThis,
     /// A negative index.
     BadIndex(i64),
-    /// A read or write through a pointer whose pointee is neither scalar nor
-    /// pointer: nothing to load at one width.
+    /// A pointer whose pointee is neither scalar nor pointer.
     NotDerefable,
-    /// A construction of a type that has no field layout.
+    /// A construction of a type with no field layout.
     NoLayout(DyadPtr),
     /// A sequence node with no expression array.
     EmptyScope,
@@ -79,104 +60,64 @@ pub enum RunError {
     OutOfMemory,
     /// A teardown of a place whose type carries no destructor.
     NoDestructor(DyadPtr),
-    /// A numeric literal has no exact `i32` value to compute — a non-integer
-    /// rational (e.g. `3.14`) or an integer outside `i32` range. Reported instead
-    /// of computing a wrong value or crashing.
+    /// A literal with no exact `i32` value: a fraction, or out of range.
     UncomputableLiteral,
-    /// A call's argument count did not match the callee's parameter count.
+    /// A call's argument count differs from the callee's parameter count.
     ArityMismatch,
-    /// `f.compile()` ran under a runtime with no compiler attached — parse-time
-    /// evaluation (a `-> logos` call's body), where compiling would install code
-    /// behind the open pass's back.
+    /// `f.compile()` under a runtime with no compiler: parse-time evaluation.
     CompilerUnavailable,
-    /// `f.compile()` failed: the body does not lower (a construct with no
-    /// lowering rule, or more parameters than the compiled convention carries).
-    /// Carries the rendered [`crate::compile::CompileError`], behind a thin
-    /// box so the error enum keeps its one-word payload — `run` recurses
-    /// deeply, and every frame carries a `Result` of this type.
+    /// `f.compile()` failed; the rendered compile error, boxed so every `run`
+    /// frame's `Result` stays one word.
     CompileFailed(Box<String>),
-    /// The interpreter panicked while running an uncompiled callee under
-    /// compiled code (#65): a seed bug, carried back across the machine-code
-    /// boundary as a checked error rather than an abort; the panic's message.
+    /// The interpreter panicked under compiled code; the panic's message,
+    /// carried back across the machine-code boundary as a checked error.
     Faulted(Box<String>),
-    /// Interpreted calls nested deeper than [`MAX_CALL_DEPTH`] (#80): the
-    /// checked error a runaway recursion gets, instead of the Rust stack
-    /// overflowing and aborting the process.
+    /// Calls nested deeper than [`MAX_CALL_DEPTH`].
     CallDepth,
-    /// A read or a write went through a pointer holding nothing — the hole a
-    /// `p := @i32 ?` declaration leaves (#74). DESIGN ›Both slots of a dyad
-    /// follow one lifecycle‹: "`undefined` is the hole ... and reading it is a
-    /// checked error, never undefined behavior".
+    /// A read or write through a pointer holding nothing.
     NullPointer,
-    /// `lex «…»` ran under a runtime with no lexer attached (#62): only the
-    /// parser, which owns the scopes and the index, hands them in around
-    /// what it runs.
+    /// `lex «…»` under a runtime with no lexer attached; only the parser attaches one.
     NoLexer,
-    /// `lex «…»` met text nothing spells — a spelling outside every literal
-    /// and pattern, or two spellings tied for it; the resolve error's own
-    /// sentence, boxed as [`RunError::CompileFailed`]'s is.
+    /// `lex «…»` met text nothing spells; the resolve error's sentence.
     Lex(Box<String>),
-    /// `caller.scope` ran outside a Logos constructor's run (#123): the seed
-    /// answers the pass's position only there, an ordinary function's
-    /// `caller` being a per-call fact it does not yet elaborate.
+    /// `caller.scope` outside a Logos constructor's run.
     NoCaller,
-    /// `caller` was read as a value (#123): the appearance's spot has no
-    /// value form in the seed, which reads `caller.scope` only.
+    /// `caller` read as a value; the seed reads `caller.scope` only.
     CallerSpot,
 }
 
 thread_local! {
-    /// The runtime whose compiled code is running, set around every jump into
-    /// machine code so a call that lands back in the interpreter
-    /// ([`interpret_call`]) finds it. Null outside such a jump. Re-derived at
-    /// each jump and restored after it, never cached: a nested jump (compiled
-    /// f, interpreted g, compiled f again) sees the same runtime at each level.
+    /// The runtime whose compiled code is running: set around every jump into
+    /// machine code so a call back into the interpreter finds it, null outside
+    /// one. Saved and restored per jump, so nested jumps each see their own.
     static CURRENT: Cell<*mut Runtime<'static>> = const { Cell::new(std::ptr::null_mut()) };
-    /// The checked error an interpreted callee raised under compiled code,
-    /// parked here because an `extern "C"` function cannot return it; the
-    /// runtime reads it back the moment the machine code returns.
+    /// The checked error an interpreted callee raised under compiled code; an
+    /// `extern "C"` function cannot return it, so the runtime reads it back
+    /// the moment the machine code returns.
     static PENDING: Cell<Option<RunError>> = const { Cell::new(None) };
 }
 
-/// Call compiled machine code (a `fn(i64…) -> i64`) with `args`, dispatching on
-/// arity, since a raw code pointer must be given a concrete function type to call.
-/// Reached only through [`Runtime::call_compiled`], which stands the runtime by
-/// for a jump back into the interpreter.
-/// The calling convention is uniform: every argument and the result is the `i64`
-/// bit-container (the compiled body reinterprets them to their real logos at the
-/// boundary), so this dispatch is independent of the parameter/return type. The seed
-/// passes at most three arguments; Cranelift's default convention matches `extern "C"`.
+/// Jump to compiled code of the one signature ([`MachineFn`]).
 ///
 /// # Safety
-/// `p` must point at live machine code of exactly `args.len()` `i64` parameters
-/// returning `i64` (as [`crate::compile::compile_fn`] produces).
+/// `p` must point at live machine code of that signature.
 unsafe fn call_machine(p: *const u8, args: &[i64]) -> i64 {
     let f = std::mem::transmute::<*const u8, MachineFn>(p);
     f(args.as_ptr(), args.len())
 }
 
-/// The one signature every compiled function has (DESIGN ›Operands travel on
-/// the stack‹: "the call's operands are placed on the stack by the caller and
-/// read by the callee's code"): the arguments as `i64` bit-containers in a
-/// block the caller owns, their count, and the result container. One shape
-/// for every arity, so the jump is one transmute and a function of any
-/// parameter count compiles.
+/// The one signature every compiled function has: the arguments as `i64`
+/// bit-containers in a block the caller owns, their count, and the result
+/// container; one shape for every arity. DESIGN ›Operands travel on the stack‹.
 pub type MachineFn = extern "C" fn(*const i64, usize) -> i64;
 
-/// The jump a compiled caller makes into a callee that is not compiled (#65;
-/// DESIGN ›The callable ground‹: "`compile` never fails on an uncompiled Logos
-/// callee — the call is emitted as a jump into the interpreter, `run`'s
-/// body-walk over that callee"). The compiled code passes the callee's fn
-/// node, the argument count, and the arguments as containers in a stack
-/// slot; the runtime whose code is running ([`CURRENT`]) applies the callee
-/// by value ([`Runtime::apply_values`]). An `extern "C"` function can neither
-/// return a `RunError` nor let a panic cross into machine code, so a checked
-/// error, or a panic, is parked in [`PENDING`] and 0 returned; the runtime
-/// reads it back as the call's error the moment the machine code returns.
+/// The jump a compiled caller makes into a callee that is not compiled: the
+/// runtime in [`CURRENT`] applies the callee by value. An error or a panic is
+/// parked in [`PENDING`] and 0 returned, since neither may cross into machine code.
 ///
 /// # Safety
-/// Called only by compiled code the seed emitted: `fn_node` must be a `fn`
-/// node from the store and `argv` must hold `argc` containers.
+/// Called only by compiled code the seed emitted: `fn_node` a `fn` node from
+/// the store, `argv` holding `argc` containers.
 pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *const i64) -> i64 {
     let rt = CURRENT.get();
     if rt.is_null() {
@@ -185,22 +126,18 @@ pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *
         eprintln!("logos: compiled code reached an uncompiled function with no runtime to run it");
         std::process::abort();
     }
-    // SAFETY: `rt` was set by the runtime around this very jump and is live
-    // for its duration.
+    // SAFETY: `rt` was set by the runtime around this very jump and is live for its duration.
     let saved = unsafe { ((*rt).activations.len(), (*rt).stack.mark(), (*rt).constructing) };
     let depth = CALL_DEPTH.with(|d| d.get());
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: as above; `argv` holds `argc` containers the compiled
-        // caller stored; `fn_node` is the fn node the caller baked.
+        // SAFETY: as above; `argv` holds `argc` containers; `fn_node` is the fn the caller baked.
         unsafe {
             let args = if argc == 0 { &[][..] } else { std::slice::from_raw_parts(argv, argc) };
             (*rt).apply_values(fn_node, args)
         }
     }));
-    // An error or a panic left the interpreter mid-call: its activations,
-    // frame bytes and constructor count are unwound here, since the machine
-    // code runs on with the 0 below and may call back in before the parked
-    // error surfaces.
+    // The machine code runs on with the 0 and may call back in before the park
+    // surfaces, so the interpreter's mid-call state is unwound here.
     let restore = || {
         // SAFETY: as above.
         unsafe {
@@ -230,83 +167,51 @@ pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *
     }
 }
 
-/// The fault a compiled read or write through a null pointer raises (#74), the
-/// compiled half of the guard [`crate::identities::pointer::run_deref`] makes
-/// in the interpreter. DESIGN ›Both slots of a dyad follow one lifecycle‹
-/// rules a read of the hole "a checked error, never undefined behavior", and
-/// DESIGN ›Errors are values‹ rules what a checked error does in v0.1.0: it is
-/// "not a value but a fault ... the run aborts with its message". An
-/// `extern "C"` function cannot return a `RunError`, so the error is parked in
-/// [`PENDING`] exactly as [`interpret_call`] parks one, and the guarded arm
-/// yields a zero the runtime discards when it reads the park back
-/// ([`Runtime::call_compiled`]).
+/// The fault a compiled read or write through a null pointer raises: parked
+/// in [`PENDING`] as [`interpret_call`] parks one; the zero is discarded when
+/// the runtime reads the park back.
 ///
 /// # Safety
-/// Called only by compiled code the seed emitted, on the null arm of a
-/// pointer guard. It touches no memory of its own.
+/// Called only by compiled code, on the null arm of a pointer guard.
 pub unsafe extern "C" fn park_null_pointer() -> i64 {
     PENDING.set(Some(RunError::NullPointer));
     0
 }
 
-/// The fault a compiled call raises when the calls in flight would exceed
-/// [`MAX_CALL_DEPTH`] (#119): the compiled prologue counts itself into
-/// [`CALL_DEPTH`], and on the limit parks this and returns 0 instead of
-/// claiming a frame the machine stack cannot hold, exactly as the
-/// interpreter refuses its own frame.
+/// The fault a compiled prologue raises past [`MAX_CALL_DEPTH`], parked as
+/// [`park_null_pointer`]'s is.
 ///
 /// # Safety
-/// Called only by compiled code the seed emitted, on the over-limit arm of
-/// its prologue. It touches no memory of its own.
+/// Called only by compiled code, on the over-limit arm of its prologue.
 pub unsafe extern "C" fn park_call_depth() -> i64 {
     PENDING.set(Some(RunError::CallDepth));
     0
 }
 
 thread_local! {
-    /// The calls in flight across both tiers: the interpreter counts each
-    /// interpreted call in and out ([`Runtime::apply_values`]), compiled code
-    /// counts itself in and out in its prologue and epilogue, and both refuse
-    /// the frame past [`MAX_CALL_DEPTH`]. One counter per thread, so a chain
-    /// that alternates tiers is one depth, and the limit means the same
-    /// thing whichever tier a frame runs in. Per thread, as [`PENDING`] and
-    /// [`CURRENT`] are, because a run is a thread's: a process-wide word
-    /// made one test's legitimate depth another's fault. Written by compiled
-    /// code as a plain word through [`call_depth_ptr`].
+    /// The calls in flight across both tiers: the interpreter and each compiled
+    /// prologue count in and out, and both refuse the frame past
+    /// [`MAX_CALL_DEPTH`]. Per thread, because a run is a thread's.
     pub static CALL_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// The address compiled code counts through ([`crate::compile::compile_fn`]):
-/// the calling thread's counter, baked at compile time, since a compiled
-/// function runs on the thread that compiled it — the seed has one.
+/// The address compiled code counts through: the compiling thread's counter,
+/// baked at compile time.
 pub fn call_depth_ptr() -> *mut usize {
     CALL_DEPTH.with(|d| d.as_ptr())
 }
 
-/// How deep interpreted calls may nest before the run faults (#80). The
-/// interpreter walks the body of each call on the Rust stack, so without a
-/// limit a runaway recursion overflows it and the process aborts with no
-/// diagnostic — the one failure a language must never answer with a crash.
-/// Chosen against [`crate::WORK_STACK_BYTES`], which is eight times the
-/// default main thread: a debug build overflowed near 5,500 frames on 8 MiB,
-/// so 10,000 frames on 64 MiB leaves room of about four times over in the
-/// most expensive build. Deeper than this is what `.compile()` is for.
+/// How deep interpreted calls may nest before the run faults instead of the
+/// Rust stack overflowing. Sized against [`crate::WORK_STACK_BYTES`]: a debug
+/// build overflowed near 5,500 frames on 8 MiB, so 10,000 on 64 MiB has room to spare.
 pub const MAX_CALL_DEPTH: usize = 10_000;
 
-/// The chunk size of the interpreter's activation stack. One chunk carries many
-/// ordinary frames; a frame larger than this gets a dedicated chunk of its own
-/// size.
+/// A frame larger than this gets a dedicated chunk of its own size.
 const STACK_CHUNK: usize = 64 * 1024;
 
-/// The interpreter's activation stack: one per runtime (per thread), holding
-/// every in-flight interpreted call's frame — parameters first, locals after —
-/// as a LIFO bump allocation, the software analogue of the machine stack
-/// compiled code runs on (DESIGN ›Operands travel on the stack‹). Chunked so
-/// that a live frame's address never moves: a frame lives wholly inside one
-/// chunk, a chunk never reallocates, and growth adds chunks rather than moving
-/// bytes — which is what keeps a `&local` or `&param` address valid for its
-/// whole call. Emptied chunks are kept and reused, so steady-state calling
-/// allocates nothing.
+/// The interpreter's activation stack: a LIFO bump allocation of in-flight
+/// frames. Chunked so a live frame's address never moves (a frame lies wholly
+/// in one chunk, a chunk never reallocates), which keeps `&local` valid for its call.
 struct FrameStack {
     chunks: Vec<Box<[u8]>>,
     /// Index of the chunk the cursor is in. Meaningless while `chunks` is empty.
@@ -315,9 +220,8 @@ struct FrameStack {
     cursor: usize,
 }
 
-/// A saved stack position: the (chunk, cursor) pair to restore when a call
-/// returns. Held on the Rust call stack across the body walk, so the stack
-/// needs no side list of frame boundaries.
+/// The (chunk, cursor) to restore when a call returns; held on the Rust stack
+/// across the body walk.
 type StackMark = (usize, usize);
 
 impl FrameStack {
@@ -325,16 +229,12 @@ impl FrameStack {
         FrameStack { chunks: Vec::new(), chunk: 0, cursor: 0 }
     }
 
-    /// The current position, to be restored with [`FrameStack::release`] when
-    /// the frame allocated after it is done.
     fn mark(&self) -> StackMark {
         (self.chunk, self.cursor)
     }
 
-    /// Claim `size` zeroed bytes wholly inside one chunk and return their base.
-    /// The base stays valid until the matching [`FrameStack::release`], across
-    /// any deeper allocations. A zero-size frame claims nothing and returns a
-    /// dangling (never dereferenced) base.
+    /// Claim `size` zeroed bytes wholly inside one chunk, valid until the
+    /// matching release. A zero-size frame returns a dangling, never-read base.
     fn alloc(&mut self, size: usize) -> *mut u8 {
         if size == 0 {
             return std::ptr::NonNull::dangling().as_ptr();
@@ -344,9 +244,7 @@ impl FrameStack {
             self.chunk = 0;
             self.cursor = 0;
         } else if self.cursor + size > self.chunks[self.chunk].len() {
-            // The frame does not fit where the cursor stands: move to the next
-            // chunk, reusing a retained one when it is big enough and replacing
-            // the tail otherwise (rare: only an oversized frame forces that).
+            // Move to the next chunk, reusing a retained one when it is big enough.
             if self.chunk + 1 >= self.chunks.len() || self.chunks[self.chunk + 1].len() < size {
                 self.chunks.truncate(self.chunk + 1);
                 self.chunks.push(vec![0u8; STACK_CHUNK.max(size)].into_boxed_slice());
@@ -354,10 +252,8 @@ impl FrameStack {
             self.chunk += 1;
             self.cursor = 0;
         }
-        // Chunks are reused after release, so the claim is re-zeroed: a typed
-        // declaration with no initializer must read the same zeroed
-        // "undefined" the compiled tier's zeroed stack slot gives. The slice
-        // is bounds-checked; the chunk was chosen or grown above to hold it.
+        // Re-zeroed on reuse: an uninitialized declaration must read the same
+        // zero the compiled tier's zeroed slot gives.
         let claim = &mut self.chunks[self.chunk][self.cursor..self.cursor + size];
         claim.fill(0);
         let base = claim.as_mut_ptr();
@@ -365,82 +261,52 @@ impl FrameStack {
         base
     }
 
-    /// Pop back to `mark`, releasing every byte claimed after it. The bytes are
-    /// dead the moment the call they belonged to returns, exactly like a
-    /// machine stack's.
     fn release(&mut self, (chunk, cursor): StackMark) {
         self.chunk = chunk;
         self.cursor = cursor;
     }
 }
 
-/// A running evaluation: the core handles the reading rule reads by, the
-/// store, and the activation stack. Operand computation rides the Rust call
-/// stack (each `run` is a frame); the explicit [`FrameStack`] holds each
-/// in-flight interpreted call's frame — its parameters and locals at their
-/// parse-assigned byte offsets.
+/// A running evaluation. Operand computation rides the Rust call stack; the
+/// [`FrameStack`] holds each in-flight interpreted call's frame.
 pub struct Runtime<'a> {
-    /// The core handles the reading rule reads — the record type a use of a
-    /// name hops through and the `fn` type it must compare before any record
-    /// is read ([`crate::identities::read::read_kind`]).
+    /// The core handles the reading rule reads by.
     types: &'a crate::Core,
-    /// Live heap allocations (issue #49): `alloc` increments, `free` decrements.
-    /// Not a correctness mechanism — the null-place drop flag prevents double
-    /// frees — but an observable one, so tests assert a program frees what it
-    /// allocates (net zero) rather than leaking.
+    /// `alloc` increments, `free` decrements; tests assert net zero. Not a
+    /// correctness mechanism.
     live_allocs: usize,
-    /// The per-runtime activation stack the frames live in.
     stack: FrameStack,
     /// The base address of each in-flight interpreted call's frame, innermost
-    /// last. A frame-relative place reads `base + offset` in the top entry;
-    /// each call having its own frame is what makes recursion work.
+    /// last; a frame place reads `base + offset` in the top entry.
     activations: Vec<*mut u8>,
-    /// What `f.compile()` needs, attached by [`Runtime::with_compiler`]: the
-    /// lowering table (`Core::lower`), borrowed for the runtime's life. Absent
-    /// (the default, and always at parse-time evaluation), a compile node
-    /// fails with [`RunError::CompilerUnavailable`] instead of compiling
-    /// behind the open pass's back.
+    /// Absent at parse-time evaluation, so a compile node fails instead of
+    /// installing code behind the open pass's back.
     compiler: Option<&'a crate::compile::LowerTable>,
-    /// The store every node lives in, borrowed for the runtime's life: what
-    /// a Logos-written constructor builds into (#61) and what `lex` mints
-    /// fresh dyads into (#62). The parser owns its runtime and reaches the
-    /// store through it, so the one `&mut Store` is visible to the borrow
-    /// checker instead of being a raw handle two owners shared.
+    /// The parser owns its runtime and reaches the store through it, so the one
+    /// `&mut Store` is visible to the borrow checker.
     pub(crate) store: &'a mut crate::store::Store,
-    /// The lexer `lex «…»` runs (#62), set only inside [`Runtime::lexing`]:
-    /// the scopes open at that moment and the name index — "the record the
-    /// trie resolved at the lex site" (DESIGN ›Text is the quote‹), the lex
-    /// site being wherever `lex` runs. Absent elsewhere, so `lex` fails with
-    /// [`RunError::NoLexer`].
+    /// Set only inside [`Runtime::lexing`]; absent elsewhere, so `lex` fails
+    /// with [`RunError::NoLexer`].
     lexer: Option<Lexer>,
-    /// The tape fragments `lex «…»` built, owned here for the runtime's life
-    /// — the seed's form of "the fragment is graph owned like any other
-    /// value of the scope that made it" (DESIGN ›Text is the quote‹): the
-    /// pass that made it keeps it. Each is boxed because its handle is
-    /// what `lex` yields, and a fragment must stay put while the vector
-    /// grows.
+    /// The fragments `lex «…»` built, owned for the runtime's life; boxed because
+    /// the handle `lex` yields must stay put as the vector grows.
     #[allow(clippy::vec_box)]
     fragments: Vec<Box<crate::parse::ParsingTape>>,
-    /// How many Logos constructors the parser is running through this
-    /// runtime (#123): `caller.scope` reads the pass's position only inside
-    /// one ([`Runtime::pass_scope`]).
+    /// How many Logos constructors the parser is running through this runtime;
+    /// `caller.scope` answers only inside one.
     constructing: u32,
 }
 
-/// What `lex «…»` lexes against (#62): the parser's scope stack and name
-/// index. Raw, because the parser owns both and the runtime inside it, so no
-/// lifetime can tie a field of the runtime to them; set only by
-/// [`Runtime::lexing`], which borrows both for the call it makes and clears
-/// the handles when that call returns or unwinds. Every read of them is
-/// inside such a call.
+/// What `lex «…»` lexes against. Raw, because the parser owns both and the
+/// runtime inside it; set only by [`Runtime::lexing`], which clears them when
+/// its call returns or unwinds, and every read is inside such a call.
 #[derive(Clone, Copy)]
 struct Lexer {
     scopes: std::ptr::NonNull<crate::parse::ScopeStack>,
     trie: std::ptr::NonNull<crate::regex_trie::RegexTrie>,
 }
 
-/// Clears the lexer when a [`Runtime::lexing`] call ends, by return or by
-/// unwinding, so the handles never outlive the borrows they were taken from.
+/// Clears the lexer when a [`Runtime::lexing`] call ends, by return or by unwinding.
 struct Detach<'r, 'a>(&'r mut Runtime<'a>);
 
 impl Drop for Detach<'_, '_> {
@@ -450,12 +316,7 @@ impl Drop for Detach<'_, '_> {
 }
 
 impl<'a> Runtime<'a> {
-    /// A runtime recognizing functions by `fn_type` (record instances are
-    /// recognized by their type's stored layout record), molding `rational`
-    /// leaves on read, with an empty activation stack (its first chunk is
-    /// claimed lazily, at the first call that needs a frame). Everything
-    /// executable is reached through the graph. No compiler is attached; see
-    /// [`Runtime::with_compiler`].
+    /// No compiler attached; see [`Runtime::with_compiler`].
     pub fn new(types: &'a crate::Core, store: &'a mut crate::store::Store) -> Self {
         Runtime {
             types,
@@ -470,11 +331,7 @@ impl<'a> Runtime<'a> {
         }
     }
 
-    /// Run `f` with the lexer `lex «…»` needs (#62) attached: the parser's
-    /// open scopes and name index, borrowed for exactly this call, so nothing
-    /// can move or mutate them while a native reads them, and cleared when
-    /// the call returns or unwinds ([`Detach`]). The parser wraps each run it
-    /// makes in this.
+    /// Run `f` with the parser's scopes and index attached for exactly this call.
     pub(crate) fn lexing<R>(
         &mut self,
         scopes: &crate::parse::ScopeStack,
@@ -489,24 +346,17 @@ impl<'a> Runtime<'a> {
         f(guard.0)
     }
 
-    /// Enter a Logos constructor's run (#123): until the matching
-    /// [`Runtime::leave_constructor`], `caller.scope` answers
-    /// ([`Runtime::pass_scope`]).
+    /// Until the matching [`Runtime::leave_constructor`], `caller.scope` answers.
     pub(crate) fn enter_constructor(&mut self) {
         self.constructing += 1;
     }
 
-    /// Leave a Logos constructor's run.
     pub(crate) fn leave_constructor(&mut self) {
         self.constructing -= 1;
     }
 
-    /// The scope open at the pass's position — the appearance a constructor
-    /// is building — for `caller.scope` (#123; DESIGN ›Meta-navigation‹: "for
-    /// a constructor the appearance of its identity … so inside a constructor
-    /// `caller.scope` is the scope the tape belongs to, the use site").
-    /// Outside a constructor's run it is [`RunError::NoCaller`]: an ordinary
-    /// function's `caller` is a per-call fact the seed does not yet elaborate.
+    /// The scope open at the pass's position, for `caller.scope` inside a
+    /// constructor's run; [`RunError::NoCaller`] elsewhere. DESIGN ›Meta-navigation‹.
     pub(crate) fn pass_scope(&self) -> Result<DyadPtr, RunError> {
         let Some(lexer) = self.lexer else {
             return Err(RunError::NoCaller);
@@ -514,23 +364,18 @@ impl<'a> Runtime<'a> {
         if self.constructing == 0 {
             return Err(RunError::NoCaller);
         }
-        // SAFETY: `lexer` is set only inside `lexing`, whose borrows of the
-        // scopes and the index outlive this call.
+        // SAFETY: `lexer` is set only inside `lexing`, whose borrows outlive this call.
         let scopes = unsafe { lexer.scopes.as_ref() };
         Ok(scopes.current().unwrap_or(std::ptr::null_mut()))
     }
 
-    /// `lex «…»`'s work (#62): lex `text` against the attached scopes and
-    /// index into a fresh fragment — every token an unconstructed cell with
-    /// its spelling, a fresh dyad for a spelling nothing declared, minted
-    /// into the attached store — and yield its handle, the `parsing_tape`
-    /// value `insert` splices. The fragment lives as long as this runtime.
+    /// Lex `text` against the attached scopes and index into a fresh fragment
+    /// owned by this runtime; the handle is the `parsing_tape` value `insert` splices.
     pub(crate) fn lex(&mut self, text: &str) -> Result<*mut crate::parse::ParsingTape, RunError> {
         let Some(lexer) = self.lexer else {
             return Err(RunError::NoLexer);
         };
-        // SAFETY: `lexer` is set only inside `lexing`, whose borrows of the
-        // scopes and the index outlive this call.
+        // SAFETY: `lexer` is set only inside `lexing`, whose borrows outlive this call.
         let (scopes, trie) = unsafe { (lexer.scopes.as_ref(), lexer.trie.as_ref()) };
         let tape = crate::parse::lex_fragment(scopes, trie, self.store, text)
             .map_err(|e| RunError::Lex(Box::new(crate::report::resolve_message(&e))))?;
@@ -540,48 +385,37 @@ impl<'a> Runtime<'a> {
         Ok(handle)
     }
 
-    /// The store the graph-building natives allocate into.
     pub(crate) fn store(&mut self) -> &mut crate::store::Store {
         self.store
     }
 
-    /// Note a heap allocation (issue #49): `alloc` calls this after allocating.
     pub(crate) fn note_alloc(&mut self) {
         self.live_allocs += 1;
     }
 
-    /// Note a heap free (issue #49): the teardown calls this after freeing a
-    /// non-null pointer (an emptied place is a no-op and never reaches here).
+    /// Called after freeing a non-null pointer; an emptied place never reaches here.
     pub(crate) fn note_free(&mut self) {
         self.live_allocs = self.live_allocs.saturating_sub(1);
     }
 
-    /// Live (allocated-not-yet-freed) heap blocks — zero after a program that
-    /// frees everything it allocates. Tests read it to catch leaks.
+    /// Zero after a program that frees everything it allocates.
     pub fn live_allocs(&self) -> usize {
         self.live_allocs
     }
 
-    /// Attach the lowering table (`Core::lower`), enabling `f.compile()` under
-    /// this runtime. A builder; [`Runtime::set_compiler`] is the same on a
-    /// runtime already built.
+    /// Enable `f.compile()` under this runtime.
     pub fn with_compiler(mut self, lower: &'a crate::compile::LowerTable) -> Self {
         self.compiler = Some(lower);
         self
     }
 
-    /// Attach the lowering table to a runtime already built.
     pub(crate) fn set_compiler(&mut self, lower: &'a crate::compile::LowerTable) {
         self.compiler = Some(lower);
     }
 
-    /// `f.compile()`: lower `fn_node`'s body to machine code and install the
-    /// finalized entry into `code_leaf` (the leaf the parser pre-minted), so
-    /// the next call jumps instead of walking the body. Compiling again
-    /// compiles again: a call to a callee that had no code the first time was
-    /// emitted as a jump into the interpreter, and the recompile is what lifts
-    /// that boundary once the callee has code (DESIGN ›The callable ground‹,
-    /// #65: "a boundary left behind is lifted by compiling f again").
+    /// `f.compile()`: lower `fn_node`'s body and install the entry into
+    /// `code_leaf`, the leaf the parser pre-minted. Compiling again lifts a
+    /// jump into the interpreter left by a callee that had no code the first time.
     ///
     /// # Safety
     /// `fn_node` must be a valid dyad and `code_leaf` a callable value, both
@@ -605,32 +439,12 @@ impl<'a> Runtime<'a> {
             .map_err(|e| RunError::CompileFailed(Box::new(crate::report::compile_message(&e))))
     }
 
-    /// The machine address a place node denotes: an absolute pointer for a
-    /// global/top-level place, or `frame_base + offset` for a frame-relative
-    /// parameter or local of the call in progress (the top frame). This is the
-    /// one place the interpreter decodes the frame tag (see
-    /// [`crate::dyad::FRAME_TAG`]); every read, write, and address-of of a
-    /// parameter or local goes through it.
-    ///
-    /// `None` is a frame-relative place with *no call in progress*: its storage
-    /// does not exist. Ordinary execution never sees this (a frame place is only
-    /// built inside a function, which only runs under a call), but parse-time
-    /// evaluation does — a `-> logos` call whose argument touches an enclosing
-    /// function's local runs before any activation exists — and every caller maps
-    /// it to a clean [`RunError::NoActivation`], which the comptime path reports as
-    /// not-comptime-known.
-    ///
-    /// # Safety
-    /// `node` must be a valid place node.
-    /// The core handles this runtime reads by — for a native's run to ask the
-    /// reading rule ([`crate::identities::read`]) the way `run` itself does.
+    /// The core handles, for a native's run to ask the reading rule as `run` does.
     pub(crate) fn types(&self) -> &crate::Core {
         self.types
     }
 
-    /// The reading rule: a record operand yields the dyad it names (DESIGN
-    /// ›The dyad's read surface‹, 8 September 2026), one pointer compare per
-    /// interpreted operand read; compiled code bakes the address instead.
+    /// A record operand yields the dyad it names. DESIGN ›The dyad's read surface‹.
     ///
     /// # Safety
     /// `p` must be null or a valid dyad from the store.
@@ -638,28 +452,29 @@ impl<'a> Runtime<'a> {
         crate::record::through(self.types.record_, p)
     }
 
+    /// The machine address a place denotes: absolute for a global, `frame base
+    /// + offset` in the top frame for a parameter or local. The one place the
+    /// interpreter decodes the frame tag. `None`: a frame place with no call in
+    /// progress (parse-time evaluation), which callers map to [`RunError::NoActivation`].
+    ///
+    /// # Safety
+    /// `node` must be a valid place node.
     pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> Option<*mut u8> {
         let node = self.through(node);
         match frame_ref((*node).value) {
-            // Only the offset matters at run time — the place is in the call in
-            // progress (the top frame); the depth is a parse-time capture guard.
+            // The depth is a parse-time capture guard; only the offset matters here.
             Some((_, off)) => {
                 let base = *self.activations.last()?;
                 Some(base.add(off))
             }
-            // Global storage carries its own tag; anything else is not a place
-            // and has no storage to read.
+            // Global storage carries its own tag; an untagged value is a literal's blob.
             None => crate::dyad::global_ref((*node).value).or(Some((*node).value)),
         }
     }
 
-    /// Apply the function `f` to the call node `node` — `{type: _, value:
-    /// [args…, null]}` — the one act behind every call: a node typed by a
-    /// function (`f(2)`) and a node typed by a type carrying a `code` (`2 ^ 3`,
-    /// DESIGN ›Execution is function application‹, #63) both arrive here, the
-    /// latter with `f` the type's code. The arguments are evaluated in the
-    /// current frame (the caller's) into their containers, then
-    /// [`Runtime::apply_values`] does the rest.
+    /// Apply `f` to the call node `node`, `{type: _, value: [args…, null]}`:
+    /// a node typed by a function, or by a type whose `code` is `f`, both
+    /// arrive here. DESIGN ›Execution is function application‹.
     ///
     /// # Safety
     /// `f` must be a `fn` node from the store and `node` a node whose value
@@ -669,20 +484,14 @@ impl<'a> Runtime<'a> {
         self.apply_values(f, &values)
     }
 
-    /// Apply `f` to arguments already evaluated into their `i64` containers —
-    /// the second half of [`Runtime::apply`], and the whole of a jump back
-    /// from compiled code ([`interpret_call`], #65). Compiled: jump to the
-    /// installed entry. Interpreted: claim the callee's zeroed frame from the
-    /// activation stack, write the containers into its parameter slots — the
-    /// caller placing the operands on the stack for the callee to read, the
-    /// ordinary calling convention (DESIGN ›Operands travel on the stack‹) —
-    /// make the frame current, walk the body, and pop both again.
+    /// Apply `f` to arguments already in their `i64` containers: jump to the
+    /// installed entry, or claim the callee's zeroed frame, write the
+    /// containers into its parameter slots, walk the body, and pop both again.
     ///
     /// # Safety
     /// `f` must be a `fn` node from the store; `values` one container per
     /// parameter.
     pub unsafe fn apply_values(&mut self, f: DyadPtr, values: &[i64]) -> Result<i64, RunError> {
-        // A user function's value is `[input, output, body, bcode, frame]`.
         let fields = (*f).value as *const DyadPtr;
         if fields.is_null() {
             return Err(RunError::NotRunnable(f));
@@ -696,9 +505,7 @@ impl<'a> Runtime<'a> {
         if body.is_null() {
             return Err(RunError::NotRunnable(f));
         }
-        // The depth is the count of calls in flight in both tiers
-        // ([`CALL_DEPTH`]); past the limit the run faults rather than letting
-        // the Rust stack under `run` overflow and abort (#80, #119).
+        // Past the limit the run faults rather than the Rust stack overflowing.
         if CALL_DEPTH.with(|d| d.get()) >= MAX_CALL_DEPTH {
             return Err(RunError::CallDepth);
         }
@@ -714,8 +521,7 @@ impl<'a> Runtime<'a> {
         self.activations.pop();
         CALL_DEPTH.with(|d| d.set(d.get() - 1));
         self.stack.release(mark);
-        // A `-> void` function runs its body for effect and yields unit (0 bits),
-        // matching the compiled void fn's `return 0`, so both tiers agree.
+        // A `-> void` body yields unit, matching the compiled tier's `return 0`.
         if crate::identities::numtype::is_void_type(*fields.add(FN_OUTPUT)) {
             result.map(|_| 0)
         } else {
@@ -723,13 +529,11 @@ impl<'a> Runtime<'a> {
         }
     }
 
-    /// Jump to compiled machine code with `args`, this runtime standing by as
-    /// the one a call back into the interpreter finds ([`CURRENT`]), and read
-    /// back the checked error such a call parked ([`PENDING`]) the moment the
-    /// machine code returns — whatever value it returned, since 0 is a value.
+    /// Jump to machine code with this runtime standing by in [`CURRENT`], and
+    /// read back any error parked in [`PENDING`] when it returns (0 is a value).
     ///
     /// # Safety
-    /// `entry` must be live machine code of the seed's one compiled signature
+    /// `entry` must be live machine code of the one compiled signature
     /// ([`MachineFn`]).
     unsafe fn call_compiled(&mut self, entry: *const u8, args: &[i64]) -> Result<i64, RunError> {
         // The lifetime is erased at the machine-code boundary and restored
@@ -747,33 +551,17 @@ impl<'a> Runtime<'a> {
         }
     }
 
-    /// Run `node`: ask the reading rule what it is
-    /// ([`crate::identities::read::read_kind`], DESIGN ›Declarations are
-    /// immutable by default‹: "the type defines how the value is read") and do
-    /// that one thing. An executable node is dispatched — a call is applied,
-    /// an application jumps to the callable leaf its constructor stored in its
-    /// op slot — and everything else is data read the way its type says. The
-    /// decision is made once, in `read_kind`, and the compiler asks the same
-    /// question in the same order.
+    /// Run `node`: ask the reading rule what it is and do that one thing. An
+    /// executable node is dispatched; everything else is data read the way its
+    /// type says. The compiler asks the same question in the same order.
     ///
     /// # Safety
-    /// `node` must be a valid dyad from the store (address = id). `run`
-    /// dereferences it, its operation, and (for functions) the operands or body
-    /// they reach. If the operation has installed code, the compiled artifact
-    /// that owns that machine code must still be alive (see
-    /// [`crate::compile::compile_fn`]).
+    /// `node` must be a valid dyad from the store. If its operation has
+    /// installed code, the artifact owning that machine code must still be alive.
     pub unsafe fn run(&mut self, node: DyadPtr) -> Result<i64, RunError> {
-        // The reading rule first: a use of a name is its record, and running
-        // it runs the dyad it names (DESIGN ›The dyad's read surface‹).
         let node = self.through(node);
         match read_kind(self.types, node) {
-            // A value of a function is a call; a node typed by a type that
-            // carries a `code` is a call of that code (›Execution is function
-            // application‹).
             Read::Executable(Dispatch::Call(f)) => self.apply(f, node),
-            // An application: jump to the callable leaf its constructor stored
-            // in its op slot (issue #44). Dispatch flows through the node, not
-            // a table; the identity carries only its record.
             Read::Executable(Dispatch::Leaf(leaf)) => {
                 // SAFETY: a seed-native callable's entry is a `RunFn` shim
                 // address, minted only by the registration loops.
@@ -782,27 +570,16 @@ impl<'a> Runtime<'a> {
                 );
                 entry(self, node)
             }
-            // An operand record with nothing in its op slot: the tape's path
-            // markers, or a node built without a leaf. Refused as data.
             Read::Executable(Dispatch::None) => Err(RunError::NoLeaf),
-            // Prose, or a fn literal standing as a statement: unit, the same
-            // precedent as `-> void`.
             Read::Unit => Ok(0),
-            // A logos standing as a value carries its identity AS its value:
-            // its bits are its own address (roadmap #30).
+            // An identity's value is its own address.
             Read::Identity => Ok(node as i64),
-            // A dyad view (#52): its value IS the viewed node's address.
+            // A view's value is the viewed node's address.
             Read::Address => Ok((*node).value as i64),
-            // A place holding a node address — a `type ?` or `dyad ?` box, a
-            // bare parameter's slot — reads its 8-byte container.
             Read::Container(_) => self.read_container(node),
-            // A rational literal molds to its integer value (a fraction like
-            // 3.14 has none: UncomputableLiteral, not a bad read).
             Read::Literal => crate::identities::rational::mold(node)
                 .map(i64::from)
                 .ok_or(RunError::UncomputableLiteral),
-            // A numeric, bool, or pointer value: read at its type's width from
-            // its storage — a declared place, or a literal's untagged blob.
             Read::Scalar(_) | Read::Pointer(_) => {
                 let slot = self.place_addr(node).ok_or(RunError::NoActivation)?;
                 if slot.is_null() {
@@ -810,16 +587,12 @@ impl<'a> Runtime<'a> {
                 }
                 Ok(crate::identities::numtype::read_scalar((*node).ty, slot))
             }
-            // A record instance is read by field or by address, never whole;
-            // text and unit have no scalar; a hole holds nothing yet.
             Read::Aggregate | Read::Opaque | Read::Undefined => Err(RunError::NoWholeRead),
         }
     }
 
-    /// Read a place's full 8-byte slot as the raw i64 bit-container — how a
-    /// binding of no declared scalar width (a bare `name`, a place holding a
-    /// type) is stored and read, in a frame or at top level alike. Not a place
-    /// at all, or no call in progress for a frame one: [`RunError::NoActivation`].
+    /// A place's full 8-byte slot as the raw container: how a binding of no
+    /// declared scalar width is stored, in a frame or at top level alike.
     ///
     /// # Safety
     /// `node` must be a valid dyad from the store; a frame-tagged one must carry
@@ -830,11 +603,8 @@ impl<'a> Runtime<'a> {
         Ok(std::ptr::read_unaligned(slot as *const i64))
     }
 
-    /// Evaluate a call's arguments, in order, in the *current* frame (the
-    /// caller's) into their `i64` bit-containers. The parameter and argument
-    /// arrays are both null-terminated (the input record's fields, the call
-    /// value `[arg0 …, null]` or null); a count mismatch is
-    /// [`RunError::ArityMismatch`].
+    /// Evaluate a call's arguments in the caller's frame into their containers;
+    /// the parameter and the argument arrays are both null-terminated.
     ///
     /// # Safety
     /// `fn_node` must be a valid function node and `call_node` a valid
@@ -865,15 +635,12 @@ impl<'a> Runtime<'a> {
         Ok(values)
     }
 
-    /// Write `values`, one per parameter, into the callee's parameter slots in
-    /// the fresh frame at `base`. A scalar-typed parameter stores at its
-    /// type's width, exactly as a local of that type would; any other (a bare
-    /// `name`, a type-valued parameter) stores the full i64 bit-container.
+    /// Write `values` into the parameter slots of the fresh frame at `base`: a
+    /// scalar parameter at its type's width, any other as the full container.
     ///
     /// # Safety
     /// `fn_node` must be a valid function node; `base` a frame allocation of
-    /// its `FN_FRAME` size, which covers every parameter slot the parser
-    /// assigned.
+    /// its frame size, which covers every parameter slot the parser assigned.
     unsafe fn bind_values(fn_node: DyadPtr, base: *mut u8, values: &[i64]) -> Result<(), RunError> {
         let input = *((*fn_node).value as *const DyadPtr).add(FN_INPUT);
         let params =
@@ -882,8 +649,6 @@ impl<'a> Runtime<'a> {
             return Err(RunError::ArityMismatch);
         }
         for (&param, &bits) in params.iter().zip(values) {
-            // A parameter without a parse-assigned slot is a malformed
-            // function node (the parser always assigns one).
             let Some((_, off)) = frame_ref((*param).value) else {
                 return Err(RunError::MalformedFn(fn_node));
             };

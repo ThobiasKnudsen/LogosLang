@@ -1,44 +1,10 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The hybrid regex-trie — a port of `regex_trie.zig`.
-//!
-//! Each node holds a 256-entry `child_indices` table mapping a byte to a slot in
-//! `children`; byte 0 is reserved as the end-of-word (EOW) sentinel (its slot
-//! holds `None`). Patterns that are not pure literals are split (see
-//! [`crate::regex_splitting`]) so their literal prefixes ride the fast byte-path
-//! and only the residual regex chunks become `regexes` branches. Lookup is true
-//! longest-match: [`get`](RegexTrie::get) explores both the literal child and
-//! every regex branch at each node and returns the longest reachable EOW, with a
-//! literal path winning ties over a regex path (a shorter literal never blocks a
-//! longer regex match).
-//!
-//! The stored value is a list of record dyads (see [`Record`]): the names the
-//! matched text can denote, each a dyad of type `record` in the store pairing
-//! an identity with the scope it was declared in. The trie does **not** own
-//! them (they live in the store, at stable addresses), so it only holds and
-//! returns their pointers; nothing is freed on removal. A spelling declared in
-//! several scopes accumulates several records; `get` returns the whole
-//! candidate list, and the parser's scope stack picks the one live in the open
-//! scopes. Resolution *policy* (scope filtering, no-shadowing, out-of-scope,
-//! ambiguity) lives in the parser (`crate::parse`), not here: the trie is the
-//! pure name index.
-//!
-//! Differences from the Zig original, all behaviour-preserving:
-//! - PCRE2 is replaced by the Rust `regex` crate (`regex::bytes`, byte-oriented
-//!   like the PCRE2 8-bit API). Lookaround/backreferences therefore cannot
-//!   compile; [`RegexTrieError::BadPattern`] surfaces that instead of panicking.
-//! - Because a record is a store-owned dyad the trie only points at, the Zig's
-//!   shared-value/`freed`-flag bookkeeping collapses to storing the one pointer
-//!   on each alternation path (a write through it is seen from every path, so
-//!   there is nothing to keep in step); `remove` matches on the declaring scope
-//!   (its live record: a dead one, ended by `own`/`drop`, stays for reflection).
-//! - Each regex branch owns a lazily-compiled anchored matcher behind a `RefCell`
-//!   (so `get` stays `&self`) and is matched independently. Matching branches
-//!   separately, rather than as one combined `(?:a|b|…)` alternation, is what lets
-//!   longest-match compare branch lengths — a combined alternation returns the
-//!   `regex` crate's leftmost-*first* branch, not the longest.
-//! - `remove`'s upward prune is recursion rather than an explicit parent stack.
+//! The hybrid regex-trie, the lexing name index. Literal prefixes ride a
+//! byte-path; residual regex chunks are branches, matched separately so
+//! lookup is true longest-match, a literal beating a regex at equal length.
+//! Values are record dyads the store owns; resolution policy is the parser's.
 
 use std::cell::RefCell;
 
@@ -51,47 +17,39 @@ use crate::regex_splitting::{is_pure_literal, regex_splitting, Segment};
 
 /// `child_indices` sentinel: no child for this byte.
 const NONE: u32 = u32::MAX;
-/// Byte index reserved as the end-of-word marker.
+/// The byte reserved as the end-of-word marker; its child slot holds `None`.
 const EOW: usize = 0;
 
-/// Errors surfaced by trie operations. Resolution policy (scope filtering,
-/// no-shadowing, out-of-scope, ambiguity) lives in the parser, not here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegexTrieError {
-    /// `get`/`remove` found no matching entry for the spelling.
+    /// No entry matches the spelling.
     NodeNotFound,
-    /// A residual regex segment failed to compile with the `regex` crate.
+    /// A residual regex segment failed to compile.
     BadPattern(String),
 }
 
-/// The value stored at an end-of-word node: the pattern key and the list of
-/// record dyads the matched text can denote (one per declaring scope).
-/// Alternation paths of one `insert` each hold the same pointer.
+/// The value at an end-of-word node; every alternation path of one `insert`
+/// holds the same record pointers.
 #[derive(Debug)]
 pub struct Leaf {
     pub regex_key: String,
     pub records: Vec<DyadPtr>,
 }
 
-/// The result of a successful lookup. `regex_key` and `records` borrow the
-/// stored entry. `records` is the full candidate list; the trie is a pure index,
-/// so the parser's [`ScopeStack::resolve`](crate::parse::ScopeStack::resolve)
+/// `records` is the full candidate list, one per declaring scope; the parser
 /// picks the one live in the open scopes.
 #[derive(Debug)]
 pub struct MatchResult<'a> {
-    /// Number of bytes consumed from the start of the input.
+    /// Bytes consumed from the start of the input.
     pub matched: usize,
-    /// The pattern key that matched.
     pub regex_key: &'a str,
-    /// Every record the matched text can denote, one per declaring scope.
     pub records: &'a [DyadPtr],
 }
 
 struct RegexEntry {
     node: Box<RegexTrie>,
     pattern: String,
-    /// This branch's anchored matcher (`^(?:pattern)`), compiled on first use.
-    /// Deferred so a bad pattern surfaces as [`RegexTrieError::BadPattern`] on
+    /// `^(?:pattern)`, compiled on first use so a bad pattern surfaces at
     /// lookup rather than at insert.
     matcher: RefCell<Option<Regex>>,
 }
@@ -105,8 +63,7 @@ impl RegexEntry {
         }
     }
 
-    /// Length of this branch's match at the start of `hay`, if it matches a
-    /// non-empty prefix. Compiles the anchored matcher on first call.
+    /// Length of this branch's non-empty match at the start of `hay`.
     fn match_len(&self, hay: &[u8]) -> Result<Option<usize>, RegexTrieError> {
         if self.matcher.borrow().is_none() {
             let anchored = format!("^(?:{})", self.pattern);
@@ -120,7 +77,8 @@ impl RegexEntry {
     }
 }
 
-/// A node of the hybrid regex-trie.
+/// A node: `child_indices` maps a byte to a slot in `children`; byte 0 is the
+/// EOW sentinel.
 pub struct RegexTrie {
     child_indices: [u32; 256],
     children: Vec<Option<Box<RegexTrie>>>,
@@ -135,7 +93,6 @@ impl Default for RegexTrie {
 }
 
 impl RegexTrie {
-    /// A fresh, empty trie node.
     pub fn new() -> Self {
         RegexTrie {
             child_indices: [NONE; 256],
@@ -145,7 +102,6 @@ impl RegexTrie {
         }
     }
 
-    /// The literal child for byte `c`, if one exists.
     fn lit_child(&self, c: u8) -> Option<&RegexTrie> {
         let idx = self.child_indices[c as usize];
         if idx == NONE {
@@ -154,15 +110,13 @@ impl RegexTrie {
         self.children[idx as usize].as_deref()
     }
 
-    // --- structural helpers -------------------------------------------------
-
-    /// True if this node is an end-of-word (its byte-0 slot exists and is null).
+    /// End-of-word: the byte-0 slot exists and is null.
     fn check_eow(&self) -> bool {
         let idx = self.child_indices[EOW];
         idx != NONE && self.children[idx as usize].is_none()
     }
 
-    /// True if this node has any literal child (other than EOW) or any regex branch.
+    /// Any literal child other than EOW, or any regex branch.
     fn has_children(&self) -> bool {
         for key in 1..256usize {
             let idx = self.child_indices[key];
@@ -173,7 +127,6 @@ impl RegexTrie {
         !self.regexes.is_empty()
     }
 
-    /// Get or create the literal child for byte `c` and return a mutable ref to it.
     fn lit_child_or_create(&mut self, c: u8) -> &mut RegexTrie {
         debug_assert!(c != 0, "byte 0 is reserved for the EOW sentinel");
         let slot = self.child_indices[c as usize];
@@ -187,7 +140,6 @@ impl RegexTrie {
         }
     }
 
-    /// Get or create the regex branch for `pattern` and return a mutable ref to it.
     fn regex_child_or_create(&mut self, pattern: &str) -> &mut RegexTrie {
         if let Some(i) = self.regexes.iter().position(|e| e.pattern == pattern) {
             return &mut self.regexes[i].node;
@@ -197,7 +149,6 @@ impl RegexTrie {
         &mut self.regexes[last].node
     }
 
-    /// Ensure the EOW sentinel slot exists on this node.
     fn ensure_eow(&mut self) {
         if self.child_indices[EOW] == NONE {
             let new_idx = self.children.len() as u32;
@@ -206,8 +157,6 @@ impl RegexTrie {
         }
     }
 
-    /// Walk (creating nodes as needed) from `node` through one split path,
-    /// returning the leaf node at its end.
     fn walk_create<'a>(node: &'a mut RegexTrie, path: &[Segment]) -> &'a mut RegexTrie {
         let mut current = node;
         for seg in path {
@@ -222,7 +171,6 @@ impl RegexTrie {
         current
     }
 
-    /// Walk an existing path read-only, returning the node it ends at (if present).
     fn locate(&self, path: &[Segment]) -> Option<&RegexTrie> {
         let mut current = self;
         for seg in path {
@@ -245,11 +193,8 @@ impl RegexTrie {
         Some(current)
     }
 
-    /// The records stored under exactly `key` — the literal or pattern as it
-    /// was inserted — or `None` when nothing is. A declaration-time question
-    /// ("is this very spelling already declared?"), unlike [`get`](Self::get),
-    /// which asks what a text lexes as. Every alternation path of one insert
-    /// holds the same records, so the first path answers for all.
+    /// The records under exactly `key` as inserted: a declaration-time question,
+    /// unlike [`get`](Self::get), which asks what a text lexes as.
     pub fn records_for_key(&self, key: &str) -> Option<&[DyadPtr]> {
         let path = regex_splitting(key).into_iter().next()?;
         let node = self.locate(&path).filter(|n| n.check_eow())?;
@@ -257,13 +202,8 @@ impl RegexTrie {
         Some(&leaf.records)
     }
 
-    // --- insert -------------------------------------------------------------
-
-    /// Add the record dyad `record` under `key` (a literal or regex pattern). A
-    /// spelling may carry several records, one per scope it is declared in, so
-    /// this appends. The no-shadowing rule (rejecting a redeclaration whose
-    /// scope is currently live) is the parser's, since it needs the scope
-    /// stack; the trie only stores.
+    /// Appends: a spelling carries one record per scope it is declared in. The
+    /// no-shadowing rule is the parser's; the trie only stores.
     pub fn insert(&mut self, key: &str, record: DyadPtr) {
         debug_assert!(!key.is_empty());
 
@@ -271,7 +211,6 @@ impl RegexTrie {
             return self.insert_literal_fast(key, record);
         }
 
-        // Every alternation path of this insert holds the same record.
         for path in &regex_splitting(key) {
             let leaf = Self::walk_create(self, path);
             leaf.ensure_eow();
@@ -279,7 +218,6 @@ impl RegexTrie {
         }
     }
 
-    /// Fast path for pure-literal keys: walk byte-by-byte, no splitting.
     fn insert_literal_fast(&mut self, s: &str, record: DyadPtr) {
         let mut current = self;
         for &c in s.as_bytes() {
@@ -289,12 +227,8 @@ impl RegexTrie {
         push_record(&mut current.leaf_value, s, record);
     }
 
-    // --- get ----------------------------------------------------------------
-
-    /// Longest-match lookup at the start of `string`: the longest reachable EOW
-    /// wins, and a literal path beats a regex path of equal length (so a shorter
-    /// literal keyword never blocks a longer regex match — the old greedy
-    /// commit-to-literal did).
+    /// Longest match at the start of `string`; a literal beats a regex of
+    /// equal length, so a short keyword never blocks a longer identifier.
     pub fn get(&self, string: &str) -> Result<MatchResult<'_>, RegexTrieError> {
         debug_assert!(!string.is_empty());
         match self.longest(string.as_bytes(), 0)? {
@@ -305,10 +239,9 @@ impl RegexTrie {
         }
     }
 
-    /// The longest `(matched_len, leaf)` reachable from this node consuming `hay`
-    /// starting at `pos`. Explores the literal child first, then each regex branch
-    /// in insertion order; a candidate replaces the best only when strictly longer,
-    /// so the literal path (and earlier-declared regexes) win ties.
+    /// The literal child first, then each regex branch in insertion order; a
+    /// candidate replaces the best only when strictly longer, so the literal
+    /// path and earlier-declared regexes win ties.
     fn longest<'s>(
         &'s self,
         hay: &[u8],
@@ -344,8 +277,7 @@ impl RegexTrie {
         Ok(best)
     }
 
-    /// Every match at the start of `string`, exploring all paths. Slower than
-    /// [`get`](Self::get); useful for ambiguity inspection.
+    /// Every match at the start of `string`, for ambiguity inspection.
     pub fn get_all_matches(&self, string: &str) -> Result<Vec<MatchResult<'_>>, RegexTrieError> {
         let bytes = string.as_bytes();
         let mut out: Vec<MatchResult<'_>> = Vec::new();
@@ -384,22 +316,14 @@ impl RegexTrie {
         Ok(out)
     }
 
-    // --- remove -------------------------------------------------------------
-
-    /// Remove the *live* record declared in `scope` for `regex_key` and
-    /// return the identity it denoted. This is the structural-deletion path:
-    /// only that one record is dropped — a dead one (ended by `own`/`drop`,
-    /// see [`Record::is_dead`]) in the same scope stays, its range being what
-    /// reflection reads — and a leaf is pruned only when its last record goes
-    /// (siblings and outer declarations of the same spelling stay). Errors with
-    /// [`RegexTrieError::NodeNotFound`] if any of the key's paths lacks a live
-    /// record in `scope`, or they do not all denote the same identity.
+    /// Remove the live record declared in `scope` for `regex_key` and return
+    /// the identity it denoted. A dead record in the same scope stays, its
+    /// range being what reflection reads; a leaf is pruned only when its last record goes.
     pub fn remove(&mut self, regex_key: &str, scope: DyadPtr) -> Result<DyadPtr, RegexTrieError> {
         debug_assert!(!regex_key.is_empty());
         let paths = regex_splitting(regex_key);
 
-        // Verify every path holds this scope's live record and they agree on
-        // the identity before mutating anything.
+        // Verify every path before mutating anything.
         let mut held: Option<DyadPtr> = None;
         for path in &paths {
             let node = self.locate(path).filter(|n| n.check_eow());
@@ -420,8 +344,6 @@ impl RegexTrie {
             }
         }
 
-        // Drop this scope's live record at each path's leaf and prune leaves
-        // that lose their last record.
         for path in &paths {
             let steps = flatten(path);
             Self::prune_remove(self, &steps, 0, scope);
@@ -430,10 +352,7 @@ impl RegexTrie {
         Ok(held.expect("at least one path verified"))
     }
 
-    /// Recursively descend `steps` from `node`, dropping `scope`'s record at the
-    /// end (clearing the leaf only when its last record goes) and pruning empty
-    /// children on the way back up. Returns true if `node` itself became empty and
-    /// the caller should drop the link to it.
+    /// Returns true when `node` became empty and the caller should drop the link to it.
     fn prune_remove(node: &mut RegexTrie, steps: &[Step], i: usize, scope: DyadPtr) -> bool {
         if i == steps.len() {
             if let Some(leaf) = &mut node.leaf_value {
@@ -480,18 +399,13 @@ impl RegexTrie {
         !node.has_children() && node.leaf_value.is_none() && !node.check_eow()
     }
 
-    // --- debug print --------------------------------------------------------
-
-    /// Render the trie structure as text (literal chains compressed), in the
-    /// style of the Zig `print`.
+    /// The trie as text, literal chains compressed.
     pub fn dump(&self) -> String {
         let mut out = String::new();
         self.dump_rec(0, &mut out);
         out
     }
 
-    /// Follow a single-literal-child chain, returning the accumulated label and
-    /// the node the chain ends at.
     fn literal_chain(&self) -> (String, &RegexTrie) {
         let mut label = String::new();
         let mut curr = self;
@@ -589,21 +503,17 @@ impl RegexTrie {
     }
 }
 
-/// A single navigation step, used by `remove`'s recursive prune.
 enum Step {
     Lit(u8),
     Regex(String),
 }
 
-/// Whether the record dyad `record` is the live declaration of its name in
-/// `scope`.
 fn is_live_in(record: DyadPtr, scope: DyadPtr) -> bool {
     // SAFETY: every pointer the trie stores is a record dyad from the store.
     let fields = unsafe { Record::read(record) };
     fields.scope == scope && !fields.is_dead()
 }
 
-/// Append `record` to `leaf`, creating the `Leaf` (keyed by `key`) if absent.
 fn push_record(leaf: &mut Option<Leaf>, key: &str, record: DyadPtr) {
     match leaf {
         Some(l) => l.records.push(record),
@@ -611,7 +521,6 @@ fn push_record(leaf: &mut Option<Leaf>, key: &str, record: DyadPtr) {
     }
 }
 
-/// Flatten a split path into per-byte literal steps and regex steps.
 fn flatten(path: &[Segment]) -> Vec<Step> {
     let mut v = Vec::new();
     for seg in path {
@@ -632,20 +541,17 @@ mod tests {
     use super::*;
     use crate::dyad::Dyad;
 
-    /// Leak a distinct dyad and return a pointer to it (its address is its id).
-    /// Leaking is fine in tests: the process exits. Serves for both identities
-    /// and scopes, since a scope is just a dyad.
+    /// A leaked dyad whose address is its id; serves as identity and as scope.
     fn dummy(tag: usize) -> DyadPtr {
         Box::into_raw(Box::new(Dyad { ty: std::ptr::null_mut(), value: tag as *mut u8 }))
     }
 
-    /// A record dyad in `scope` for `identity`: leaked, like the dyads above.
+    /// A leaked record dyad in `scope` for `identity`.
     fn rec(identity: DyadPtr, scope: DyadPtr) -> DyadPtr {
         let fields = Box::into_raw(Box::new(Record::new(identity, scope, std::ptr::null_mut())));
         Box::into_raw(Box::new(Dyad { ty: std::ptr::null_mut(), value: fields as *mut u8 }))
     }
 
-    /// The fields behind a record dyad the trie returned.
     fn f(record: DyadPtr) -> Record {
         // SAFETY: only `rec`-built dyads are inserted in these tests.
         unsafe { Record::read(record) }
@@ -653,7 +559,6 @@ mod tests {
 
     #[test]
     fn literal_longest_match() {
-        // The `a = a + 1` operator set: `:` vs `:=` must disambiguate by length.
         let root = dummy(100);
         let mut t = RegexTrie::new();
         let (colon, colon_eq, eq, plus) = (dummy(1), dummy(2), dummy(3), dummy(4));
@@ -687,7 +592,6 @@ mod tests {
 
     #[test]
     fn literal_beats_regex_at_same_node() {
-        // get() commits to the literal child; the regex is only the fallback.
         let root = dummy(100);
         let mut t = RegexTrie::new();
         let (kw, ident) = (dummy(1), dummy(2));
@@ -708,8 +612,6 @@ mod tests {
 
     #[test]
     fn same_spelling_two_scopes_are_both_stored() {
-        // The trie stores one context per declaring scope; picking the live one
-        // is the parser's job (see crate::parse).
         let (outer, inner) = (dummy(100), dummy(101));
         let mut t = RegexTrie::new();
         let (id_outer, id_inner) = (dummy(1), dummy(2));
@@ -724,8 +626,7 @@ mod tests {
 
     #[test]
     fn insert_then_use_in_same_pass() {
-        // Declare a token, then immediately lex a use of it: declarations extend
-        // the lexer mid-parse (the non-context-free property).
+        // Declarations extend the lexer mid-parse.
         let root = dummy(100);
         let mut t = RegexTrie::new();
         t.insert("=", rec(dummy(1), root));
@@ -747,7 +648,6 @@ mod tests {
         assert_eq!(f(t.get("ab").unwrap().records[0]).dyad, d);
         assert_eq!(f(t.get("cd").unwrap().records[0]).dyad, d);
 
-        // Removing the scope's context returns the shared identity and drops both paths.
         assert_eq!(t.remove("ab|cd", root).unwrap(), d);
         assert!(t.get("ab").is_err());
         assert!(t.get("cd").is_err());
@@ -755,7 +655,6 @@ mod tests {
 
     #[test]
     fn remove_one_scope_keeps_the_other() {
-        // Structural deletion drops only the dying scope's context.
         let (outer, inner) = (dummy(100), dummy(101));
         let mut t = RegexTrie::new();
         let (id_outer, id_inner) = (dummy(1), dummy(2));
@@ -770,9 +669,6 @@ mod tests {
 
     #[test]
     fn alternation_paths_share_one_record_dyad() {
-        // One insert puts the same record dyad on each alternation path, so a
-        // write through it is seen from every branch and nothing needs to be
-        // kept in step (DESIGN ›The dyad's read surface‹: a record is a value).
         let root = dummy(100);
         let mut t = RegexTrie::new();
         let (d, ender) = (dummy(7), dummy(8));
@@ -786,9 +682,7 @@ mod tests {
 
     #[test]
     fn remove_takes_only_the_live_context() {
-        // A name ended by `own`/`drop` and then redeclared in the same scope has
-        // two records there: the dead one (its range kept for reflection) and
-        // the live one. Structural deletion by scope removes the live one only.
+        // A name ended and redeclared in one scope has a dead and a live record there.
         let root = dummy(100);
         let mut t = RegexTrie::new();
         let (old, new, ender) = (dummy(1), dummy(2), dummy(9));
@@ -803,7 +697,6 @@ mod tests {
         assert_eq!(m.records.len(), 1);
         assert_eq!(f(m.records[0]).dyad, old);
         assert!(f(m.records[0]).is_dead());
-        // With no live context left in the scope, a second remove is an error.
         assert_eq!(t.remove("x", root), Err(RegexTrieError::NodeNotFound));
     }
 
@@ -816,7 +709,6 @@ mod tests {
         t.insert("foobar", rec(foobar, root));
         assert_eq!(t.remove("foo", root).unwrap(), foo);
         assert!(t.get("foo").is_err());
-        // The longer key sharing the prefix survives.
         assert_eq!(f(t.get("foobar").unwrap().records[0]).dyad, foobar);
     }
 
@@ -826,9 +718,7 @@ mod tests {
         let other = dummy(101);
         let mut t = RegexTrie::new();
         t.insert("foo", rec(dummy(1), root));
-        // Wrong spelling.
         assert_eq!(t.remove("bar", root), Err(RegexTrieError::NodeNotFound));
-        // Right spelling, wrong scope.
         assert_eq!(t.remove("foo", other), Err(RegexTrieError::NodeNotFound));
     }
 
@@ -851,19 +741,16 @@ mod tests {
 
     #[test]
     fn longest_match_regex_beats_shorter_literal() {
-        // A keyword that is a prefix of an identifier must not steal the match:
-        // "iffy" is the identifier, not the keyword "if" (plus a stray "fy").
+        // "iffy" is the identifier, not the keyword "if" plus a stray "fy".
         let root = dummy(100);
         let mut t = RegexTrie::new();
         let (kw, ident) = (dummy(1), dummy(2));
         t.insert("if", rec(kw, root));
         t.insert("[a-z]+", rec(ident, root));
 
-        // Exact keyword: the literal wins the tie at equal length.
         let m = t.get("if").unwrap();
         assert_eq!(m.matched, 2);
         assert_eq!(f(m.records[0]).dyad, kw);
-        // Longer identifier: the length-4 regex match beats the length-2 literal EOW.
         let m = t.get("iffy").unwrap();
         assert_eq!(m.matched, 4);
         assert_eq!(f(m.records[0]).dyad, ident);
@@ -871,13 +758,11 @@ mod tests {
 
     #[test]
     fn longest_match_across_sibling_regexes() {
-        // Two regex branches at one node: the longer match wins regardless of
-        // insertion order (a combined alternation returns the leftmost-first branch).
         let root = dummy(100);
         let mut t = RegexTrie::new();
         let (short, long) = (dummy(1), dummy(2));
-        t.insert("[a-z]", rec(short, root)); // matches 1
-        t.insert("[a-z]+", rec(long, root)); // matches 3 on "abc"
+        t.insert("[a-z]", rec(short, root));
+        t.insert("[a-z]+", rec(long, root));
         let m = t.get("abc").unwrap();
         assert_eq!(m.matched, 3);
         assert_eq!(f(m.records[0]).dyad, long);
@@ -885,7 +770,7 @@ mod tests {
 
     #[test]
     fn bad_pattern_surfaces_error() {
-        // Lookaround is unsupported by the `regex` crate; report it cleanly.
+        // Lookaround is unsupported by the `regex` crate.
         let root = dummy(100);
         let mut t = RegexTrie::new();
         t.insert("(?=foo)", rec(dummy(1), root));

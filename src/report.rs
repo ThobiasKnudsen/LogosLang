@@ -3,37 +3,26 @@
 
 //! Human-readable diagnostics: byte offsets become `file:line:col`, errors
 //! become sentences, and the offending source line is shown with a caret.
-//!
-//! The parser tracks byte offsets (the tape's cell spans, the cursor) but its
-//! errors carry none; the honest v1 position is *where the parser stopped*
-//! ([`crate::parse::Parser::offset`]) — the stuck point, which for the common
-//! errors (an unknown name, a bad literal) sits exactly at the offending
-//! token. Run/compile errors have no path to a source position yet (nodes
-//! carry no spans; the derived source-map is future work), so they render as
-//! message-only lines. All diagnostic text lives here, in one place: the error
-//! enums stay plain data, and nothing ever prints a raw node address.
+//! All diagnostic text lives here; nothing prints a raw node address.
 
 use crate::compile::CompileError;
 use crate::parse::{ParseError, ResolveError};
 use crate::regex_trie::RegexTrieError;
 use crate::run::RunError;
 
-/// The 1-based `(line, column)` of byte `offset` in `source`. Columns count
-/// characters, not bytes (a `«…»` earlier in the line must not shift the
-/// caret). Any offset is safe: past-the-end clamps to the end, and an offset
-/// inside a multibyte character counts the character it falls in.
+/// The 1-based `(line, column)` of byte `offset`. Columns count characters, not
+/// bytes; any offset is safe (past the end clamps, inside a multibyte character
+/// counts that character).
 pub fn line_col(source: &str, offset: usize) -> (usize, usize) {
     let offset = offset.min(source.len());
     let before = &source.as_bytes()[..offset];
     let line = 1 + before.iter().filter(|&&b| b == b'\n').count();
     let line_start = before.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
-    // Count characters, tolerating an offset that splits a multibyte sequence.
     let col = 1 + String::from_utf8_lossy(&before[line_start..]).chars().count();
     (line, col)
 }
 
-/// Render a positioned diagnostic: `file:line:col: error: message` (the
-/// editor-clickable prefix), the offending source line, and a caret under the
+/// `file:line:col: error: message`, the source line, and a caret under the
 /// column. A tab in the line stays a tab in the pad, so the caret aligns
 /// however tabs render.
 pub fn render(file: &str, source: &str, offset: usize, message: &str) -> String {
@@ -41,11 +30,8 @@ pub fn render(file: &str, source: &str, offset: usize, message: &str) -> String 
     let text = source.lines().nth(line - 1).unwrap_or("");
     let pad: String =
         text.chars().take(col - 1).map(|c| if c == '\t' { '\t' } else { ' ' }).collect();
-    // A message of several lines — an import's failure carrying the inner
-    // file's own rendering — heads this block with its first line and
-    // follows the caret with the rest, so each block reads top down: the
-    // outer position, then the inner one under it, never an outer caret
-    // dangling below an inner block (#106).
+    // A multi-line message heads the block with its first line and follows the
+    // caret with the rest, so a nested rendering reads top down.
     let (first, rest) = match message.split_once('\n') {
         Some((first, rest)) => (first, Some(rest)),
         None => (message, None),
@@ -58,7 +44,6 @@ pub fn render(file: &str, source: &str, offset: usize, message: &str) -> String 
     out
 }
 
-/// The human sentence for a parse error.
 pub fn parse_message(e: &ParseError) -> String {
     match e {
         ParseError::Resolve(r) => resolve_message(r),
@@ -265,7 +250,6 @@ pub fn parse_message(e: &ParseError) -> String {
     }
 }
 
-/// The human sentence for a name-resolution error.
 pub(crate) fn resolve_message(e: &ResolveError) -> String {
     match e {
         ResolveError::Unknown(n) if n.is_empty() => "unknown name".into(),
@@ -288,8 +272,7 @@ pub(crate) fn resolve_message(e: &ResolveError) -> String {
     }
 }
 
-/// The human sentence for a run error (message-only: nodes carry no source
-/// positions yet).
+/// Message-only: nodes carry no source positions yet.
 pub fn run_message(e: &RunError) -> String {
     match e {
         RunError::NotRunnable(_) => "this is not runnable".into(),
@@ -344,7 +327,7 @@ pub fn run_message(e: &RunError) -> String {
     }
 }
 
-/// The human sentence for a compile error (message-only, as [`run_message`]).
+/// Message-only, as [`run_message`].
 pub fn compile_message(e: &CompileError) -> String {
     match e {
         CompileError::NotLowerable(_) => "this cannot be compiled yet".into(),
@@ -373,13 +356,12 @@ mod tests {
         assert_eq!(line_col(src, 4), (1, 5));
         assert_eq!(line_col(src, 6), (2, 1));
         assert_eq!(line_col(src, 13), (2, 8));
-        assert_eq!(line_col(src, src.len()), (3, 6)); // past the last char
-        assert_eq!(line_col(src, 9999), (3, 6)); // clamps
+        assert_eq!(line_col(src, src.len()), (3, 6));
+        assert_eq!(line_col(src, 9999), (3, 6));
     }
 
     #[test]
     fn columns_count_characters_not_bytes() {
-        // `«` is 2 bytes; the caret must land on the char after it, not two on.
         let src = "x := «a»\nzz";
         let off = src.find("»").unwrap();
         assert_eq!(line_col(src, off), (1, 8));

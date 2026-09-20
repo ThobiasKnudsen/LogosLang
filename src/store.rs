@@ -1,44 +1,34 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The node store: an append-only arena that hands out stable addresses for
-//! dyads. A node's address is its id (DESIGN ›The store is keyed by address‹),
-//! so an allocated dyad must never move. The arena is a list of fixed-capacity
-//! chunks: allocation bumps within the newest chunk and starts a fresh chunk
-//! when it fills, so every address stays valid for the store's lifetime. v1 does
-//! not free individual nodes (structural deletion tombstones in the graph, not
-//! the store).
+//! The node store: an append-only arena of dyads whose addresses never move,
+//! since a node's address is its id. Nothing is freed individually.
+//! DESIGN ›The store is keyed by address‹.
 
 use crate::dyad::{Dyad, DyadPtr};
 use crate::record::Record;
 
-/// Dyads per chunk. Each chunk is a `Vec` allocated to exactly this capacity and
-/// never grown past it, so its heap buffer never reallocates and the addresses
-/// into it stay stable even as new chunks are appended.
+/// Each chunk is allocated to exactly this capacity and never grown, so its
+/// buffer never reallocates and the addresses into it stay stable.
 const CHUNK: usize = 4096;
 
-/// An append-only arena of dyads with stable addresses, plus side arenas for the
-/// variable-width blobs a node's `value` points at: operand records (a run of
-/// `dyad@` fields) and literal bytes. Each blob is boxed, so its heap address is
-/// stable, and the keeper `Vec` holds ownership for the store's lifetime.
+/// Dyads in fixed-capacity chunks, plus boxed side blobs (operand runs, literal
+/// bytes, records); every address handed out stays valid for the store's life.
 #[derive(Default)]
 pub struct Store {
     chunks: Vec<Vec<Dyad>>,
     operands: Vec<Box<[DyadPtr]>>,
     blobs: Vec<Box<[u8]>>,
-    /// Boxed: a record's address is handed out and must survive the
-    /// vector's growth.
+    /// Boxed: a record's address is handed out and must survive the vector's growth.
     #[allow(clippy::vec_box)]
     records: Vec<Box<Record>>,
 }
 
 impl Store {
-    /// A fresh, empty store.
     pub fn new() -> Self {
         Store { chunks: Vec::new(), operands: Vec::new(), blobs: Vec::new(), records: Vec::new() }
     }
 
-    /// Store `dyad` and return its stable address (its id).
     pub fn alloc(&mut self, dyad: Dyad) -> DyadPtr {
         let need_chunk = match self.chunks.last() {
             Some(c) => c.len() == CHUNK,
@@ -53,15 +43,8 @@ impl Store {
         chunk.last_mut().unwrap() as *mut Dyad
     }
 
-    /// Whether `ptr` is an address this store handed out: inside one of its
-    /// chunks, and on a `Dyad` boundary there.
-    ///
-    /// A chunk is allocated at its full capacity and never reallocates, so a
-    /// chunk's live range is a plain interval and the scan is exact. Used
-    /// where a node address arrives as raw bits from a run
-    /// ([`crate::parse::Parser::eval_type_call`], #76): bits that were never
-    /// a node must become a checked error, not a dereference. Costs a walk of
-    /// the chunk list, which is a comptime price at a comptime site.
+    /// Whether `ptr` is an address this store handed out, on a `Dyad` boundary:
+    /// bits that arrive from a run must become a checked error, never a dereference.
     pub fn contains(&self, ptr: DyadPtr) -> bool {
         if ptr.is_null() {
             return false;
@@ -77,18 +60,13 @@ impl Store {
         })
     }
 
-    /// Store a dyad with the given `logos` and `value` fields and return its address.
     pub fn alloc_raw(&mut self, ty: DyadPtr, value: *mut u8) -> DyadPtr {
         self.alloc(Dyad { ty, value })
     }
 
-    /// Store an operand record (a run of `dyad@` fields, e.g. a binary op's
-    /// `{lhs, rhs}`) and return a `void@` to it. Read back by casting to
-    /// `*const DyadPtr` and indexing. The returned pointer is 8-aligned, and is a
-    /// *write* pointer: callers patch it in place (e.g. `compile_fn` installs the
-    /// `bcode` into a fn value's trailing slot), so it must be derived from a
-    /// mutable borrow (`as_mut_ptr`) rather than `as_ptr`, which would carry
-    /// read-only provenance and make the later write UB under Stacked/Tree Borrows.
+    /// An operand run (`dyad@` fields) as a `void@`. A write pointer: callers
+    /// patch it in place, so it is minted from `as_mut_ptr`, never `as_ptr`,
+    /// whose read-only provenance would make the later write UB.
     pub fn alloc_operands(&mut self, fields: &[DyadPtr]) -> *mut u8 {
         let mut boxed: Box<[DyadPtr]> = fields.into();
         let ptr = boxed.as_mut_ptr() as *mut u8;
@@ -96,9 +74,6 @@ impl Store {
         ptr
     }
 
-    /// Store a name's record (`#[repr(C)]`, seven eight-byte words) and
-    /// return a write pointer to it. Boxed, so its address is stable, and
-    /// kept for the store's lifetime like every other blob.
     pub fn alloc_record(&mut self, rec: Record) -> *mut Record {
         let mut boxed = Box::new(rec);
         let ptr: *mut Record = &mut *boxed;
@@ -106,11 +81,7 @@ impl Store {
         ptr
     }
 
-    /// Store literal bytes (e.g. a numeric literal's digits, or a variable's
-    /// storage) and return a `void@` to them. Length is the caller's to track.
-    /// The pointer is a *write* pointer (an `=` assignment writes a variable's
-    /// storage through it), so it is minted from a mutable borrow — see
-    /// [`Self::alloc_operands`] for why `as_mut_ptr` and not `as_ptr`.
+    /// A write pointer, minted as `alloc_operands`'s is: an `=` writes through it.
     pub fn alloc_bytes(&mut self, bytes: &[u8]) -> *mut u8 {
         let mut boxed: Box<[u8]> = bytes.into();
         let ptr = boxed.as_mut_ptr();
@@ -118,19 +89,15 @@ impl Store {
         ptr
     }
 
-    /// Iterate every stored dyad's address, in allocation order. Read-oriented:
-    /// the pointers derive from a shared borrow, so callers read through them
-    /// (the reflect walker, a renderer) rather than write.
+    /// Read-only: the pointers derive from a shared borrow.
     pub fn iter(&self) -> impl Iterator<Item = DyadPtr> + '_ {
         self.chunks.iter().flat_map(|c| c.iter().map(|d| d as *const Dyad as DyadPtr))
     }
 
-    /// Total number of dyads stored.
     pub fn len(&self) -> usize {
         self.chunks.iter().map(Vec::len).sum()
     }
 
-    /// True if no dyads have been stored.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -141,8 +108,7 @@ impl Store {
 mod tests {
     use super::*;
 
-    /// A sentinel `value` bit-pattern (never dereferenced), used to prove a
-    /// stored dyad's bytes survive later allocations.
+    /// A sentinel `value` bit-pattern, never dereferenced.
     fn tag(n: usize) -> *mut u8 {
         std::ptr::without_provenance_mut(n)
     }
@@ -160,11 +126,9 @@ mod tests {
     fn addresses_are_stable_across_chunk_growth() {
         let mut s = Store::new();
         let first = s.alloc_raw(std::ptr::null_mut(), tag(1));
-        // Allocate well past a chunk boundary to force new chunks.
         for i in 0..(CHUNK * 2) {
             s.alloc_raw(std::ptr::null_mut(), tag(i));
         }
-        // The first address is still valid and unchanged.
         unsafe {
             assert_eq!((*first).value, tag(1));
         }
@@ -176,7 +140,6 @@ mod tests {
         let mut s = Store::new();
         let (lhs, rhs) = (tag(1) as DyadPtr, tag(2) as DyadPtr);
         let ops = s.alloc_operands(&[lhs, rhs]);
-        // Churn other allocations to force the keeper Vec to grow.
         for _ in 0..1000 {
             s.alloc_operands(&[tag(9) as DyadPtr]);
         }
@@ -198,7 +161,7 @@ mod tests {
 
     #[test]
     fn self_typed_node_round_trips() {
-        // A node can be its own logos: the `logos : logos` self-loop core.rs builds.
+        // The `logos : logos` self-loop the core builds.
         let mut s = Store::new();
         let n = s.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut());
         unsafe {

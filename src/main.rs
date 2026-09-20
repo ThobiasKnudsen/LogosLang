@@ -1,20 +1,10 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `logos`: the command. Everything after `logos` is one line of Logos
-//! source, run by the one pass (#58, DESIGN ›The command line is Logos
-//! source‹): `logos import ./file.logos` imports a file — it runs top to
-//! bottom, and the importer reaches only its `pub` names — and
-//! `logos 'import ./file.logos, main(«a»)'` calls one. The line's tail value
-//! prints (an import's value is its file's tail). Bare `logos` starts the
-//! interactive REPL: one persistent scope, one expression per line, each
-//! value echoed. The superseded `logos file.logos` spelling is gone.
-//!
-//! Deliberately this small (settled, July 2026): no subcommands and no compile
-//! flags, ever — the build system, linking, and what-to-compile decisions live
-//! *inside* Logos source, not in this binary. The CLI's whole job is handing
-//! source to the interpreter. Printing the tail value stands in for output
-//! until FFI (#45) gives programs real effects.
+//! `logos`: the command. Everything after `logos` is one line of Logos source
+//! run by the one pass; bare `logos` starts the REPL. No subcommands and no
+//! compile flags: what to compile is decided inside Logos source.
+//! DESIGN ›The command line is Logos source‹.
 
 use std::io::{BufRead, Write};
 use std::process::ExitCode;
@@ -26,8 +16,7 @@ use seed::report;
 use seed::run::Runtime;
 use seed::store::Store;
 
-/// The engine a run needs: the store and name index the graph lives in, plus
-/// the core identities. One per process; the REPL reuses it across lines.
+/// One per process; the REPL reuses it across lines.
 struct Engine {
     store: Store,
     trie: RegexTrie,
@@ -43,29 +32,22 @@ impl Engine {
     }
 }
 
-/// Whether `node` is a statement for the REPL's echo policy — a declaration,
-/// an assignment, a bare fn/logos, a compile, or an import: silent.
+/// The echo rule: a declaration, an assignment, a bare fn or type definition,
+/// a compile, or an import is a statement and stays silent; everything else echoes.
 ///
 /// # Safety
 /// `node` must be a valid dyad.
 unsafe fn is_statement_node(core: &Core, node: seed::dyad::DyadPtr) -> bool {
     let (named, logos) = tail_type(core, node);
-    // A bare type *definition* is a statement, as a bare `fn` is. A place
-    // holding a type is a value and echoes what it holds, like any variable —
-    // the tag is what tells the two apart (DESIGN ›A type is a comptime
-    // value‹, 12 September 2026).
+    // A bare type definition is a statement; a place holding a type is a value and echoes.
     if logos == core.type_ {
         return seed::identities::read::read_kind(core, named)
             == seed::identities::read::Read::Identity;
     }
-    // The rest is a result-type question — what an expression yields — which
-    // is `numtype_of`'s, not the reading rule's (#82's second half).
     is_silent_type(core, logos) || logos == core.fn_type || logos == core.drop_
 }
 
-/// What a line's tail is: an item that ran in the pass echoes as its
-/// expression would, and a bare name is its record, so what it names decides.
-/// The dyad behind the name and its type.
+/// The dyad a line's tail names (through its ran item and its record) and its type.
 ///
 /// # Safety
 /// `node` must be a valid dyad.
@@ -78,8 +60,7 @@ unsafe fn tail_type(
     (named, (*named).ty)
 }
 
-/// The statement types with no value worth printing in any mode: a
-/// declaration, the two stores, a compile, an import.
+/// The statement types with no value worth printing in any mode.
 fn is_silent_type(core: &Core, logos: seed::dyad::DyadPtr) -> bool {
     logos == core.declare_
         || logos == core.assign
@@ -88,10 +69,8 @@ fn is_silent_type(core: &Core, logos: seed::dyad::DyadPtr) -> bool {
         || logos == core.import_
 }
 
-/// Whether an imported file's tail is a true statement, with no value worth
-/// printing as the line's tail. Narrower than the REPL's echo policy: a bare
-/// logos tail keeps printing its spelling, exactly as the retired file mode
-/// printed it.
+/// Whether an imported file's tail prints nothing. Narrower than the REPL's
+/// rule: a bare type tail still prints its spelling.
 ///
 /// # Safety
 /// `node` must be a valid dyad.
@@ -100,12 +79,7 @@ unsafe fn is_silent_tail(core: &Core, node: seed::dyad::DyadPtr) -> bool {
 }
 
 fn main() -> ExitCode {
-    // The work runs on a thread of the seed's own stack size, not the main
-    // thread's default (#80). The parser recurses per open bracket and the
-    // interpreter per call, so how deep a Logos program may go would otherwise
-    // be decided by whatever stack the OS handed this process, and the checked
-    // depth limits would mean a different thing in a debug build than in a
-    // release one. See `seed::WORK_STACK_BYTES`.
+    // A thread of the seed's stack size, so the depth guards decide, not the build profile.
     std::thread::Builder::new()
         .stack_size(seed::WORK_STACK_BYTES)
         .spawn(work)
@@ -114,7 +88,6 @@ fn main() -> ExitCode {
         .unwrap_or(ExitCode::FAILURE)
 }
 
-/// The command, on the work thread: the whole of [`main`]'s decision.
 fn work() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
@@ -123,16 +96,13 @@ fn work() -> ExitCode {
             print!("{}", help());
             ExitCode::SUCCESS
         }
-        // No arm rejects a leading `-`: DESIGN ›The command line is Logos
-        // source‹ rules "Everything after `logos` is one line of Logos code"
-        // and "There are no build or compile flags", so `-` is the negation
-        // identity here as everywhere else and `logos '-5 + 3'` runs (#90).
-        // `--help` and `-h` above are matched exactly, never as a prefix.
+        // No arm rejects a leading `-`: `logos '-5 + 3'` is Logos source; only
+        // an exact `--help` or `-h` is a flag.
         line => run_line(&line.join(" ")),
     }
 }
 
-/// The `--help` text, versioned so the release archives self-identify.
+/// Versioned, so the release archives self-identify.
 fn help() -> String {
     format!(
         "logos {} — the Logos language\n\n\
@@ -151,42 +121,25 @@ fn help() -> String {
     )
 }
 
-/// Run the command line as one line of Logos source: one pass — each item
-/// is pending as it parses and runs when the pass needs a value or at the
-/// end, in order (DESIGN ›Build and run are one self-directing pass‹, 13
-/// September 2026), so everything the parser itself evaluates (an `import`,
-/// a `-> logos` call reading an earlier binding) sees committed state, and
-/// the command line and REPL agree. The line's tail value prints
-/// at the end — for an import node, the imported file's own tail. Parse
-/// errors render with line:col and a caret; run errors are message-only
-/// (nodes carry no source positions yet).
+/// Run the command line as one line of Logos source; its tail value prints at
+/// the end (an import's: the imported file's tail). Parse errors render with a
+/// caret; run errors are message-only, nodes carrying no positions.
 fn run_line(source: &str) -> ExitCode {
     let path = "<command line>";
     let mut engine = Engine::new();
     let mut scopes = ScopeStack::new();
     scopes.push(engine.core.root_scope);
-    // The command line is its own section (ruled August 2026): its
-    // declarations land in a scope above the root, so an imported file's
-    // fresh view — the root plus the file's own section — cannot see them.
+    // The command line is its own section: its declarations sit above the
+    // root, out of an imported file's view.
     let user_section = engine.store.alloc_raw(engine.core.scope, std::ptr::null_mut());
     scopes.push(user_section);
 
     let types = &engine.core;
-    // The compiler rides along so `f.compile()` works in the one pass; the
-    // parser's runtime carries it, and the engine (core + store) outlives
-    // the parser.
+    // The compiler rides along so `f.compile()` works in the one pass.
     let mut p = Parser::new(source, &mut engine.store, &mut engine.trie, types, scopes)
         .with_lower(&engine.core.lower);
 
-    // The tail: the last non-comment expression and its value, printed at the
-    // end (prose is invisible to value flow, so a trailing comment never
-    // becomes the line's value). An import node's value displays through the
-    // imported file's own tail; a declaration-only import counts as ran work
-    // with nothing to print.
-    // The items are pending as they parse and run when the pass needs a
-    // value or at the end, in order (DESIGN ›Build and run are one
-    // self-directing pass‹, 13 September 2026): a run error is a parse error
-    // here, reported the same way, wherever it surfaces.
+    // The tail is the last non-comment item: prose never becomes the line's value.
     let mut last = None;
     let mut ran_something = false;
     while let Some(item) = p.parse_next() {
@@ -208,21 +161,14 @@ fn run_line(source: &str) -> ExitCode {
         unsafe {
             if (*node).ty == engine.core.import_ {
                 ran_something = true;
-                // A value tail is the import's value; a statement tail (a
-                // library ending in a declaration) shows nothing.
                 let tail = seed::identities::import::tail_of(node);
                 if !tail.is_null() && !is_silent_tail(&engine.core, tail) {
                     last = Some(tail);
                 }
             } else if (*node).ty != types.comment_ {
                 ran_something = true;
-                // A statement shows nothing, the same test an import's tail
-                // takes and the same policy the REPL applies. `=` yields
-                // nothing (DESIGN ›The scope's constructor is the driver‹, 8
-                // September 2026), so `logos 'x := i32 0, x = 5'` printed 5
-                // where the REPL and a file both stayed silent; this line is
-                // what run_line's own promise that "the command line and REPL
-                // agree" was missing.
+                // The same silence test an import's tail takes, so the command
+                // line and the REPL agree.
                 if !is_silent_tail(&engine.core, node) {
                     last = Some(node);
                 }
@@ -238,10 +184,8 @@ fn run_line(source: &str) -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
-    // The root scope's own run: what the top level has not run yet, in order.
-    // The tail's value is read afterwards — an item that ran answers from its
-    // cell, a bare name is read — and before the teardowns, which may free
-    // what it points at.
+    // The tail is read after the root's own run and before the teardowns,
+    // which may free what it points at.
     if let Err(e) = p.finish() {
         eprintln!("{path}: {}", report::parse_message(&e));
         return ExitCode::FAILURE;
@@ -258,10 +202,7 @@ fn run_line(source: &str) -> ExitCode {
         None => None,
     };
 
-    // The top level's own scope exit (issue #49): the teardowns top-level
-    // owning bindings inserted run LIFO at program end. A nested scope ran its
-    // own at its exit; these are the file's, freeing what top-level `alloc`s
-    // owned.
+    // The top level's scope exit: its owning bindings' teardowns run LIFO here.
     if let Err(e) = p.exit() {
         eprintln!("{path}: {}", report::parse_message(&e));
         return ExitCode::FAILURE;
@@ -273,8 +214,7 @@ fn run_line(source: &str) -> ExitCode {
             println!("{}", unsafe { seed::identities::display_value(types, node, bits) });
             ExitCode::SUCCESS
         }
-        // A line that did real work with no value to show (a declaration-only
-        // import) exits clean and silent; a genuinely empty line is an error.
+        // Real work with nothing to show exits clean; a genuinely empty line is an error.
         None if ran_something => ExitCode::SUCCESS,
         None => {
             eprintln!(
@@ -286,29 +226,24 @@ fn run_line(source: &str) -> ExitCode {
     }
 }
 
-/// The REPL: one persistent store/name-index/scope, one expression per line,
-/// each value echoed. Declarations on earlier lines stay resolvable; an error
-/// reports and the loop continues.
+/// One persistent store, index and scope; one expression per line, each value
+/// echoed; an error reports and the loop continues.
 fn repl() -> ExitCode {
     println!("logos {} — one expression per line, ctrl-d to exit", env!("CARGO_PKG_VERSION"));
     let mut engine = Engine::new();
     let mut scopes = ScopeStack::new();
     scopes.push(engine.core.root_scope);
-    // The session is its own section, like the command line (ruled August
-    // 2026): its declarations land above the root, invisible to imported files.
+    // The session is its own section, like the command line.
     let user_section = engine.store.alloc_raw(engine.core.scope, std::ptr::null_mut());
     scopes.push(user_section);
 
     let stdin = std::io::stdin();
     let mut lines = stdin.lock().lines();
-    // The session's own teardowns (issue #49): a REPL binding lives for the whole
-    // session, so its `defer free` belongs at session exit — the REPL's top-level
-    // scope exit, the same exit the file driver runs at program end (file mode
-    // and the REPL are one pass and must agree). Each line's parser is fresh, so
-    // its pending teardowns are collected here as the line is accepted.
+    // A REPL binding lives for the session, so its teardowns run at session
+    // exit; each line's parser is fresh, so they collect here.
     let mut session_defers: Vec<seed::dyad::DyadPtr> = Vec::new();
-    // A session is one run, so once-per-run imports must hold across lines:
-    // the one registry threads through each line's fresh parser.
+    // Once-per-run imports must hold across lines: one registry threads through
+    // each line's fresh parser.
     let mut imports = Imports::default();
     loop {
         print!("» ");
@@ -317,11 +252,9 @@ fn repl() -> ExitCode {
             Some(Ok(line)) => line,
             _ => {
                 println!();
-                // Session exit: run the accumulated teardowns, newest first.
                 let mut rt = Runtime::new(&engine.core, &mut engine.store);
                 for defer_node in session_defers.into_iter().rev() {
-                    // SAFETY: each is a `defer` node in the engine's store, which
-                    // is still alive here.
+                    // SAFETY: each is a `defer` node in the engine's store, still alive here.
                     if let Err(e) = unsafe { seed::identities::run_deferred(&mut rt, defer_node) } {
                         eprintln!("<repl>: run error: {}", report::run_message(&e));
                         return ExitCode::FAILURE;
@@ -335,11 +268,7 @@ fn repl() -> ExitCode {
         }
 
         let types = &engine.core;
-        // A REPL line is one item, and reading its value is its run: the
-        // parser's runtime carries the compiler, so `f.compile()` works
-        // across lines (the installed code lives in the engine's store and is
-        // process-lived). The read happens while the parser is alive and
-        // only for a line that parsed whole.
+        // The value is read while the parser is alive, and only for a line that parsed whole.
         let (parsed, end, value, line_defers, scopes_back, imports_back) = {
             let mut p = Parser::new(&line, &mut engine.store, &mut engine.trie, types, scopes)
                 .with_imports(std::mem::take(&mut imports))
@@ -353,8 +282,6 @@ fn repl() -> ExitCode {
                 }
                 _ => None,
             };
-            // Teardowns this line's bindings inserted; kept only if the line is
-            // accepted, so a failed line leaves no trace here either.
             let line_defers = p.take_pending_defers();
             let imports_back = p.take_imports();
             (parsed, end, value, line_defers, p.into_scopes(), imports_back)
@@ -362,10 +289,8 @@ fn repl() -> ExitCode {
         scopes = scopes_back;
         imports = imports_back;
 
-        // A failed line must leave no trace: roll its declarations back out of
-        // the name index and close any scopes an error left open, or a typo
-        // would burn its name for the rest of the session ("shadowed" forever
-        // under the no-shadowing rule).
+        // A failed line must leave no trace, or a typo would burn its name for
+        // the session under the no-shadowing rule.
         let fail = |scopes: &mut ScopeStack, trie: &mut RegexTrie| {
             scopes.rollback(trie);
             scopes.truncate(2); // the root and the session's own section
@@ -388,12 +313,8 @@ fn repl() -> ExitCode {
             continue;
         }
 
-        // Echo policy (settled): statements are silent — only value
-        // expressions echo, like Python. The graph says which is which: a
-        // declaration is a declare node, an assignment an assign/storeptr
-        // node, a bare fn, record, or logos a declaration statement. An import
-        // echoes through the imported file's tail (its value), so a
-        // declaration-tailed or declaration-only import stays silent.
+        // Echo rule: statements are silent, value expressions echo. An import
+        // echoes through its file's tail, so a declaration-tailed import stays silent.
         // SAFETY: `node` is the valid dyad just parsed.
         let display_node = unsafe {
             if (*node).ty == engine.core.import_ {
@@ -410,16 +331,13 @@ fn repl() -> ExitCode {
         // SAFETY: `display_node` is a valid dyad (the node or its import tail).
         let is_statement = unsafe { is_statement_node(&engine.core, display_node) };
 
-        // The line is accepted, so its bindings' teardowns join the session's,
-        // to run at exit. A teardown over a place whose binding never ran sees a
-        // null place and no-ops, so keeping them is the fail-closed side.
+        // Kept even for a binding that never ran: its teardown sees a null
+        // place and no-ops, the fail-closed side.
         session_defers.extend(line_defers);
 
-        // Statements still ran — for their effect — they just do not echo.
         match value {
             Some(Ok(bits)) if !is_statement => {
-                // SAFETY: `display_node` is a valid dyad whose value `bits` is
-                // (an import's run yields its tail's bits).
+                // SAFETY: `display_node` is a valid dyad whose value `bits` is.
                 println!("{}", unsafe {
                     seed::identities::display_value(types, display_node, bits)
                 })
@@ -430,8 +348,7 @@ fn repl() -> ExitCode {
                 fail(&mut scopes, &mut engine.trie);
                 continue;
             }
-            // Unreachable: the value is read for every line that parsed whole,
-            // and both other outcomes continued above.
+            // Unreachable: every line that parsed whole had its value read above.
             None => {}
         }
         scopes.commit();

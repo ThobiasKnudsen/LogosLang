@@ -1,26 +1,9 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `compile`: lower a dyad tree to native code with Cranelift.
-//!
-//! `compile` is `run`'s sibling: where `run` walks the graph and computes,
-//! `compile` walks it and *emits* machine code, one IR node per graph node, then
-//! finalizes to a callable function (the `bcode`). The result is meant to be
-//! observably identical to `run` (the interpreter is the compiler's oracle).
-//!
-//! Each core primitive carries a lowering rule (its [`LowerFn`]) exactly as it
-//! carries a run native, kept in [`crate::identities::Core`]'s `lower` table. The
-//! seed compiles whole `fn` bodies: parameters map to block params, `if` and the
-//! short-circuiting `and`/`or` lower to branch-and-merge blocks, and a call
-//! lowers to a direct self-call (compiled recursion), a `call_indirect` to an
-//! already-compiled callee, or a jump into the interpreter for a callee not
-//! compiled yet (#65), with operand addresses and literals baked as
-//! immediates (DESIGN ›operand access is baked into the machine code‹). The
-//! calling convention is uniform — the arguments travel as the interpreter's
-//! `i64` bit-containers in a block on the caller's stack, `(argv, argc)`, and
-//! the result as one container, reinterpreted at the boundary
-//! ([`crate::run::MachineFn`]) — so a function of any parameter count
-//! compiles and the interpreter's jump is one shape.
+//! `compile`: lower a dyad tree to native code with Cranelift, `run`'s
+//! sibling: one IR node per graph node, finalized to a callable `bcode`.
+//! The interpreter is the oracle; compiled and interpreted results must agree.
 
 use std::collections::HashMap;
 
@@ -41,28 +24,22 @@ use crate::identities::{numtype_of, operands, Operand};
 use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
 use crate::Core;
 
-/// A lowering rule: emit the IR for a node and return the SSA value it computes,
-/// recursing on operands via [`Lowerer::lower`].
+/// Emit the IR for a node and return the SSA value it computes, recursing on
+/// operands via [`Lowerer::lower`].
 pub type LowerFn = fn(&mut Lowerer, DyadPtr) -> Result<Value, CompileError>;
 
-/// What the register-promotion analysis pass records about a function's frame
-/// places (DESIGN ›Operands travel on the stack‹: compiled code has "locals
-/// assigned to registers or stack slots"). A frame offset promotes to a
-/// register variable only when every observation of it is a plain scalar read
-/// or write of one consistent logos; materializing its *address* (`&x`, an
-/// instance base, a bare parameter's container) pins it to memory, since a
-/// register has no address.
+/// What the analysis pass records about a function's frame places. An offset
+/// promotes to a register variable only when every use is a scalar read or
+/// write of one consistent type; a materialized address pins it to memory.
 #[derive(Default)]
 pub(crate) struct PlaceStats {
-    /// Offsets read/written as scalars: offset → the one Cranelift logos seen.
+    /// Offset → the one Cranelift type seen.
     uses: HashMap<usize, types::Type>,
-    /// Offsets seen at more than one logos — never promoted.
+    /// Offsets seen at more than one type: never promoted.
     conflicted: Vec<usize>,
-    /// Byte ranges whose address escaped into the code: `(offset, len)`.
-    /// Anything overlapping one stays in memory.
+    /// Byte ranges `(offset, len)` whose address escaped; anything overlapping stays in memory.
     dirty: Vec<(usize, usize)>,
-    /// A frame address of unknown extent escaped (a non-scalar place):
-    /// promote nothing.
+    /// A frame address of unknown extent escaped: promote nothing.
     kill: bool,
 }
 
@@ -76,8 +53,7 @@ impl PlaceStats {
         }
     }
 
-    /// The promotable offsets and their logos: used consistently, address
-    /// never taken, no dirty overlap.
+    /// Used consistently, address never taken, no dirty overlap.
     fn promotable(&self) -> Vec<(usize, types::Type)> {
         if self.kill {
             return Vec::new();
@@ -101,107 +77,73 @@ impl PlaceStats {
     }
 }
 
-/// Lowering rules keyed by operation identity (a primitive's compiled form).
+/// Lowering rules keyed by operation identity.
 pub type LowerTable = HashMap<DyadPtr, LowerFn>;
 
-/// Why compilation failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompileError {
-    /// No lowering rule is registered for this node's operation.
+    /// No lowering rule for this node's operation.
     NotLowerable(DyadPtr),
-    /// A node's storage address is null: a declared-but-uninitialised variable or
-    /// assignment target. The interpreter returns `RunError::Uninitialized` for the
-    /// same node; the compiler refuses rather than baking a load/store to address 0.
+    /// A null storage address; refused rather than baking a load from address 0.
     Uninitialized,
-    /// A function's local reached outside any call: the interpreter's
-    /// [`crate::run::RunError::NoActivation`], refused at compile time.
+    /// A frame place compiled outside any call.
     NoActivation,
-    /// A read or write through a pointer whose pointee is neither scalar nor
-    /// pointer.
+    /// A pointer whose pointee is neither scalar nor pointer.
     NotDerefable,
-    /// A construction of a type that has no field layout.
+    /// A construction of a type with no field layout.
     NoLayout(DyadPtr),
     /// A sequence with no expression array, or no expression to yield.
     EmptyScope,
-    /// A builder's invariant the lowering found broken: a seed bug, named.
+    /// A builder's invariant found broken: a seed bug, named.
     Internal(&'static str),
-    /// A numeric literal has no exact `i32` value to compute — a non-integer
-    /// rational (e.g. `3.14`) or an integer outside `i32` range. Mirrors
-    /// `RunError::UncomputableLiteral`.
+    /// A literal with no exact `i32` value.
     UncomputableLiteral,
-    /// A call's argument count did not match the callee's parameter count — the
-    /// compile-time mirror of `RunError::ArityMismatch`, refused instead of baking a
-    /// call with the wrong signature.
+    /// A call's argument count differs from the callee's parameter count.
     ArityMismatch,
     /// Cranelift rejected the setup, function, or finalization.
     Cranelift(String),
 }
 
-/// The lowering context: a Cranelift function under construction plus the rule
-/// table `lower` dispatches through, and the host pointer type for baked
-/// addresses. The `builder` is not exposed; lowering rules use the small typed
-/// helpers below, so `crate::identities` needs only Cranelift's `Value`.
+/// The lowering context: a Cranelift function under construction, the rule
+/// table, and the host pointer type. The builder is not exposed; rules use the
+/// typed helpers below.
 pub struct Lowerer<'a, 'f> {
     builder: &'a mut FunctionBuilder<'f>,
     lower: &'a LowerTable,
     ptr_ty: types::Type,
-    /// Memory flags for loads/stores: plain (no alignment assumption, may trap),
-    /// since variable storage is only byte-aligned. The builder interns these.
+    /// Plain flags: storage is only byte-aligned, so no alignment is assumed.
     flags: MemFlagsData,
-    /// The module the function is compiled into, so a call can reference the function
-    /// being defined (self-recursion) or an already-compiled callee's machine code.
+    /// So a call can reference the function being defined, or a compiled callee's code.
     module: &'a mut dyn Module,
-    /// The id of the function under construction, so a self-call becomes a direct
-    /// `call` the JIT patches to this function's own address.
+    /// So a self-call becomes a direct `call` the JIT patches to this function.
     func_id: FuncId,
-    /// The core type handles: `logos.fn_type` tells a call from data (a node whose
-    /// operation is `fn`-typed with no lowering rule is a call), and the rest let a
-    /// call's arguments resolve their numeric type at the ABI boundary.
     types: &'a Core,
-    /// The function node being compiled (null for a bare expression), so a call to it
-    /// is recognized as self-recursion rather than a call to other machine code.
+    /// The function being compiled (null for a bare expression), so a call to
+    /// it is recognized as recursion.
     self_fn: DyadPtr,
-    /// The Cranelift stack slot backing this call's activation record — the
-    /// compiled analogue of the interpreter's frame, holding the function's
-    /// parameters (spilled from the block params on entry) and frame-relative
-    /// locals at their parse-assigned offsets. `None` for a function with no
-    /// parameters and no locals (an empty frame). A frame place lowers to
-    /// `stack_addr(slot, offset)`; the machine call stack gives each activation
-    /// its own copy, which is what makes compiled recursion correct.
+    /// This call's activation record: the parameters spilled on entry, then the
+    /// frame-relative locals, at their parse-assigned offsets. `None` for an
+    /// empty frame. The machine stack gives each activation its own copy.
     frame_slot: Option<StackSlot>,
-    /// Analysis mode: the stats the first lowering pass records frame-place
-    /// usage into. `None` on the real (second) pass.
+    /// The analysis pass's stats; `None` on the real pass.
     collect: Option<&'a mut PlaceStats>,
-    /// The promoted frame places, offset → register variable and its type —
-    /// DESIGN's "locals assigned to registers or stack slots": a promoted
-    /// place reads and writes a Cranelift variable (a register after regalloc)
-    /// instead of its frame-slot memory. Empty on the analysis pass.
+    /// Offset → register variable and type; a promoted place never touches its
+    /// frame memory. Empty on the analysis pass.
     promoted: &'a HashMap<usize, (Variable, types::Type)>,
 }
 
 impl Lowerer<'_, '_> {
-    /// Lower `node`: dispatch to its operation's lowering rule; a parameter
-    /// reads its frame slot through the same place machinery as a local.
+    /// Dispatch to the node's lowering rule, asking the reading rule the same
+    /// question `run` asks, in the same order.
     ///
     /// # Safety
-    /// `node` must be a valid dyad from the store; lowering dereferences it and
-    /// its operands to read baked constants and structure.
+    /// `node` must be a valid dyad from the store.
     pub unsafe fn lower(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
-        // The reading rule, applied once at lowering: a use of a name is its
-        // record, and compiled code bakes the address of the dyad it names
-        // (DESIGN ›The dyad's read surface‹) — the emitted code is unchanged.
         let node = self.through(node);
         let op = (*node).ty;
         match read_kind(self.types, node) {
-            // A value of a function is a call; a node typed by a type carrying
-            // a `code` is a call of that code (#63).
             Read::Executable(Dispatch::Call(f)) => self.lower_call_to(f, node),
-            // An application lowers by its identity's rule — the one table the
-            // compiler keeps (DESIGN ›The backend interface‹). An identity with
-            // no rule cannot be compiled; neither can an operand record with
-            // nothing in its op slot.
-            // A rational operation or place is interpreted only (#133 slice
-            // 8, part 4): DESIGN defers arbitrary precision.
+            // Rational operations and places are interpreted only.
             Read::Executable(Dispatch::Leaf(leaf)) if self.types.ops.is_rational_leaf(leaf) => {
                 Err(CompileError::NotLowerable(node))
             }
@@ -210,67 +152,39 @@ impl Lowerer<'_, '_> {
                 None => Err(CompileError::NotLowerable(op)),
             },
             Read::Executable(Dispatch::None) => Err(CompileError::NotLowerable(op)),
-            // Prose, or a fn literal standing as a statement: unit, as it runs.
             Read::Unit => Ok(self.const_i32(0)),
-            // A logos standing as a value: its own address, baked as an i64
-            // immediate — logos identities are interned and per-run, and so is
-            // the machine code baking them, which is what lets a `-> type`
-            // function compile.
+            // An identity's address is baked: identities and the code baking
+            // them are both per-run.
             Read::Identity => Ok(self.builder.ins().iconst(types::I64, node as i64)),
-            // A dyad view: the viewed node's address, baked the same way. The
-            // compiler had no arm for a view before the rule (#82, asymmetry 2).
             Read::Address => Ok(self.builder.ins().iconst(types::I64, (*node).value as i64)),
-            // A place holding a node address — a `type ?` or `dyad ?` box, a
-            // bare parameter's slot: its eight bytes, frame or global alike.
             Read::Container(t) if t == self.types.rational => Err(CompileError::NotLowerable(node)),
             Read::Container(_) => self.read_place(node, types::I64),
-            // A rational literal molds to its i32 value now, an immediate.
             Read::Literal => match crate::identities::rational::mold(node) {
                 Some(v) => Ok(self.const_i32(v)),
                 None => Err(CompileError::UncomputableLiteral),
             },
-            // A numeric, bool, or pointer value: a load at the type's width
-            // from its storage. A null value slot is a comptime binding with no
-            // storage — Uninitialized, mirroring the interpreter. A `bool` literal
-            // used to bake an immediate read from its storage; it loads it now,
-            // the same value by the same rule as every other scalar.
+            // A null value slot is a comptime binding with no storage.
             Read::Scalar(nt) => {
                 if (*node).value.is_null() {
                     return Err(CompileError::Uninitialized);
                 }
                 self.read_place(node, nt.cranelift_type())
             }
-            // A pointer place: its eight-byte address, the same load at `U64`.
             Read::Pointer(_) => {
                 if (*node).value.is_null() {
                     return Err(CompileError::Uninitialized);
                 }
                 self.read_place(node, NumType::U64.cranelift_type())
             }
-            // A record instance has no whole-value read; text and unit have no
-            // scalar; a hole holds nothing yet.
             Read::Aggregate | Read::Opaque | Read::Undefined => Err(CompileError::NotLowerable(op)),
         }
     }
 
-    /// An `i32` immediate.
     pub fn const_i32(&mut self, v: i32) -> Value {
         self.builder.ins().iconst(types::I32, i64::from(v))
     }
 
-    /// The address a place node denotes, as an SSA pointer value: a baked
-    /// `iconst` for a global/top-level place (an absolute host address), or
-    /// `stack_addr(frame_slot, offset)` for a frame-relative place of this
-    /// call. Materializing a frame place's address pins it to memory — a
-    /// register has no address — so the analysis pass records it as dirty
-    /// here; scalar reads and writes that need no address go through
-    /// [`Self::read_place`]/[`Self::write_place`] instead, which is what lets
-    /// them promote.
-    ///
-    /// # Safety
-    /// `node` must be a valid place node; a frame-relative one only appears in a
-    /// function whose [`compile_body`] created a `frame_slot`.
-    /// The reading rule over an operand (see [`Lowerer::lower`]).
+    /// The reading rule over an operand: a record operand yields the dyad it names.
     ///
     /// # Safety
     /// `p` must be null or a valid dyad from the store.
@@ -278,6 +192,13 @@ impl Lowerer<'_, '_> {
         crate::record::through(self.types.record_, p)
     }
 
+    /// A place's address as an SSA pointer: a baked `iconst` for a global,
+    /// `stack_addr(frame_slot, offset)` for a frame place. Taking the address
+    /// pins the place to memory, so the analysis pass marks it dirty here.
+    ///
+    /// # Safety
+    /// `node` must be a valid place node; a frame-relative one only appears in a
+    /// function whose [`compile_body`] created a `frame_slot`.
     pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
         let node = self.through(node);
         if let Some(stats) = self.collect.as_deref_mut() {
@@ -286,9 +207,7 @@ impl Lowerer<'_, '_> {
                 if crate::identities::numtype::is_scalar_type(logos) {
                     stats.dirty.push((off, of_type_node(logos).bytes()));
                 } else {
-                    // A non-scalar place (an instance base, a bare parameter's
-                    // container): the escaping extent is unknown here, so
-                    // promote nothing in this function.
+                    // Unknown extent: promote nothing in this function.
                     stats.kill = true;
                 }
             }
@@ -300,25 +219,20 @@ impl Lowerer<'_, '_> {
         self.place_addr_raw(node)
     }
 
-    /// [`Self::place_addr`] without the analysis bookkeeping — the address
-    /// materialization itself. The one place the compiler decodes the frame
-    /// tag (see [`crate::dyad::FRAME_TAG`]); the depth is a parse-time capture
-    /// guard, only the offset into this call's stack slot matters here.
+    /// [`Self::place_addr`] without the analysis bookkeeping; the one place the
+    /// compiler decodes the frame tag.
     unsafe fn place_addr_raw(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
         let node = self.through(node);
         match frame_ref((*node).value) {
             Some((_, off)) => {
-                // A frame place with no frame under it — a bare expression
-                // compiled outside any call — is the checked error the
-                // interpreter gives for the same shape (`place_addr` there is
-                // `None` with no activation), not a panic (#82, asymmetry 8).
+                // A frame place with no frame under it: the checked error the
+                // interpreter gives for the same shape, not a panic.
                 let Some(slot) = self.frame_slot else {
                     return Err(CompileError::NoActivation);
                 };
                 Ok(self.builder.ins().stack_addr(self.ptr_ty, slot, off as i32))
             }
-            // Global storage: the tag comes off before the address is baked
-            // into the machine code (see [`crate::dyad::GLOBAL_TAG`]).
+            // The global tag comes off before the address is baked.
             None => {
                 let v = (*node).value;
                 let addr = crate::dyad::global_ref(v).unwrap_or(v);
@@ -327,9 +241,8 @@ impl Lowerer<'_, '_> {
         }
     }
 
-    /// Read a place as a `ct`-typed scalar: a promoted frame place reads its
-    /// register variable; everything else loads from its address. The analysis
-    /// pass records the use, which is what qualifies the place for promotion.
+    /// A promoted frame place reads its register variable; everything else
+    /// loads from its address. The analysis pass records the use.
     ///
     /// # Safety
     /// `node` must be a valid place node holding a `ct`-typed scalar.
@@ -352,9 +265,7 @@ impl Lowerer<'_, '_> {
         Ok(self.load_at(ct, addr, 0))
     }
 
-    /// Write `v` (of type `ct`) to a place — the dual of [`Self::read_place`]:
-    /// a promoted frame place defines its register variable; everything else
-    /// stores through its address.
+    /// The dual of [`Self::read_place`].
     ///
     /// # Safety
     /// As [`Self::read_place`].
@@ -380,30 +291,19 @@ impl Lowerer<'_, '_> {
         Ok(())
     }
 
-    /// The core handles this compilation resolves against — for an identity's
-    /// lowering to reach the op-leaf table (`types.ops`) the way the builders
-    /// that filled the node's op slot did.
+    /// The core handles, for an identity's lowering to reach the op-leaf table.
     pub(crate) fn types(&self) -> &Core {
         self.types
     }
 
-    /// Load a `ct`-typed value through a *runtime* address (an SSA i64 pointer)
-    /// at a byte offset. The address is a runtime value — from [`Self::place_addr`]
-    /// (a baked `iconst` or a frame `stack_addr`) or a dereferenced pointer.
     pub(crate) fn load_at(&mut self, ct: types::Type, addr: Value, offset: i64) -> Value {
         self.builder.ins().load(ct, self.flags, addr, offset as i32)
     }
 
-    /// Run `ok` unless `addr` is null; on null, park the null-pointer fault
-    /// ([`crate::run::park_null_pointer`]) and yield a zero of `ct` (#74).
-    ///
-    /// This is the compiled half of the guard the interpreter makes directly.
-    /// The two tiers agree on the answer: the fault the native parks is the
-    /// `RunError` the interpreter returns, and the runtime reads it back the
-    /// moment the machine code returns ([`crate::run::Runtime::call_compiled`]),
-    /// discarding the zero. Compiled code cannot simply stop — a Cranelift
-    /// block needs its terminator and the seed installs no trap handler — so
-    /// the faulted call runs on over zeroed values it never reports.
+    /// Run `ok` unless `addr` is null; on null, park the null-pointer fault and
+    /// yield a zero of `ct`. Compiled code cannot simply stop (a block needs its
+    /// terminator, and there is no trap handler), so the faulted call runs on
+    /// over zeros the runtime discards when it reads the park back.
     pub(crate) fn guard_non_null<F>(
         &mut self,
         addr: Value,
@@ -430,7 +330,6 @@ impl Lowerer<'_, '_> {
         )
     }
 
-    /// A zero of a Cranelift type, whichever kind it is.
     fn zero_of(&mut self, ct: types::Type) -> Value {
         match ct {
             types::F32 => self.builder.ins().f32const(0.0),
@@ -439,8 +338,6 @@ impl Lowerer<'_, '_> {
         }
     }
 
-    /// Store `v` through a runtime address at a byte offset — the dual of
-    /// [`Self::load_at`].
     pub(crate) fn store_at(&mut self, ct: types::Type, addr: Value, offset: i64, v: Value) {
         debug_assert_eq!(
             self.builder.func.dfg.value_type(v),
@@ -450,30 +347,24 @@ impl Lowerer<'_, '_> {
         self.builder.ins().store(self.flags, v, addr, offset as i32);
     }
 
-    /// Equality of two same-typed integer values, as an `i32` 0/1. Kept for `not`
-    /// (which lowers `not x` as `x == 0`); the numeric comparison operators go through
-    /// [`Lowerer::lower_compare`].
+    /// Kept for `not`, which lowers `not x` as `x == 0`.
     pub fn icmp_eq(&mut self, a: Value, b: Value) -> Value {
         self.icmp(IntCC::Equal, a, b)
     }
 
-    /// An integer comparison `a cc b`, zero-extended to the `I32` bool (`icmp` yields a
-    /// one-bit `I8`).
+    /// Zero-extended to the `I32` bool (`icmp` yields a one-bit `I8`).
     fn icmp(&mut self, cc: IntCC, a: Value, b: Value) -> Value {
         let c = self.builder.ins().icmp(cc, a, b);
         self.builder.ins().uextend(types::I32, c)
     }
 
-    /// A float comparison `a cc b`, zero-extended to the `I32` bool.
     fn fcmp(&mut self, cc: FloatCC, a: Value, b: Value) -> Value {
         let c = self.builder.ins().fcmp(cc, a, b);
         self.builder.ins().uextend(types::I32, c)
     }
 
-    /// Lower a binary arithmetic operator (`+`/`-`/`*`): the operand type is the
-    /// (committed) left operand's — the op slot holds the concrete op, not a
-    /// logos — and the matching machine op is emitted over the lowered operands
-    /// (`iadd`/`fadd`, …). The result logos follows the operand `Value`s.
+    /// The operand type is the committed left operand's; the result follows
+    /// the operand `Value`s.
     ///
     /// # Safety
     /// `node` must be a resolved binary numeric operator node `[lhs, rhs, op]`.
@@ -485,7 +376,6 @@ impl Lowerer<'_, '_> {
         let (lhs, rhs) = operands(node);
         let nt = match numtype_of(self.types, lhs) {
             Operand::Concrete(nt) => nt,
-            // Resolution committed both operands; anything else cannot exist here.
             _ => {
                 return Err(CompileError::Internal(
                     "a resolved arithmetic node has a numeric operand",
@@ -512,16 +402,12 @@ impl Lowerer<'_, '_> {
         })
     }
 
-    /// An integer constant of `nt`'s Cranelift logos.
     fn const_int(&mut self, nt: NumType, imm: i64) -> Value {
         self.builder.ins().iconst(nt.cranelift_type(), imm)
     }
 
-    /// Lower an integer division with the total, saturating semantics (see
-    /// [`ArithOp`]): a zero divisor yields the type's MAX, the signed MIN/-1
-    /// overflow saturates to MAX, quotients truncate toward zero. Matches the
-    /// interpreter's `apply_arith` — a raw `sdiv`/`udiv` would trap on the two
-    /// impossible cases instead.
+    /// Total, saturating semantics as the interpreter's: `x / 0` is MAX and the
+    /// signed MIN/-1 overflow saturates to MAX; a raw `sdiv` would trap on both.
     fn lower_int_div(&mut self, nt: NumType, l: Value, r: Value) -> Result<Value, CompileError> {
         let zero = self.const_int(nt, 0);
         let is_zero = self.icmp(IntCC::Equal, r, zero);
@@ -547,10 +433,8 @@ impl Lowerer<'_, '_> {
         )
     }
 
-    /// Lower an integer remainder with the total semantics (see [`ArithOp`]):
-    /// `x % 0` is the type's MAX, and a signed `x % -1` is the well-defined 0
-    /// (which also covers the MIN/-1 trap). Matches the interpreter's
-    /// `apply_arith`.
+    /// Total semantics as the interpreter's: `x % 0` is MAX, and a signed
+    /// `x % -1` is 0 (which also covers the MIN/-1 trap).
     fn lower_int_rem(&mut self, nt: NumType, l: Value, r: Value) -> Result<Value, CompileError> {
         let zero = self.const_int(nt, 0);
         let is_zero = self.icmp(IntCC::Equal, r, zero);
@@ -573,9 +457,8 @@ impl Lowerer<'_, '_> {
         )
     }
 
-    /// Lower a binary comparison (`<`/`>`/`==`/…): the operand type is the
-    /// (committed) left operand's, and the matching `icmp` (signed or unsigned
-    /// per the type) or `fcmp` is emitted, zero-extended to the `I32` bool.
+    /// A signed or unsigned `icmp`, or an `fcmp`, at the width the node's leaf
+    /// carries, zero-extended to the `I32` bool.
     ///
     /// # Safety
     /// `node` must be a resolved binary numeric operator node `[lhs, rhs, op]`.
@@ -585,14 +468,8 @@ impl Lowerer<'_, '_> {
         op: CmpOp,
     ) -> Result<Value, CompileError> {
         let (lhs, rhs) = operands(node);
-        // The width is in the node: the comparison's builder chose a leaf for
-        // the resolved operand types and stored it in the op slot, and the
-        // interpreter's `cmp_run<OP, NT>` *is* that leaf. Reading it here is
-        // DESIGN ›Declarations are immutable by default‹ applied once — "the
-        // type defines how the value is read" — instead of classifying the
-        // operands a second time with a special case for two node-valued
-        // operands (a type or a `dyad` box compares as its address, at I64;
-        // the builder already said so, #82 asymmetry 7).
+        // The width is in the node: the builder chose a leaf for the resolved
+        // operand types, so they are not classified a second time here.
         let leaf = *((*node).value as *const DyadPtr).add(2);
         let Some(logos) = self.types.ops.cmp_nt_of(leaf) else {
             return Err(CompileError::Internal(
@@ -629,16 +506,12 @@ impl Lowerer<'_, '_> {
         }
     }
 
-    /// Emit the machine code casting `v` (a native `from` value) to `to`, matching
-    /// [`crate::identities::numtype::apply_cast`] (Rust `as`): integer widen/narrow,
-    /// int↔float conversion (float→int **saturating**, so it agrees with Rust rather
-    /// than trapping), and float↔float promote/demote. The result is the native `to`
-    /// value; the ABI boundary re-encodes it into the `i64` container.
+    /// Cast `v` from `from` to `to` as the interpreter's `apply_cast` does
+    /// (Rust `as`); float→int saturates rather than trapping.
     pub(crate) fn emit_cast(&mut self, from: NumType, to: NumType, v: Value) -> Value {
         let tct = to.cranelift_type();
         match (from.is_float(), to.is_float()) {
-            // int -> int: same width is a no-op (the bits are unchanged; signedness is
-            // the consumer's concern), else extend or reduce to the target width.
+            // Same width is a no-op: signedness is the consumer's concern.
             (false, false) => {
                 if to.bytes() == from.bytes() {
                     v
@@ -652,7 +525,6 @@ impl Lowerer<'_, '_> {
                     self.builder.ins().ireduce(tct, v)
                 }
             }
-            // int -> float.
             (false, true) => {
                 if from.is_signed_int() {
                     self.builder.ins().fcvt_from_sint(tct, v)
@@ -660,7 +532,7 @@ impl Lowerer<'_, '_> {
                     self.builder.ins().fcvt_from_uint(tct, v)
                 }
             }
-            // float -> int, saturating (NaN -> 0) to match Rust `as` on the interpreter.
+            // Saturating, NaN → 0, matching Rust `as`.
             (true, false) => {
                 if to.is_signed_int() {
                     self.builder.ins().fcvt_to_sint_sat(tct, v)
@@ -668,7 +540,6 @@ impl Lowerer<'_, '_> {
                     self.builder.ins().fcvt_to_uint_sat(tct, v)
                 }
             }
-            // float -> float: promote to a wider format, demote to a narrower one.
             (true, true) => {
                 if to.bytes() > from.bytes() {
                     self.builder.ins().fpromote(tct, v)
@@ -681,14 +552,9 @@ impl Lowerer<'_, '_> {
         }
     }
 
-    /// Emit a two-way branch on `cond` (a non-zero i32 is true): run `then_arm` in the
-    /// taken block and `else_arm` in the other, each yielding a value of one agreed
-    /// logos (the merge takes the arms' width, not a fixed `i32`), merged into a
-    /// single value. Leaves the builder positioned in the (sealed) merge block, so the
-    /// caller's next instruction — an enclosing lowering, or `compile_body`'s trailing
-    /// `return_` — lands there. Nesting composes: an arm that itself branches leaves
-    /// the builder in its own merge, from which this arm's `jump` fires. The shared
-    /// spine of `if` and the short-circuiting `and`/`or`.
+    /// A two-way branch on `cond`, each arm yielding a value of one agreed type,
+    /// merged into one value; leaves the builder in the sealed merge block, so
+    /// nesting composes. The shared spine of `if`, `and` and `or`.
     fn branch<T, E>(&mut self, cond: Value, then_arm: T, else_arm: E) -> Result<Value, CompileError>
     where
         T: FnOnce(&mut Self) -> Result<Value, CompileError>,
@@ -698,15 +564,13 @@ impl Lowerer<'_, '_> {
         let else_b = self.builder.create_block();
         let merge_b = self.builder.create_block();
 
-        // Branch to the two arms; both their predecessors (this block) are now known.
         self.builder.ins().brif(cond, then_b, &[], else_b, &[]);
         self.builder.seal_block(then_b);
         self.builder.seal_block(else_b);
 
         self.builder.switch_to_block(then_b);
         let then_v = then_arm(self)?;
-        // The merged value takes the branches' logos (they must agree) from the then arm,
-        // so `if` yields whatever width its branches do rather than a fixed i32.
+        // The merge takes the arms' type, so `if` yields whatever width its branches do.
         let result =
             self.builder.append_block_param(merge_b, self.builder.func.dfg.value_type(then_v));
         self.builder.ins().jump(merge_b, &[then_v.into()]);
@@ -715,15 +579,11 @@ impl Lowerer<'_, '_> {
         let else_v = else_arm(self)?;
         self.builder.ins().jump(merge_b, &[else_v.into()]);
 
-        // Both arms have jumped; the merge block's predecessors are complete.
         self.builder.seal_block(merge_b);
         self.builder.switch_to_block(merge_b);
         Ok(result)
     }
 
-    /// Lower an `if`: branch on the condition, each arm lowering its branch to the
-    /// `if`'s value. See [`Lowerer::branch`].
-    ///
     /// # Safety
     /// `cond`/`then`/`els` must be valid dyads from the store.
     pub unsafe fn lower_if(
@@ -737,10 +597,8 @@ impl Lowerer<'_, '_> {
         self.branch(c, |s| unsafe { s.lower(then) }, |s| unsafe { s.lower(els) })
     }
 
-    /// Lower a `while` loop: jump into a header block that re-evaluates the
-    /// condition (variables live in memory, so each iteration reloads them), a
-    /// body block that runs for effect and jumps back, and an exit block. The
-    /// header seals only after the body's back-edge exists. Yields unit (0).
+    /// The header re-evaluates the condition, the body jumps back, and the
+    /// header seals only after that back-edge exists. Yields unit.
     ///
     /// # Safety
     /// `cond`/`body` must be valid dyads from the store.
@@ -761,25 +619,18 @@ impl Lowerer<'_, '_> {
         self.builder.seal_block(body_b);
         self.lower(body)?;
         self.builder.ins().jump(header, &[]);
-        // Both of the header's predecessors (the entry jump and the back-edge)
-        // now exist.
         self.builder.seal_block(header);
         self.builder.switch_to_block(exit);
         self.builder.seal_block(exit);
         Ok(self.const_i32(0))
     }
 
-    /// Lower a `for` loop: write the start into the loop variable's place
-    /// (its register variable when promoted, its storage otherwise), hoist the
-    /// end and step (default 1) as SSA in the pre-header, guard `step > 0` (a
-    /// non-positive step runs zero iterations, as interpreted), then loop —
-    /// read the variable, compare `< end` (signed/unsigned/float per the loop
-    /// logos), run the body for effect, increment. Yields unit. Block
-    /// discipline as [`Lowerer::lower_while`].
+    /// The start goes into the loop variable's place, the end and step (default 1)
+    /// are hoisted as SSA, a `step > 0` guard runs zero iterations otherwise, as
+    /// interpreted; then read, compare `< end`, body, increment. Yields unit.
     ///
     /// # Safety
-    /// The parts must be valid dyads from the store, as `Parser::parse_for`
-    /// builds them (`step` may be null for the default).
+    /// The parts must be valid dyads from the store; `step` may be null for the default.
     pub unsafe fn lower_for(
         &mut self,
         var: DyadPtr,
@@ -808,7 +659,6 @@ impl Lowerer<'_, '_> {
         let body_b = self.builder.create_block();
         let exit = self.builder.create_block();
 
-        // Guard: a non-positive step runs zero iterations.
         let pos = if nt.is_float() {
             let zero = if ct == types::F32 {
                 self.builder.ins().f32const(0.0)
@@ -845,7 +695,7 @@ impl Lowerer<'_, '_> {
         let inc = if nt.is_float() {
             self.builder.ins().fadd(v2, d)
         } else {
-            // A step past the counter's width ends the loop (#111), as the
+            // A step past the counter's width ends the loop, as the
             // interpreter's checked add does.
             let (sum, overflow) = if nt.is_signed_int() {
                 self.builder.ins().sadd_overflow(v2, d)
@@ -860,17 +710,13 @@ impl Lowerer<'_, '_> {
         };
         self.write_place(var, ct, inc)?;
         self.builder.ins().jump(header, &[]);
-        // Both of the header's predecessors (the entry brif and the back-edge)
-        // now exist.
         self.builder.seal_block(header);
         self.builder.switch_to_block(exit);
         self.builder.seal_block(exit);
         Ok(self.const_i32(0))
     }
 
-    /// Lower an else-less `if`: a statement, not a value — the then-branch runs for
-    /// its effect when the condition holds, and both arms yield unit (0), so the
-    /// merge always agrees. See [`Lowerer::branch`].
+    /// A statement: both arms yield unit, so the merge always agrees.
     ///
     /// # Safety
     /// `cond`/`then` must be valid dyads from the store.
@@ -891,8 +737,7 @@ impl Lowerer<'_, '_> {
         )
     }
 
-    /// Lower `a and b` short-circuit: when `a` is false the result is `false` and `b`
-    /// is not evaluated; otherwise the result is `b`.
+    /// Short-circuit: `b` is not evaluated when `a` is false.
     ///
     /// # Safety
     /// `a`/`b` must be valid dyads from the store.
@@ -902,8 +747,7 @@ impl Lowerer<'_, '_> {
         self.branch(va, |s| unsafe { s.lower(b) }, |s| Ok(s.const_i32(0)))
     }
 
-    /// Lower `a or b` short-circuit: when `a` is true the result is `true` and `b` is
-    /// not evaluated; otherwise the result is `b`.
+    /// Short-circuit: `b` is not evaluated when `a` is true.
     ///
     /// # Safety
     /// `a`/`b` must be valid dyads from the store.
@@ -913,28 +757,16 @@ impl Lowerer<'_, '_> {
         self.branch(va, |s| Ok(s.const_i32(1)), |s| unsafe { s.lower(b) })
     }
 
-    /// Lower a call `callee(args)`. A self-call (the function being compiled) becomes
-    /// a direct Cranelift `call` to this function — a relocation the JIT patches to
-    /// this function's own address, which is what makes compiled recursion work. A
-    /// call to another already-compiled function becomes a `call_indirect` through
-    /// its baked machine address. A call to a function not compiled yet is a jump
-    /// into the interpreter ([`crate::run::interpret_call`], #65): the callee's
-    /// node and its containers travel in a stack slot, and compiling the callee
-    /// and then this function again makes the call direct — compile order
-    /// decides the call's shape, never whether it compiles (DESIGN ›The callable
-    /// ground‹).
-    ///
-    /// The boundary follows the uniform convention (see `compile_body`): each
-    /// argument widens into the `i64` bit-container per its *own* resolved logos —
-    /// the compiled analogue of `eval_args` reading each argument at its width —
-    /// and the result narrows per the callee's declared return type, a void callee
-    /// yielding unit. The argument count is checked against the callee's parameters
-    /// ([`CompileError::ArityMismatch`], mirroring the interpreter).
+    /// A self-call is a direct `call` the JIT patches to this function; a
+    /// compiled callee is a `call_indirect` through its baked entry; an
+    /// uncompiled callee is a jump into the interpreter. Each argument widens
+    /// into its container per its own type; the result narrows per the
+    /// callee's return type. Compile order decides the call's shape, never
+    /// whether it compiles.
     ///
     /// # Safety
     /// `callee` must be a `fn` node from the store and `node` a node whose
-    /// value is its null-terminated argument run (the node's own type is the
-    /// callee, or a type whose `code` the callee is).
+    /// value is its null-terminated argument run.
     unsafe fn lower_call_to(
         &mut self,
         callee: DyadPtr,
@@ -945,16 +777,11 @@ impl Lowerer<'_, '_> {
             // No signature to size the call by: an unbound placeholder.
             return Err(CompileError::NotLowerable(callee));
         }
-        // The callee's parameter count (from the input record's stored fields
-        // array) and return type (`None` for void; a `-> logos` callee cannot
-        // appear here — its calls comptime-resolve at parse — but the guard
-        // keeps the tag read honest).
         let input = *fields.add(FN_INPUT);
         let param_count =
             crate::identities::array::items(crate::identities::meta::record_fields_of(input)).len();
         let ret = return_kind(self.types, *fields.add(FN_OUTPUT))?;
 
-        // Lower each argument and widen it into its i64 bit-container.
         let args = (*node).value as *const DyadPtr; // [arg0 …, null] or null
         let mut args64 = Vec::new();
         if !args.is_null() {
@@ -962,8 +789,7 @@ impl Lowerer<'_, '_> {
             while !(*args.add(i)).is_null() {
                 let arg = *args.add(i);
                 let v = self.lower(arg)?;
-                // A value already at the container's width — a type value or
-                // an address, baked as `i64` — rides as it is.
+                // Already at the container's width: a type value or an address.
                 if self.builder.func.dfg.value_type(v) == types::I64 {
                     args64.push(v);
                     i += 1;
@@ -973,8 +799,8 @@ impl Lowerer<'_, '_> {
                     Operand::Concrete(nt) => nt,
                     // A pointer rides the container as its 8-byte address.
                     Operand::Pointer(_) => NumType::U64,
-                    // An uncommitted literal lowers as the bare-literal i32 default;
-                    // a non-numeric value (a void call's unit) rides as the i32 unit.
+                    // An uncommitted literal is the bare-literal i32 default; a
+                    // non-numeric value (a void call's unit) rides as the i32 unit.
                     Operand::Literal | Operand::NonNumeric => NumType::I32,
                 };
                 args64.push(widen_to_i64(self.builder, v, nt));
@@ -985,10 +811,7 @@ impl Lowerer<'_, '_> {
             return Err(CompileError::ArityMismatch);
         }
 
-        // The containers in a block on this frame (DESIGN ›Operands travel on
-        // the stack‹), what every callee reads: machine code through the one
-        // compiled signature, the interpreter through its jump. A nullary
-        // call passes no block.
+        // The containers in a block on this frame; a nullary call passes no block.
         let argv = if args64.is_empty() {
             self.builder.ins().iconst(self.ptr_ty, 0)
         } else {
@@ -1004,15 +827,11 @@ impl Lowerer<'_, '_> {
         };
         let argc = self.builder.ins().iconst(types::I64, args64.len() as i64);
         let inst = if callee == self.self_fn {
-            // Self-recursion: reference the function under construction by its id, so
-            // the JIT resolves the call to this very function's address.
             let fref = self.module.declare_func_in_func(self.func_id, &mut *self.builder.func);
             self.builder.ins().call(fref, &[argv, argc])
         } else {
             let bcode = *fields.add(FN_BCODE);
             if bcode.is_null() {
-                // Not compiled: jump into the interpreter with the callee's
-                // node and the block (#65).
                 let fn_node = self.builder.ins().iconst(self.ptr_ty, callee as i64);
                 let mut sig = self.module.make_signature();
                 for _ in 0..3 {
@@ -1024,13 +843,6 @@ impl Lowerer<'_, '_> {
                 let addr = self.builder.ins().iconst(self.ptr_ty, entry as i64);
                 self.builder.ins().call_indirect(sigref, addr, &[fn_node, argc, argv])
             } else {
-                // Compiled: call its machine code through the entry of the
-                // callable node in its `bcode` slot, baked as an immediate
-                // (DESIGN ›Operands travel on the stack‹: "operand access is
-                // baked into the machine code"); a recompiled callee is
-                // reached by compiling this caller again (#65), the deopt
-                // layer's freshness being no part of `run` (›Execution is
-                // function application‹).
                 let entry = crate::identities::callable::entry_of(bcode);
                 let mut sig = self.module.make_signature();
                 sig.params.push(AbiParam::new(self.ptr_ty));
@@ -1058,41 +870,25 @@ pub struct Compiled {
 }
 
 impl Compiled {
-    /// Call the compiled `fn() -> i64` and return the raw `i64` bit-container it
-    /// yields (the interpreter's value representation; see [`compile_body`]'s uniform
-    /// ABI). The caller reinterprets the bits per the function's return type.
+    /// Call the compiled function with no arguments and return the raw `i64` container.
     ///
     /// # Safety
-    /// The compiled function must be nullary (it is, when produced by
-    /// [`compile_nullary_i32`]) and any host addresses it baked in must still be valid.
+    /// The compiled function must be nullary and any host addresses it baked
+    /// in must still be valid.
     pub unsafe fn call(&self) -> i64 {
         let f: crate::run::MachineFn = std::mem::transmute(self.ptr);
         f(std::ptr::null(), 0)
     }
 }
 
-/// Compile a function literal and install its machine code on the node. Reads the
-/// parameter nodes from the input record and the `body` (see
-/// [`crate::parse::FN_BODY`]), compiles the body with each parameter reference
-/// lowering to its matching argument (narrowed from the `i64` bit-container to the
-/// parameter's declared type) and the return following the declared output
-/// (`-> void` yields unit), then mints a `callable` node — the finalized entry
-/// under the `container-i64` convention, the backend's licensed mint (DESIGN ›The
-/// callable ground is `@exec`‹) — into the node's `bcode` slot
-/// ([`crate::parse::FN_BCODE`]) so [`crate::run`] calls it with the arguments
-/// instead of walking the body. One representation of jumpable code in the whole
-/// graph: a compiled fn's code is the same kind of value `add_i32` carries.
-///
-/// The returned [`Compiled`] *owns* the executable memory; the installed callable
-/// is only valid while it is alive, so the caller must keep it alive for as long
-/// as the function may be run compiled (a use-after-free otherwise). This is the
-/// same lifetime contract as [`Compiled`] itself; graph-managed ownership arrives
-/// with deoptimization.
+/// Compile a function literal and install its machine code, as a `callable`
+/// under the `container-i64` convention, into the node's `bcode` slot. The
+/// returned [`Compiled`] owns the executable memory: the installed entry is
+/// valid only while it is alive.
 ///
 /// # Safety
-/// `fn_node` must be a valid function node (`{type: fn, value -> [input, output,
-/// body, bcode]}`) from the store, and any storage its body references must outlive
-/// every call to the returned [`Compiled`].
+/// `fn_node` must be a valid function node from the store, and any storage its
+/// body references must outlive every call to the returned [`Compiled`].
 pub unsafe fn compile_fn(
     store: &mut crate::store::Store,
     lower: &LowerTable,
@@ -1100,8 +896,6 @@ pub unsafe fn compile_fn(
     fn_node: DyadPtr,
 ) -> Result<Compiled, CompileError> {
     let compiled = compile_fn_body(lower, types, fn_node)?;
-    // Mint the callable — the finalized entry plus its convention — and install
-    // the node into the bcode slot. `run` reads the entry back and calls it.
     let code = crate::identities::callable::mint(
         store,
         types.callable_,
@@ -1113,9 +907,8 @@ pub unsafe fn compile_fn(
     Ok(compiled)
 }
 
-/// Compile a function node's body to machine code, without minting or
-/// installing anything — the shared work of [`compile_fn`] and
-/// [`compile_into`].
+/// The shared work of [`compile_fn`] and [`compile_into`]: the body's machine
+/// code, nothing minted or installed.
 ///
 /// # Safety
 /// As [`compile_fn`].
@@ -1128,28 +921,17 @@ unsafe fn compile_fn_body(
     if fields.is_null() {
         return Err(CompileError::NotLowerable(fn_node));
     }
-    // The parameter nodes, from the input record's stored fields array (see
-    // `Parser::parse_record`).
     let input = *fields.add(FN_INPUT);
     let params: Vec<DyadPtr> =
         crate::identities::array::items(crate::identities::meta::record_fields_of(input)).to_vec();
     let body = *fields.add(FN_BODY);
-    // A `-> void` function yields unit (compiled to `return 0`); a `-> logos`
-    // function yields a type identity's address, already the i64 container
-    // (type value are node addresses, so a type-returning function is
-    // integers in, an integer out — and comptime evaluation runs it like any
-    // other, jumping to installed bcode per ›Build and run are one
-    // self-directing pass‹); every other compilable output is a scalar type
-    // the body's value widens to. A remaining non-scalar output (a record)
-    // refuses cleanly.
     let ret = return_kind(types, *fields.add(FN_OUTPUT))?;
-    // The fn node is its own self-reference: a call to it inside `body` is recursion.
     compile_body(lower, types, fn_node, body, &params, ret)
 }
 
-/// How a function's declared output travels in the i64 container: not at
-/// all for `void`, as an address for a type value, at its width for a
-/// scalar; anything else (a record) is not compilable yet.
+/// How the declared output travels in the container: not at all for `void`,
+/// as an address for a type value, at its width for a scalar; anything else
+/// (a record) is not compilable yet.
 ///
 /// # Safety
 /// `out` must be a type node from the store.
@@ -1165,19 +947,10 @@ unsafe fn return_kind(types: &Core, out: DyadPtr) -> Result<Option<NumType>, Com
     }
 }
 
-/// `f.compile()`'s run half: compile `fn_node`'s body and install the finalized
-/// entry into `code_leaf`, the callable the parser pre-minted (with a zero
-/// entry) when it built the compile node — minting needs the store, which the
-/// parser holds; patching an entry does not. The leaf then goes into the fn's
-/// `bcode` slot, so the next call jumps to the machine code instead of walking
-/// the body (DESIGN ›Build and run are one self-directing pass‹: "a construct
-/// can `compile` and then `run` a function during the same pass").
-///
-/// The compiled artifact owns its executable memory and is deliberately
-/// leaked: the installed entry must stay valid for every later call, and
-/// graph-managed artifact ownership arrives with deoptimization (see
-/// [`compile_fn`]'s lifetime note). One leak per `f.compile()`, alive to
-/// process exit — the same lifetime the machine code itself needs.
+/// `f.compile()`'s run half: compile the body and install the entry into
+/// `code_leaf`, the callable the parser pre-minted, then that leaf into the
+/// `bcode` slot. The artifact is deliberately leaked: the entry must stay
+/// valid for every later call, and nothing in the graph owns artifacts yet.
 ///
 /// # Safety
 /// As [`compile_fn`]; `code_leaf` must be a callable value from the store.
@@ -1195,9 +968,6 @@ pub(crate) unsafe fn compile_into(
     Ok(())
 }
 
-/// Compile `root` as a nullary function returning `i32` (a bare expression with no
-/// parameters).
-///
 /// # Safety
 /// See [`compile_body`].
 pub unsafe fn compile_nullary_i32(
@@ -1205,19 +975,13 @@ pub unsafe fn compile_nullary_i32(
     types: &Core,
     root: DyadPtr,
 ) -> Result<Compiled, CompileError> {
-    // A bare expression is not a function, so there is no self to recurse into; v1
-    // bare expressions are i32 (or bool, physically i32).
+    // No self to recurse into; v1 bare expressions are i32 (or bool, physically i32).
     compile_body(lower, types, std::ptr::null_mut(), root, &[], Some(NumType::I32))
 }
 
-/// Compile `root` as a function of `params`, spilling each argument (an `i64`
-/// bit-container, narrowed to the parameter's declared type where it has one)
-/// into the parameter's frame slot on entry, and returning `ret` (`None` for
-/// `-> void`, which yields unit). `root` references those parameter nodes where
-/// it uses them — they read their frame slots through the same place machinery
-/// as locals, which is what makes `&param` and parameter reassignment agree
-/// with the interpreter — and its other leaves bake addresses/immediates as
-/// usual.
+/// Compile `root` as a function of `params`, each argument spilled from its
+/// container into the parameter's frame slot on entry, returning `ret` (`None`
+/// for `-> void`, which yields unit).
 ///
 /// # Safety
 /// `root` must be a valid dyad tree from the store, and any variable storage its
@@ -1231,15 +995,9 @@ pub(crate) unsafe fn compile_body(
     params: &[DyadPtr],
     ret: Option<NumType>,
 ) -> Result<Compiled, CompileError> {
-    // Two passes (DESIGN ›Operands travel on the stack‹: compiled code has
-    // "locals assigned to registers or stack slots"). The first lowers into a
-    // discarded function while recording how every frame place is used; the
-    // offsets used only as consistent scalars, with their address never
-    // materialized, then promote to register variables on the real pass —
-    // FunctionBuilder's SSA construction carries them across blocks, and the
-    // register allocator keeps them out of memory. Address-taken places
-    // (`&x`), instance bases, and bare parameters stay in the frame slot,
-    // where the interpreter's layout and pointers into the frame need them.
+    // Two passes: the first lowers into a discarded function, recording how
+    // every frame place is used; the offsets used only as consistent scalars,
+    // address never taken, promote to register variables on the real pass.
     let mut stats = PlaceStats::default();
     build_pass(lower, types, self_fn, root, params, ret, Some(&mut stats), &[], false)?;
     let promote = stats.promotable();
@@ -1247,11 +1005,9 @@ pub(crate) unsafe fn compile_body(
     Ok(compiled.expect("the finishing pass returns the artifact"))
 }
 
-/// One lowering pass of [`compile_body`]: analysis (`collect` set, `finish`
-/// false — the built function is discarded) or the real build (`promote`
-/// filled, `finish` true — the function is defined and finalized). `promote`
-/// lists the frame offsets to place in register variables, with their logos;
-/// the variables themselves are minted from the pass's own builder.
+/// One pass of [`compile_body`]: analysis (`collect` set, `finish` false, the
+/// function discarded) or the real build. `promote` lists the frame offsets to
+/// place in register variables, with their types.
 ///
 /// # Safety
 /// See [`compile_body`].
@@ -1278,17 +1034,12 @@ unsafe fn build_pass(
 
     let mut module = JITModule::new(JITBuilder::with_isa(isa, default_libcall_names()));
     let mut ctx = module.make_context();
-    // The calling convention is uniform `(argv, argc) -> i64`
-    // ([`crate::run::MachineFn`]): the arguments arrive as `i64`
-    // bit-containers in a block the caller owns, and the result leaves as one
-    // container, each reinterpreted to its real type at the boundary. One
-    // signature for every arity.
+    // The one compiled signature, `(argv, argc) -> i64` (`crate::run::MachineFn`).
     ctx.func.signature.params.push(AbiParam::new(ptr_ty));
     ctx.func.signature.params.push(AbiParam::new(types::I64));
     ctx.func.signature.returns.push(AbiParam::new(types::I64));
 
-    // Declare the function before lowering its body, so a self-call can reference its
-    // id; the JIT patches that call to this function's own address once it is defined.
+    // Declared before the body lowers, so a self-call can reference its id.
     let func_id =
         module.declare_function("main", Linkage::Export, &ctx.func.signature).map_err(cl)?;
 
@@ -1300,11 +1051,8 @@ unsafe fn build_pass(
         builder.switch_to_block(entry);
         builder.seal_block(entry);
 
-        // The depth guard, the compiled half of the interpreter's (#119): count
-        // this call into the shared depth ([`crate::run::CALL_DEPTH`]) and,
-        // past [`crate::run::MAX_CALL_DEPTH`], park the fault and return 0
-        // instead of claiming a frame the machine stack cannot hold. The
-        // epilogue counts it out again.
+        // The depth guard's compiled half: count this call in, park the fault
+        // past the limit instead of claiming a frame, and count out in the epilogue.
         let depth_addr = builder.ins().iconst(ptr_ty, crate::run::call_depth_ptr() as usize as i64);
         let depth = builder.ins().load(types::I64, MemFlagsData::new(), depth_addr, 0);
         let deeper = builder.ins().iadd_imm(depth, 1);
@@ -1331,23 +1079,18 @@ unsafe fn build_pass(
         builder.switch_to_block(body_b);
         builder.seal_block(body_b);
 
-        // The activation record: one explicit stack slot sized to the function's
-        // frame — its parameters first, its frame-relative locals after — 8-byte
-        // aligned. A frameless function (`self_fn` null for a bare expression,
-        // or no parameters and no locals) gets none, and its places all bake
-        // absolute addresses as before.
+        // The activation record, 8-byte aligned; a frameless function gets none.
         let frame_size = if self_fn.is_null() { 0 } else { fn_frame_size(self_fn) };
         let frame_slot = (frame_size > 0).then(|| {
-            // Rounded up to whole i64 words so the zeroing below covers it.
+            // Whole i64 words, so the zeroing below covers it.
             let size = (frame_size as u32).next_multiple_of(8);
             let slot = builder.create_sized_stack_slot(StackSlotData::new(
                 StackSlotKind::ExplicitSlot,
                 size,
                 3,
             ));
-            // Zero the record on entry, exactly as the interpreter zeroes its
-            // frame: a typed declaration (`a : i32`) has no initializer, so its
-            // first read must see the same zeroed "undefined" on both tiers.
+            // Zeroed on entry as the interpreter zeroes its frame, so an
+            // uninitialized declaration reads the same zero on both tiers.
             let zero = builder.ins().iconst(types::I64, 0);
             for off in (0..size).step_by(8) {
                 builder.ins().stack_store(zero, slot, off as i32);
@@ -1355,11 +1098,8 @@ unsafe fn build_pass(
             slot
         });
 
-        // Every promoted place becomes a builder-minted variable, defined
-        // before the body lowers: parameters from their narrowed arguments
-        // below, locals to the all-zero value of their logos — the register
-        // form of the zeroed frame, so a typed declaration's first read sees
-        // the same zeroed "undefined" on both tiers.
+        // Promoted locals start at the zero of their type, the register form of
+        // the zeroed frame; promoted parameters are defined from their arguments below.
         let param_offs: Vec<Option<usize>> =
             params.iter().map(|&p| frame_ref((*p).value).map(|(_, off)| off)).collect();
         let mut promoted: HashMap<usize, (Variable, types::Type)> = HashMap::new();
@@ -1367,7 +1107,7 @@ unsafe fn build_pass(
             let var = builder.declare_var(ct);
             promoted.insert(off, (var, ct));
             if param_offs.iter().flatten().any(|&poff| poff == off) {
-                continue; // defined from its argument below
+                continue;
             }
             let zero = match ct {
                 types::F32 => builder.ins().f32const(0.0),
@@ -1377,26 +1117,17 @@ unsafe fn build_pass(
             builder.def_var(var, zero);
         }
 
-        // Bind each argument — the compiled side of the one calling
-        // convention: the caller left the i64 bit-containers in the block
-        // `argv` points at, and entry loads each and narrows it to the
-        // parameter's declared scalar type (a bare or type-valued parameter
-        // keeps the full container). A promoted parameter defines its
-        // register variable; the rest spill into the slot the parser
-        // assigned, where `&param` and the interpreter's layout expect them.
+        // Each argument loads from `argv` and narrows to its declared scalar
+        // type; a bare or type-valued parameter keeps the full container.
         let argv = builder.block_params(entry)[0];
         for (i, &p) in params.iter().enumerate() {
             let v = builder.ins().load(types::I64, MemFlagsData::new(), argv, (i * 8) as i32);
-            // A parameter always has a parse-assigned slot; a function node
-            // without one is malformed and cannot be compiled.
             let Some((_, off)) = frame_ref((*p).value) else {
                 return Err(CompileError::NotLowerable(p));
             };
             let logos = (*p).ty;
             let scalar = crate::identities::numtype::is_scalar_type(logos);
             if let Some(&(var, _)) = promoted.get(&off) {
-                // A promoted container parameter (a type-valued `t : logos`,
-                // promoted through its i64 reads) keeps the full container.
                 let vn =
                     if scalar { narrow_from_i64(&mut builder, v, of_type_node(logos)) } else { v };
                 builder.def_var(var, vn);
@@ -1427,13 +1158,13 @@ unsafe fn build_pass(
             };
             lw.lower(root)?
         };
-        // Widen the body's value back to the `i64` bit-container for the uniform return;
-        // a `-> void` function discards it (the body ran for effect) and returns unit 0.
+        // The body's value widens back to the container; a `-> void` body ran
+        // for effect and returns unit.
         let ret64 = match ret {
             Some(nt) => widen_to_i64(&mut builder, value, nt),
             None => builder.ins().iconst(types::I64, 0),
         };
-        // Count this call out of the shared depth (the prologue counted it in).
+        // Count this call out (the prologue counted it in).
         let depth = builder.ins().load(types::I64, MemFlagsData::new(), depth_addr, 0);
         let shallower = builder.ins().iadd_imm(depth, -1);
         builder.ins().store(MemFlagsData::new(), shallower, depth_addr, 0);
@@ -1452,14 +1183,11 @@ unsafe fn build_pass(
     Ok(Some(Compiled { module, ptr }))
 }
 
-/// Narrow the `i64` bit-container `v` to `nt`'s native Cranelift value at the ABI
-/// boundary. Integers reduce to their width; floats reinterpret the container's bits
-/// (`f64` is the whole 64 bits, `f32` the low 32), the inverse of [`widen_to_i64`].
+/// The inverse of [`widen_to_i64`]: integers reduce to their width; floats
+/// reinterpret the container's bits (`f64` the whole 64, `f32` the low 32).
 fn narrow_from_i64(b: &mut FunctionBuilder, v: Value, nt: NumType) -> Value {
     match nt {
-        // `f64`: the container *is* the raw f64 bits (see `read_scalar`), reinterpret.
         NumType::F64 => b.ins().bitcast(types::F64, bitcast_flags(), v),
-        // `f32`: the f32 bits are the container's low 32; take them, then reinterpret.
         NumType::F32 => {
             let bits = b.ins().ireduce(types::I32, v);
             b.ins().bitcast(types::F32, bitcast_flags(), bits)
@@ -1475,9 +1203,8 @@ fn narrow_from_i64(b: &mut FunctionBuilder, v: Value, nt: NumType) -> Value {
     }
 }
 
-/// Widen `nt`'s native value `v` back to the `i64` bit-container: sign-extend signed
-/// integers, zero-extend unsigned, reinterpret float bits (matching `read_scalar`,
-/// which zero-extends an `f32`'s 32 bits and takes an `f64`'s 64 bits raw).
+/// Sign-extend signed integers, zero-extend unsigned, reinterpret float bits,
+/// matching `read_scalar`.
 fn widen_to_i64(b: &mut FunctionBuilder, v: Value, nt: NumType) -> Value {
     match nt {
         NumType::F64 => b.ins().bitcast(types::I64, bitcast_flags(), v),
@@ -1491,14 +1218,12 @@ fn widen_to_i64(b: &mut FunctionBuilder, v: Value, nt: NumType) -> Value {
     }
 }
 
-/// Memory flags for a scalar `bitcast`: an explicit endianness is required, but for a
-/// same-size scalar reinterpret the byte order does not affect the result (it only
-/// matters when lane count/size differ), so a fixed `Little` is correct on any host.
+/// A same-size scalar reinterpret is byte-order independent, so a fixed
+/// `Little` is correct on any host.
 fn bitcast_flags() -> MemFlagsData {
     MemFlagsData::new().with_endianness(Endianness::Little)
 }
 
-/// Map any `Display` Cranelift error into [`CompileError::Cranelift`].
 fn cl<E: std::fmt::Display>(e: E) -> CompileError {
     CompileError::Cranelift(e.to_string())
 }
