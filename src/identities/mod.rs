@@ -26,22 +26,15 @@
 //! per backend identity).
 //!
 //! Deferred surface the sketch declares that the seed does not yet register —
-//! tracked here so each gap is deliberate, not drift: the operators `^` and
-//! `xor`; ranges as first-class values, and `for`'s multi-variable, `in`-less,
-//! and `gpu` forms (the old prototype has them); pointer arithmetic and checked
-//! `&mut` references (see `pointer`; scalar heap `alloc`/`free` now exist in
-//! `drop_model`); record-typed
-//! (nested) fields and record parameters/returns; the `string` *name* and operations over
-//! strings (the `«…»` literal exists as an inert value, above all as the comment
-//! substance); `mut` at every level (DESIGN ›Mutability and construction‹); the
-//! `hashtable` and `array` logos; bare `key :` outside field lists (the
-//! composed `key : logos = value` is rejected, not deferred — DESIGN
-//! ›Declarations are immutable by default‹); `?` the unknown (issue #38 — no
-//! token exists yet); error unions `(T | Error)` with `match` and the
-//! `success`/`fails` combinators (DESIGN ›Error handling‹); and the explicit
-//! `comptime` marker (the inferred path — `-> logos` calls resolving in the
-//! pass — exists). Each arrives with the machinery it needs (layout, places,
-//! the borrow rule), not before.
+//! tracked here so each gap is deliberate, not drift: the operators `^` (the
+//! demo defines it in Logos, identities/power.logos) and `xor`; ranges as
+//! first-class values, and `for`'s multi-variable and `gpu` forms; pointer
+//! arithmetic; record parameters and returns (#115); operations over strings
+//! (the `«…»` literal exists as an inert value); `mut` as a gate (#33); the
+//! `hashtable` type and element-typed arrays (#47); error unions `(T | Error)`
+//! (DESIGN ›Error handling‹); and the explicit `comptime` marker (the inferred
+//! path — `-> type` calls resolving in the pass — exists). Each arrives with
+//! the machinery it needs (layout, places, the borrow rule), not before.
 
 use std::collections::HashMap;
 
@@ -267,11 +260,12 @@ pub struct Core {
     /// `left` and `right` — associativity's two values.
     pub left_: DyadPtr,
     pub right_: DyadPtr,
-    /// The six slot markers a type body may write (`parse_rank`, `lex_rank`,
-    /// `associativity`, `constructor`, `destructor`, `code`), in
-    /// [`SLOT_NAMES`] order. Five fill the type's own value; `lex_rank`
-    /// writes the record `:=` is filling (#122), the seed's stand-in for the
-    /// reach DESIGN records open.
+    /// The six slot words a type body may fill (`parse_rank`, `lex_rank`,
+    /// `associativity`, `parse`, `run`, `instance`), in [`SLOT_NAMES`]
+    /// order. Five fill the type's own value; `lex_rank` writes the record
+    /// `:=` is filling (#122). Declared at the root today, a known
+    /// divergence: the words belong to the type body alone (DESIGN ›The
+    /// constructor is a field‹, 19 September 2026).
     pub slots: [DyadPtr; 6],
     /// `->` — the return-logos arrow (parse-only).
     pub arrow_: DyadPtr,
@@ -1383,7 +1377,7 @@ pub(crate) unsafe fn commit_call_args(
 }
 
 /// Commit a comptime-rational function body to its declared return logos — the typed-slot
-/// context (DESIGN ›a rational commits when it lands in a typed slot‹). A `void` return,
+/// context (DESIGN ›Numeric literals are uncommitted until context classifies them‹). A `void` return,
 /// or any non-concrete output, passes the body through; otherwise the body's tail value
 /// positions are committed (see [`commit_tail`]).
 ///

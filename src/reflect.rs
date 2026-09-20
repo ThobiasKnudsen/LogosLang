@@ -128,16 +128,15 @@ pub enum Shape {
     LogosNode {
         /// The node's own record kind (a tag from `numtype`/`meta`).
         kind: u8,
-        /// The node's parse_rank — `None` for the NaN sentinel (the
-        /// identity never extends an expression to its left), `Some(+inf)`
-        /// for a tight extender, finite for an infix operator.
-        parse_rank: Option<f64>,
+        /// The node's parse_rank: its place on the one axis
+        /// ([`crate::identities::meta::prec`]).
+        parse_rank: f64,
         /// The constructor: a callable leaf (`seed-parse` convention, a
         /// `native` body — invoked, never read into), or null: undefined, for
         /// a pure delimiter or a data logos with no parse role of its own.
         constructor: DyadPtr,
-        /// The destructor: null on every seed identity — the honest undefined
-        /// until drop semantics exist.
+        /// The destructor: the owning pointer's teardown, null on every other
+        /// identity.
         destructor: DyadPtr,
     },
     /// A name's record — the trie entry, a dyad of type `record` (DESIGN ›The
@@ -229,7 +228,7 @@ pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
         meta::FRACTION_TAG => Shape::Fraction,
         meta::TYPEREC_TAG => Shape::LogosNode {
             kind: meta::kind_of(node).unwrap_or(meta::TOKEN_TAG),
-            parse_rank: Some(meta::parse_rank_of(node)),
+            parse_rank: meta::parse_rank_of(node),
             constructor: meta::constructor_of(node),
             destructor: meta::destructor_of(node),
         },
@@ -776,7 +775,7 @@ mod tests {
             else {
                 panic!("an identity self-describes");
             };
-            assert_eq!((kind, parse_rank), (meta::TUPLE_TAG, Some(meta::prec::ADDITIVE)));
+            assert_eq!((kind, parse_rank), (meta::TUPLE_TAG, meta::prec::ADDITIVE));
             assert!(!constructor.is_null() && destructor.is_null());
             let Shape::LogosNode { kind, parse_rank, constructor, destructor } =
                 describe(types, core.i32_)
@@ -786,14 +785,14 @@ mod tests {
             // Every identity has a place on the one axis (no NaN sentinel,
             // ruled 30 August 2026): a numeric logos sits at application, the
             // juxtaposition constructor it carries (`i32 3`).
-            assert_eq!((kind, parse_rank), (NumType::I32 as u8, Some(meta::prec::APPLY)));
+            assert_eq!((kind, parse_rank), (NumType::I32 as u8, meta::prec::APPLY));
             assert!(!constructor.is_null() && destructor.is_null());
             let Shape::LogosNode { kind, parse_rank, constructor, destructor } =
                 describe(types, core.type_)
             else {
                 panic!("an identity self-describes");
             };
-            assert_eq!((kind, parse_rank), (meta::TYPEREC_TAG, Some(meta::prec::READER)));
+            assert_eq!((kind, parse_rank), (meta::TYPEREC_TAG, meta::prec::READER));
             // The root carries the merged constructor (record path / bare
             // classifier); its destructor stays the honest undefined.
             assert!(!constructor.is_null() && destructor.is_null());

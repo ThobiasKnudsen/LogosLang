@@ -7,7 +7,7 @@
 //! the `den == 1` case.
 //!
 //! A rational only becomes a machine number when it is *molded* to a concrete logos
-//! at use (DESIGN ›Numeric literals are uncommitted until context logos them‹):
+//! at use (DESIGN ›Numeric literals are uncommitted until context classifies them‹):
 //! [`mold_to`] commits it exactly to any numeric width (an integer target requires
 //! an exact in-range integer; a float target takes `num/den`), and a literal that
 //! never lands in a typed slot defaults to `i32` when read ([`mold`]). A literal

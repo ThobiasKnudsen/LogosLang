@@ -21,8 +21,8 @@ use super::{meta, Cx};
 use crate::dyad::DyadPtr;
 use crate::parse::{Constructed, ParseError};
 
-/// Register `pub`: a fresh-start word (a plain token record, NaN parse_rank —
-/// never extends left, so the driver invokes the constructor immediately).
+/// Register `pub`: a prefix word (a plain token record at [`meta::prec::PREFIX`],
+/// constructed at the boundary over the declaration to its right).
 /// No node is ever typed by `pub`; its identity exists to be named in a
 /// declare node's gate slot.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {

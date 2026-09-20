@@ -5,33 +5,32 @@
 //! seed's realization of the sealed `logos` model (DESIGN ›A logos's metadata is
 //! shared by its values‹, issue #30) and of layout-as-graph-data (issue #42).
 //!
-//! Anything that stands in a node's `logos` position stores, once, the members its
-//! values share: its parse `parse_rank` and `associativity`, its `constructor`
-//! (a native callable leaf; see below) and `destructor` (null: the honest
-//! undefined until drop semantics exist), and the *layout* that says how a
-//! value of it is read — a scalar width, a text or fraction blob, a pointer's
-//! pointee, or the arity and role names of an application's operands. A
-//! generic walker ([`crate::reflect`]) reads any node's structure from these
-//! records alone, and the parser dispatches from them too: the driver
-//! classifies a token from constructor presence, the parse_rank field (NaN
-//! never-extends / finite infix / +inf tight extender), and the kind byte —
-//! the constructors drive the tape (DESIGN ›Source becomes runnable›), and
-//! the schedule byte that stood in until they did is gone. The constructor is
-//! a `seed-parse` callable (one [`crate::parse::ConstructFn`] signature)
-//! whose body stays `native` until self-hosting ports it to Logos source (the
-//! #42 boundary). Only `run`'s lowering table remains Rust-side, awaiting
-//! per-backend keying.
+//! Anything that stands in a node's `type` position stores, once, the members
+//! its values share: its parse `parse_rank` and `associativity`, its
+//! `constructor` (a native callable leaf; see below) and `destructor` (the
+//! teardown the drop model installs on an owning pointer type, null on every
+//! other identity), and the *layout* that says how a value of it is read — a
+//! scalar width, a text or fraction blob, a pointer's pointee, or the arity
+//! and role names of an application's operands. A generic walker
+//! ([`crate::reflect`]) reads any node's structure from these records alone,
+//! and the parser dispatches from them too: the driver classifies a token
+//! from constructor presence, its place on the one parse_rank axis
+//! ([`prec`]: at or above `(` it runs at discovery, below at the boundary),
+//! and the kind byte — the constructors drive the tape (DESIGN ›Source
+//! becomes runnable›). The constructor is a `seed-parse` callable (one
+//! [`crate::parse::ConstructFn`] signature) whose body stays `native` until
+//! self-hosting ports it to Logos source (the #42 boundary). Only `run`'s
+//! lowering table remains Rust-side, awaiting per-backend keying.
 //!
 //! Record layout (unaligned, native-endian, byte offsets):
 //!
 //! ```text
 //! [0]        u8   kind — the logos-tag namespace (see below)
 //! [1]        u8   associativity (0 left-to-right, 1 right-to-left)
-//! [2..10]    f64  parse_rank — NaN: never extends left; finite: infix;
-//!                 +inf: tight extender (call `(`, postfix `.`/`@`)
+//! [2..10]    f64  parse_rank — the identity's place on the one axis ([`prec`])
 //! [10..18]   u64  constructor — a callable leaf (`seed-parse` convention,
 //!                 one `ConstructFn` signature), or 0: undefined
-//! [18..26]   u64  destructor  (0: undefined until drop semantics exist)
+//! [18..26]   u64  destructor  (the owning pointer's teardown, else 0)
 //! [26..34]   u64  code — the `fn` node a type body's `code = …` filled (#63):
 //!                 what a node of the type runs and compiles as, or 0
 //! [34..42]   u64  run body — the lexed body a `shared run = (…)` line held
@@ -219,7 +218,7 @@ pub(crate) fn record_assoc(store: &mut Store, kind: u8, parse_rank: f64, assoc: 
 
 /// Build an operand record for an operator/statement identity: its layout
 /// `kind` ([`TUPLE_TAG`] or [`LIST_TAG`]), its parse
-/// `parse_rank`/`assoc`/`schedule`, and one role-name string node per operand
+/// `parse_rank`/`assoc`, and one role-name string node per operand
 /// slot.
 pub(crate) fn operand_record(
     cx: &mut Cx,
@@ -323,22 +322,22 @@ fn header(kind: u8, assoc: Assoc, parse_rank: f64) -> [u8; PAYLOAD_OFF] {
 }
 
 /// The constructor stored in `id`'s record: a callable leaf under the
-/// `seed-parse` convention (its entry a Rust shim whose signature the schedule
-/// byte selects), or null — the *undefined* constructor of a pure delimiter
-/// token or a data logos, whose parse role is scheduling alone.
+/// `seed-parse` convention (its entry a Rust shim of the one
+/// [`crate::parse::ConstructFn`] signature), or null — the *undefined*
+/// constructor of a pure delimiter token or a data type, inert on the tape.
 ///
 /// # Safety
-/// As [`precedence_of`].
+/// As [`parse_rank_of`].
 pub(crate) unsafe fn constructor_of(id: DyadPtr) -> DyadPtr {
     std::ptr::read_unaligned((*id).value.add(CTOR_OFF) as *const DyadPtr)
 }
 
-/// The destructor stored in `id`'s record — null for every seed identity: the
-/// honest *undefined*, filled the day drop semantics exist, never faked with a
-/// no-op.
+/// The destructor stored in `id`'s record: the teardown the drop model
+/// installs on an owning pointer type ([`install_destructor`]), null on every
+/// other identity, never faked with a no-op.
 ///
 /// # Safety
-/// As [`precedence_of`].
+/// As [`parse_rank_of`].
 pub(crate) unsafe fn destructor_of(id: DyadPtr) -> DyadPtr {
     std::ptr::read_unaligned((*id).value.add(DTOR_OFF) as *const DyadPtr)
 }
@@ -498,7 +497,7 @@ pub(crate) unsafe fn parse_rank_of(id: DyadPtr) -> f64 {
 /// The associativity stored in `id`'s record.
 ///
 /// # Safety
-/// As [`precedence_of`].
+/// As [`parse_rank_of`].
 pub(crate) unsafe fn assoc_of(id: DyadPtr) -> Assoc {
     if *(*id).value.add(ASSOC_OFF) == 0 {
         Assoc::Left

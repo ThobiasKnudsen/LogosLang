@@ -103,8 +103,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     // "run the place's destructor" reach the same code as an inserted `free`.
     let teardown_leaf = callable::mint_native(cx.store, cs.callable, run_teardown, cs.seed_native);
 
-    // `alloc T v`: a fresh-start keyword constructor (NaN parse_rank → the driver
-    // invokes it immediately). Its constructor parses the following typed value.
+    // `alloc T v`: a prefix word ([`meta::prec::PREFIX`]) whose constructor
+    // parses the typed value to its right.
     let alloc_ =
         keyword(cx, "alloc", meta::prec::PREFIX, &["pointee", "init", "op"], |p, _id, tape| {
             let init = p.take_right(tape)?;

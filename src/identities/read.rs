@@ -133,8 +133,7 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
         // No reachable node is classified by a type that carries no record:
         // the four roots are back-filled in `Core::build`, and the markers and
         // holes that do have null values never stand in a type slot. Asserted
-        // rather than assumed, so the debug suite is the proof that
-        // `is_scalar_type`'s null-value default can go (#82, step 10).
+        // rather than assumed, so the debug suite is the proof.
         debug_assert!(!(*op).value.is_null(), "a type with no record stands in a type slot");
         return if place { Read::Container(op) } else { Read::Undefined };
     };

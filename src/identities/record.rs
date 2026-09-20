@@ -38,10 +38,10 @@
 //! frontier, so liveness reduces to `end` being null; the position comparison
 //! is for resolution from a later context, which nothing performs yet.
 //!
-//! The gate set: v0.1.0 has no gates (DESIGN ›Feasibility and effort‹, ruled
-//! 4 September 2026), so `gate` is null on every record until gates land
-//! (issue #33). The slot exists so the one lookup that answers reachable and
-//! live is the one that will answer permitted.
+//! The gate set: `pub` fills it ([`super::gate`]); every other gate waits on
+//! issue #33, and the preview ships none (DESIGN ›Feasibility and effort‹,
+//! ruled 4 September 2026). The slot exists so the one lookup that answers
+//! reachable and live is the one that answers permitted.
 //!
 //! A record is a value (DESIGN ›The dyad's read surface‹, ruled 8 September
 //! 2026): a dyad of type `record` whose value points at these seven fields,

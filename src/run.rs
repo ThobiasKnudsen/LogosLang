@@ -300,18 +300,15 @@ impl FrameStack {
     }
 }
 
-/// A running evaluation. Holds the `fn` logos (to tell a function application from
-/// a data read) and the activation stack. Operand computation rides the Rust
-/// call stack (each `run` is a frame); the explicit [`FrameStack`] holds each
+/// A running evaluation: the core handles the reading rule reads by, the
+/// store, and the activation stack. Operand computation rides the Rust call
+/// stack (each `run` is a frame); the explicit [`FrameStack`] holds each
 /// in-flight interpreted call's frame — its parameters and locals at their
 /// parse-assigned byte offsets.
 pub struct Runtime<'a> {
-    /// The `record` type: a use of a name stores its record, read through to
-    /// the dyad it names on every evaluation (the reading rule).
-    /// The core handles the reading rule reads — the record type it hops
-    /// through and the `fn` type it must compare before any record is read
-    /// ([`crate::identities::read::read_kind`]). The named handles above are
-    /// the same values, kept until the sweep retires them (#82).
+    /// The core handles the reading rule reads — the record type a use of a
+    /// name hops through and the `fn` type it must compare before any record
+    /// is read ([`crate::identities::read::read_kind`]).
     types: &'a crate::Core,
     /// Live heap allocations (issue #49): `alloc` increments, `free` decrements.
     /// Not a correctness mechanism — the null-place drop flag prevents double

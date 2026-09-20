@@ -116,9 +116,9 @@ pub enum CompileError {
     /// `RunError::UncomputableLiteral`.
     UncomputableLiteral,
     /// The function has more parameters than the seed's compiled calling convention
-    /// supports (at most three `i32` args; see [`crate::run`]). Rejected at compile
-    /// time so a 4+ parameter function stays interpreted rather than compiling to a
-    /// body that errors only when called.
+    /// supports (at most three `i64` containers; see [`crate::run`]). Rejected at
+    /// compile time so a 4+ parameter function stays interpreted rather than
+    /// compiling to a body that errors only when called.
     UnsupportedArity(usize),
     /// A call's argument count did not match the callee's parameter count — the
     /// compile-time mirror of `RunError::ArityMismatch`, refused instead of baking a
@@ -129,8 +129,9 @@ pub enum CompileError {
 }
 
 /// The most parameters a compiled function may take, bounded by `run`'s
-/// `call_compiled` arity dispatch (0..=3 `i32` args). Kept here so compilation
-/// fails fast instead of installing bcode a later call cannot invoke.
+/// `call_machine` arity dispatch (0..=3 `i64` containers). Kept here so
+/// compilation fails fast instead of installing bcode a later call cannot
+/// invoke.
 pub const MAX_COMPILED_PARAMS: usize = 3;
 
 /// The lowering context: a Cranelift function under construction plus the rule

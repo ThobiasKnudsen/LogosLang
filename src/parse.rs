@@ -26,10 +26,11 @@
 //!
 //! This module also holds the scope stack and name resolution over it. The
 //! parser owns resolution; the trie ([`crate::regex_trie`]) is only the name
-//! index. Still to come: the tape's four affordances as Logos-reachable
-//! identities and a cell as a bare dyad pointer with `is_constructed` beside
-//! it (#60), constructors written in Logos and a parse_rank spelled relative
-//! to another's (#61), `lex «…»` (#62).
+//! index. Open here: the slot words as root identities where the type body
+//! alone should know them (DESIGN ›The constructor is a field‹, 19 September
+//! 2026), the parser's per-identity state a Logos-written constructor cannot
+//! reach (#97), the dispatch on identity handles where the record should
+//! decide (#99), and the run body constructed per field-type set (#133).
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -1185,8 +1186,8 @@ pub const SLOT_NAMES: [&str; 6] =
     ["parse_rank", "lex_rank", "associativity", "parse", "run", "instance"];
 
 /// How deep scopes may nest before the parse is refused (#80). Each open
-/// bracket recurses `parse_sequence` -> `parse_next` -> `parse_expression` ->
-/// the opener's constructor -> `parse_sequence`, so a wall of `(` costs Rust
+/// bracket recurses `parse_sequence` -> `parse_next` -> `lex_segment` ->
+/// `run_ctor` -> `(`'s constructor -> `parse_sequence`, so a wall of `(` costs Rust
 /// stack the same way a runaway recursion does, and answered it the same way:
 /// by aborting. Sized well under what [`crate::WORK_STACK_BYTES`] holds, and
 /// far past anything a person writes — source nested two thousand brackets
@@ -1194,8 +1195,9 @@ pub const SLOT_NAMES: [&str; 6] =
 pub const MAX_BRACKET_DEPTH: usize = 2_000;
 
 /// What a line of a `type (…)` body is (DESIGN ›The constructor is a field‹:
-/// a body line fills a slot, `instance = (…)` among them, declares a member,
-/// or is prose). Anything else is [`ParseError::TypeBodyLine`].
+/// a body line fills a slot, `instance = (…)` among them, or is prose; a bare
+/// member is [`ParseError::MemberOutsideInstanceBlock`] since 19 September
+/// 2026). Anything else is [`ParseError::TypeBodyLine`].
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BodyLine {
     /// A comment.
@@ -1284,10 +1286,10 @@ struct OpenType {
 /// constructor may splice tokens in or drop upcoming ones before they lex‹).
 /// `Placed` reports only that it did; the tape is the result. `Decline` is
 /// "not mine": the constructor consumed nothing and touched nothing, and the
-/// driver drops its token, rewinds to its start, and lets the expression
-/// finalize (or shifts the token, for an extender) — an explicit signal,
-/// because a tape left holding a token is a legitimate outcome, not a
-/// refusal.
+/// driver leaves the identity standing as its own value ([`Parser::run_ctor`];
+/// DESIGN, 19 September 2026: a constructor with nothing to consume "should
+/// rather just be itself in constructed state") — an explicit signal, because
+/// a tape left holding a token is a legitimate outcome, not a refusal.
 pub enum Constructed {
     /// The construct applied; its edits are on the tape.
     Placed,
@@ -1600,11 +1602,6 @@ pub enum ParseError {
     OwnOfOuterName,
 }
 
-/// Build a call node `{type: callee, value: [args…, null]}`, the application
-/// `callee(args)`. Like a binary operator's `{type: op, value: [lhs, rhs]}`, a call's
-/// value is the operand array of its arguments (null-terminated so `run` can count
-/// them); a nullary call carries a null value. The callee's logos decides how the
-/// call runs, exactly as an operator's does.
 /// Whether `node`'s result is a `bool`: a `bool` literal/value, a comparison
 /// (`<`/`>`/`==`/…), or a logical operator (`and`/`or`/`not`). An `if` condition and
 /// a logical operator's operands must be one; arithmetic and other values are not.
@@ -1701,6 +1698,11 @@ unsafe fn contains_return(types: &Core, node: DyadPtr) -> bool {
     false
 }
 
+/// Build a call node `{type: callee, value: [args…, null]}`, the application
+/// `callee(args)`. Like a binary operator's `{type: op, value: [lhs, rhs]}`, a call's
+/// value is the operand array of its arguments (null-terminated so `run` can count
+/// them); a nullary call carries a null value. The callee's logos decides how the
+/// call runs, exactly as an operator's does.
 fn build_call(store: &mut Store, callee: DyadPtr, args: &[DyadPtr]) -> DyadPtr {
     let value = if args.is_empty() {
         std::ptr::null_mut()
@@ -3653,17 +3655,18 @@ impl<'a> Parser<'a> {
 
     /// Parse a function literal `fn ( params ) -> ret ( body )` (DESIGN ›A
     /// function's surface‹), given `fn_type` (the resolved `fn` identity). The
-    /// parameter list is a `record` (the step-2 field list); the return logos after
-    /// `->` is a single logos identity; the body is a `( )` scope parsed with the
-    /// parameter scope reopened, so parameters resolve inside it. The node is
-    /// `{type: fn, value -> [input, output, body, bcode]}` — the params record, the
-    /// return logos, the reflectable body, and the compiled `bcode` (null until
-    /// [`crate::compile::compile_fn`] installs it).
+    /// parameter list is a `record` (a field list); the return type after `->`
+    /// is a driven segment to the body bracket (`@i32` is one); the body is a
+    /// `( )` scope parsed with the parameter scope reopened, so parameters
+    /// resolve inside it. The node is `{type: fn, value -> [input, output,
+    /// body, bcode, frame, outer]}` ([`FN_INPUT`] … [`FN_OUTER`]): the params
+    /// record, the return type, the reflectable body, the compiled `bcode`
+    /// (null until [`crate::compile::compile_fn`] installs it), the frame
+    /// size, and the outer names the body reads.
     ///
-    /// A function's value is what its body evaluates to; an explicit `return` is
-    /// *optional* and, for v1's single-expression body, `return X` and `X` yield the
-    /// same value in tail position (early-return semantics, `return` unwinding out
-    /// of control flow, arrive with `if`/`while`).
+    /// A function's value is what its body evaluates to; an explicit `return`
+    /// is *optional*, `return X` and `X` yielding the same value in tail
+    /// position.
     ///
     /// `declared` (null when the literal does not open a declaration's value) is
     /// the declaration's placeholder: the signature publishes onto it — body and
@@ -4548,10 +4551,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Whether `node` is a scope with nothing in it — the `()` cell.
-    ///
-    /// # Safety
-    /// `node` must be a dyad from the store.
     /// `[`'s constructor. `[` is `(` in square brackets (ruled 9 September
     /// 2026): the interior is parsed as any bracket's — the eager-segment
     /// loop, to one expression — and closed by its `]`, which it consumes
@@ -4815,15 +4814,6 @@ impl<'a> Parser<'a> {
         Ok(node)
     }
 
-    /// The `own`/`drop` node `node` has emptied `ended`'s place: its name is dead
-    /// from here on (DESIGN ›Memory and concurrency‹, *`own` and `drop` are
-    /// static*). See [`ScopeStack::mark_dead`].
-    /// Declare `name` in the current scope as `identity`, minting its record —
-    /// one per declared name, a dyad of type `record` (DESIGN ›`mut` is a gate
-    /// on the record‹) — and return it. Errors are the no-shadowing and index
-    /// errors of [`ScopeStack::declare`], reported at `at`, the name's own
-    /// offset in the source, so the caret lands on the name and not where the
-    /// declaration happened to end.
     /// Mint the record for `identity` declared in `scope` under `spelling`:
     /// the six fields, the spelling as a string node (`a:name`, #120).
     fn mint_record(&mut self, identity: DyadPtr, scope: DyadPtr, spelling: &[u8]) -> DyadPtr {
@@ -4832,6 +4822,12 @@ impl<'a> Parser<'a> {
         Record::alloc(self.rt.store, self.types.record_, Record::new(identity, scope, name))
     }
 
+    /// Declare `name` in the current scope as `identity`, minting its record —
+    /// one per declared name, a dyad of type `record` (DESIGN ›`mut` is a gate
+    /// on the record‹) — and return it. Errors are the no-shadowing and index
+    /// errors of [`ScopeStack::declare`], reported at `at`, the name's own
+    /// offset in the source, so the caret lands on the name and not where the
+    /// declaration happened to end.
     pub(crate) fn declare_name(
         &mut self,
         name: &str,
@@ -4885,6 +4881,9 @@ impl<'a> Parser<'a> {
         Ok(record)
     }
 
+    /// The `own`/`drop` node `node` has emptied `ended`'s place: its name is dead
+    /// from here on (DESIGN ›Memory and concurrency‹, *`own` and `drop` are
+    /// static*). See [`ScopeStack::mark_dead`].
     pub(crate) fn mark_dead(&mut self, ended: Ended, node: DyadPtr) {
         // SAFETY: `ended.record` is the record the resolver returned for the operand.
         unsafe { self.scopes.mark_dead(ended.record, node) };
@@ -5060,17 +5059,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse a sequence of expressions up to the enclosing scope's end (a `)`, or
-    /// the end of input), consuming an optional `,` between them (DESIGN
-    /// ›Expressions are self-delimiting; `,` is the one explicit separator‹). A
-    /// single expression is returned as itself; several become a sequence node
-    /// `{type: scope, value: [expr0 … exprN, null]}` that runs its expressions in
-    /// order and yields the trailing one (DESIGN ›A scope's value is what it
-    /// evaluates to‹). Declarations inside are block-local: the sequence node is
-    /// itself the scope they are declared in, pushed while the body parses. A
-    /// `return` in a non-tail position is rejected ([`ParseError::EarlyReturn`]):
-    /// v1 `return` is the tail yield, and running one without exiting would be
-    /// silently wrong.
     /// Open a scope: mint its node carrying the scope now open as its
     /// enclosing scope (#123; DESIGN ›Meta-navigation‹: "A scope node carries
     /// its enclosing scope: the parent link, null at the arche") and push it.
@@ -5083,6 +5071,17 @@ impl<'a> Parser<'a> {
         scope
     }
 
+    /// Parse a sequence of expressions up to the enclosing scope's end (a `)`, or
+    /// the end of input), consuming an optional `,` between them (DESIGN
+    /// ›Expressions are self-delimiting; `,` is the one explicit separator‹). A
+    /// single expression is returned as itself; several become a sequence node
+    /// `{type: scope, value: [expr0 … exprN, null]}` that runs its expressions in
+    /// order and yields the trailing one (DESIGN ›A scope's value is what it
+    /// evaluates to‹). Declarations inside are block-local: the sequence node is
+    /// itself the scope they are declared in, pushed while the body parses. A
+    /// `return` in a non-tail position is rejected ([`ParseError::EarlyReturn`]):
+    /// v1 `return` is the tail yield, and running one without exiting would be
+    /// silently wrong.
     pub fn parse_sequence(&mut self) -> Result<DyadPtr, ParseError> {
         // The block's scope node: the membership key while parsing and, when the
         // sequence is real, the sequence node itself.
@@ -5874,7 +5873,7 @@ impl<'a> Parser<'a> {
     /// every path the seed can write, since the item reads yield address
     /// values no path continues from; `start` and `end` null — the enclosing
     /// item is the segment still under construction, which a folded read
-    /// cannot see; `gate` null — v0.1.0 has no gates. The address values are
+    /// cannot see; `gate` what the record holds (`pub` fills it, else null). The address values are
     /// `@dyad` literals, read at run time like any pointer.
     ///
     /// # Safety
@@ -6128,12 +6127,6 @@ impl<'a> Parser<'a> {
         Ok(Some((cell, cell.start)))
     }
 
-    /// The constructor an appearance of `id` runs, or `None` for an inert
-    /// cell (a value, a delimiter). The identity's own slot first; failing
-    /// that, its type's shared instance constructor — application for an
-    /// instance of `fn` and for a record logos (DESIGN ›The constructor is a
-    /// field‹: "whether the name resolves to X's own slot or to the type's
-    /// shared one is ordinary field semantics").
     /// The identity a cell denotes *now*.
     ///
     /// A place holding a type denotes the type it holds. Where parse order is
@@ -6193,6 +6186,12 @@ impl<'a> Parser<'a> {
         self.settled_type(cell.identity(self.types))
     }
 
+    /// The constructor an appearance of `id` runs, or `None` for an inert
+    /// cell (a value, a delimiter). The identity's own slot first; failing
+    /// that, its type's shared instance constructor — application for an
+    /// instance of `fn` and for a record logos (DESIGN ›The constructor is a
+    /// field‹: "whether the name resolves to X's own slot or to the type's
+    /// shared one is ordinary field semantics").
     ///
     /// Constructor *dispatch*, not a value read: this ladder and its siblings
     /// (`precedence_of_cell`, `assoc_of_cell`, `slot_of`, `build_call`) are
