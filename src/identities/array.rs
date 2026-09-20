@@ -1,14 +1,9 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `array`: the seed's first array value form — array-of-`dyad@`, the value
-//! `[len: u64][data: @dyad]` (16 bytes). The list rides behind one indirection
-//! (settled, July 2026: a scope *is* an array, and the dynamic array must not
-//! live inline in the scope node's value), so a sequence node holds a single
-//! array-typed field and the growable thing is its own value. No spelling and
-//! no element operations yet: the surface `array` logos, element access, and
-//! growth arrive with mutable arrays; today the parser builds one from a
-//! complete expression list.
+//! `array`: array-of-`dyad@`, the value `[len: u64][data: @dyad]` (16 bytes).
+//! The list rides behind one indirection, so a scope node holds the growable
+//! thing as a single field.
 
 use crate::dyad::DyadPtr;
 use crate::store::Store;
@@ -20,15 +15,11 @@ const LEN_OFF: usize = 0;
 /// Byte offset of the data pointer (a run of `dyad@`).
 const DATA_OFF: usize = 8;
 
-/// Register the array-of-dyad logos: `{type: logos, value -> record}`, the record
-/// [`meta::ARRAY_TAG`]-kinded.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, meta::ARRAY_TAG, meta::prec::APPLY);
     cx.store.alloc_raw(cx.type_, record)
 }
 
-/// Build an array node over `items`: the elements copy into their own stable
-/// allocation and the node's value is the `[len, data]` pair.
 pub(crate) fn build(store: &mut Store, array_: DyadPtr, items: &[DyadPtr]) -> DyadPtr {
     let data = store.alloc_operands(items);
     let mut bytes = [0u8; 16];
@@ -49,8 +40,6 @@ pub(crate) unsafe fn parts(node: DyadPtr) -> (usize, *const DyadPtr) {
     (len, data)
 }
 
-/// The elements of an array node, as a slice.
-///
 /// # Safety
 /// As [`parts`]; the store must outlive the returned slice.
 pub(crate) unsafe fn items<'a>(node: DyadPtr) -> &'a [DyadPtr] {

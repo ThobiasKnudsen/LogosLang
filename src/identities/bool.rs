@@ -1,27 +1,15 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `bool`: the type of a boolean value. A data type (its own type is `logos`), like
-//! [`crate::identities::i32`], but its values are just 0/1. Comparisons (`<`, …)
-//! produce `bool`, and `if` requires a `bool` condition (checked at parse time).
-//! DESIGN has no `bool` yet; this is the seed's minimal one.
-//!
-//! `true`/`false` are the two literals: shared value nodes typed `bool`, each
-//! carrying an `i32` 0/1 in its storage. They have no parse `Construct` (they
-//! resolve to their node and push as an operand); `run`'s generic data path reads
-//! the `i32`, and the `bool` lowering bakes it as a constant.
+//! `bool`: the type of a boolean value, physically an `i32` 0/1. `true` and
+//! `false` are shared value nodes typed `bool` with no parse construct.
 
 use super::numtype::NumType;
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
 
-/// Register `bool`: its type spelling and lowering, plus the `true`/`false`
-/// literal nodes with their spellings. Returns the `bool` type identity so the
-/// parser can hold it in `Core` (a comparison result is `bool`; `if`'s
-/// condition must be one).
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
-    // A bool is physically an i32 0/1, so its record carries the I32 width kind;
-    // its bool-ness lives in the identity itself (comparisons point here).
+    // The record carries the I32 width kind; bool-ness lives in the identity itself.
     let record = meta::record(cx.store, NumType::I32 as u8, meta::prec::INERT);
     let bool_ = cx.store.alloc_raw(cx.type_, record);
     cx.declare("bool", bool_);
@@ -34,14 +22,11 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     bool_
 }
 
-/// A `bool` literal node carrying `v` (0 or 1) as an `i32` in its storage.
 fn literal(cx: &mut Cx, bool_: DyadPtr, v: i32) -> DyadPtr {
     let value = cx.store.alloc_bytes(&v.to_ne_bytes());
     cx.store.alloc_raw(bool_, value)
 }
 
-/// Build a `bool` value node for `v`, physically the `i32` 0/1. Used to fold a
-/// comparison of two comptime rationals into a literal at parse time.
 pub(crate) fn literal_node(store: &mut crate::store::Store, bool_: DyadPtr, v: bool) -> DyadPtr {
     let value = store.alloc_bytes(&i32::from(v).to_ne_bytes());
     store.alloc_raw(bool_, value)

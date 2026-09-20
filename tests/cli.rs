@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! End-to-end tests of the `logos` binary: the real executable, real files,
-//! real stdin — the surface a user downloads. Integration tests run with the
+//! real stdin, the surface a user downloads. Integration tests run with the
 //! package root as the working directory, so the example and fixture paths
 //! are relative.
 
@@ -16,8 +16,6 @@ fn logos() -> Command {
 
 #[test]
 fn an_import_runs_the_file_and_prints_its_tail() {
-    // #58: the command line is Logos source — `logos import ./file.logos`
-    // runs the file top to bottom, and the line's value is the file's tail.
     let out = logos().args(["import", "examples/answer.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
@@ -25,10 +23,6 @@ fn an_import_runs_the_file_and_prints_its_tail() {
 
 #[test]
 fn the_drop_model_runs_at_file_scope() {
-    // The drop model (issue #49) through the real driver: a top-level `alloc`,
-    // an `own` move, and a block whose own alloc frees at its exit. The driver
-    // drains the top level's teardowns at program exit, so the program prints
-    // its tail value (42) and exits clean — no leak, no crash.
     let out = logos().args(["import", "tests/fixtures/heap.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
@@ -36,8 +30,6 @@ fn the_drop_model_runs_at_file_scope() {
 
 #[test]
 fn a_parse_error_renders_clickable_with_a_caret() {
-    // The inner report keeps the imported file's own coordinates and caret,
-    // wrapped in the import-failed frame.
     let out = logos().args(["import", "tests/fixtures/unknown_name.logos"]).output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
@@ -55,8 +47,6 @@ fn an_unreadable_path_fails_cleanly() {
 
 #[test]
 fn an_import_exposes_pub_and_hides_private() {
-    // Pub-only exposure (#58 over #33): the importer reaches `pub double`,
-    // and the unmarked `helper` stays invisible — fail-closed.
     let out = logos().arg("import tests/fixtures/lib_pub.logos, double(21)").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
@@ -72,7 +62,6 @@ fn an_import_exposes_pub_and_hides_private() {
 
 #[test]
 fn importing_a_library_alone_is_silent_and_clean() {
-    // A declaration-tailed file has no value to print; the run still counts.
     let out = logos().args(["import", "tests/fixtures/lib_pub.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert!(out.stdout.is_empty());
@@ -80,8 +69,6 @@ fn importing_a_library_alone_is_silent_and_clean() {
 
 #[test]
 fn an_imported_file_cannot_see_the_import_site() {
-    // The fresh view (ruled August 2026): the imported scope resolves ambient
-    // names and its own imports only — never the command line's declarations.
     let out = logos().arg("x := 5, import tests/fixtures/uses_missing.logos").output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
@@ -91,8 +78,6 @@ fn an_imported_file_cannot_see_the_import_site() {
 
 #[test]
 fn a_relative_import_resolves_against_the_importing_file() {
-    // outer.logos imports ./subdir/inner.logos — relative to ITS folder, not
-    // the working directory (ruled August 2026).
     let out = logos().args(["import", "tests/fixtures/outer.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "7\n");
@@ -100,7 +85,6 @@ fn a_relative_import_resolves_against_the_importing_file() {
 
 #[test]
 fn an_import_cycle_is_a_checked_error() {
-    // The import graph must be a DAG (ruled August 2026).
     let out = logos().args(["import", "tests/fixtures/cycle_a.logos"]).output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     assert!(
@@ -112,10 +96,6 @@ fn an_import_cycle_is_a_checked_error() {
 
 #[test]
 fn an_import_failure_reports_the_outer_position_then_the_inner_one() {
-    // #106: the inner file's rendering rode inside the outer message, and
-    // the outer text and caret were printed after it, detached. Each block
-    // now reads top down: the import line with its caret, then the inner
-    // file's own header, line and caret.
     let out = logos().arg("import tests/fixtures/broken.logos").output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -135,8 +115,6 @@ fn an_import_failure_reports_the_outer_position_then_the_inner_one() {
 
 #[test]
 fn a_repeat_import_is_idempotent() {
-    // Once per run: the second import finds the loaded file and republishing
-    // the same identities is not a shadowing error.
     let out = logos()
         .arg(
             "import tests/fixtures/subdir/inner.logos, \
@@ -150,9 +128,6 @@ fn a_repeat_import_is_idempotent() {
 
 #[test]
 fn the_repl_imports_once_per_session_and_keeps_pub_names() {
-    // The REPL threads one import registry across lines (a session is a run):
-    // the answer echoes through the import's tail, the library import is
-    // silent, and its pub fn stays callable on a later line.
     let (echoes, stderr) =
         repl(b"import examples/answer.logos\nimport tests/fixtures/lib_pub.logos\ndouble(4)\n");
     assert_eq!(echoes, ["42", "8"], "stderr: {stderr}");
@@ -161,14 +136,7 @@ fn the_repl_imports_once_per_session_and_keeps_pub_names() {
 
 #[test]
 fn the_view_reads_the_cell_and_operands_are_ordinary_fields() {
-    // #52: the view exposes exactly the cell's two fields (`.logos`, `.value`)
-    // — the dyad logos defines nothing else — while an operator node's
-    // slots are fields ITS logos defines: `.operands` is that collection and
-    // `[i]` fetches an element from it (element access is `[…]`, application
-    // is `(…)`): `(x + x).operands[0]`, no view involved. Reads fold at
-    // parse (comptime reflection). The honest cell surface shows the op slot
-    // too: `(x + x)` has arity 3, and operands[2] is the resolved callable
-    // leaf, not an i32.
+    // `(x + x)` has arity 3: operands[2] is the resolved callable leaf, not an i32.
     let (echoes, stderr) = repl(
         b"x := i32 5\nx:dyad.type == i32\n(x + x):dyad.type.arity\n\
           (x + x).operands[0]:dyad.type == i32\n(x + x).operands[2]:dyad.type == i32\n\
@@ -180,13 +148,6 @@ fn the_view_reads_the_cell_and_operands_are_ordinary_fields() {
 
 #[test]
 fn a_type_body_fills_its_slots_and_declares_its_members() {
-    // DESIGN ›The constructor is a field‹ (#61; 19 September 2026): the slots
-    // `type` declares are filled with `=` — the parse_rank spelled relative,
-    // the associativity one of the two identities `left` and `right` (of type
-    // `type`, like a keyword, ruled 9 September 2026) — and every member lives
-    // in the `instance = (…)` block: a `shared` one is stored once with the
-    // type and read `g.y`, an unmarked one is a field of every instance. A
-    // bare `:=` line in the body is the checked error.
     let (echoes, stderr) = repl(
         b"t := type (parse_rank = *.parse_rank + 1, associativity = right)\n\
           t.parse_rank\nt.associativity == right\nright:dyad.type == type\n",
@@ -196,56 +157,36 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
         b"g := type (instance = (shared y := 3, shared z := y + 3))\ng.y\ng.z\ng.parse_rank\n",
     );
     assert_eq!(echoes, ["3", "6", "91.0"], "stderr: {stderr}");
-    // A shared member's initializer runs at the definition, so a *typed*
-    // member holds its value too — the body's declarations run as they are
-    // parsed, the one pass over a type body as over a file. Before that, only
-    // the untyped comptime form worked, because it folds at parse, and `g.y`
-    // read the zeroed place (#87).
     let (echoes, stderr) = repl(
         b"g := type (instance = (shared y := i32 7, shared z := i32 (y + 3)))\ng.y\ng.z\ng.y + 1\n",
     );
     assert_eq!(echoes, ["7", "10", "8"], "stderr: {stderr}");
-    // Shared and per-instance members share one block: the field is a place
-    // per instance and in the layout, the shared one is neither.
     let (echoes, stderr) = repl(
         b"p := type (instance = (shared k := 10, v := i32 ?))\nq := p(2)\nq.v\np.k\np.size_bytes\n",
     );
     assert_eq!(echoes, ["2", "10", "4"], "stderr: {stderr}");
-    // Prose beside a `shared` line is lifted out like any segment's, before
-    // or after the declaration, and none of it is taken for a body line.
     let (echoes, stderr) = repl(
         b"t := type (instance = (shared # \xc2\xabnote\xc2\xbb y := 3, shared z := 4 # \xc2\xabtail\xc2\xbb, v := i32 ?))\n\
           t.y\nt.z\nt.size_bytes\n",
     );
     assert_eq!(echoes, ["3", "4", "4"], "stderr: {stderr}");
-    // A declaration that faults at the definition says so, and names the type
-    // body it was in.
     let (echoes, stderr) =
         repl(b"h := fn () -> i32 ( p := @i32 ?, p@ )\ng := type (instance = (shared y := h()))\n");
     assert!(
         echoes.is_empty() && stderr.contains("a type body's own declaration failed"),
         "stderr: {stderr}"
     );
-    // `lex_rank` (ruled 10 September 2026, #113; on the record since 14
-    // September 2026, #122): the order among spellings competing at one text
-    // position. A body's `lex_rank = …` writes the record of the name being
-    // declared, `r:lex_rank` reads it, and it is not a member of the type.
     let (echoes, stderr) = repl(b"r := type (lex_rank = 3)\nr:lex_rank\n+:lex_rank\nr.lex_rank\n");
     assert_eq!(echoes, ["3.0", "0.0"], "stderr: {stderr}");
     assert!(!stderr.is_empty(), "`.lex_rank` is no member of a type");
-    // A rank is the name's, never the thing's: a second name for `r` starts
-    // at the default, and a name's rank may be written on the name after the
-    // fact. A body with no name to write is refused.
     let (echoes, stderr) = repl(
         b"r := type (lex_rank = 3)\ns := r\ns:lex_rank\ns:lex_rank = 7\ns:lex_rank\nr:lex_rank\n",
     );
     assert_eq!(echoes, ["0.0", "7.0", "3.0"], "stderr: {stderr}");
     let (_echoes, stderr) = repl(b"f := fn (t := type ?) -> void ( )\nf(type (lex_rank = 1))\n");
     assert!(stderr.contains("lex_rank is the name's"), "stderr: {stderr}");
-    // The superseded spelling is no slot: inside a body it is an unknown name.
     let (echoes, stderr) = repl(b"s := type (precedence = 5)\n");
     assert!(echoes.is_empty() && stderr.contains("unknown name"), "stderr: {stderr}");
-    // `run` holds a bare body or, until #133 slice 9, a function (#63).
     let (echoes, stderr) = repl(b"c := type (instance = (shared run = 5))\n");
     assert!(echoes.is_empty() && stderr.contains("`shared run = (…)`"), "stderr: {stderr}");
     let (echoes, stderr) =
@@ -255,40 +196,20 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
 
 #[test]
 fn any_spelling_the_index_can_hold_is_nameable() {
-    // DESIGN ›The scope's constructor is the driver‹ (ruled 10 September 2026,
-    // #110): a spelling nothing declared lexes through one of two fresh
-    // patterns, a word or a symbol run, ranked below every declared spelling;
-    // the highest-ranked candidate wins, the longest at equal rank. So `^` is
-    // a name like any other, a declared `a` does not cut the fresh `ab2`, a
-    // declared `@` beats the run `@@`, `=` and `-` glue without a rank set,
-    // and a fresh symbol used as an operand is the leftover-cell error at its
-    // own column.
     let (echoes, stderr) = repl(
         b"^ := i32 5\n^ + 1\na := i32 1\nab2 := i32 2\nab2 + a\nx := i32 5\nx=-1\nx\n\
           p := type (instance = (v := i32 ?))\nq := p(7)\nr := &q\nrr := &r\nrr@@.v\nx^2\n",
     );
     assert_eq!(echoes, ["6", "3", "-1", "7"], "stderr: {stderr}");
-    // The fresh `^` is the leftover cell of its line, reported at its column.
     assert!(stderr.contains("<repl>:1:2: error:"), "stderr: {stderr}");
-    // The demo's operator with its `code` slot (#63): `^` defined with
-    // `type`, right-associative, above `*`, its constructor and its code in
-    // Logos, used glued (`x^3`) inside a function that compiles. 9 + 512 + 18.
+    // caret.logos: 9 + 512 + 18.
     let out = logos().args(["import", "tests/fixtures/caret.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "539\n");
 }
 
-/// The demo in the ruled shape (#133): `^` with its instance block, its
-/// `parse` over `this` and the tape, and its `shared run` body over the
-/// fields. It prints 9 once slice 8 constructs the held run body per
-/// field-type set; until then `this` in that body is an unknown name, so the
-/// test is the promise slice 1 made, ignored, not a passing stand-in.
 #[test]
 fn the_power_demo_prints_nine() {
-    // `^`'s bare `shared run = (…)` body is lexed once at the definition and
-    // constructed for i32 operands when `x ^ 3` is built (DESIGN ›Deferral
-    // is authored‹, 20 September 2026; #133 slice 8); f.compile() lowers the
-    // node as a call of that constructed function.
     let out = logos().args(["import", "identities/power.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "9\n");
@@ -303,9 +224,7 @@ const POWER: &str = "^ := type ( instance = ( lhs := ?, rhs := i32 ?, output := 
 
 #[test]
 fn a_held_run_body_is_constructed_once_per_field_type_set_in_both_tiers() {
-    // One definition, two sets in one function: `a ^ 2` over i32 and `b ^ 2`
-    // over i64 each get their own constructed body, and the compiled function
-    // agrees with the interpreted one. 9 + 16.
+    // `a ^ 2` over i32 and `b ^ 2` over i64 each get their own constructed body: 9 + 16.
     let src =
         format!("{POWER}, h := fn (a := i32 ?, b := i64 ?) -> i64 ( i64(a ^ 2) + b ^ 2 ), h(3, 4)");
     let out = logos().args([&src]).output().unwrap();
@@ -322,9 +241,7 @@ fn a_held_run_body_is_constructed_once_per_field_type_set_in_both_tiers() {
 
 #[test]
 fn a_constructed_run_body_is_kept_on_the_type_across_repl_lines() {
-    // The functions built from the held body live on the type, so a later
-    // line — its own parser — finds the i32 body built by the first use
-    // and never re-lexes the definition: 4, then 27 through compiled code.
+    // A later line is its own parser, so it must find the i32 body built by the first use.
     let (echoes, stderr) = repl(
         format!(
             "{POWER}\nf := fn (x := i32 ?) -> i32 ( x ^ 2 )\nf(2)\n\
@@ -337,9 +254,6 @@ fn a_constructed_run_body_is_kept_on_the_type_across_repl_lines() {
 
 #[test]
 fn a_run_body_sees_its_definition_and_its_own_locals_only() {
-    // The body's cells resolve as at the definition: a name declared before
-    // the type is read, and one declared after it is unknown inside the body
-    // — the construction fails at the use, rendered against the body's text.
     let before = format!(
         "k := i32 2, {}, f := fn (x := i32 ?) -> i32 ( x ^ 2 ), f(5)",
         POWER.replace("r = r * this.lhs", "r = r * this.lhs * k")
@@ -361,14 +275,7 @@ fn a_run_body_sees_its_definition_and_its_own_locals_only() {
 
 #[test]
 fn a_run_body_over_bare_literal_operands_is_a_rational_specialization() {
-    // A bare literal written into `lhs := ?` gives the field type
-    // `rational_number` (ruled 20 September 2026: the literal's type, no
-    // silent i32), a set of its own, whose body runs over rational places
-    // and operators; and a node every value field of which is a literal is
-    // comptime, so it folds at construction as `2 * 3` does and its literal
-    // molds where it lands (DESIGN ›Deferral is authored‹: "every
-    // constructor is a partial evaluator"). caret.logos's tail through the
-    // bare body: 9 + 512 + 18.
+    // A node whose value fields are all literals folds at construction; `f(2) + 2 ^ 3 ^ 2 + 2 * 3 ^ 2` is 9 + 512 + 18.
     let src = format!("{POWER}, 2 ^ 3");
     let out = logos().args([&src]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -380,9 +287,6 @@ fn a_run_body_over_bare_literal_operands_is_a_rational_specialization() {
     let out = logos().args([&src]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "539");
-    // A rational place as an operand is evaluated at run: the set's function
-    // runs interpreted, and a function may yield the type; an inexact result
-    // stays exact.
     let (echoes, stderr) = repl(
         format!(
             "{POWER}\nq := rational_number 2\nq ^ 3\n\
@@ -395,18 +299,12 @@ fn a_run_body_over_bare_literal_operands_is_a_rational_specialization() {
 
 #[test]
 fn rational_places_and_operators_run_interpreted_and_are_refused_compiled() {
-    // `rational_number ?` and `rational_number 2` make places of the type
-    // (DESIGN ›Numeric literals are uncommitted until context classifies
-    // them‹: "the result *stays* `rational_number`"); the operators over
-    // them carry the exact fraction; a place shows its number.
     let (echoes, stderr) = repl(
         b"q := rational_number 2\nr := rational_number 3\nq * r\nq / 3\nq = q * 2\nq\n\
           q < 5\nx := rational_number ?\nx = 7\nx\nk := fn () -> rational_number ( q )\nk()\n",
     );
     assert_eq!(echoes, ["6", "2/3", "4", "true", "7", "4"], "stderr: {stderr}");
-    // Crossing into a machine type is explicit, and the seed has no such
-    // conversion yet: a rational value in a typed slot is the mismatch, and
-    // the compiler refuses a rational place (arbitrary precision deferred).
+    // The seed has no rational-to-machine conversion yet, so a rational value in a typed slot is the mismatch.
     for (src, expect) in [
         ("q := rational_number 2, q + i32 1", "do not match"),
         ("k := fn () -> i32 ( q := rational_number 2, q ), k()", "do not match"),
@@ -422,12 +320,7 @@ fn rational_places_and_operators_run_interpreted_and_are_refused_compiled() {
 
 #[test]
 fn a_pattern_spelling_is_declared_through_regex() {
-    // DESIGN ›The scope's constructor is the driver‹ (ruled 10 September 2026,
-    // #114): `regex «…»` reads its own quote and yields a recognizer, which
-    // `:=` enters into the index as written. So a spelling that is a pattern
-    // (`5k`), or a compound of known symbols (`<=>`, beating `<=` `>` by
-    // length at equal rank), becomes a name like any other; the same key live
-    // twice is the shadowing error (the core's `..` is spelled `\.\.`).
+    // `<=>` beats `<=` `>` by length at equal rank; the core's `..` is spelled `\.\.`.
     let (echoes, stderr) = repl(
         b"regex \xc2\xab[0-9]+[kK]\xc2\xbb := type ()\n(5k):dyad.type == type\n\
           regex \xc2\xab<=>\xc2\xbb := type ()\n(<=>):dyad.type == type\n\
@@ -435,17 +328,12 @@ fn a_pattern_spelling_is_declared_through_regex() {
     );
     assert_eq!(echoes, ["true", "true"], "stderr: {stderr}");
     assert!(stderr.contains("shadowed"), "stderr: {stderr}");
-    // Two declared patterns of equal rank matching the same length is the
-    // inconsistency the definitions must correct; the seed reports it where
-    // text hits both. A `lex_rank` on one of them settles it.
     let (echoes, stderr) = repl(
         b"regex \xc2\xab[a-z][0-9]\xc2\xbb := type ()\nregex \xc2\xaba[0-9]\xc2\xbb := type ()\na1\n\
           regex \xc2\xabb[0-9]\xc2\xbb := type (lex_rank = 1)\n(b1):dyad.type == type\n",
     );
     assert_eq!(echoes, ["true"], "stderr: {stderr}");
     assert!(stderr.contains("same lex_rank"), "stderr: {stderr}");
-    // A pattern that does not compile is refused at its quote; `regex` with
-    // no quote is refused at the word; a failed line rolls its pattern back.
     let (echoes, stderr) = repl(
         b"regex \xc2\xab[unclosed\xc2\xbb := type ()\nregex 5\n\
           regex \xc2\xabz[0-9]\xc2\xbb := type (\nregex \xc2\xabz[0-9]\xc2\xbb := type ()\n(z1):dyad.type == type\n",
@@ -457,34 +345,17 @@ fn a_pattern_spelling_is_declared_through_regex() {
 
 #[test]
 fn a_constructor_written_in_logos_runs_during_the_parse() {
-    // Issue #61's done-when: a file defines a type with `parse_rank = …`,
-    // `associativity = …`, and a `parse = (…)` body over the tape (a bare
-    // body since #133 slice 5; the `fn (tape := parsing_tape ?) -> void`
-    // wrapper `noop` below still wears is read too, until #133 slice 9), and
-    // a later appearance in the same file runs that constructor during the
-    // parse — here a postfix `squared` and an infix `plus2`, the nodes they
-    // build calling like any other, interpreted and compiled.
     let out = logos().args(["import", "tests/fixtures/squared.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "92\n");
-    // A constructor that finds nothing to consume sets its flag and stands
-    // as itself (DESIGN ›Execution is function application‹, ruled 19
-    // September 2026: "it should rather just be itself in constructed
-    // state"); the wrapped `fn (tape …)` form is still read (until #133
-    // slice 9).
+    // The `fn (tape := parsing_tape ?)` wrapper is still read: stand-in for #133.
     let (echoes, stderr) = repl(
         b"noop := type (parse = fn (tape := parsing_tape ?) -> void ( tape.is_constructed[0] = true ))\n\
           t := noop\nt:dyad.type == type\nnoop.parse_rank\n",
     );
     assert_eq!(echoes, ["true", "91.0"], "stderr: {stderr}");
-    // A constructor that fails is the checked error, reported at the appearance.
     let (_echoes, stderr) = repl(b"bad := type (parse = ( tape[5] ))\nx := bad\n");
     assert!(stderr.contains("constructor failed"), "stderr: {stderr}");
-    // `tape.spelling[k]` (#121, ruled 14 September 2026): a keyword whose
-    // constructor makes its cell its own lexed text. The cell sits in a body
-    // nothing runs, since a string has no storage to read yet, and the
-    // session goes on; off the tape the read is the checked error like any
-    // tape read.
     let (echoes, stderr) = repl(
         b"named := type (parse = ( tape[0] = tape.spelling[0], tape.is_constructed[0] = true ))\n\
           f := fn () -> void ( named )\n5\n",
@@ -496,17 +367,10 @@ fn a_constructor_written_in_logos_runs_during_the_parse() {
 
 #[test]
 fn a_record_carries_its_spelling() {
-    // DESIGN ›The dyad's read surface‹ (ruled 14 September 2026, #120):
-    // "`x:name` is the spelling the trie holds for `x` … readable wherever `:`
-    // reaches". A declared name, a core identity, and — inside a constructor
-    // — the record a cell holds (`tape[-1]:name`), while a constructed node,
-    // having no record, has no name: the same checked error as `a:type`.
     let (echoes, stderr) = repl(b"x := 5\nx:name\nif:name\n");
     assert_eq!(echoes, ["x", "if"], "stderr: {stderr}");
     let (_echoes, stderr) = repl(b"a := i32 1\n(a + 1):name\n");
     assert!(stderr.contains("expected a field name"), "stderr: {stderr}");
-    // A postfix `sp` that makes its cell the name of the identity on its
-    // left, in a body nothing runs (a string has no storage to read yet).
     let (echoes, stderr) = repl(
         b"sp := type (parse = ( tape[0] = tape[-1]:name, tape.is_constructed[0] = true, tape.remove(-1) ))\n\
           x := 1\nf := fn () -> void ( x sp )\n5\n",
@@ -516,14 +380,7 @@ fn a_record_carries_its_spelling() {
 
 #[test]
 fn a_slot_body_is_read_bare() {
-    // #133 slice 5 (DESIGN ›Execution is function application‹, 17 September
-    // 2026: "`parse = ( … )` with a place of type `parse` on the left reads
-    // the bracket as a deferred parse body, `run = ( … )` as a deferred run
-    // body … the `fn (tape := parsing_tape ?) -> void` wrapper a parse slot
-    // carried is gone, `tape` being a word inside `parse`"). A `parse` body
-    // is read over a hidden `tape` and the constructor runs as before; the
-    // hidden name is declared as a parameter is, so an outer `tape` the body
-    // could still mean is the shadowing error, as it was for the wrapper.
+    // The hidden `tape` is declared as a parameter is, so an outer `tape` is the shadowing error.
     let (echoes, stderr) = repl(
         b"sp := type (parse = ( tape[0] = tape[-1]:name, tape.is_constructed[0] = true, tape.remove(-1) ))\n\
           x := 1\nf := fn () -> void ( x sp )\n5\n",
@@ -531,14 +388,6 @@ fn a_slot_body_is_read_bare() {
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
     let (_echoes, stderr) = repl(b"tape := 1\nsp := type (parse = ( tape.recenter(0) ))\n");
     assert!(stderr.contains("shadowed"), "stderr: {stderr}");
-    // `this` (#133 slice 6; DESIGN, 18 September 2026: "`this` in `parse` is
-    // a fresh node of the type being defined … the constructor fills it by
-    // name, `this.lhs = tape[-1]`, and places it with the tape's ordinary
-    // write, `tape[0] = this`"; 19 September 2026: "followed by
-    // `tape.is_constructed[0] = true`"): the node's fields are the instance
-    // block's, in order, and the run's parameters read them in that order.
-    // `this` is a name only a parse body knows: outside one it is out of
-    // scope, as any name declared in a closed scope is.
     let (echoes, stderr) = repl(
         b"minus := type (instance = (a := ?, b := ?, shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( a - b )), \
           parse_rank = +.parse_rank, associativity = left, \
@@ -548,13 +397,6 @@ fn a_slot_body_is_read_bare() {
     );
     assert_eq!(echoes, ["5", "5", "8"], "stderr: {stderr}");
     assert!(stderr.contains("`this` is not in scope"), "stderr: {stderr}");
-    // A `run` body is a body over `this`, whose fields' types no definition
-    // knows (DESIGN ›Deferral is authored‹, 20 September 2026: "the body is
-    // held as its lexed tape … and constructed once per field-type set when
-    // a node supplies the types"): the seed lexes it once into the cells the
-    // type holds. Its extent is found by the index: a
-    // bracket inside a quote is text, a comment's text is passed over to
-    // its quote's end or its line's, and nested brackets pair up.
     let (echoes, stderr) = repl(
         b"t := type (instance = (a := i32 ?, shared run = ( s := \xc2\xaba ) b\xc2\xbb, \
           # \xc2\xab ) \xc2\xbb (( x[0] ), 5 ))))\n\
@@ -572,24 +414,14 @@ fn a_slot_body_is_read_bare() {
 
 #[test]
 fn a_type_body_refuses_what_is_not_its_own() {
-    // `:=` on a slot name is the no-shadowing error; a member may not shadow
-    // an outer name; `instance` belongs in a body, once; a line that would
-    // only run is refused; the slot values are checked.
     for (src, expect) in [
         (&b"t := type (parse_rank := 5)\n"[..], "shadowed"),
         (b"y := 1\ng := type (y := 3)\n", "shadowed"),
         (b"t := type (instance = (a := i32 ?), instance = (b := i32 ?))\n", "one `instance"),
-        // A bare `:=` line is not a type body's own (19 September 2026): members
-        // go inside `instance = (…)`; `shared` marks one there and nowhere else.
         (b"g := type (y := 3)\n", "inside `instance"),
         (b"g := type (instance = (shared))\n", "followed by a declaration"),
         (b"f := fn (shared a := i32 ?) -> void ( a )\n", "nowhere else"),
-        // The slot words are core identities in the seed (19 September 2026;
-        // DESIGN has them known only inside a type body, a listed
-        // divergence): left of `=` outside a type body they are refused; a
-        // type's own `run`, the instances' parse trio, their `instance` and
-        // the `drop` slot are not in the seed yet, and a slot fill inside the
-        // block is marked `shared`.
+        // Stand-in: the slot words are core identities in the seed, not names known only inside a type body.
         (b"parse_rank = 3\n", "only inside a type body"),
         (b"d := i32 5\ndrop = 3\n", "only inside a type body"),
         (b"t := type (run = fn () -> i32 ( 1 ))\n", "`shared run = (…)`"),
@@ -599,23 +431,16 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"t := type (instance = (shared parse = ( tape.recenter(0) )))\n", "other slots"),
         (b"t := type (instance = (shared instance = (a := i32 ?)))\n", "other slots"),
         (b"t := type (instance = (shared drop = 5))\n", "`drop` slot"),
-        // `this.f` reaches a field the instance block above declared, and
-        // nothing else (20 September 2026: the block comes first).
         (b"t := type (parse = ( this.a = tape[-1] ))\n", "declares none"),
         (b"t := type (instance = (a := ?), parse = ( this.b = tape[-1] ))\n", "no field `b`"),
         (
             b"t := type (instance = (a := ?), parse = ( tape.is_constructed[0] = 5 ))\n",
             "takes a bool",
         ),
-        // One block, one no-shadowing rule (19 September 2026): a field and a
-        // `shared` member may not share a name, in either order; and `shared`
-        // is the mark, never a field's name.
         (b"p := type (instance = (y := i32 ?, shared y := 3))\n", "shadowed"),
         (b"p := type (instance = (shared y := 3, y := i32 ?))\n", "shadowed"),
         (b"t := type (instance = (shared := i32 ?))\n", "followed by a declaration"),
         (b"t := type (5)\n", "a type body line"),
-        // A bare `instance` line declares nothing: the slot name used to
-        // stand as a bare value and pass as a silent no-op (#87).
         (b"t := type (instance)\n", "a type body line"),
         (b"t := type (associativity = 5)\n", "`left` or `right`"),
         (b"t := type (parse = fn (a := i32 ?) -> void ( a = 1 ))\n", "parsing_tape"),
@@ -635,10 +460,6 @@ fn a_type_body_refuses_what_is_not_its_own() {
 
 #[test]
 fn an_and_group_of_non_booleans_is_data_not_a_condition() {
-    // `and` over two non-booleans is a group the consuming operator
-    // distributes over (DESIGN, 7 September 2026; the seed's `append`), so
-    // `if` refuses it as a condition, and a boolean beside a non-boolean is
-    // still the operand error.
     let (_echoes, stderr) = repl(b"x := i32 1\ny := i32 2\nif (x and y) (1) else (2)\n");
     assert!(stderr.contains("must be a bool"), "stderr: {stderr}");
     let (_echoes, stderr) = repl(b"x := i32 1\nx and true\n");
@@ -647,21 +468,13 @@ fn an_and_group_of_non_booleans_is_data_not_a_condition() {
 
 #[test]
 fn two_spellings_of_a_pointer_type_are_one_type() {
-    // #89: `@i32` was minted fresh at every use, so two type values of it
-    // were different nodes and `==` said false. Plain pointer types are
-    // interned through the pointee's record now (DESIGN ›The store is keyed
-    // by address‹: "interned canonical identities"), one node per pointee.
+    // Plain pointer types are interned through the pointee's record, one node per pointee.
     let (echoes, stderr) = repl(b"x := @i32\ny := @i32\nx == y\nz := @@i32\nz == @@i32\n");
     assert_eq!(echoes, ["true", "true"], "stderr: {stderr}");
 }
 
 #[test]
 fn an_or_group_of_non_booleans_is_data_like_the_and_group() {
-    // DESIGN ›The proof layer‹ (7 September 2026): "`and` and `or` on
-    // operands that are not booleans build a group that carries the
-    // connective". `or` built no group before (#95); now it is refused as a
-    // condition exactly as the `and` group is, and a boolean beside a
-    // non-boolean is still the operand error.
     let (_echoes, stderr) = repl(b"x := i32 1\ny := i32 2\nif (x or y) (1) else (2)\n");
     assert!(stderr.contains("must be a bool"), "stderr: {stderr}");
     let (_echoes, stderr) = repl(b"x := i32 1\nx or true\n");
@@ -670,16 +483,12 @@ fn an_or_group_of_non_booleans_is_data_like_the_and_group() {
 
 #[test]
 fn a_collection_member_demands_its_index_brackets() {
-    // Element access is `[…]`; the call form is refused with a teaching
-    // message, and the bare collection as a value waits for the array logos.
     let (_echoes, stderr) = repl(b"x := i32 5\n(x + x).operands(0)\n");
     assert!(stderr.contains("element access is `[…]`"), "stderr: {stderr}");
 }
 
 #[test]
 fn a_square_bracket_is_a_paren_that_closes_only_itself() {
-    // `[` is `(` in square brackets (ruled 9 September 2026): its interior is
-    // any expression, and each opener takes only its own closer.
     let (echoes, stderr) = repl(b"x := i32 5\n(x + x).operands[1 - 1]\n");
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
     let (_echoes, stderr) = repl(b"(1]\n");
@@ -690,24 +499,19 @@ fn a_square_bracket_is_a_paren_that_closes_only_itself() {
 
 #[test]
 fn dot_logos_off_the_view_is_a_guided_error() {
-    // `.` reads only the fields a type defines — about the value — so
-    // `x.type` no longer exists; the error teaches the view spelling.
     let (_echoes, stderr) = repl(b"x := i32 5\nx.type\n");
     assert!(stderr.contains("dyad view"), "stderr: {stderr}");
 }
 
 #[test]
 fn a_reflect_read_that_does_not_fit_is_an_error() {
-    // The ruled checked error: the view has no member beyond the two cell
-    // fields, so `.operands` through it has nothing to read.
     let (_echoes, stderr) = repl(b"x := i32 5\nx:dyad.operands[0]\n");
     assert!(stderr.contains("does not fit"), "stderr: {stderr}");
 }
 
 #[test]
 fn an_import_inside_a_fn_body_is_rejected() {
-    // The load is a comptime effect; inside a fn body parse and run order do
-    // not coincide, so it is rejected like a type variable's fill.
+    // The load is a comptime effect; inside a fn body parse and run order do not coincide.
     let (_echoes, stderr) = repl(b"g := fn () -> i32 ( import examples/answer.logos 1 )\n");
     assert!(stderr.contains("loads at parse time"), "stderr: {stderr}");
 }
@@ -731,9 +535,6 @@ fn the_repl_echoes_values_but_not_declarations_or_assignments() {
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    // Declarations and the assignment are silent (they still ran: the call
-    // reads x = 40 through the declared double); only the tail expression
-    // echoes. Strip the banner and prompts, keep the echoes.
     let echoes: Vec<&str> = stdout
         .lines()
         .skip(1) // the banner
@@ -767,9 +568,6 @@ fn repl(input: &[u8]) -> (Vec<String>, String) {
 
 #[test]
 fn the_repl_rolls_back_a_failed_lines_declarations() {
-    // A failed line — parse error or run error — must not burn its name: the
-    // same spelling declares cleanly on the next line instead of reporting
-    // "shadowed" for the rest of the session.
     let (echoes, stderr) =
         repl(b"b := )\nb := 5\nf := fn (v := i32 ?) -> i32 ( v )\ng := f(1,2)\ng := f(3)\ng + b\n");
     assert_eq!(echoes, ["8"], "stderr: {stderr}");
@@ -780,10 +578,6 @@ fn the_repl_rolls_back_a_failed_lines_declarations() {
 
 #[test]
 fn the_repl_keeps_an_owning_binding_alive_across_lines() {
-    // A REPL binding lives for the whole session, so its teardown belongs at
-    // session exit, not end of line: `a` is still readable on a later line, and
-    // a block's own allocation is freed at the block's exit as in file mode
-    // (file and REPL are one pass and must agree).
     let (echoes, stderr) = repl(b"a := alloc i32 5\na@\nr := ( b := alloc i32 20, b@ )\nr\n");
     assert_eq!(echoes, ["5", "20"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -791,9 +585,6 @@ fn the_repl_keeps_an_owning_binding_alive_across_lines() {
 
 #[test]
 fn the_repl_reuses_a_name_after_drop() {
-    // DESIGN ›Name resolution is scope-filtered‹ (3 September 2026): a session
-    // name is recycled by `drop n` then `n := …`, and between the two the dead
-    // name refuses a read instead of reporting "shadowed" forever.
     let (echoes, stderr) = repl(b"n := i32 5\ndrop n\nn\nn := i32 6\nn\n");
     assert_eq!(echoes, ["6"], "stderr: {stderr}");
     assert!(stderr.contains("<repl>:1:1: error: `n` is dead here"), "stderr: {stderr}");
@@ -801,11 +592,7 @@ fn the_repl_reuses_a_name_after_drop() {
 
 #[test]
 fn the_repl_refuses_a_call_whose_body_reads_a_dropped_name() {
-    // #125 (DESIGN ›`own` and `drop` are static‹, 15 September 2026): a call
-    // is a use of every outer name the callee's body reads, so `climb()`
-    // after `drop n` is the dead-name error at the call, and stays so after
-    // `n := …` redeclares the spelling; a function declared after the new
-    // `n` counts in it.
+    // A call is a use of every outer name the callee's body reads.
     let (echoes, stderr) = repl(
         b"n := i32 0\nclimb := fn () -> i32 ( n = n + 1, n )\nclimb()\nclimb()\ndrop n\n\
           climb()\nn := i32 10\nclimb()\nclimb2 := fn () -> i32 ( n = n + 1, n )\nclimb2()\n",
@@ -820,11 +607,7 @@ fn the_repl_refuses_a_call_whose_body_reads_a_dropped_name() {
 
 #[test]
 fn an_imported_function_may_read_its_own_sections_private_names() {
-    // #125: `bump` reads `helper`, a private name of the imported section.
-    // The section is on no caller's stack, but its names live for the run
-    // (DESIGN ›Importing is dropping the text there‹: importers "share the
-    // one loaded scope and its identities"), so the call is a use of a live
-    // name, not an out-of-scope one.
+    // The section is on no caller's stack, but its names live for the run.
     let out = logos().arg("import tests/fixtures/lib_helper.logos, bump(41)").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
@@ -832,9 +615,6 @@ fn an_imported_function_may_read_its_own_sections_private_names() {
 
 #[test]
 fn a_failed_repl_line_restores_a_moved_name() {
-    // A line that moves `a` out and then fails is rolled back whole: the dead
-    // mark lifts with the line's declarations, so `a` reads on the next line
-    // as if the line had never been typed.
     let (echoes, stderr) = repl(b"a := alloc i32 5\nr := ( b := own a, b@ ) + nosuch\na@\n");
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
     assert!(stderr.contains("unknown name"), "stderr: {stderr}");
@@ -843,8 +623,6 @@ fn a_failed_repl_line_restores_a_moved_name() {
 
 #[test]
 fn an_owning_value_that_nothing_can_free_is_refused() {
-    // The fail-closed edge of the drop model: an owning value with no name to
-    // attach its teardown to is refused at parse rather than leaked at run.
     let out = logos().args(["import", "tests/fixtures/unbound_owning.logos"]).output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
@@ -854,9 +632,6 @@ fn an_owning_value_that_nothing_can_free_is_refused() {
 
 #[test]
 fn the_repl_compiles_a_fn_across_lines() {
-    // `f.compile()` on one line installs the machine code; the call on the
-    // next line jumps to it. The compile itself is a silent statement, so the
-    // only echo is the call's value.
     let (echoes, stderr) =
         repl(b"double := fn (x := i64 ?) -> i64 ( x + x )\ndouble.compile()\ndouble(21)\n");
     assert_eq!(echoes, ["42"], "stderr: {stderr}");
@@ -865,10 +640,6 @@ fn the_repl_compiles_a_fn_across_lines() {
 
 #[test]
 fn an_else_if_chain_selects_the_matching_arm() {
-    // `else if` is sugar for a nested `if` in the else slot, so a chain picks the
-    // first matching arm with no hand-written `else ( if … )`. Each reachable arm
-    // is exercised — a middle `else if`, a later one, the final `else` — and the
-    // explicit nested form yields the same value the sugar does.
     let (echoes, stderr) = repl(
         b"x := i32 1\nif (x == 0) (i32 10) else if (x == 1) (i32 20) else (i32 30)\n\
           y := i32 2\nif (y == 0) (i32 10) else if (y == 1) (i32 20) else if (y == 2) (i32 30) else (i32 40)\n\
@@ -881,9 +652,6 @@ fn an_else_if_chain_selects_the_matching_arm() {
 
 #[test]
 fn the_repl_binds_a_name_to_a_type() {
-    // `t := i32` makes `t` another spelling of `i32` (a `:=` value may be a
-    // logos): it works by juxtaposition, as a conversion, and in a fn
-    // signature; declaring it and echoing the bare logos are silent.
     let (echoes, stderr) =
         repl(b"t := i32\nx := t 7\nt(9)\nf := fn (v := t ?) -> t ( v + v )\nt\nf(x)\n");
     assert_eq!(echoes, ["9", "14"], "stderr: {stderr}");
@@ -892,9 +660,6 @@ fn the_repl_binds_a_name_to_a_type() {
 
 #[test]
 fn logos_is_a_value_reflected_by_dot_logos_and_compared_by_identity() {
-    // Roadmap #30: `logos` is a first-class value. `.logos` yields a value's logos, and
-    // `==`/`!=` compare logos by identity (logos are interned, so pointer identity is
-    // type identity). Every result is a bool, so it echoes; declarations stay silent.
     let (echoes, stderr) = repl(
         b"i32 == i32\ni32 == f64\ni32 != f64\ni32:dyad.type == logos\ni32:dyad.type == i32\n\
           x := i32 5\nx:dyad.type == i32\nx:dyad.type == f64\nt := logos\ni32:dyad.type == t\nlogos:dyad.type == logos\n",
@@ -916,8 +681,6 @@ fn the_type_reflection_example_runs() {
 
 #[test]
 fn a_logos_value_prints_its_spelling() {
-    // A program whose value is a type prints the type's name, not the raw bit
-    // container (roadmap #30). The value rides out of a scope (comment + expression).
     let out = logos().args(["import", "tests/fixtures/logos_name.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "i32\n");
@@ -925,8 +688,6 @@ fn a_logos_value_prints_its_spelling() {
 
 #[test]
 fn a_type_returning_function_resolves_at_comptime() {
-    // Roadmap #30 Phase 2: a `-> logos` call is run during parsing and becomes the
-    // concrete type it yields, so it flows through `==` and `:=` like any type.
     let (echoes, stderr) = repl(
         b"pick := fn (i := i32 ?) -> logos (if (i==0)(i32) else (f64))\n\
           pick(0) == i32\npick(1) == f64\npick(0) == f64\nt := pick(0)\nt == i32\n",
@@ -944,11 +705,7 @@ fn the_type_returning_fn_example_runs() {
 
 #[test]
 fn file_mode_runs_each_expression_as_it_parses() {
-    // Build and run are one pass: a top-level expression runs the moment it is
-    // parsed, so parse-time evaluation (a `-> logos` call reading an earlier
-    // binding) sees committed state and file mode agrees with the REPL. Before,
-    // the file driver parsed everything first and ran afterward, so the call
-    // read x's zeroed storage instead of 5 and answered i32 rather than f64.
+    // The file driver used to parse everything first, so the call read x's zeroed storage and answered i32 rather than f64.
     let out = logos()
         .args(["import", "tests/fixtures/comptime_sees_committed_state.logos"])
         .output()
@@ -959,8 +716,6 @@ fn file_mode_runs_each_expression_as_it_parses() {
 
 #[test]
 fn a_type_call_with_a_runtime_argument_is_rejected() {
-    // A `-> logos` call is comptime-only; an argument not known at parse time (here a
-    // function parameter) is reported, not silently mis-evaluated.
     let (_echoes, stderr) = repl(
         b"pick := fn (i := i32 ?) -> logos (if (i==0)(i32) else (f64))\n\
           g := fn (n := i32 ?) -> i32 ( a := pick(n), 1 )\n",
@@ -970,9 +725,6 @@ fn a_type_call_with_a_runtime_argument_is_rejected() {
 
 #[test]
 fn a_logos_declaration_declares_a_place_of_that_type() {
-    // `a := i32 ?` introduces the name with its type slot set and its value
-    // undefined (zeroed until phase bits land): the declaration is silent,
-    // `.logos` reflects the declared type, `=` fills the value, reads load it.
     let (echoes, stderr) = repl(b"a := i32 ?\na:dyad.type == i32\na = 9\na\n");
     assert_eq!(echoes, ["true", "9"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -980,9 +732,6 @@ fn a_logos_declaration_declares_a_place_of_that_type() {
 
 #[test]
 fn a_dependent_typed_declaration_takes_a_computed_type() {
-    // `b := metalogos(1) ?` — the declared type is the result of running a
-    // `-> logos` function at parse time (roadmap #30): the dependent
-    // declaration is the same declaration, its type just computed.
     let (echoes, stderr) = repl(
         b"metalogos := fn (i := i32 ?) -> logos (if (i==0)(i32) else (f64))\n\
           b := metalogos(1) ?\nb:dyad.type == f64\nb = 7\nb\n",
@@ -1003,26 +752,18 @@ fn a_logos_declaration_works_after_other_code() {
 
 #[test]
 fn a_logos_declaration_rejects_a_non_type() {
-    // `5 ?`: a hole after a value is no declared type — two cells where one
-    // must stand, the leftover error.
     let (_echoes, stderr) = repl(b"a := 5 ?\n");
     assert!(stderr.contains("expected one expression, found more"), "stderr: {stderr}");
 }
 
 #[test]
 fn a_logos_declaration_names_the_non_numeric_gap() {
-    // Storage for `a := bool ?` (and struct/pointer/void declarations) is not in
-    // the seed yet; the error names the gap instead of mis-storing. (`a := logos ?`
-    // is no longer a gap — it declares a type variable.)
     let (_echoes, stderr) = repl(b"a := bool ?\n");
     assert!(stderr.contains("non-numeric types are not in the seed yet"), "stderr: {stderr}");
 }
 
 #[test]
 fn a_logos_variable_declares_fills_once_and_becomes_the_type() {
-    // `a := logos ?` declares a type variable (an undefined logos); `a = i32` fills
-    // it at parse — comptime rebinding — after which the name is a full
-    // spelling of the type: `==` folds, juxtaposition builds typed values.
     let (echoes, stderr) =
         repl(b"a := logos ?\na:dyad.type == logos\na == i32\na = i32\na == i32\ny := a 5\ny\n");
     assert_eq!(echoes, ["true", "false", "true", "5"], "stderr: {stderr}");
@@ -1031,29 +772,18 @@ fn a_logos_variable_declares_fills_once_and_becomes_the_type() {
 
 #[test]
 fn a_logos_box_is_written_as_often_as_you_like() {
-    // Superseded behaviour, kept as the record of what changed: a fill used to
-    // be define-once and comptime-only, because `a = i32` rebound the *name* to
-    // the type instead of writing a box. A second fill then reported "not an
-    // assignable place" and a fill inside a fn body was refused outright.
-    // DESIGN ›A type is a comptime value‹ (12 September 2026) makes it an
-    // ordinary place, so both work now.
     let (echoes, stderr) = repl(b"a := logos ?\na = i32\na = f64\na\n");
     assert_eq!(echoes, ["f64"], "stderr: {stderr}");
 
-    // A store from inside a function body happens when the function runs, which
-    // is exactly the runtime type value the ruling is about.
     let (echoes, stderr) = repl(b"a := logos ?\ng := fn () -> i32 ( a = i32, 1 )\ng()\na\n");
     assert_eq!(echoes, ["1", "i32"], "stderr: {stderr}");
 
-    // What it still takes is a type and nothing else.
     let (_e, stderr) = repl(b"a := logos ?\na = 5\n");
     assert!(stderr.contains("must be a type value"), "stderr: {stderr}");
 }
 
 #[test]
 fn logical_operators_fold_over_bool_literals() {
-    // and/or/not over bare bool literals fold at parse (pure, nothing lost) —
-    // what keeps a comptime chain comptime; runtime operands still build nodes.
     let (echoes, stderr) = repl(
         b"true or false\ntrue and true\nnot (true)\n\
           a := logos ?\nif (a:dyad.type == f32 or a:dyad.type == logos) (a = f64) else (a = i32)\na == f64\n",
@@ -1064,12 +794,7 @@ fn logical_operators_fold_over_bool_literals() {
 
 #[test]
 fn a_comptime_if_drops_the_untaken_branch_unparsed() {
-    // The condition folds to a bool literal at parse time (`a:dyad.type == i32`), so
-    // the `if` resolves during parsing and the untaken branch's tokens are
-    // dropped unlexed: `a = 9.9` under `a := i32 ?` would be a parse error
-    // (UncomputableLiteral) if it were ever parsed — the proof it was skipped
-    // is that this runs at all. A comptime-false chain link falls through to
-    // the branch whose condition holds.
+    // `a = 9.9` under `a := i32 ?` would be a parse error if it were ever parsed; that this runs proves the branch was skipped.
     let (echoes, stderr) = repl(
         b"a := i32 ?\nif (a:dyad.type == i32) (a = 9) else (a = 9.9)\na\n\
           b := f64 ?\nif (b:dyad.type == i32) (b = 1) else if (b:dyad.type == f64) (b = 2.5) else (b = 3)\nb\n",
@@ -1080,11 +805,7 @@ fn a_comptime_if_drops_the_untaken_branch_unparsed() {
 
 #[test]
 fn the_metatypefn_example_runs() {
-    // The station #30 north-star, end to end: a `-> logos` fn computes the type,
-    // `a := metalogos(…) ?` declares with it, and a comptime `if` dispatches on
-    // `a.logos`, skipping the untaken branches unparsed. The expected value
-    // tracks the file's current argument (2 → f64 → the middle arm assigns 9.9;
-    // the deep arm is pinned separately by the metalogos_arm fixture).
+    // The expected value tracks the file's current argument; the deep arm is pinned by the metalogos_arm fixture.
     let out = logos().args(["import", "examples/metatypefn.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "9.9\n");
@@ -1092,9 +813,6 @@ fn the_metatypefn_example_runs() {
 
 #[test]
 fn the_metalogos_arm_fills_a_logos_variable() {
-    // The deep arm the example reaches with argument 3: `a := metalogos(3) ?` is
-    // `a := logos ?` — a type variable — and the comptime chain's last arm fills it
-    // with the type i32, so the program's value IS a type and prints `i32`.
     let out = logos().args(["import", "tests/fixtures/metalogos_arm.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "i32\n");
@@ -1102,10 +820,7 @@ fn the_metalogos_arm_fills_a_logos_variable() {
 
 #[test]
 fn a_declaration_snapshots_its_value_and_reads_are_stable() {
-    // `:=` evaluates its value once, into the name's own storage; reading the
-    // name is a plain load, never a re-evaluation. A block that sums 0..10 to 45
-    // stays 45 across reads (it was re-running the loop and growing before), and
-    // a later mutation of an input does not change the snapshot.
+    // The block used to re-run its loop on every read and grow.
     let (echoes, stderr) = repl(
         b"c := (sum := i32 0, for i in 0..10 (sum = sum + i), sum)\nc\nc\n\
           a := i32 1\nx := a + a\na = 5\nx\n",
@@ -1115,9 +830,6 @@ fn a_declaration_snapshots_its_value_and_reads_are_stable() {
 
 #[test]
 fn a_for_loop_needs_no_index_in_both_tiers() {
-    // `for a..b (body)` is the same loop without the variable (DESIGN ›The
-    // scope's constructor is the driver‹, 17 September 2026; #129): the body
-    // runs five times interpreted and five times compiled.
     let (echoes, stderr) = repl(
         b"f := fn () -> i32 ( t := i32 0, for 0..5 ( t = t + 2 ), t )\nf()\nf.compile()\nf()\n",
     );
@@ -1133,16 +845,12 @@ fn the_no_index_example_counts_the_evens() {
 
 #[test]
 fn a_declaration_copies_rather_than_aliases() {
-    // `z := y` snapshots y's value into fresh storage; writing z must not write y.
     let (echoes, stderr) = repl(b"y := i32 1\nz := y\nz = 5\ny\nz\n");
     assert_eq!(echoes, ["1", "5"], "stderr: {stderr}");
 }
 
 #[test]
 fn values_render_through_their_type() {
-    // The CLI shows a value through its static type, not the raw i64 container:
-    // floats with a decimal point, unsigned at width, bool as true/false, and a
-    // negative literal juxtaposed onto a type (`i64 -1`).
     let (echoes, stderr) =
         repl(b"f32 5.5\nq := f64 2.5\nq + q\ni64 -1\nu8 200\n1 < 2\nnot (1 < 2)\n");
     assert_eq!(echoes, ["5.5", "5.0", "-1", "200", "true", "false"], "stderr: {stderr}");
@@ -1159,30 +867,19 @@ fn help_prints_usage_and_version() {
 
 #[test]
 fn a_statement_tail_prints_nothing_on_the_command_line_too() {
-    // `=` yields nothing (DESIGN ›The scope's constructor is the driver‹,
-    // 8 September 2026). The REPL knew that and an imported file's tail knew
-    // it; the command line did not, so `logos 'x := i32 0, x = 5'` printed 5
-    // where the same source in the REPL and in a file printed nothing.
-    // run_line's own doc says "the command line and REPL agree".
+    // The command line used to print 5 for `x := i32 0, x = 5` where the REPL and a file printed nothing.
     for src in ["x := i32 0, x = 5", "x := i32 5", "x := i32 1, p := &x, p@ = 9"] {
         let out = logos().arg(src).output().unwrap();
         assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
         assert!(out.stdout.is_empty(), "{src}: printed {:?}", String::from_utf8_lossy(&out.stdout));
     }
-    // A value tail still prints, which is the whole point of the tail.
     let out = logos().arg("x := i32 0, x = 5, x").output().unwrap();
     assert_eq!(String::from_utf8_lossy(&out.stdout), "5\n");
 }
 
 #[test]
 fn a_line_starting_with_a_dash_is_source_not_a_flag() {
-    // DESIGN ›The command line is Logos source‹: "Everything after `logos`
-    // is one line of Logos code" and "There are no build or compile flags".
-    // Prefix `-` is the negation identity there as everywhere else, so a
-    // leading `-` reaches the parser (#90) and a would-be flag is an ordinary
-    // parse error at its own position, never a usage message.
-    // Both shapes a shell produces: the words unquoted, which the binary joins
-    // back into one line, and the line as a single argument.
+    // Both shapes a shell produces: the words unquoted, joined back into one line, and the line as one argument.
     let out = logos().args(["-5", "+", "3"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "-2\n");
@@ -1196,7 +893,6 @@ fn a_line_starting_with_a_dash_is_source_not_a_flag() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("<command line>:1:7: error:"), "stderr: {err}");
 
-    // The two exact spellings are still flags, matched whole and not by prefix.
     for flag in ["--help", "-h"] {
         let out = logos().arg(flag).output().unwrap();
         assert!(out.status.success(), "{flag}");
@@ -1206,11 +902,6 @@ fn a_line_starting_with_a_dash_is_source_not_a_flag() {
 
 #[test]
 fn the_record_read_answers_scope_range_and_gate() {
-    // DESIGN ›The dyad's read surface‹ (7–8 September 2026): `:` reads a
-    // name's record — `dyad`, `scope`, `start`, `end`, `gate` — bypassing its
-    // reading rule. `end` and `gate` are null here (alive; no gates in
-    // v0.1.0), `scope` is the session scope, and a constructed node answers
-    // `:scope` from its path (›Meta-navigation‹): the same scope.
     let (echoes, stderr) = repl(
         b"x := i32 5\nx:end\nx:gate\nx:scope\n(x + x):scope\ny := i32\ny:dyad.type == type\ny == i32\n",
     );
@@ -1224,14 +915,7 @@ fn the_record_read_answers_scope_range_and_gate() {
 
 #[test]
 fn a_field_the_record_has_not_is_the_same_error_as_an_undeclared_dot_field() {
-    // `a:type` is a checked error, "exactly as a `.` read the type does not
-    // declare is" (DESIGN ›The dyad's read surface‹): the record has no such
-    // field, and the read resolves the name against `record`'s own scope —
-    // the same resolution a `.` read runs against a user record's scope, so
-    // the two report the same way, whether the spelling exists elsewhere
-    // (`type`, `scope`: out of scope) or nowhere (`nonexistent`: unknown).
-    // The message names the spelling, which is the one thing the two probes
-    // differ in, so it is blanked before the two are compared.
+    // The message names the spelling, the one thing the two probes differ in, so it is blanked before comparing.
     fn message(stderr: &str) -> String {
         let m = stderr.lines().next().and_then(|l| l.split("error: ").nth(1)).unwrap_or("");
         m.split('`')
@@ -1253,8 +937,6 @@ fn a_field_the_record_has_not_is_the_same_error_as_an_undeclared_dot_field() {
 
 #[test]
 fn the_dyad_view_is_spelled_with_the_record_read() {
-    // `(dyad a)` as a second spelling of `a:dyad` is superseded (DESIGN, 8
-    // September 2026): `dyad` is the cell type, inert on the tape.
     let (_echoes, stderr) = repl(b"x := i32 5\n(dyad x).type\n");
     assert!(!stderr.is_empty(), "the old spelling no longer parses");
     let (echoes, stderr) = repl(b"x := i32 5\nx:dyad.type == i32\n");
@@ -1263,10 +945,6 @@ fn the_dyad_view_is_spelled_with_the_record_read() {
 
 #[test]
 fn a_tight_read_runs_over_a_keyword_before_its_constructor_wakes() {
-    // DESIGN ›Text is the quote‹ and the 8 September 2026 ruling: `:` and `.`
-    // sit above the identities that read their own right side, so `if:scope`
-    // reads the keyword's record and `if.parse` its field; a keyword
-    // used as a keyword still reads its right side.
     let (echoes, stderr) = repl(
         b"x := i32 5\nif:scope\ntype:dyad.type == type\nfn:dyad.type == type\n\
           f := fn () -> i32 ( if (x < 9) (x = 1) else (x = 2), x )\nf()\n",
@@ -1279,9 +957,6 @@ fn a_tight_read_runs_over_a_keyword_before_its_constructor_wakes() {
 
 #[test]
 fn assignment_returns_nothing() {
-    // `=` beside `:=`, driving its right side, and returning nothing (ruled 8
-    // September 2026): `a = b = c` assigns nothing to `a`, an error; an `=`
-    // in a value position is the statement-as-value error.
     let (_e, stderr) = repl(b"a := i32 1\nb := i32 2\na = b = 3\n");
     assert!(stderr.contains("yields no value"), "stderr: {stderr}");
     let (_e, stderr) = repl(b"a := i32 1\ny := (a = 2) + 1\n");
@@ -1294,10 +969,6 @@ fn assignment_returns_nothing() {
 
 #[test]
 fn a_tight_read_lexes_its_right_cell_on_demand_and_stops_at_a_boundary() {
-    // DESIGN ›The scope's constructor is the driver‹ (8-9 September 2026):
-    // `:`, `.`, and `@` construct at discovery, their right cell lexed lazily
-    // by the `tape[1]` read inside the constructor; a lazy read never crosses
-    // a `,` or a closer, and an inner `@` constructs before the outer one.
     let (echoes, stderr) = repl(
         b"x := i32 5\n(x:end, 3)\np := type (instance = (a := i32 ?))\nq := p(1)\n(q.a, 2)\nq.a\n\
           r := &q\nr@.a\npp := &r\npp@@.a\nx:dyad.type == i32\n",
@@ -1308,22 +979,12 @@ fn a_tight_read_lexes_its_right_cell_on_demand_and_stops_at_a_boundary() {
 
 #[test]
 fn a_type_box_is_an_ordinary_variable() {
-    // DESIGN ›A type is a comptime value‹ (12 September 2026): "a place holding
-    // a type is therefore an ordinary place". `a := type ?` used to build a
-    // null-valued placeholder that `a = i32` filled by *rebinding the name*,
-    // so the name stopped being a variable and became a synonym for `i32`, and
-    // a second assignment reported "this is not an assignable place". It is a
-    // box now: written, read, and written again.
     let (echoes, stderr) = repl(b"a := type ?\na = i32\na == i32\na = f64\na == f64\na == i32\n");
     assert_eq!(echoes, ["true", "true", "false"], "stderr: {stderr}");
 
-    // And it still declares: at the top level the one pass has run the
-    // assignment by the time a later item parses, so the box is read and what
-    // it holds is the declared type. Reassigning changes which.
     let (echoes, stderr) = repl(b"a := type ?\na = i32\nx := a 5\nx\na = f64\ny := a 2.5\ny\na\n");
     assert_eq!(echoes, ["5", "2.5", "f64"], "stderr: {stderr}");
 
-    // A box nothing has filled cannot say what a hole's type is.
     let (echoes, stderr) = repl(b"b := type ?\nz := b ?\n");
     assert!(
         echoes.is_empty() && stderr.contains("known only when the program runs"),
@@ -1333,24 +994,14 @@ fn a_type_box_is_an_ordinary_variable() {
 
 #[test]
 fn the_dyad_box_holds_any_node_and_says_what_it_holds() {
-    // `dyad ?` is the general box and `type ?` the narrow case of it: both
-    // hold a node address, and what the general one currently holds is asked
-    // the ordinary way, `a:dyad.type == type` (DESIGN ›The dyad's read
-    // surface‹ over ›A type is a comptime value‹, 12 September 2026).
     let (echoes, stderr) = repl(
         b"a := dyad ?\na\na = i32\na:dyad.type == type\na == i32\na\n          x := i32 7\na = x:dyad\na:dyad.type == i32\na:dyad.type == type\n",
     );
     assert_eq!(echoes, ["dyad ?", "true", "true", "i32", "true", "false"], "stderr: {stderr}");
 
-    // It declares with what it holds, like the narrow box.
     let (echoes, stderr) = repl(b"a := dyad ?\na = i32\ny := a 5\ny\n");
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
 
-    // A `( )` block settles its boxes exactly as the top level does. It did
-    // not before: the top level runs each item as it parses and a block parses
-    // its whole body first, so the same source meant two things in the two
-    // places. The depth-0 stores are replayed at parse, in parse order, which
-    // is their run order.
     for src in
         [&b"( a := type ?, a = i32, x := a 5, x )"[..], b"( a := dyad ?, a = i32, x := a 5, x )"]
     {
@@ -1359,9 +1010,7 @@ fn the_dyad_box_holds_any_node_and_says_what_it_holds() {
         assert_eq!(String::from_utf8_lossy(&out.stdout), "5\n", "{}", String::from_utf8_lossy(src));
     }
 
-    // A deferred body is the one place it stays refused, because there parse
-    // order is not run order — and it says so, rather than reporting a
-    // leftover cell and sending the reader looking for a missing comma.
+    // A deferred body is the one place a box fill stays refused: there parse order is not run order.
     let out = logos()
         .arg("f := fn () -> i32 ( a := type ?, a = i32, x := a 5, x ), f()")
         .output()
@@ -1373,27 +1022,18 @@ fn the_dyad_box_holds_any_node_and_says_what_it_holds() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // A box holding a node address may only be given one: a number's *value*
-    // in it would be followed as an address by every later reader.
     let (_e, stderr) = repl(b"a := dyad ?\na = 5\n");
     assert!(stderr.contains("must be a type value"), "stderr: {stderr}");
 }
 
 #[test]
 fn only_a_marked_place_is_written_or_addressed() {
-    // #82 step 8: `=`'s target and `&`'s operand are asked of the reading rule.
-    // Three things used to pass that are not places: a literal's untagged
-    // storage as an assignment target, the same as an `&` operand, and an
-    // application of a code-carrying type — whose "address" was a pointer into
-    // the graph that faulted on the first read.
     let pw = "pw := type ( instance = ( a := ?, b := ?, shared run = fn (a := i32 ?, b := i32 ?) -> i32 ( a * b ) ), \
               parse_rank = *.parse_rank + 1, associativity = right, \
               parse = ( this.a = tape[-1], this.b = tape[1], tape[0] = this, \
               tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
     for (src, expect) in [
         ("i32 5 = 3\n", "not an assignable place"),
-        // The first refusal a newcomer meets: `a := 5` binds the number, not
-        // a place. The message names the literal and the declaration to write.
         ("a := 5\na = 6\n", "`5` is a literal with no storage"),
         ("a := 5\na = 6\n", "as in `x := i32 5`"),
         ("x := &(i32 5)\n", "needs a variable"),
@@ -1402,9 +1042,6 @@ fn only_a_marked_place_is_written_or_addressed() {
         let (_e, stderr) = repl(src.as_bytes());
         assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
     }
-    // What still works: a marked scalar place, a record instance's address,
-    // a type box written from an identity or another type box, a dyad box
-    // written from a view.
     let (echoes, stderr) = repl(
         b"x := i32 5\nx = 6\np := &x\np@\nw := type (instance = (y := i64 ?))\nq := w(7)\nr := &q\nr@.y\n\
           a := type ?\nb := type ?\na = i32\nb = a\nb == i32\nd := dyad ?\nd = x:dyad\nd:dyad.type == i32\n",
@@ -1414,29 +1051,19 @@ fn only_a_marked_place_is_written_or_addressed() {
 
 #[test]
 fn declaring_from_a_box_copies_it() {
-    // #82 step 9, behaviour change 3. `x := a` where `a := type ?` used to
-    // rebind `x` to `a`'s storage — the type-slot test in construct_decl
-    // matched a box as well as an identity — so `x = f64` wrote `a`. Reads are
-    // copy by default (ruled 12 September 2026): `x` is its own box.
     let (echoes, stderr) = repl(
         b"a := type ?\na = i32\nx := a\nx = f64\na == i32\nx == f64\n\
           d := dyad ?\nd = i32\ne := d\ne = f64\nd == i32\ne == f64\n",
     );
     assert_eq!(echoes, ["true", "true", "true", "true"], "stderr: {stderr}");
-    // An identity on the right still makes the name a spelling of the type.
     let (echoes, stderr) = repl(b"t := i32\ny := t 5\ny\n");
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
-    // A `bool` place is still refused (#47): the one exception the allocation
-    // rule keeps by identity, stated at construct_hole.
     let (_e, stderr) = repl(b"b := bool ?\n");
     assert!(stderr.contains("not in the seed yet"), "stderr: {stderr}");
 }
 
 #[test]
 fn a_dyad_is_built_from_a_type_and_a_value() {
-    // DESIGN ›Feasibility‹: "`dyad (type, value)` construction from Logos"
-    // (#60). `dyad (i32, 7)` is a store-owned i32 cell, `dyad` alone the
-    // cell type; the view reads the built cell's two fields.
     let (echoes, stderr) =
         repl(b"c := dyad (i32, 7)\nc\nc:dyad.type == i32\ndyad (i32, 7):dyad.type == i32\nc + 1\n");
     assert_eq!(echoes, ["7", "true", "true", "8"], "stderr: {stderr}");
@@ -1444,16 +1071,10 @@ fn a_dyad_is_built_from_a_type_and_a_value() {
     let (_e, stderr) = repl(b"dyad (i32)\n");
     assert!(!stderr.is_empty(), "two operands, not one");
 
-    // A bool cell carries the literal's own 0/1 byte. It used to carry the
-    // *node* as its value, so every bool dyad read true because a node address
-    // is nonzero — `dyad (bool, false)` included (#85).
+    // A bool cell used to carry the node as its value, so every bool dyad read true.
     let (echoes, stderr) = repl(b"dyad (bool, true)\ndyad (bool, false)\n");
     assert_eq!(echoes, ["true", "false"], "stderr: {stderr}");
 
-    // Every other type reads its value as bytes at its own width, and handing
-    // it a node was type confusion: `dyad (@i32, 5)` read the rational node's
-    // bytes as an i32 and a write through it corrupted the store. Nothing
-    // builds such a cell, so it is refused rather than guessed.
     for src in [
         &b"dyad (bool, 0)\n"[..],
         b"p := dyad (@i32, 5)\n",
@@ -1478,10 +1099,6 @@ fn line(src: &str) -> String {
 
 #[test]
 fn an_import_tail_runs_once() {
-    // #88: the imported file's tail ran once in the pass and again whenever
-    // the import node ran, and once more per repeated import of the file.
-    // The file runs at the import, its tail stands in the graph as the item
-    // that ran, and running the import node reads it.
     assert_eq!(line("import ./tests/fixtures/counter.logos, c@"), "1");
     let (echoes, stderr) =
         repl(b"import ./tests/fixtures/counter.logos\nimport ./tests/fixtures/counter.logos\nc@\n");
@@ -1490,24 +1107,15 @@ fn an_import_tail_runs_once() {
 
 #[test]
 fn the_pass_runs_only_as_far_as_it_must_in_order_and_never_twice() {
-    // DESIGN ›Build and run are one self-directing pass‹ (13 September 2026).
     let bump = "x := i32 0, bump := fn () -> i32 ( x = x + 1, x )";
-    // Order is left to right: a bracket does not run early for being one.
     assert_eq!(line(&format!("{bump}, bump() + ( x = 10, x )")), "11");
-    // An argument list's items run once, at the call.
     let add = "f := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b )";
     assert_eq!(line(&format!("{bump}, {add}, f(bump(), bump()) * 10 + x")), "32");
-    // A loop's condition is a body: never run in the pass.
     assert_eq!(line("x := i32 0, while (x < 3) ( x = x + 1 ), x"), "3");
-    // Where the pass must read a box, what stands before the read runs
-    // first, and an item that ran is read when its block runs, never run
-    // again: `bump()` once gives 7; twice would give 9.
+    // `bump()` once gives 7; twice would give 9.
     let block = "y := ( a := type ?, a = i32, bump(), z := a 5, z + x ), y + x";
     assert_eq!(line(&format!("{bump}, {block}")), "7");
-    // The same text means the same thing inside an expression.
     assert_eq!(line("y := ( a := type ?, a = i32, x := a 5, x ) + 1, y"), "6");
-    // And in the REPL, where a run the pass needed can fail and the line
-    // then leaves no trace.
     let (echoes, stderr) =
         repl(b"( a := type ?, a = i32, x := a 5, x )\nq := ( p := @i32 ?, p@ )\nq := i32 4\nq\n");
     assert_eq!(echoes, ["5", "4"], "stderr: {stderr}");
@@ -1516,14 +1124,10 @@ fn the_pass_runs_only_as_far_as_it_must_in_order_and_never_twice() {
 
 #[test]
 fn a_name_error_names_the_name_and_points_at_it() {
-    // A parameter that reuses a session name is the no-shadowing error
-    // (DESIGN ›Name resolution is scope-filtered‹). The message says which
-    // name, and the caret sits on that name, not where the declaration
-    // happened to end: `x` is the tenth character of the line.
+    // `x` is the tenth character of the line.
     let (echoes, stderr) = repl(b"x := i32 1\nf := fn (x:=i32 ?, y:=i32 ?) -> i32 ( x + y )\n");
     assert!(echoes.is_empty(), "stderr: {stderr}");
     assert!(stderr.contains("<repl>:1:10: error: `x` is already declared"), "stderr: {stderr}");
-    // The other name errors name their name too.
     let (_echoes, stderr) = repl(b"zz + 1\nq := i32 1\n( q := 2 )\n");
     assert!(stderr.contains("unknown name `zz`"), "stderr: {stderr}");
     assert!(stderr.contains("<repl>:1:3: error: `q` is already declared"), "stderr: {stderr}");
@@ -1531,25 +1135,13 @@ fn a_name_error_names_the_name_and_points_at_it() {
 
 #[test]
 fn lex_splices_text_built_fragments() {
-    // DESIGN ›Text is the quote‹ (#62): "`lex` returns a tape fragment … the
-    // cells the lexer would have put on the frontier … unconstructed, no
-    // constructor woken … a group is what a macro splices, `tape.insert(i,
-    // lex «(a, b)»)`". A postfix `twice` whose constructor splices `* 2`
-    // after its own cell and removes itself: the driver then constructs the
-    // spliced cells as if they had been written — the literal `2` from the
-    // text the spliced cell carries (`lex «5»` carries «5»), `*` over its
-    // operands. Above `+` on the axis, so `3 + 4 twice` doubles the 4.
+    // `twice` sits above `+` on the axis, so `3 + 4 twice` doubles the 4.
     let (echoes, stderr) = repl(
         "twice := type (parse_rank = *.parse_rank + 1, parse = ( tape.insert(1, lex «* 2»), tape.remove(0) ))\n\
           5 twice\n3 + 4 twice\n"
             .as_bytes(),
     );
     assert_eq!(echoes, ["10", "11"], "stderr: {stderr}");
-    // "text that names nothing lexes to a fresh dyad with both slots
-    // `undefined` … constructing it later being the ordinary unknown-name
-    // error": a spliced fresh spelling left on the tape is that error at
-    // the boundary. A fragment made at the top level, its names fresh,
-    // errs in nothing while nothing constructs it.
     let (echoes, stderr) = repl(
         "t := lex «(a, b)»\n5\n\
           bad := type (parse = ( tape.insert(1, lex «zz»), tape.remove(0) ))\n\
@@ -1558,7 +1150,6 @@ fn lex_splices_text_built_fragments() {
     );
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
     assert!(stderr.contains("unknown name `zz`"), "stderr: {stderr}");
-    // `lex` reads its own quote, as `regex` does; `insert` takes a tape.
     let (_echoes, stderr) = repl(
         b"y := lex 5\n\
           bad2 := type (parse = ( tape.insert(1, dyad (i32, 1)) ))\n",
@@ -1569,14 +1160,6 @@ fn lex_splices_text_built_fragments() {
 
 #[test]
 fn caller_scope_is_the_use_site_and_here_scope_the_body() {
-    // #123; DESIGN ›Meta-navigation walks the graph‹: "inside a constructor
-    // `caller.scope` is the scope the tape belongs to, the use site, and
-    // `here.scope` the constructor's own body, the definition site … Both
-    // stand inside a constructor". A constructor that writes the scope of
-    // its appearance into a top-level place and removes itself: applied in
-    // g's body while g is defined, it sees g's body, whose enclosing scope
-    // is g's parameter scope, whose enclosing scope is the root — `here.scope`
-    // at the top. `here.scope` inside h's body is h's body, read when h runs.
     let (echoes, stderr) = repl(
         "seen := here.scope\n\
          w := type (parse = ( seen = caller.scope, tape.remove(0) ))\n\
@@ -1590,9 +1173,7 @@ fn caller_scope_is_the_use_site_and_here_scope_the_body() {
             .as_bytes(),
     );
     assert_eq!(echoes, ["false", "true", "1", "2", "true"], "stderr: {stderr}");
-    // Outside a constructor `caller.scope` is the checked error, the seed's
-    // stand-in for the per-call read of an ordinary function; `caller` alone
-    // has no value form in the seed.
+    // Stand-in: outside a constructor `caller.scope` is the checked error, not the per-call read.
     let (_echoes, stderr) = repl(b"caller.scope\n");
     assert!(stderr.contains("`caller` can be read only inside a constructor"), "stderr: {stderr}");
     let (_echoes, stderr) = repl(b"caller\n");
@@ -1601,15 +1182,6 @@ fn caller_scope_is_the_use_site_and_here_scope_the_body() {
 
 #[test]
 fn a_pointer_type_applies_to_any_type() {
-    // #124; DESIGN ›Pointer types are prefix `@T`‹: "`@i32` is a pointer to
-    // an i32, composing as `@@i32` and applying to any type (`@point`,
-    // `@dyad`)", and ›Substrate vocabulary‹: "`@void` is a type-erased
-    // address whose interpretation comes from elsewhere". A `@dyad` place
-    // takes a scope address (`here.scope`, `x:scope`), a `@dyad` parameter
-    // takes one, and `.scope` over the place reads the parent link: the
-    // argument bracket `here.scope` was written in, whose enclosing scope is
-    // g's body, then g's parameter scope, then the root. `@void` declares as
-    // a place and as a parameter.
     let (echoes, stderr) = repl(
         "p := @dyad ?\n\
          p = here.scope\n\
@@ -1627,9 +1199,7 @@ fn a_pointer_type_applies_to_any_type() {
     );
     assert_eq!(echoes, ["true", "1", "true", "1", "true"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
-    // The base must be a type: a place or a literal is refused as an operand
-    // `@` cannot compute over, and the place's bytes are never read as a
-    // record (this used to crash).
+    // A place or literal after `@` is refused; its bytes used to be read as a record and crash.
     let (_echoes, stderr) = repl(b"x := i32 5\nq := @x ?\nq := @5 ?\n");
     assert_eq!(
         stderr.matches("this operator cannot compute over these operands").count(),
@@ -1640,12 +1210,7 @@ fn a_pointer_type_applies_to_any_type() {
 
 #[test]
 fn a_pointer_parameter_takes_a_pointer_of_the_same_type_however_spelled() {
-    // DESIGN ›Pointer types are prefix `@T`‹: "`@i32` is a pointer to an
-    // i32, composing as `@@i32`". The seed mints a pointer type per
-    // spelling, so a `@@i32` parameter's pointee and a `@@i32` argument's
-    // are two nodes describing one type; the call and the record construction
-    // compare them as types, as a store into a pointer place already did.
-    // `@i32` into `@@i32` is still the mismatch, in both.
+    // The seed mints a pointer type per spelling, so two `@@i32` pointees are two nodes describing one type.
     let (echoes, stderr) = repl(
         "x := i32 7\n\
          px := &x\n\
@@ -1665,18 +1230,6 @@ fn a_pointer_parameter_takes_a_pointer_of_the_same_type_however_spelled() {
 
 #[test]
 fn a_constructors_outcome_is_read_off_its_own_cell() {
-    // #81; DESIGN ›The scope's constructor is the driver‹: "A constructor's
-    // outcome is read off its cell … There is no holding and no
-    // re-invocation." The driver judges its own cell by handle and puts the
-    // center back, wherever a constructor moved it — onto the next cell, the
-    // previous, or off the tape — so it never finds the same cell again
-    // forever. What it reads there is the flag (›Execution is function
-    // application‹, ruled 19 September 2026): "flag true, done; flag false
-    // and the cell holds another identity than the one whose `parse` ran,
-    // that identity's turn; flag false and the same identity, the checked
-    // error, a constructor that neither finished nor handed on" — and "a
-    // constructor that finds nothing to consume sets its flag and stands as
-    // itself".
     let (echoes, stderr) = repl(
         b"r1 := type (parse = ( tape.is_constructed[0] = true, tape.recenter(1) ))\n\
           r2 := type (parse = ( tape.is_constructed[0] = true, tape.recenter(-1) ))\n\
@@ -1684,8 +1237,6 @@ fn a_constructors_outcome_is_read_off_its_own_cell() {
           a := r1\nb := r2\nc := r3\na:dyad.type == type\nb:dyad.type == type\nc:dyad.type == type\n",
     );
     assert_eq!(echoes, ["true", "true", "true"], "stderr: {stderr}");
-    // Only moving the center, or writing a value into the cell without the
-    // flag, is the stall: the same identity still there, unfinished.
     for src in [
         &b"r4 := type (parse = ( tape.recenter(1) ))\nx := r4\n"[..],
         b"r5 := type (parse = ( tape[0] = tape.spelling[0] ))\nf := fn () -> void ( r5 )\n",
@@ -1697,18 +1248,12 @@ fn a_constructors_outcome_is_read_off_its_own_cell() {
             String::from_utf8_lossy(src)
         );
     }
-    // "what it built it leaves at the cursor (a dyad, or another token)": a
-    // cell handed on to another identity, the flag left false, is that
-    // identity's turn, and the driver constructs it as its own — `as_i32`
-    // becomes `i32`, so `as_i32 5` is `i32 5`.
+    // `as_i32` hands its cell to `i32` with the flag false, so `as_i32 5` is `i32 5`.
     let (echoes, stderr) = repl(
         b"as_i32 := type (parse = ( tape[0] = i32 ))\n\
           x := as_i32 5\nx + 1\n",
     );
     assert_eq!(echoes, ["6"], "stderr: {stderr}");
-    // A constructor that edits the tape and returns with its own cell
-    // still unconstructed is "an unfinished construct": the checked error,
-    // named for the cell, never a second run.
     let (_echoes, stderr) = repl(
         "half := type (parse = ( tape.insert(1, lex «/ 2») ))\n\
           8 half\n"

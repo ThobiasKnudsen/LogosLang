@@ -1,14 +1,9 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `or`: short-circuiting logical disjunction over `bool`s. Both operands must be
-//! `bool` (comparisons, `bool` values, or nested logical results); the result is a
-//! `bool`. It short-circuits: when the left operand is true the right is not
-//! evaluated, so run branches and compile lowers a two-way branch (`if a then true
-//! else b`, [`crate::compile::Lowerer::lower_or`]). It binds loosest of the logical
-//! operators (looser than `and`), just above `=`. One concrete native serves it:
-//! the node is `{type: or, value: [lhs, rhs, or_native]}` and run jumps through the
-//! op slot (issue #44).
+//! `or`: short-circuiting disjunction over two `bool`s, or, over two
+//! non-booleans, a group the consuming operator distributes over, as `and`.
+//! DESIGN ›The proof layer‹
 
 use crate::Core;
 use cranelift_codegen::ir::Value;
@@ -21,8 +16,6 @@ use crate::parse::{bool_literal_value, is_bool_result, Assoc, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
-/// Register `or`: spelling and parse_rank (logical, left-associative,
-/// looser than `and`), its lowering, and its short-circuiting native leaf.
 /// Returns `(identity, leaf)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let record = meta::operand_record(
@@ -40,12 +33,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     (id, leaf)
 }
 
-/// Build `lhs or rhs` as `{type: or, value: [lhs, rhs, or_native]}` over two
-/// booleans, or, over two non-booleans, the group that carries the
-/// connective (DESIGN ›The proof layer‹, 7 September 2026: "`and` and `or`
-/// on operands that are not booleans build a group that carries the
-/// connective"), exactly as [`super::and`] does; a boolean beside a
-/// non-boolean is [`ParseError::NonBoolOperands`].
+/// The node is `[lhs, rhs, op]`; a group's op slot is null.
 fn build(
     store: &mut Store,
     types: &Core,
@@ -53,18 +41,16 @@ fn build(
     lhs: DyadPtr,
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    // SAFETY: `lhs`/`rhs` are reduced dyads from the store; reading their type is safe.
+    // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let (lb, rb) = unsafe { (is_bool_result(types, lhs), is_bool_result(types, rhs)) };
     if lb != rb {
         return Err(ParseError::NonBoolOperands);
     }
     if !lb {
-        // A group of non-booleans: the consuming operator distributes over it.
         let value = store.alloc_operands(&[lhs, rhs, std::ptr::null_mut()]);
         return Ok(store.alloc_raw(or, value));
     }
-    // Two bool literals fold now (a bare literal is pure, so nothing is lost),
-    // like `==` over rationals or logos — what keeps a comptime chain comptime.
+    // Two literals fold now: what keeps a comptime chain comptime.
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let literals = unsafe { (bool_literal_value(types, lhs), bool_literal_value(types, rhs)) };
     if let (Some(a), Some(b)) = literals {
@@ -74,8 +60,6 @@ fn build(
     Ok(store.alloc_raw(or, value))
 }
 
-/// Run: short-circuit — the result is `true` (without running the right operand)
-/// when the left is true, else the right operand's value.
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid `or` application; its two operands are valid.
     unsafe {
@@ -88,7 +72,6 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// Lower: a short-circuiting two-way branch (`if a then true else b`).
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid `or` application; its two operands are valid.
     unsafe {

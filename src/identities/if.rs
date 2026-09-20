@@ -1,18 +1,10 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `if ( cond ) ( then )` with an optional `else ( else )`: the conditional. `if`
-//! is a function (its own type is `fn`), like the operators; its node is
-//! `{type: if, value: [cond, then, else]}`, the else slot null when absent. The
-//! condition must be a `bool` (checked at parse time); run evaluates only the taken
-//! branch, compile emits a two-way branch merging to a single value (DESIGN ›A
-//! scope's value is what it evaluates to‹). With both branches an `if` is a value;
-//! else-less it is a statement yielding unit (0 bits), and value positions reject
-//! it at parse time ([`crate::parse::ParseError::MissingElse`]).
-//!
-//! The surface parse lives in [`crate::parse::Parser::parse_if`] (it drives three
-//! bracketed sub-parses and the `else` keyword); here we register the identity, its
-//! run native and lowering, and the `else` token the parser consumes.
+//! `if ( cond ) ( then )` with an optional `else ( else )`: the node is
+//! `[cond, then, else]`, the else slot null when absent. The surface parse
+//! lives in [`crate::parse::Parser::parse_if`]; here the identity, its run
+//! native and lowering, and the `else` token.
 
 use cranelift_codegen::ir::Value;
 
@@ -23,16 +15,11 @@ use crate::dyad::DyadPtr;
 use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
 
-/// The index of the condition in an `if` node's value record.
 const IF_COND: usize = 0;
-/// The index of the then-branch.
 const IF_THEN: usize = 1;
-/// The index of the else-branch.
 const IF_ELSE: usize = 2;
 
-/// Register `if` (the conditional keyword, its native leaf, and its lowering)
-/// and the `else` token the parser consumes between the branches. Returns
-/// `(identity, leaf, else token)`.
+/// Returns `(identity, leaf, else token)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::operand_record(
         cx,
@@ -59,20 +46,14 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     (if_, leaf, else_)
 }
 
-/// The `(cond, then, else)` operands of an `if` node (the else null when absent).
-///
 /// # Safety
-/// `node` must be an `if` node built by [`crate::parse::Parser::parse_if`], with a
-/// `[cond, then, else]` value.
+/// `node` must be an `if` node `[cond, then, else]`.
 unsafe fn branches(node: DyadPtr) -> (DyadPtr, DyadPtr, DyadPtr) {
     let p = (*node).value as *const DyadPtr;
     (*p.add(IF_COND), *p.add(IF_THEN), *p.add(IF_ELSE))
 }
 
-/// Run: evaluate the condition, then run only the taken branch (a non-zero condition
-/// is true, matching the compiled `brif`). An else-less `if` runs its then-branch
-/// for its effect when taken and yields unit (0 bits) either way, matching the
-/// compiled merge.
+/// An else-less `if` yields unit either way, matching the compiled merge.
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid `if` node with `[cond, then, else]` operands.
     unsafe {
@@ -91,9 +72,6 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// Lower: a two-way branch on the condition, each arm lowering its branch and
-/// jumping to a merge block whose parameter is the `if`'s value; an else-less `if`
-/// lowers as a unit-valued statement ([`Lowerer::lower_if_stmt`]).
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid `if` node with `[cond, then, else]` operands.
     unsafe {

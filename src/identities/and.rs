@@ -1,21 +1,9 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `and`: short-circuiting logical conjunction over `bool`s. Both operands must be
-//! `bool` (comparisons, `bool` values, or nested logical results); the result is a
-//! `bool`. It short-circuits: when the left operand is false the right is not
-//! evaluated, so run branches and compile lowers a two-way branch (`if a then b else
-//! false`, [`crate::compile::Lowerer::lower_and`]). It binds looser than the
-//! comparisons and tighter than `or`. One concrete native serves it (bool has one
-//! width): the node is `{type: and, value: [lhs, rhs, and_native]}` and run jumps
-//! through the op slot (issue #44).
-//!
-//! Over two non-booleans `and` builds a **group** instead (DESIGN ›The proof
-//! layer‹, ruled 7 September 2026: every operator distributes over an and/or
-//! group until a boolean): the same node with an empty op slot, data for the
-//! operator that consumes it — in the seed, `append(tape[-1] and tape[1])`
-//! appends both (#61). A group is neither a boolean nor a number, so `if`
-//! and the arithmetic refuse it, and running it bare is the checked error.
+//! `and`: short-circuiting conjunction over two `bool`s, or, over two
+//! non-booleans, a group the consuming operator distributes over.
+//! DESIGN ›The proof layer‹
 
 use crate::Core;
 use cranelift_codegen::ir::Value;
@@ -28,9 +16,7 @@ use crate::parse::{bool_literal_value, is_bool_result, Assoc, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
-/// Register `and`: spelling and parse_rank (logical, left-associative,
-/// looser than the comparisons), its lowering, and its short-circuiting native
-/// leaf. Returns `(identity, leaf)`.
+/// Returns `(identity, leaf)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let record = meta::operand_record(
         cx,
@@ -47,8 +33,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     (id, leaf)
 }
 
-/// Build `lhs and rhs` as `{type: and, value: [lhs, rhs, and_native]}`, requiring
-/// both operands to be `bool` ([`ParseError::NonBoolOperands`]).
+/// The node is `[lhs, rhs, op]`; a group's op slot is null.
 fn build(
     store: &mut Store,
     types: &Core,
@@ -56,18 +41,16 @@ fn build(
     lhs: DyadPtr,
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    // SAFETY: `lhs`/`rhs` are reduced dyads from the store; reading their type is safe.
+    // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let (lb, rb) = unsafe { (is_bool_result(types, lhs), is_bool_result(types, rhs)) };
     if lb != rb {
         return Err(ParseError::NonBoolOperands);
     }
     if !lb {
-        // A group of non-booleans: the consuming operator distributes over it.
         let value = store.alloc_operands(&[lhs, rhs, std::ptr::null_mut()]);
         return Ok(store.alloc_raw(and, value));
     }
-    // Two bool literals fold now (a bare literal is pure, so nothing is lost),
-    // like `==` over rationals or logos — what keeps a comptime chain comptime.
+    // Two literals fold now: what keeps a comptime chain comptime.
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let literals = unsafe { (bool_literal_value(types, lhs), bool_literal_value(types, rhs)) };
     if let (Some(a), Some(b)) = literals {
@@ -77,8 +60,6 @@ fn build(
     Ok(store.alloc_raw(and, value))
 }
 
-/// Run: short-circuit — the result is `false` (without running the right operand)
-/// when the left is false, else the right operand's value.
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid `and` application; its two operands are valid.
     unsafe {
@@ -91,7 +72,6 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// Lower: a short-circuiting two-way branch (`if a then b else false`).
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid `and` application; its two operands are valid.
     unsafe {

@@ -1,15 +1,9 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `while ( cond ) ( body )`: the loop statement. `while` is a function (its own
-//! type is `fn`), like `if`; its node is `{type: while, value: [cond, body]}`. The
-//! `bool` condition is re-evaluated before each iteration and the body reruns for
-//! its effect, its value discarded each time (DESIGN ›a loop body's is thrown
-//! away‹). The loop yields unit (0 bits): it is a statement, so value positions
-//! reject it at parse time ([`crate::parse::ParseError::StatementAsValue`]).
-//!
-//! The surface parse lives in [`crate::parse::Parser::parse_while`]; here we
-//! register the identity, its run native, and its lowering.
+//! `while ( cond ) ( body )`: the loop statement, the node `[cond, body]`,
+//! yielding unit. The surface parse lives in
+//! [`crate::parse::Parser::parse_while`]; here the identity, run, and lowering.
 
 use cranelift_codegen::ir::Value;
 
@@ -20,8 +14,7 @@ use crate::dyad::DyadPtr;
 use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
 
-/// Register `while`: spelling, its `While` schedule, native leaf, and
-/// lowering. Returns `(identity, leaf)`.
+/// Returns `(identity, leaf)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let record = meta::operand_record(
         cx,
@@ -42,18 +35,13 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     (while_, leaf)
 }
 
-/// The `(cond, body)` operands of a `while` node.
-///
 /// # Safety
-/// `node` must be a `while` node built by [`crate::parse::Parser::parse_while`],
-/// with a `[cond, body]` value.
+/// `node` must be a `while` node `[cond, body]`.
 unsafe fn parts(node: DyadPtr) -> (DyadPtr, DyadPtr) {
     let p = (*node).value as *const DyadPtr;
     (*p, *p.add(1))
 }
 
-/// Run: re-evaluate the condition before each iteration (non-zero is true,
-/// matching the compiled `brif`), running the body for its effect; yield unit.
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid `while` node with `[cond, body]` operands.
     unsafe {
@@ -65,8 +53,6 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// Lower: a loop of header (condition), body, and exit blocks; see
-/// [`Lowerer::lower_while`].
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid `while` node with `[cond, body]` operands.
     unsafe {

@@ -1,19 +1,9 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `string` and its `«…»` literal: the text substance (DESIGN ›Text literals are
-//! plain values; `#` is the one comment constructor‹). A string literal is always
-//! a plain value — never position-dependently a comment — and in this seed it is
-//! *inert*: nothing consumes a string yet (no parameters, returns, casts, or
-//! operations), so it exists as reflectable structure, above all as the substance
-//! of comment nodes (see [`crate::identities::comment`]). The `string` *name* and
-//! runtime reads arrive with the machinery that can hold them; until then the
-//! interpreter refuses to read a string as a scalar (`RunError::NoWholeRead`).
-//!
-//! Storage: the value points at `[len: u64][bytes]`, the native-endian length
-//! then the UTF-8 text. The type node self-describes via
-//! [`STRING_TAG`](crate::identities::numtype::STRING_TAG) in its own value slot,
-//! so run and compile recognize string-typed data without a handle.
+//! `string` and its `«…»` literal: a plain value, inert in the seed (nothing
+//! consumes one yet). Storage: `[len: u64][bytes]`, the native-endian length
+//! then the UTF-8 text; the type node self-describes via [`STRING_TAG`].
 
 use super::numtype::STRING_TAG;
 use super::{meta, Cx};
@@ -21,24 +11,20 @@ use crate::dyad::DyadPtr;
 use crate::parse::{Constructed, ParseError, Parser, ParsingTape};
 use crate::store::Store;
 
-/// Register `string`: fill the [`STRING_TAG`] record into the type node the
-/// build minted first (every record's `name` is a string node, so the type
-/// exists before the first declaration; #120) and declare the `«…»` literal
-/// pattern (no escapes yet, so a `»` cannot occur inside the text; unanchored,
-/// like the rational pattern, so the lexer longest-matches a prefix).
+/// Fills the record into the type node the build minted first (every record's
+/// `name` is a string node, so the type exists before the first declaration).
+/// The literal has no escapes yet, so a `»` cannot occur inside the text.
 pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, STRING_TAG, meta::prec::LITERAL);
     let id = cx.string_;
-    // SAFETY: `id` is the string type node the build allocated, its value
-    // null until now.
+    // SAFETY: `id` is the string type node the build allocated, its value null until now.
     unsafe { (*id).value = record };
     cx.declare("«[^»]*»", id);
     cx.metas.insert(id, construct);
     id
 }
 
-/// The literal's constructor: read the `«…»` text off the cursor cell and
-/// place the string node over it (the guillemets are two bytes each in UTF-8).
+/// The guillemets are two bytes each in UTF-8.
 fn construct(
     p: &mut Parser,
     id: DyadPtr,
@@ -51,7 +37,6 @@ fn construct(
     Ok(Constructed::Placed)
 }
 
-/// Build a string node `{type: string, value -> [len, bytes]}` from raw text.
 pub(crate) fn build_text(store: &mut Store, string_ty: DyadPtr, text: &[u8]) -> DyadPtr {
     let mut blob = Vec::with_capacity(8 + text.len());
     blob.extend_from_slice(&(text.len() as u64).to_ne_bytes());
@@ -60,9 +45,6 @@ pub(crate) fn build_text(store: &mut Store, string_ty: DyadPtr, text: &[u8]) -> 
     store.alloc_raw(string_ty, value)
 }
 
-/// The text of a string node — the reflection accessor (a comment's substance
-/// and a record's role names are read through this; see [`crate::reflect`]).
-///
 /// # Safety
 /// `node` must be a string node built by [`build_text`] (its value the
 /// `[len, bytes]` blob), and the slice must not outlive the store.

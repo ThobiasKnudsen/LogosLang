@@ -1,26 +1,10 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `for i in a..b ( body )` and `for i in a..b..d ( body )`: the counted loop,
-//! with the surface the old prototype settled (examples/*.logos there), and
-//! `for a..b ( body )` / `for a..b..d ( body )`, the same loop with no index
-//! (DESIGN ›The scope's constructor is the driver‹, ruled 17 September 2026:
-//! "sometimes you don't need the index"; #129). The range is **end-exclusive**
-//! (`0..10` runs 0 through 9) with an optional step `d` (default 1), and
-//! start/end/step are evaluated **once**, before the loop. The counter is a
-//! fresh block-local of the range's resolved numeric type (endpoints resolve
-//! like a binary operator's operands: concrete type must match, literals
-//! commit, all-literals default to i32), declared under the written name or
-//! under none. A non-positive step runs zero iterations — the guard both tiers
-//! emit — and a *literal* step must be positive at parse. Like `while`, `for`
-//! is a statement yielding unit.
-//!
-//! Node: `{type: for, value: [var, start, end, step-or-null, body]}`, one shape
-//! for both surfaces. The surface parse lives in
-//! [`crate::parse::Parser::parse_for`]; here we register the identity, the
-//! structural `in` and `..` tokens it consumes, and the run and lowering.
-//! Deferred, deliberately: ranges as first-class values, multi-variable forms,
-//! and the prototype's `gpu` loops.
+//! `for i in a..b ( body )`, `for a..b..d ( body )`: the counted loop, index
+//! optional, end-exclusive, start/end/step evaluated once. The node is
+//! `[var, start, end, step-or-null, body]`; the surface parse lives in
+//! [`crate::parse::Parser::parse_for`].
 
 use cranelift_codegen::ir::Value;
 
@@ -32,10 +16,8 @@ use crate::dyad::DyadPtr;
 use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
 
-/// Register `for` (the loop keyword, its run native, and its lowering) plus the
-/// structural `in` and `..` tokens the parser consumes. `..` registers escaped
-/// (`.` is a regex metacharacter); the trie's longest-match keeps it distinct
-/// from the field-access `.` and from a rational's fractional part.
+/// `..` registers escaped (`.` is a regex metacharacter); the trie's longest
+/// match keeps it distinct from the field-access `.`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::operand_record(
         cx,
@@ -65,8 +47,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     (for_, leaf, in_, range)
 }
 
-/// The `(var, start, end, step, body)` operands of a `for` node (step null when
-/// unwritten, meaning 1).
+/// The step is null when unwritten, meaning 1.
 ///
 /// # Safety
 /// `node` must be a `for` node built by [`crate::parse::Parser::parse_for`].
@@ -75,7 +56,7 @@ unsafe fn parts(node: DyadPtr) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr) 
     (*p, *p.add(1), *p.add(2), *p.add(3), *p.add(4))
 }
 
-/// The default step's bit-container: 1 in the loop logos (1.0 for floats).
+/// The default step's bit-container: 1 in the loop type (1.0 for floats).
 fn one_bits(nt: numtype::NumType) -> i64 {
     use numtype::NumType::*;
     match nt {
@@ -85,10 +66,6 @@ fn one_bits(nt: numtype::NumType) -> i64 {
     }
 }
 
-/// Run: evaluate start (written to the variable), end, and step once; then
-/// rerun the body and increment while `var < end`. A non-positive step runs
-/// zero iterations, and a step past the counter's width ends the loop
-/// (#111: a wrapped counter would satisfy `var < end` again). Yields unit.
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid `for` node; its parts are valid dyads.
     unsafe {
@@ -108,6 +85,7 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
                 break;
             }
             rt.run(body)?;
+            // A wrapped counter would satisfy `var < end` again.
             let Some(next) = numtype::checked_add(nt, v, d) else {
                 break;
             };
@@ -117,7 +95,6 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// Lower: see [`Lowerer::lower_for`].
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid `for` node; its parts are valid dyads.
     unsafe {

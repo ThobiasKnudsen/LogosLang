@@ -1,28 +1,15 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `pub`: the first gate. Gates are access-setting identities (DESIGN ›Read
-//! and write are one mechanism across the system‹ — "`pub` and `mut` are
-//! themselves gates"), and their spelling belongs to their constructor like
-//! every identity on the tape: `pub` is a prefix word over a declaration,
-//! `pub x := 5`. Unmarked stays fail-closed — private — so `pub` is the only
-//! marking; there is no `private` word to write.
-//!
-//! The constructor parses the declaration to its right and fills the declare
-//! node's gate slot ([`super::declare::set_gate`]): the deviation lives in the
-//! declaration's own structure (DESIGN ›Metadata has three homes‹), where the
-//! visibility read `import` performs (#58) finds it. Within one section the
-//! marking changes nothing — visibility restricts *peer* access across the
-//! section boundary, and the seed is a single section until `import` lands —
-//! so this slice is the surface and the structure; the boundary that consults
-//! them is #58's.
+//! `pub`: the first gate, a prefix word over a declaration, `pub x := 5`, that
+//! fills the declare node's gate slot. Unmarked stays private, so there is no
+//! `private` word to write.
+//! DESIGN ›Read and write are one mechanism across the system‹
 
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
 use crate::parse::{Constructed, ParseError};
 
-/// Register `pub`: a prefix word (a plain token record at [`meta::prec::PREFIX`],
-/// constructed at the boundary over the declaration to its right).
 /// No node is ever typed by `pub`; its identity exists to be named in a
 /// declare node's gate slot.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
@@ -38,10 +25,8 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     id
 }
 
-/// `pub`'s constructor: parse the expression to the right, demand it reduced
-/// to a declaration, and fill its gate slot. Anything else — a value, a bare
-/// name, a second `pub` — is a parse error, not a silent no-op: a gate that
-/// marked nothing would be a lie in the source.
+/// Anything but a declaration to the right is a parse error, not a silent
+/// no-op: a gate that marked nothing would be a lie in the source.
 fn construct(
     p: &mut crate::parse::Parser,
     _id: DyadPtr,
