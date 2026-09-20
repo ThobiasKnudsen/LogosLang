@@ -379,6 +379,21 @@ fn a_record_carries_its_spelling() {
 }
 
 #[test]
+fn the_slot_words_are_names_only_inside_a_type_body() {
+    // Outside a type body they are ordinary spellings; inside, the body's own
+    // shadow an outer name and are gone again at the close.
+    let (echoes, stderr) = repl(
+        b"run := 5\nrun + 1\nparse := i32 2\nparse * 3\n\
+          m := type (instance = (a := i32 ?, output := type ?, shared run = ( this.a + this.a )), \
+          parse_rank = *.parse_rank + 1, \
+          parse = ( this.a = tape[-1], this.output = i32, tape[0] = this, \
+          tape.is_constructed[0] = true, tape.remove(-1) ))\n\
+          x := i32 3\nx m\nrun\nparse_rank := 4\nparse_rank\n",
+    );
+    assert_eq!(echoes, ["6", "6", "6", "5", "4"], "stderr: {stderr}");
+}
+
+#[test]
 fn a_slot_body_is_read_bare() {
     // The hidden `tape` is declared as a parameter is, so an outer `tape` is the shadowing error.
     let (echoes, stderr) = repl(
@@ -432,9 +447,9 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"g := type (y := 3)\n", "inside `instance"),
         (b"g := type (instance = (shared))\n", "followed by a declaration"),
         (b"f := fn (shared a := i32 ?) -> void ( a )\n", "nowhere else"),
-        // Stand-in: the slot words are core identities in the seed, not names known only inside a type body.
-        (b"parse_rank = 3\n", "only inside a type body"),
-        (b"d := i32 5\ndrop = 3\n", "only inside a type body"),
+        (b"parse_rank = 3\n", "unknown name"),
+        (b"d := i32 5\ndrop = 3\n", "a line of the type body itself"),
+        (b"t := type (parse = ( parse_rank = 3 ))\n", "a line of the type body itself"),
         (b"t := type (run = ( 1 ))\n", "`shared run = (…)`"),
         (b"t := type (instance = (run = 5))\n", "marked"),
         (b"t := type (instance = (shared parse_rank = 5))\n", "other slots"),

@@ -460,9 +460,6 @@ pub enum ResolveError {
     Unknown(String),
     /// Known, but no declaration of it is in an open scope.
     OutOfScope(String),
-    /// More than one live candidate: impossible under no-shadowing, so a
-    /// corrupt index.
-    Ambiguous(String),
     /// Declaring it would shadow a declaration still live in an open scope.
     Shadowed(String),
     /// Declared in an open scope but made dead by an `own` or `drop`; only
@@ -684,25 +681,23 @@ impl ScopeStack {
                 continue;
             }
             // At the frontier "range covers the point" is exactly "not dead".
-            let mut live = m
+            // Two live records of one spelling are a field's or a slot word's,
+            // declared against their siblings alone: the innermost open
+            // scope's wins (DESIGN ›The constructor is a field‹).
+            let record = m
                 .records
                 .iter()
                 .copied()
-                .filter(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead());
-            let record = match (live.next(), live.next()) {
-                (None, _) => {
-                    let spelling = text[..m.matched].to_string();
-                    if m.records.iter().any(|&r| self.is_open(fields(r).scope)) {
-                        why_none = Some(ResolveError::Dead(spelling));
-                    } else if why_none.is_none() {
-                        why_none = Some(ResolveError::OutOfScope(spelling));
-                    }
-                    continue;
+                .filter(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead())
+                .max_by_key(|&r| self.position(fields(r).scope));
+            let Some(record) = record else {
+                let spelling = text[..m.matched].to_string();
+                if m.records.iter().any(|&r| self.is_open(fields(r).scope)) {
+                    why_none = Some(ResolveError::Dead(spelling));
+                } else if why_none.is_none() {
+                    why_none = Some(ResolveError::OutOfScope(spelling));
                 }
-                (Some(r), None) => r,
-                (Some(_), Some(_)) => {
-                    return Err(ResolveError::Ambiguous(text[..m.matched].to_string()))
-                }
+                continue;
             };
             match cands.iter_mut().find(|(r, _, _)| *r == record) {
                 Some(e) => e.1 = e.1.max(m.matched),
@@ -948,10 +943,9 @@ pub unsafe fn fn_outer<'a>(fn_node: DyadPtr) -> &'a [DyadPtr] {
     }
 }
 
-/// The slot words, in the order `Core::slots` and `SlotKind` follow (DESIGN
-/// ›The constructor is a field‹). Root identities known everywhere: a
-/// stand-in for the type body alone knowing them. `drop` is not here: it is
-/// the statement keyword, which `=` takes as the slot's name.
+/// The slot words a type body declares into its own scope, in `SlotKind`
+/// order (DESIGN ›The constructor is a field‹). `drop` is not here: it is the
+/// statement keyword, which `=` takes as the slot's name.
 pub const SLOT_NAMES: [&str; 6] =
     ["parse_rank", "lex_rank", "associativity", "parse", "run", "instance"];
 
@@ -1008,6 +1002,8 @@ impl SlotKind {
 /// takes at the close, the constructor, and the instance block's layout.
 struct OpenType {
     scope: DyadPtr,
+    /// The six slot words as this definition's own markers, declared into the body's scope.
+    slots: [DyadPtr; 6],
     parse_rank: f64,
     /// From a `lex_rank = …` line; written onto the declaration's record at
     /// the close.
@@ -2392,9 +2388,14 @@ impl<'a> Parser<'a> {
             }
             // A slot fill inside the block is written `shared run = (…)`: an
             // unmarked one would be a per-instance default, not in the seed.
-            if relaxed && (name == "drop" || SLOT_NAMES.contains(&name)) {
-                self.pos = start;
-                return Err(ParseError::InstanceSlotNeedsShared);
+            if relaxed {
+                let def =
+                    self.definitions.last().expect("a relaxed field list is an instance block");
+                let id = self.scopes.resolve(self.trie, name).ok().map(|r| r.identity);
+                if id.is_some_and(|id| id == self.types.drop_ || def.slots.contains(&id)) {
+                    self.pos = start;
+                    return Err(ParseError::InstanceSlotNeedsShared);
+                }
             }
             // `name := T ?` declares the field's type through the hole `?`
             // built; a bare name leaves the type slot undefined.
@@ -2530,11 +2531,11 @@ impl<'a> Parser<'a> {
         unsafe { crate::reflect::text_of(*((*item).value as *const DyadPtr)) }
     }
 
-    /// The spelling decides, which is sound while the slot words are
-    /// reserved: no `:=` can declare one.
+    /// A slot fill's item declares the definition's own marker.
     fn is_slot_fill(&self, item: DyadPtr) -> bool {
-        let text = self.declared_name(item);
-        SLOT_NAMES.iter().any(|s| s.as_bytes() == text)
+        // SAFETY: `item` is a declare node from the store.
+        let declared = unsafe { crate::identities::declare::declared_of(item) };
+        self.definitions.last().is_some_and(|def| def.slots.contains(&declared))
     }
 
     /// An ordinary scope whose bare lines fill the type's own slots and whose
@@ -2542,9 +2543,30 @@ impl<'a> Parser<'a> {
     /// constructor is a field‹); every other line must be prose, since nothing runs a type body later.
     pub fn parse_type_body(&mut self, id: DyadPtr) -> Result<DyadPtr, ParseError> {
         self.expect_open()?;
+        // The slot words are the fields `type` declares (identities/type.logos):
+        // names on the body's lines and nowhere outside them, in a scope of
+        // their own so that a member read through the type never finds them.
+        // Each is a marker of this definition, declared against its siblings
+        // alone, so that a body inside another's shadows its words.
+        let words = self.open_scope();
+        let slots = SLOT_NAMES.map(|_| {
+            let head = crate::identities::meta::record(
+                self.rt.store,
+                crate::identities::meta::TYPEREC_TAG,
+                crate::identities::meta::prec::INERT,
+            );
+            self.rt.store.alloc_raw(self.types.type_, head)
+        });
+        for (name, &marker) in SLOT_NAMES.iter().zip(&slots) {
+            let record = self.mint_record(marker, words, name.as_bytes());
+            // SAFETY: `record` was minted by `Record::alloc` just above.
+            unsafe { self.scopes.declare_field(self.trie, name, record) }
+                .map_err(ParseError::Resolve)?;
+        }
         let scope = self.open_scope();
         self.definitions.push(OpenType {
             scope,
+            slots,
             parse_rank: crate::identities::meta::prec::APPLY,
             lex_rank: None,
             assoc: Assoc::Left,
@@ -2575,6 +2597,7 @@ impl<'a> Parser<'a> {
         let defers = self.open.pop().expect("pushed above").defers;
         self.restore_pending_fn(suppressed);
         let def = self.definitions.pop().expect("pushed above");
+        self.scopes.pop();
         self.scopes.pop();
         lines?;
         if !defers.is_empty() {
@@ -2667,17 +2690,7 @@ impl<'a> Parser<'a> {
         }
         let instance = self.parse_field_list(true)?;
         self.definitions.last_mut().expect("checked above").instance = Some(instance);
-        let types = self.types;
-        let name = SlotKind::Instance.name();
-        let name_node =
-            crate::identities::string::build_text(self.rt.store, types.string_, name.as_bytes());
-        Ok(crate::identities::declare::build(
-            self.rt.store,
-            types.declare_,
-            types.ops.declare_,
-            name_node,
-            types.slots[SlotKind::Instance as usize],
-        ))
+        Ok(self.slot_declare(SlotKind::Instance))
     }
 
     /// A use of one of the slot words, or of `drop`; whether the fill reaches
@@ -2695,7 +2708,11 @@ impl<'a> Parser<'a> {
             if id == self.types.drop_ {
                 return Some(SlotKind::Drop);
             }
-            self.types.slots.iter().position(|&m| m == id).map(SlotKind::of)
+            self.definitions
+                .iter()
+                .rev()
+                .find_map(|def| def.slots.iter().position(|&m| m == id))
+                .map(SlotKind::of)
         }
     }
 
@@ -2792,12 +2809,19 @@ impl<'a> Parser<'a> {
                 )
             }
         }
-        Ok(self.slot_declare(kind, value))
+        Ok(self.slot_declare(kind))
     }
 
-    /// The line's item for a slot fill: a declare node over the slot word.
-    fn slot_declare(&mut self, kind: SlotKind, value: DyadPtr) -> DyadPtr {
+    /// The line's item for a slot fill: a declare node over the slot word,
+    /// declaring the definition's marker, which is how the body's close tells
+    /// a fill from a member declaration.
+    fn slot_declare(&mut self, kind: SlotKind) -> DyadPtr {
         let types = self.types;
+        let def = self.definitions.last().expect("a slot is filled inside a definition");
+        let marker = match kind {
+            SlotKind::Drop => unreachable!("the drop slot is refused before it is filled"),
+            kind => def.slots[kind as usize],
+        };
         let name_node = crate::identities::string::build_text(
             self.rt.store,
             types.string_,
@@ -2808,7 +2832,7 @@ impl<'a> Parser<'a> {
             types.declare_,
             types.ops.declare_,
             name_node,
-            value,
+            marker,
         )
     }
 
@@ -2838,7 +2862,7 @@ impl<'a> Parser<'a> {
                 def.this_param = std::ptr::null_mut();
                 let f = f?;
                 def.ctor = f;
-                Ok(self.slot_declare(SlotKind::Parse, f))
+                Ok(self.slot_declare(SlotKind::Parse))
             }
             SlotKind::Run if !in_block => Err(ParseError::OwnRunNotInSeed),
             SlotKind::Run => {
@@ -2859,7 +2883,7 @@ impl<'a> Parser<'a> {
                 let cells = Box::into_raw(Box::new(fragment));
                 let body = crate::identities::run_body::build(self.rt.store, types, text, cells);
                 self.definitions.last_mut().expect("checked above").run_body = body;
-                Ok(self.slot_declare(SlotKind::Run, types.slots[SlotKind::Run as usize]))
+                Ok(self.slot_declare(SlotKind::Run))
             }
             _ => unreachable!("`=` reads a bare body for `parse` and `run` only"),
         }
@@ -6635,8 +6659,7 @@ mod tests {
     }
 
     #[test]
-    fn two_live_candidates_is_the_corruption_canary() {
-        // No-shadowing prevents this via declare, so inject straight into the index.
+    fn two_live_records_resolve_to_the_innermost_scope() {
         let mut trie = RegexTrie::new();
         let (a, b) = (dyad(100), dyad(101));
         trie.insert("z", rec_in(dyad(1), a));
@@ -6645,6 +6668,8 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(a);
         scopes.push(b);
-        assert_eq!(scopes.resolve(&trie, "z"), Err(ResolveError::Ambiguous("z".into())));
+        assert_eq!(scopes.resolve(&trie, "z").map(|r| r.identity), Ok(dyad(2)));
+        scopes.pop();
+        assert_eq!(scopes.resolve(&trie, "z").map(|r| r.identity), Ok(dyad(1)));
     }
 }

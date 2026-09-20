@@ -252,9 +252,6 @@ mod tests {
             for &n in &types.numtypes {
                 assert_eq!(read_kind(types, n), Read::Identity);
             }
-            for &m in &types.slots {
-                assert_eq!(read_kind(types, m), Read::Identity);
-            }
         }
     }
 

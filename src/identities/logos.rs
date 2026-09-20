@@ -6,8 +6,6 @@
 //! type ([`crate::parse::Parser::parse_type_body`]); bare, it is the classifier as a value.
 //! DESIGN ›Substrate vocabulary‹
 
-use crate::parse::SLOT_NAMES;
-
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
 use crate::store::Store;
@@ -21,8 +19,8 @@ pub(super) fn register_root(store: &mut Store) -> DyadPtr {
     logos_
 }
 
-/// Returns `,`, `left`, `right`, and the six slot markers, in that order.
-pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, [DyadPtr; 6]) {
+/// Returns `,`, `left` and `right`, in that order.
+pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr) {
     // Spelled here, not in `register_root`: the trie and the root scope did not exist yet.
     // `logos` is a transitional alias of `type` until the `language` identity exists.
     cx.declare("type", cx.type_);
@@ -51,13 +49,9 @@ pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, [DyadP
     let left_ = side(cx, "left");
     let right_ = side(cx, "right");
 
-    // Stand-in: the slot words are spelled at the root, where DESIGN ›The
-    // constructor is a field‹ has them known only inside a type body.
-    let slots = SLOT_NAMES.map(|name| side(cx, name));
-
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::COMMA);
     let comma = cx.store.alloc_raw(cx.type_, record);
     cx.declare(",", comma);
 
-    (comma, left_, right_, slots)
+    (comma, left_, right_)
 }

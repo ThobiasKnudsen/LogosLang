@@ -194,7 +194,7 @@ pub fn parse_message(e: &ParseError) -> String {
             format!("the run body of `{name}` could not be constructed for these field types:\n{rendered}")
         }
         ParseError::SlotOutsideDefinition => {
-            "a slot word (`parse_rank`, `lex_rank`, `associativity`, `parse`, `run`, `drop`, `instance`) stands left of `=` only inside a type body".into()
+            "a slot is filled on a line of the type body itself: `parse_rank = …` on a bare line, `shared run = (…)` inside `instance = (…)`".into()
         }
         ParseError::OwnRunNotInSeed => {
             "a type's own `run` is not in the seed; an instance's run is `shared run = (…)` inside `instance = (…)`".into()
@@ -255,7 +255,6 @@ pub(crate) fn resolve_message(e: &ResolveError) -> String {
         ResolveError::Unknown(n) if n.is_empty() => "unknown name".into(),
         ResolveError::Unknown(n) => format!("unknown name `{n}`"),
         ResolveError::OutOfScope(n) => format!("`{n}` is not in scope here"),
-        ResolveError::Ambiguous(n) => format!("`{n}` is ambiguous here"),
         ResolveError::Shadowed(n) => format!(
             "`{n}` is already declared and still in scope; declaring it again would \
              leave the first one shadowed (a name ended by `drop {n}` may be declared again)"

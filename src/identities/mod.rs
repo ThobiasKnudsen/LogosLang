@@ -158,9 +158,6 @@ pub struct Core {
     /// Associativity's two values.
     pub left_: DyadPtr,
     pub right_: DyadPtr,
-    /// The six slot words a type body may fill, in `SLOT_NAMES` order; `lex_rank`
-    /// writes the record being declared, the other five the type's own value.
-    pub slots: [DyadPtr; 6],
     pub arrow_: DyadPtr,
     pub else_: DyadPtr,
     pub in_: DyadPtr,
@@ -273,7 +270,7 @@ impl Core {
         let dyad_ = dyad::register(&mut cx);
         let colon_ = colon::register(&mut cx);
         hole::register(&mut cx);
-        let (sep_, left_, right_, slots) = logos_mod::register_syntax(&mut cx);
+        let (sep_, left_, right_) = logos_mod::register_syntax(&mut cx);
         fresh::register(&mut cx);
         let (construct_, construct_leaf, dot_, index_, open_sq_, close_sq_) =
             instance::register(&mut cx, &callables);
@@ -388,7 +385,6 @@ impl Core {
             sep_,
             left_,
             right_,
-            slots,
             arrow_,
             else_,
             in_,
