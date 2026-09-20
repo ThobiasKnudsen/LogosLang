@@ -104,7 +104,7 @@ pub fn frame_ref(value: *mut u8) -> Option<(usize, usize)> {
 /// type-valued place worked as a parameter and nowhere else: `i32` the
 /// identity is `{type: type, value: <its record>}` and a top-level box holding
 /// a type is `{type: type, value: <8 bytes>}`, the same shape, both untagged.
-/// `type` is the only logos with that problem, being the only one that is its
+/// `type` is the only type with that problem, being the only one that is its
 /// own logos — for every other `T`, an identity says `type` in its type slot
 /// and a box says `T`.
 ///

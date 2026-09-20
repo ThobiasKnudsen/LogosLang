@@ -53,7 +53,7 @@ fn build(
     lhs: DyadPtr,
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    // SAFETY: `lhs`/`rhs` are reduced dyads from the store; reading their logos is safe.
+    // SAFETY: `lhs`/`rhs` are reduced dyads from the store; reading their type is safe.
     let (lb, rb) = unsafe { (is_bool_result(types, lhs), is_bool_result(types, rhs)) };
     if lb != rb {
         return Err(ParseError::NonBoolOperands);

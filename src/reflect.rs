@@ -8,9 +8,9 @@
 //! read each value rides the graph, as each identity's shared-member record
 //! ([`crate::identities::meta`]). [`describe`] is that walker, and its dispatch
 //! is exactly `run`'s (DESIGN ›Execution is function application‹): consult the
-//! node's logos; a value of a record logos is an instance, a value of a function
+//! node's logos; a value of a record type is an instance, a value of a function
 //! is an application (its operands per the function's record, or a call), and
-//! everything else is data read through its logos's record — grounding out at
+//! everything else is data read through its type's record — grounding out at
 //! the `logos := logos ?` fixed point. The only handles it takes are the same three
 //! fixed points the interpreter holds (`logos`, `fn`, `record`); everything else
 //! comes from records.
@@ -44,10 +44,10 @@ pub struct Slot {
 /// A node's structure, read from the graph alone.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Shape {
-    /// A scalar value, read at its logos's width (a `bool` is physically an i32;
+    /// A scalar value, read at its type's width (a `bool` is physically an i32;
     /// a pointer value is its own variant below).
     Scalar(NumType),
-    /// The unit logos's value: nothing to read.
+    /// The unit type's value: nothing to read.
     Unit,
     /// Text `[len: u64][bytes]` (a `«…»` string).
     Text,
@@ -58,17 +58,17 @@ pub enum Shape {
     },
     /// An uncommitted comptime rational `[num: i64, den: i64]`.
     Fraction,
-    /// A pointer value: an 8-byte address, its pointee logos carried by the
-    /// pointer logos's record.
+    /// A pointer value: an 8-byte address, its pointee type carried by the
+    /// pointer type's record.
     Pointer {
-        /// The pointee logos node (`@T` → `T`).
+        /// The pointee type node (`@T` → `T`).
         pointee: DyadPtr,
     },
     /// An application/value of fixed named operand slots: an operator or
     /// statement node (`[lhs, rhs, logos]`, `[condition, then, else]`, …) or an
     /// fn value (`[input, output, body, bcode, frame]`).
     Tuple {
-        /// The operands, one per role in the logos's record.
+        /// The operands, one per role in the type's record.
         slots: Vec<Slot>,
     },
     /// Fixed named head slots then a null-terminated variadic tail: a sequence
@@ -115,14 +115,14 @@ pub enum Shape {
         /// The arguments, in order.
         args: Vec<DyadPtr>,
     },
-    /// An instance of a record logos: fields at derived offsets.
+    /// An instance of a record type: fields at derived offsets.
     Instance {
-        /// Each field's declaration node, machine logos, and byte offset.
+        /// Each field's declaration node, machine type, and byte offset.
         fields: Vec<(DyadPtr, NumType, usize)>,
         /// The instance storage's total size in bytes.
         size: usize,
     },
-    /// The node is itself a logos/identity carrying a shared-member record: its
+    /// The node is itself a type/identity carrying a shared-member record: its
     /// layout kind and parse members are the record's — the sealed `logos`
     /// model's shared members (issue #30), every field readable.
     LogosNode {
@@ -133,7 +133,7 @@ pub enum Shape {
         parse_rank: f64,
         /// The constructor: a callable leaf (`seed-parse` convention, a
         /// `native` body — invoked, never read into), or null: undefined, for
-        /// a pure delimiter or a data logos with no parse role of its own.
+        /// a pure delimiter or a data type with no parse role of its own.
         constructor: DyadPtr,
         /// The destructor: the owning pointer's teardown, null on every other
         /// identity.
@@ -169,8 +169,8 @@ pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
     if logos.is_null() {
         return Shape::Undefined;
     }
-    // A record logos definition reads its stored layout record (issue #47),
-    // recognized by that record itself now that every logos is classified by
+    // A record type definition reads its stored layout record (issue #47),
+    // recognized by that record itself now that every type is classified by
     // the root.
     if meta::is_record_type(node) {
         return Shape::RecordLogos {
@@ -197,7 +197,7 @@ pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
     if matches!(read_kind(types, node), Read::Container(_)) {
         return Shape::Container;
     }
-    // A value of a record logos is an instance: its layout derives from the
+    // A value of a record type is an instance: its layout derives from the
     // definition's field list.
     if meta::is_record_type(logos) {
         return match instance::layout(logos) {
@@ -210,7 +210,7 @@ pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
     if (*logos).ty == types.fn_type {
         return Shape::Call { callee: logos, args: scan_null_terminated((*node).value) };
     }
-    // Data: read the node through its logos's record, grounding at logos : logos.
+    // Data: read the node through its type's record, grounding at logos : logos.
     let Some(kind) = meta::kind_of(logos) else {
         return Shape::Undefined; // an unbound placeholder standing as a logos
     };
@@ -370,7 +370,7 @@ mod tests {
         // extender; finite = infix), and the constructor slot carries the
         // parse behaviour — a callable leaf under the seed-parse convention —
         // exactly where behaviour exists. A pure delimiter's or plain data
-        // logos's constructor is null, and every destructor is null: the honest
+        // type's constructor is null, and every destructor is null: the honest
         // undefined until drop semantics exist. No table anywhere backs any of
         // this; there is no schedule byte.
         let mut store = Store::new();
@@ -422,7 +422,7 @@ mod tests {
             ("in", prec::INERT, false),
             ("..", prec::RANGE, false),
             // Numeric logos carry the juxtaposition constructor (`i32 3`, the
-            // anonymous typed value; declining the right yields the logos as a
+            // anonymous typed value; declining the right yields the type as a
             // value).
             ("i32", prec::APPLY, true),
             ("f64", prec::APPLY, true),
@@ -474,7 +474,7 @@ mod tests {
             );
             p.parse_expression().unwrap()
         };
-        // SAFETY: the root is the record logos just parsed, from the store.
+        // SAFETY: the root is the record type just parsed, from the store.
         unsafe {
             let scope = meta::record_scope_of(node);
             let falpha = crate::identities::array::items(meta::record_fields_of(node))[0];
@@ -537,7 +537,7 @@ mod tests {
     }
 
     /// A box holding a node address describes as the container it is, not as
-    /// the logos whose address it happens to hold — the arm `describe` lacked
+    /// the type whose address it happens to hold — the arm `describe` lacked
     /// until it asked the reading rule (#82).
     #[test]
     fn a_node_box_describes_as_a_container() {
@@ -773,7 +773,7 @@ mod tests {
 
             // Identities self-describe as logos: every shared member readable.
             // An operator carries its constructor (a callable leaf); a data
-            // logos's constructor and every destructor are the honest undefined.
+            // type's constructor and every destructor are the honest undefined.
             let Shape::LogosNode { kind, parse_rank, constructor, destructor } =
                 describe(types, core.plus)
             else {
@@ -787,7 +787,7 @@ mod tests {
                 panic!("an identity self-describes");
             };
             // Every identity has a place on the one axis (no NaN sentinel,
-            // ruled 30 August 2026): a numeric logos sits at application, the
+            // ruled 30 August 2026): a numeric type sits at application, the
             // juxtaposition constructor it carries (`i32 3`).
             assert_eq!((kind, parse_rank), (NumType::I32 as u8, meta::prec::APPLY));
             assert!(!constructor.is_null() && destructor.is_null());

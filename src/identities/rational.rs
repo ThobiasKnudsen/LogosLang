@@ -1,12 +1,12 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `rational_number`: the numeric-literal carrier. A data logos whose value is an
+//! `rational_number`: the numeric-literal carrier. A data type whose value is an
 //! actual rational — a reduced fraction `num / den` (`den > 0`) — so `3.14` is a
 //! first-class literal (`157 / 50`), not just whole numbers. Integer literals are
 //! the `den == 1` case.
 //!
-//! A rational only becomes a machine number when it is *molded* to a concrete logos
+//! A rational only becomes a machine number when it is *molded* to a concrete type
 //! at use (DESIGN ›Numeric literals are uncommitted until context classifies them‹):
 //! [`mold_to`] commits it exactly to any numeric width (an integer target requires
 //! an exact in-range integer; a float target takes `num/den`), and a literal that
@@ -93,7 +93,7 @@ fn build_literal(store: &mut Store, rational: DyadPtr, num: i64, den: i64) -> Dy
 
 /// Fold `op` over two rational **literals** into a new rational literal by exact
 /// fraction arithmetic (DESIGN ›both-uncommitted operands stay `rational`, committing
-/// only when context logos them‹). Returns `Ok(None)` if either operand is not a
+/// only when context type them‹). Returns `Ok(None)` if either operand is not a
 /// rational literal (so the operator builds a normal node instead), or
 /// [`ParseError::UncomputableLiteral`] if the exact result overflows the seed's `i64`
 /// num/den (its rationals are `i64` fractions; arbitrary precision is later work).
@@ -287,7 +287,7 @@ unsafe fn read_fraction(node: DyadPtr) -> (i64, i64) {
     (num, den)
 }
 
-/// Mold a rational literal to a concrete numeric logos `nt`, returning the value's
+/// Mold a rational literal to a concrete numeric type `nt`, returning the value's
 /// `i64` bit-container. Integer logos require an exact integer (`den` divides `num`)
 /// in range; float logos take `num/den` as the float's bits. Returns `None` if there
 /// is no exact value (a decimal to an int, or an out-of-range integer) — which the

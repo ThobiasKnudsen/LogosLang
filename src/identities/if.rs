@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `if ( cond ) ( then )` with an optional `else ( else )`: the conditional. `if`
-//! is a function (its own logos is `fn`), like the operators; its node is
+//! is a function (its own type is `fn`), like the operators; its node is
 //! `{type: if, value: [cond, then, else]}`, the else slot null when absent. The
 //! condition must be a `bool` (checked at parse time); run evaluates only the taken
 //! branch, compile emits a two-way branch merging to a single value (DESIGN ›A

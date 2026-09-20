@@ -135,7 +135,7 @@ pub enum CompileError {
 pub const MAX_COMPILED_PARAMS: usize = 3;
 
 /// The lowering context: a Cranelift function under construction plus the rule
-/// table `lower` dispatches through, and the host pointer logos for baked
+/// table `lower` dispatches through, and the host pointer type for baked
 /// addresses. The `builder` is not exposed; lowering rules use the small typed
 /// helpers below, so `crate::identities` needs only Cranelift's `Value`.
 pub struct Lowerer<'a, 'f> {
@@ -151,9 +151,9 @@ pub struct Lowerer<'a, 'f> {
     /// The id of the function under construction, so a self-call becomes a direct
     /// `call` the JIT patches to this function's own address.
     func_id: FuncId,
-    /// The core logos handles: `logos.fn_type` tells a call from data (a node whose
+    /// The core type handles: `logos.fn_type` tells a call from data (a node whose
     /// operation is `fn`-typed with no lowering rule is a call), and the rest let a
-    /// call's arguments resolve their numeric logos at the ABI boundary.
+    /// call's arguments resolve their numeric type at the ABI boundary.
     types: &'a Core,
     /// The function node being compiled (null for a bare expression), so a call to it
     /// is recognized as self-recursion rather than a call to other machine code.
@@ -169,7 +169,7 @@ pub struct Lowerer<'a, 'f> {
     /// Analysis mode: the stats the first lowering pass records frame-place
     /// usage into. `None` on the real (second) pass.
     collect: Option<&'a mut PlaceStats>,
-    /// The promoted frame places, offset → register variable and its logos —
+    /// The promoted frame places, offset → register variable and its type —
     /// DESIGN's "locals assigned to registers or stack slots": a promoted
     /// place reads and writes a Cranelift variable (a register after regalloc)
     /// instead of its frame-slot memory. Empty on the analysis pass.
@@ -343,7 +343,7 @@ impl Lowerer<'_, '_> {
         Ok(self.load_at(ct, addr, 0))
     }
 
-    /// Write `v` (of logos `ct`) to a place — the dual of [`Self::read_place`]:
+    /// Write `v` (of type `ct`) to a place — the dual of [`Self::read_place`]:
     /// a promoted frame place defines its register variable; everything else
     /// stores through its address.
     ///
@@ -461,7 +461,7 @@ impl Lowerer<'_, '_> {
         self.builder.ins().uextend(types::I32, c)
     }
 
-    /// Lower a binary arithmetic operator (`+`/`-`/`*`): the operand logos is the
+    /// Lower a binary arithmetic operator (`+`/`-`/`*`): the operand type is the
     /// (committed) left operand's — the op slot holds the concrete op, not a
     /// logos — and the matching machine op is emitted over the lowered operands
     /// (`iadd`/`fadd`, …). The result logos follows the operand `Value`s.
@@ -505,7 +505,7 @@ impl Lowerer<'_, '_> {
     }
 
     /// Lower an integer division with the total, saturating semantics (see
-    /// [`ArithOp`]): a zero divisor yields the logos's MAX, the signed MIN/-1
+    /// [`ArithOp`]): a zero divisor yields the type's MAX, the signed MIN/-1
     /// overflow saturates to MAX, quotients truncate toward zero. Matches the
     /// interpreter's `apply_arith` — a raw `sdiv`/`udiv` would trap on the two
     /// impossible cases instead.
@@ -535,7 +535,7 @@ impl Lowerer<'_, '_> {
     }
 
     /// Lower an integer remainder with the total semantics (see [`ArithOp`]):
-    /// `x % 0` is the logos's MAX, and a signed `x % -1` is the well-defined 0
+    /// `x % 0` is the type's MAX, and a signed `x % -1` is the well-defined 0
     /// (which also covers the MIN/-1 trap). Matches the interpreter's
     /// `apply_arith`.
     fn lower_int_rem(&mut self, nt: NumType, l: Value, r: Value) -> Result<Value, CompileError> {
@@ -560,9 +560,9 @@ impl Lowerer<'_, '_> {
         )
     }
 
-    /// Lower a binary comparison (`<`/`>`/`==`/…): the operand logos is the
+    /// Lower a binary comparison (`<`/`>`/`==`/…): the operand type is the
     /// (committed) left operand's, and the matching `icmp` (signed or unsigned
-    /// per the logos) or `fcmp` is emitted, zero-extended to the `I32` bool.
+    /// per the type) or `fcmp` is emitted, zero-extended to the `I32` bool.
     ///
     /// # Safety
     /// `node` must be a resolved binary numeric operator node `[lhs, rhs, op]`.
@@ -573,7 +573,7 @@ impl Lowerer<'_, '_> {
     ) -> Result<Value, CompileError> {
         let (lhs, rhs) = operands(node);
         // The width is in the node: the comparison's builder chose a leaf for
-        // the resolved operand logos and stored it in the op slot, and the
+        // the resolved operand types and stored it in the op slot, and the
         // interpreter's `cmp_run<OP, NT>` *is* that leaf. Reading it here is
         // DESIGN ›Declarations are immutable by default‹ applied once — "the
         // type defines how the value is read" — instead of classifying the
@@ -912,7 +912,7 @@ impl Lowerer<'_, '_> {
     /// The boundary follows the uniform convention (see `compile_body`): each
     /// argument widens into the `i64` bit-container per its *own* resolved logos —
     /// the compiled analogue of `eval_args` reading each argument at its width —
-    /// and the result narrows per the callee's declared return logos, a void callee
+    /// and the result narrows per the callee's declared return type, a void callee
     /// yielding unit. The argument count is checked against the callee's parameters
     /// ([`CompileError::ArityMismatch`], mirroring the interpreter).
     ///
@@ -931,7 +931,7 @@ impl Lowerer<'_, '_> {
             return Err(CompileError::NotLowerable(callee));
         }
         // The callee's parameter count (from the input record's stored fields
-        // array) and return logos (`None` for void; a `-> logos` callee cannot
+        // array) and return type (`None` for void; a `-> logos` callee cannot
         // appear here — its calls comptime-resolve at parse — but the guard
         // keeps the tag read honest).
         let input = *fields.add(FN_INPUT);
@@ -1031,7 +1031,7 @@ pub struct Compiled {
 impl Compiled {
     /// Call the compiled `fn() -> i64` and return the raw `i64` bit-container it
     /// yields (the interpreter's value representation; see [`compile_body`]'s uniform
-    /// ABI). The caller reinterprets the bits per the function's return logos.
+    /// ABI). The caller reinterprets the bits per the function's return type.
     ///
     /// # Safety
     /// The compiled function must be nullary (it is, when produced by
@@ -1046,7 +1046,7 @@ impl Compiled {
 /// parameter nodes from the input record and the `body` (see
 /// [`crate::parse::FN_BODY`]), compiles the body with each parameter reference
 /// lowering to its matching argument (narrowed from the `i64` bit-container to the
-/// parameter's declared logos) and the return following the declared output
+/// parameter's declared type) and the return following the declared output
 /// (`-> void` yields unit), then mints a `callable` node — the finalized entry
 /// under the `container-i64` convention, the backend's licensed mint (DESIGN ›The
 /// callable ground is `@exec`‹) — into the node's `bcode` slot
@@ -1106,11 +1106,11 @@ unsafe fn compile_fn_body(
         crate::identities::array::items(crate::identities::meta::record_fields_of(input)).to_vec();
     let body = *fields.add(FN_BODY);
     // A `-> void` function yields unit (compiled to `return 0`); a `-> logos`
-    // function yields a logos identity's address, already the i64 container
-    // (logos values are node addresses, so a logos-returning function is
+    // function yields a type identity's address, already the i64 container
+    // (type value are node addresses, so a type-returning function is
     // integers in, an integer out — and comptime evaluation runs it like any
     // other, jumping to installed bcode per ›Build and run are one
-    // self-directing pass‹); every other compilable output is a scalar logos
+    // self-directing pass‹); every other compilable output is a scalar type
     // the body's value widens to. A remaining non-scalar output (a record)
     // refuses cleanly.
     let ret = return_kind(types, *fields.add(FN_OUTPUT))?;
@@ -1182,7 +1182,7 @@ pub unsafe fn compile_nullary_i32(
 }
 
 /// Compile `root` as a function of `params`, spilling each argument (an `i64`
-/// bit-container, narrowed to the parameter's declared logos where it has one)
+/// bit-container, narrowed to the parameter's declared type where it has one)
 /// into the parameter's frame slot on entry, and returning `ret` (`None` for
 /// `-> void`, which yields unit). `root` references those parameter nodes where
 /// it uses them — they read their frame slots through the same place machinery
@@ -1258,7 +1258,7 @@ unsafe fn build_pass(
     // The calling convention is uniform `(i64…) -> i64`: every parameter and the
     // result is passed as the interpreter's `i64` bit-container, reinterpreted to its
     // real logos at the boundary. This keeps `run::call_compiled` a fixed
-    // `fn(i64…) -> i64` regardless of the parameter/return logos.
+    // `fn(i64…) -> i64` regardless of the parameter/return type.
     for _ in params {
         ctx.func.signature.params.push(AbiParam::new(types::I64));
     }
@@ -1326,7 +1326,7 @@ unsafe fn build_pass(
         // Bind each argument — the compiled side of the one calling
         // convention: the caller passes the i64 bit-containers per the uniform
         // signature, and entry narrows each to the parameter's declared scalar
-        // logos (a bare or logos-valued parameter keeps the full container). A
+        // logos (a bare or type-valued parameter keeps the full container). A
         // promoted parameter defines its register variable; the rest spill
         // into the slot the parser assigned, where `&param` and the
         // interpreter's layout expect them.
@@ -1340,7 +1340,7 @@ unsafe fn build_pass(
             let logos = (*p).ty;
             let scalar = crate::identities::numtype::is_scalar_type(logos);
             if let Some(&(var, _)) = promoted.get(&off) {
-                // A promoted container parameter (a logos-valued `t : logos`,
+                // A promoted container parameter (a type-valued `t : logos`,
                 // promoted through its i64 reads) keeps the full container.
                 let vn =
                     if scalar { narrow_from_i64(&mut builder, v, of_type_node(logos)) } else { v };

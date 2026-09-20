@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The concrete machine operations: `add_i32`, `lt_f64`, `store_u8`, … — one
-//! spelling-less identity per (operation, machine logos), each a [`callable`]
+//! spelling-less identity per (operation, machine type), each a [`callable`]
 //! value immutably carrying its `@exec` (DESIGN ›Concrete machine operations
 //! are identities‹; issue #44).
 //!
@@ -12,7 +12,7 @@
 //! a side table at run time — to evaluate a node, read its op slot and jump.
 //! The ~120 machine ops the original design worried would be ~120 files are
 //! ~120 graph *nodes*, registered here from one table-driven loop; their
-//! bodies stay the shared logos-switched helpers in [`super::numtype`], each
+//! bodies stay the shared type-switched helpers in [`super::numtype`], each
 //! shim a monomorphic wrapper with its (operation, logos) pair baked in as
 //! const generics.
 //!
@@ -29,7 +29,7 @@ use super::{operands, Cx};
 /// The concrete-op leaves, indexed by operation and [`NumType`] — the parse-time
 /// resolver's table (`(family, operand logos) → leaf`). Rides [`crate::parse::Core`]
 /// so the `Construct` builders can resolve; the interpreter never consults it
-/// (each shim's logos is baked in), and it retires into versioned scopes with the
+/// (each shim's type is baked in), and it retires into versioned scopes with the
 /// rest of the Rust-side parse tables at self-hosting.
 #[derive(Clone, Copy, Debug)]
 pub struct OpLeaves {
@@ -74,7 +74,7 @@ pub struct OpLeaves {
     pub(crate) ran_: DyadPtr,
     /// `declare`'s native (run the initializer for effect, yield unit).
     pub(crate) declare_: DyadPtr,
-    /// `compile`'s native (`f.compile()`, the fn logos's shared member).
+    /// `compile`'s native (`f.compile()`, the fn type's shared member).
     pub(crate) compile_: DyadPtr,
     /// `alloc`'s native (heap-allocate, write the initializer, yield the pointer).
     pub(crate) alloc_: DyadPtr,
@@ -142,7 +142,7 @@ impl OpLeaves {
 
 /// Run a binary arithmetic node with the (operation, logos) pair baked in:
 /// evaluate both operands and apply the shared helper. The concrete op never
-/// reads a logos from the node — its logos *is* this instantiation.
+/// reads a type from the node — its type *is* this instantiation.
 fn arith_run<const OP: u8, const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a resolved binary operator application whose first two
     // slots are its operands, as the family builders construct.

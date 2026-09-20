@@ -4,12 +4,12 @@
 //! Pointers: `@T` logos, `&x` address-of, `x@` dereference, `p@.x`, and
 //! store-through (`p@ = v`).
 //!
-//! The settled surface (Thobias, July 2026): the pointer logos is **prefix**
+//! The settled surface (Thobias, July 2026): the pointer type is **prefix**
 //! `@T` — the pointer is the first thing the user interacts with, and it
 //! composes (`@@i32`, `@point`) — while dereference is **postfix** `x@`, so
 //! chains read left to right: `p@.x`, `p@@`. Because a dereference can never
 //! *start* an expression, `@` after a completed dyad is always deref and `@`
-//! elsewhere is always the logos prefix; no ambiguity exists. `&x` is address-of.
+//! elsewhere is always the type prefix; no ambiguity exists. `&x` is address-of.
 //! v1 pointers are raw, unchecked addresses (DESIGN's `@`-family); checked
 //! `&T`/`&mut T` references layer on when the borrow checker arrives.
 //!
@@ -155,7 +155,7 @@ fn lower_addr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     }
 }
 
-/// Build a pointer logos node `@pointee`: `{type: logos, value -> record}`, the
+/// Build a pointer type node `@pointee`: `{type: logos, value -> record}`, the
 /// record [`ADDR_TAG`]-kinded with the pointee as its payload. Fresh per use;
 /// compare pointees, not nodes.
 /// An `@pointee` value holding `addr`: a pointer-typed literal with its own
@@ -204,13 +204,13 @@ pub(crate) unsafe fn make_pointer_type(
     node
 }
 
-/// Build an *owning* pointer logos node `@pointee` — the same `ADDR_TAG` record
+/// Build an *owning* pointer type node `@pointee` — the same `ADDR_TAG` record
 /// as [`make_pointer_type`], but with `destructor` filled (the drop model's
 /// teardown leaf). This is what `alloc` mints for its result: an ordinary `@T`
-/// whose logos carries a non-null destructor, so `drop`/`own` recognize
+/// whose type carries a non-null destructor, so `drop`/`own` recognize
 /// owning-ness by reading the slot while a `&x` borrow's pointer stays droppable
 /// by no one (DESIGN ›Explicit heap‹: ownership rides the node `alloc` built,
-/// not `@T` in general). Fresh per use, like every pointer logos.
+/// not `@T` in general). Fresh per use, like every pointer type.
 ///
 /// # Safety
 /// `destructor` must be a callable leaf running the owning pointer's teardown.

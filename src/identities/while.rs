@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `while ( cond ) ( body )`: the loop statement. `while` is a function (its own
-//! logos is `fn`), like `if`; its node is `{type: while, value: [cond, body]}`. The
+//! type is `fn`), like `if`; its node is `{type: while, value: [cond, body]}`. The
 //! `bool` condition is re-evaluated before each iteration and the body reruns for
 //! its effect, its value discarded each time (DESIGN ›a loop body's is thrown
 //! away‹). The loop yields unit (0 bits): it is a statement, so value positions

@@ -1,7 +1,7 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! Struct instances: construction (`point(3, 4)`, the logos applied to its field
+//! Struct instances: construction (`point(3, 4)`, the type applied to its field
 //! values — the same constructor doctrine casts use) and field resolution
 //! (`p.x`).
 //!
@@ -86,20 +86,20 @@ pub(super) fn register(
 /// its total size in bytes: what [`layout`] reads off a record type.
 pub(crate) type FieldLayout = (Vec<(DyadPtr, NumType, usize)>, usize);
 
-/// The layout a record logos stores from its field declarations (DESIGN ›a logos
+/// The layout a record type stores from its field declarations (DESIGN ›a type
 /// whose constructor derives the layout automatically‹, issue #47): each field
-/// with its numeric logos and byte offset, in declaration order, plus the total
+/// with its numeric type and byte offset, in declaration order, plus the total
 /// size — the offsets walked from the stored `fields` array, the size matching
 /// the stored `size_bytes`. Fields must be numeric or pointer-typed (8 bytes)
 /// in v1 ([`ParseError::UnsupportedOperands`] otherwise — there is no nested
 /// layout yet).
 ///
 /// # Safety
-/// `record_logos` must be a record logos node from the store (its value a
+/// `record_logos` must be a record type node from the store (its value a
 /// [`meta::RECORD_TAG`] record).
 pub(crate) unsafe fn layout(record_logos: DyadPtr) -> Result<FieldLayout, ParseError> {
-    // A field's logos must be a *logos node* (its own logos is `logos`, reachable as
-    // the record logos's logos's logos — the fixed point): that excludes a nested
+    // A field's logos must be a *type node* (its own type is `logos`, reachable as
+    // the record type's type's logos — the fixed point): that excludes a nested
     // record definition and a value node standing in logos position, whose value
     // bytes would otherwise be misread as a width tag.
     let type_root = (*(*record_logos).ty).ty;
@@ -132,7 +132,7 @@ pub(crate) unsafe fn layout(record_logos: DyadPtr) -> Result<FieldLayout, ParseE
 /// 0; the construct is a re-run initializer.
 ///
 /// # Safety
-/// `record_logos` must be a record logos node, `instance` a place of that logos
+/// `record_logos` must be a record type node, `instance` a place of that type
 /// sized to [`layout`], and `args` reduced dyads, all from the store.
 pub(crate) unsafe fn build_ctor(
     store: &mut Store,

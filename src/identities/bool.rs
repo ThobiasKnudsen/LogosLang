@@ -1,7 +1,7 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `bool`: the logos of a boolean value. A data logos (its own logos is `logos`), like
+//! `bool`: the type of a boolean value. A data type (its own type is `logos`), like
 //! [`crate::identities::i32`], but its values are just 0/1. Comparisons (`<`, …)
 //! produce `bool`, and `if` requires a `bool` condition (checked at parse time).
 //! DESIGN has no `bool` yet; this is the seed's minimal one.
@@ -15,8 +15,8 @@ use super::numtype::NumType;
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
 
-/// Register `bool`: its logos spelling and lowering, plus the `true`/`false`
-/// literal nodes with their spellings. Returns the `bool` logos identity so the
+/// Register `bool`: its type spelling and lowering, plus the `true`/`false`
+/// literal nodes with their spellings. Returns the `bool` type identity so the
 /// parser can hold it in `Core` (a comparison result is `bool`; `if`'s
 /// condition must be one).
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {

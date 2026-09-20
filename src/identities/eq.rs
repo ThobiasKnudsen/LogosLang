@@ -35,7 +35,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     id
 }
 
-/// Build `lhs == rhs`: resolve the operand logos and store the concrete
+/// Build `lhs == rhs`: resolve the operand types and store the concrete
 /// comparison in the op slot.
 fn build(
     store: &mut Store,
@@ -50,7 +50,7 @@ fn build(
     }
     // What the two operands are is the reading rule's answer (#82). Two
     // identities in hand compare by identity now: logos are interned, so
-    // pointer identity *is* logos identity (roadmap #30) — `x:dyad.type == i32`
+    // pointer identity *is* type identity (roadmap #30) — `x:dyad.type == i32`
     // is decided at parse. Two values that read as node addresses — an
     // identity against a box or a view, two boxes, a bare parameter that
     // "accepts any dyad" — compare those addresses when the program runs
@@ -86,7 +86,7 @@ fn build(
     Ok(store.alloc_raw(eq, value))
 }
 
-/// Lower: emit the machine comparison for the resolved operand logos.
+/// Lower: emit the machine comparison for the resolved operand types.
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid `==` application `[lhs, rhs, op]`.
     unsafe { lw.lower_compare(node, CmpOp::Eq) }

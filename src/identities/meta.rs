@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The shared-member record every core identity carries in its value slot — the
-//! seed's realization of the sealed `logos` model (DESIGN ›A logos's metadata is
+//! seed's realization of the sealed `logos` model (DESIGN ›A type's metadata is
 //! shared by its values‹, issue #30) and of layout-as-graph-data (issue #42).
 //!
 //! Anything that stands in a node's `type` position stores, once, the members
@@ -25,7 +25,7 @@
 //! Record layout (unaligned, native-endian, byte offsets):
 //!
 //! ```text
-//! [0]        u8   kind — the logos-tag namespace (see below)
+//! [0]        u8   kind — the type-tag namespace (see below)
 //! [1]        u8   associativity (0 left-to-right, 1 right-to-left)
 //! [2..10]    f64  parse_rank — the identity's place on the one axis ([`prec`])
 //! [10..18]   u64  constructor — a callable leaf (`seed-parse` convention,
@@ -38,7 +38,7 @@
 //! [42..50]   u64  pointer type — the one `@T` of this type, written by the
 //!                 first mint and read back by every later one (#89), or 0
 //! [50..]     payload, per kind:
-//!              ADDR              pointee logos node (`dyad@`)
+//!              ADDR              pointee type node (`dyad@`)
 //!              TUPLE/LIST         u8 arity, then arity × `dyad@` role-name strings
 //! ```
 //!
@@ -75,7 +75,7 @@ pub(crate) const TYPEREC_TAG: u8 = 18;
 /// Kind: a parse-only token (`,`, `(`, `->`, `else`, …); no values exist.
 pub(crate) const TOKEN_TAG: u8 = 19;
 /// Kind: values are the complete jump information — `[entry: @exec, convention]`,
-/// 16 bytes. The `callable` logos's kind (DESIGN ›The callable ground is `@exec`‹,
+/// 16 bytes. The `callable` type's kind (DESIGN ›The callable ground is `@exec`‹,
 /// issue #44): every exec leaf (`add_i32`, `if_native`, a compiled fn's code) is a
 /// value of it, and jumping consumes exactly this record.
 pub(crate) const CALLABLE_TAG: u8 = 20;
@@ -89,7 +89,7 @@ pub(crate) const CONVENTION_TAG: u8 = 21;
 /// arrays and surface syntax arrive with the `array` logos proper.
 pub(crate) const ARRAY_TAG: u8 = 22;
 /// Kind: a record *logos* node's record (issue #47) — the stored layout the
-/// constructor derives at definition (DESIGN ›a logos whose constructor derives
+/// constructor derives at definition (DESIGN ›a type whose constructor derives
 /// the layout automatically — reading the field declarations in its scope and
 /// filling `fields` and `size_bytes`‹), locked before first instantiation. The
 /// payload is `[scope: @dyad][fields: @dyad (an array node over the field
@@ -99,13 +99,13 @@ pub(crate) const ARRAY_TAG: u8 = 22;
 /// bare lines' members, `g.y` — null where a type has no body (#61). The
 /// head carries the type's parse_rank and associativity, the call defaults
 /// (`APPLY`, left) unless its body filled them, and its constructor slot the
-/// Logos function its body filled, if any. Giving record logos a real
+/// Logos function its body filled, if any. Giving record type a real
 /// record also makes their first value byte an honest kind tag — before this,
 /// it was a node address's low byte, and any tag read on it was garbage.
 pub(crate) const RECORD_TAG: u8 = 23;
 /// Kind: values are dyad *views* (#52) — the value IS the viewed node's
 /// address, so `a:dyad` views any value as its cell and `.` then reads
-/// the cell: the one place the logos appears in a value, which is what makes
+/// the cell: the one place the type appears in a value, which is what makes
 /// `.logos` a field read like every other `.` (ruled August 2026).
 pub(crate) const DYAD_TAG: u8 = 24;
 
@@ -135,7 +135,7 @@ const RUN_BODY_OFF: usize = 34;
 /// canonical identities (one `i32` referenced everywhere)"; #89), so that
 /// two spellings of `@i32` are one node and compare equal.
 const POINTER_TYPE_OFF: usize = 42;
-/// Byte offset of the kind-specific payload (a pointer logos's pointee, or an
+/// Byte offset of the kind-specific payload (a pointer type's pointee, or an
 /// operand record's arity + roles).
 pub(crate) const PAYLOAD_OFF: usize = 50;
 
@@ -238,7 +238,7 @@ pub(crate) fn operand_record(
     cx.store.alloc_bytes(&blob)
 }
 
-/// Build a pointer logos's record: kind [`ADDR_TAG`], the pointee node as the
+/// Build a pointer type's record: kind [`ADDR_TAG`], the pointee node as the
 /// payload. Pointer logos are created fresh per use and carry no parse members.
 pub(crate) fn pointer_record(store: &mut Store, pointee: DyadPtr) -> *mut u8 {
     let mut blob = header(ADDR_TAG, Assoc::Left, prec::INERT).to_vec();
@@ -246,10 +246,10 @@ pub(crate) fn pointer_record(store: &mut Store, pointee: DyadPtr) -> *mut u8 {
     store.alloc_bytes(&blob)
 }
 
-/// Build a record logos node's record (issue #47): the [`RECORD_TAG`] head and
+/// Build a record type node's record (issue #47): the [`RECORD_TAG`] head and
 /// the stored layout — the field-list scope, the `fields` array node over the
 /// field declarations, and the derived `size_bytes` — filled at definition,
-/// where the logos's layout locks (DESIGN ›A logos's layout-relevant slots must
+/// where the type's layout locks (DESIGN ›A type's layout-relevant slots must
 /// be defined and frozen before its first instantiation‹).
 pub(crate) fn record_layout(
     store: &mut Store,
@@ -268,7 +268,7 @@ pub(crate) fn record_layout(
     store.alloc_bytes(&blob)
 }
 
-/// The stored scope of a record logos node — where its field names are declared.
+/// The stored scope of a record type node — where its field names are declared.
 ///
 /// # Safety
 /// `id` must carry a [`RECORD_TAG`] record ([`record_layout`]).
@@ -276,7 +276,7 @@ pub(crate) unsafe fn record_scope_of(id: DyadPtr) -> DyadPtr {
     std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF) as *const DyadPtr)
 }
 
-/// The stored `fields` array node of a record logos node — the field
+/// The stored `fields` array node of a record type node — the field
 /// declarations, in order, behind one indirection (the system's first
 /// element-typed array in spirit: an array of `dyad`).
 ///
@@ -286,7 +286,7 @@ pub(crate) unsafe fn record_fields_of(id: DyadPtr) -> DyadPtr {
     std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF + 8) as *const DyadPtr)
 }
 
-/// The stored `size_bytes` of a record logos node — the packed byte size its
+/// The stored `size_bytes` of a record type node — the packed byte size its
 /// instances occupy, derived at definition.
 ///
 /// # Safety
@@ -295,7 +295,7 @@ pub(crate) unsafe fn record_size_of(id: DyadPtr) -> u64 {
     std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF + 16) as *const u64)
 }
 
-/// The stored definition scope of a record logos node — its body's bare
+/// The stored definition scope of a record type node — its body's bare
 /// lines, the members read `g.y` (#61) — or null where it has no body.
 ///
 /// # Safety
@@ -355,7 +355,7 @@ pub(crate) unsafe fn install_constructor(id: DyadPtr, leaf: DyadPtr) {
 
 /// Install `leaf` (a callable value) as `id`'s destructor — the drop model's
 /// writer for the reserved slot (issue #49), run once while the owning pointer
-/// logos is under construction; nothing has read the slot before the fill. Every
+/// type is under construction; nothing has read the slot before the fill. Every
 /// other identity leaves it null (the honest undefined).
 ///
 /// # Safety
@@ -449,14 +449,14 @@ pub(crate) unsafe fn kind_of(id: DyadPtr) -> Option<u8> {
     }
 }
 
-/// Whether `id` is a record logos — a definition built by the record path,
+/// Whether `id` is a record type — a definition built by the record path,
 /// its value a [`RECORD_TAG`] layout record. This replaces the retired
 /// `logos == struct_` classifier test: since the `logos`/`record` merge every
-/// logos's own classifier is the root, and the stored layout record is what
+/// type's own classifier is the root, and the stored layout record is what
 /// marks the record case. The tag read is guarded so the test is safe on ANY
 /// node, as the identity compare it replaces was: [`kind_of`] turns away both
 /// a null value and a type-valued place, so only a node classified by the
-/// self-classified root (a logos at all) that actually carries a record has
+/// self-classified root (a type at all) that actually carries a record has
 /// its tag consulted.
 ///
 /// # Safety
@@ -469,9 +469,9 @@ pub(crate) unsafe fn is_record_type(id: DyadPtr) -> bool {
 }
 
 /// The index of a runnable node's *op slot* — the last fixed slot of its
-/// logos's operand record, where a resolved node stores its callable leaf
+/// type's operand record, where a resolved node stores its callable leaf
 /// (issue #44: dispatch flows through the node, not the identity). `None` for
-/// kinds without fixed slots (any data logos).
+/// kinds without fixed slots (any data type).
 ///
 /// # Safety
 /// `id` must be a valid dyad from the store whose non-null value is a record.

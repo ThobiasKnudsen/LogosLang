@@ -18,7 +18,7 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
     // `(` is one identity at the discovery threshold and it builds a group,
     // never a call: `X (…)` is X's constructor's decision (DESIGN ›The scope's
     // constructor is the driver‹, ruled 3 September 2026; #59 step 2) — a
-    // function value, a record logos, and a numeric logos each consume the
+    // function value, a record type, and a numeric type each consume the
     // bracket to their right themselves. Two operands left side by side, as
     // in `(1 + 2) (3)`, are the checked error, not a call.
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::OPEN);

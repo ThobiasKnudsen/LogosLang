@@ -1074,7 +1074,7 @@ impl ScopeStack {
     }
 
     /// Re-point `record` at `identity`. Used by the declaration fixpoint when
-    /// the value turns out to *be* an existing identity (a logos): the name
+    /// the value turns out to *be* an existing identity (a type): the name
     /// becomes another spelling of that node — its own record, one per name,
     /// pointing at the shared dyad — so pointer-identity checks
     /// (`is_numtype_node`, logos equality) see the original. The record's
@@ -1098,7 +1098,7 @@ pub enum Assoc {
 }
 
 /// The fields of a function node's value record, in order, as built by
-/// [`Parser::parse_fn`]: the input `record`, the return logos, the reflectable body,
+/// [`Parser::parse_fn`]: the input `record`, the return type, the reflectable body,
 /// and the compiled code. The concrete ops (`add_i32`, `if_native`, …) are
 /// `callable` leaves the nodes reference from their op slots instead; a user
 /// function carries its own compiled callable here, null until compiled, and
@@ -1442,10 +1442,10 @@ pub enum ParseError {
     ExpectedField,
     /// A fn signature's parameter list was not followed by `->`.
     ExpectedArrow,
-    /// A fn signature's `->` was not followed by a return logos.
+    /// A fn signature's `->` was not followed by a return type.
     ExpectedReturnType,
     /// An abstract operator (e.g. `+`) could not resolve a concrete machine op for
-    /// its operand logos (DESIGN ›a `+` over mismatched or sizeless logos simply
+    /// its operand types (DESIGN ›a `+` over mismatched or sizeless logos simply
     /// does not lower until that is resolved‹).
     UnsupportedOperands,
     /// An `if` condition was not a `bool` (a comparison result or `bool` value).
@@ -1456,11 +1456,11 @@ pub enum ParseError {
     MissingElse,
     /// A logical operator (`and`/`or`/`not`) was applied to a non-`bool` operand.
     NonBoolOperands,
-    /// A binary operator's operands were two *different* concrete numeric logos (e.g.
+    /// A binary operator's operands were two *different* concrete numeric type (e.g.
     /// `i32` and `f64`). Cross-logos arithmetic needs an explicit cast; there is no
     /// implicit coercion.
     TypeMismatch,
-    /// A number literal had no exact value in the logos it was committed to (a decimal
+    /// A number literal had no exact value in the type it was committed to (a decimal
     /// molded to an integer, or an out-of-range integer).
     UncomputableLiteral,
     /// A `return` in a non-tail position of a scope's sequence: v1 `return` is the
@@ -1523,7 +1523,7 @@ pub enum ParseError {
         rendered: String,
     },
     /// A reflection read that does not fit the node's logos (`.operand` on a
-    /// scalar, an index past the arity, `.fields` of a non-record logos), an
+    /// scalar, an index past the arity, `.fields` of a non-record type), an
     /// unknown member on a view or logos, or a read whose answer is the honest
     /// undefined (a null constructor slot). Answering `?` instead waits for
     /// the `?` identity (#38).
@@ -1533,7 +1533,7 @@ pub enum ParseError {
     /// as a first-class value waits for the array logos (#47).
     ExpectedIndexBracket,
     /// `.logos` on something that is not a dyad view: `.` reads only the
-    /// fields a logos defines, which are about the value — a value's logos is
+    /// fields a type defines, which are about the value — a value's type is
     /// never one of its own fields (ruled August 2026). The view puts the
     /// type into the value: `x:dyad.type`.
     TypeNeedsView,
@@ -1555,17 +1555,17 @@ pub enum ParseError {
     /// A numeric conversion `logos(value)` was malformed: not exactly one operand, or a
     /// non-numeric operand (there is nothing to convert).
     BadCast,
-    /// A typed declaration's `name :` — or a logos variable's fill `name = …` —
-    /// was followed by something that is not a logos value: the logos slot holds
-    /// a logos, so the expression must evaluate to one (a spelled logos, or a
+    /// A typed declaration's `name :` — or a type variable's fill `name = …` —
+    /// was followed by something that is not a type value: the type slot holds
+    /// a type, so the expression must evaluate to one (a spelled logos, or a
     /// `-> logos` call resolved at parse time).
     BadDeclaredType,
-    /// A typed declaration of a non-numeric logos (`a := logos ?`, a record, a
+    /// A typed declaration of a non-numeric type (`a := logos ?`, a record, a
     /// pointer, `bool`, `void`) — the declared-logos storage for those is not in
     /// the seed yet, and this names the gap instead of mis-storing the value.
     NonNumericDeclaredType,
     /// A `-> logos` call could not be resolved at parse time — either running it
-    /// failed (its arguments were not comptime-known) or it did not yield a logos.
+    /// failed (its arguments were not comptime-known) or it did not yield a type.
     /// A logos-returning function is evaluated during parsing (roadmap #30), so its
     /// arguments must be known then.
     NonComptimeTypeCall,
@@ -1589,8 +1589,8 @@ pub enum ParseError {
     OwningEscape,
     /// A function body hands ownership out through its return. A block may do
     /// this (its binder sees the tail at parse), but a call hides the body
-    /// behind the return logos, and a plain `@T` carries no destructor, so the
-    /// caller could not know it owes a `free`. Fail-closed until a return logos
+    /// behind the return type, and a plain `@T` carries no destructor, so the
+    /// caller could not know it owes a `free`. Fail-closed until a return type
     /// can declare that it transfers ownership — the ownership-gate work,
     /// issue #53.
     OwnershipAcrossReturn,
@@ -1676,7 +1676,7 @@ pub(crate) unsafe fn last_sequence_expr(node: DyadPtr) -> Option<DyadPtr> {
 /// non-tail sequence position, where it would run without exiting.
 ///
 /// # Safety
-/// `node` must be a valid dyad from the store, with the value shapes its logos
+/// `node` must be a valid dyad from the store, with the value shapes its type
 /// implies (as the parser builds them).
 unsafe fn contains_return(types: &Core, node: DyadPtr) -> bool {
     let logos = (*node).ty;
@@ -1701,7 +1701,7 @@ unsafe fn contains_return(types: &Core, node: DyadPtr) -> bool {
 /// Build a call node `{type: callee, value: [args…, null]}`, the application
 /// `callee(args)`. Like a binary operator's `{type: op, value: [lhs, rhs]}`, a call's
 /// value is the operand array of its arguments (null-terminated so `run` can count
-/// them); a nullary call carries a null value. The callee's logos decides how the
+/// them); a nullary call carries a null value. The callee's type decides how the
 /// call runs, exactly as an operator's does.
 fn build_call(store: &mut Store, callee: DyadPtr, args: &[DyadPtr]) -> DyadPtr {
     let value = if args.is_empty() {
@@ -1716,7 +1716,7 @@ fn build_call(store: &mut Store, callee: DyadPtr, args: &[DyadPtr]) -> DyadPtr {
 
 /// The once-per-run import registry (#58): canonical path → load state. A file
 /// loads once per run — every importer shares the one loaded section and its
-/// identities, so two importers of the same file see the same logos, never two
+/// identities, so two importers of the same file see the same type, never two
 /// copies — and the import graph must be a DAG, so a path met again while its
 /// own load is still in progress is a cycle (ruled August 2026). The REPL
 /// threads one registry across its per-line parsers (a session is a run); the
@@ -1753,12 +1753,12 @@ pub struct Parser<'a> {
     pos: usize,
     scopes: ScopeStack,
     trie: &'a mut RegexTrie,
-    /// The core logos handles the parser logos opened nodes with (see [`Core`]).
+    /// The core type handles the parser logos opened nodes with (see [`Core`]).
     types: &'a Core,
     /// The placeholder of the declaration currently awaiting its value, or null.
     /// When the value opens with a `fn` literal, [`Parser::parse_fn`] publishes the
     /// signature onto it before the body parses, so a recursive self-call resolves
-    /// its parameter and return logos instead of the unbound-placeholder defaults.
+    /// its parameter and return type instead of the unbound-placeholder defaults.
     pending_fn: DyadPtr,
     /// The records of the declarations whose right side is being driven,
     /// innermost last: what a `lex_rank = …` line in a `type (…)` body
@@ -1776,7 +1776,7 @@ pub struct Parser<'a> {
     frames: Vec<OpenFn>,
     /// How many deferred-or-repeated bodies enclose the current position — fn
     /// bodies, loop bodies, and runtime `if` branches — where parse order and run
-    /// order do NOT coincide. Comptime effects that rebind names at parse (a logos
+    /// order do NOT coincide. Comptime effects that rebind names at parse (a type
     /// variable's fill) are rejected while this is non-zero: inside such a body
     /// the rebinding would happen once, at the wrong time, and on both runtime
     /// branches. Comptime-taken `if` branches do not count (they run iff parsed).
@@ -2033,7 +2033,7 @@ impl<'a> Parser<'a> {
         self.rt.store
     }
 
-    /// The core logos handles (copied out, so a `&mut self` call can follow).
+    /// The core type handles (copied out, so a `&mut self` call can follow).
     pub(crate) fn types(&self) -> &'a Core {
         self.types
     }
@@ -2273,13 +2273,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Application — the constructor an instance of `fn`, a record logos, or
-    /// (through its own constructor) a numeric logos runs for the bracket to
+    /// Application — the constructor an instance of `fn`, a record type, or
+    /// (through its own constructor) a numeric type runs for the bracket to
     /// its right: DESIGN ›`X (…)` is one spelling, and X's constructor decides
     /// what the bracket is‹ — a call, an instance construction, a conversion —
     /// never `(`'s decision, which builds a group and nothing else (#59 step
     /// 2). Without a `(` directly ahead the identity stands as its own value
-    /// (`f(i32, 3)` passes the logos; `g := f` names the function).
+    /// (`f(i32, 3)` passes the type; `g := f` names the function).
     pub(crate) fn construct_application(
         &mut self,
         id: DyadPtr,
@@ -2346,7 +2346,7 @@ impl<'a> Parser<'a> {
     /// The constructor of `id`, decoded from its constructor-slot leaf — the
     /// parse-time analogue of `run`'s op-slot jump: dispatch flows through the
     /// graph, no table anywhere. `None` for an undefined constructor (a
-    /// delimiter token, a data logos).
+    /// delimiter token, a data type).
     fn construct_of(&self, id: DyadPtr) -> Option<ConstructFn> {
         // SAFETY: `id` is a resolved identity; a constructor leaf is minted
         // from a `ConstructFn` at registration (`Core::build`) under the
@@ -2873,8 +2873,8 @@ impl<'a> Parser<'a> {
     /// declaration dyad `{type: field-logos, value: undefined}` whose name is declared
     /// in the record's own scope. The node's value is a [`RECORD_TAG`] record
     /// storing the layout the definition derives — the scope, the `fields`
-    /// array node, and the packed `size_bytes` — filled here, where the logos's
-    /// layout locks (issue #47; DESIGN ›a logos whose constructor derives the
+    /// array node, and the packed `size_bytes` — filled here, where the type's
+    /// layout locks (issue #47; DESIGN ›a type whose constructor derives the
     /// layout automatically — reading the field declarations in its scope and
     /// filling `fields` and `size_bytes`‹). Fresh field names are read raw
     /// here, which is why the field list needs its own sub-parse rather than
@@ -2991,7 +2991,7 @@ impl<'a> Parser<'a> {
         self.expect_close()?;
 
         // The stored layout: fields pack in declaration order, a scalar at its
-        // logos's width and anything else (a bare or logos-valued name, only
+        // type's width and anything else (a bare or type-valued name, only
         // meaningful for parameter lists) as the 8-byte container — the same
         // width rule parameters claim frame offsets by.
         // SAFETY: each field is the dyad just built, its type null or a type
@@ -3671,7 +3671,7 @@ impl<'a> Parser<'a> {
     /// `declared` (null when the literal does not open a declaration's value) is
     /// the declaration's placeholder: the signature publishes onto it — body and
     /// bcode still null — before the body parses, so a recursive self-call inside
-    /// the body reads real parameter and return logos.
+    /// the body reads real parameter and return type.
     ///
     /// # Safety
     /// `declared` must be null or a placeholder dyad from the store that nothing
@@ -3684,7 +3684,7 @@ impl<'a> Parser<'a> {
         // The parameter list is a record; parse_record opens and closes its scope.
         let input = self.parse_record()?;
         self.expect_arrow()?;
-        // The return logos: the cells up to the body bracket, constructed to
+        // The return type: the cells up to the body bracket, constructed to
         // one (`i32`, `@i32`, later `array i32`).
         let output = {
             let items = self.drive_until_open(RightSide::ReturnType)?;
@@ -3726,8 +3726,8 @@ impl<'a> Parser<'a> {
         // parameter resolves to a frame slot exactly as a local does (DESIGN
         // ›Resolution is one rule‹), and the caller writes the argument values
         // into those slots (›Operands travel on the stack‹). A scalar-typed
-        // parameter stores at its logos's width, like a local of that logos;
-        // anything else — a bare `name`, a logos-valued parameter — rides the
+        // parameter stores at its type's width, like a local of that type;
+        // anything else — a bare `name`, a type-valued parameter — rides the
         // full 8-byte i64 bit-container the call convention already passes.
         // The body's local declarations then claim the offsets after these; a
         // nested `fn` literal pushes its own frame, so its state never lands
@@ -3812,9 +3812,9 @@ impl<'a> Parser<'a> {
         self.scopes.pop_barrier();
         // Ownership may not cross a function return yet (issue #49). A block can
         // hand ownership to its binder because the parse sees the block's tail,
-        // but a *call* hides the body behind the return logos, and a plain `@T`
+        // but a *call* hides the body behind the return type, and a plain `@T`
         // carries no destructor — so the caller could not know it owes a `free`
-        // and would leak. Fail closed until a return logos can declare that it
+        // and would leak. Fail closed until a return type can declare that it
         // hands ownership over, which is the ownership-gate work (issue #53).
         // SAFETY: `body` is the reduced dyad just parsed.
         if unsafe { crate::identities::drop_model::is_owning_value(self.types, body) } {
@@ -3823,7 +3823,7 @@ impl<'a> Parser<'a> {
         let OpenFn { size: frame_size, outer, .. } =
             self.frames.pop().expect("parse_fn pushed a frame");
 
-        // A comptime-rational tail expression commits to the declared return logos here
+        // A comptime-rational tail expression commits to the declared return type here
         // (the typed slot), so `fn () -> i64 ( 2000000000 + 2000000000 )` returns i64
         // rather than molding to the i32 default.
         // SAFETY: `body`/`output` are valid dyads just built.
@@ -4128,7 +4128,7 @@ impl<'a> Parser<'a> {
     /// 17 September 2026: "`for a..b (body)` with no index is the same loop
     /// without the variable"; #129). The range is end-exclusive, the cells up to
     /// the body bracket ([`Parser::drive_until_open`]). The counter is a fresh
-    /// block-local of the range's resolved numeric logos either way — declared
+    /// block-local of the range's resolved numeric type either way — declared
     /// under the name when one is written, under no name otherwise — so both
     /// tiers run one node shape; a literal step must be positive
     /// ([`ParseError::BadStep`]); the loop is a statement yielding unit, and a
@@ -4153,7 +4153,7 @@ impl<'a> Parser<'a> {
             _ => return Err(ParseError::ExpectedRange),
         };
 
-        // Resolve the loop logos across the range parts (concrete logos must
+        // Resolve the loop logos across the range parts (concrete type must
         // match, literals commit, all-literals default to i32).
         let types = self.types;
         // SAFETY: `step` is the reduced dyad just parsed.
@@ -4248,7 +4248,7 @@ impl<'a> Parser<'a> {
     /// over the instance's storage at the field's byte offset (DESIGN ›Resolution
     /// is one rule‹ — the declaration found decides, and a field declaration is
     /// the offset inside the value area). The field name resolves in the record
-    /// logos's own scope, alone (never against the enclosing scopes). The `.` has
+    /// type's own scope, alone (never against the enclosing scopes). The `.` has
     /// already been consumed.
     ///
     /// # Safety
@@ -4264,9 +4264,9 @@ impl<'a> Parser<'a> {
     ) -> Result<(DyadPtr, usize), ParseError> {
         let unit_call = matches!(call, Some(ref a) if a.is_empty());
         // `.` does exactly one job (ruled August 2026): reading fields the
-        // logos defines, which are always about the value. A value's logos is
+        // logos defines, which are always about the value. A value's type is
         // never one of its own fields — the retired universal `.logos`
-        // metaproperty did a second job here — so reading a logos takes the
+        // metaproperty did a second job here — so reading a type takes the
         // dyad view, `x:dyad.type`, where the type IS in the value.
         // The member name is the cell to the right of `.`, read as its raw
         // spelling: a field is dot-only, so what the driver resolved it to
@@ -4347,7 +4347,7 @@ impl<'a> Parser<'a> {
             }
             // An operator node's slots are the fields its own logos defines
             // (#52, corrected August 2026): `.operands` is the collection
-            // that logos defines, and `[i]` fetches an element from it —
+            // that type defines, and `[i]` fetches an element from it —
             // `(x + x).operands[0]` — no view involved, exactly as `p.x`
             // reads a record field. A null slot (an absent optional) is the
             // ruled checked error until `?`.
@@ -4369,13 +4369,13 @@ impl<'a> Parser<'a> {
                 }
                 return Ok((operand, 1));
             }
-            // `.compile` on an fn-typed value is the fn logos's shared member
+            // `.compile` on an fn-typed value is the fn type's shared member
             // (DESIGN ›Execution is function application‹: "The `fn` logos
             // carries two shared functions: `compile` … and `run`"; `run` is
             // calling). `f.compile()` builds a compile statement whose run
             // lowers `f`'s body and installs its `bcode`, so the next call
             // jumps to machine code. The name-compare here is the seed's
-            // stand-in for shared-member resolution through the logos's scope
+            // stand-in for shared-member resolution through the type's scope
             // (one mechanism at self-hosting); reserved only on fn-typed
             // values, so a record field named `compile` still resolves. The
             // `()` is mandatory — compile is a function, applied like any
@@ -4449,7 +4449,7 @@ impl<'a> Parser<'a> {
                 0,
             ));
         }
-        // The direct case: an instance of a record logos, with storage — the
+        // The direct case: an instance of a record type, with storage — the
         // access is a *place*, its offset folded into the instance's own place
         // now. `wrapping_add` keeps a frame-tagged instance value a valid tagged
         // offset (`FRAME_TAG | (base + field)`); for an absolute instance it is
@@ -4475,7 +4475,7 @@ impl<'a> Parser<'a> {
     ) -> Result<Constructed, ParseError> {
         // The left is read as it stands — an identity's fields are read off
         // the token before its own constructor wakes (DESIGN ›Text is the
-        // quote‹: `i32.parse_rank`), so a callable or a logos name to the
+        // quote‹: `i32.parse_rank`), so a callable or a type name to the
         // left is the identity itself, not a call in waiting.
         let lhs = match tape.at(-1).copied() {
             Some(cell) => self.operand_dyad(cell)?,
@@ -4598,7 +4598,7 @@ impl<'a> Parser<'a> {
     /// shadow or double a field), returning the field node and its byte offset.
     ///
     /// # Safety
-    /// `record_logos` must be a record logos node from the store.
+    /// `record_logos` must be a record type node from the store.
     unsafe fn resolve_field(
         &mut self,
         record_logos: DyadPtr,
@@ -4619,8 +4619,8 @@ impl<'a> Parser<'a> {
         Ok((field, offset))
     }
 
-    /// Whether `callee` is a function whose declared return logos is the `logos` root —
-    /// it yields a logos, resolved at comptime (roadmap #30).
+    /// Whether `callee` is a function whose declared return type is the `logos` root —
+    /// it yields a type, resolved at comptime (roadmap #30).
     ///
     /// # Safety
     /// `callee` must be a resolved dyad from the store.
@@ -4632,11 +4632,11 @@ impl<'a> Parser<'a> {
         !fields.is_null() && *fields.add(FN_OUTPUT) == self.types.type_
     }
 
-    /// Comptime-evaluate a logos-returning call to the concrete logos it produces,
-    /// substituting that logos node for the call. The call runs under a fresh
+    /// Comptime-evaluate a type-returning call to the concrete type it produces,
+    /// substituting that type node for the call. The call runs under a fresh
     /// interpreter — which works off raw handles and never touches the store — so
     /// interpretation doubles as parse-time evaluation (DESIGN ›Build and run are one
-    /// self-directing pass‹); the result bits are the produced logos node's address.
+    /// self-directing pass‹); the result bits are the produced type node's address.
     /// A run failure (e.g. a runtime-only argument) or a non-logos result is reported
     /// as [`ParseError::NonComptimeTypeCall`].
     ///
@@ -4663,8 +4663,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Build a postfix dereference `lhs@`: the lhs's static logos must be a
-    /// pointer logos — a pointer variable or `&x` literal (its `logos`), a pointer
+    /// Build a postfix dereference `lhs@`: the lhs's static type must be a
+    /// pointer type — a pointer variable or `&x` literal (its `logos`), a pointer
     /// field place, or another deref whose pointee is a pointer (`p@@`).
     ///
     /// # Safety
@@ -4894,7 +4894,7 @@ impl<'a> Parser<'a> {
         self.consume_token(self.types.else_)
     }
 
-    /// Consume the `->` that separates a fn's parameter list from its return logos.
+    /// Consume the `->` that separates a fn's parameter list from its return type.
     fn expect_arrow(&mut self) -> Result<(), ParseError> {
         if self.consume_token(self.types.arrow_) {
             Ok(())
@@ -4950,8 +4950,8 @@ impl<'a> Parser<'a> {
     /// Build a call `callee ( args )` over the arguments its bracket cell
     /// held — the callee's own constructor's work (DESIGN ›`X (…)` is one
     /// spelling, and X's constructor decides what the bracket is‹). A numeric
-    /// logos callee is a conversion (`i32(a)`), a record logos constructs an
-    /// instance, a logos-returning callee resolves NOW at comptime; any other
+    /// logos callee is a conversion (`i32(a)`), a record type constructs an
+    /// instance, a type-returning callee resolves NOW at comptime; any other
     /// callee is an ordinary call.
     pub(crate) fn build_call(
         &mut self,
@@ -5011,10 +5011,10 @@ impl<'a> Parser<'a> {
             if !run_body.is_null() {
                 return Err(ParseError::RunBodyHeld);
             }
-            // A record logos applied to its field values constructs an
+            // A record type applied to its field values constructs an
             // instance — the constructor doctrine, like `i32(a)`.
             let types = self.types;
-            // SAFETY: `callee` is a record logos node; `args` are reduced dyads
+            // SAFETY: `callee` is a record type node; `args` are reduced dyads
             // from the store.
             unsafe {
                 // The instance is a per-call local (a frame slot inside a
@@ -5033,7 +5033,7 @@ impl<'a> Parser<'a> {
             }
         } else {
             // Each uncommitted literal argument commits to its parameter's
-            // declared logos (the typed slot); an unbound callee has no
+            // declared type (the typed slot); an unbound callee has no
             // signature yet and commits nothing.
             let types = self.types;
             let mut args = args;
@@ -5042,9 +5042,9 @@ impl<'a> Parser<'a> {
                 crate::identities::commit_call_args(self.rt.store, types, callee, &mut args)?;
             }
             let call = build_call(self.rt.store, callee, &args);
-            // A call whose callee returns a logos is resolved NOW, at comptime:
-            // run it and substitute the concrete logos it produces (roadmap
-            // #30), so the result flows as an ordinary logos value through
+            // A call whose callee returns a type is resolved NOW, at comptime:
+            // run it and substitute the concrete type it produces (roadmap
+            // #30), so the result flows as an ordinary type value through
             // `==`, `:=`, `.logos`, and display. It runs before the driver
             // judges the cell, so the outer-name check runs here first: a
             // body that reads a dead name must not run (#125). SAFETY:
@@ -5378,10 +5378,10 @@ impl<'a> Parser<'a> {
         // construction binds the name to the *instance* (the storage)
         // and keeps the construct statement as the initializer: the name
         // is the place, the statement fills it each run. A *logos* value
-        // (`x := i32`, `p := record(…)`) rebinds the name to the logos
+        // (`x := i32`, `p := record(…)`) rebinds the name to the type
         // node itself instead — the name becomes another spelling of
-        // that logos, so the pointer-identity checks (`is_numtype_node`,
-        // cross-logos mismatch, record-logos equality) see the original.
+        // that type, so the pointer-identity checks (`is_numtype_node`,
+        // cross-type mismatch, record-logos equality) see the original.
         // SAFETY: `placeholder`/`value` are valid dyads just built.
         // A box on the right, by the reading rule (#82): its declared type, or
         // none. Decided before the chain below because a `let` chain would
@@ -5436,7 +5436,7 @@ impl<'a> Parser<'a> {
                 // lands in a place here — the one site that knows the name it
                 // binds — so this is where the constructor-inserted teardown
                 // attaches (issue #49, DESIGN ›Explicit heap‹: attachment at the
-                // binding site). Mint an *owning* `@pointee` place (its logos
+                // binding site). Mint an *owning* `@pointee` place (its type
                 // carries the destructor, so `drop`/`own` on it are legal),
                 // snapshot the value into it like any pointer, then insert
                 // `defer free <place>` into this scope. Ownership landing in a
@@ -5454,7 +5454,7 @@ impl<'a> Parser<'a> {
                 let place = self.alloc_local(owning_ty, 8);
                 let init = crate::identities::build_init(self.rt.store, self.types, place, value)?;
                 self.scopes.rebind(record, place);
-                // `place` was just minted with the owning pointer logos (its
+                // `place` was just minted with the owning pointer type (its
                 // destructor set), so the owning check passes; keeping it on
                 // guards against a future caller inserting a free over a borrow.
                 let free_node = crate::identities::drop_model::build_teardown(
@@ -5532,7 +5532,7 @@ impl<'a> Parser<'a> {
     ) -> Result<Constructed, ParseError> {
         // The load is a comptime effect: inside a fn body, loop, or runtime
         // branch, parse order and run order do not coincide, so it is rejected
-        // like a logos variable's fill.
+        // like a type variable's fill.
         if self.runtime_depth != 0 {
             return Err(ParseError::ImportInRuntimeBody);
         }
@@ -5974,15 +5974,15 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// A member read on a node standing as a logos (#52): the shared metadata
-    /// this crate stores once per logos — `.arity`, `.roles[i]`,
+    /// A member read on a node standing as a type (#52): the shared metadata
+    /// this crate stores once per type — `.arity`, `.roles[i]`,
     /// `.parse_rank`, `.associativity`, `.constructor`, `.destructor`, and the
     /// record layout `.fields`, `.size_bytes`, `.scope`. Typically reached as
     /// `a:dyad.type.arity`. A null constructor/destructor slot is the
     /// honest undefined and errors until `?` exists.
     ///
     /// # Safety
-    /// `logos` must be a logos identity node from the store.
+    /// `logos` must be a type identity node from the store.
     unsafe fn logos_member(
         &mut self,
         logos: DyadPtr,
@@ -6189,7 +6189,7 @@ impl<'a> Parser<'a> {
     /// The constructor an appearance of `id` runs, or `None` for an inert
     /// cell (a value, a delimiter). The identity's own slot first; failing
     /// that, its type's shared instance constructor — application for an
-    /// instance of `fn` and for a record logos (DESIGN ›The constructor is a
+    /// instance of `fn` and for a record type (DESIGN ›The constructor is a
     /// field‹: "whether the name resolves to X's own slot or to the type's
     /// shared one is ordinary field semantics").
     ///
@@ -6199,21 +6199,35 @@ impl<'a> Parser<'a> {
     fn ctor_of(&self, id: DyadPtr) -> Option<ConstructFn> {
         // SAFETY: `id` is a resolved dyad from the store.
         unsafe {
-            if id.is_null() {
-                return None;
-            }
-            if (*id).ty == self.types.fn_type {
+            if !id.is_null() && (*id).ty == self.types.fn_type {
                 return Some(application);
             }
-            if (*id).ty != self.types.type_ || crate::identities::meta::kind_of(id).is_none() {
-                return None;
-            }
+            let id = self.identity_head(id)?;
             // A record type runs the constructor its body filled (#61), or
             // the derived one: application, the instance construction.
             if crate::identities::meta::is_record_type(id) {
                 return self.construct_of(id).or(Some(application));
             }
             self.construct_of(id)
+        }
+    }
+
+    /// `id` when it is an identity carrying a record — a dyad typed by the
+    /// root with a record in its value — or `None` for null, a value, an
+    /// instance, a place: the one test the three dispatch readers
+    /// ([`Self::ctor_of`], [`Self::precedence_of_cell`],
+    /// [`Self::assoc_of_cell`]) share.
+    ///
+    /// # Safety
+    /// `id` must be null or a dyad from the store.
+    unsafe fn identity_head(&self, id: DyadPtr) -> Option<DyadPtr> {
+        if id.is_null()
+            || (*id).ty != self.types.type_
+            || crate::identities::meta::kind_of(id).is_none()
+        {
+            None
+        } else {
+            Some(id)
         }
     }
 
@@ -6224,13 +6238,9 @@ impl<'a> Parser<'a> {
     fn precedence_of_cell(&self, id: DyadPtr) -> f64 {
         // SAFETY: as [`Parser::ctor_of`].
         unsafe {
-            if id.is_null()
-                || (*id).ty != self.types.type_
-                || crate::identities::meta::kind_of(id).is_none()
-            {
-                crate::identities::meta::prec::APPLY
-            } else {
-                crate::identities::meta::parse_rank_of(id)
+            match self.identity_head(id) {
+                Some(id) => crate::identities::meta::parse_rank_of(id),
+                None => crate::identities::meta::prec::APPLY,
             }
         }
     }
@@ -6241,13 +6251,9 @@ impl<'a> Parser<'a> {
     fn assoc_of_cell(&self, id: DyadPtr) -> Assoc {
         // SAFETY: as [`Parser::ctor_of`].
         unsafe {
-            if id.is_null()
-                || (*id).ty != self.types.type_
-                || crate::identities::meta::kind_of(id).is_none()
-            {
-                Assoc::Left
-            } else {
-                crate::identities::meta::assoc_of(id)
+            match self.identity_head(id) {
+                Some(id) => crate::identities::meta::assoc_of(id),
+                None => Assoc::Left,
             }
         }
     }
@@ -6448,7 +6454,7 @@ impl<'a> Parser<'a> {
                     // identity's — `f(x)`'s arguments, `not (c)`'s operand,
                     // `==`'s right operand — never the body (DESIGN ›`X (…)`
                     // is one spelling, and X's constructor decides‹). A
-                    // return logos takes no bracket, so there the first
+                    // return type takes no bracket, so there the first
                     // `(` is the body: `fn () -> i32 ( body )` "is taken by
                     // `fn` before `i32`'s juxtaposition could read a
                     // conversion".
@@ -6617,7 +6623,7 @@ impl<'a> Parser<'a> {
 
     /// Lex and construct the cells up to the next `(` — the right side an
     /// identity reads before its bracket: an `if`'s or `while`'s condition,
-    /// a `for`'s range, a `fn`'s return logos (DESIGN ›The scope's
+    /// a `for`'s range, a `fn`'s return type (DESIGN ›The scope's
     /// constructor is the driver‹, ruled 5 September 2026: "its condition is
     /// the cells up to the body bracket, constructed to one cell"). A `(`
     /// standing first is part of the read (`if (c) (body)`); a later one is
@@ -6694,7 +6700,7 @@ enum RightSide {
     /// An `if`'s or `while`'s condition, a `for`'s range: a bracket after a
     /// pending identity is that identity's.
     Condition,
-    /// A `fn`'s return logos: the first bracket is the body, and an identity
+    /// A `fn`'s return type: the first bracket is the body, and an identity
     /// that reads its own bracket is not woken.
     ReturnType,
 }

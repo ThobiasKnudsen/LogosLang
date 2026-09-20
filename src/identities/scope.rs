@@ -1,9 +1,9 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `scope`: the logos of a scope node, the graph's own spine (DESIGN
+//! `scope`: the type of a scope node, the graph's own spine (DESIGN
 //! ›Meta-navigation walks the graph; the scope stack is the graph's own spine‹).
-//! A scope is a node whose logos is `scope`; entering one is descending into its
+//! A scope is a node whose type is `scope`; entering one is descending into its
 //! subtree, leaving it is ascending, and name resolution walks up the chain of
 //! open scopes.
 //!
@@ -38,7 +38,7 @@ use crate::dyad::DyadPtr;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
-/// Create the `scope` logos (its own logos is `logos`) and return it. Called before
+/// Create the `scope` logos (its own type is `logos`) and return it. Called before
 /// the build context exists, since the root scope is itself typed `scope`.
 pub(super) fn register(store: &mut Store, type_: DyadPtr) -> DyadPtr {
     store.alloc_raw(type_, std::ptr::null_mut())

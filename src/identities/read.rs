@@ -61,7 +61,7 @@ pub enum Read {
     /// what the box may take without reading the node's type slot again.
     Container(DyadPtr),
     /// A logos standing as a value: its own address is the value (›A type is a
-    /// comptime value‹: "a logos node standing as a value carries its identity
+    /// comptime value‹: "a type node standing as a value carries its identity
     /// as its value").
     Identity,
     /// A dyad view (`x:dyad`): the stored address is the value.
@@ -290,7 +290,7 @@ mod tests {
     fn every_identity_is_an_identity() {
         // The classifier ground and everything classified by it — including the
         // four roots that are minted null and back-filled in `Core::build`, the
-        // numeric logos, and the two associativity values `left`/`right`, which
+        // numeric type, and the two associativity values `left`/`right`, which
         // is the one place `Identity` is wider than "is the type root".
         let mut store = Store::new();
         let mut trie = RegexTrie::new();

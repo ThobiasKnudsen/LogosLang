@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `+`: addition. `+` is a *parse-time constructor* owning no code (DESIGN ›The
-//! callable ground is `@exec`‹; issue #44): from its operand logos it resolves
+//! callable ground is `@exec`‹; issue #44): from its operand types it resolves
 //! each application to one concrete machine operation and stores that leaf in
 //! the node's op slot — `{type: +, value: [lhs, rhs, add_i32]}` — so run jumps
 //! through the node and compile reads the same resolution. One `+` identity
-//! serves every numeric logos; the concrete additions are callable leaves
+//! serves every numeric type; the concrete additions are callable leaves
 //! ([`crate::identities::ops`]).
 
 use crate::Core;
@@ -37,9 +37,9 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     id
 }
 
-/// Build `lhs + rhs`: resolve the operand logos and store the concrete addition in
+/// Build `lhs + rhs`: resolve the operand types and store the concrete addition in
 /// the op slot, giving `{type: +, value: [lhs, rhs, add_<logos>]}`. Resolution follows
-/// [`resolve_binary`]: matching concrete logos keep theirs, a literal molds to its
+/// [`resolve_binary`]: matching concrete type keep theirs, a literal molds to its
 /// partner, two literals fold exactly; non-numeric operands leave `+` unresolved
 /// ([`ParseError::UnsupportedOperands`]).
 fn build(
@@ -50,7 +50,7 @@ fn build(
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
     // Two comptime rationals fold now (exact fraction math), staying rational until
-    // context logos them; otherwise resolve the operand logos and build the `+` node.
+    // context type them; otherwise resolve the operand types and build the `+` node.
     if let Some(folded) = rational::fold_arith(store, types, ArithOp::Add, lhs, rhs)? {
         return Ok(folded);
     }
@@ -60,7 +60,7 @@ fn build(
     Ok(store.alloc_raw(plus, value))
 }
 
-/// Lower: emit the machine addition for the resolved operand logos.
+/// Lower: emit the machine addition for the resolved operand types.
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid `+` application `[lhs, rhs, op]`.
     unsafe { lw.lower_arith(node, ArithOp::Add) }

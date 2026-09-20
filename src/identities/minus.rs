@@ -53,7 +53,7 @@ fn construct(
     // Prefix: negation of the operand to the right (DESIGN ›Numeric
     // literals‹, ruled 5 September 2026: one identity whose constructor reads
     // its left context) — spelled `0 - x`, the sketch's own spelling of a
-    // negative, so it molds to the operand's logos and lowers as a
+    // negative, so it molds to the operand's type and lowers as a
     // subtraction. A literal to the right was already folded into a negative
     // literal at discovery, so this is the non-literal case.
     let types = p.types();
@@ -64,7 +64,7 @@ fn construct(
     Ok(crate::parse::Constructed::Placed)
 }
 
-/// Build `lhs - rhs`: resolve the operand logos and store the concrete
+/// Build `lhs - rhs`: resolve the operand types and store the concrete
 /// subtraction in the op slot.
 fn build(
     store: &mut Store,
@@ -83,7 +83,7 @@ fn build(
     Ok(store.alloc_raw(minus, value))
 }
 
-/// Lower: emit the machine subtraction for the resolved operand logos.
+/// Lower: emit the machine subtraction for the resolved operand types.
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid `-` application `[lhs, rhs, op]`.
     unsafe { lw.lower_arith(node, ArithOp::Sub) }

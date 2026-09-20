@@ -1,7 +1,7 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `callable`: the logos whose values are the complete jump information — an
+//! `callable`: the type whose values are the complete jump information — an
 //! `@exec` entry plus the convention identity the jump follows (DESIGN ›The
 //! callable ground is `@exec`‹; issue #44, settled July 2026).
 //!
@@ -53,7 +53,7 @@ pub(crate) struct Callables {
     pub seed_parse: DyadPtr,
 }
 
-/// Register the `callable` and `convention` logos and the two seed conventions.
+/// Register the `callable` and `convention` type and the two seed conventions.
 /// Neither logos has a spelling: callables are minted by registration loops and
 /// compilation, never written in source (the same as `convert`).
 pub(super) fn register(cx: &mut Cx) -> Callables {
@@ -116,7 +116,7 @@ pub(crate) unsafe fn install_entry(leaf: DyadPtr, entry: usize) {
     std::ptr::write_unaligned((*leaf).value.add(ENTRY_OFF) as *mut usize, entry);
 }
 
-/// Whether `node` is a callable leaf, read from the graph alone: its logos's
+/// Whether `node` is a callable leaf, read from the graph alone: its type's
 /// record kind is [`meta::CALLABLE_TAG`].
 ///
 /// # Safety

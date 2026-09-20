@@ -5,7 +5,7 @@
 //! resolves each application to a concrete remainder and stores the leaf in the
 //! op slot `{type: %, value: [lhs, rhs, rem_<logos>]}`; binds like `*`,
 //! left-associative. Integer remainder is TOTAL (settled): `x % 0` yields the
-//! logos's MAX — the same loud sentinel as `/` — and a signed `x % -1` is the
+//! type's MAX — the same loud sentinel as `/` — and a signed `x % -1` is the
 //! well-defined 0. Float `%` is rejected at parse (Cranelift has no float
 //! remainder instruction, so no `rem_f32`/`rem_f64` leaf exists; a libcall path
 //! can lift this later). Two comptime *integer* literals fold exactly; a
@@ -40,7 +40,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 }
 
 /// Build `lhs % rhs`: fold two comptime integer literals exactly, else resolve
-/// the operand logos — rejecting floats, which have no machine remainder and
+/// the operand types — rejecting floats, which have no machine remainder and
 /// therefore no leaf — and store the concrete remainder in the op slot.
 fn build(
     store: &mut Store,
@@ -61,7 +61,7 @@ fn build(
     Ok(store.alloc_raw(rem, value))
 }
 
-/// Lower: emit the checked machine remainder for the resolved operand logos.
+/// Lower: emit the checked machine remainder for the resolved operand types.
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid `%` application `[lhs, rhs, op]`.
     unsafe { lw.lower_arith(node, ArithOp::Rem) }

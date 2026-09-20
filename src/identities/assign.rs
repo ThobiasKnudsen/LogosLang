@@ -105,8 +105,8 @@ fn construct(
 }
 
 /// Build `lhs = rhs`, committing an uncommitted literal right side to the target
-/// variable's declared numeric logos — the typed slot (DESIGN ›committing to a
-/// concrete logos only when it finally lands in a typed slot‹) — so `a = 10` writes
+/// variable's declared numeric type — the typed slot (DESIGN ›committing to a
+/// concrete type only when it finally lands in a typed slot‹) — so `a = 10` writes
 /// at `a`'s width in both tiers and `a = 5000000000` into an i64 is exact. A
 /// literal with no exact value in the target is [`ParseError::UncomputableLiteral`]
 /// at parse time; a non-literal right side passes through unchanged. The op slot
@@ -214,7 +214,7 @@ pub(super) fn build(
         return Err(ParseError::StatementAsValue);
     }
     // A literal right side commits to the target's logos (the typed slot); a
-    // non-literal one must already BE that logos — no implicit coercion
+    // non-literal one must already BE that type — no implicit coercion
     // ([`super::check_store_type`]).
     // SAFETY: as above.
     let rhs = unsafe {

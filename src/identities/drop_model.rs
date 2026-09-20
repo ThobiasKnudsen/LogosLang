@@ -8,7 +8,7 @@
 //! usual one-file-per-identity split.
 //!
 //! **The model.** `alloc T v` heap-allocates room for a `T`, writes `v` into it,
-//! and yields an *owning* pointer — an ordinary `@T` whose logos node carries a
+//! and yields an *owning* pointer — an ordinary `@T` whose type node carries a
 //! non-null `destructor` (the first identity in the seed that does; a `&x` borrow
 //! mints the same `@T` with a null destructor, so owning-ness rides the node
 //! `alloc` built, not `@T` in general). Binding that owning pointer to a name
@@ -26,9 +26,9 @@
 //! on the way out, so the value handed back would already be freed — `own` is
 //! how ownership leaves a scope); and ownership may not cross a **function
 //! return** (a block hands ownership to its binder in full view of the parse,
-//! but a call hides its body behind a return logos that cannot yet say it
+//! but a call hides its body behind a return type that cannot yet say it
 //! transfers ownership, so the caller would not know it owes a `free`). The
-//! last lifts once a logos carries its ownership mode — `take`/`drop` as gates
+//! last lifts once a type carries its ownership mode — `take`/`drop` as gates
 //! on a reference, the same primitive as `pub`/`mut` (issue #53).
 //!
 //! **Teardown follows the owner.** `own a` is a move: it reads `a`'s pointer,
@@ -48,7 +48,7 @@
 //! **Node shapes** (operand records, so the op slot carries the run native):
 //! `alloc` → `[pointee, init, op]`; `free`/`drop`/`own` → `[place, pointee, op]`;
 //! `defer` → `[inner, op]`. `free`'s run native *is* the owning pointer's stored
-//! destructor, so `drop` — which reads the destructor off the place's logos and
+//! destructor, so `drop` — which reads the destructor off the place's type and
 //! invokes it — routes straight to the same teardown, exercising the slot.
 //!
 //! **Compilation.** None of the five lower: a function whose body reaches one
@@ -67,13 +67,13 @@ use crate::parse::{Assoc, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
-/// Operand index of the pointee logos in an `alloc` node (`[pointee, init, op]`).
+/// Operand index of the pointee type in an `alloc` node (`[pointee, init, op]`).
 const ALLOC_POINTEE: usize = 0;
 /// Operand index of the initializer value in an `alloc` node.
 const ALLOC_INIT: usize = 1;
 /// Operand index of the place in a `free`/`drop`/`own` node (`[place, pointee, op]`).
 const TEARDOWN_PLACE: usize = 0;
-/// Operand index of the pointee logos in a `free`/`drop`/`own` node.
+/// Operand index of the pointee type in a `free`/`drop`/`own` node.
 const TEARDOWN_POINTEE: usize = 1;
 /// Operand index of the deferred inner expression in a `defer` node (`[inner, op]`).
 const DEFER_INNER: usize = 0;
@@ -95,7 +95,7 @@ pub(super) struct DropModel {
 
 /// Register all five identities: their spellings, operand records, and run
 /// natives. Called from `Core::build` after the callable machinery and the
-/// numeric logos exist (an `alloc` node's init is a numeric value; the natives
+/// numeric type exist (an `alloc` node's init is a numeric value; the natives
 /// are callable leaves).
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     // The shared teardown native, minted once: `free`'s op leaf AND the owning
@@ -243,15 +243,15 @@ unsafe fn heap_free(ptr: *mut u8, width: usize) {
     std::alloc::dealloc(ptr, layout);
 }
 
-/// The byte width of a pointee logos (`i32` → 4, a pointer `@T` → 8).
+/// The byte width of a pointee type (`i32` → 4, a pointer `@T` → 8).
 ///
 /// # Safety
-/// `pointee` must be a scalar or pointer logos node.
+/// `pointee` must be a scalar or pointer type node.
 unsafe fn pointee_width(pointee: DyadPtr) -> usize {
     numtype::of_type_node(pointee).bytes()
 }
 
-/// Build an `alloc` node from its parsed initializer. The pointee logos is the
+/// Build an `alloc` node from its parsed initializer. The pointee type is the
 /// initializer's own logos (`alloc i32 5` allocates an `i32`), so the value
 /// carries both what to allocate and what to store; a non-scalar initializer is
 /// rejected (v1 allocates scalars and pointers only).
@@ -287,7 +287,7 @@ pub(crate) fn build_teardown(
     place: DyadPtr,
     require_owning: bool,
 ) -> Result<DyadPtr, ParseError> {
-    // SAFETY: `place` is a reduced dyad; its logos is a valid logos node.
+    // SAFETY: `place` is a reduced dyad; its type is a valid type node.
     let logos = unsafe { (*place).ty };
     // SAFETY: `logos` is a type node from the store (above).
     if unsafe { !numtype::is_pointer_type(logos) } {
@@ -311,14 +311,14 @@ pub(crate) fn build_teardown(
     Ok(store.alloc_raw(op_id, value))
 }
 
-/// Whether `place`'s logos is an owning pointer: a pointer type whose
+/// Whether `place`'s type is an owning pointer: a pointer type whose
 /// `destructor` slot is set (the node `alloc` built, or an `own`-bound place),
 /// as opposed to a borrow or a plain value.
 ///
 /// # Safety-free at the call boundary; reads `place`'s logos, which must be a
 /// reduced dyad from the store.
 pub(crate) fn is_owning_place(place: DyadPtr) -> bool {
-    // SAFETY: `place` is a reduced dyad; its logos is a valid logos node.
+    // SAFETY: `place` is a reduced dyad; its type is a valid type node.
     unsafe {
         let logos = (*place).ty;
         numtype::is_pointer_type(logos) && !meta::destructor_of(logos).is_null()
@@ -376,7 +376,7 @@ pub(crate) unsafe fn teardown_place_of(defer_node: DyadPtr) -> DyadPtr {
     *((*inner).value as *const DyadPtr).add(TEARDOWN_PLACE)
 }
 
-/// The pointee logos of an `alloc`/`own` node — what a bound owning pointer
+/// The pointee type of an `alloc`/`own` node — what a bound owning pointer
 /// points at, so the binding site can mint its owning `@pointee` type. `alloc`
 /// stores it at [`ALLOC_POINTEE`], `own` at [`TEARDOWN_POINTEE`]; a scope whose
 /// tail is one propagates through (an owning value moved out of a block).
@@ -460,7 +460,7 @@ fn run_teardown(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// Run `drop`: read the destructor off the place's logos and invoke it, so the
+/// Run `drop`: read the destructor off the place's type and invoke it, so the
 /// teardown genuinely flows through the reserved `destructor` slot. The inert
 /// form (a null pointee: a non-owning place, dropped only to end its name) is
 /// unit. Otherwise a null destructor cannot happen here — `build_teardown`
@@ -868,7 +868,7 @@ mod tests {
     #[test]
     fn ownership_may_not_cross_a_function_return_yet() {
         // A block hands ownership to its binder because the parse sees its tail,
-        // but a call hides the body behind the return logos, which cannot yet say
+        // but a call hides the body behind the return type, which cannot yet say
         // "I transfer ownership" — so the caller would not know it owes a `free`
         // and would leak. Fail closed until ownership-gated logos land (#53).
         assert_eq!(

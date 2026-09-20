@@ -14,7 +14,7 @@
 //! lowering). [`Core::build`] wires them into the graph. Structure — parse
 //! parse_rank and associativity, and the layout values are read through (a
 //! scalar width, operand arity and role names) — rides the graph as each
-//! identity's shared-member record ([`meta`]; DESIGN ›A logos's metadata is
+//! identity's shared-member record ([`meta`]; DESIGN ›A type's metadata is
 //! shared by its values‹). Run behaviour rides the graph too (issue #44): each
 //! native is a [`callable`] leaf the resolved nodes reference from their op
 //! slots, so the interpreter consults no table — alternative run versions live
@@ -109,25 +109,25 @@ mod while_mod;
 
 /// The core identities and the per-phase tables that drive them.
 pub struct Core {
-    /// The `logos := logos ?` self-loop, the one node whose logos is itself.
+    /// The `logos := logos ?` self-loop, the one node whose type is itself.
     pub type_: DyadPtr,
-    /// `scope`, the logos of a scope node (the graph's spine). Each scope the parser
+    /// `scope`, the type of a scope node (the graph's spine). Each scope the parser
     /// opens is typed with this.
     pub scope: DyadPtr,
-    /// `ran`, the logos of an item that has run in the pass and carries its
+    /// `ran`, the type of an item that has run in the pass and carries its
     /// result (DESIGN ›Build and run are one self-directing pass‹, 13
     /// September 2026). Built by the parser, never spelled.
     pub ran_: DyadPtr,
     /// The scope every core identity is declared in; itself a `scope`-typed node.
     pub root_scope: DyadPtr,
-    /// `fn`, the logos whose values are functions.
+    /// `fn`, the type whose values are functions.
     pub fn_type: DyadPtr,
-    /// `i32`, the logos of an integer variable/value (an alias for `numtypes[I32]`).
+    /// `i32`, the type of an integer variable/value (an alias for `numtypes[I32]`).
     pub i32_: DyadPtr,
-    /// The numeric primitive logos nodes, indexed by `NumType`. Unregistered logos
+    /// The numeric primitive type nodes, indexed by `NumType`. Unregistered logos
     /// (e.g. `f32`/`f64` before their phase) are null.
     pub numtypes: [DyadPtr; 10],
-    /// `bool`, the logos of a boolean value (a comparison result; an `if` condition).
+    /// `bool`, the type of a boolean value (a comparison result; an `if` condition).
     pub bool_: DyadPtr,
     /// `void`, the zero-sized unit logos: a `-> void` function yields unit (0 bits).
     pub void_: DyadPtr,
@@ -136,7 +136,7 @@ pub struct Core {
     /// `convert`: the shared scalar numeric conversion, built from a `logos(value)`
     /// constructor and carrying its source/target logos per node.
     pub convert: DyadPtr,
-    /// `+` (addition); resolves and stores its operand logos per node.
+    /// `+` (addition); resolves and stores its operand types per node.
     pub plus: DyadPtr,
     /// `-` (subtraction).
     pub minus: DyadPtr,
@@ -172,13 +172,13 @@ pub struct Core {
     pub for_: DyadPtr,
     /// `return` (the optional early yield); a function whose value is its operand.
     pub return_: DyadPtr,
-    /// `declare`, the logos of the declaration node `name := value` builds
+    /// `declare`, the type of the declaration node `name := value` builds
     /// (`[name, declared, op]`); a statement yielding unit.
     pub declare_: DyadPtr,
-    /// `compile`, the fn logos's shared member (`f.compile()` — lower the body
+    /// `compile`, the fn type's shared member (`f.compile()` — lower the body
     /// to machine code, install its `bcode`); a statement yielding unit.
     pub compile_: DyadPtr,
-    /// `rational_number` (numeric literal carrier); a data logos.
+    /// `rational_number` (numeric literal carrier); a data type.
     pub rational: DyadPtr,
     /// `string` (the `«…»` text literal); inert in the seed, the comment substance.
     pub string_: DyadPtr,
@@ -235,10 +235,10 @@ pub struct Core {
     /// `array` (of `dyad@`), the seed's first array form: a sequence's
     /// expression list lives behind one of these, never inline in the node.
     pub array_: DyadPtr,
-    /// `callable`, the logos whose values are the complete jump information
+    /// `callable`, the type whose values are the complete jump information
     /// (`[entry: @exec, convention]`); every exec leaf's logos (issue #44).
     pub callable_: DyadPtr,
-    /// `convention`, the logos whose values are calling-convention identities.
+    /// `convention`, the type whose values are calling-convention identities.
     pub convention_: DyadPtr,
     /// `seed-native`: the Rust-shim convention (`fn(&mut Runtime, node)`).
     pub conv_seed_native: DyadPtr,
@@ -323,7 +323,7 @@ impl Core {
             metas: HashMap::new(),
             lower: HashMap::new(),
         };
-        // The numeric primitive logos. Each self-describes its `NumType` (a tag in its
+        // The numeric primitive types. Each self-describes its `NumType` (a tag in its
         // value slot); the shared lowering and interpreter read dispatch on the width.
         let mut numtypes: [DyadPtr; 10] = [std::ptr::null_mut(); 10];
         for &(spelling, nt) in &[
@@ -352,11 +352,11 @@ impl Core {
         string::register(&mut cx);
         let comment_ = comment::register(&mut cx);
         let regex_ = regex_mod::register(&mut cx);
-        // The callable machinery: the `callable`/`convention` logos and the two
+        // The callable machinery: the `callable`/`convention` type and the two
         // seed conventions. After `string` (convention names are string nodes),
         // before everything executable (exec leaves are callable values).
         let callables = callable::register(&mut cx);
-        // The concrete machine operations: every (operation, machine logos) pair
+        // The concrete machine operations: every (operation, machine type) pair
         // as a callable leaf, from one table-driven loop. The single-native
         // leaves (`and`, `or`, `convert`, …) are patched in by their files'
         // registrations below.
@@ -393,9 +393,9 @@ impl Core {
         // parser builds conversion nodes from the `logos(value)` constructor surface.
         let (convert, convert_leaf) = convert::register(&mut cx, &callables);
         op_leaves.convert_ = convert_leaf;
-        // The numeric operators. Each resolves its operand logos at parse time and
+        // The numeric operators. Each resolves its operand types at parse time and
         // stores it in the node's value slot; run/compile switch on it (see
-        // `numtype`), so one identity per operator serves every numeric logos.
+        // `numtype`), so one identity per operator serves every numeric type.
         let plus = plus::register(&mut cx);
         let minus = minus::register(&mut cx);
         let times = times::register(&mut cx);
@@ -421,7 +421,7 @@ impl Core {
         let (for_, for_leaf, in_, dotdot_) = for_mod::register(&mut cx, &callables);
         op_leaves.for_ = for_leaf;
         let arrow_ = fn_mod::register_syntax(&mut cx);
-        // `compile`, the fn logos's shared member (`f.compile()`); no spelling
+        // `compile`, the fn type's shared member (`f.compile()`); no spelling
         // — it resolves after `.` on an fn-typed value.
         let (compile_, compile_leaf) = fn_mod::register_compile(&mut cx, &callables);
         op_leaves.compile_ = compile_leaf;
@@ -603,7 +603,7 @@ impl Core {
 }
 
 /// The shared context each identity registers itself into: the store and name
-/// index to build in, the foundational logos handles it may reference, and the
+/// index to build in, the foundational type handles it may reference, and the
 /// per-phase tables it fills.
 pub(crate) struct Cx<'a> {
     store: &'a mut Store,
@@ -694,11 +694,11 @@ pub(crate) unsafe fn operands(node: DyadPtr) -> (DyadPtr, DyadPtr) {
 
 /// A binary numeric operator operand's character, for logos resolution.
 pub(crate) enum Operand {
-    /// A value with a committed numeric logos.
+    /// A value with a committed numeric type.
     Concrete(NumType),
     /// An uncommitted number literal (a `rational`), which molds to context.
     Literal,
-    /// A pointer value, carrying its pointee logos node. Pointer logos compare by
+    /// A pointer value, carrying its pointee type node. Pointer logos compare by
     /// pointee, never by node identity — they are created fresh per use.
     Pointer(DyadPtr),
     /// Not a number an operator can compute over (e.g. a `record`).
@@ -720,9 +720,9 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     if logos == types.rational {
         return Operand::Literal;
     }
-    // An arithmetic operator's result logos is its left operand's: resolution
-    // committed both operands to one logos and stored the concrete op — not a
-    // logos — in the op slot, so the logos is read where it lives.
+    // An arithmetic operator's result type is its left operand's: resolution
+    // committed both operands to one type and stored the concrete op — not a
+    // logos — in the op slot, so the type is read where it lives.
     if logos == types.plus
         || logos == types.minus
         || logos == types.times
@@ -782,7 +782,7 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     if logos == types.convert {
         return Operand::Concrete(numtype::of_type_node(numtype::stored_type(node)));
     }
-    // A numeric variable/value: its logos is one of the numeric logos nodes.
+    // A numeric variable/value: its type is one of the numeric type nodes.
     if types.numtypes.iter().any(|&t| !t.is_null() && t == logos) {
         return Operand::Concrete(numtype::of_type_node(logos));
     }
@@ -824,8 +824,8 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
         return Operand::Pointer(numtype::pointee_of(logos));
     }
     // An address-of yields a pointer to its place's logos (the pointee it stores
-    // at operand 1). Like deref/storeptr, its node logos is its own identity, not
-    // a pointer logos, so numtype_of is the single classifier.
+    // at operand 1). Like deref/storeptr, its node type is its own identity, not
+    // a pointer type, so numtype_of is the single classifier.
     if logos == types.addr_ {
         return Operand::Pointer(*((*node).value as *const DyadPtr).add(1));
     }
@@ -855,7 +855,7 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
             None => Operand::NonNumeric,
         };
     }
-    // A call: its result is the callee's return logos. A self-call resolves through
+    // A call: its result is the callee's return type. A self-call resolves through
     // the signature the declaration published onto its placeholder; only a
     // placeholder with no published signature (the value did not open with `fn`)
     // falls back to the i32 default. A void-returning callee yields no numeric
@@ -884,7 +884,7 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     Operand::NonNumeric
 }
 
-/// The numeric return logos of a fn node (its `FN_OUTPUT`), or `I32` when the callee
+/// The numeric return type of a fn node (its `FN_OUTPUT`), or `I32` when the callee
 /// is an unbound placeholder with no published signature, or returns a non-numeric.
 unsafe fn call_return_numtype(fn_node: DyadPtr) -> NumType {
     let fields = (*fn_node).value as *const DyadPtr;
@@ -899,13 +899,13 @@ unsafe fn call_return_numtype(fn_node: DyadPtr) -> NumType {
     }
 }
 
-/// Resolve a binary numeric operator's operand logos: commit any uncommitted
+/// Resolve a binary numeric operator's operand types: commit any uncommitted
 /// literal operand to it and return the committed operands with the resolved
 /// [`NumType`], from which the family's builder picks its concrete-op leaf
-/// (`add_i32`, `lt_f64`, …). Two different concrete logos are a
-/// [`ParseError::TypeMismatch`] (cross-logos needs an explicit cast); a
+/// (`add_i32`, `lt_f64`, …). Two different concrete type are a
+/// [`ParseError::TypeMismatch`] (cross-type needs an explicit cast); a
 /// non-numeric operand is [`ParseError::UnsupportedOperands`]; a literal that
-/// has no exact value in the resolved logos is
+/// has no exact value in the resolved type is
 /// [`ParseError::UncomputableLiteral`].
 ///
 /// # Safety
@@ -966,7 +966,7 @@ unsafe fn commit_if_literal(
     }
 }
 
-/// Whether `node` is one of the registered numeric logos nodes (`i32`, `f64`, …). The
+/// Whether `node` is one of the registered numeric type nodes (`i32`, `f64`, …). The
 /// parser uses this to recognize a `logos(value)` conversion at a call site.
 ///
 /// # Safety
@@ -977,9 +977,9 @@ pub(crate) unsafe fn is_numtype_node(types: &Core, node: DyadPtr) -> bool {
     types.numtypes.iter().any(|&t| !t.is_null() && t == node)
 }
 
-/// Whether `node` is a logos-value: a node classified by the `logos := logos ?`
-/// root — a numeric logos, the root itself, `bool`, a pointer or record logos.
-/// Logos identities are interned, so pointer identity *is* logos identity, which
+/// Whether `node` is a type-value: a node classified by the `logos := logos ?`
+/// root — a numeric type, the root itself, `bool`, a pointer or record type.
+/// Logos identities are interned, so pointer identity *is* type identity, which
 /// is what lets `==`/`!=` fold a comparison of two logos-values at parse time and
 /// lets `.logos` yield a value comparable this way (roadmap #30).
 ///
@@ -1011,9 +1011,9 @@ pub(crate) unsafe fn type_identity_of(types: &Core, node: DyadPtr) -> Option<Dya
     }
 }
 
-/// The display spelling of a logos-value (`i32`, `bool`, `type`, …). Numeric
-/// logos and `void` read their name from the record tag; the root and `bool`
-/// are recognized by identity; other logos-values (record logos, pointers,
+/// The display spelling of a type-value (`i32`, `bool`, `type`, …). Numeric
+/// type and `void` read their name from the record tag; the root and `bool`
+/// are recognized by identity; other types-values (record type, pointers,
 /// text) fall back to the generic `type` (the root's ruled spelling).
 ///
 /// # Safety
@@ -1035,8 +1035,8 @@ unsafe fn type_name(types: &Core, node: DyadPtr) -> String {
     }
 }
 
-/// The place logos and byte width a declaration's snapshot binding needs for a
-/// runtime scalar `value`: a `Concrete` numeric (or `bool`) commits to its logos
+/// The place type and byte width a declaration's snapshot binding needs for a
+/// runtime scalar `value`: a `Concrete` numeric (or `bool`) commits to its type
 /// node at its width; a `Pointer` value (an `&x`, a pointer variable) becomes a
 /// fresh `@pointee` place, 8 bytes wide, so `p := &x` gets real storage that
 /// `p = &y` can rewire. The caller mints the place with this — frame-relative
@@ -1074,18 +1074,18 @@ pub(crate) fn build_init(
     assign::build(store, types, types.assign, place, value)
 }
 
-/// Check a store's non-literal right side against the target's declared logos —
-/// the no-coercion rule (DESIGN ›two different concrete logos do not silently
+/// Check a store's non-literal right side against the target's declared type —
+/// the no-coercion rule (DESIGN ›two different concrete type do not silently
 /// lower — there is no implicit coercion‹) applied to `=` and `p@ = …`. A
 /// numeric target takes exactly its own width-kind (`bool` rides `I32` here, as
 /// everywhere in the classifier); a pointer target takes a pointer to a matching
-/// pointee; everything else — a cross-logos value, a value into a pointer, a
+/// pointee; everything else — a cross-type value, a value into a pointer, a
 /// pointer into a numeric, a unit-valued statement — is [`ParseError::TypeMismatch`].
 /// An uncommitted literal never reaches this: the callers commit it to the
 /// target's logos first (the typed slot), which is the one sanctioned crossing.
 ///
 /// # Safety
-/// `target_ty` must be a numeric or pointer logos node and `rhs` a reduced dyad,
+/// `target_ty` must be a numeric or pointer type node and `rhs` a reduced dyad,
 /// both from the store.
 pub(crate) unsafe fn check_store_type(
     types: &Core,
@@ -1110,13 +1110,13 @@ pub(crate) unsafe fn check_store_type(
     }
 }
 
-/// Whether two pointee logos nodes denote the same logos: the same node (numeric
-/// and record logos are interned singletons), or pointer logos whose pointees
-/// match recursively — pointer logos nodes are minted per spelling, so `@@i32`
+/// Whether two pointee type nodes denote the same type: the same node (numeric
+/// and record type are interned singletons), or pointer type whose pointees
+/// match recursively — pointer type nodes are minted per spelling, so `@@i32`
 /// and `@@i32` are different nodes describing one logos.
 ///
 /// # Safety
-/// `a`/`b` must be logos nodes from the store.
+/// `a`/`b` must be type nodes from the store.
 /// Plain pointer types are interned (#89), so this is `==` for them; what
 /// it still bridges is an *owning* `@T` (fresh, its destructor its own)
 /// against the plain `@T`, which name one pointee and match as types.
@@ -1128,7 +1128,7 @@ unsafe fn pointee_types_match(a: DyadPtr, b: DyadPtr) -> bool {
 }
 
 /// Render a run result for display: `bits` (the i64 the interpreter computes in)
-/// interpreted through `node`'s static logos — a float via its bit pattern, an
+/// interpreted through `node`'s static type — a float via its bit pattern, an
 /// unsigned integer at its own width, a `bool` as `true`/`false` — so the CLI
 /// prints `5.5` and `true`, not the raw bit container. Non-scalar and comptime
 /// results fall back to the signed-decimal container, the plain default.
@@ -1138,8 +1138,8 @@ unsafe fn pointee_types_match(a: DyadPtr, b: DyadPtr) -> bool {
 /// `bits` is).
 pub unsafe fn display_value(types: &Core, node: DyadPtr, bits: i64) -> String {
     // A file or block is a scope whose value is its trailing expression; render
-    // through that so the logos-directed formatting below sees the actual value node
-    // (a multi-line program ending in a logos — or a float — not the scope wrapper).
+    // through that so the type-directed formatting below sees the actual value node
+    // (a multi-line program ending in a type — or a float — not the scope wrapper).
     let node = types.through(trailing_expr(types, node));
     // A comparison / logical result is physically an i32; show its truth. A bool
     // stored into a variable reads back as its i32 0/1 (the seed has no distinct
@@ -1150,7 +1150,7 @@ pub unsafe fn display_value(types: &Core, node: DyadPtr, bits: i64) -> String {
     // From here the reading rule says what the bits are (#82): the rest of
     // this function used to re-derive it with four tests of its own.
     match read::read_kind(types, node) {
-        // A logos is a first-class value; show its spelling, not the raw bit
+        // A type is a first-class value; show its spelling, not the raw bit
         // container (roadmap #30) — a program ending in `i32` prints `i32`.
         read::Read::Identity => type_name(types, node),
         // A box shows what it holds: the container IS the held node's address
@@ -1232,11 +1232,11 @@ fn format_scalar(nt: NumType, bits: i64) -> String {
     }
 }
 
-/// Resolve a `for` range's operand logos across its parts (start, end, optional
-/// step), like [`resolve_binary`] over more operands: concrete logos must all
+/// Resolve a `for` range's operand types across its parts (start, end, optional
+/// step), like [`resolve_binary`] over more operands: concrete type must all
 /// match ([`ParseError::TypeMismatch`]), literals commit in place to the
 /// resolved logos, all-literals default to i32, and a non-numeric part is
-/// rejected. Returns the resolved numeric logos node.
+/// rejected. Returns the resolved numeric type node.
 ///
 /// # Safety
 /// `parts` must be reduced dyads from the store.
@@ -1268,12 +1268,12 @@ pub(crate) unsafe fn resolve_loop_parts(
     Ok(logos)
 }
 
-/// Commit a rational literal node exactly to the numeric logos `ty_node` — the
+/// Commit a rational literal node exactly to the numeric type `ty_node` — the
 /// `logos literal` juxtaposition (`i32 32`, DESIGN ›an anonymous typed value is
 /// written by juxtaposition‹). The result is a typed value with real storage.
 ///
 /// # Safety
-/// `lit` must be a rational literal from the store; `ty_node` a numeric logos node.
+/// `lit` must be a rational literal from the store; `ty_node` a numeric type node.
 pub(crate) unsafe fn commit_literal_to(
     store: &mut Store,
     types: &Core,
@@ -1285,13 +1285,13 @@ pub(crate) unsafe fn commit_literal_to(
 }
 
 /// Commit a call's uncommitted literal arguments to their parameters' declared
-/// numeric logos — the typed slot (DESIGN ›committing to a concrete logos only when
+/// numeric type — the typed slot (DESIGN ›committing to a concrete type only when
 /// it finally lands in a typed slot‹), so `f(3000000000)` is exact for an i64
 /// parameter and `g(2.5)` reaches a float one. A non-fn callee, an unbound callee
 /// (no published signature yet), an untyped parameter, or a non-literal argument
 /// each pass through unchanged; extra arguments beyond the parameters are left for
 /// the run/compile arity check. A literal with no exact value in its parameter's
-/// logos is [`ParseError::UncomputableLiteral`].
+/// type is [`ParseError::UncomputableLiteral`].
 ///
 /// # Safety
 /// `callee` and `args` must be valid dyads from the store.
@@ -1322,7 +1322,7 @@ pub(crate) unsafe fn commit_call_args(
         }
         // What the parameter's place reads as says what an argument may be
         // (#82). A record or a code-carrying type has no whole read here and
-        // is checked where that logos is built (#115).
+        // is checked where that type is built (#115).
         match read::place_layout(types, pty) {
             // A pointer parameter takes only a pointer to the same pointee — a
             // committed literal here would be dereferenced as a wild address.
@@ -1359,7 +1359,7 @@ pub(crate) unsafe fn commit_call_args(
                 }
             }
             // A scalar parameter: a literal commits to it (the typed slot);
-            // anything else must already be its logos — the store a typed
+            // anything else must already be its type — the store a typed
             // place takes, no implicit coercion (DESIGN ›A function's surface‹:
             // "the caller's positional arguments are the parameter list's
             // holes, in order").
@@ -1376,7 +1376,7 @@ pub(crate) unsafe fn commit_call_args(
     Ok(())
 }
 
-/// Commit a comptime-rational function body to its declared return logos — the typed-slot
+/// Commit a comptime-rational function body to its declared return type — the typed-slot
 /// context (DESIGN ›Numeric literals are uncommitted until context classifies them‹). A `void` return,
 /// or any non-concrete output, passes the body through; otherwise the body's tail value
 /// positions are committed (see [`commit_tail`]).
@@ -1478,13 +1478,13 @@ unsafe fn walk_tail(
     leaf(node)
 }
 
-/// Commit a comptime rational in tail position to `output`, a numeric logos
+/// Commit a comptime rational in tail position to `output`, a numeric type
 /// node: a rational leaf molds to `output` (exact, else
 /// [`ParseError::UncomputableLiteral`]) and everything else passes through.
 /// The tail positions are [`walk_tail`]'s.
 ///
 /// # Safety
-/// `node`/`output` are valid dyads from the store; `output` is a numeric logos node.
+/// `node`/`output` are valid dyads from the store; `output` is a numeric type node.
 unsafe fn commit_tail(
     store: &mut Store,
     types: &Core,
@@ -1527,14 +1527,14 @@ unsafe fn check_type_tail(types: &Core, node: DyadPtr) -> Result<(), ParseError>
 }
 
 /// Build a scalar numeric conversion `target(operand)` — the `logos(value)` constructor
-/// and the only cross-logos path (DESIGN ›numeric conversion is the logos constructor
+/// and the only cross-type path (DESIGN ›numeric conversion is the type constructor
 /// consuming a value‹). A literal operand folds now, with `as` semantics, into a
-/// `target`-typed value; a runtime operand of a *different* concrete logos becomes a
-/// [`convert`] node; the same concrete logos passes through unchanged. Exactly one
+/// `target`-typed value; a runtime operand of a *different* concrete type becomes a
+/// [`convert`] node; the same concrete type passes through unchanged. Exactly one
 /// numeric operand is required, else [`ParseError::BadCast`].
 ///
 /// # Safety
-/// `target` is a numeric logos node; `args` are valid dyads from the store.
+/// `target` is a numeric type node; `args` are valid dyads from the store.
 pub(crate) unsafe fn build_cast(
     store: &mut Store,
     types: &Core,

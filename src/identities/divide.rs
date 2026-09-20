@@ -6,7 +6,7 @@
 //! division and stores the leaf in the op slot
 //! `{type: /, value: [lhs, rhs, div_<logos>]}`; binds like `*`, left-associative.
 //! Integer division truncates toward zero and is TOTAL (settled): a zero
-//! divisor yields the logos's MAX — a loud sentinel, easier to discover than 0 —
+//! divisor yields the type's MAX — a loud sentinel, easier to discover than 0 —
 //! and the signed MIN/-1 overflow saturates to MAX. Float division is IEEE
 //! (`x / 0.0` is ±inf). Two comptime literals fold to an exact fraction —
 //! `1 / 3` *is* one third — with a literal zero divisor a parse error; explicit
@@ -40,7 +40,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 }
 
 /// Build `lhs / rhs`: fold two comptime literals to an exact fraction, else
-/// resolve the operand logos and store the concrete division in the op slot.
+/// resolve the operand types and store the concrete division in the op slot.
 fn build(
     store: &mut Store,
     types: &Core,
@@ -57,7 +57,7 @@ fn build(
     Ok(store.alloc_raw(div, value))
 }
 
-/// Lower: emit the checked machine division for the resolved operand logos.
+/// Lower: emit the checked machine division for the resolved operand types.
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid `/` application `[lhs, rhs, op]`.
     unsafe { lw.lower_arith(node, ArithOp::Div) }

@@ -1,18 +1,18 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `fn`: the logos whose values are functions. `run` recognizes a function by its
+//! `fn`: the type whose values are functions. `run` recognizes a function by its
 //! logos being this.
 //!
 //! Surface syntax (DESIGN ›A function's surface‹): `fn ( params ) -> ret ( body )`,
 //! an anonymous literal, e.g. `fn () -> i32 ( return 40 + 2 )`. The parameter list
-//! *is* a `record` (step 2's field list); the return logos after `->` is mandatory;
+//! *is* a `record` (step 2's field list); the return type after `->` is mandatory;
 //! the body is a `( )` scope parsed with the parameters open. The parse lives in
 //! [`crate::parse::Parser::parse_fn`]; here we only register the identity, its
 //! `Fn` construct, and the `->` arrow it consumes.
 //!
 //! A `fn` instance's value is its `[input, output, body, bcode, frame, outer]`
-//! record (the params, the return logos, the reflectable body, the compiled
+//! record (the params, the return type, the reflectable body, the compiled
 //! machine code — null until [`crate::compile::compile_fn`] installs it — the
 //! activation-record byte size, null for a function with no locals, and the
 //! records of the outer names the body reads, null for a function that reads
@@ -28,7 +28,7 @@ use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
-/// Create the `fn` logos (its own logos is `logos`) and return it. Called before the
+/// Create the `fn` logos (its own type is `logos`) and return it. Called before the
 /// build context exists, since `=`/`+` reference `fn` as their logos.
 pub(super) fn register(store: &mut Store, type_: DyadPtr) -> DyadPtr {
     store.alloc_raw(type_, std::ptr::null_mut())
@@ -65,7 +65,7 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
 
     // `fn`'s own record, installed now that the string logos exists for the role
     // names: an fn value is the six fixed slots `[input, output, body, bcode,
-    // frame, outer]` — the params, the return logos, the reflectable body, the
+    // frame, outer]` — the params, the return type, the reflectable body, the
     // compiled callable (null until compiled), the activation-record byte size
     // (null for a function with no locals), and the outer names the body reads
     // (null for a function that reads none; #125).
@@ -82,21 +82,21 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
         (*cx.fn_type).value = record;
     }
 
-    // `->` separates a fn's parameter list from its return logos.
+    // `->` separates a fn's parameter list from its return type.
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
     let arrow = cx.store.alloc_raw(cx.type_, record);
     cx.declare("->", arrow);
     arrow
 }
 
-/// Register `compile`, the `fn` logos's shared member (DESIGN ›Execution is
+/// Register `compile`, the `fn` type's shared member (DESIGN ›Execution is
 /// function application‹: "The `fn` logos carries two shared functions:
 /// `compile` … and `run`"; `run` is calling). `f.compile()` lowers `f`'s body
 /// to machine code and installs it, so the next call jumps instead of walking
 /// the body — explicit direction in the one pass (DESIGN ›Build and run are
 /// one self-directing pass‹). No spelling enters the trie: `compile` resolves
 /// only after `.` on an fn-typed value ([`crate::parse::Parser::parse_field_access`]),
-/// the seed's stand-in for shared-member resolution through the logos's scope.
+/// the seed's stand-in for shared-member resolution through the type's scope.
 /// A statement yielding unit, like `while`; value positions reject it.
 ///
 /// The node is `{type: compile, value -> [function, code, op]}`: the target fn,

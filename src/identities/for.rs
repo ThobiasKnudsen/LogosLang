@@ -8,8 +8,8 @@
 //! "sometimes you don't need the index"; #129). The range is **end-exclusive**
 //! (`0..10` runs 0 through 9) with an optional step `d` (default 1), and
 //! start/end/step are evaluated **once**, before the loop. The counter is a
-//! fresh block-local of the range's resolved numeric logos (endpoints resolve
-//! like a binary operator's operands: concrete logos must match, literals
+//! fresh block-local of the range's resolved numeric type (endpoints resolve
+//! like a binary operator's operands: concrete type must match, literals
 //! commit, all-literals default to i32), declared under the written name or
 //! under none. A non-positive step runs zero iterations — the guard both tiers
 //! emit — and a *literal* step must be positive at parse. Like `while`, `for`

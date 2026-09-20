@@ -32,7 +32,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     id
 }
 
-/// Build `lhs > rhs`: resolve the operand logos and store the concrete
+/// Build `lhs > rhs`: resolve the operand types and store the concrete
 /// comparison in the op slot.
 fn build(
     store: &mut Store,
@@ -51,7 +51,7 @@ fn build(
     Ok(store.alloc_raw(gt, value))
 }
 
-/// Lower: emit the machine comparison for the resolved operand logos.
+/// Lower: emit the machine comparison for the resolved operand types.
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid `>` application `[lhs, rhs, op]`.
     unsafe { lw.lower_compare(node, CmpOp::Gt) }

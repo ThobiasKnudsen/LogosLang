@@ -61,11 +61,11 @@ fn parses_a_equals_a_plus_one() {
         assert_eq!((*sum).ty, core.plus);
         let sops = (*sum).value as *const DyadPtr;
         assert_eq!(core.through(*sops), a); // +.lhs is a use of a: its record
-                                            // +.rhs is the literal `1`, committed to i32 (the logos resolved from `a`).
+                                            // +.rhs is the literal `1`, committed to i32 (the type resolved from `a`).
         let one = *sops.add(1);
         assert_eq!((*one).ty, core.i32_);
         assert_eq!(std::ptr::read_unaligned((*one).value as *const i32), 1);
-        // `+` stayed reflectable (logos is still `+`) and stored the resolved
+        // `+` stayed reflectable (type is still `+`) and stored the resolved
         // concrete op in its op slot.
         assert_eq!(*sops.add(2), core.ops.arith_leaf(numtype::ArithOp::Add, NumType::I32));
     }
@@ -115,7 +115,7 @@ fn runs_a_compound_function_by_walking_its_body() {
             Parser::new("fn () -> i32 ( return a + 1 )", &mut store, &mut trie, &core, scopes);
         p.parse_expression().unwrap()
     };
-    // A nullary application of `main`: its logos is `main`.
+    // A nullary application of `main`: its type is `main`.
     let call = store.alloc_raw(main, std::ptr::null_mut());
 
     let mut rt = Runtime::new(&core, &mut store);
@@ -196,7 +196,7 @@ fn parses_and_runs_a_fn() {
     };
 
     // Node shape: `{type: fn, value -> [input, output, body, bcode]}` with an empty
-    // input record, an i32 return logos, and a body (the `return`).
+    // input record, an i32 return type, and a body (the `return`).
     unsafe {
         assert_eq!((*func).ty, core.fn_type);
         let v = (*func).value as *const DyadPtr;
@@ -470,7 +470,7 @@ fn parses_a_bare_name_field() {
         p.parse_expression().unwrap()
     };
 
-    // A bare name: one field with an undefined logos slot, carried as the
+    // A bare name: one field with an undefined type slot, carried as the
     // 8-byte container in the stored size.
     let (scope, ft) = unsafe {
         let fields = array::items(meta::record_fields_of(node));
@@ -507,7 +507,7 @@ fn bare_logos_without_parens_yields_the_classifier() {
 fn scopes_are_typed_scope() {
     let (mut store, mut trie, core) = new_core();
 
-    // `scope` is a logos (its own logos is `logos`), and the root scope is one.
+    // `scope` is a type (its own type is `logos`), and the root scope is one.
     unsafe {
         assert_eq!((*core.scope).ty, core.type_);
         assert_eq!((*core.root_scope).ty, core.scope);
@@ -576,7 +576,7 @@ fn assign_to_a_wide_variable_stores_at_full_width_both_tiers() {
     let a = store.alloc_raw(core.numtypes[NumType::I64 as usize], crate::dyad::global_place(a_val));
     unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
 
-    // A nullary `-> i64` fn so the compiled return logos is the declared i64
+    // A nullary `-> i64` fn so the compiled return type is the declared i64
     // (`compile_fn` reads `FN_OUTPUT`); its body assigns into the enclosing `a`.
     let func = {
         let mut p = Parser::new(
@@ -813,7 +813,7 @@ fn plus_is_abstract_and_resolves_to_a_concrete_op() {
 fn a_whole_file_runs_top_to_bottom_like_a_script() {
     // The CLI model (settled, July 2026): `logos file.logos` evaluates the
     // file's top-level scope in order, Python-style — no main function. A
-    // declaration statement (a fn literal or a record logos standing as an
+    // declaration statement (a fn literal or a record type standing as an
     // expression) is inert at run time — its work happened at parse — and
     // yields unit; the file's value is its tail expression's.
     let (mut store, mut trie, core) = new_core();
@@ -1319,7 +1319,7 @@ fn the_else_binds_to_the_outer_if_across_a_bracketed_branch() {
 
 #[test]
 fn assignment_commits_a_literal_to_the_targets_type() {
-    // The rhs literal commits to the variable's declared logos at parse time, so
+    // The rhs literal commits to the variable's declared type at parse time, so
     // an i64 target takes a value past i32 exactly, in both tiers.
     diff_var_fn(NumType::I64, 0, "fn () -> i64 ( a = 5000000000, a )", 5_000_000_000);
     // And a literal with no exact value in the target is a parse error.
@@ -1695,7 +1695,7 @@ fn a_return_inside_a_while_body_is_rejected() {
 #[test]
 fn juxtaposition_types_a_literal() {
     // `i64 5000000000` is the anonymous typed value (DESIGN ›written by
-    // juxtaposition‹): the literal commits exactly to the logos before it.
+    // juxtaposition‹): the literal commits exactly to the type before it.
     diff_typed_call("fn () -> i64 ( x := i64 5000000000, x )", "f()", 5_000_000_000);
     // An exact commit, not a wrapping cast: a decimal into i32 is an error.
     assert_eq!(parse_err("i32 3.5"), ParseError::UncomputableLiteral);
@@ -1717,7 +1717,7 @@ fn division_and_remainder_match_between_tiers() {
 
 #[test]
 fn division_by_zero_saturates_to_max_both_tiers() {
-    // Settled: a zero divisor yields the logos's MAX — a loud sentinel, easier
+    // Settled: a zero divisor yields the type's MAX — a loud sentinel, easier
     // to discover than 0 — and signed MIN/-1, the other impossible quotient,
     // saturates to MAX too. MIN % -1 is the well-defined 0.
     diff_typed_call(
@@ -2289,8 +2289,8 @@ fn nested_calls_in_argument_position_release_frames_lifo() {
 
 #[test]
 fn a_bare_parameter_carries_the_container() {
-    // A bare `name` parameter (DESIGN: accepts any logos-value dyad) has no
-    // declared logos; its frame slot carries the full i64 bit-container and
+    // A bare `name` parameter (DESIGN: accepts any type-value dyad) has no
+    // declared type; its frame slot carries the full i64 bit-container and
     // a read yields it back.
     assert_eq!(run_script("f := fn (a) -> i64 ( a ),\nf(42)"), 42);
 }
@@ -2447,11 +2447,11 @@ fn compile_member_is_a_statement_not_a_value() {
 
 #[test]
 fn a_type_returning_fn_compiles_and_serves_comptime_calls() {
-    // A logos value is a node address, so a `-> logos` function is integers
-    // in, an integer out — it compiles (logos nodes bake as i64 address
+    // A type value is a node address, so a `-> logos` function is integers
+    // in, an integer out — it compiles (type nodes bake as i64 address
     // immediates, run's own rule), and the parse-time comptime evaluation
     // of later `metatype(...)` calls jumps to the installed code. This
-    // used to panic on the logos root's record tag.
+    // used to panic on the type root's record tag.
     assert_eq!(
         run_script(
             "metatype := fn (i := i32 ?) -> logos ( if (i == 0) (i32) else (f64) ),\nmetatype.compile(),\nsame := metatype(0) == i32,\nother := metatype(1) == f64,\nif (same and other) (i64 1) else (i64 0)"
@@ -2567,7 +2567,7 @@ fn declare_point(store: &mut Store, trie: &mut RegexTrie, core: &Core) {
 #[test]
 fn record_instances_construct_read_and_write_fields_both_tiers() {
     // The logos applied to its field values constructs the instance
-    // (point(3, 4), the logos-constructor doctrine); `.` resolves to a place
+    // (point(3, 4), the type-constructor doctrine); `.` resolves to a place
     // inside the instance's storage, so reads and writes are ordinary numeric
     // paths. Construction re-runs per call, so both tiers start from (3, 4).
     let (mut store, mut trie, core) = new_core();
@@ -3268,7 +3268,7 @@ fn parse_err_after(defs: &[&str], src: &str) -> ParseError {
 #[test]
 fn assignment_rejects_a_cross_type_right_side() {
     // No implicit coercion (DESIGN ›Numeric literals are uncommitted until
-    // context logos them‹): a non-literal right side must already BE the
+    // context type them‹): a non-literal right side must already BE the
     // target's logos; crossing is explicit (`i64(b)`). Only a literal commits
     // to the target (the typed slot), which the suite covers elsewhere.
     let defs = &["a := i64 1", "b := i32 2"];
@@ -3413,7 +3413,7 @@ fn signed_vs_unsigned_comparison_matches_between_tiers() {
 }
 
 /// Diff a nullary `fn () -> ... ( body )` between the interpreter and the JIT, where
-/// `body` reads an enclosing variable `a` of numeric logos `nt` initialised to the
+/// `body` reads an enclosing variable `a` of numeric type `nt` initialised to the
 /// low `nt.bytes()` of `init` (its bit-container). Floats can't ride the i32-mold
 /// argument path, so a float operand has to be a real stored variable, not a call
 /// argument; the body only reads `a`, so no reset between runs is needed.
@@ -3606,7 +3606,7 @@ fn void_function_runs_its_body_for_effect() {
 #[test]
 fn both_literal_arithmetic_stays_rational() {
     // `1 + 2` is not committed to i32 at parse time; it folds to a rational literal
-    // (exact), committing only when context logos it.
+    // (exact), committing only when context type it.
     let (mut store, mut trie, core) = new_core();
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
@@ -3622,7 +3622,7 @@ fn both_literal_arithmetic_stays_rational() {
 fn comptime_rational_arithmetic_folds_exactly_and_commits_on_context() {
     // Two comptime literals stay rational and fold exactly: `1000000 * 1000000` is
     // 10^12 (not an i32 overflow), committing to i64 through the cast; `2e9 + 2e9`
-    // commits to the i64 return logos; a decimal fold reduces the fraction exactly.
+    // commits to the i64 return type; a decimal fold reduces the fraction exactly.
     diff_typed_call("fn () -> i64 ( i64(1000000 * 1000000) )", "f()", 1_000_000_000_000);
     diff_typed_call("fn () -> i64 ( 2000000000 + 2000000000 )", "f()", 4_000_000_000);
     diff_typed_call("fn () -> i64 ( 2000000000 * 2 )", "f()", 4_000_000_000);
@@ -3650,7 +3650,7 @@ fn a_comptime_rational_that_overflows_i64_is_rejected() {
 #[test]
 fn comptime_rational_commits_through_if_branches() {
     // An `if` in tail position is a value slot too: a large comptime rational in
-    // either branch commits to the i64 return logos (it would otherwise fail the i32
+    // either branch commits to the i64 return type (it would otherwise fail the i32
     // mold shim). This also exercises the width-general `if` lowering (i64 branches).
     let fn_src = "fn (c := i32 ?) -> i64 ( if (c < 1) (2000000000 + 2000000000) else (0) )";
     diff_typed_call(fn_src, "f(0)", 4_000_000_000); // then-branch taken

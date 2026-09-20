@@ -1,15 +1,15 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! Numeric conversion (`i32(a)`, `f64(x)`, …): a numeric logos node acting as a
-//! constructor over a value (DESIGN ›numeric conversion is the logos constructor
+//! Numeric conversion (`i32(a)`, `f64(x)`, …): a numeric type node acting as a
+//! constructor over a value (DESIGN ›numeric conversion is the type constructor
 //! consuming a value‹). One shared `convert` identity carries every scalar cast; a
 //! conversion node is `{type: convert, value: [operand, from, to, op]}`, with the
 //! source and target logos stored as graph data (self-describing numtype nodes,
 //! read via their tag) and the single conversion native in the op slot (its
 //! from/to pair rides the node, so one leaf serves every cast; issue #44). Run
 //! applies Rust `as` ([`apply_cast`]); compile emits the matching Cranelift op
-//! ([`Lowerer::emit_cast`]). This is the only cross-logos path; there is no
+//! ([`Lowerer::emit_cast`]). This is the only cross-type path; there is no
 //! implicit coercion. The parser builds these from the `logos(value)` constructor
 //! surface (see [`super::build_cast`]), folding a literal operand directly and
 //! expanding a runtime operand into a conversion node.
@@ -45,7 +45,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
 }
 
 /// Build `{type: convert, value: [operand, from, to, op]}`: the conversion of
-/// `operand` (a value of logos `from`) to logos `to`. `from`/`to` are numtype nodes.
+/// `operand` (a value of type `from`) to logos `to`. `from`/`to` are numtype nodes.
 pub(crate) fn build_convert(
     store: &mut Store,
     types: &Core,

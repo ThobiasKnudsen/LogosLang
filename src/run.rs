@@ -7,7 +7,7 @@
 //! `@exec`‹; issue #44): read a node's operation (its `logos`). A *user*
 //! function applies — jump to its installed code or walk its `body`
 //! (interpretation is just the null-code path). Everything else consults the
-//! node's own *op slot*: the last fixed slot of its logos's record holds the
+//! node's own *op slot*: the last fixed slot of its type's record holds the
 //! [`callable`](crate::identities::callable) leaf its constructor resolved at
 //! parse time (`add_i32` for a `+` node, `if_native` for an `if`), and run
 //! jumps to that leaf's entry with the node. No HashMap is consulted anywhere;
@@ -15,8 +15,8 @@
 //! versions live — versioned scopes — not in swapped tables. Identities carry
 //! only their shared-member *records* (the reflectable parse_rank/layout data,
 //! see [`crate::identities::meta`]), never code; a node with no code to reach
-//! is data, read through its logos's layout. v1 scalar values ride an `i64`
-//! bit-container, read and written at their logos's width (see
+//! is data, read through its type's layout. v1 scalar values ride an `i64`
+//! bit-container, read and written at their type's width (see
 //! `crate::identities::numtype`).
 
 use std::cell::Cell;
@@ -55,7 +55,7 @@ pub enum RunError {
     /// lowering rule, or more parameters than the compiled convention carries).
     /// Carries the rendered [`crate::compile::CompileError`], behind a thin
     /// box so the error enum keeps its one-word payload — `run` recurses
-    /// deeply, and every frame carries a `Result` of this logos.
+    /// deeply, and every frame carries a `Result` of this type.
     CompileFailed(Box<String>),
     /// The interpreter panicked while running an uncompiled callee under
     /// compiled code (#65): a seed bug, carried back across the machine-code
@@ -106,7 +106,7 @@ thread_local! {
 /// for a jump back into the interpreter.
 /// The calling convention is uniform: every argument and the result is the `i64`
 /// bit-container (the compiled body reinterprets them to their real logos at the
-/// boundary), so this dispatch is independent of the parameter/return logos. The seed
+/// boundary), so this dispatch is independent of the parameter/return type. The seed
 /// passes at most three arguments; Cranelift's default convention matches `extern "C"`.
 ///
 /// # Safety
@@ -377,7 +377,7 @@ impl Drop for Detach<'_, '_> {
 
 impl<'a> Runtime<'a> {
     /// A runtime recognizing functions by `fn_type` (record instances are
-    /// recognized by their logos's stored layout record), molding `rational`
+    /// recognized by their type's stored layout record), molding `rational`
     /// leaves on read, with an empty activation stack (its first chunk is
     /// claimed lazily, at the first call that needs a frame). Everything
     /// executable is reached through the graph. No compiler is attached; see
