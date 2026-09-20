@@ -92,7 +92,8 @@ pub(super) fn register(
     void_ty: DyadPtr,
 ) -> TapeIds {
     let scope = cx.store.alloc_raw(scope_ty, std::ptr::null_mut());
-    let at_void = super::pointer::make_pointer_type(cx.store, cx.type_, void_ty);
+    // SAFETY: `void_ty` is the type node `Core::build` minted.
+    let at_void = unsafe { super::pointer::make_pointer_type(cx.store, cx.type_, void_ty) };
     let cells = cx.store.alloc_raw(at_void, std::ptr::null_mut());
     cx.declare_in(scope, "cells", cells);
     let fields = super::array::build(cx.store, array_ty, &[cells]);

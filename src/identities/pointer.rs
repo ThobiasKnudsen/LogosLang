@@ -167,14 +167,41 @@ pub(crate) fn address_value(
     pointee: DyadPtr,
     addr: DyadPtr,
 ) -> DyadPtr {
-    let ty = make_pointer_type(store, types.type_, pointee);
+    // SAFETY: `pointee` is the type node the address was taken of.
+    let ty = unsafe { make_pointer_type(store, types.type_, pointee) };
     let storage = store.alloc_bytes(&(addr as usize as u64).to_ne_bytes());
     store.alloc_raw(ty, storage)
 }
 
-pub(crate) fn make_pointer_type(store: &mut Store, type_: DyadPtr, pointee: DyadPtr) -> DyadPtr {
+///
+/// One node per pointee (DESIGN ›The store is keyed by address‹: "interned
+/// canonical identities (one `i32` referenced everywhere)"; #89): the first
+/// mint is written into the pointee's own record and every later `@pointee`
+/// reads it back, so two spellings of `@i32` are one type and `==` on them
+/// is true. A pointee carrying no record (a type-valued place) gets a fresh
+/// node. An *owning* pointer type is never interned: its destructor is its
+/// own ([`make_owning_pointer_type`]).
+///
+/// # Safety
+/// `pointee` must be a type node from the store.
+pub(crate) unsafe fn make_pointer_type(
+    store: &mut Store,
+    type_: DyadPtr,
+    pointee: DyadPtr,
+) -> DyadPtr {
+    let interned = super::meta::kind_of(pointee).is_some();
+    if interned {
+        let known = super::meta::pointer_type_of(pointee);
+        if !known.is_null() {
+            return known;
+        }
+    }
     let value = super::meta::pointer_record(store, pointee);
-    store.alloc_raw(type_, value)
+    let node = store.alloc_raw(type_, value);
+    if interned {
+        super::meta::install_pointer_type(pointee, node);
+    }
+    node
 }
 
 /// Build an *owning* pointer logos node `@pointee` — the same `ADDR_TAG` record

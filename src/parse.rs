@@ -4934,11 +4934,15 @@ impl<'a> Parser<'a> {
         tape.remove(1);
         let mut logos = base;
         for _ in 0..depth {
-            logos = crate::identities::pointer::make_pointer_type(
-                self.rt.store,
-                self.types.type_,
-                logos,
-            );
+            // SAFETY: `logos` is the base type node the tape held, or the
+            // pointer type minted in the previous round.
+            logos = unsafe {
+                crate::identities::pointer::make_pointer_type(
+                    self.rt.store,
+                    self.types.type_,
+                    logos,
+                )
+            };
         }
         tape.place(logos);
         Ok(Constructed::Placed)

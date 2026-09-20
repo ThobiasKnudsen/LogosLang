@@ -1123,6 +1123,9 @@ pub(crate) unsafe fn check_store_type(
 ///
 /// # Safety
 /// `a`/`b` must be logos nodes from the store.
+/// Plain pointer types are interned (#89), so this is `==` for them; what
+/// it still bridges is an *owning* `@T` (fresh, its destructor its own)
+/// against the plain `@T`, which name one pointee and match as types.
 unsafe fn pointee_types_match(a: DyadPtr, b: DyadPtr) -> bool {
     a == b
         || (numtype::is_pointer_type(a)

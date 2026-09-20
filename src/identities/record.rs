@@ -231,8 +231,9 @@ pub(super) fn register_type(
     let record_ = cx.record_;
     let scope = cx.store.alloc_raw(scope_ty, std::ptr::null_mut());
     let mut fields = Vec::with_capacity(7);
+    // SAFETY: `dyad_ty` is the type node `Core::build` minted.
+    let at_dyad = unsafe { super::pointer::make_pointer_type(cx.store, cx.type_, dyad_ty) };
     for name in ["dyad", "scope", "start", "end", "gate"] {
-        let at_dyad = super::pointer::make_pointer_type(cx.store, cx.type_, dyad_ty);
         let field = cx.store.alloc_raw(at_dyad, std::ptr::null_mut());
         cx.declare_in(scope, name, field);
         fields.push(field);
@@ -240,7 +241,6 @@ pub(super) fn register_type(
     // `name` is laid out as an `@dyad` place like the five (no place of type
     // `string` exists, `read::place_layout`); the `:` read hands it back as
     // the string container it holds (`Parser::record_read`).
-    let at_dyad = super::pointer::make_pointer_type(cx.store, cx.type_, dyad_ty);
     let name_field = cx.store.alloc_raw(at_dyad, std::ptr::null_mut());
     cx.declare_in(scope, "name", name_field);
     fields.push(name_field);

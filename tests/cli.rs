@@ -481,6 +481,16 @@ fn an_and_group_of_non_booleans_is_data_not_a_condition() {
 }
 
 #[test]
+fn two_spellings_of_a_pointer_type_are_one_type() {
+    // #89: `@i32` was minted fresh at every use, so two type values of it
+    // were different nodes and `==` said false. Plain pointer types are
+    // interned through the pointee's record now (DESIGN ›The store is keyed
+    // by address‹: "interned canonical identities"), one node per pointee.
+    let (echoes, stderr) = repl(b"x := @i32\ny := @i32\nx == y\nz := @@i32\nz == @@i32\n");
+    assert_eq!(echoes, ["true", "true"], "stderr: {stderr}");
+}
+
+#[test]
 fn an_or_group_of_non_booleans_is_data_like_the_and_group() {
     // DESIGN ›The proof layer‹ (7 September 2026): "`and` and `or` on
     // operands that are not booleans build a group that carries the

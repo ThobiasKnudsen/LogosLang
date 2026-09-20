@@ -36,7 +36,9 @@
 //!                 what a node of the type runs and compiles as, or 0
 //! [34..42]   u64  run body — the lexed body a `shared run = (…)` line held
 //!                 (#133 slice 5), constructed per field-type set later, or 0
-//! [42..]     payload, per kind:
+//! [42..50]   u64  pointer type — the one `@T` of this type, written by the
+//!                 first mint and read back by every later one (#89), or 0
+//! [50..]     payload, per kind:
 //!              ADDR              pointee logos node (`dyad@`)
 //!              TUPLE/LIST         u8 arity, then arity × `dyad@` role-name strings
 //! ```
@@ -129,9 +131,14 @@ const CODE_OFF: usize = 26;
 /// Kept beside the code slot rather than in it, so every reader of a type's
 /// `run` as a function ([`code_of`]) keeps finding a function or nothing.
 const RUN_BODY_OFF: usize = 34;
+/// Byte offset of the interned pointer type: the `@T` of this type, minted
+/// once and kept here (DESIGN ›The store is keyed by address‹: "interned
+/// canonical identities (one `i32` referenced everywhere)"; #89), so that
+/// two spellings of `@i32` are one node and compare equal.
+const POINTER_TYPE_OFF: usize = 42;
 /// Byte offset of the kind-specific payload (a pointer logos's pointee, or an
 /// operand record's arity + roles).
-pub(crate) const PAYLOAD_OFF: usize = 42;
+pub(crate) const PAYLOAD_OFF: usize = 50;
 
 /// The one parse_rank axis every identity is placed on (DESIGN ›The scope's
 /// constructor is the driver‹, ruled 30 August 2026: "Every identity nameable
@@ -310,7 +317,8 @@ fn header(kind: u8, assoc: Assoc, parse_rank: f64) -> [u8; PAYLOAD_OFF] {
     h[PREC_OFF..CTOR_OFF].copy_from_slice(&parse_rank.to_ne_bytes());
     // CTOR_OFF..DTOR_OFF and DTOR_OFF..CODE_OFF stay zero: reserved; the code
     // at CODE_OFF..RUN_BODY_OFF and the held run body at
-    // RUN_BODY_OFF..PAYLOAD_OFF are null until a type body sets them.
+    // RUN_BODY_OFF..POINTER_TYPE_OFF are null until a type body sets them;
+    // the pointer type at POINTER_TYPE_OFF..PAYLOAD_OFF until `@` is minted.
     h
 }
 
@@ -398,6 +406,25 @@ pub(crate) unsafe fn run_body_of(id: DyadPtr) -> DyadPtr {
 /// `id` must carry a record and `body` must be a `lex` node from the store.
 pub(crate) unsafe fn install_run_body(id: DyadPtr, body: DyadPtr) {
     std::ptr::write_unaligned((*id).value.add(RUN_BODY_OFF) as *mut DyadPtr, body);
+}
+
+/// The interned `@T` of the type `id`, or null while none has been minted.
+///
+/// # Safety
+/// As [`parse_rank_of`].
+pub(crate) unsafe fn pointer_type_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned((*id).value.add(POINTER_TYPE_OFF) as *const DyadPtr)
+}
+
+/// Install `p` as the interned `@T` of the type `id` — the first mint's
+/// writer ([`super::pointer::make_pointer_type`]); nothing has read the slot
+/// before the fill.
+///
+/// # Safety
+/// `id` must carry a record and `p` must be the plain pointer type node over
+/// `id` from the store.
+pub(crate) unsafe fn install_pointer_type(id: DyadPtr, p: DyadPtr) {
+    std::ptr::write_unaligned((*id).value.add(POINTER_TYPE_OFF) as *mut DyadPtr, p);
 }
 
 /// The record kind of `id`, or `None` where there is no record to read: a
