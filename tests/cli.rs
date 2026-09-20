@@ -397,6 +397,17 @@ fn a_slot_body_is_read_bare() {
     );
     assert_eq!(echoes, ["5", "5", "8"], "stderr: {stderr}");
     assert!(stderr.contains("`this` is not in scope"), "stderr: {stderr}");
+    // A body constructed in the session's section reaches the core names, so a
+    // run that calls a function whose body reads an operator constructs.
+    let (echoes, stderr) = repl(
+        b"sq := fn (a := i32 ?) -> i32 ( a * a )\n\
+          squared := type (instance = (a := i32 ?, output := type ?, shared run = ( sq(this.a) )), \
+          parse_rank = *.parse_rank + 1, \
+          parse = ( this.a = tape[-1], this.output = i32, tape[0] = this, \
+          tape.is_constructed[0] = true, tape.remove(-1) ))\n\
+          x := i32 4\nx squared\n",
+    );
+    assert_eq!(echoes, ["16"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
         b"t := type (instance = (a := i32 ?, shared run = ( s := \xc2\xaba ) b\xc2\xbb, \
           # \xc2\xab ) \xc2\xbb (( x[0] ), 5 ))))\n\

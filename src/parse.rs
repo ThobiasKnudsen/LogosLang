@@ -556,6 +556,15 @@ impl ScopeStack {
         self.set.insert(scope);
     }
 
+    /// Open a section under the innermost open scope: its parent link is that
+    /// scope, so a walk up from a body constructed inside it reaches the root.
+    pub fn push_section(&mut self, store: &mut Store, scope_ty: DyadPtr) -> DyadPtr {
+        let parent = *self.open.last().expect("a section opens under an open scope");
+        let section = crate::identities::scope::mint(store, scope_ty, parent);
+        self.push(section);
+        section
+    }
+
     /// Endpoints still pending for the scope can no longer settle and are
     /// dropped.
     pub fn pop(&mut self) -> Option<DyadPtr> {
@@ -4955,11 +4964,10 @@ impl<'a> Parser<'a> {
         // A fresh stack of the root (ambient names) plus a fresh scope node
         // the file's declarations land in.
         let root = *self.scopes.open.first().expect("an import site has an open root scope");
-        let section = crate::identities::scope::mint(self.rt.store, self.types.scope, root);
-        self.imports.sections.insert(section);
         let mut nested = ScopeStack::new();
         nested.push(root);
-        nested.push(section);
+        let section = nested.push_section(self.rt.store, self.types.scope);
+        self.imports.sections.insert(section);
 
         let saved_source = std::mem::replace(&mut self.source, text);
         let saved_pos = std::mem::replace(&mut self.pos, 0);

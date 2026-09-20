@@ -131,8 +131,7 @@ fn run_line(source: &str) -> ExitCode {
     scopes.push(engine.core.root_scope);
     // The command line is its own section: its declarations sit above the
     // root, out of an imported file's view.
-    let user_section = engine.store.alloc_raw(engine.core.scope, std::ptr::null_mut());
-    scopes.push(user_section);
+    scopes.push_section(&mut engine.store, engine.core.scope);
 
     let types = &engine.core;
     // The compiler rides along so `f.compile()` works in the one pass.
@@ -234,8 +233,7 @@ fn repl() -> ExitCode {
     let mut scopes = ScopeStack::new();
     scopes.push(engine.core.root_scope);
     // The session is its own section, like the command line.
-    let user_section = engine.store.alloc_raw(engine.core.scope, std::ptr::null_mut());
-    scopes.push(user_section);
+    scopes.push_section(&mut engine.store, engine.core.scope);
 
     let stdin = std::io::stdin();
     let mut lines = stdin.lock().lines();
