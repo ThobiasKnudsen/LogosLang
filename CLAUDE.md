@@ -14,6 +14,13 @@
 - All rulings MUST have a good reason for existing otherwise i will forget later why i choose what i choose and change the rule
 - ALLWAYS EXPLAIN WITH SIMPLE WORDS
 
+# Comment rules (as few comments as possible; only what is actually important):
+- A comment says what the code cannot: a one-line WHY at a spot a reader would not guess, an invariant (the SAFETY line on an unsafe block, a byte layout, what a slot holds), a bare pointer to the DESIGN.md paragraph by its title, or a two-to-four-line module header saying what the file is. Nothing else.
+- No ruling history in code: no dates, no "ruled", "superseded", "amended", no issue numbers, no quotes from DESIGN.md. That story lives in DESIGN.md, the commit message and CLAUDE_LOG. The one exception is a known stand-in, marked with one phrase: "stand-in for #N".
+- No comment that restates the line below it, and no doc comment that only rephrases the item's name. If the name says it, the comment goes.
+- When in doubt, leave it out. A reader who needs more reads DESIGN.md or the git log, which is where the reasons are kept.
+- Reason for these rules: comments were 38% of the seed and were where staleness lived; every sentence that repeats a ruling is one more sentence that goes wrong when the ruling changes.
+
 # Release rules (a version tag is one-way):
 
 **Release tags are immutable. Pushing one is irreversible, so a tag that fails CI burns that version number forever.**
