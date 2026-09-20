@@ -16,9 +16,11 @@
 //! already-compiled callee, or a jump into the interpreter for a callee not
 //! compiled yet (#65), with operand addresses and literals baked as
 //! immediates (DESIGN ›operand access is baked into the machine code‹). The
-//! calling convention is uniform — every parameter and result is the
-//! interpreter's `i64` bit-container, reinterpreted at the boundary — capped at
-//! [`MAX_COMPILED_PARAMS`] parameters.
+//! calling convention is uniform — the arguments travel as the interpreter's
+//! `i64` bit-containers in a block on the caller's stack, `(argv, argc)`, and
+//! the result as one container, reinterpreted at the boundary
+//! ([`crate::run::MachineFn`]) — so a function of any parameter count
+//! compiles and the interpreter's jump is one shape.
 
 use std::collections::HashMap;
 
@@ -115,11 +117,6 @@ pub enum CompileError {
     /// rational (e.g. `3.14`) or an integer outside `i32` range. Mirrors
     /// `RunError::UncomputableLiteral`.
     UncomputableLiteral,
-    /// The function has more parameters than the seed's compiled calling convention
-    /// supports (at most three `i64` containers; see [`crate::run`]). Rejected at
-    /// compile time so a 4+ parameter function stays interpreted rather than
-    /// compiling to a body that errors only when called.
-    UnsupportedArity(usize),
     /// A call's argument count did not match the callee's parameter count — the
     /// compile-time mirror of `RunError::ArityMismatch`, refused instead of baking a
     /// call with the wrong signature.
@@ -127,12 +124,6 @@ pub enum CompileError {
     /// Cranelift rejected the setup, function, or finalization.
     Cranelift(String),
 }
-
-/// The most parameters a compiled function may take, bounded by `run`'s
-/// `call_machine` arity dispatch (0..=3 `i64` containers). Kept here so
-/// compilation fails fast instead of installing bcode a later call cannot
-/// invoke.
-pub const MAX_COMPILED_PARAMS: usize = 3;
 
 /// The lowering context: a Cranelift function under construction plus the rule
 /// table `lower` dispatches through, and the host pointer type for baked
@@ -963,32 +954,35 @@ impl Lowerer<'_, '_> {
             return Err(CompileError::ArityMismatch);
         }
 
+        // The containers in a block on this frame (DESIGN ›Operands travel on
+        // the stack‹), what every callee reads: machine code through the one
+        // compiled signature, the interpreter through its jump. A nullary
+        // call passes no block.
+        let argv = if args64.is_empty() {
+            self.builder.ins().iconst(self.ptr_ty, 0)
+        } else {
+            let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                (args64.len() * 8) as u32,
+                3,
+            ));
+            for (i, &v) in args64.iter().enumerate() {
+                self.builder.ins().stack_store(v, slot, (i * 8) as i32);
+            }
+            self.builder.ins().stack_addr(self.ptr_ty, slot, 0)
+        };
+        let argc = self.builder.ins().iconst(types::I64, args64.len() as i64);
         let inst = if callee == self.self_fn {
             // Self-recursion: reference the function under construction by its id, so
             // the JIT resolves the call to this very function's address.
             let fref = self.module.declare_func_in_func(self.func_id, &mut *self.builder.func);
-            self.builder.ins().call(fref, &args64)
+            self.builder.ins().call(fref, &[argv, argc])
         } else {
             let bcode = *fields.add(FN_BCODE);
             if bcode.is_null() {
-                // Not compiled: jump into the interpreter with the callee's node
-                // and its containers in a stack slot (#65). A nullary call
-                // passes no slot.
-                let argv = if args64.is_empty() {
-                    self.builder.ins().iconst(self.ptr_ty, 0)
-                } else {
-                    let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
-                        StackSlotKind::ExplicitSlot,
-                        (args64.len() * 8) as u32,
-                        3,
-                    ));
-                    for (i, &v) in args64.iter().enumerate() {
-                        self.builder.ins().stack_store(v, slot, (i * 8) as i32);
-                    }
-                    self.builder.ins().stack_addr(self.ptr_ty, slot, 0)
-                };
+                // Not compiled: jump into the interpreter with the callee's
+                // node and the block (#65).
                 let fn_node = self.builder.ins().iconst(self.ptr_ty, callee as i64);
-                let argc = self.builder.ins().iconst(types::I64, args64.len() as i64);
                 let mut sig = self.module.make_signature();
                 for _ in 0..3 {
                     sig.params.push(AbiParam::new(types::I64));
@@ -1000,16 +994,20 @@ impl Lowerer<'_, '_> {
                 self.builder.ins().call_indirect(sigref, addr, &[fn_node, argc, argv])
             } else {
                 // Compiled: call its machine code through the entry of the
-                // callable node in its `bcode` slot.
+                // callable node in its `bcode` slot, baked as an immediate
+                // (DESIGN ›Operands travel on the stack‹: "operand access is
+                // baked into the machine code"); a recompiled callee is
+                // reached by compiling this caller again (#65), the deopt
+                // layer's freshness being no part of `run` (›Execution is
+                // function application‹).
                 let entry = crate::identities::callable::entry_of(bcode);
                 let mut sig = self.module.make_signature();
-                for _ in 0..param_count {
-                    sig.params.push(AbiParam::new(types::I64));
-                }
+                sig.params.push(AbiParam::new(self.ptr_ty));
+                sig.params.push(AbiParam::new(types::I64));
                 sig.returns.push(AbiParam::new(types::I64));
                 let sigref = self.builder.import_signature(sig);
                 let addr = self.builder.ins().iconst(self.ptr_ty, entry as i64);
-                self.builder.ins().call_indirect(sigref, addr, &args64)
+                self.builder.ins().call_indirect(sigref, addr, &[argv, argc])
             }
         };
         let r = self.builder.inst_results(inst)[0];
@@ -1037,8 +1035,8 @@ impl Compiled {
     /// The compiled function must be nullary (it is, when produced by
     /// [`compile_nullary_i32`]) and any host addresses it baked in must still be valid.
     pub unsafe fn call(&self) -> i64 {
-        let f: extern "C" fn() -> i64 = std::mem::transmute(self.ptr);
-        f()
+        let f: crate::run::MachineFn = std::mem::transmute(self.ptr);
+        f(std::ptr::null(), 0)
     }
 }
 
@@ -1202,12 +1200,6 @@ pub(crate) unsafe fn compile_body(
     params: &[DyadPtr],
     ret: Option<NumType>,
 ) -> Result<Compiled, CompileError> {
-    // Fail fast on arities the compiled calling convention cannot call, so the
-    // function stays interpreted (its bcode is never installed) instead of
-    // compiling into a body that errors only at the call site.
-    if params.len() > MAX_COMPILED_PARAMS {
-        return Err(CompileError::UnsupportedArity(params.len()));
-    }
     // Two passes (DESIGN ›Operands travel on the stack‹: compiled code has
     // "locals assigned to registers or stack slots"). The first lowers into a
     // discarded function while recording how every frame place is used; the
@@ -1255,13 +1247,13 @@ unsafe fn build_pass(
 
     let mut module = JITModule::new(JITBuilder::with_isa(isa, default_libcall_names()));
     let mut ctx = module.make_context();
-    // The calling convention is uniform `(i64…) -> i64`: every parameter and the
-    // result is passed as the interpreter's `i64` bit-container, reinterpreted to its
-    // real logos at the boundary. This keeps `run::call_compiled` a fixed
-    // `fn(i64…) -> i64` regardless of the parameter/return type.
-    for _ in params {
-        ctx.func.signature.params.push(AbiParam::new(types::I64));
-    }
+    // The calling convention is uniform `(argv, argc) -> i64`
+    // ([`crate::run::MachineFn`]): the arguments arrive as `i64`
+    // bit-containers in a block the caller owns, and the result leaves as one
+    // container, each reinterpreted to its real type at the boundary. One
+    // signature for every arity.
+    ctx.func.signature.params.push(AbiParam::new(ptr_ty));
+    ctx.func.signature.params.push(AbiParam::new(types::I64));
     ctx.func.signature.returns.push(AbiParam::new(types::I64));
 
     // Declare the function before lowering its body, so a self-call can reference its
@@ -1324,14 +1316,15 @@ unsafe fn build_pass(
         }
 
         // Bind each argument — the compiled side of the one calling
-        // convention: the caller passes the i64 bit-containers per the uniform
-        // signature, and entry narrows each to the parameter's declared scalar
-        // logos (a bare or type-valued parameter keeps the full container). A
-        // promoted parameter defines its register variable; the rest spill
-        // into the slot the parser assigned, where `&param` and the
-        // interpreter's layout expect them.
-        let block_params = builder.block_params(entry).to_vec();
-        for (&p, &v) in params.iter().zip(block_params.iter()) {
+        // convention: the caller left the i64 bit-containers in the block
+        // `argv` points at, and entry loads each and narrows it to the
+        // parameter's declared scalar type (a bare or type-valued parameter
+        // keeps the full container). A promoted parameter defines its
+        // register variable; the rest spill into the slot the parser
+        // assigned, where `&param` and the interpreter's layout expect them.
+        let argv = builder.block_params(entry)[0];
+        for (i, &p) in params.iter().enumerate() {
+            let v = builder.ins().load(types::I64, MemFlagsData::new(), argv, (i * 8) as i32);
             // A parameter always has a parse-assigned slot; a function node
             // without one is malformed and cannot be compiled.
             let Some((_, off)) = frame_ref((*p).value) else {

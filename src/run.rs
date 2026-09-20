@@ -43,10 +43,6 @@ pub enum RunError {
     UncomputableLiteral,
     /// A call's argument count did not match the callee's parameter count.
     ArityMismatch,
-    /// A compiled call had more arguments than the seed's calling convention
-    /// supports (v1 calls compiled code with at most three `i64` bit-container
-    /// arguments).
-    CompiledArity,
     /// `f.compile()` ran under a runtime with no compiler attached — parse-time
     /// evaluation (a `-> logos` call's body), where compiling would install code
     /// behind the open pass's back.
@@ -112,18 +108,18 @@ thread_local! {
 /// # Safety
 /// `p` must point at live machine code of exactly `args.len()` `i64` parameters
 /// returning `i64` (as [`crate::compile::compile_fn`] produces).
-unsafe fn call_machine(p: *const u8, args: &[i64]) -> Result<i64, RunError> {
-    let r = match args {
-        [] => (std::mem::transmute::<*const u8, extern "C" fn() -> i64>(p))(),
-        [a] => (std::mem::transmute::<*const u8, extern "C" fn(i64) -> i64>(p))(*a),
-        [a, b] => (std::mem::transmute::<*const u8, extern "C" fn(i64, i64) -> i64>(p))(*a, *b),
-        [a, b, c] => {
-            (std::mem::transmute::<*const u8, extern "C" fn(i64, i64, i64) -> i64>(p))(*a, *b, *c)
-        }
-        _ => return Err(RunError::CompiledArity),
-    };
-    Ok(r)
+unsafe fn call_machine(p: *const u8, args: &[i64]) -> i64 {
+    let f = std::mem::transmute::<*const u8, MachineFn>(p);
+    f(args.as_ptr(), args.len())
 }
+
+/// The one signature every compiled function has (DESIGN ›Operands travel on
+/// the stack‹: "the call's operands are placed on the stack by the caller and
+/// read by the callee's code"): the arguments as `i64` bit-containers in a
+/// block the caller owns, their count, and the result container. One shape
+/// for every arity, so the jump is one transmute and a function of any
+/// parameter count compiles.
+pub type MachineFn = extern "C" fn(*const i64, usize) -> i64;
 
 /// The jump a compiled caller makes into a callee that is not compiled (#65;
 /// DESIGN ›The callable ground‹: "`compile` never fails on an uncompiled Logos
@@ -653,8 +649,8 @@ impl<'a> Runtime<'a> {
     /// machine code returns — whatever value it returned, since 0 is a value.
     ///
     /// # Safety
-    /// `entry` must be live machine code of `args.len()` `i64` parameters
-    /// returning `i64`, as the seed compiles.
+    /// `entry` must be live machine code of the seed's one compiled signature
+    /// ([`MachineFn`]).
     unsafe fn call_compiled(&mut self, entry: *const u8, args: &[i64]) -> Result<i64, RunError> {
         // The lifetime is erased at the machine-code boundary and restored
         // below before the borrow it came from ends.
@@ -665,7 +661,6 @@ impl<'a> Runtime<'a> {
         PENDING.set(None);
         let r = call_machine(entry, args);
         CURRENT.set(prev);
-        let r = r?;
         match PENDING.take() {
             Some(e) => Err(e),
             None => Ok(r),

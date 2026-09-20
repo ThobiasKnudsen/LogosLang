@@ -707,40 +707,15 @@ fn i32_overflow_matches_between_interpreter_and_jit() {
 }
 
 #[test]
-fn four_param_fn_stays_interpreted_and_refuses_to_compile() {
-    // The compiled calling convention supports at most three i32 args, so a
-    // 4-param function fails compilation (UnsupportedArity) rather than
-    // installing bcode a call cannot invoke; interpreted, it runs fine.
-    let (mut store, mut trie, core) = new_core();
-
-    let add4 = {
-        let mut s = ScopeStack::new();
-        s.push(core.root_scope);
-        let mut p = Parser::new(
-            "fn (a := i32 ?, b := i32 ?, c := i32 ?, d := i32 ?) -> i32 ( return a + b + c + d )",
-            &mut store,
-            &mut trie,
-            &core,
-            s,
-        );
-        p.parse_expression().unwrap()
-    };
-    // Compilation refuses the arity up front.
-    // SAFETY: `add4` is the fn node just built.
-    let result = unsafe { compile_fn(&mut store, &core.lower, &core, add4) };
-    assert!(matches!(result, Err(crate::compile::CompileError::UnsupportedArity(4))));
-
-    // Interpreted, the same function computes (bcode was never installed).
-    let call = {
-        let mut s = ScopeStack::new();
-        s.push(core.root_scope);
-        unsafe { s.declare(&mut trie, "add4", test_record(core.record_, add4)) }.unwrap();
-        let mut p = Parser::new("add4(1, 2, 3, 4)", &mut store, &mut trie, &core, s);
-        p.parse_expression().unwrap()
-    };
-    let mut rt = Runtime::new(&core, &mut store);
-    // SAFETY: `call`/`add4`/args are valid nodes just parsed.
-    assert_eq!(unsafe { rt.run(call) }.unwrap(), 10);
+fn a_four_parameter_fn_compiles_and_agrees_with_the_interpreter() {
+    // One compiled signature for every arity (DESIGN ›Operands travel on
+    // the stack‹): the arguments travel as a block, so nothing caps the
+    // parameter count at three any more (#102).
+    diff_typed_call(
+        "fn (a := i32 ?, b := i32 ?, c := i32 ?, d := i32 ?) -> i32 ( return a + b + c + d )",
+        "f(1, 2, 3, 4)",
+        10,
+    );
 }
 
 #[test]
@@ -2461,15 +2436,13 @@ fn a_type_returning_fn_compiles_and_serves_comptime_calls() {
 }
 
 #[test]
-fn compile_member_on_four_params_reports_cleanly() {
-    // The compiled convention carries at most three arguments in v1;
-    // `.compile()` on a wider fn is a clean run error, and the function
-    // stays interpreted.
-    let e = run_script_result(
-        "f := fn (a := i64 ?, b := i64 ?, c := i64 ?, d := i64 ?) -> i64 ( a + b + c + d ),\nf.compile()",
-    )
-    .unwrap_err();
-    assert!(matches!(e, crate::run::RunError::CompileFailed(_)), "got {e:?}");
+fn compile_member_on_four_params_compiles_and_runs() {
+    // `.compile()` on a four-parameter fn installs code the next call jumps
+    // to, like any other arity (#102).
+    let v = run_script_result(
+        "f := fn (a := i64 ?, b := i64 ?, c := i64 ?, d := i64 ?) -> i64 ( a + b + c + d ),\nf.compile(),\nf(1, 2, 3, 4)",
+    );
+    assert_eq!(v, Ok(10));
 }
 
 #[test]

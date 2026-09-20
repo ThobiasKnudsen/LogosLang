@@ -20,7 +20,7 @@
 //! Conventions are identities, not an enum: declared metadata a backend renders
 //! per target, open-ended (new backends mint new ones). The seed registers two:
 //! `seed-native` (a Rust `RunFn` shim taking the runtime context and the node)
-//! and `container-i64` (compiled artifacts taking uniform `i64` bit-containers,
+//! and `container-i64` (compiled artifacts taking their `i64` bit-containers as a block, `(argv, argc)`,
 //! as `run::call_compiled` jumps to).
 //!
 //! Value layout (16 bytes, native-endian): `[entry: usize][convention: dyad@]`.
@@ -45,7 +45,8 @@ pub(crate) struct Callables {
     pub convention: DyadPtr,
     /// `seed-native`: a Rust shim `fn(&mut Runtime, DyadPtr) -> Result<i64, RunError>`.
     pub seed_native: DyadPtr,
-    /// `container-i64`: compiled code taking uniform `i64` bit-containers.
+    /// `container-i64`: compiled code taking its `i64` bit-containers as a
+    /// block on the caller's stack, `(argv, argc)` ([`crate::run::MachineFn`]).
     pub container_i64: DyadPtr,
     /// `seed-parse`: the one constructor signature
     /// ([`crate::parse::ConstructFn`]) — the convention of every constructor

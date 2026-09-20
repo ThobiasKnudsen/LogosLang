@@ -242,7 +242,8 @@ pub struct Core {
     pub convention_: DyadPtr,
     /// `seed-native`: the Rust-shim convention (`fn(&mut Runtime, node)`).
     pub conv_seed_native: DyadPtr,
-    /// `container-i64`: the compiled-artifact convention (uniform `i64` containers).
+    /// `container-i64`: the compiled-artifact convention (`i64` containers in a
+    /// block, `(argv, argc)`; [`crate::run::MachineFn`]).
     pub conv_container: DyadPtr,
     /// `seed-parse`: the constructor convention (one [`ConstructFn`] signature
     /// for every identity).

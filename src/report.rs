@@ -281,7 +281,6 @@ pub fn run_message(e: &RunError) -> String {
             "a literal here has no exact value in the type it lands in".into()
         }
         RunError::ArityMismatch => "a call's argument count does not match its function".into(),
-        RunError::CompiledArity => "compiled calls take at most three arguments in v1".into(),
         RunError::CompilerUnavailable => {
             "compile() is not available here (parse-time evaluation runs without the compiler)"
                 .into()
@@ -313,9 +312,6 @@ pub fn compile_message(e: &CompileError) -> String {
         CompileError::BadValue => "a value here has no storage to compile against".into(),
         CompileError::UncomputableLiteral => {
             "a literal here has no exact value in the type it lands in".into()
-        }
-        CompileError::UnsupportedArity(n) => {
-            format!("compiled functions take at most three parameters in v1 (this one has {n})")
         }
         CompileError::ArityMismatch => "a call's argument count does not match its function".into(),
         CompileError::Cranelift(msg) => format!("the backend rejected this: {msg}"),
