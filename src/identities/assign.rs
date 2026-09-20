@@ -12,6 +12,7 @@
 //! assigning nothing, and an `=` in a value position is the statement-as-value
 //! error.
 
+use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::numtype::{is_pointer_type, of_type_node, NumType};
@@ -19,7 +20,7 @@ use super::read::{read_kind, Read};
 use super::{commit_if_literal, meta, operands, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc, CoreTypes, ParseError};
+use crate::parse::{Assoc, ParseError};
 use crate::store::Store;
 
 /// Register `=`: spelling, parse_rank, and lowering. The run natives are
@@ -59,7 +60,7 @@ fn construct(
     // keyword's own use as the slot's name without constructing it — a lone
     // `drop` constructed on its own would read an operand to its right.
     let target = match tape.at(-1) {
-        Some(c) if tape.cursor() == 1 && !c.constructed && c.identity(&types) == types.drop_ => {
+        Some(c) if tape.cursor() == 1 && !c.constructed && c.identity(types) == types.drop_ => {
             let record = c.dyad;
             tape.remove(-1);
             record
@@ -97,7 +98,7 @@ fn construct(
         p.slot_fill(kind, value)?
     } else {
         let types = p.types();
-        build(p.store(), &types, id, target, value)?
+        build(p.store(), types, id, target, value)?
     };
     tape.place(node);
     Ok(crate::parse::Constructed::Placed)
@@ -116,7 +117,7 @@ fn construct(
 /// ([`super::build_scalar_init`]) can reuse the `place = value` store for `:=`.
 pub(super) fn build(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     op: DyadPtr,
     lhs: DyadPtr,
     rhs: DyadPtr,

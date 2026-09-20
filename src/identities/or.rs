@@ -10,13 +10,14 @@
 //! the node is `{type: or, value: [lhs, rhs, or_native]}` and run jumps through the
 //! op slot (issue #44).
 
+use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
 use super::{bool_mod, meta, operands, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{bool_literal_value, is_bool_result, Assoc, CoreTypes, ParseError};
+use crate::parse::{bool_literal_value, is_bool_result, Assoc, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -43,7 +44,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
 /// operands to be `bool` ([`ParseError::NonBoolOperands`]).
 fn build(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     or: DyadPtr,
     lhs: DyadPtr,
     rhs: DyadPtr,

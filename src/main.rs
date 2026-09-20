@@ -50,7 +50,7 @@ impl Engine {
 /// `node` must be a valid dyad.
 unsafe fn is_statement_node(core: &Core, node: seed::dyad::DyadPtr) -> bool {
     // An item that ran in the pass echoes as its expression would.
-    let node = seed::identities::ran::expr_of(&core.types(), node);
+    let node = seed::identities::ran::expr_of(core, node);
     // A bare name is its record: what it names decides the echo.
     let named = seed::record::through(core.record_, node);
     let logos = (*named).ty;
@@ -59,7 +59,7 @@ unsafe fn is_statement_node(core: &Core, node: seed::dyad::DyadPtr) -> bool {
     // the tag is what tells the two apart (DESIGN ›A type is a comptime
     // value‹, 12 September 2026).
     if logos == core.type_ {
-        return seed::identities::read::read_kind(&core.types(), named)
+        return seed::identities::read::read_kind(core, named)
             == seed::identities::read::Read::Identity;
     }
     // The rest is a result-type question — what an expression yields — which
@@ -81,7 +81,7 @@ unsafe fn is_statement_node(core: &Core, node: seed::dyad::DyadPtr) -> bool {
 /// # Safety
 /// `node` must be a valid dyad.
 unsafe fn is_silent_tail(core: &Core, node: seed::dyad::DyadPtr) -> bool {
-    let node = seed::identities::ran::expr_of(&core.types(), node);
+    let node = seed::identities::ran::expr_of(core, node);
     let logos = (*seed::record::through(core.record_, node)).ty;
     logos == core.declare_
         || logos == core.assign
@@ -159,10 +159,10 @@ fn run_line(source: &str) -> ExitCode {
     // The command line is its own section (ruled August 2026): its
     // declarations land in a scope above the root, so an imported file's
     // fresh view — the root plus the file's own section — cannot see them.
-    let user_section = engine.store.alloc_raw(engine.core.scope_, std::ptr::null_mut());
+    let user_section = engine.store.alloc_raw(engine.core.scope, std::ptr::null_mut());
     scopes.push(user_section);
 
-    let types = engine.core.types();
+    let types = &engine.core;
     // The compiler rides along so `f.compile()` works in the one pass; the
     // parser's runtime carries it, and the engine (core + store) outlives
     // the parser.
@@ -261,7 +261,7 @@ fn run_line(source: &str) -> ExitCode {
     match last {
         Some((node, bits)) => {
             // SAFETY: `node` is the parsed dyad whose value `bits` is.
-            println!("{}", unsafe { seed::identities::display_value(&types, node, bits) });
+            println!("{}", unsafe { seed::identities::display_value(types, node, bits) });
             ExitCode::SUCCESS
         }
         // A line that did real work with no value to show (a declaration-only
@@ -287,7 +287,7 @@ fn repl() -> ExitCode {
     scopes.push(engine.core.root_scope);
     // The session is its own section, like the command line (ruled August
     // 2026): its declarations land above the root, invisible to imported files.
-    let user_section = engine.store.alloc_raw(engine.core.scope_, std::ptr::null_mut());
+    let user_section = engine.store.alloc_raw(engine.core.scope, std::ptr::null_mut());
     scopes.push(user_section);
 
     let stdin = std::io::stdin();
@@ -309,7 +309,7 @@ fn repl() -> ExitCode {
             _ => {
                 println!();
                 // Session exit: run the accumulated teardowns, newest first.
-                let mut rt = Runtime::new(engine.core.types(), &mut engine.store);
+                let mut rt = Runtime::new(&engine.core, &mut engine.store);
                 for defer_node in session_defers.into_iter().rev() {
                     // SAFETY: each is a `defer` node in the engine's store, which
                     // is still alive here.
@@ -325,7 +325,7 @@ fn repl() -> ExitCode {
             continue;
         }
 
-        let types = engine.core.types();
+        let types = &engine.core;
         // A REPL line is one item, and reading its value is its run: the
         // parser's runtime carries the compiler, so `f.compile()` works
         // across lines (the installed code lives in the engine's store and is
@@ -412,7 +412,7 @@ fn repl() -> ExitCode {
                 // SAFETY: `display_node` is a valid dyad whose value `bits` is
                 // (an import's run yields its tail's bits).
                 println!("{}", unsafe {
-                    seed::identities::display_value(&types, display_node, bits)
+                    seed::identities::display_value(types, display_node, bits)
                 })
             }
             Some(Ok(_)) => {}

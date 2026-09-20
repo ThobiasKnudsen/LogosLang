@@ -14,6 +14,7 @@
 //! surface (see [`super::build_cast`]), folding a literal operand directly and
 //! expanding a runtime operand into a conversion node.
 
+use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
@@ -21,7 +22,7 @@ use super::numtype::{apply_cast, of_type_node, NumType};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc, CoreTypes};
+use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -47,7 +48,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
 /// `operand` (a value of logos `from`) to logos `to`. `from`/`to` are numtype nodes.
 pub(crate) fn build_convert(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     operand: DyadPtr,
     from: DyadPtr,
     to: DyadPtr,

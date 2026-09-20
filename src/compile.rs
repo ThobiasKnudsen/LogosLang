@@ -36,7 +36,8 @@ use crate::dyad::{frame_ref, DyadPtr};
 use crate::identities::numtype::{is_void_type, of_type_node, ArithOp, CmpOp, NumType};
 use crate::identities::read::{read_kind, Dispatch, Read};
 use crate::identities::{numtype_of, operands, Operand};
-use crate::parse::{fn_frame_size, CoreTypes, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
+use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
+use crate::Core;
 
 /// A lowering rule: emit the IR for a node and return the SSA value it computes,
 /// recursing on operands via [`Lowerer::lower`].
@@ -152,7 +153,7 @@ pub struct Lowerer<'a, 'f> {
     /// The core logos handles: `logos.fn_type` tells a call from data (a node whose
     /// operation is `fn`-typed with no lowering rule is a call), and the rest let a
     /// call's arguments resolve their numeric logos at the ABI boundary.
-    types: CoreTypes,
+    types: &'a Core,
     /// The function node being compiled (null for a bare expression), so a call to it
     /// is recognized as self-recursion rather than a call to other machine code.
     self_fn: DyadPtr,
@@ -187,7 +188,7 @@ impl Lowerer<'_, '_> {
         // (DESIGN ›The dyad's read surface‹) — the emitted code is unchanged.
         let node = self.through(node);
         let op = (*node).ty;
-        match read_kind(&self.types, node) {
+        match read_kind(self.types, node) {
             // A value of a function is a call; a node typed by a type carrying
             // a `code` is a call of that code (#63).
             Read::Executable(Dispatch::Call(f)) => self.lower_call_to(f, node),
@@ -372,8 +373,8 @@ impl Lowerer<'_, '_> {
     /// The core handles this compilation resolves against — for an identity's
     /// lowering to reach the op-leaf table (`types.ops`) the way the builders
     /// that filled the node's op slot did.
-    pub(crate) fn types(&self) -> &CoreTypes {
-        &self.types
+    pub(crate) fn types(&self) -> &Core {
+        self.types
     }
 
     /// Load a `ct`-typed value through a *runtime* address (an SSA i64 pointer)
@@ -472,7 +473,7 @@ impl Lowerer<'_, '_> {
         op: ArithOp,
     ) -> Result<Value, CompileError> {
         let (lhs, rhs) = operands(node);
-        let nt = match numtype_of(&self.types, lhs) {
+        let nt = match numtype_of(self.types, lhs) {
             Operand::Concrete(nt) => nt,
             // Resolution committed both operands; anything else cannot exist here.
             _ => return Err(CompileError::BadValue),
@@ -943,7 +944,7 @@ impl Lowerer<'_, '_> {
             while !(*args.add(i)).is_null() {
                 let arg = *args.add(i);
                 let v = self.lower(arg)?;
-                let nt = match numtype_of(&self.types, arg) {
+                let nt = match numtype_of(self.types, arg) {
                     Operand::Concrete(nt) => nt,
                     // A pointer rides the container as its 8-byte address.
                     Operand::Pointer(_) => NumType::U64,
@@ -1063,7 +1064,7 @@ impl Compiled {
 pub unsafe fn compile_fn(
     store: &mut crate::store::Store,
     lower: &LowerTable,
-    types: CoreTypes,
+    types: &Core,
     fn_node: DyadPtr,
 ) -> Result<Compiled, CompileError> {
     let compiled = compile_fn_body(lower, types, fn_node)?;
@@ -1088,7 +1089,7 @@ pub unsafe fn compile_fn(
 /// As [`compile_fn`].
 unsafe fn compile_fn_body(
     lower: &LowerTable,
-    types: CoreTypes,
+    types: &Core,
     fn_node: DyadPtr,
 ) -> Result<Compiled, CompileError> {
     let fields = (*fn_node).value as *const DyadPtr;
@@ -1141,7 +1142,7 @@ unsafe fn compile_fn_body(
 /// As [`compile_fn`]; `code_leaf` must be a callable value from the store.
 pub(crate) unsafe fn compile_into(
     lower: &LowerTable,
-    types: CoreTypes,
+    types: &Core,
     fn_node: DyadPtr,
     code_leaf: DyadPtr,
 ) -> Result<(), CompileError> {
@@ -1160,7 +1161,7 @@ pub(crate) unsafe fn compile_into(
 /// See [`compile_body`].
 pub unsafe fn compile_nullary_i32(
     lower: &LowerTable,
-    types: CoreTypes,
+    types: &Core,
     root: DyadPtr,
 ) -> Result<Compiled, CompileError> {
     // A bare expression is not a function, so there is no self to recurse into; v1
@@ -1183,7 +1184,7 @@ pub unsafe fn compile_nullary_i32(
 /// addresses are baked into the code).
 pub(crate) unsafe fn compile_body(
     lower: &LowerTable,
-    types: CoreTypes,
+    types: &Core,
     self_fn: DyadPtr,
     root: DyadPtr,
     params: &[DyadPtr],
@@ -1222,7 +1223,7 @@ pub(crate) unsafe fn compile_body(
 #[allow(clippy::too_many_arguments)]
 unsafe fn build_pass(
     lower: &LowerTable,
-    types: CoreTypes,
+    types: &Core,
     self_fn: DyadPtr,
     root: DyadPtr,
     params: &[DyadPtr],

@@ -172,7 +172,7 @@ fn construct(
     // there belongs to the literal after it, which folds it at its own
     // discovery — so that literal is lexed too, and the folded cell read.
     let mut right = p.cell_at(tape, 1)?;
-    if matches!(right, Some(c) if !c.constructed && c.identity(&types) == types.minus) {
+    if matches!(right, Some(c) if !c.constructed && c.identity(types) == types.minus) {
         p.cell_at(tape, 2)?;
         right = tape.at(1).copied();
     }
@@ -188,7 +188,7 @@ fn construct(
             tape.remove(1);
             // SAFETY: `l` is that node, rational-typed by the guard; `id` is
             // this numeric type's registered node.
-            unsafe { super::commit_literal_to(p.store(), &types, l, id) }?
+            unsafe { super::commit_literal_to(p.store(), types, l, id) }?
         }
         // `i32(x)`: the bracket is this logos's to read — a conversion (DESIGN
         // ›a numeric type applied to a value is the conversion, per-constructor

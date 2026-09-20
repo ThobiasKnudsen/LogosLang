@@ -27,7 +27,7 @@ use super::numtype::{apply_arith, apply_compare, write_scalar_nt, ArithOp, CmpOp
 use super::{operands, Cx};
 
 /// The concrete-op leaves, indexed by operation and [`NumType`] — the parse-time
-/// resolver's table (`(family, operand logos) → leaf`). Rides [`crate::parse::CoreTypes`]
+/// resolver's table (`(family, operand logos) → leaf`). Rides [`crate::parse::Core`]
 /// so the `Construct` builders can resolve; the interpreter never consults it
 /// (each shim's logos is baked in), and it retires into versioned scopes with the
 /// rest of the Rust-side parse tables at self-hosting.
@@ -346,7 +346,7 @@ mod tests {
         let value = store.alloc_operands(&[lhs, rhs, leaf]);
         let node = store.alloc_raw(core.plus, value);
 
-        let mut rt = Runtime::new(core.types(), &mut store);
+        let mut rt = Runtime::new(&core, &mut store);
         // SAFETY: the node and its operands were just built; the leaf is a
         // minted seed-native callable.
         assert_eq!(unsafe { rt.run(node) }.unwrap(), 42);
@@ -368,7 +368,7 @@ mod tests {
         let value = store.alloc_operands(&[lhs, rhs, leaf]);
         let node = store.alloc_raw(core.plus, value);
 
-        let mut rt = Runtime::new(core.types(), &mut store);
+        let mut rt = Runtime::new(&core, &mut store);
         // SAFETY: the leaf was minted from a seed-native RunFn shim; the node's
         // operands are valid committed scalars.
         let got = unsafe {

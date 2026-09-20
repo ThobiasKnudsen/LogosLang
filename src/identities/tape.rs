@@ -39,9 +39,10 @@
 use super::callable::{self, Callables};
 use super::{meta, numtype_of, Cx, Operand};
 use crate::dyad::DyadPtr;
-use crate::parse::{CoreTypes, ParseError, ParsingTape};
+use crate::parse::{ParseError, ParsingTape};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
+use crate::Core;
 
 /// The handles: the type, and each native's identity with its run leaf.
 #[derive(Debug, Clone, Copy)]
@@ -186,7 +187,7 @@ pub(crate) fn member(ids: &TapeIds, name: &str) -> Option<(DyadPtr, DyadPtr)> {
 /// `lhs` must be a reduced dyad from the store.
 pub(crate) unsafe fn receiver_addr(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     lhs: DyadPtr,
 ) -> Option<DyadPtr> {
     if (*lhs).ty == types.deref_ {
@@ -211,12 +212,7 @@ fn node(store: &mut Store, op: DyadPtr, leaf: DyadPtr, operands: &[DyadPtr]) -> 
 
 /// `t[k]`: the element read, a slot node `[tape, k, op]` — read, the cell's
 /// pointer; as `=`'s target, the write ([`build_write`]).
-pub(crate) fn build_slot(
-    store: &mut Store,
-    types: &CoreTypes,
-    recv: DyadPtr,
-    k: DyadPtr,
-) -> DyadPtr {
+pub(crate) fn build_slot(store: &mut Store, types: &Core, recv: DyadPtr, k: DyadPtr) -> DyadPtr {
     node(store, types.tape.slot, types.tape.slot_leaf, &[recv, k])
 }
 
@@ -224,7 +220,7 @@ pub(crate) fn build_slot(
 /// (a slot read, a cell read through it, a `dyad ?` place holding a node —
 /// `this` in a parse body) passes as it stands; any other node is handed *by
 /// identity*, its own address as an `@dyad` value.
-fn cell_arg(store: &mut Store, types: &CoreTypes, cell: DyadPtr) -> DyadPtr {
+fn cell_arg(store: &mut Store, types: &Core, cell: DyadPtr) -> DyadPtr {
     // SAFETY: `cell` is a reduced dyad from the store.
     let yields_node = unsafe {
         matches!(numtype_of(types, cell), Operand::Pointer(p) if p == types.dyad_)
@@ -246,7 +242,7 @@ fn cell_arg(store: &mut Store, types: &CoreTypes, cell: DyadPtr) -> DyadPtr {
 /// `slot` must be a slot node from [`build_slot`].
 pub(crate) unsafe fn build_write(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     slot: DyadPtr,
     cell: DyadPtr,
 ) -> DyadPtr {
@@ -269,11 +265,7 @@ unsafe fn slot_parts(over: DyadPtr) -> (DyadPtr, DyadPtr) {
 ///
 /// # Safety
 /// `slot` must be a slot node from [`build_slot`].
-pub(crate) unsafe fn build_slot_dyad(
-    store: &mut Store,
-    types: &CoreTypes,
-    slot: DyadPtr,
-) -> DyadPtr {
+pub(crate) unsafe fn build_slot_dyad(store: &mut Store, types: &Core, slot: DyadPtr) -> DyadPtr {
     let (recv, k) = slot_parts(slot);
     node(store, types.tape.slot_dyad, types.tape.slot_dyad_leaf, &[recv, k])
 }
@@ -282,11 +274,7 @@ pub(crate) unsafe fn build_slot_dyad(
 ///
 /// # Safety
 /// `slot` must be a slot node from [`build_slot`].
-pub(crate) unsafe fn build_slot_name(
-    store: &mut Store,
-    types: &CoreTypes,
-    slot: DyadPtr,
-) -> DyadPtr {
+pub(crate) unsafe fn build_slot_name(store: &mut Store, types: &Core, slot: DyadPtr) -> DyadPtr {
     let (recv, k) = slot_parts(slot);
     node(store, types.tape.slot_name, types.tape.slot_name_leaf, &[recv, k])
 }
@@ -297,7 +285,7 @@ pub(crate) unsafe fn build_slot_name(
 /// `slot_dyad` must be a node from [`build_slot_dyad`].
 pub(crate) unsafe fn build_cell_type(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     slot_dyad: DyadPtr,
 ) -> DyadPtr {
     let (recv, k) = slot_parts(slot_dyad);
@@ -313,7 +301,7 @@ pub(crate) unsafe fn build_cell_type(
 /// `flag_read` must be a node [`build_member`] built for `is_constructed`.
 pub(crate) unsafe fn build_flag_write(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     flag_read: DyadPtr,
     flag: DyadPtr,
 ) -> DyadPtr {
@@ -333,7 +321,7 @@ pub(crate) unsafe fn build_flag_write(
 /// `args` must be reduced dyads from the store.
 pub(crate) unsafe fn build_member(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     recv: DyadPtr,
     op: DyadPtr,
     leaf: DyadPtr,

@@ -6,6 +6,7 @@
 //! slot; result is `bool`. It binds at equality parse_rank (looser than the
 //! relational operators).
 
+use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::numtype::CmpOp;
@@ -14,7 +15,7 @@ use super::read::Read;
 use super::{bool_mod, meta, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc, CoreTypes, ParseError};
+use crate::parse::{Assoc, ParseError};
 use crate::store::Store;
 
 /// Register `!=`: spelling, parse_rank (equality, left-associative), and its
@@ -38,7 +39,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 /// comparison in the op slot.
 fn build(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     ne: DyadPtr,
     lhs: DyadPtr,
     rhs: DyadPtr,

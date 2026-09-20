@@ -55,6 +55,7 @@
 //! declines to compile and stays interpreted (the sanctioned deopt, Q4 ruling),
 //! so heap paths run on the body-walk in both tiers.
 
+use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
@@ -62,7 +63,7 @@ use super::numtype;
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc, CoreTypes, ParseError};
+use crate::parse::{Assoc, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -108,7 +109,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         keyword(cx, "alloc", meta::prec::PREFIX, &["pointee", "init", "op"], |p, _id, tape| {
             let init = p.take_right(tape)?;
             let types = p.types();
-            let node = build_alloc(p.store(), &types, init)?;
+            let node = build_alloc(p.store(), types, init)?;
             tape.place(node);
             Ok(crate::parse::Constructed::Placed)
         });
@@ -121,7 +122,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         keyword(cx, "own", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
             let (place, ended) = p.place_operand_cell(tape, true)?;
             let types = p.types();
-            let node = build_teardown(p.store(), &types, types.own_, place, true)?;
+            let node = build_teardown(p.store(), types, types.own_, place, true)?;
             tape.place(node);
             if let Some(ended) = ended {
                 p.mark_dead(ended, node);
@@ -148,9 +149,9 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
             let (place, ended) = p.place_operand_cell(tape, true)?;
             let types = p.types();
             let node = if is_owning_place(place) {
-                build_teardown(p.store(), &types, types.drop_, place, true)?
+                build_teardown(p.store(), types, types.drop_, place, true)?
             } else {
-                build_inert_drop(p.store(), &types, place)
+                build_inert_drop(p.store(), types, place)
             };
             tape.place(node);
             if let Some(ended) = ended {
@@ -170,7 +171,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
             // The raw teardown verb leaves the name alive: only `own`/`drop` end it.
             let (place, _) = p.place_operand_cell(tape, false)?;
             let types = p.types();
-            let node = build_teardown(p.store(), &types, types.free_, place, true)?;
+            let node = build_teardown(p.store(), types, types.free_, place, true)?;
             tape.place(node);
             Ok(crate::parse::Constructed::Placed)
         });
@@ -180,7 +181,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     let defer_ = keyword(cx, "defer", meta::prec::READER, &["inner", "op"], |p, _id, tape| {
         let inner = p.parse_expression()?;
         let types = p.types();
-        let node = build_defer(p.store(), &types, inner);
+        let node = build_defer(p.store(), types, inner);
         tape.place(node);
         Ok(crate::parse::Constructed::Placed)
     });
@@ -256,7 +257,7 @@ unsafe fn pointee_width(pointee: DyadPtr) -> usize {
 /// rejected (v1 allocates scalars and pointers only).
 pub(super) fn build_alloc(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     init: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
     // SAFETY: `init` is a reduced dyad just parsed.
@@ -281,7 +282,7 @@ pub(super) fn build_alloc(
 /// reduced dyad from the store.
 pub(crate) fn build_teardown(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     op_id: DyadPtr,
     place: DyadPtr,
     require_owning: bool,
@@ -329,7 +330,7 @@ pub(crate) fn is_owning_place(place: DyadPtr) -> bool {
 /// free. It runs and lowers to unit; its work is done at parse, where the
 /// name became dead. It still stands in the body as the emptying node
 /// reflection reads (DESIGN ›Name resolution is scope-filtered‹).
-fn build_inert_drop(store: &mut Store, types: &CoreTypes, place: DyadPtr) -> DyadPtr {
+fn build_inert_drop(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
     let value = store.alloc_operands(&[place, std::ptr::null_mut(), types.ops.drop_]);
     store.alloc_raw(types.drop_, value)
 }
@@ -348,7 +349,7 @@ fn lower_drop(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
 }
 
 /// Build a `defer <inner>` node `[inner, op]`.
-pub(crate) fn build_defer(store: &mut Store, types: &CoreTypes, inner: DyadPtr) -> DyadPtr {
+pub(crate) fn build_defer(store: &mut Store, types: &Core, inner: DyadPtr) -> DyadPtr {
     let value = store.alloc_operands(&[inner, types.ops.defer_]);
     store.alloc_raw(types.defer_, value)
 }
@@ -382,7 +383,7 @@ pub(crate) unsafe fn teardown_place_of(defer_node: DyadPtr) -> DyadPtr {
 ///
 /// # Safety
 /// `node` must be a valid dyad from the store.
-pub(crate) unsafe fn owning_pointee_of(types: &CoreTypes, node: DyadPtr) -> Option<DyadPtr> {
+pub(crate) unsafe fn owning_pointee_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
     let node = types.through(node);
     let logos = (*node).ty;
     if logos == types.alloc_ {
@@ -406,7 +407,7 @@ pub(crate) unsafe fn owning_pointee_of(types: &CoreTypes, node: DyadPtr) -> Opti
 ///
 /// # Safety
 /// As [`owning_pointee_of`].
-pub(crate) unsafe fn is_owning_value(types: &CoreTypes, node: DyadPtr) -> bool {
+pub(crate) unsafe fn is_owning_value(types: &Core, node: DyadPtr) -> bool {
     owning_pointee_of(types, node).is_some()
 }
 
@@ -532,13 +533,13 @@ mod tests {
         let core = Core::build(&mut store, &mut trie);
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
-        let types = core.types();
+        let types = &core;
         let root = {
             let mut p =
                 Parser::new(src, &mut store, &mut trie, types, scopes).with_lower(&core.lower);
             p.parse_sequence().expect("parse")
         };
-        let mut rt = Runtime::new(core.types(), &mut store).with_compiler(&core.lower);
+        let mut rt = Runtime::new(&core, &mut store).with_compiler(&core.lower);
         // SAFETY: `root` is the scope just parsed into `store`, which outlives `rt`.
         let bits = unsafe { rt.run(root) }.expect("run");
         (bits, rt.live_allocs())
@@ -585,7 +586,7 @@ mod tests {
         let core = Core::build(&mut store, &mut trie);
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
-        let types = core.types();
+        let types = &core;
         let mut p = Parser::new(src, &mut store, &mut trie, types, scopes);
         p.parse_sequence().expect_err("expected a parse error")
     }
@@ -782,7 +783,7 @@ mod tests {
         let core = Core::build(&mut store, &mut trie);
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
-        let types = core.types();
+        let types = &core;
         let scope = {
             let mut p = Parser::new("a := alloc i32 5,\n0", &mut store, &mut trie, types, scopes);
             p.parse_sequence().expect("parse")
@@ -796,7 +797,7 @@ mod tests {
             let inner = deferred_inner_of(*defer.unwrap());
             assert_eq!((*inner).ty, core.free_, "it defers a free");
             // It describes without panicking — reflectable like any node.
-            let _ = crate::reflect::describe(&types, *defer.unwrap());
+            let _ = crate::reflect::describe(types, *defer.unwrap());
         }
     }
 
@@ -810,7 +811,7 @@ mod tests {
         let core = Core::build(&mut store, &mut trie);
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
-        let types = core.types();
+        let types = &core;
         let scope = {
             // The tail is a deref, not `a` itself: handing the owning place out
             // as the scope's value is the escape the parser now rejects, so the
@@ -1035,14 +1036,14 @@ mod tests {
         let core = Core::build(&mut store, &mut trie);
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
-        let types = core.types();
+        let types = &core;
         let src = "main := fn () -> i32 ( p := alloc i32 5, p@ ),\nmain.compile()";
         let root = {
             let mut p =
                 Parser::new(src, &mut store, &mut trie, types, scopes).with_lower(&core.lower);
             p.parse_sequence().expect("parse")
         };
-        let mut rt = Runtime::new(core.types(), &mut store).with_compiler(&core.lower);
+        let mut rt = Runtime::new(&core, &mut store).with_compiler(&core.lower);
         // SAFETY: `root` is the script just parsed into `store`.
         let result = unsafe { rt.run(root) };
         assert!(

@@ -296,7 +296,7 @@ pub struct Runtime<'a> {
     /// through and the `fn` type it must compare before any record is read
     /// ([`crate::identities::read::read_kind`]). The named handles above are
     /// the same values, kept until the sweep retires them (#82).
-    types: crate::parse::CoreTypes,
+    types: &'a crate::Core,
     /// Live heap allocations (issue #49): `alloc` increments, `free` decrements.
     /// Not a correctness mechanism — the null-place drop flag prevents double
     /// frees — but an observable one, so tests assert a program frees what it
@@ -369,7 +369,7 @@ impl<'a> Runtime<'a> {
     /// claimed lazily, at the first call that needs a frame). Everything
     /// executable is reached through the graph. No compiler is attached; see
     /// [`Runtime::with_compiler`].
-    pub fn new(types: crate::parse::CoreTypes, store: &'a mut crate::store::Store) -> Self {
+    pub fn new(types: &'a crate::Core, store: &'a mut crate::store::Store) -> Self {
         Runtime {
             types,
             live_allocs: 0,
@@ -537,8 +537,8 @@ impl<'a> Runtime<'a> {
     /// `node` must be a valid place node.
     /// The core handles this runtime reads by — for a native's run to ask the
     /// reading rule ([`crate::identities::read`]) the way `run` itself does.
-    pub(crate) fn types(&self) -> &crate::parse::CoreTypes {
-        &self.types
+    pub(crate) fn types(&self) -> &crate::Core {
+        self.types
     }
 
     /// The reading rule: a record operand yields the dyad it names (DESIGN
@@ -678,7 +678,7 @@ impl<'a> Runtime<'a> {
         // The reading rule first: a use of a name is its record, and running
         // it runs the dyad it names (DESIGN ›The dyad's read surface‹).
         let node = self.through(node);
-        match read_kind(&self.types, node) {
+        match read_kind(self.types, node) {
             // A value of a function is a call; a node typed by a type that
             // carries a `code` is a call of that code (›Execution is function
             // application‹).

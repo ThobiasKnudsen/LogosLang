@@ -17,7 +17,7 @@ use crate::dyad::DyadPtr;
 
 /// Register `bool`: its logos spelling and lowering, plus the `true`/`false`
 /// literal nodes with their spellings. Returns the `bool` logos identity so the
-/// parser can hold it in `CoreTypes` (a comparison result is `bool`; `if`'s
+/// parser can hold it in `Core` (a comparison result is `bool`; `if`'s
 /// condition must be one).
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     // A bool is physically an i32 0/1, so its record carries the I32 width kind;

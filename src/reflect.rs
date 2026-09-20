@@ -26,8 +26,8 @@ use crate::identities::instance;
 use crate::identities::meta;
 use crate::identities::numtype::{self, NumType, ADDR_TAG, COMMENT_TAG, STRING_TAG, VOID_TAG};
 use crate::identities::read::{read_kind, Read};
-use crate::parse::CoreTypes;
 use crate::record::Record;
+use crate::Core;
 
 /// One operand slot of a [`Shape::Tuple`] or a [`Shape::List`] head: the role
 /// naming it (a string node from the identity's record) and the operand node
@@ -165,7 +165,7 @@ pub enum Shape {
 /// `node` must be a valid dyad from the store, in the shapes the parser and
 /// [`crate::identities::Core::build`] produce (every identity in logos position
 /// carries its record).
-pub unsafe fn describe(types: &CoreTypes, node: DyadPtr) -> Shape {
+pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
     let logos = (*node).ty;
     if logos.is_null() {
         return Shape::Undefined;
@@ -308,7 +308,7 @@ mod tests {
         for src in sources {
             let mut scopes = ScopeStack::new();
             scopes.push(core.root_scope);
-            let mut p = Parser::new(src, &mut store, &mut trie, core.types(), scopes);
+            let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes);
             roots.push(p.parse_expression().unwrap());
         }
         (store, core, roots)
@@ -321,17 +321,17 @@ mod tests {
         // reaches a named operand holds the record and follows `dyad` to the
         // value; the interpreter reads through the reading rule.
         let (mut store, core, roots) = parse_all(&["x := i32 41", "x + 1"]);
-        let types = core.types();
+        let types = &core;
         // SAFETY: all nodes were just parsed into the store.
         unsafe {
-            let Shape::Tuple { slots } = describe(&types, roots[1]) else {
+            let Shape::Tuple { slots } = describe(types, roots[1]) else {
                 panic!("an application should be a tuple");
             };
-            let Shape::Record { dyad, scope, start, end, gate } = describe(&types, slots[0].node)
+            let Shape::Record { dyad, scope, start, end, gate } = describe(types, slots[0].node)
             else {
                 panic!("a named operand should be its record");
             };
-            assert_eq!(describe(&types, dyad), Shape::Scalar(NumType::I32));
+            assert_eq!(describe(types, dyad), Shape::Scalar(NumType::I32));
             assert_eq!(scope, core.root_scope);
             // Top level has no body array, so `start` stays null there; `end`
             // null is alive, and v0.1.0 has no gates.
@@ -348,13 +348,13 @@ mod tests {
         // DESIGN ›`mut` is a gate on the record‹: `y := i32` binds a second
         // name to i32's own dyad — one record per name, never one per identity.
         let (_store, core, roots) = parse_all(&["y := i32", "y", "i32"]);
-        let types = core.types();
+        let types = &core;
         // SAFETY: all nodes were just parsed into the store.
         unsafe {
-            let Shape::Record { dyad: via_y, .. } = describe(&types, roots[1]) else {
+            let Shape::Record { dyad: via_y, .. } = describe(types, roots[1]) else {
                 panic!("a bare name is its record");
             };
-            let Shape::Record { dyad: via_i32, .. } = describe(&types, roots[2]) else {
+            let Shape::Record { dyad: via_i32, .. } = describe(types, roots[2]) else {
                 panic!("a bare name is its record");
             };
             assert_eq!(via_y, via_i32, "both names point at the one dyad");
@@ -470,7 +470,7 @@ mod tests {
                 "logos (instance = (alpha := i32 ?, beta := i32 ?))",
                 &mut store,
                 &mut trie,
-                core.types(),
+                &core,
                 scopes,
             );
             p.parse_expression().unwrap()
@@ -480,7 +480,7 @@ mod tests {
             let scope = meta::record_scope_of(node);
             let falpha = crate::identities::array::items(meta::record_fields_of(node))[0];
             // The entry is the bare field node — no name stored anywhere on it.
-            assert_eq!(describe(&core.types(), falpha), Shape::Scalar(NumType::I32));
+            assert_eq!(describe(&core, falpha), Shape::Scalar(NumType::I32));
             // The spelling resolves only with the record's scope open…
             let mut inner = ScopeStack::new();
             inner.push(scope);
@@ -501,7 +501,7 @@ mod tests {
         // record — a stale record would hide a trailing slot from reflection.
         let (_store, core, roots) = parse_all(&["fn (n := i32 ?) -> i32 ( x := n, x )"]);
         // SAFETY: the root is the fn value just parsed, from the store.
-        let Shape::Tuple { slots } = (unsafe { describe(&core.types(), roots[0]) }) else {
+        let Shape::Tuple { slots } = (unsafe { describe(&core, roots[0]) }) else {
             panic!("an fn value reads as its fixed slots");
         };
         let roles: Vec<&[u8]> = slots.iter().map(|s| unsafe { text_of(s.role) }).collect();
@@ -539,7 +539,7 @@ mod tests {
     #[test]
     fn a_node_box_describes_as_a_container() {
         let (_store, core, roots) = parse_all(&["a := type ?", "d := dyad ?", "x := i32 5"]);
-        let types = core.types();
+        let types = &core;
         // SAFETY: the declare nodes were just parsed; their declared slots are
         // the places.
         unsafe {
@@ -551,9 +551,9 @@ mod tests {
                     d
                 }
             };
-            assert_eq!(describe(&types, place(0)), Shape::Container);
-            assert_eq!(describe(&types, place(1)), Shape::Container);
-            assert_eq!(describe(&types, place(2)), Shape::Scalar(NumType::I32));
+            assert_eq!(describe(types, place(0)), Shape::Container);
+            assert_eq!(describe(types, place(1)), Shape::Container);
+            assert_eq!(describe(types, place(2)), Shape::Scalar(NumType::I32));
         }
     }
 
@@ -599,12 +599,12 @@ mod tests {
             // Data and foundation logos.
             assert_eq!(meta::kind_of(core.i32_), Some(NumType::I32 as u8));
             assert_eq!(meta::kind_of(core.bool_), Some(NumType::I32 as u8));
-            assert_eq!(meta::kind_of(core.void), Some(VOID_TAG));
+            assert_eq!(meta::kind_of(core.void_), Some(VOID_TAG));
             assert_eq!(meta::kind_of(core.string_), Some(STRING_TAG));
             assert_eq!(meta::kind_of(core.comment_), Some(COMMENT_TAG));
             assert_eq!(meta::kind_of(core.rational), Some(meta::FRACTION_TAG));
             assert_eq!(meta::kind_of(core.type_), Some(meta::TYPEREC_TAG));
-            assert_eq!(meta::kind_of(core.scope_), Some(meta::TUPLE_TAG));
+            assert_eq!(meta::kind_of(core.scope), Some(meta::TUPLE_TAG));
             assert_eq!(meta::kind_of(core.ran_), Some(meta::TUPLE_TAG));
             assert_eq!(meta::kind_of(core.array_), Some(meta::ARRAY_TAG));
             assert_eq!(meta::kind_of(core.fn_type), Some(meta::TUPLE_TAG));
@@ -657,7 +657,7 @@ mod tests {
             "( 5, # prose\n 6 )",
             "inc := fn (p := @i32 ?) -> void ( p@ = p@ + 1 )",
         ]);
-        let types = core.types();
+        let types = &core;
 
         // SAFETY: all nodes were just parsed into the store.
         unsafe {
@@ -665,23 +665,23 @@ mod tests {
             // initializer (`place = 41`) that fills `x`'s storage — the binding
             // is graph structure, like the construction below. The initializer's
             // target (its `lhs`) is the i32 variable the name resolves to.
-            let Shape::Tuple { slots } = describe(&types, roots[0]) else {
+            let Shape::Tuple { slots } = describe(types, roots[0]) else {
                 panic!("a declaration should be a tuple");
             };
             assert_eq!(text_of(slots[0].role), b"name");
             assert_eq!(text_of(slots[0].node), b"x");
-            let Shape::Tuple { slots: init } = describe(&types, slots[1].node) else {
+            let Shape::Tuple { slots: init } = describe(types, slots[1].node) else {
                 panic!("a scalar binding's initializer should be a tuple");
             };
             assert_eq!(text_of(init[0].role), b"lhs");
-            assert_eq!(describe(&types, init[0].node), Shape::Scalar(NumType::I32));
+            assert_eq!(describe(types, init[0].node), Shape::Scalar(NumType::I32));
 
             // The record definition, behind its declaration: its stored layout
             // (issue #47) — the field-name scope, two fields, a + b packed.
-            let Shape::Tuple { slots } = describe(&types, roots[1]) else {
+            let Shape::Tuple { slots } = describe(types, roots[1]) else {
                 panic!("a declaration should be a tuple");
             };
-            let Shape::RecordLogos { scope, fields, size_bytes } = describe(&types, slots[1].node)
+            let Shape::RecordLogos { scope, fields, size_bytes } = describe(types, slots[1].node)
             else {
                 panic!("record definition should read its stored layout");
             };
@@ -691,15 +691,15 @@ mod tests {
 
             // The construction, behind its declaration: [instance, op | args…];
             // the instance lays out a:0, b:4.
-            let Shape::Tuple { slots } = describe(&types, roots[2]) else {
+            let Shape::Tuple { slots } = describe(types, roots[2]) else {
                 panic!("a declaration should be a tuple");
             };
-            let Shape::List { head, tail } = describe(&types, slots[1].node) else {
+            let Shape::List { head, tail } = describe(types, slots[1].node) else {
                 panic!("construction should be a list");
             };
             assert_eq!(text_of(head[0].role), b"instance");
             assert_eq!(tail.len(), 2);
-            let Shape::Instance { fields, size } = describe(&types, head[0].node) else {
+            let Shape::Instance { fields, size } = describe(types, head[0].node) else {
                 panic!("the constructed value should be an instance");
             };
             assert_eq!(size, 12);
@@ -707,63 +707,63 @@ mod tests {
             assert_eq!((fields[1].1, fields[1].2), (NumType::I64, 4));
 
             // `x = x + 1`: a [lhs, rhs] tuple whose rhs is a [lhs, rhs, logos] tuple.
-            let Shape::Tuple { slots } = describe(&types, roots[3]) else {
+            let Shape::Tuple { slots } = describe(types, roots[3]) else {
                 panic!("assignment should be a tuple");
             };
             assert_eq!(text_of(slots[0].role), b"lhs");
             assert_eq!(text_of(slots[1].role), b"rhs");
-            let Shape::Tuple { slots: sum } = describe(&types, slots[1].node) else {
+            let Shape::Tuple { slots: sum } = describe(types, slots[1].node) else {
                 panic!("the sum should be a tuple");
             };
             assert_eq!(text_of(sum[2].role), b"op");
-            let Shape::Callable { convention } = describe(&types, sum[2].node) else {
+            let Shape::Callable { convention } = describe(types, sum[2].node) else {
                 panic!("the op slot should hold a callable leaf");
             };
             assert_eq!(convention, core.conv_seed_native);
 
             // The if: [condition, then, else], all present here.
-            let Shape::Tuple { slots } = describe(&types, roots[4]) else {
+            let Shape::Tuple { slots } = describe(types, roots[4]) else {
                 panic!("if should be a tuple");
             };
             assert_eq!(text_of(slots[0].role), b"condition");
             assert!(!slots[2].node.is_null());
 
             // The for: [variable, start, end, step, body, op], the step absent.
-            let Shape::Tuple { slots } = describe(&types, roots[5]) else {
+            let Shape::Tuple { slots } = describe(types, roots[5]) else {
                 panic!("for should be a tuple");
             };
             assert_eq!(slots.len(), 6);
             assert_eq!(text_of(slots[3].role), b"step");
             assert!(slots[3].node.is_null());
-            assert_eq!(describe(&types, slots[0].node), Shape::Scalar(NumType::I32));
+            assert_eq!(describe(types, slots[0].node), Shape::Scalar(NumType::I32));
 
             // The sequence: `[exprs, op]` — its expression list rides behind
             // the array node in the first slot; the middle element is prose.
-            let Shape::Tuple { slots } = describe(&types, roots[6]) else {
+            let Shape::Tuple { slots } = describe(types, roots[6]) else {
                 panic!("a sequence should be a tuple");
             };
             assert_eq!(text_of(slots[0].role), b"exprs");
-            let Shape::Array { items } = describe(&types, slots[0].node) else {
+            let Shape::Array { items } = describe(types, slots[0].node) else {
                 panic!("the exprs slot should be an array");
             };
-            let Shape::Prose { text } = describe(&types, items[1]) else {
+            let Shape::Prose { text } = describe(types, items[1]) else {
                 panic!("the comment should be prose");
             };
             assert_eq!(text_of(text), b"prose");
 
             // The fn value, behind its declaration: [input, output, body, bcode];
             // `p := @i32 ?` describes as a pointer to i32.
-            let Shape::Tuple { slots: decl } = describe(&types, roots[7]) else {
+            let Shape::Tuple { slots: decl } = describe(types, roots[7]) else {
                 panic!("a declaration should be a tuple");
             };
-            let Shape::Tuple { slots } = describe(&types, decl[1].node) else {
+            let Shape::Tuple { slots } = describe(types, decl[1].node) else {
                 panic!("an fn value should be a tuple");
             };
             assert_eq!(text_of(slots[0].role), b"input");
-            let Shape::RecordLogos { fields: params, .. } = describe(&types, slots[0].node) else {
+            let Shape::RecordLogos { fields: params, .. } = describe(types, slots[0].node) else {
                 panic!("the input record reads its stored layout");
             };
-            let Shape::Pointer { pointee } = describe(&types, params[0]) else {
+            let Shape::Pointer { pointee } = describe(types, params[0]) else {
                 panic!("the parameter should be a pointer");
             };
             assert_eq!(pointee, core.i32_);
@@ -772,14 +772,14 @@ mod tests {
             // An operator carries its constructor (a callable leaf); a data
             // logos's constructor and every destructor are the honest undefined.
             let Shape::LogosNode { kind, parse_rank, constructor, destructor } =
-                describe(&types, core.plus)
+                describe(types, core.plus)
             else {
                 panic!("an identity self-describes");
             };
             assert_eq!((kind, parse_rank), (meta::TUPLE_TAG, Some(meta::prec::ADDITIVE)));
             assert!(!constructor.is_null() && destructor.is_null());
             let Shape::LogosNode { kind, parse_rank, constructor, destructor } =
-                describe(&types, core.i32_)
+                describe(types, core.i32_)
             else {
                 panic!("an identity self-describes");
             };
@@ -789,7 +789,7 @@ mod tests {
             assert_eq!((kind, parse_rank), (NumType::I32 as u8, Some(meta::prec::APPLY)));
             assert!(!constructor.is_null() && destructor.is_null());
             let Shape::LogosNode { kind, parse_rank, constructor, destructor } =
-                describe(&types, core.type_)
+                describe(types, core.type_)
             else {
                 panic!("an identity self-describes");
             };
@@ -815,12 +815,12 @@ mod tests {
             "for i in 0..10 ( y = y + 1 )",
             "( «text», # prose\n 3.5 )",
         ]);
-        let types = core.types();
+        let types = &core;
 
         let mut counts = std::collections::HashMap::new();
         for node in store.iter() {
             // SAFETY: `iter` yields every allocated dyad; describe only reads.
-            let shape = unsafe { describe(&types, node) };
+            let shape = unsafe { describe(types, node) };
             let name = match shape {
                 Shape::Scalar(_) => "scalar",
                 Shape::Unit => "unit",

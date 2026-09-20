@@ -7,13 +7,14 @@
 //! `{type: -, value: [lhs, rhs, sub_<logos>]}`. Same parse_rank as `+`,
 //! left-associative.
 
+use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::numtype::ArithOp;
 use super::{meta, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc, CoreTypes, ParseError};
+use crate::parse::{Assoc, ParseError};
 use crate::store::Store;
 
 /// Register `-`: spelling, parse_rank (same as `+`, left-associative), and its
@@ -45,7 +46,7 @@ fn construct(
 ) -> Result<crate::parse::Constructed, ParseError> {
     if let Some((lhs, rhs)) = p.binary_operands(tape)? {
         let types = p.types();
-        let node = build(p.store(), &types, id, lhs, rhs)?;
+        let node = build(p.store(), types, id, lhs, rhs)?;
         tape.reduce_here(node);
         return Ok(crate::parse::Constructed::Placed);
     }
@@ -58,7 +59,7 @@ fn construct(
     let types = p.types();
     let rhs = p.take_right(tape)?;
     let zero = rational::build(p.store(), types.rational, "0")?;
-    let node = build(p.store(), &types, id, zero, rhs)?;
+    let node = build(p.store(), types, id, zero, rhs)?;
     tape.place(node);
     Ok(crate::parse::Constructed::Placed)
 }
@@ -67,7 +68,7 @@ fn construct(
 /// subtraction in the op slot.
 fn build(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     minus: DyadPtr,
     lhs: DyadPtr,
     rhs: DyadPtr,

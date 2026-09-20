@@ -23,6 +23,7 @@
 //! a name's record; the reading rule and `run` do not, which is the point.
 //! Like `scope`, `ran` is built by the parser and never spelled in source.
 
+use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
@@ -30,7 +31,7 @@ use super::numtype::NumType;
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc, CoreTypes};
+use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -56,7 +57,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
 }
 
 /// Build a ran node over `expr` whose run yielded `bits`.
-pub fn build(store: &mut Store, types: &CoreTypes, expr: DyadPtr, bits: i64) -> DyadPtr {
+pub fn build(store: &mut Store, types: &Core, expr: DyadPtr, bits: i64) -> DyadPtr {
     let storage = store.alloc_bytes(&bits.to_ne_bytes());
     let cell = store.alloc_raw(types.numtypes[NumType::I64 as usize], storage);
     let value = store.alloc_operands(&[expr, cell, types.ops.ran_]);
@@ -70,7 +71,7 @@ pub fn build(store: &mut Store, types: &CoreTypes, expr: DyadPtr, bits: i64) -> 
 /// # Safety
 /// `node` must be a valid dyad from the store that nothing is reading while
 /// this runs.
-pub unsafe fn rewrite(store: &mut Store, types: &CoreTypes, node: DyadPtr, bits: i64) {
+pub unsafe fn rewrite(store: &mut Store, types: &Core, node: DyadPtr, bits: i64) {
     let copy = store.alloc_raw((*node).ty, (*node).value);
     let ran = build(store, types, copy, bits);
     (*node).ty = (*ran).ty;
@@ -82,7 +83,7 @@ pub unsafe fn rewrite(store: &mut Store, types: &CoreTypes, node: DyadPtr, bits:
 ///
 /// # Safety
 /// `node` must be null or a valid dyad from the store.
-pub unsafe fn expr_of(types: &CoreTypes, node: DyadPtr) -> DyadPtr {
+pub unsafe fn expr_of(types: &Core, node: DyadPtr) -> DyadPtr {
     if node.is_null() || (*node).ty != types.ran_ {
         return node;
     }
@@ -131,7 +132,7 @@ mod tests {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
-        let types = core.types();
+        let types = &core;
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
         let (decl, cmp) = {
@@ -147,25 +148,25 @@ mod tests {
             rt.run(decl).unwrap();
             let bits = rt.run(cmp).unwrap();
             assert_eq!(bits, 1);
-            let ran = build(rt.store, &types, cmp, bits);
+            let ran = build(rt.store, types, cmp, bits);
             // The reading rule: an operand record dispatching to the leaf.
-            assert_eq!(read_kind(&types, ran), Read::Executable(Dispatch::Leaf(types.ops.ran_)));
+            assert_eq!(read_kind(types, ran), Read::Executable(Dispatch::Leaf(types.ops.ran_)));
             // Its run is the cell read; its value is at hand without a run.
             assert_eq!(rt.run(ran).unwrap(), 1);
             assert_eq!(value_of(ran), 1);
             // Readers that ask what it *is* see the comparison.
-            assert_eq!(expr_of(&types, ran), cmp);
-            assert_eq!(expr_of(&types, cmp), cmp);
-            assert!(is_bool_result(&types, ran));
-            assert!(matches!(numtype_of(&types, ran), Operand::Concrete(NumType::I32)));
-            assert_eq!(display_value(&types, ran, 1), "true");
+            assert_eq!(expr_of(types, ran), cmp);
+            assert_eq!(expr_of(types, cmp), cmp);
+            assert!(is_bool_result(types, ran));
+            assert!(matches!(numtype_of(types, ran), Operand::Concrete(NumType::I32)));
+            assert_eq!(display_value(types, ran, 1), "true");
             // Rewriting in place: the old address now reads as the ran form,
             // and the item lives on behind it.
-            rewrite(rt.store, &types, cmp, 1);
+            rewrite(rt.store, types, cmp, 1);
             assert_eq!((*cmp).ty, types.ran_);
-            assert_eq!((*expr_of(&types, cmp)).ty, types.eq);
+            assert_eq!((*expr_of(types, cmp)).ty, types.eq);
             assert_eq!(rt.run(cmp).unwrap(), 1);
-            assert_eq!(display_value(&types, cmp, 1), "true");
+            assert_eq!(display_value(types, cmp, 1), "true");
         }
     }
 }

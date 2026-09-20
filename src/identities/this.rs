@@ -27,9 +27,9 @@
 use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
-use crate::parse::CoreTypes;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
+use crate::Core;
 
 /// The handles: the slot read and the slot write, each with its run leaf.
 #[derive(Debug, Clone, Copy)]
@@ -72,12 +72,7 @@ fn node(store: &mut Store, op: DyadPtr, leaf: DyadPtr, operands: &[DyadPtr]) -> 
 /// `this.f`: the read of slot `k` of the node `this` holds — `this` the
 /// body's hidden parameter, `k` the field's index among the instance fields
 /// as a `u64` literal.
-pub(crate) fn build_slot(
-    store: &mut Store,
-    types: &CoreTypes,
-    this: DyadPtr,
-    k: DyadPtr,
-) -> DyadPtr {
+pub(crate) fn build_slot(store: &mut Store, types: &Core, this: DyadPtr, k: DyadPtr) -> DyadPtr {
     node(store, types.this.slot, types.this.slot_leaf, &[this, k])
 }
 
@@ -87,7 +82,7 @@ pub(crate) fn build_slot(
 /// `slot` must be a node from [`build_slot`].
 pub(crate) unsafe fn build_write(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     slot: DyadPtr,
     value: DyadPtr,
 ) -> DyadPtr {

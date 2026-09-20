@@ -26,9 +26,9 @@
 use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
-use crate::parse::CoreTypes;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
+use crate::Core;
 
 /// The handles: the identity and its run leaf.
 #[derive(Debug, Clone, Copy)]
@@ -57,7 +57,7 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> LexIds {
 
 /// Build the node `lex «…»` places: `[text, op]`, `text` the string node the
 /// quote built.
-pub(crate) fn build(store: &mut Store, types: &CoreTypes, text: DyadPtr) -> DyadPtr {
+pub(crate) fn build(store: &mut Store, types: &Core, text: DyadPtr) -> DyadPtr {
     let value = store.alloc_operands(&[text, types.lex.leaf]);
     store.alloc_raw(types.lex.lex, value)
 }
@@ -67,7 +67,7 @@ pub(crate) fn build(store: &mut Store, types: &CoreTypes, text: DyadPtr) -> Dyad
 ///
 /// # Safety
 /// `node` must be null or a valid dyad from the store.
-pub(crate) unsafe fn is_fragment(types: &CoreTypes, node: DyadPtr) -> bool {
+pub(crate) unsafe fn is_fragment(types: &Core, node: DyadPtr) -> bool {
     let d = types.through(node);
     !d.is_null() && (*d).ty == types.lex.lex
 }

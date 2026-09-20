@@ -12,13 +12,14 @@
 //! `1 / 3` *is* one third — with a literal zero divisor a parse error; explicit
 //! truncation is the cast (`i32(10 / 3)`).
 
+use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::numtype::ArithOp;
 use super::{meta, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc, CoreTypes, ParseError};
+use crate::parse::{Assoc, ParseError};
 use crate::store::Store;
 
 /// Register `/`: spelling, parse_rank (binding like `*`, left-associative), and
@@ -42,7 +43,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 /// resolve the operand logos and store the concrete division in the op slot.
 fn build(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     div: DyadPtr,
     lhs: DyadPtr,
     rhs: DyadPtr,

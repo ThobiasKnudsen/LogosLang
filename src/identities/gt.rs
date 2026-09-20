@@ -5,13 +5,14 @@
 //! constructor resolving each application to a concrete comparison in the op
 //! slot; result is `bool`.
 
+use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::numtype::CmpOp;
 use super::{bool_mod, meta, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc, CoreTypes, ParseError};
+use crate::parse::{Assoc, ParseError};
 use crate::store::Store;
 
 /// Register `>`: spelling, parse_rank (relational, left-associative), and its
@@ -35,7 +36,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 /// comparison in the op slot.
 fn build(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     gt: DyadPtr,
     lhs: DyadPtr,
     rhs: DyadPtr,

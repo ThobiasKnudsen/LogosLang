@@ -29,6 +29,7 @@
 //! pointers over system-allocated storage — so a pointer no longer only ever
 //! points at parse-allocated storage.
 
+use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
@@ -36,7 +37,7 @@ use super::numtype::{self, NumType};
 use super::{commit_if_literal, meta, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc, CoreTypes, ParseError};
+use crate::parse::{Assoc, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -127,7 +128,7 @@ pub(super) fn register(
 ///
 /// # Safety
 /// `place` must be a storage-backed place node from the store.
-pub(crate) unsafe fn build_addr(store: &mut Store, types: &CoreTypes, place: DyadPtr) -> DyadPtr {
+pub(crate) unsafe fn build_addr(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
     let pointee = (*place).ty;
     let value = store.alloc_operands(&[place, pointee, types.ops.addr_]);
     store.alloc_raw(types.addr_, value)
@@ -162,7 +163,7 @@ fn lower_addr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
 /// node is handed to a native *by identity* (`:scope`, a tape's cell).
 pub(crate) fn address_value(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     pointee: DyadPtr,
     addr: DyadPtr,
 ) -> DyadPtr {
@@ -203,7 +204,7 @@ pub(crate) unsafe fn make_owning_pointer_type(
 /// self-describing.
 pub(crate) fn build_deref(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     ptr_expr: DyadPtr,
     pointee: DyadPtr,
     offset: usize,
@@ -233,7 +234,7 @@ pub(crate) unsafe fn deref_parts(node: DyadPtr) -> (DyadPtr, DyadPtr, u64) {
 /// `deref` must be a deref node; `rhs` a reduced dyad, both from the store.
 pub(crate) unsafe fn build_storeptr(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     deref: DyadPtr,
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {

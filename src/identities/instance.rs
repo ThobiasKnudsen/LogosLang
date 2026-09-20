@@ -18,6 +18,7 @@
 //! arrive with the richer layout) and writable by default, like today's
 //! variables; the immutable-by-default flip arrives with `mut` for both at once.
 
+use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
@@ -25,7 +26,7 @@ use super::numtype::{self, NumType};
 use super::{commit_if_literal, meta, numtype_of, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{CoreTypes, ParseError};
+use crate::parse::ParseError;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -135,7 +136,7 @@ pub(crate) unsafe fn layout(record_logos: DyadPtr) -> Result<FieldLayout, ParseE
 /// sized to [`layout`], and `args` reduced dyads, all from the store.
 pub(crate) unsafe fn build_ctor(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     construct: DyadPtr,
     record_logos: DyadPtr,
     instance: DyadPtr,

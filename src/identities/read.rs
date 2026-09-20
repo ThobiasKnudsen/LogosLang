@@ -40,7 +40,7 @@ use super::callable;
 use super::meta;
 use super::numtype::{self, NumType, ADDR_TAG, COMMENT_TAG, STRING_TAG, VOID_TAG};
 use crate::dyad::{is_place, DyadPtr};
-use crate::parse::CoreTypes;
+use crate::Core;
 
 /// How a node's value is read. `Copy` and register-sized: it is asked on every
 /// interpreted value read.
@@ -106,7 +106,7 @@ pub enum Dispatch {
 /// `node` must be null or a valid dyad from the store, as the parser and
 /// [`super::Core::build`] produce; every identity standing in a type slot
 /// carries its record.
-pub unsafe fn read_kind(types: &CoreTypes, node: DyadPtr) -> Read {
+pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
     // 1. A use of a name reads through to what it names.
     let node = types.through(node);
     if node.is_null() {
@@ -233,7 +233,7 @@ pub unsafe fn read_kind(types: &CoreTypes, node: DyadPtr) -> Read {
 ///
 /// # Safety
 /// `t` must be null or a valid dyad from the store.
-pub unsafe fn place_layout(types: &CoreTypes, t: DyadPtr) -> Option<(Read, usize)> {
+pub unsafe fn place_layout(types: &Core, t: DyadPtr) -> Option<(Read, usize)> {
     let t = super::type_identity_of(types, t)?;
     let kind = meta::kind_of(t)?;
     match kind {
@@ -273,15 +273,15 @@ mod tests {
         let seq = {
             let mut scopes = ScopeStack::new();
             scopes.push(core.root_scope);
-            let mut p = Parser::new(src, &mut store, &mut trie, core.types(), scopes);
+            let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes);
             p.parse_sequence().unwrap()
         };
-        let types = core.types();
+        let types = &core;
         // SAFETY: a sequence node's first slot is its expression array.
         let exprs = unsafe {
             array::items(*((*seq).value as *const DyadPtr))
                 .iter()
-                .map(|&e| crate::identities::ran::expr_of(&types, e))
+                .map(|&e| crate::identities::ran::expr_of(types, e))
                 .collect()
         };
         (store, core, exprs)
@@ -296,18 +296,18 @@ mod tests {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
-        let types = core.types();
+        let types = &core;
         // SAFETY: all handles are identities Core::build just allocated.
         unsafe {
             for id in [
                 core.type_,
                 core.fn_type,
-                core.scope_,
+                core.scope,
                 core.ran_,
                 core.record_,
                 core.i32_,
                 core.bool_,
-                core.void,
+                core.void_,
                 core.string_,
                 core.rational,
                 core.dyad_,
@@ -315,14 +315,14 @@ mod tests {
                 types.left_,
                 types.right_,
             ] {
-                assert_eq!(read_kind(&types, id), Read::Identity, "{id:p}");
+                assert_eq!(read_kind(types, id), Read::Identity, "{id:p}");
             }
             for &n in &types.numtypes {
-                assert_eq!(read_kind(&types, n), Read::Identity);
+                assert_eq!(read_kind(types, n), Read::Identity);
             }
             // The slot words are identities like `left` and `right`.
             for &m in &types.slots {
-                assert_eq!(read_kind(&types, m), Read::Identity);
+                assert_eq!(read_kind(types, m), Read::Identity);
             }
         }
     }
@@ -346,7 +346,7 @@ mod tests {
              f(1, 2),\n\
              ?",
         );
-        let types = core.types();
+        let types = &core;
         // SAFETY: every node was just parsed into `_store`, which is alive.
         unsafe {
             // A declaration's "declared" slot is the binding, or the initializer
@@ -365,39 +365,39 @@ mod tests {
             };
             // A declared numeric place is read at its width; the place itself is
             // marked, its `&` is a pointer place read as an address.
-            assert_eq!(read_kind(&types, declared(0)), Read::Scalar(NumType::I32));
+            assert_eq!(read_kind(types, declared(0)), Read::Scalar(NumType::I32));
             assert!(is_place((*declared(0)).value));
-            assert_eq!(read_kind(&types, declared(1)), Read::Pointer(core.i32_));
+            assert_eq!(read_kind(types, declared(1)), Read::Pointer(core.i32_));
             // The two node boxes hold a container.
-            assert_eq!(read_kind(&types, declared(2)), Read::Container(core.type_));
-            assert_eq!(read_kind(&types, declared(3)), Read::Container(core.dyad_));
+            assert_eq!(read_kind(types, declared(2)), Read::Container(core.type_));
+            assert_eq!(read_kind(types, declared(3)), Read::Container(core.dyad_));
             // A record type is an identity; its instance is an aggregate place.
-            assert_eq!(read_kind(&types, declared(4)), Read::Identity);
-            assert_eq!(read_kind(&types, declared(5)), Read::Aggregate);
+            assert_eq!(read_kind(types, declared(4)), Read::Identity);
+            assert_eq!(read_kind(types, declared(5)), Read::Aggregate);
             // A fn literal stands as a statement; its parameters are a scalar
             // frame place and, for the bare `b`, a container.
             let f = declared(6);
-            assert_eq!(read_kind(&types, f), Read::Unit);
+            assert_eq!(read_kind(types, f), Read::Unit);
             let input = *((*f).value as *const DyadPtr).add(crate::parse::FN_INPUT);
             let params = array::items(meta::record_fields_of(input));
-            assert_eq!(read_kind(&types, params[0]), Read::Scalar(NumType::I32));
-            assert_eq!(read_kind(&types, params[1]), Read::Container(std::ptr::null_mut()));
+            assert_eq!(read_kind(types, params[0]), Read::Scalar(NumType::I32));
+            assert_eq!(read_kind(types, params[1]), Read::Container(std::ptr::null_mut()));
             // Values by kind: a bool literal is scalar storage (untagged, still
             // storage), a rational is a literal, text is opaque, prose is unit,
             // a view is an address, an application is its leaf, a call is a
             // call, a bare hole is undefined.
-            assert_eq!(read_kind(&types, exprs[7]), Read::Scalar(NumType::I32));
+            assert_eq!(read_kind(types, exprs[7]), Read::Scalar(NumType::I32));
             assert!(!is_place((*exprs[7]).value), "a literal's storage carries no mark");
-            assert_eq!(read_kind(&types, exprs[8]), Read::Literal);
-            assert_eq!(read_kind(&types, exprs[9]), Read::Opaque);
-            assert_eq!(read_kind(&types, exprs[10]), Read::Unit);
-            assert_eq!(read_kind(&types, exprs[11]), Read::Address);
-            match read_kind(&types, exprs[12]) {
+            assert_eq!(read_kind(types, exprs[8]), Read::Literal);
+            assert_eq!(read_kind(types, exprs[9]), Read::Opaque);
+            assert_eq!(read_kind(types, exprs[10]), Read::Unit);
+            assert_eq!(read_kind(types, exprs[11]), Read::Address);
+            match read_kind(types, exprs[12]) {
                 Read::Executable(Dispatch::Leaf(leaf)) => assert!(callable::is_callable(leaf)),
                 other => panic!("a `+` application reads as its leaf, got {other:?}"),
             }
-            assert_eq!(read_kind(&types, exprs[13]), Read::Executable(Dispatch::Call(f)));
-            assert_eq!(read_kind(&types, exprs[14]), Read::Undefined);
+            assert_eq!(read_kind(types, exprs[13]), Read::Executable(Dispatch::Call(f)));
+            assert_eq!(read_kind(types, exprs[14]), Read::Undefined);
         }
     }
 
@@ -419,19 +419,19 @@ mod tests {
              ),\n\
              2 pw 3",
         );
-        let types = core.types();
+        let types = &core;
         // SAFETY: nodes just parsed; the hand-built node below is well-formed.
         unsafe {
             let pw = declare::declared_of(exprs[0]);
-            assert_eq!(read_kind(&types, pw), Read::Identity);
+            assert_eq!(read_kind(types, pw), Read::Identity);
             let code = meta::code_of(pw);
             assert!(!code.is_null());
-            assert_eq!(read_kind(&types, exprs[1]), Read::Executable(Dispatch::Call(code)));
+            assert_eq!(read_kind(types, exprs[1]), Read::Executable(Dispatch::Call(code)));
             // An operand record whose op slot holds no leaf is a named refusal,
             // not a fall-through: the shape of the tape's path markers.
             let value = store.alloc_operands(&[exprs[1], exprs[1], std::ptr::null_mut()]);
             let leafless = store.alloc_raw(core.plus, value);
-            assert_eq!(read_kind(&types, leafless), Read::Executable(Dispatch::None));
+            assert_eq!(read_kind(types, leafless), Read::Executable(Dispatch::None));
         }
     }
 
@@ -440,22 +440,22 @@ mod tests {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
-        let types = core.types();
+        let types = &core;
         // SAFETY: all handles are identities Core::build just allocated.
         unsafe {
-            assert_eq!(place_layout(&types, core.i32_), Some((Read::Scalar(NumType::I32), 4)));
-            assert_eq!(place_layout(&types, core.bool_), Some((Read::Scalar(NumType::I32), 4)));
+            assert_eq!(place_layout(types, core.i32_), Some((Read::Scalar(NumType::I32), 4)));
+            assert_eq!(place_layout(types, core.bool_), Some((Read::Scalar(NumType::I32), 4)));
             assert_eq!(
-                place_layout(&types, types.numtypes[NumType::F64 as usize]),
+                place_layout(types, types.numtypes[NumType::F64 as usize]),
                 Some((Read::Scalar(NumType::F64), 8))
             );
-            assert_eq!(place_layout(&types, core.type_), Some((Read::Container(core.type_), 8)));
-            assert_eq!(place_layout(&types, core.dyad_), Some((Read::Container(core.dyad_), 8)));
+            assert_eq!(place_layout(types, core.type_), Some((Read::Container(core.type_), 8)));
+            assert_eq!(place_layout(types, core.dyad_), Some((Read::Container(core.dyad_), 8)));
             // No place: text, void, prose, a parse-only identity, a non-identity.
-            for t in [core.string_, core.void, core.comment_, core.plus, core.fn_type] {
-                assert_eq!(place_layout(&types, t), None, "{t:p}");
+            for t in [core.string_, core.void_, core.comment_, core.plus, core.fn_type] {
+                assert_eq!(place_layout(types, t), None, "{t:p}");
             }
-            assert_eq!(place_layout(&types, std::ptr::null_mut()), None);
+            assert_eq!(place_layout(types, std::ptr::null_mut()), None);
         }
         // A record type is an aggregate of its size; a code-carrying one has no
         // place, since a node of it is a call.
@@ -463,13 +463,13 @@ mod tests {
             "w := type ( instance = (x := i64 ?, y := i64 ?) ),\n\
              c := type ( instance = ( shared run = fn (a := i32 ?) -> i32 ( a ) ) )",
         );
-        let types = core.types();
+        let types = &core;
         // SAFETY: the declared identities were just parsed.
         unsafe {
             let w = declare::declared_of(exprs[0]);
-            assert_eq!(place_layout(&types, w), Some((Read::Aggregate, 16)));
+            assert_eq!(place_layout(types, w), Some((Read::Aggregate, 16)));
             let c = declare::declared_of(exprs[1]);
-            assert_eq!(place_layout(&types, c), None);
+            assert_eq!(place_layout(types, c), None);
         }
     }
 }

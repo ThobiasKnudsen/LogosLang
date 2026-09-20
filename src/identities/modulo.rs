@@ -12,13 +12,14 @@
 //! fractional literal falls through to the committed runtime path, and a
 //! literal zero divisor is a parse error.
 
+use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::numtype::ArithOp;
 use super::{meta, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc, CoreTypes, ParseError};
+use crate::parse::{Assoc, ParseError};
 use crate::store::Store;
 
 /// Register `%`: spelling, parse_rank (binding like `*`, left-associative), and
@@ -43,7 +44,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 /// therefore no leaf — and store the concrete remainder in the op slot.
 fn build(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     rem: DyadPtr,
     lhs: DyadPtr,
     rhs: DyadPtr,

@@ -7,13 +7,14 @@
 //! `{type: *, value: [lhs, rhs, mul_<logos>]}`. Binds tighter than `+`/`-`,
 //! left-associative.
 
+use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::numtype::ArithOp;
 use super::{meta, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc, CoreTypes, ParseError};
+use crate::parse::{Assoc, ParseError};
 use crate::store::Store;
 
 /// Register `*`: spelling, parse_rank (binding tighter than `+`/`-`,
@@ -37,7 +38,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 /// multiplication in the op slot.
 fn build(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     times: DyadPtr,
     lhs: DyadPtr,
     rhs: DyadPtr,

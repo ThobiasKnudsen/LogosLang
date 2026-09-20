@@ -9,13 +9,14 @@
 //! serves every numeric logos; the concrete additions are callable leaves
 //! ([`crate::identities::ops`]).
 
+use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::numtype::ArithOp;
 use super::{meta, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc, CoreTypes, ParseError};
+use crate::parse::{Assoc, ParseError};
 use crate::store::Store;
 
 /// Register `+`: spelling, parse_rank (left-associative, binding tighter
@@ -43,7 +44,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 /// ([`ParseError::UnsupportedOperands`]).
 fn build(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     plus: DyadPtr,
     lhs: DyadPtr,
     rhs: DyadPtr,

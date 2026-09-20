@@ -174,13 +174,13 @@ mod tests {
         // SAFETY: the handles are identities Core::build just allocated.
         unsafe {
             assert_eq!((*core.conv_seed_native).ty, core.convention_);
-            assert_eq!((*core.conv_container_i64).ty, core.convention_);
+            assert_eq!((*core.conv_container).ty, core.convention_);
             assert_eq!(
                 crate::reflect::text_of((*core.conv_seed_native).value.cast()),
                 b"seed-native"
             );
             assert_eq!(
-                crate::reflect::text_of((*core.conv_container_i64).value.cast()),
+                crate::reflect::text_of((*core.conv_container).value.cast()),
                 b"container-i64"
             );
             // The logos carry their record kinds, readable from the graph alone.

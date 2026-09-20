@@ -17,13 +17,14 @@
 //! appends both (#61). A group is neither a boolean nor a number, so `if`
 //! and the arithmetic refuse it, and running it bare is the checked error.
 
+use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
 use super::{bool_mod, meta, operands, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{bool_literal_value, is_bool_result, Assoc, CoreTypes, ParseError};
+use crate::parse::{bool_literal_value, is_bool_result, Assoc, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -50,7 +51,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
 /// both operands to be `bool` ([`ParseError::NonBoolOperands`]).
 fn build(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     and: DyadPtr,
     lhs: DyadPtr,
     rhs: DyadPtr,

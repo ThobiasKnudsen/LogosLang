@@ -22,8 +22,9 @@
 use super::numtype::{ArithOp, CmpOp, NumType};
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
-use crate::parse::{Constructed, CoreTypes, ParseError, Parser, ParsingTape};
+use crate::parse::{Constructed, ParseError, Parser, ParsingTape};
 use crate::store::Store;
+use crate::Core;
 
 /// Register `rational_number`: its spelling (integers or decimals), literal
 /// constructor, and lowering.
@@ -53,7 +54,7 @@ fn construct(
     // "`-3` still folds into the literal"): `x := -5`, `f(-1)`, `2 * -3`,
     // `i32 -5` — while `a - 5` keeps its subtraction.
     let types = p.types();
-    let negated = matches!(tape.at(-1), Some(c) if !c.constructed && c.identity(&types) == types.minus)
+    let negated = matches!(tape.at(-1), Some(c) if !c.constructed && c.identity(types) == types.minus)
         && !tape.at(-2).is_some_and(|c| p.is_operand_cell(c));
     let node = if negated {
         tape.remove(-1);
@@ -98,7 +99,7 @@ fn build_literal(store: &mut Store, rational: DyadPtr, num: i64, den: i64) -> Dy
 /// num/den (its rationals are `i64` fractions; arbitrary precision is later work).
 pub(crate) fn fold_arith(
     store: &mut Store,
-    types: &CoreTypes,
+    types: &Core,
     op: ArithOp,
     lhs: DyadPtr,
     rhs: DyadPtr,
@@ -157,7 +158,7 @@ pub(crate) fn fold_arith(
 /// operand is not a rational literal. Cross-multiplies (`den > 0` keeps the direction);
 /// the products fit `i128`, so this never overflows.
 pub(crate) fn compare_literals(
-    types: &CoreTypes,
+    types: &Core,
     op: CmpOp,
     lhs: DyadPtr,
     rhs: DyadPtr,
