@@ -54,6 +54,7 @@ pub mod record;
 mod and;
 pub(crate) mod array;
 mod assign;
+mod binary;
 #[path = "bool.rs"]
 pub(crate) mod bool_mod;
 pub(crate) mod callable;
@@ -61,38 +62,28 @@ mod colon;
 mod comment;
 mod convert;
 pub(crate) mod declare;
-mod divide;
 pub(crate) mod drop_model;
-mod eq;
 #[path = "fn.rs"]
 mod fn_mod;
 #[path = "for.rs"]
 mod for_mod;
 pub(crate) mod fresh;
 mod gate;
-mod ge;
-mod gt;
 pub mod here;
 mod hole;
 #[path = "if.rs"]
 mod if_mod;
 pub mod import;
 pub(crate) mod instance;
-mod le;
 pub mod lex;
 #[path = "logos.rs"]
 mod logos_mod;
-mod lt;
 pub(crate) mod meta;
-mod minus;
-mod modulo;
-mod ne;
 mod not;
 pub(crate) mod numtype;
 pub(crate) mod ops;
 mod or;
 mod paren;
-mod plus;
 pub(crate) mod pointer;
 pub mod ran;
 pub(crate) mod rational;
@@ -103,7 +94,6 @@ pub(crate) mod scope;
 pub(crate) mod string;
 pub mod tape;
 pub mod this;
-mod times;
 #[path = "while.rs"]
 mod while_mod;
 
@@ -397,17 +387,8 @@ impl Core {
         // The numeric operators. Each resolves its operand types at parse time and
         // stores it in the node's value slot; run/compile switch on it (see
         // `numtype`), so one identity per operator serves every numeric type.
-        let plus = plus::register(&mut cx);
-        let minus = minus::register(&mut cx);
-        let times = times::register(&mut cx);
-        let div_ = divide::register(&mut cx);
-        let rem_ = modulo::register(&mut cx);
-        let lt = lt::register(&mut cx);
-        let gt = gt::register(&mut cx);
-        let eq = eq::register(&mut cx);
-        let le = le::register(&mut cx);
-        let ge = ge::register(&mut cx);
-        let ne = ne::register(&mut cx);
+        let binary::BinaryIds { plus, minus, times, div: div_, rem: rem_, lt, gt, eq, le, ge, ne } =
+            binary::register_all(&mut cx);
         // The logical operators, over `bool` (their operands are comparisons/bools).
         let (and_, and_leaf) = and::register(&mut cx, &callables);
         op_leaves.and_ = and_leaf;
