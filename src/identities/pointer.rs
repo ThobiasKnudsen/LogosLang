@@ -1,33 +1,10 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! Pointers: `@T` logos, `&x` address-of, `x@` dereference, `p@.x`, and
-//! store-through (`p@ = v`).
-//!
-//! The settled surface (Thobias, July 2026): the pointer type is **prefix**
-//! `@T` — the pointer is the first thing the user interacts with, and it
-//! composes (`@@i32`, `@point`) — while dereference is **postfix** `x@`, so
-//! chains read left to right: `p@.x`, `p@@`. Because a dereference can never
-//! *start* an expression, `@` after a completed dyad is always deref and `@`
-//! elsewhere is always the type prefix; no ambiguity exists. `&x` is address-of.
-//! v1 pointers are raw, unchecked addresses (DESIGN's `@`-family); checked
-//! `&T`/`&mut T` references layer on when the borrow checker arrives.
-//!
-//! Representation: a pointer *logos* is `{type: logos, value -> record}`, its
-//! shared-member record [`ADDR_TAG`]-kinded with the pointee node as payload
-//! (see [`crate::identities::meta`]) — created fresh per use, never interned
-//! (DESIGN: ordinary source nodes are not deduped); equality anywhere compares
-//! *pointees*. A pointer *value* is an ordinary 8-byte scalar (the address in
-//! the i64 bit-container), so variables, parameters, record fields, and the
-//! compiled ABI all carry pointers through the existing width machinery. A
-//! dereference is `{type: deref, value: [ptr-expr, pointee-logos, offset-node]}` —
-//! the offset folds `p@.x` field access into the same node — and a store-through
-//! is `{type: storeptr, value: [ptr-expr, rhs, pointee-logos, offset-node]}`, built
-//! by `=` at parse time. Deferred, deliberately: pointer arithmetic and
-//! null-safety beyond the literal-argument seam. Heap allocation now exists —
-//! `alloc`/`free` in [`crate::identities::drop_model`] mint owning `@T`
-//! pointers over system-allocated storage — so a pointer no longer only ever
-//! points at parse-allocated storage.
+//! Pointers: the `@T` type, `&x` address-of, `x@` dereference (`p@.x` folds the field
+//! offset into the deref node), and store-through `p@ = v`. Prefix `@` is the type, `@`
+//! after a completed dyad is deref, so no ambiguity exists. A pointer value is an
+//! ordinary 8-byte scalar; raw and unchecked in the seed.
 
 use crate::Core;
 use cranelift_codegen::ir::Value;
@@ -41,11 +18,8 @@ use crate::parse::{Assoc, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
-/// Register the pointer machinery: the `@` and `&` tokens (driver-dispatched),
-/// and the `deref` and `storeptr` identities with their native leaves and
-/// lowerings — those two have no spelling; the parser builds deref nodes from
-/// postfix `@` and storeptr nodes from `=` over a deref. Returns the two
-/// identities and their leaves.
+/// `deref` and `storeptr` have no spelling: the parser builds deref nodes from postfix
+/// `@` and storeptr nodes from `=` over a deref.
 pub(super) fn register(
     cx: &mut Cx,
     cs: &Callables,
@@ -53,12 +27,8 @@ pub(super) fn register(
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::TIGHT);
     let at = cx.store.alloc_raw(cx.type_, record);
     cx.declare("@", at);
-    // `@`'s constructor reads its own left context (the model's tape[-1]): a
-    // completed dyad makes it a postfix deref, none makes it the pointer-logos
-    // prefix.
+    // A completed dyad to the left makes `@` a postfix deref; none makes it the type prefix.
     cx.metas.insert(at, |p, _id, tape| {
-        // The model's `tape[-1]`: a completed operand makes `@` a postfix
-        // deref (the left consumed), none makes it the pointer-logos prefix.
         match p.left_operand(tape)? {
             Some(left) => {
                 // SAFETY: `left` is a reduced dyad off the tape.
@@ -103,8 +73,7 @@ pub(super) fn register(
     cx.lower.insert(storeptr, lower_storeptr);
     let storeptr_leaf = callable::mint_native(cx.store, cs.callable, run_storeptr, cs.seed_native);
 
-    // `addr` (prefix `&`): no spelling of its own beyond the `&` token; the
-    // parser builds these from `parse_address_of`. `[place, pointee, op]`.
+    // `addr` has no spelling beyond the `&` token; `[place, pointee, op]`.
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
@@ -119,12 +88,8 @@ pub(super) fn register(
     (deref, storeptr, addr, deref_leaf, storeptr_leaf, addr_leaf, at)
 }
 
-/// Build an address-of node `{type: addr, value: [place, pointee, op]}` over a
-/// storage-backed `place` (a variable, a record field, a pointer variable). The
-/// pointee is the place's logos. Unlike a baked pointer *literal*, this node
-/// resolves the address at run/lower time through `place_addr`, so a
-/// frame-relative local yields a *per-activation* address — `&x` inside a
-/// recursive function is a different address on each call, exactly like C.
+/// The address resolves at run/lower time through `place_addr`, so a frame-relative
+/// local yields a per-activation address.
 ///
 /// # Safety
 /// `place` must be a storage-backed place node from the store.
@@ -134,9 +99,6 @@ pub(crate) unsafe fn build_addr(store: &mut Store, types: &Core, place: DyadPtr)
     store.alloc_raw(types.addr_, value)
 }
 
-/// Run an address-of: the current machine address of its place — an absolute
-/// pointer for a global, `activation_base + offset` for a frame-relative local
-/// of the call in progress.
 fn run_addr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an addr node; its first operand is a place.
     unsafe {
@@ -145,8 +107,6 @@ fn run_addr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// Lower an address-of: the place's address as an SSA value — a baked `iconst`
-/// for a global, a frame `stack_addr` for a local.
 fn lower_addr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is an addr node; its first operand is a place.
     unsafe {
@@ -155,12 +115,8 @@ fn lower_addr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     }
 }
 
-/// Build a pointer type node `@pointee`: `{type: logos, value -> record}`, the
-/// record [`ADDR_TAG`]-kinded with the pointee as its payload. Fresh per use;
-/// compare pointees, not nodes.
-/// An `@pointee` value holding `addr`: a pointer-typed literal with its own
-/// eight bytes of storage, read at run time like any pointer variable. How a
-/// node is handed to a native *by identity* (`:scope`, a tape's cell).
+/// An `@pointee` value holding `addr`: a pointer literal with its own eight bytes of
+/// storage. How a node is handed to a native by identity.
 pub(crate) fn address_value(
     store: &mut Store,
     types: &Core,
@@ -173,14 +129,9 @@ pub(crate) fn address_value(
     store.alloc_raw(ty, storage)
 }
 
-///
-/// One node per pointee (DESIGN ›The store is keyed by address‹: "interned
-/// canonical identities (one `i32` referenced everywhere)"; #89): the first
-/// mint is written into the pointee's own record and every later `@pointee`
-/// reads it back, so two spellings of `@i32` are one type and `==` on them
-/// is true. A pointee carrying no record (a type-valued place) gets a fresh
-/// node. An *owning* pointer type is never interned: its destructor is its
-/// own ([`make_owning_pointer_type`]).
+/// One node per pointee: the first mint is written into the pointee's record and every
+/// later `@pointee` reads it back, so two spellings of `@i32` are one type. A pointee
+/// carrying no record gets a fresh node; an owning pointer type is never interned.
 ///
 /// # Safety
 /// `pointee` must be a type node from the store.
@@ -204,13 +155,9 @@ pub(crate) unsafe fn make_pointer_type(
     node
 }
 
-/// Build an *owning* pointer type node `@pointee` — the same `ADDR_TAG` record
-/// as [`make_pointer_type`], but with `destructor` filled (the drop model's
-/// teardown leaf). This is what `alloc` mints for its result: an ordinary `@T`
-/// whose type carries a non-null destructor, so `drop`/`own` recognize
-/// owning-ness by reading the slot while a `&x` borrow's pointer stays droppable
-/// by no one (DESIGN ›Explicit heap‹: ownership rides the node `alloc` built,
-/// not `@T` in general). Fresh per use, like every pointer type.
+/// The same record as `make_pointer_type` with `destructor` filled: what `alloc` mints,
+/// so `drop`/`own` recognize owning-ness by the slot while a borrow's pointer has none.
+/// Never interned.
 ///
 /// # Safety
 /// `destructor` must be a callable leaf running the owning pointer's teardown.
@@ -226,9 +173,7 @@ pub(crate) unsafe fn make_owning_pointer_type(
     node
 }
 
-/// Build a dereference node `{type: deref, value: [ptr-expr, pointee, offset]}`,
-/// the offset carried as a committed u64 literal node so the graph stays
-/// self-describing.
+/// The offset is a committed u64 literal node, so the graph stays self-describing.
 pub(crate) fn build_deref(
     store: &mut Store,
     types: &Core,
@@ -242,20 +187,17 @@ pub(crate) fn build_deref(
     store.alloc_raw(types.deref_, value)
 }
 
-/// The `(ptr-expr, pointee, offset)` of a deref node.
-///
 /// # Safety
-/// `node` must be a deref node as [`build_deref`] lays it out.
+/// `node` must be a deref node from `build_deref`.
 pub(crate) unsafe fn deref_parts(node: DyadPtr) -> (DyadPtr, DyadPtr, u64) {
     let p = (*node).value as *const DyadPtr;
     let off = std::ptr::read_unaligned((**p.add(2)).value as *const u64);
     (*p, *p.add(1), off)
 }
 
-/// Build a store-through from `=` over a deref lhs: the pointee must be a
-/// scalar place (numeric or pointer — a whole record cannot be stored,
-/// [`ParseError::BadAssignTarget`]); a literal rhs commits to a numeric pointee
-/// and is rejected for a pointer pointee (it would become a wild address).
+/// The pointee must be a scalar or pointer place (a whole record cannot be stored); a
+/// literal rhs commits to a numeric pointee and is refused for a pointer pointee, where
+/// it would become a wild address.
 ///
 /// # Safety
 /// `deref` must be a deref node; `rhs` a reduced dyad, both from the store.
@@ -267,10 +209,7 @@ pub(crate) unsafe fn build_storeptr(
 ) -> Result<DyadPtr, ParseError> {
     let (ptr_expr, pointee, _) = deref_parts(deref);
     let off_node = *(((*deref).value as *const DyadPtr).add(2));
-    // What a store through this pointer writes is what a place of the pointee
-    // reads as (#82): a scalar at its width, or an address.
-    // SAFETY: `pointee` is the deref node's pointee type (`deref_parts`), a
-    // node from the store.
+    // SAFETY: `pointee` is the deref node's pointee type, a node from the store.
     let pointee_read = unsafe { super::read::place_layout(types, pointee) };
     let pointer_pointee = matches!(pointee_read, Some((super::read::Read::Pointer(_), _)));
     if !pointer_pointee && !matches!(pointee_read, Some((super::read::Read::Scalar(_), _))) {
@@ -283,8 +222,6 @@ pub(crate) unsafe fn build_storeptr(
         let nt = numtype::of_type_node(pointee);
         commit_if_literal(store, types, rhs, &Operand::Literal, pointee, nt)?
     } else {
-        // A non-literal rhs must already be the pointee's logos — no implicit
-        // coercion ([`super::check_store_type`]).
         super::check_store_type(types, pointee, rhs)?;
         rhs
     };
@@ -292,26 +229,19 @@ pub(crate) unsafe fn build_storeptr(
     Ok(store.alloc_raw(types.storeptr_, value))
 }
 
-/// Run a deref: evaluate the pointer, add the offset, read the pointee's scalar
-/// at that address. A record pointee has no whole-value read (fields go through
-/// `p@.x`), reported as a clean `NotDerefable`.
+/// A record pointee has no whole-value read; its fields go through `p@.x`.
 fn run_deref(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a deref node; its parts are valid dyads.
     unsafe {
         let (ptr_expr, pointee, off) = deref_parts(node);
-        // A whole-value read through the pointer needs a pointee that reads
-        // whole — a scalar or an address; a record is read by field (#82).
         if !matches!(
             super::read::place_layout(rt.types(), pointee),
             Some((super::read::Read::Scalar(_) | super::read::Read::Pointer(_), _))
         ) {
             return Err(RunError::NotDerefable);
         }
-        // The base is the pointer's own value: a hole-declared `p := @i32 ?`
-        // reads as 0, and DESIGN ›Both slots of a dyad follow one lifecycle‹
-        // rules that reading the hole is "a checked error, never undefined
-        // behavior" (#74). The base is what is checked, not base + offset, so
-        // a field read `p@.x` through a null `p` is caught at any offset.
+        // The base is checked, not base + offset, so a field read through a null `p` is
+        // caught at any offset; reading a hole is the checked error, never undefined.
         let base = rt.run(ptr_expr)? as u64;
         if base == 0 {
             return Err(RunError::NullPointer);
@@ -321,17 +251,14 @@ fn run_deref(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// Run a store-through: evaluate the rhs and the pointer, write the pointee's
-/// scalar at address + offset; yields the stored value, like `=`.
 fn run_storeptr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a storeptr node as [`build_storeptr`] lays it out.
+    // SAFETY: `node` is a storeptr node from `build_storeptr`.
     unsafe {
         let p = (*node).value as *const DyadPtr;
         let (ptr_expr, rhs, pointee) = (*p, *p.add(1), *p.add(2));
         let off = std::ptr::read_unaligned((**p.add(3)).value as *const u64);
         let bits = rt.run(rhs)?;
-        // Same guard as `run_deref`: a write through the hole is the checked
-        // error, never a store to address 0 (#74).
+        // Same guard as `run_deref`.
         let base = rt.run(ptr_expr)? as u64;
         if base == 0 {
             return Err(RunError::NullPointer);
@@ -342,8 +269,6 @@ fn run_storeptr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// Lower a deref: the pointer lowers to its i64 address, the pointee loads
-/// through it at the folded offset.
 fn lower_deref(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a deref node; its parts are valid dyads.
     unsafe {
@@ -356,16 +281,13 @@ fn lower_deref(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         }
         let addr = lw.lower(ptr_expr)?;
         let ct = numtype::of_type_node(pointee).cranelift_type();
-        // The same null guard the interpreter makes, so both tiers answer a
-        // read through the hole with the checked error (#74).
+        // The same null guard the interpreter makes, so both tiers agree.
         lw.guard_non_null(addr, ct, |s| Ok(s.load_at(ct, addr, off as i64)))
     }
 }
 
-/// Lower a store-through: rhs and pointer lower, the pointee stores through the
-/// address at the folded offset; yields the stored value.
 fn lower_storeptr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a storeptr node as [`build_storeptr`] lays it out.
+    // SAFETY: `node` is a storeptr node from `build_storeptr`.
     unsafe {
         let p = (*node).value as *const DyadPtr;
         let (ptr_expr, rhs, pointee) = (*p, *p.add(1), *p.add(2));
@@ -373,8 +295,7 @@ fn lower_storeptr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError
         let v = lw.lower(rhs)?;
         let addr = lw.lower(ptr_expr)?;
         let ct = numtype::of_type_node(pointee).cranelift_type();
-        // A write through the hole is guarded too: the store happens only on
-        // the non-null arm, and the yielded value is the stored one (#74).
+        // The store happens only on the non-null arm; the yielded value is the stored one.
         lw.guard_non_null(addr, ct, |s| {
             s.store_at(ct, addr, off as i64, v);
             Ok(v)

@@ -1,40 +1,10 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The reading rule: how a node's value is read, decided once.
-//!
-//! DESIGN ›Declarations are immutable by default‹: "the type defines how the
-//! value is read"; ›The dyad's read surface‹: "two fields, and the type answers
-//! the rest". Before this file the seed had about a hundred places that each
-//! decided by hand what a node's `.value` pointed at — scalar storage at some
-//! width, an 8-byte container holding a node address, the node's own address, a
-//! record's fields, a rational's fraction — and the interpreter's and the
-//! compiler's data paths were two copies of that decision in different orders.
-//! Every crash of 12 September 2026 (#74 #75 #76 #85 #118) was one of those
-//! guesses reading the wrong thing. [`read_kind`] is the one place the question
-//! is answered (#82, rule R1); every reader asks it.
-//!
-//! What decides the answer, in order:
-//!
-//! 1. A use of a name is its record; the rule hops to the dyad it names first.
-//! 2. A node whose type is *a function* is a call. This must come before any
-//!    record is read: a function node's value is an operand array, so reading
-//!    its first byte as a kind tag would be exactly the crash class above.
-//! 3. The `fn` literal standing as a statement yields unit. Its own record is an
-//!    operand record like `+`'s, so the kind byte cannot tell them apart; only
-//!    the identity can, and its op slot is `frame`, a byte count.
-//! 4. The **type's** record kind byte — `kind_of((*node).ty)`, never
-//!    `kind_of(node)`: a value node's own bytes are its value, not a record.
-//! 5. The **node's** place mark, [`crate::dyad::is_place`], which says whether
-//!    `.value` is storage or the datum itself. It matters only where the datum
-//!    is itself an address (a type, a dyad, a bare parameter's container): a
-//!    numeric literal committed at parse holds untagged storage and reads as a
-//!    scalar all the same.
-//! 6. For a record type, whether it carries a `code`: then a node of it is a
-//!    call of that code (›Execution is function application‹), else an instance.
-//!
-//! So: the type's record, the node's mark, and the one identity no record can
-//! carry (`fn`). Nothing here consults a list of identity names.
+//! The reading rule: how a node's value is read, decided once in `read_kind`, which
+//! every reader asks. What decides it: the record hop, then `fn` (the one identity no
+//! record can carry), then the type's record kind byte, then the node's place mark.
+//! DESIGN ›The dyad's read surface‹.
 
 use super::callable;
 use super::meta;
@@ -42,72 +12,49 @@ use super::numtype::{self, NumType, ADDR_TAG, COMMENT_TAG, STRING_TAG, VOID_TAG}
 use crate::dyad::{is_place, DyadPtr};
 use crate::Core;
 
-/// How a node's value is read. `Copy` and register-sized: it is asked on every
-/// interpreted value read.
+/// `Copy` and register-sized: it is asked on every interpreted value read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Read {
-    /// A numeric or bool value: load at the type's width. The place mark does
-    /// not matter here — a declared place, a committed literal, and a
-    /// reflection scalar all hold storage the type says how to read.
+    /// Load at the type's width; the place mark does not matter, every case holds storage.
     Scalar(NumType),
-    /// A pointer value: eight bytes holding an address, its pointee the type
-    /// node carried. Read like a `U64`, but it is an address, not a number —
-    /// which is why a literal may fill a scalar and never a pointer, and why
-    /// the pointee is here for `@` and `=` to consult.
+    /// Eight bytes holding an address; the pointee is here for `@` and `=` to consult.
     Pointer(DyadPtr),
-    /// A place holding a node address: eight bytes, read as the address they
-    /// hold. Carries the declared type — `type` for a `type ?` box, `dyad` for
-    /// a `dyad ?` box, null for a bare parameter's slot — so a writer can say
-    /// what the box may take without reading the node's type slot again.
+    /// Eight bytes holding a node address; carries the declared type (`type`, `dyad`, or
+    /// null for a bare parameter's slot) so a writer knows what the box may take.
     Container(DyadPtr),
-    /// A logos standing as a value: its own address is the value (›A type is a
-    /// comptime value‹: "a type node standing as a value carries its identity
-    /// as its value").
+    /// A type standing as a value: its own address is the value.
     Identity,
-    /// A dyad view (`x:dyad`): the stored address is the value.
+    /// A dyad view: the stored address is the value.
     Address,
-    /// A comptime rational: molded to its integer value on read.
+    /// A comptime rational, molded on read.
     Literal,
-    /// A record instance place: read by field or by address, never whole. No
-    /// size rides here — nobody reads one today and computing it allocates;
-    /// the calling convention (#115) adds it when a copy needs it.
+    /// A record instance place: read by field or by address, never whole.
     Aggregate,
-    /// A blob with no whole-value read: text, unit, a regex, an array, a
-    /// callable, a convention, a parse-only identity. Refused as it always was.
+    /// No whole-value read: text, unit, a regex, an array, a callable, a convention, a
+    /// parse-only identity.
     Opaque,
     /// Prose, or a `fn` literal standing as a statement: yields 0.
     Unit,
-    /// Not data: run or lower by dispatch.
     Executable(Dispatch),
-    /// Declared, nothing to read yet: a bare hole, a slot marker, a fresh
-    /// spelling's dyad.
+    /// A bare hole, a slot marker, a fresh spelling's dyad.
     Undefined,
 }
 
-/// Where an executable node's behaviour lives. Carried out of [`read_kind`] so
-/// neither tier re-derives it.
+/// Carried out of `read_kind` so neither tier re-derives it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dispatch {
-    /// A call: the callee is the node's type, or that type's `code`.
+    /// The callee: the node's type, or that type's `code`.
     Call(DyadPtr),
-    /// An operator or statement application: the callable leaf its constructor
-    /// stored in the node's op slot, already checked to be one. The compiler
-    /// keys its lowering table on the node's type, which it has in hand.
+    /// The callable leaf in the node's op slot, already checked to be one.
     Leaf(DyadPtr),
-    /// An operand record with no leaf in its op slot — a node built without
-    /// one. Today this fell off the end of the interpreter's ladder; now it
-    /// is a named refusal.
+    /// An operand record with no leaf in its op slot: a named refusal.
     None,
 }
 
-/// The reading rule for `node`. See the module doc for what decides it.
-///
 /// # Safety
-/// `node` must be null or a valid dyad from the store, as the parser and
-/// [`super::Core::build`] produce; every identity standing in a type slot
-/// carries its record.
+/// `node` must be null or a valid dyad from the store; every identity standing in a
+/// type slot carries its record.
 pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
-    // 1. A use of a name reads through to what it names.
     let node = types.through(node);
     if node.is_null() {
         return Read::Undefined;
@@ -115,29 +62,24 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
     let op = (*node).ty;
     let value = (*node).value;
     let place = is_place(value);
-    // A node with no type: a bare parameter's slot holds the container its
-    // call bound; a hole, a slot marker, or a fresh spelling holds nothing.
+    // A bare parameter's slot holds the container its call bound; a hole or marker holds nothing.
     if op.is_null() {
         return if place { Read::Container(op) } else { Read::Undefined };
     }
-    // 2. A value of a function is a call — before any record read.
+    // Before any record read: a function node's value is an operand array, not a record.
     if (*op).ty == types.fn_type {
         return Read::Executable(Dispatch::Call(op));
     }
-    // 3. The `fn` literal as a statement.
+    // `fn`'s own record is an operand record like `+`'s, so only the identity tells them apart.
     if op == types.fn_type {
         return Read::Unit;
     }
-    // 4. The type's record kind.
     let Some(kind) = meta::kind_of(op) else {
-        // No reachable node is classified by a type that carries no record:
-        // the four roots are back-filled in `Core::build`, and the markers and
-        // holes that do have null values never stand in a type slot. Asserted
-        // rather than assumed, so the debug suite is the proof.
+        // The roots are back-filled in `Core::build`, and holes never stand in a type
+        // slot, so no reachable node is classified by a type with no record.
         debug_assert!(!(*op).value.is_null(), "a type with no record stands in a type slot");
         return if place { Read::Container(op) } else { Read::Undefined };
     };
-    // 5 and 6.
     match kind {
         k if k < VOID_TAG => Read::Scalar(numtype::of_type_node(op)),
         ADDR_TAG => Read::Pointer(numtype::pointee_of(op)),
@@ -160,11 +102,8 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
             if !place && !code.is_null() {
                 Read::Executable(Dispatch::Call(code))
             } else if !place && !meta::run_body_of(op).is_null() {
-                // A node of a type whose `run` is a held body runs as the
-                // function built for its field-type set, and not at all
-                // until one is written into it (#133 slice 8; DESIGN
-                // ›Deferral is authored‹: the unresolved op slot "does not
-                // lower until resolved").
+                // A held `run` body: the node runs as the function built for its field-type
+                // set, and not at all until one exists.
                 let spec = super::run_body::spec_of(node);
                 if spec.is_null() {
                     Read::Executable(Dispatch::None)
@@ -179,7 +118,6 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
             if place {
                 return Read::Container(op);
             }
-            // The op slot: the last fixed slot of the type's operand record.
             let Some(idx) = meta::op_slot_of(op) else {
                 return Read::Executable(Dispatch::None);
             };
@@ -208,8 +146,7 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
                 Read::Unit
             }
         }
-        // VOID_TAG, STRING_TAG, ARRAY_TAG, CALLABLE_TAG, CONVENTION_TAG,
-        // TOKEN_TAG: no whole-value read; a place of one holds a container.
+        // The rest have no whole-value read; a place of one holds a container.
         _ => {
             debug_assert!(matches!(
                 kind,
@@ -229,18 +166,9 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
     }
 }
 
-/// The reading rule asked of a *type*: what a place of `t` reads as, and how
-/// many bytes it takes — or `None` when no place of `t` can exist. This is the
-/// allocation side of [`read_kind`]: `construct_hole` and `parse_fn` size a
-/// place from it, and a read of that place must agree with them or two frame
-/// slots overlap, which no read-side check can catch. One table for both.
-///
-/// A numeric or pointer type is a scalar at its width; `type` and `dyad` are
-/// boxes holding a node address; a record type is an aggregate of its layout's
-/// size, unless it carries a `code` — then a node of it is a call, never a
-/// place (#63). Everything else (text, void, prose, a parse-only identity)
-/// has no place. `bool` is a 4-byte scalar by kind; that a `bool ?` place is
-/// still refused is `construct_hole`'s stated exception (#47), not this rule's.
+/// What a place of `t` reads as and how many bytes it takes, or `None` when no place of
+/// `t` can exist. The allocation side of `read_kind`: a read of a place must agree with
+/// its allocation, or two frame slots overlap and no read-side check can catch it.
 ///
 /// # Safety
 /// `t` must be null or a valid dyad from the store.
@@ -248,8 +176,7 @@ pub unsafe fn place_layout(types: &Core, t: DyadPtr) -> Option<(Read, usize)> {
     let t = super::type_identity_of(types, t)?;
     let kind = meta::kind_of(t)?;
     match kind {
-        // A place of `rational_number` holds a rational value's address
-        // (#133 slice 8, part 4; [`super::rational::box_literal`]).
+        // A place of `rational_number` holds a rational value's address.
         meta::FRACTION_TAG => Some((Read::Container(t), 8)),
         k if k < VOID_TAG => {
             let nt = numtype::of_type_node(t);
@@ -275,11 +202,7 @@ mod tests {
     use crate::regex_trie::RegexTrie;
     use crate::store::Store;
 
-    /// Parse `src` as one top-level sequence in a fresh core and return the
-    /// sequence's expressions in order, with the core and store kept alive.
-    /// An item the pass had to run stands in the sequence as its ran form
-    /// ([`crate::identities::ran`]); these tests ask what each item *is*, so
-    /// they look through it.
+    /// Parse `src` in a fresh core and return the sequence's items, looked through their ran form.
     fn parse_seq(src: &str) -> (Store, Core, Vec<DyadPtr>) {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
@@ -303,10 +226,7 @@ mod tests {
 
     #[test]
     fn every_identity_is_an_identity() {
-        // The classifier ground and everything classified by it — including the
-        // four roots that are minted null and back-filled in `Core::build`, the
-        // numeric type, and the two associativity values `left`/`right`, which
-        // is the one place `Identity` is wider than "is the type root".
+        // Every root and everything classified by it, `left`/`right` included.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
@@ -334,7 +254,6 @@ mod tests {
             for &n in &types.numtypes {
                 assert_eq!(read_kind(types, n), Read::Identity);
             }
-            // The slot words are identities like `left` and `right`.
             for &m in &types.slots {
                 assert_eq!(read_kind(types, m), Read::Identity);
             }
@@ -363,10 +282,7 @@ mod tests {
         let types = &core;
         // SAFETY: every node was just parsed into `_store`, which is alive.
         unsafe {
-            // A declaration's "declared" slot is the binding, or the initializer
-            // that fills it: a scalar or pointer binding snapshots through a
-            // `place = value` store, a record binding through a construction
-            // whose head is the instance. The place is behind either.
+            // The place is behind the binding's initializer store or construction.
             let declared = |i: usize| {
                 let d = declare::declared_of(exprs[i]);
                 if (*d).ty == core.assign {
@@ -377,29 +293,19 @@ mod tests {
                     d
                 }
             };
-            // A declared numeric place is read at its width; the place itself is
-            // marked, its `&` is a pointer place read as an address.
             assert_eq!(read_kind(types, declared(0)), Read::Scalar(NumType::I32));
             assert!(is_place((*declared(0)).value));
             assert_eq!(read_kind(types, declared(1)), Read::Pointer(core.i32_));
-            // The two node boxes hold a container.
             assert_eq!(read_kind(types, declared(2)), Read::Container(core.type_));
             assert_eq!(read_kind(types, declared(3)), Read::Container(core.dyad_));
-            // A record type is an identity; its instance is an aggregate place.
             assert_eq!(read_kind(types, declared(4)), Read::Identity);
             assert_eq!(read_kind(types, declared(5)), Read::Aggregate);
-            // A fn literal stands as a statement; its parameters are a scalar
-            // frame place and, for the bare `b`, a container.
             let f = declared(6);
             assert_eq!(read_kind(types, f), Read::Unit);
             let input = *((*f).value as *const DyadPtr).add(crate::parse::FN_INPUT);
             let params = array::items(meta::record_fields_of(input));
             assert_eq!(read_kind(types, params[0]), Read::Scalar(NumType::I32));
             assert_eq!(read_kind(types, params[1]), Read::Container(std::ptr::null_mut()));
-            // Values by kind: a bool literal is scalar storage (untagged, still
-            // storage), a rational is a literal, text is opaque, prose is unit,
-            // a view is an address, an application is its leaf, a call is a
-            // call, a bare hole is undefined.
             assert_eq!(read_kind(types, exprs[7]), Read::Scalar(NumType::I32));
             assert!(!is_place((*exprs[7]).value), "a literal's storage carries no mark");
             assert_eq!(read_kind(types, exprs[8]), Read::Literal);
@@ -441,8 +347,6 @@ mod tests {
             let code = meta::code_of(pw);
             assert!(!code.is_null());
             assert_eq!(read_kind(types, exprs[1]), Read::Executable(Dispatch::Call(code)));
-            // An operand record whose op slot holds no leaf is a named refusal,
-            // not a fall-through: the shape of the tape's path markers.
             let value = store.alloc_operands(&[exprs[1], exprs[1], std::ptr::null_mut()]);
             let leafless = store.alloc_raw(core.plus, value);
             assert_eq!(read_kind(types, leafless), Read::Executable(Dispatch::None));
@@ -465,14 +369,11 @@ mod tests {
             );
             assert_eq!(place_layout(types, core.type_), Some((Read::Container(core.type_), 8)));
             assert_eq!(place_layout(types, core.dyad_), Some((Read::Container(core.dyad_), 8)));
-            // No place: text, void, prose, a parse-only identity, a non-identity.
             for t in [core.string_, core.void_, core.comment_, core.plus, core.fn_type] {
                 assert_eq!(place_layout(types, t), None, "{t:p}");
             }
             assert_eq!(place_layout(types, std::ptr::null_mut()), None);
         }
-        // A record type is an aggregate of its size; a code-carrying one has no
-        // place, since a node of it is a call.
         let (_store, core, exprs) = parse_seq(
             "w := type ( instance = (x := i64 ?, y := i64 ?) ),\n\
              c := type ( instance = ( shared run = fn (a := i32 ?) -> i32 ( a ) ) )",

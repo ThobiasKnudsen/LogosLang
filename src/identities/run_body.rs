@@ -1,33 +1,10 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! A type's held `run` body (#133 slice 8; DESIGN ›Deferral is authored‹,
-//! refined 20 September 2026: "the body is held as its lexed tape … and
-//! constructed once per field-type set when a node supplies the types, its
-//! op slots resolving at that construction as anywhere else; so `^`'s
-//! `shared run = (…)` is lexed at the definition and constructed when `x ^ 3`
-//! is built, once for i32 operands, kept on the type for every later `^`
-//! over i32, the interpreter and the compiler reading the same constructed
-//! body").
-//!
-//! `shared run = (…)` in an instance block is lexed once, at the definition,
-//! into a tape fragment ([`crate::parse::Parser::slot_body_fill`]), and the
-//! fragment is held on the type in a node of this shape: `{type: run_body,
-//! value: [text, cells, specs, op]}`. `text` is the string node the body's
-//! text was copied into — its bytes live for the store, and the cells'
-//! spellings index them; `cells` is a `u64` holding the fragment's address,
-//! a [`ParsingTape`] leaked for the run as a source is; `specs` holds the
-//! bodies constructed so far, an array of `[key, fn]` pairs — `key` an array
-//! with one type per instance field (for a field of type `type`, the type it
-//! held), `fn` the function built from the fragment for that set, its
-//! parameters the fields in order. A node of the type points at its set's
-//! function through the slot after its operand run's terminator
-//! ([`spec_of`]): `[field…, null, fn]`, as `+`'s op slot holds `add_i32`
-//! (DESIGN ›Deferral is authored‹: "stores it in the dyad as `+`'s op slot
-//! stores `add_i32`"). The parser writes that slot when the node is placed,
-//! and again should a field's type arrive later
-//! ([`crate::parse::Parser::resolve_specialization`]); a node whose slot is
-//! still empty neither runs nor lowers (ruled 20 September 2026).
+//! A type's held `run` body: `shared run = (…)` is lexed once at the definition into a
+//! tape fragment and constructed once per field-type set when a node supplies the types.
+//! Node shape `{type: run_body, value: [text, cells, specs, op]}`; `specs` is an array
+//! of `[key, fn]` pairs, `key` one type per instance field. DESIGN ›Deferral is authored‹.
 
 use super::numtype::NumType;
 use super::{array, meta, Cx};
@@ -36,14 +13,12 @@ use crate::parse::ParsingTape;
 use crate::store::Store;
 use crate::Core;
 
-/// The held-body node type.
 #[derive(Debug, Clone, Copy)]
 pub struct RunBodyIds {
     pub run_body: DyadPtr,
 }
 
-/// Register the node type. It has no spelling, and nothing runs it: its op
-/// slot stays null, so a read of it is data.
+/// No spelling, and nothing runs it: its op slot stays null, so a read of it is data.
 pub(super) fn register(cx: &mut Cx) -> RunBodyIds {
     let record = meta::operand_record(
         cx,
@@ -60,9 +35,7 @@ const TEXT: usize = 0;
 const CELLS: usize = 1;
 const SPECS: usize = 2;
 
-/// Build the held node over `text` (a string node holding the body with its
-/// brackets) and `cells`, the fragment lexed from it, which must live for
-/// the run.
+/// `text` holds the body with its brackets; `cells` must live for the run.
 pub(crate) fn build(
     store: &mut Store,
     types: &Core,
@@ -79,7 +52,7 @@ pub(crate) fn build(
 /// The body's text, brackets included.
 ///
 /// # Safety
-/// `node` must be a node from [`build`].
+/// `node` must be a node from `build`.
 pub(crate) unsafe fn text_of<'a>(node: DyadPtr) -> &'a str {
     let ops = (*node).value as *const DyadPtr;
     let bytes = super::string::text(*ops.add(TEXT));
@@ -87,20 +60,18 @@ pub(crate) unsafe fn text_of<'a>(node: DyadPtr) -> &'a str {
     std::str::from_utf8(bytes).unwrap_or("")
 }
 
-/// The fragment the body was lexed into.
-///
 /// # Safety
-/// As [`text_of`].
+/// As `text_of`.
 pub(crate) unsafe fn cells_of(node: DyadPtr) -> *mut ParsingTape {
     let ops = (*node).value as *const DyadPtr;
     let handle = *ops.add(CELLS);
     std::ptr::read_unaligned((*handle).value as *const u64) as usize as *mut ParsingTape
 }
 
-/// The pairs `[key, fn]` constructed so far.
+/// The `[key, fn]` pairs constructed so far.
 ///
 /// # Safety
-/// As [`text_of`].
+/// As `text_of`.
 unsafe fn pairs(node: DyadPtr) -> Vec<DyadPtr> {
     let ops = (*node).value as *const DyadPtr;
     let specs = *ops.add(SPECS);
@@ -111,10 +82,10 @@ unsafe fn pairs(node: DyadPtr) -> Vec<DyadPtr> {
     }
 }
 
-/// The function built for `key`, or null when none was.
+/// Null when no function was built for `key`.
 ///
 /// # Safety
-/// As [`text_of`].
+/// As `text_of`.
 pub(crate) unsafe fn lookup(node: DyadPtr, key: &[DyadPtr]) -> DyadPtr {
     for pair in pairs(node) {
         let items = array::items(pair);
@@ -125,10 +96,8 @@ pub(crate) unsafe fn lookup(node: DyadPtr, key: &[DyadPtr]) -> DyadPtr {
     std::ptr::null_mut()
 }
 
-/// Enter `f` as the function for `key`.
-///
 /// # Safety
-/// As [`text_of`]; `key` types from the store, `f` a `fn` node.
+/// As `text_of`; `key` types from the store, `f` a `fn` node.
 pub(crate) unsafe fn insert(
     store: &mut Store,
     types: &Core,
@@ -144,11 +113,10 @@ pub(crate) unsafe fn insert(
     *ops.add(SPECS) = array::build(store, types.array_, &all);
 }
 
-/// Take the entry for `key` out again — a construction that failed leaves
-/// nothing behind.
+/// A construction that failed leaves nothing behind.
 ///
 /// # Safety
-/// As [`insert`].
+/// As `insert`.
 pub(crate) unsafe fn remove(store: &mut Store, types: &Core, node: DyadPtr, key: &[DyadPtr]) {
     let kept: Vec<DyadPtr> = pairs(node)
         .into_iter()
@@ -165,11 +133,11 @@ pub(crate) unsafe fn remove(store: &mut Store, types: &Core, node: DyadPtr, key:
     };
 }
 
-/// The slot after a node's operand run: where its set's function goes.
+/// The slot after a node's operand run, where its set's function goes.
 ///
 /// # Safety
-/// `node` must be the node [`crate::parse::Parser::run_logos_ctor`] minted
-/// for a type whose record carries a run body: `[field…, null, spec]`.
+/// `node` must be a node minted for a type whose record carries a run body:
+/// `[field…, null, spec]`.
 unsafe fn spec_slot(node: DyadPtr) -> *mut DyadPtr {
     let slots = (*node).value as *mut DyadPtr;
     let mut i = 0;
@@ -179,11 +147,10 @@ unsafe fn spec_slot(node: DyadPtr) -> *mut DyadPtr {
     slots.add(i + 1)
 }
 
-/// The function a node of a held-body type runs as — null while no set has
-/// been resolved for it.
+/// Null while no set has been resolved for the node.
 ///
 /// # Safety
-/// As [`spec_slot`].
+/// As `spec_slot`.
 pub(crate) unsafe fn spec_of(node: DyadPtr) -> DyadPtr {
     if (*node).value.is_null() {
         return std::ptr::null_mut();
@@ -191,10 +158,8 @@ pub(crate) unsafe fn spec_of(node: DyadPtr) -> DyadPtr {
     *spec_slot(node)
 }
 
-/// Point `node` at `f`.
-///
 /// # Safety
-/// As [`spec_slot`]; `f` a `fn` node.
+/// As `spec_slot`; `f` a `fn` node.
 pub(crate) unsafe fn set_spec(node: DyadPtr, f: DyadPtr) {
     *spec_slot(node) = f;
 }

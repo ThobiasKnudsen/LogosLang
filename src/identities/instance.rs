@@ -1,22 +1,10 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! Struct instances: construction (`point(3, 4)`, the type applied to its field
-//! values — the same constructor doctrine casts use) and field resolution
-//! (`p.x`).
-//!
-//! An instance is `{type: point, value -> bytes}` — parse-allocated storage laid
-//! out from the field declarations in order, exactly a numeric variable grown
-//! wide. Construction is the runtime half: a `construct` node
-//! `{type: construct, value: [instance, arg0 … argN, null]}` that evaluates each
-//! argument and writes it to its field's offset, yielding unit (a statement).
-//! Field access is the parse-time half, per DESIGN ›Resolution is one rule‹: the
-//! declaration found decides — a field resolves to a *place*, the byte offset
-//! inside the instance's value area — so `p.x` becomes an ordinary numeric node
-//! `{type: i32, value -> blob + offset}` and every existing read, write, and
-//! lowering path just works. Fields are numeric-only in v1 (nested records
-//! arrive with the richer layout) and writable by default, like today's
-//! variables; the immutable-by-default flip arrives with `mut` for both at once.
+//! Record instances: construction (`point(3, 4)`, the type applied to its field values)
+//! and field resolution (`p.x`). An instance is parse-allocated storage laid out from
+//! the field declarations in order; a field resolves to a place at its byte offset, so
+//! every scalar read, write and lowering path serves it unchanged.
 
 use crate::Core;
 use cranelift_codegen::ir::Value;
@@ -30,10 +18,8 @@ use crate::parse::ParseError;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
-/// Register the instance machinery: the `construct` identity (no spelling; the
-/// parser builds these from a record-typed callee) with its native leaf and
-/// lowering, the `.` field-access token (parse-only; access nodes are plain
-/// data), and the `[` `]` pair. Returns `(identity, leaf, . token, index, ])`.
+/// `construct` has no spelling: the parser builds it from a record-typed callee.
+/// Returns the `construct` identity, its leaf, `.`, `index`, `[`, `]`.
 pub(super) fn register(
     cx: &mut Cx,
     cs: &Callables,
@@ -49,20 +35,16 @@ pub(super) fn register(
     cx.lower.insert(construct, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
 
-    // Escaped, because `.` is a regex metacharacter (as `\(` and `\)` are).
+    // Escaped, because `.` is a regex metacharacter.
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::TIGHT);
     let dot = cx.store.alloc_raw(cx.type_, record);
     cx.declare(r"\.", dot);
-    // `.` reads its member's spelling off the cell to its right, and a `[i]`
-    // or `()` cell after that where the read takes one (#59 step 3).
+    // `.` reads its member's spelling off the cell to its right, and a `[i]` or `()` cell after
+    // that where the read takes one.
     cx.metas.insert(dot, |p, _id, tape| p.construct_field_access(tape));
 
-    // `[` is `(` in square brackets (ruled 9 September 2026): one identity at
-    // the discovery threshold, it parses its interior as any bracket's — the
-    // eager-segment loop, closed by its `]` — into a passive index cell the
-    // reads after `.` consume (DESIGN ›The constructor is a field‹: "`[…]`
-    // constructs itself … into a passive node carrying the index"), or, after
-    // a tape, into the element read the tape's constructor consumes.
+    // `[` is `(` in square brackets: it parses its interior as any bracket's into a
+    // passive index cell the reads after `.` consume, or, after a tape, into the element read.
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::OPEN);
     let open_sq = cx.store.alloc_raw(cx.type_, record);
     cx.declare(r"\[", open_sq);
@@ -82,26 +64,17 @@ pub(super) fn register(
     (construct, leaf, dot, index_, open_sq, close_sq)
 }
 
-/// A record's fields as `(type node, width tag, byte offset)` triples, and
-/// its total size in bytes: what [`layout`] reads off a record type.
+/// `(type node, width tag, byte offset)` per field, and the total size.
 pub(crate) type FieldLayout = (Vec<(DyadPtr, NumType, usize)>, usize);
 
-/// The layout a record type stores from its field declarations (DESIGN ›a type
-/// whose constructor derives the layout automatically‹, issue #47): each field
-/// with its numeric type and byte offset, in declaration order, plus the total
-/// size — the offsets walked from the stored `fields` array, the size matching
-/// the stored `size_bytes`. Fields must be numeric or pointer-typed (8 bytes)
-/// in v1 ([`ParseError::UnsupportedOperands`] otherwise — there is no nested
-/// layout yet).
+/// Each field with its numeric type and byte offset, in declaration order, plus the
+/// total size. Fields must be numeric or pointer-typed; there is no nested layout.
 ///
 /// # Safety
-/// `record_logos` must be a record type node from the store (its value a
-/// [`meta::RECORD_TAG`] record).
+/// `record_logos` must be a record type node from the store.
 pub(crate) unsafe fn layout(record_logos: DyadPtr) -> Result<FieldLayout, ParseError> {
-    // A field's logos must be a *type node* (its own type is `logos`, reachable as
-    // the record type's type's logos — the fixed point): that excludes a nested
-    // record definition and a value node standing in logos position, whose value
-    // bytes would otherwise be misread as a width tag.
+    // A field's type must be a type node: that excludes a nested record definition and a
+    // value node standing in type position, whose bytes would be misread as a width tag.
     let type_root = (*(*record_logos).ty).ty;
     let mut fields = Vec::new();
     let mut offset = 0usize;
@@ -122,18 +95,12 @@ pub(crate) unsafe fn layout(record_logos: DyadPtr) -> Result<FieldLayout, ParseE
     Ok((fields, offset))
 }
 
-/// Build a construction `point(args)`: derive the layout, check the argument
-/// count ([`ParseError::CtorArity`]) and each argument's logos against its field
-/// (a literal commits to the field's logos; a concrete mismatch is
-/// [`ParseError::TypeMismatch`]), and return the construct node over the
-/// pre-minted `instance` place. The caller mints `instance` (via
-/// [`layout`] for its size), frame-relative inside a function so each call fills
-/// its own copy, or an absolute blob at top level. The instance rides at operand
-/// 0; the construct is a re-run initializer.
+/// The caller mints `instance` sized by `layout`, frame-relative inside a function or
+/// absolute at top level; it rides at operand 0 and the construct is a re-run initializer.
 ///
 /// # Safety
-/// `record_logos` must be a record type node, `instance` a place of that type
-/// sized to [`layout`], and `args` reduced dyads, all from the store.
+/// `record_logos` must be a record type node, `instance` a place of that type sized to
+/// `layout`, and `args` reduced dyads, all from the store.
 pub(crate) unsafe fn build_ctor(
     store: &mut Store,
     types: &Core,
@@ -151,8 +118,6 @@ pub(crate) unsafe fn build_ctor(
     ops.push(types.ops.construct_);
     for (&arg, &(field, nt, _)) in args.iter().zip(&fields) {
         let fty = (*field).ty;
-        // What the field reads as — a scalar or an address — says what may
-        // fill it (#82).
         let field_read = super::read::place_layout(types, fty);
         let field_ptr = matches!(field_read, Some((super::read::Read::Pointer(_), _)));
         let arg = match numtype_of(types, arg) {
@@ -164,8 +129,7 @@ pub(crate) unsafe fn build_ctor(
                 commit_if_literal(store, types, arg, &Operand::Literal, fty, nt)?
             }
             Operand::Pointer(pointee) => {
-                // Pointees compare as types, not nodes: pointer types are
-                // minted per spelling (`super::pointee_types_match`).
+                // Pointees compare as types, not nodes.
                 if !matches!(field_read, Some((super::read::Read::Pointer(fp), _)) if super::pointee_types_match(fp, pointee))
                 {
                     return Err(ParseError::TypeMismatch);
@@ -183,10 +147,8 @@ pub(crate) unsafe fn build_ctor(
     Ok(store.alloc_raw(construct, value))
 }
 
-/// Run: evaluate each argument and write it to its field's offset in the
-/// instance's storage; construction is a statement and yields unit.
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a construct node as [`build_ctor`] lays it out.
+    // SAFETY: `node` is a construct node from `build_ctor`.
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         let instance = *ops;
@@ -201,16 +163,13 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// Lower: each argument stores to its field's baked address; yields unit.
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a construct node as [`build_ctor`] lays it out.
+    // SAFETY: `node` is a construct node from `build_ctor`.
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         let instance = *ops;
         let (fields, _) =
             layout((*instance).ty).map_err(|_| CompileError::NoLayout((*instance).ty))?;
-        // The instance's base address, resolved once (baked absolute, or a frame
-        // `stack_addr`); each field stores at its byte offset from it.
         let base = lw.place_addr(instance)?;
         // The arguments follow the two fixed head slots (instance, op).
         for (i, &(_, nt, offset)) in fields.iter().enumerate() {

@@ -1,21 +1,10 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `NumType`: the seed's numeric machine type, and the type-switched arithmetic and
-//! comparison helpers the concrete ops' shims share.
-//!
-//! A binary numeric operator node is `{type: op, value: [lhs, rhs, op-leaf]}` —
-//! the concrete machine operation resolved from the operand types rides the op
-//! slot (DESIGN ›which concrete machine operation runs is resolved from the
-//! operand types‹), each leaf's shim a monomorphic wrapper over the helpers
-//! here with its (operation, logos) pair baked in ([`super::ops`]). One
-//! `+`/`<`/… identity serves every numeric type; the ~120 machine ops are graph
-//! leaves, not ~120 files.
-//!
-//! Each numeric **type node** self-describes its `NumType` by the kind byte of the
-//! shared-member record in its value slot (see [`crate::identities::meta`] and
-//! [`of_type_node`]), so neither the interpreter nor the compiler needs a separate
-//! logos→NumType map — the tag rides the graph.
+//! `NumType`, the seed's numeric machine type, and the type-switched arithmetic,
+//! comparison, cast, read and write helpers the concrete ops' shims share. A numeric
+//! type node self-describes its `NumType` by the kind byte of its record, so the tag
+//! rides the graph.
 
 use cranelift_codegen::ir::types;
 
@@ -23,9 +12,7 @@ use crate::dyad::DyadPtr;
 
 use super::Cx;
 
-/// A numeric machine type. `#[repr(u8)]` so the discriminant is the type node's tag.
-/// Public through [`crate::identities::NumType`]: the reflect walker's scalar
-/// shapes carry it.
+/// `#[repr(u8)]` so the discriminant is the type node's tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum NumType {
@@ -42,7 +29,6 @@ pub enum NumType {
 }
 
 impl NumType {
-    /// Recover a `NumType` from a tag byte.
     pub(crate) fn from_tag(t: u8) -> NumType {
         use NumType::*;
         match t {
@@ -60,7 +46,6 @@ impl NumType {
         }
     }
 
-    /// The canonical source spelling of this type (`i32`, `f64`, …), for display.
     pub(crate) fn spelling(self) -> &'static str {
         use NumType::*;
         match self {
@@ -77,17 +62,14 @@ impl NumType {
         }
     }
 
-    /// Whether this is a floating-point logos.
     pub(crate) fn is_float(self) -> bool {
         matches!(self, NumType::F32 | NumType::F64)
     }
 
-    /// Whether this is a signed integer logos (false for unsigned and floats).
     pub(crate) fn is_signed_int(self) -> bool {
         matches!(self, NumType::I8 | NumType::I16 | NumType::I32 | NumType::I64)
     }
 
-    /// The storage width of this `NumType` in bytes.
     pub(crate) fn bytes(self) -> usize {
         use NumType::*;
         match self {
@@ -98,9 +80,8 @@ impl NumType {
         }
     }
 
-    /// The `iconst` immediate encoding this integer type's MAX in its own width
-    /// (an unsigned maximum is all-ones, which is -1 sign-narrowed) — the
-    /// saturation sentinel division by zero yields.
+    /// The saturation sentinel division by zero yields; an unsigned maximum is all-ones,
+    /// which is -1 sign-narrowed.
     pub(crate) fn max_imm(self) -> i64 {
         use NumType::*;
         match self {
@@ -113,7 +94,6 @@ impl NumType {
         }
     }
 
-    /// The `iconst` immediate for this signed integer type's MIN.
     pub(crate) fn min_imm(self) -> i64 {
         use NumType::*;
         match self {
@@ -125,7 +105,6 @@ impl NumType {
         }
     }
 
-    /// The Cranelift logos a value of this `NumType` computes in.
     pub(crate) fn cranelift_type(self) -> types::Type {
         use NumType::*;
         match self {
@@ -139,11 +118,6 @@ impl NumType {
     }
 }
 
-/// Register a numeric type node: its spelling (so it resolves as a type name), its
-/// shared-member record with the `NumType` tag as its kind (self-describing, so
-/// run/compile recover the type from the graph), its juxtaposition constructor,
-/// (its lowering is the reading rule's `Scalar` arm in `Lowerer::lower`). The interpreter reads
-/// its values through the type's width (see [`read_scalar`]).
 pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr {
     let record = super::meta::record(cx.store, nt as u8, super::meta::prec::APPLY);
     let id = cx.store.alloc_raw(cx.type_, record);
@@ -152,47 +126,34 @@ pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr
     id
 }
 
-/// A numeric type's constructor — juxtaposition (DESIGN ›an anonymous typed
-/// value is written by juxtaposition — `i32 32`, the type preceding the
-/// value‹): consume a directly following rational literal (or `- <rational>`,
-/// the negated literal) and commit it exactly to this type, an anonymous typed
-/// value with real storage; a directly following `(` is the conversion
-/// `i32(x)`. Anything else — `,`, an operator, a name — declines the right,
-/// and the constructor "yields its own dyad as-is — the type as a value"
-/// (DESIGN ›Expressions are self-delimiting‹): the type node itself, so
-/// `f(i32, 3)` passes the type.
+/// Juxtaposition: a directly following rational literal (or `- <rational>`) commits
+/// exactly to this type; a following `(` is the conversion `i32(x)`; anything else
+/// declines the right and the type stands as a value, so `f(i32, 3)` passes the type.
 fn construct(
     p: &mut crate::parse::Parser,
     id: DyadPtr,
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, crate::parse::ParseError> {
     let types = p.types();
-    // The cell to the right, lexed on demand: this constructor runs at
-    // discovery (`prec::APPLY`), before the loop has lexed past it. A sign
-    // there belongs to the literal after it, which folds it at its own
-    // discovery — so that literal is lexed too, and the folded cell read.
+    // Runs at discovery, before the loop has lexed past the right cell. A sign there
+    // belongs to the literal after it, which folds it at its own discovery, so that
+    // literal is lexed too.
     let mut right = p.cell_at(tape, 1)?;
     if matches!(right, Some(c) if !c.constructed && c.identity(types) == types.minus) {
         p.cell_at(tape, 2)?;
         right = tape.at(1).copied();
     }
     let node = match right {
-        // A rational literal cell (a negative one already folded at
-        // discovery): the anonymous typed value. SAFETY: a dyad cell is a
-        // node from the store; `id` is this numeric type's registered node.
         Some(c)
             // SAFETY: a constructed, non-bracket cell holds a node from the store.
             if c.constructed && !c.is_bracket() && unsafe { (*c.dyad).ty } == types.rational =>
         {
             let l = c.dyad;
             tape.remove(1);
-            // SAFETY: `l` is that node, rational-typed by the guard; `id` is
-            // this numeric type's registered node.
+            // SAFETY: `l` is rational-typed by the guard; `id` is this numeric type's node.
             unsafe { super::commit_literal_to(p.store(), types, l, id) }?
         }
-        // `i32(x)`: the bracket is this type's to read — a conversion (DESIGN
-        // ›a numeric type applied to a value is the conversion, per-constructor
-        // rather than a uniform cast syntax‹), never `(`'s call (#59 step 2).
+        // `i32(x)`: the bracket is this type's to read, a conversion, never `(`'s call.
         Some(c) if c.is_bracket() => {
             let scope = c.dyad;
             // SAFETY: `scope` is the bracket's node from the store.
@@ -207,15 +168,10 @@ fn construct(
     Ok(crate::parse::Constructed::Placed)
 }
 
-/// The value-slot tag for the `void` unit logos, one past every [`NumType`] discriminant
-/// (0..=9) so a void type node is told apart from a numeric one by its tag alone,
-/// without threading a separate handle through run and compile.
+/// One past every `NumType` discriminant, so a void type node is told apart by its tag alone.
 pub(crate) const VOID_TAG: u8 = 10;
 
-/// Register the `void` unit logos: its spelling and its [`VOID_TAG`]-kinded record.
-/// Unlike a numeric type it carries no lowering — in the seed `void` appears only as
-/// a `->` return type, marking a function that runs its body for effect and yields
-/// unit.
+/// No lowering: `void` appears only as a `->` return type.
 pub(crate) fn register_void(cx: &mut Cx) -> DyadPtr {
     let record = super::meta::record(cx.store, VOID_TAG, super::meta::prec::INERT);
     let id = cx.store.alloc_raw(cx.type_, record);
@@ -223,11 +179,8 @@ pub(crate) fn register_void(cx: &mut Cx) -> DyadPtr {
     id
 }
 
-/// Whether `type_node` is the `void` unit logos (its value slot holds [`VOID_TAG`]).
-///
 /// # Safety
-/// `type_node` must be null or a valid type node from the store (null — a bare
-/// parameter's undeclared logos — is no `void`).
+/// `type_node` must be null or a valid type node from the store.
 pub(crate) unsafe fn is_void_type(type_node: DyadPtr) -> bool {
     if type_node.is_null() {
         return false;
@@ -236,17 +189,12 @@ pub(crate) unsafe fn is_void_type(type_node: DyadPtr) -> bool {
     !v.is_null() && *(v as *const u8) == VOID_TAG
 }
 
-/// The value-slot tag for the `string` logos, past [`VOID_TAG`].
 pub(crate) const STRING_TAG: u8 = 11;
 
-/// The value-slot tag for the `comment` logos (prose nodes), past [`STRING_TAG`].
 pub(crate) const COMMENT_TAG: u8 = 12;
 
-/// Whether `type_node` is the `comment` logos — prose, invisible to value flow.
-///
 /// # Safety
-/// `type_node` must be null or a valid type node from the store (null — a bare
-/// parameter's undeclared logos — is no comment).
+/// `type_node` must be null or a valid type node from the store.
 pub(crate) unsafe fn is_comment_type(type_node: DyadPtr) -> bool {
     if type_node.is_null() {
         return false;
@@ -255,17 +203,11 @@ pub(crate) unsafe fn is_comment_type(type_node: DyadPtr) -> bool {
     !v.is_null() && *(v as *const u8) == COMMENT_TAG
 }
 
-/// The value-slot tag for pointer type (`@T`), past [`COMMENT_TAG`]. A pointer
-/// type node's record carries its pointee as the payload, so the graph carries
-/// what is pointed at (see [`crate::identities::pointer`] and
-/// [`crate::identities::meta`]).
+/// A pointer type's record carries its pointee as the payload.
 pub(crate) const ADDR_TAG: u8 = 13;
 
-/// Whether `type_node` is a pointer type (`@T`).
-///
 /// # Safety
-/// `type_node` must be null or a valid type node from the store (null — a bare
-/// parameter's undeclared logos — is no pointer).
+/// `type_node` must be null or a valid type node from the store.
 pub(crate) unsafe fn is_pointer_type(type_node: DyadPtr) -> bool {
     if type_node.is_null() {
         return false;
@@ -274,35 +216,22 @@ pub(crate) unsafe fn is_pointer_type(type_node: DyadPtr) -> bool {
     !v.is_null() && *(v as *const u8) == ADDR_TAG
 }
 
-/// The pointee type node of a pointer type (`@T` → `T`), the record's payload.
-///
 /// # Safety
-/// `type_node` must be a pointer type node ([`is_pointer_type`]).
+/// `type_node` must be a pointer type node (`is_pointer_type`).
 pub(crate) unsafe fn pointee_of(type_node: DyadPtr) -> DyadPtr {
     let p = (*type_node).value.add(super::meta::PAYLOAD_OFF);
     std::ptr::read_unaligned(p as *const DyadPtr)
 }
 
-/// Whether a data node whose type is `type_node` holds a scalar the
-/// interpreter can read at a width: a numeric type, `bool` (whose type node
-/// carries no tag), or a pointer (an 8-byte address). The unit `void`, the
-/// text substance (`string`, `comment`), a record type, and the null
-/// undeclared logos of a bare parameter are not scalars.
+/// A numeric or pointer type; `void`, text, a record type, and a null type are not scalars.
 ///
 /// # Safety
-/// `type_node` must be null or a *record-carrying* type node from the store —
-/// an identity whose value is a [`super::meta`] record with a kind tag as its
-/// first byte. Every registered logos carries one (a record type included,
-/// since issue #47's stored layout record).
+/// `type_node` must be null or a record-carrying type node from the store.
 pub(crate) unsafe fn is_scalar_type(type_node: DyadPtr) -> bool {
     if type_node.is_null() {
         return false;
     }
     let v = (*type_node).value;
-    // A type with no record is no scalar. This used to answer `true` so that
-    // an undefined placeholder read as an 8-byte container; the reading rule
-    // names that case itself now (`Read::Container`, `Read::Undefined`), and
-    // its debug assertion has shown no such type reaches a type slot (#82).
     if v.is_null() {
         return false;
     }
@@ -310,9 +239,7 @@ pub(crate) unsafe fn is_scalar_type(type_node: DyadPtr) -> bool {
     tag < VOID_TAG || tag == ADDR_TAG
 }
 
-/// Read the scalar stored at `slot`, typed by `type_node`, into the `i64`
-/// bit-container the interpreter computes in (sign/zero-extended for ints per
-/// signedness; the raw float bits for `f32`/`f64`).
+/// Into the `i64` container: sign or zero-extended per signedness, raw bits for floats.
 ///
 /// # Safety
 /// `type_node` is a valid type node; `slot` points at a value of that type's width.
@@ -333,18 +260,13 @@ pub(crate) unsafe fn read_scalar(type_node: DyadPtr, slot: *const u8) -> i64 {
     }
 }
 
-/// Write the `i64` bit-container `bits` to `slot` at `type_node`'s width — the storage
-/// dual of [`read_scalar`], so a write then a read round-trips.
-///
 /// # Safety
 /// `type_node` is a valid type node; `slot` points at storage of that type's width.
 pub(crate) unsafe fn write_scalar(type_node: DyadPtr, slot: *mut u8, bits: i64) {
     write_scalar_nt(of_type_node(type_node), slot, bits)
 }
 
-/// [`write_scalar`] with the width already resolved to a `NumType` — the form a
-/// concrete store op uses, its type baked at registration rather than read from
-/// a node.
+/// The form a concrete store op uses, its type baked at registration.
 ///
 /// # Safety
 /// `slot` points at storage of `nt`'s width.
@@ -365,14 +287,11 @@ pub(crate) unsafe fn write_scalar_nt(nt: NumType, slot: *mut u8, bits: i64) {
     }
 }
 
-/// The `NumType` a numeric type node describes (read from its value-slot tag).
-/// A pointer type reads and writes as its 8-byte address (`U64`) — the one
-/// central case that gives every width-driven path (reads, writes, leaf loads,
-/// the ABI boundary, record layout) pointer behaviour with no further edits.
+/// A pointer type reads and writes as its 8-byte address (`U64`), which gives every
+/// width-driven path pointer behaviour.
 ///
 /// # Safety
-/// `type_node` must be a numeric or pointer type node with a tagged value slot
-/// (see `identities::i32` and its siblings, and `identities::pointer`).
+/// `type_node` must be a numeric or pointer type node.
 pub(crate) unsafe fn of_type_node(type_node: DyadPtr) -> NumType {
     let tag = *((*type_node).value as *const u8);
     if tag == ADDR_TAG {
@@ -381,20 +300,17 @@ pub(crate) unsafe fn of_type_node(type_node: DyadPtr) -> NumType {
     NumType::from_tag(tag)
 }
 
-/// The type node stored at a conversion's third slot (its target,
-/// `[operand, from, to, op]`).
+/// A conversion is `[operand, from, to, op]`; this is `to`.
 ///
 /// # Safety
-/// `node` must be a conversion node as `convert::build_convert` lays it out.
+/// `node` must be a conversion node from `convert::build_convert`.
 pub(crate) unsafe fn stored_type(node: DyadPtr) -> DyadPtr {
     *((*node).value as *const DyadPtr).add(2)
 }
 
-/// The five machine arithmetic operations. Integer `Div`/`Rem` are TOTAL
-/// (settled): a zero divisor yields the type's MAX — a loud sentinel, easier to
-/// discover than 0 — the signed MIN/-1 overflow saturates to MAX, and MIN % -1 is
-/// the well-defined 0. Float `Div` is IEEE; float `Rem` is rejected at parse
-/// (Cranelift has no float remainder instruction).
+/// Integer `Div`/`Rem` are total: a zero divisor yields the type's MAX, the signed
+/// MIN/-1 overflow saturates to MAX, and MIN % -1 is 0. Float `Rem` is rejected at
+/// parse (Cranelift has no float remainder).
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 pub(crate) enum ArithOp {
@@ -406,8 +322,8 @@ pub(crate) enum ArithOp {
 }
 
 impl ArithOp {
-    /// Recover an `ArithOp` from its discriminant — the concrete-op registration
-    /// loop's index (a const generic cannot be an enum on stable Rust).
+    /// The concrete-op registration loop's index (a const generic cannot be an enum on stable
+    /// Rust).
     pub(crate) fn from_tag(t: u8) -> ArithOp {
         use ArithOp::*;
         match t {
@@ -421,7 +337,7 @@ impl ArithOp {
     }
 }
 
-/// The six machine comparisons (their result is `bool`, an i32 0/1).
+/// The result is `bool`, an i32 0/1.
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 pub(crate) enum CmpOp {
@@ -434,7 +350,6 @@ pub(crate) enum CmpOp {
 }
 
 impl CmpOp {
-    /// Recover a `CmpOp` from its discriminant, as [`ArithOp::from_tag`].
     pub(crate) fn from_tag(t: u8) -> CmpOp {
         use CmpOp::*;
         match t {
@@ -449,8 +364,7 @@ impl CmpOp {
     }
 }
 
-/// Interpret the `i64` bit-containers `l`/`r` as `logos`, apply the arithmetic `op` with
-/// wrapping semantics (matching the JIT), and return the result's bit-container.
+/// Wrapping semantics, matching the JIT.
 pub(crate) fn apply_arith(op: ArithOp, logos: NumType, l: i64, r: i64) -> i64 {
     macro_rules! int {
         ($t:ty) => {{
@@ -459,8 +373,6 @@ pub(crate) fn apply_arith(op: ArithOp, logos: NumType, l: i64, r: i64) -> i64 {
                 ArithOp::Add => a.wrapping_add(b),
                 ArithOp::Sub => a.wrapping_sub(b),
                 ArithOp::Mul => a.wrapping_mul(b),
-                // Total division: a zero divisor yields the type's MAX, and the
-                // signed MIN/-1 overflow saturates to MAX (see [`ArithOp`]).
                 ArithOp::Div => {
                     if b == 0 {
                         <$t>::MAX
@@ -468,8 +380,6 @@ pub(crate) fn apply_arith(op: ArithOp, logos: NumType, l: i64, r: i64) -> i64 {
                         a.checked_div(b).unwrap_or(<$t>::MAX)
                     }
                 }
-                // x % 0 is MAX (the same loud sentinel); MIN % -1 is the
-                // well-defined 0 (`checked_rem`'s only other None).
                 ArithOp::Rem => {
                     if b == 0 {
                         <$t>::MAX
@@ -509,10 +419,8 @@ pub(crate) fn apply_arith(op: ArithOp, logos: NumType, l: i64, r: i64) -> i64 {
     }
 }
 
-/// Interpret `l`/`r` as `logos` and add them, `None` where the sum does not
-/// fit the type: what a `for` counter's step does at the end of its width
-/// (#111), so the loop ends there instead of wrapping around. A float sum
-/// always fits (it saturates to infinity).
+/// `None` where the sum does not fit: a `for` counter's step ends the loop there instead
+/// of wrapping. A float sum always fits.
 pub(crate) fn checked_add(logos: NumType, l: i64, r: i64) -> Option<i64> {
     macro_rules! int {
         ($t:ty) => {
@@ -533,8 +441,6 @@ pub(crate) fn checked_add(logos: NumType, l: i64, r: i64) -> Option<i64> {
     }
 }
 
-/// Interpret `l`/`r` as `logos` and apply the comparison `op`, returning the i32 0/1
-/// bool in an `i64`.
 pub(crate) fn apply_compare(op: CmpOp, logos: NumType, l: i64, r: i64) -> i64 {
     macro_rules! cmp {
         ($a:expr, $b:expr) => {{
@@ -565,11 +471,8 @@ pub(crate) fn apply_compare(op: CmpOp, logos: NumType, l: i64, r: i64) -> i64 {
     }
 }
 
-/// Cast the `i64` bit-container `v`, holding a `from`-typed value, to `to`, applying
-/// Rust `as` semantics: int↔int wrap/extend, int→float round-to-nearest, float→int
-/// saturate (NaN→0), float↔float round. Returns the result's bit-container. This is the
-/// interpreter's cast; the compiler's [`crate::compile::Lowerer::emit_cast`] must stay
-/// bit-for-bit identical, since the interpreter is the compiler's oracle.
+/// Rust `as` semantics. The compiler's `emit_cast` must stay bit-for-bit identical: the
+/// interpreter is the compiler's oracle.
 pub(crate) fn apply_cast(from: NumType, to: NumType, v: i64) -> i64 {
     use NumType::*;
     if from.is_float() {
@@ -580,8 +483,7 @@ pub(crate) fn apply_cast(from: NumType, to: NumType, v: i64) -> i64 {
         };
         return encode_from_f64(to, f);
     }
-    // Decode the source integer to an exact `i128` (every int width fits), reading the
-    // container at the source's width and signedness.
+    // Every integer width fits an i128 exactly.
     let i: i128 = match from {
         I8 => i128::from(v as i8),
         I16 => i128::from(v as i16),
@@ -596,8 +498,6 @@ pub(crate) fn apply_cast(from: NumType, to: NumType, v: i64) -> i64 {
     encode_from_i128(to, i)
 }
 
-/// Encode an exact integer into `to`'s bit-container (Rust `as` from `i128`: an int
-/// target wraps to its width, a float target rounds to nearest).
 fn encode_from_i128(to: NumType, i: i128) -> i64 {
     use NumType::*;
     match to {
@@ -614,8 +514,6 @@ fn encode_from_i128(to: NumType, i: i128) -> i64 {
     }
 }
 
-/// Encode a float into `to`'s bit-container (Rust `as` from `f64`: an int target
-/// saturates with NaN→0, an `f32` target rounds to nearest).
 fn encode_from_f64(to: NumType, f: f64) -> i64 {
     use NumType::*;
     match to {

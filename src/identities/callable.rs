@@ -1,29 +1,11 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `callable`: the type whose values are the complete jump information — an
-//! `@exec` entry plus the convention identity the jump follows (DESIGN ›The
-//! callable ground is `@exec`‹; issue #44, settled July 2026).
-//!
-//! Every exec leaf is a `callable` value: the concrete machine operations
-//! (`add_i32`, `lt_f64`, …), the statement natives (`if_native`,
-//! `scope_native`, …), and a compiled function's code. Identities carry *no*
-//! code — their shared-member records stay pure parse/layout metadata — so the
-//! only path from a runnable node to machine code is through the callable leaf
-//! stored in the node's own value (its op slot). Arity is deliberately no part
-//! of a callable: the caller derives it — the seed-native convention *implies*
-//! two containers (runtime context and node), and the container convention
-//! reads its count from the signature on `fn` — so nothing of the caller's
-//! knowledge rides inside the callee's value (the `bcode {entry, arity}`
-//! wrapper stays rejected).
-//!
-//! Conventions are identities, not an enum: declared metadata a backend renders
-//! per target, open-ended (new backends mint new ones). The seed registers two:
-//! `seed-native` (a Rust `RunFn` shim taking the runtime context and the node)
-//! and `container-i64` (compiled artifacts taking their `i64` bit-containers as a block, `(argv, argc)`,
-//! as `run::call_compiled` jumps to).
-//!
-//! Value layout (16 bytes, native-endian): `[entry: usize][convention: dyad@]`.
+//! `callable`, the type whose values are the complete jump information: an `@exec`
+//! entry plus the convention identity the jump follows. Every exec leaf is one, and the
+//! only path from a runnable node to machine code is the leaf in its op slot. Arity is
+//! no part of a callable; the caller derives it. Value layout, 16 bytes: `[entry:
+//! usize][convention: dyad@]`.
 
 use crate::dyad::DyadPtr;
 use crate::run::RunFn;
@@ -31,32 +13,22 @@ use crate::store::Store;
 
 use super::{meta, string, Cx};
 
-/// Byte offset of the `@exec` entry in a callable value.
 const ENTRY_OFF: usize = 0;
-/// Byte offset of the convention identity.
 const CONVENTION_OFF: usize = 8;
 
-/// The callable machinery's identities: the `callable` logos, the `convention`
-/// logos, and the conventions the seed mints values under.
 pub(crate) struct Callables {
-    /// The `callable` logos; every exec leaf's `logos`.
     pub callable: DyadPtr,
-    /// The `convention` logos; the identities below are its values.
     pub convention: DyadPtr,
-    /// `seed-native`: a Rust shim `fn(&mut Runtime, DyadPtr) -> Result<i64, RunError>`.
+    /// A Rust shim `fn(&mut Runtime, DyadPtr) -> Result<i64, RunError>`.
     pub seed_native: DyadPtr,
-    /// `container-i64`: compiled code taking its `i64` bit-containers as a
-    /// block on the caller's stack, `(argv, argc)` ([`crate::run::MachineFn`]).
+    /// Compiled code taking `(argv, argc)` over i64 containers.
     pub container_i64: DyadPtr,
-    /// `seed-parse`: the one constructor signature
-    /// ([`crate::parse::ConstructFn`]) — the convention of every constructor
-    /// slot's leaf until self-hosting ports constructors to Logos source.
+    /// The one constructor signature, `ConstructFn`.
     pub seed_parse: DyadPtr,
 }
 
-/// Register the `callable` and `convention` type and the two seed conventions.
-/// Neither logos has a spelling: callables are minted by registration loops and
-/// compilation, never written in source (the same as `convert`).
+/// Neither type has a spelling: callables are minted by registration loops and compilation,
+/// never written in source.
 pub(super) fn register(cx: &mut Cx) -> Callables {
     let record = meta::record(cx.store, meta::CALLABLE_TAG, meta::prec::INERT);
     let callable = cx.store.alloc_raw(cx.type_, record);
@@ -71,16 +43,13 @@ pub(super) fn register(cx: &mut Cx) -> Callables {
     Callables { callable, convention, seed_native, container_i64, seed_parse }
 }
 
-/// Mint a convention identity: `{type: convention, value -> name string node}`.
+/// `{type: convention, value -> name string node}`.
 fn mint_convention(cx: &mut Cx, convention: DyadPtr, name: &[u8]) -> DyadPtr {
     let text = string::build_text(cx.store, cx.string_, name);
     cx.store.alloc_raw(convention, text.cast())
 }
 
-/// Mint a callable leaf: `{type: callable, value -> [entry, convention]}`. The one
-/// licensed mint in the seed — `entry` must be the address of code the given
-/// convention can actually jump to (a Rust `RunFn` shim under `seed-native`, a
-/// finalized JIT function under `container-i64`).
+/// The one licensed mint: `entry` must be the address of code the convention can jump to.
 pub(crate) fn mint(
     store: &mut Store,
     callable: DyadPtr,
@@ -94,8 +63,7 @@ pub(crate) fn mint(
     store.alloc_raw(callable, value)
 }
 
-/// Mint a seed-native leaf from its Rust shim — the fn-pointer-to-address cast
-/// done once, honestly, at the one place addresses enter the graph.
+/// The fn-pointer-to-address cast, done once where addresses enter the graph.
 pub(crate) fn mint_native(
     store: &mut Store,
     callable: DyadPtr,
@@ -105,21 +73,15 @@ pub(crate) fn mint_native(
     mint(store, callable, entry as usize, convention)
 }
 
-/// Install `entry` into an already-minted callable leaf — the backend
-/// finalizing code into a leaf minted earlier with a zero entry (`f.compile()`
-/// mints its leaf at parse, when the store is at hand, and the compile at run
-/// time only patches the entry in). The same licensed-mint rule applies: the
-/// caller is the machinery that made `entry` executable.
+/// For a leaf minted with a zero entry: `f.compile()` mints its leaf at parse and patches
+/// the entry in at run time.
 ///
 /// # Safety
-/// `leaf` must be a callable value ([`is_callable`]) from the store.
+/// `leaf` must be a callable value (`is_callable`) from the store.
 pub(crate) unsafe fn install_entry(leaf: DyadPtr, entry: usize) {
     std::ptr::write_unaligned((*leaf).value.add(ENTRY_OFF) as *mut usize, entry);
 }
 
-/// Whether `node` is a callable leaf, read from the graph alone: its type's
-/// record kind is [`meta::CALLABLE_TAG`].
-///
 /// # Safety
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn is_callable(node: DyadPtr) -> bool {
@@ -127,18 +89,14 @@ pub(crate) unsafe fn is_callable(node: DyadPtr) -> bool {
     !logos.is_null() && meta::kind_of(logos) == Some(meta::CALLABLE_TAG)
 }
 
-/// The `@exec` entry of a callable leaf.
-///
 /// # Safety
-/// `leaf` must be a callable value ([`is_callable`]).
+/// `leaf` must be a callable value (`is_callable`).
 pub(crate) unsafe fn entry_of(leaf: DyadPtr) -> usize {
     std::ptr::read_unaligned((*leaf).value.add(ENTRY_OFF) as *const usize)
 }
 
-/// The convention identity of a callable leaf.
-///
 /// # Safety
-/// As [`entry_of`].
+/// As `entry_of`.
 pub(crate) unsafe fn convention_of(leaf: DyadPtr) -> DyadPtr {
     std::ptr::read_unaligned((*leaf).value.add(CONVENTION_OFF) as *const DyadPtr)
 }
@@ -184,10 +142,8 @@ mod tests {
                 crate::reflect::text_of((*core.conv_container).value.cast()),
                 b"container-i64"
             );
-            // The logos carry their record kinds, readable from the graph alone.
             assert_eq!(meta::kind_of(core.callable_), Some(meta::CALLABLE_TAG));
             assert_eq!(meta::kind_of(core.convention_), Some(meta::CONVENTION_TAG));
-            // A non-callable node is told apart by the same graph read.
             assert!(!is_callable(core.conv_seed_native));
         }
     }

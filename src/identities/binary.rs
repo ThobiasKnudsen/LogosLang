@@ -1,26 +1,10 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The eleven infix operators over two numeric operands — `+ - * / %` and
-//! `< > <= >= == !=`. Each is a parse-time constructor owning no code
-//! (DESIGN ›The callable ground is `@exec`‹; issue #44): from its operand
-//! types it resolves each application to one concrete machine operation and
-//! stores that leaf in the node's op slot — `{type: +, value: [lhs, rhs,
-//! add_i32]}` — so run jumps through the node and compile reads the same
-//! resolution. One identity serves every numeric type; the concrete
-//! operations are the callable leaves of [`super::ops`].
-//!
-//! What differs per operator is data — its spelling, its place on the one
-//! parse_rank axis, its family and machine operation — held in one table
-//! here ([`register_all`]) as [`super::ops`] holds the leaves, and the
-//! resolution rule is written once ([`build_op`]): two comptime rationals
-//! fold now (exact fraction math, a comparison to a `bool` literal), and
-//! otherwise [`resolve_binary`] settles the operand type — matching concrete
-//! types keep theirs, a literal molds to its partner — and the leaf for that
-//! type goes in the op slot. Three operators carry one extra each: `-`
-//! opening with no left operand negates the operand to its right; `%` has no
-//! float leaf; `==` and `!=` compare two identities at parse and two
-//! addresses at run before the numeric rule.
+//! The eleven infix operators over two numeric operands, `+ - * / %` and
+//! `< > <= >= == !=`. Each resolves an application to one concrete leaf from its
+//! operand types and stores it in the node's op slot, `[lhs, rhs, leaf]`; two
+//! comptime rationals fold at parse instead.
 
 use cranelift_codegen::ir::Value;
 
@@ -33,14 +17,12 @@ use crate::parse::{Assoc, ConstructFn, ParseError};
 use crate::store::Store;
 use crate::Core;
 
-/// The machine family an operator resolves into, with its operation.
 #[derive(Clone, Copy)]
 pub(super) enum Family {
     Arith(ArithOp),
     Cmp(CmpOp),
 }
 
-/// The eleven identities, as [`register_all`] mints them.
 pub(super) struct BinaryIds {
     pub plus: DyadPtr,
     pub minus: DyadPtr,
@@ -55,11 +37,7 @@ pub(super) struct BinaryIds {
     pub ne: DyadPtr,
 }
 
-/// Register the eleven operators: spelling, parse_rank (all left-associative:
-/// `+`/`-` additive, `*`/`/`/`%` multiplicative, the relational four above
-/// the two equalities, the trie longest-matching `<=` over `<` and `==`
-/// over `=`), constructor and lowering. The order is the index's insertion
-/// order.
+/// All left-associative; the trie longest-matches `<=` over `<` and `==` over `=`.
 pub(super) fn register_all(cx: &mut Cx) -> BinaryIds {
     use meta::prec::{ADDITIVE, COMPARE, EQUALITY, MULTIPLICATIVE};
     BinaryIds {
@@ -77,9 +55,6 @@ pub(super) fn register_all(cx: &mut Cx) -> BinaryIds {
     }
 }
 
-/// Register one operator: a plain type whose record is parse and layout
-/// metadata (`[lhs, rhs, op]`); the executable code lives on the leaves its
-/// applications reference.
 fn register(cx: &mut Cx, spelling: &str, rank: f64, family: Family) -> DyadPtr {
     let record =
         meta::operand_record(cx, meta::TUPLE_TAG, rank, Assoc::Left, &["lhs", "rhs", "op"]);
@@ -105,10 +80,8 @@ const GE: u8 = CmpOp::Ge as u8;
 const EQ: u8 = CmpOp::Eq as u8;
 const NE: u8 = CmpOp::Ne as u8;
 
-/// The monomorphic constructor and lowering of an operator, its family and
-/// operation baked in as const generics (as [`super::ops`] bakes its
-/// leaves): a table entry is a plain fn pointer, so each pair is its own
-/// function. `-` has its own constructor, for its prefix form.
+/// A table entry is a plain fn pointer, so each (family, op) pair is its own function;
+/// `-` has its own constructor for its prefix form.
 fn shims(family: Family) -> (ConstructFn, LowerFn) {
     match family {
         Family::Arith(ArithOp::Add) => {
@@ -133,7 +106,6 @@ fn shims(family: Family) -> (ConstructFn, LowerFn) {
     }
 }
 
-/// The family and operation a shim's const generics name.
 fn family_of<const FAMILY: u8, const OP: u8>() -> Family {
     if FAMILY == ARITH {
         Family::Arith(ArithOp::from_tag(OP))
@@ -142,7 +114,6 @@ fn family_of<const FAMILY: u8, const OP: u8>() -> Family {
     }
 }
 
-/// [`build_op`] with the operator baked in, the shape [`super::infix_construct`] takes.
 fn build<const FAMILY: u8, const OP: u8>(
     store: &mut Store,
     types: &Core,
@@ -153,12 +124,6 @@ fn build<const FAMILY: u8, const OP: u8>(
     build_op(store, types, op, family_of::<FAMILY, OP>(), lhs, rhs)
 }
 
-/// Build `lhs <op> rhs`: fold two comptime rationals now (exact fraction
-/// math, a comparison to a `bool` literal), else resolve the operand type
-/// ([`resolve_binary`]: matching concrete types keep theirs, a literal
-/// molds to its partner, two literals fold exactly; non-numeric operands are
-/// [`ParseError::UnsupportedOperands`]) and store the leaf for that type in
-/// the op slot: `{type: op, value: [lhs, rhs, leaf]}`.
 fn build_op(
     store: &mut Store,
     types: &Core,
@@ -179,8 +144,7 @@ fn build_op(
             } else {
                 // SAFETY: as above.
                 let ([lhs, rhs], nt) = unsafe { resolve_binary(store, types, lhs, rhs) }?;
-                // `%` over floats mints no leaf: there is no machine float
-                // remainder (Cranelift has none), so the node cannot exist.
+                // No machine float remainder exists, so the node cannot.
                 if matches!(a, ArithOp::Rem) && nt.is_float() {
                     return Err(ParseError::UnsupportedOperands);
                 }
@@ -211,12 +175,8 @@ fn build_op(
     Ok(store.alloc_raw(op, value))
 }
 
-/// A rational operation at run time (#133 slice 8, part 4; DESIGN ›Numeric
-/// literals are uncommitted until context classifies them‹: the result
-/// "*stays* `rational_number`"): when either side is a rational value, the
-/// other must be one too, or a literal, which is boxed
-/// ([`rational::rational_operand`]); a concrete number beside a rational is
-/// the mismatch, crossing being explicit. `None` when neither side is one.
+/// When either side is a rational value, the other must be one too or a literal (boxed);
+/// a concrete number beside a rational is the mismatch. `None` when neither side is one.
 ///
 /// # Safety
 /// `lhs`/`rhs` are valid dyads from the store.
@@ -235,16 +195,9 @@ unsafe fn rational_slots(
     Ok(Some([l, r, leaf]))
 }
 
-/// `==`/`!=` over what is not two numbers. What the two operands are is the
-/// reading rule's answer (#82). Two identities in hand compare by identity
-/// now: types are interned, so pointer identity *is* type identity (roadmap
-/// #30) — `x:dyad.type == i32` is decided at parse. Two values that read as
-/// node addresses — an identity against a box or a view, two boxes, a bare
-/// parameter that "accepts any dyad" — compare those addresses when the
-/// program runs (DESIGN ›A type is a comptime value‹, 12 September 2026: a
-/// type value "may be passed to a function, held in a place, and compared"),
-/// and so do two pointers (›Declarations are immutable by default‹: "`&x`
-/// and `&y` differ"; #123). `None` hands the numeric rule the rest.
+/// Two identities compare by identity at parse (types are interned); two values that
+/// read as node addresses, or two pointers, compare those addresses at run. `None`
+/// hands the numeric rule the rest.
 fn build_identity_compare(
     store: &mut Store,
     types: &Core,
@@ -273,14 +226,9 @@ fn build_identity_compare(
     None
 }
 
-/// `-`'s constructor. At reduction (two completed operands flanking the
-/// cursor) it is ordinary subtraction. Opening fresh — no left operand — it
-/// negates the operand to its right (DESIGN ›Numeric literals‹, ruled 5
-/// September 2026: one identity whose constructor reads its left context),
-/// spelled `0 - x`, the sketch's own spelling of a negative, so it molds to
-/// the operand's type and lowers as a subtraction. A literal to the right was
-/// already folded into a negative literal at discovery by the literal's own
-/// constructor, so this is the non-literal case.
+/// At reduction it is subtraction. Opening fresh, with no left operand, it negates the
+/// operand to its right as `0 - x`, so it molds to the operand's type and lowers as a
+/// subtraction; a literal to the right was already folded at discovery.
 fn construct_minus(
     p: &mut crate::parse::Parser,
     id: DyadPtr,
@@ -300,7 +248,6 @@ fn construct_minus(
     Ok(crate::parse::Constructed::Placed)
 }
 
-/// Lower: emit the machine operation for the resolved operand type.
 fn lower<const FAMILY: u8, const OP: u8>(
     lw: &mut Lowerer,
     node: DyadPtr,

@@ -1,54 +1,28 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The shared-member record every core identity carries in its value slot — the
-//! seed's realization of the sealed `logos` model (DESIGN ›A type's metadata is
-//! shared by its values‹, issue #30) and of layout-as-graph-data (issue #42).
-//!
-//! Anything that stands in a node's `type` position stores, once, the members
-//! its values share: its parse `parse_rank` and `associativity`, its
-//! `constructor` (a native callable leaf; see below) and `destructor` (the
-//! teardown the drop model installs on an owning pointer type, null on every
-//! other identity), and the *layout* that says how a value of it is read — a
-//! scalar width, a text or fraction blob, a pointer's pointee, or the arity
-//! and role names of an application's operands. A generic walker
-//! ([`crate::reflect`]) reads any node's structure from these records alone,
-//! and the parser dispatches from them too: the driver classifies a token
-//! from constructor presence, its place on the one parse_rank axis
-//! ([`prec`]: at or above `(` it runs at discovery, below at the boundary),
-//! and the kind byte — the constructors drive the tape (DESIGN ›Source
-//! becomes runnable›). The constructor is a `seed-parse` callable (one
-//! [`crate::parse::ConstructFn`] signature) whose body stays `native` until
-//! self-hosting ports it to Logos source (the #42 boundary). Only `run`'s
-//! lowering table remains Rust-side, awaiting per-backend keying.
+//! The shared-member record every identity carries in its value slot: parse rank
+//! and associativity, the constructor and destructor leaves, the code and run-body
+//! slots, the interned pointer type, and the layout its values are read by.
 //!
 //! Record layout (unaligned, native-endian, byte offsets):
 //!
 //! ```text
-//! [0]        u8   kind — the type-tag namespace (see below)
+//! [0]        u8   kind: the type-tag namespace (see below)
 //! [1]        u8   associativity (0 left-to-right, 1 right-to-left)
-//! [2..10]    f64  parse_rank — the identity's place on the one axis ([`prec`])
-//! [10..18]   u64  constructor — a callable leaf (`seed-parse` convention,
-//!                 one `ConstructFn` signature), or 0: undefined
-//! [18..26]   u64  destructor  (the owning pointer's teardown, else 0)
-//! [26..34]   u64  code — the `fn` node a type body's `code = …` filled (#63):
-//!                 what a node of the type runs and compiles as, or 0
-//! [34..42]   u64  run body — the lexed body a `shared run = (…)` line held
-//!                 (#133 slice 5), constructed per field-type set later, or 0
-//! [42..50]   u64  pointer type — the one `@T` of this type, written by the
-//!                 first mint and read back by every later one (#89), or 0
+//! [2..10]    f64  parse_rank
+//! [10..18]   u64  constructor: a `seed-parse` callable leaf, or 0
+//! [18..26]   u64  destructor: the owning pointer's teardown, else 0
+//! [26..34]   u64  code: the `fn` node a node of the type runs as, or 0
+//! [34..42]   u64  run body: the lexed body a `shared run = (…)` line held, or 0
+//! [42..50]   u64  pointer type: the interned `@T` of this type, or 0
 //! [50..]     payload, per kind:
 //!              ADDR              pointee type node (`dyad@`)
 //!              TUPLE/LIST         u8 arity, then arity × `dyad@` role-name strings
 //! ```
 //!
-//! The kind byte continues [`numtype`](super::numtype)'s tag space (`NumType`
-//! 0–9, `VOID_TAG` 10, `STRING_TAG` 11, `COMMENT_TAG` 12, `ADDR_TAG` 13), so
-//! every existing first-byte tag read keeps working unchanged. Since #44 the
-//! only fn-typed nodes are real functions (operators are plain logos), so no
-//! discriminant is needed to tell them apart — the record *is* the identity's
-//! whole value, and the code its applications run lives on the callable
-//! leaves their op slots reference.
+//! The kind byte continues `numtype`'s tag space (`NumType` 0–9, `VOID_TAG` 10,
+//! `STRING_TAG` 11, `COMMENT_TAG` 12, `ADDR_TAG` 13).
 
 use crate::dyad::DyadPtr;
 use crate::parse::Assoc;
@@ -57,128 +31,67 @@ use crate::store::Store;
 use super::numtype::ADDR_TAG;
 use super::{string, Cx};
 
-/// Kind: values are applications of `arity` fixed `dyad@` operand slots, each
-/// named by a role string (a null slot is an absent optional, like an else-less
-/// `if`'s third operand). Also the shape of an fn value's
-/// `[input, output, body, bcode]`.
+/// Values are `arity` fixed `dyad@` operand slots, each named by a role string; a
+/// null slot is an absent optional. Also an fn value's `[input, output, body, bcode]`.
 pub(crate) const TUPLE_TAG: u8 = 14;
-/// Kind: values are `arity` fixed named `dyad@` slots followed by a
-/// null-terminated variadic tail — a sequence (`arity` 0), a construction
-/// (`[instance, arg…, null]`). (A record *definition*'s value is a
-/// [`RECORD_TAG`] record, not a list.)
+/// Values are `arity` fixed named `dyad@` slots, then a null-terminated variadic tail.
 pub(crate) const LIST_TAG: u8 = 15;
-/// Kind: values are `[num: i64, den: i64]` comptime fractions (`rational`).
+/// Values are `[num: i64, den: i64]` comptime fractions.
 pub(crate) const FRACTION_TAG: u8 = 16;
-/// Kind: values are themselves logos — each carries a record like this one. The
-/// `logos : logos` root's kind, where the recursion grounds.
+/// Values are themselves types, each carrying a record like this one; the root's kind.
 pub(crate) const TYPEREC_TAG: u8 = 18;
-/// Kind: a parse-only token (`,`, `(`, `->`, `else`, …); no values exist.
+/// A parse-only token; no values exist.
 pub(crate) const TOKEN_TAG: u8 = 19;
-/// Kind: values are the complete jump information — `[entry: @exec, convention]`,
-/// 16 bytes. The `callable` type's kind (DESIGN ›The callable ground is `@exec`‹,
-/// issue #44): every exec leaf (`add_i32`, `if_native`, a compiled fn's code) is a
-/// value of it, and jumping consumes exactly this record.
+/// Values are `[entry: @exec, convention]`, 16 bytes; every exec leaf is one.
 pub(crate) const CALLABLE_TAG: u8 = 20;
-/// Kind: values are calling-convention identities (declared metadata a backend
-/// renders per target; decisive at the FFI boundary). A convention value's slot
-/// holds its name string node.
+/// Values are calling-convention identities; the value slot holds the name string node.
 pub(crate) const CONVENTION_TAG: u8 = 21;
-/// Kind: values are arrays of `dyad@` — `[len: u64][data: @dyad]`, 16 bytes,
-/// the list itself behind one indirection (settled: a growable thing never
-/// lives inline in a node's value). The seed's first array form; element-typed
-/// arrays and surface syntax arrive with the `array` logos proper.
+/// Values are `[len: u64][data: @dyad]`, 16 bytes; a list never lives inline in a node.
 pub(crate) const ARRAY_TAG: u8 = 22;
-/// Kind: a record *logos* node's record (issue #47) — the stored layout the
-/// constructor derives at definition (DESIGN ›a type whose constructor derives
-/// the layout automatically — reading the field declarations in its scope and
-/// filling `fields` and `size_bytes`‹), locked before first instantiation. The
-/// payload is `[scope: @dyad][fields: @dyad (an array node over the field
-/// declarations)][size_bytes: u64][body: @dyad]`, 32 bytes: the field scope
-/// (a `type (…)` body's `instance = (…)`, a `fn`'s parameter list), the
-/// fields, their packed size, and the definition body's own scope — the
-/// bare lines' members, `g.y` — null where a type has no body (#61). The
-/// head carries the type's parse_rank and associativity, the call defaults
-/// (`APPLY`, left) unless its body filled them, and its constructor slot the
-/// Logos function its body filled, if any. Giving record type a real
-/// record also makes their first value byte an honest kind tag — before this,
-/// it was a node address's low byte, and any tag read on it was garbage.
+/// A record type node's record: payload `[scope: @dyad][fields: @dyad][size_bytes: u64]
+/// [body: @dyad]`, 32 bytes, locked at definition; `body` is null where the type has none.
 pub(crate) const RECORD_TAG: u8 = 23;
-/// Kind: values are dyad *views* (#52) — the value IS the viewed node's
-/// address, so `a:dyad` views any value as its cell and `.` then reads
-/// the cell: the one place the type appears in a value, which is what makes
-/// `.logos` a field read like every other `.` (ruled August 2026).
+/// Values are dyad views: the value IS the viewed node's address.
 pub(crate) const DYAD_TAG: u8 = 24;
 
-/// Byte offset of the associativity in a record.
 const ASSOC_OFF: usize = 1;
-/// Byte offset of the parse_rank.
+/// The parse_rank.
 const PREC_OFF: usize = 2;
-/// Byte offset of the reserved constructor slot.
 const CTOR_OFF: usize = 10;
-/// Byte offset of the reserved destructor slot.
 const DTOR_OFF: usize = 18;
-/// Byte offset of the code slot (DESIGN ›Execution is function application‹,
-/// ruled 4 September 2026: "if the type carries a `code`, run that function on
-/// it"; #63). Where the slot is stored is the seed's own placement: the spec
-/// leaves it open (Thobias, 10 September 2026). The `lex_rank` slot that sat
-/// before it left the head on 14 September 2026 (#122): a rank is the
-/// spelling's, so it lives on the name's record.
 const CODE_OFF: usize = 26;
-/// Byte offset of the held run body (DESIGN ›Deferral is authored‹, 20
-/// September 2026: "the body is held as its lexed tape … and constructed
-/// once per field-type set when a node supplies the types"; #133 slice 5).
-/// Kept beside the code slot rather than in it, so every reader of a type's
-/// `run` as a function ([`code_of`]) keeps finding a function or nothing.
+/// Beside the code slot rather than in it, so every reader of a type's `run` as a
+/// function (`code_of`) keeps finding a function or nothing.
 const RUN_BODY_OFF: usize = 34;
-/// Byte offset of the interned pointer type: the `@T` of this type, minted
-/// once and kept here (DESIGN ›The store is keyed by address‹: "interned
-/// canonical identities (one `i32` referenced everywhere)"; #89), so that
-/// two spellings of `@i32` are one node and compare equal.
+/// The interned `@T` of this type, so two spellings of `@i32` are one node.
 const POINTER_TYPE_OFF: usize = 42;
-/// Byte offset of the kind-specific payload (a pointer type's pointee, or an
-/// operand record's arity + roles).
 pub(crate) const PAYLOAD_OFF: usize = 50;
 
-/// The one parse_rank axis every identity is placed on (DESIGN ›The scope's
-/// constructor is the driver‹, ruled 30 August 2026: "Every identity nameable
-/// in text has a parse_rank — there is no NaN and no ±infinity class").
-/// Higher binds tighter. A constructor at or above [`prec::OPEN`] runs at
-/// discovery, the moment its token is lexed; one below runs at the segment
-/// boundary, highest first, associativity breaking ties. The values are the
-/// seed's own placement of the core identities — DESIGN fixes the order and
-/// the threshold, never the numbers — spaced so a user operator can slot
-/// between any two (`^` at `*.parse_rank + 1`, #61).
+/// The one parse_rank axis. Higher binds tighter. A constructor at or above `OPEN`
+/// runs at discovery, one below at the segment boundary, highest first, associativity
+/// breaking ties. DESIGN fixes the order and the threshold, never the numbers.
+/// DESIGN ›The scope's constructor is the driver‹.
 pub(crate) mod prec {
-    /// The separator `,`: above `(`, so it acts at discovery as a segment boundary.
+    /// Above `(`, so it acts at discovery as a segment boundary.
     pub const COMMA: f64 = 100.0;
-    /// A literal — a number, `«…»`, `true`/`false` — and `#`: constructed the
-    /// moment it is lexed.
+    /// A number, `«…»`, `true`/`false`, and `#`: constructed the moment it is lexed.
     pub const LITERAL: f64 = 96.0;
     /// `import`: consumes its raw path token at discovery.
     pub const IMPORT: f64 = 95.0;
-    /// `:=` and `=`: the dyad's two writers, constructed at discovery, each
-    /// reading its left and driving its right side to the boundary (`:=`
-    /// ruled 5 September 2026, `=` beside it 8 September 2026).
+    /// `:=` and `=`: each reads its left and drives its right side to the boundary.
     pub const DECLARE: f64 = 93.0;
-    /// The identities that read their own bracket or right side: `fn`, `for`,
-    /// `while`, `defer`, `type`, `if` (ruled 3 and 5 September 2026).
+    /// The identities that read their own bracket or right side: `fn`, `for`, `while`, `defer`,
+    /// `type`, `if`.
     pub const READER: f64 = 92.0;
     /// `(`: the discovery threshold.
     pub const OPEN: f64 = 90.0;
-    /// Application and juxtaposition: a callable or a type before its argument
-    /// (`f(x)`, `i32 5`, `i32(x)`, `dyad (…)`). At discovery since 9 September
-    /// 2026 (#60): it reads its bracket lazily, in source order, so `f(2).x`
-    /// and `dyad (i32, 7):dyad` read the call — the tight reads sit above it
-    /// and the identities that read their own bracket above those.
+    /// Application and juxtaposition (`f(x)`, `i32 5`): reads its bracket lazily in source
+    /// order, so the tight reads sit above it and the bracket readers above those.
     pub const APPLY: f64 = 91.0;
-    /// `?`: just below application, so `i32 ?` and `@i32 ?` find their type
-    /// standing to the left.
+    /// `?`: just below application, so `i32 ?` finds its type standing to the left.
     pub const HOLE: f64 = 87.0;
-    /// `.`, `:`, and `@`: the tight reads of the cell to their left (`@`'s
-    /// prefix form reads right), above the identities that read their own
-    /// right side and below `:=`/`=` (ruled 8 September 2026): constructed at
-    /// discovery, their right cell lexed lazily by the `tape[1]` read inside
-    /// the constructor.
+    /// `.`, `:`, `@`: the tight reads of the cell to their left, above the readers and
+    /// below `:=`/`=`; the right cell is lexed lazily inside the constructor.
     pub const TIGHT: f64 = 92.5;
     /// `&`.
     pub const ADDRESS: f64 = 85.0;
@@ -190,36 +103,28 @@ pub(crate) mod prec {
     pub const RANGE: f64 = 55.0;
     pub const COMPARE: f64 = 50.0;
     pub const EQUALITY: f64 = 40.0;
-    /// `not`: above `and`, so `a and not b` reads as it does in Python, and
-    /// below the comparisons, so `not a == b` negates the comparison.
+    /// Above `and` so `a and not b` reads as in Python; below the comparisons so `not a == b`
+    /// negates the comparison.
     pub const NOT: f64 = 35.0;
     pub const AND: f64 = 30.0;
     pub const OR: f64 = 20.0;
     pub const RETURN: f64 = 10.0;
-    /// An identity with no constructor — a delimiter (`)`, `->`, `else`, `in`),
-    /// a data type, a node record: inert, never constructed by the driver.
+    /// No constructor: a delimiter, a data type, a node record; never constructed by the driver.
     pub const INERT: f64 = 0.0;
 }
 
-/// Build a plain record: `kind` and `parse_rank`, no payload. The scalar
-/// logos, the text substance, the foundations, and the parse-only tokens.
-/// `parse_rank` is the identity's place on the one axis ([`prec`]).
+/// A record with no payload.
 pub(crate) fn record(store: &mut Store, kind: u8, parse_rank: f64) -> *mut u8 {
     record_assoc(store, kind, parse_rank, Assoc::Left)
 }
 
-/// [`record`] with an associativity: right for a prefix word, so that in a
-/// chain the rightmost runs first and each finds its operand constructed
-/// (`pub pub x := 5` reports the double gate; `not not x` reads inward).
+/// Right for a prefix word, so that in a chain the rightmost runs first and each finds
+/// its operand constructed.
 pub(crate) fn record_assoc(store: &mut Store, kind: u8, parse_rank: f64, assoc: Assoc) -> *mut u8 {
     let blob = header(kind, assoc, parse_rank);
     store.alloc_bytes(&blob)
 }
 
-/// Build an operand record for an operator/statement identity: its layout
-/// `kind` ([`TUPLE_TAG`] or [`LIST_TAG`]), its parse
-/// `parse_rank`/`assoc`, and one role-name string node per operand
-/// slot.
 pub(crate) fn operand_record(
     cx: &mut Cx,
     kind: u8,
@@ -238,19 +143,12 @@ pub(crate) fn operand_record(
     cx.store.alloc_bytes(&blob)
 }
 
-/// Build a pointer type's record: kind [`ADDR_TAG`], the pointee node as the
-/// payload. Pointer logos are created fresh per use and carry no parse members.
 pub(crate) fn pointer_record(store: &mut Store, pointee: DyadPtr) -> *mut u8 {
     let mut blob = header(ADDR_TAG, Assoc::Left, prec::INERT).to_vec();
     blob.extend_from_slice(&(pointee as usize).to_ne_bytes());
     store.alloc_bytes(&blob)
 }
 
-/// Build a record type node's record (issue #47): the [`RECORD_TAG`] head and
-/// the stored layout — the field-list scope, the `fields` array node over the
-/// field declarations, and the derived `size_bytes` — filled at definition,
-/// where the type's layout locks (DESIGN ›A type's layout-relevant slots must
-/// be defined and frozen before its first instantiation‹).
 pub(crate) fn record_layout(
     store: &mut Store,
     scope: DyadPtr,
@@ -268,44 +166,34 @@ pub(crate) fn record_layout(
     store.alloc_bytes(&blob)
 }
 
-/// The stored scope of a record type node — where its field names are declared.
+/// Where a record type's field names are declared.
 ///
 /// # Safety
-/// `id` must carry a [`RECORD_TAG`] record ([`record_layout`]).
+/// `id` must carry a `RECORD_TAG` record.
 pub(crate) unsafe fn record_scope_of(id: DyadPtr) -> DyadPtr {
     std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF) as *const DyadPtr)
 }
 
-/// The stored `fields` array node of a record type node — the field
-/// declarations, in order, behind one indirection (the system's first
-/// element-typed array in spirit: an array of `dyad`).
-///
 /// # Safety
-/// As [`record_scope_of`].
+/// As `record_scope_of`.
 pub(crate) unsafe fn record_fields_of(id: DyadPtr) -> DyadPtr {
     std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF + 8) as *const DyadPtr)
 }
 
-/// The stored `size_bytes` of a record type node — the packed byte size its
-/// instances occupy, derived at definition.
-///
 /// # Safety
-/// As [`record_scope_of`].
+/// As `record_scope_of`.
 pub(crate) unsafe fn record_size_of(id: DyadPtr) -> u64 {
     std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF + 16) as *const u64)
 }
 
-/// The stored definition scope of a record type node — its body's bare
-/// lines, the members read `g.y` (#61) — or null where it has no body.
+/// The definition body's scope, or null where the type has no body.
 ///
 /// # Safety
-/// As [`record_scope_of`].
+/// As `record_scope_of`.
 pub(crate) unsafe fn record_body_of(id: DyadPtr) -> DyadPtr {
     std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF + 24) as *const DyadPtr)
 }
 
-/// The fixed head of every record: kind, associativity, parse_rank (the
-/// identity's place on the one axis, [`prec`]), and the two reserved slots.
 fn header(kind: u8, assoc: Assoc, parse_rank: f64) -> [u8; PAYLOAD_OFF] {
     let mut h = [0u8; PAYLOAD_OFF];
     h[0] = kind;
@@ -314,128 +202,85 @@ fn header(kind: u8, assoc: Assoc, parse_rank: f64) -> [u8; PAYLOAD_OFF] {
         Assoc::Right => 1,
     };
     h[PREC_OFF..CTOR_OFF].copy_from_slice(&parse_rank.to_ne_bytes());
-    // CTOR_OFF..DTOR_OFF and DTOR_OFF..CODE_OFF stay zero: reserved; the code
-    // at CODE_OFF..RUN_BODY_OFF and the held run body at
-    // RUN_BODY_OFF..POINTER_TYPE_OFF are null until a type body sets them;
-    // the pointer type at POINTER_TYPE_OFF..PAYLOAD_OFF until `@` is minted.
+    // The slots from CTOR_OFF on stay zero until their writers fill them.
     h
 }
 
-/// The constructor stored in `id`'s record: a callable leaf under the
-/// `seed-parse` convention (its entry a Rust shim of the one
-/// [`crate::parse::ConstructFn`] signature), or null — the *undefined*
-/// constructor of a pure delimiter token or a data type, inert on the tape.
+/// Null is the undefined constructor of a delimiter token or a data type, inert on the tape.
 ///
 /// # Safety
-/// As [`parse_rank_of`].
+/// As `parse_rank_of`.
 pub(crate) unsafe fn constructor_of(id: DyadPtr) -> DyadPtr {
     std::ptr::read_unaligned((*id).value.add(CTOR_OFF) as *const DyadPtr)
 }
 
-/// The destructor stored in `id`'s record: the teardown the drop model
-/// installs on an owning pointer type ([`install_destructor`]), null on every
-/// other identity, never faked with a no-op.
+/// Null on every identity but an owning pointer type; never faked with a no-op.
 ///
 /// # Safety
-/// As [`parse_rank_of`].
+/// As `parse_rank_of`.
 pub(crate) unsafe fn destructor_of(id: DyadPtr) -> DyadPtr {
     std::ptr::read_unaligned((*id).value.add(DTOR_OFF) as *const DyadPtr)
 }
 
-/// Install `leaf` (a callable value) as `id`'s constructor — the registration
-/// back-fill's writer, run once per identity while the record is still under
-/// construction; nothing has read the slot before the fill.
-///
 /// # Safety
-/// `id` must carry a record and `leaf` must be a callable leaf whose entry is
-/// a [`crate::parse::ConstructFn`].
+/// `id` must carry a record and `leaf` must be a callable leaf whose entry is a `ConstructFn`.
 pub(crate) unsafe fn install_constructor(id: DyadPtr, leaf: DyadPtr) {
     std::ptr::write_unaligned((*id).value.add(CTOR_OFF) as *mut DyadPtr, leaf);
 }
 
-/// Install `leaf` (a callable value) as `id`'s destructor — the drop model's
-/// writer for the reserved slot (issue #49), run once while the owning pointer
-/// type is under construction; nothing has read the slot before the fill. Every
-/// other identity leaves it null (the honest undefined).
-///
 /// # Safety
-/// `id` must carry a record and `leaf` must be a callable leaf whose entry runs
-/// the identity's teardown.
+/// `id` must carry a record and `leaf` must be a callable leaf whose entry runs the
+/// identity's teardown.
 pub(crate) unsafe fn install_destructor(id: DyadPtr, leaf: DyadPtr) {
     std::ptr::write_unaligned((*id).value.add(DTOR_OFF) as *mut DyadPtr, leaf);
 }
 
-/// The `code` stored in `id`'s record (#63): the `fn` node a type body's
-/// `code = …` filled, what a node of the type runs and compiles as (DESIGN
-/// ›Execution is function application‹: "if the type carries a `code`, run
-/// that function on it"), or null for a type with nothing to run.
+/// The `fn` node a node of the type runs and compiles as, or null.
 ///
 /// # Safety
-/// As [`parse_rank_of`].
+/// As `parse_rank_of`.
 pub(crate) unsafe fn code_of(id: DyadPtr) -> DyadPtr {
     std::ptr::read_unaligned((*id).value.add(CODE_OFF) as *const DyadPtr)
 }
 
-/// Install `f` (a `fn` node) as `id`'s code — the type body's writer, run
-/// once at the close while the record is under construction.
-///
 /// # Safety
 /// `id` must carry a record and `f` must be a `fn` node from the store.
 pub(crate) unsafe fn install_code(id: DyadPtr, f: DyadPtr) {
     std::ptr::write_unaligned((*id).value.add(CODE_OFF) as *mut DyadPtr, f);
 }
 
-/// The run body a type's `shared run = (…)` line held (#133 slices 5 and 8):
-/// the [`super::run_body`] node over the body's cells, lexed once at the
-/// definition, and the functions constructed from them per field-type set —
-/// or null for a type whose run is a function ([`code_of`]) or absent.
+/// The lexed body a `shared run = (…)` line held, constructed per field-type set;
+/// null for a type whose run is a function or absent.
 ///
 /// # Safety
-/// As [`parse_rank_of`].
+/// As `parse_rank_of`.
 pub(crate) unsafe fn run_body_of(id: DyadPtr) -> DyadPtr {
     std::ptr::read_unaligned((*id).value.add(RUN_BODY_OFF) as *const DyadPtr)
 }
 
-/// Install `body` (a [`super::run_body`] node) as `id`'s held run body — the
-/// type body's writer, run once at the close while the record is under
-/// construction.
-///
 /// # Safety
 /// `id` must carry a record and `body` must be a run-body node from the store.
 pub(crate) unsafe fn install_run_body(id: DyadPtr, body: DyadPtr) {
     std::ptr::write_unaligned((*id).value.add(RUN_BODY_OFF) as *mut DyadPtr, body);
 }
 
-/// The interned `@T` of the type `id`, or null while none has been minted.
+/// The interned `@T` of `id`, or null while none has been minted.
 ///
 /// # Safety
-/// As [`parse_rank_of`].
+/// As `parse_rank_of`.
 pub(crate) unsafe fn pointer_type_of(id: DyadPtr) -> DyadPtr {
     std::ptr::read_unaligned((*id).value.add(POINTER_TYPE_OFF) as *const DyadPtr)
 }
 
-/// Install `p` as the interned `@T` of the type `id` — the first mint's
-/// writer ([`super::pointer::make_pointer_type`]); nothing has read the slot
-/// before the fill.
-///
 /// # Safety
-/// `id` must carry a record and `p` must be the plain pointer type node over
-/// `id` from the store.
+/// `id` must carry a record and `p` must be the plain pointer type node over `id`.
 pub(crate) unsafe fn install_pointer_type(id: DyadPtr, p: DyadPtr) {
     std::ptr::write_unaligned((*id).value.add(POINTER_TYPE_OFF) as *mut DyadPtr, p);
 }
 
-/// The record kind of `id`, or `None` where there is no record to read: a
-/// null value slot (a still-unbound declaration placeholder), or a tagged
-/// place, frame or global (a slot *holding* a type rather than being one).
-///
-/// Every accessor below contracts on "`kind_of` is `Some`", so this is where
-/// the contract is established and therefore where a node that is not an
-/// identity must be turned away. A type-valued place is an ordinary place
-/// (DESIGN ›A type is a comptime value‹, 12 September 2026: "a place holding
-/// a type is therefore an ordinary place"), and its bits are an address in a
-/// frame, not a record — reading a tag byte through them is what crashed
-/// (#75).
+/// `None` where there is no record to read: a null value (an unbound placeholder) or
+/// a tagged place. Every accessor below contracts on `Some`, so this is where a node
+/// that is not an identity is turned away.
 ///
 /// # Safety
 /// `id` must be a valid dyad from the store.
@@ -448,15 +293,7 @@ pub(crate) unsafe fn kind_of(id: DyadPtr) -> Option<u8> {
     }
 }
 
-/// Whether `id` is a record type — a definition built by the record path,
-/// its value a [`RECORD_TAG`] layout record. This replaces the retired
-/// `logos == struct_` classifier test: since the `logos`/`record` merge every
-/// type's own classifier is the root, and the stored layout record is what
-/// marks the record case. The tag read is guarded so the test is safe on ANY
-/// node, as the identity compare it replaces was: [`kind_of`] turns away both
-/// a null value and a type-valued place, so only a node classified by the
-/// self-classified root (a type at all) that actually carries a record has
-/// its tag consulted.
+/// Safe on any node: `kind_of` turns away both a null value and a type-valued place.
 ///
 /// # Safety
 /// `id` must be null or a valid dyad from the store.
@@ -467,10 +304,8 @@ pub(crate) unsafe fn is_record_type(id: DyadPtr) -> bool {
         && kind_of(id) == Some(RECORD_TAG)
 }
 
-/// The index of a runnable node's *op slot* — the last fixed slot of its
-/// type's operand record, where a resolved node stores its callable leaf
-/// (issue #44: dispatch flows through the node, not the identity). `None` for
-/// kinds without fixed slots (any data type).
+/// The last fixed slot of the type's operand record, where a resolved node stores its
+/// callable leaf; `None` for kinds without fixed slots.
 ///
 /// # Safety
 /// `id` must be a valid dyad from the store whose non-null value is a record.
@@ -484,19 +319,15 @@ pub(crate) unsafe fn op_slot_of(id: DyadPtr) -> Option<usize> {
     }
 }
 
-/// The parse_rank stored in `id`'s record.
-///
 /// # Safety
-/// `id` must carry a record ([`kind_of`] is `Some`).
+/// `id` must carry a record (`kind_of` is `Some`).
 pub(crate) unsafe fn parse_rank_of(id: DyadPtr) -> f64 {
     let v = (*id).value;
     f64::from_ne_bytes(std::ptr::read_unaligned(v.add(PREC_OFF) as *const [u8; 8]))
 }
 
-/// The associativity stored in `id`'s record.
-///
 /// # Safety
-/// As [`parse_rank_of`].
+/// As `parse_rank_of`.
 pub(crate) unsafe fn assoc_of(id: DyadPtr) -> Assoc {
     if *(*id).value.add(ASSOC_OFF) == 0 {
         Assoc::Left
@@ -505,18 +336,14 @@ pub(crate) unsafe fn assoc_of(id: DyadPtr) -> Assoc {
     }
 }
 
-/// The operand arity stored in `id`'s operand record.
-///
 /// # Safety
-/// `id` must carry an operand record (a [`TUPLE_TAG`] or [`LIST_TAG`] kind).
+/// `id` must carry an operand record (a `TUPLE_TAG` or `LIST_TAG` kind).
 pub(crate) unsafe fn arity_of(id: DyadPtr) -> usize {
     *(*id).value.add(PAYLOAD_OFF) as usize
 }
 
-/// The `i`-th operand's role-name string node in `id`'s operand record.
-///
 /// # Safety
-/// As [`arity_of`], with `i < arity_of(id)`.
+/// As `arity_of`, with `i < arity_of(id)`.
 pub(crate) unsafe fn role_of(id: DyadPtr, i: usize) -> DyadPtr {
     let p = (*id).value.add(PAYLOAD_OFF + 1 + i * std::mem::size_of::<DyadPtr>());
     std::ptr::read_unaligned(p as *const DyadPtr)

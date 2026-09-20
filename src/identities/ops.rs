@@ -1,23 +1,10 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The concrete machine operations: `add_i32`, `lt_f64`, `store_u8`, … — one
-//! spelling-less identity per (operation, machine type), each a [`callable`]
-//! value immutably carrying its `@exec` (DESIGN ›Concrete machine operations
-//! are identities‹; issue #44).
-//!
-//! A surface operator (`+`, `<`, `=`) is a parse-time constructor owning no
-//! code: it *resolves* each application to one of these leaves and stores the
-//! leaf in the node's op slot, so nothing mutates and nothing is looked up in
-//! a side table at run time — to evaluate a node, read its op slot and jump.
-//! The ~120 machine ops the original design worried would be ~120 files are
-//! ~120 graph *nodes*, registered here from one table-driven loop; their
-//! bodies stay the shared type-switched helpers in [`super::numtype`], each
-//! shim a monomorphic wrapper with its (operation, logos) pair baked in as
-//! const generics.
-//!
-//! Float remainder mints no leaf: `%` over floats is rejected at parse
-//! (Cranelift has no float remainder), so a node referencing it cannot exist.
+//! The concrete machine operations, `add_i32`, `lt_f64`, `store_u8`, …: one
+//! spelling-less `callable` leaf per (operation, machine type), minted from one
+//! table-driven loop. A surface operator resolves each application to a leaf and
+//! stores it in the node's op slot, so run reads the slot and jumps.
 
 use crate::dyad::DyadPtr;
 use crate::run::{RunError, RunFn, Runtime};
@@ -26,116 +13,75 @@ use super::callable::{self, Callables};
 use super::numtype::{apply_arith, apply_compare, write_scalar_nt, ArithOp, CmpOp, NumType};
 use super::{operands, Cx};
 
-/// The concrete-op leaves, indexed by operation and [`NumType`] — the parse-time
-/// resolver's table (`(family, operand logos) → leaf`). Rides [`crate::parse::Core`]
-/// so the `Construct` builders can resolve; the interpreter never consults it
-/// (each shim's type is baked in), and it retires into versioned scopes with the
-/// rest of the Rust-side parse tables at self-hosting.
+/// The parse-time resolver's table; the interpreter never consults it, each shim's type being
+/// baked in.
 #[derive(Clone, Copy, Debug)]
 pub struct OpLeaves {
-    /// `[ArithOp][NumType]` → leaf; null only for the unmintable float remainders.
+    /// `[ArithOp][NumType]`; null only for the unmintable float remainders.
     pub(crate) arith: [[DyadPtr; 10]; 5],
-    /// `[CmpOp][NumType]` → leaf.
+    /// `[CmpOp][NumType]`.
     pub(crate) cmp: [[DyadPtr; 10]; 6],
-    /// The arithmetic and comparison leaves over rational values (#133
-    /// slice 8, part 4), interpreted only.
+    /// The leaves over rational values, interpreted only.
     pub(crate) rational_arith: [DyadPtr; 5],
     pub(crate) rational_cmp: [DyadPtr; 6],
-    /// `[NumType]` → the `=` store leaf writing at that width (a pointer target
-    /// stores as its 8-byte address, `U64`, per `numtype::of_type_node`).
+    /// `[NumType]`: the `=` store leaf at that width; a pointer target stores as `U64`.
     pub(crate) store: [DyadPtr; 10],
-    /// `and`'s short-circuiting native — a single leaf (bool has one width),
-    /// minted by [`super::and::register`].
     pub(crate) and_: DyadPtr,
-    /// `or`'s short-circuiting native, minted by [`super::or::register`].
     pub(crate) or_: DyadPtr,
-    /// `convert`'s native — a single leaf; its from/to pair rides the node as
-    /// graph data. Minted by [`super::convert::register`].
     pub(crate) convert_: DyadPtr,
-    /// The statement natives, one leaf each, minted by their identities'
-    /// registrations: control flow branches on graph structure, so no
-    /// per-machine-logos variants exist.
+    /// The statement natives, one leaf each: control flow branches on graph structure.
     pub(crate) if_: DyadPtr,
-    /// `while`'s native.
     pub(crate) while_: DyadPtr,
-    /// `for`'s native.
     pub(crate) for_: DyadPtr,
-    /// `return`'s native.
     pub(crate) return_: DyadPtr,
-    /// `not`'s native.
     pub(crate) not_: DyadPtr,
-    /// `construct`'s native (record construction).
     pub(crate) construct_: DyadPtr,
-    /// `deref`'s native (postfix `@`).
     pub(crate) deref_: DyadPtr,
-    /// `storeptr`'s native (`=` through a deref).
     pub(crate) storeptr_: DyadPtr,
-    /// `addr`'s native (prefix `&`): resolves a place's address at run time.
     pub(crate) addr_: DyadPtr,
-    /// `scope`'s sequence native (run the array in order, yield the tail).
     pub(crate) scope_: DyadPtr,
-    /// `ran`'s native (read the cell an item's run left behind).
     pub(crate) ran_: DyadPtr,
-    /// `declare`'s native (run the initializer for effect, yield unit).
     pub(crate) declare_: DyadPtr,
-    /// `compile`'s native (`f.compile()`, the fn type's shared member).
     pub(crate) compile_: DyadPtr,
-    /// `alloc`'s native (heap-allocate, write the initializer, yield the pointer).
     pub(crate) alloc_: DyadPtr,
-    /// The teardown native (issue #49): `free`'s op leaf AND every owning
-    /// pointer's stored destructor, so `drop` reaches the same code through the slot.
+    /// `free`'s op leaf and every owning pointer's stored destructor.
     pub(crate) teardown_: DyadPtr,
-    /// `own`'s native (move out of a place: yield the pointer, empty the source).
     pub(crate) own_: DyadPtr,
-    /// `drop`'s native (run the place's destructor eagerly, empty the place).
     pub(crate) drop_: DyadPtr,
-    /// `defer`'s in-place native — a no-op; the scope machinery runs the inner.
+    /// A no-op; the scope machinery runs the inner.
     pub(crate) defer_: DyadPtr,
-    /// `import`'s native (#58): re-yield the imported file's tail value — the
-    /// load itself ran in the pass, once per run.
     pub(crate) import_: DyadPtr,
 }
 
 impl OpLeaves {
-    /// The arithmetic leaf for `op` over `nt`.
     pub(crate) fn arith_leaf(&self, op: ArithOp, nt: NumType) -> DyadPtr {
         self.arith[op as usize][nt as usize]
     }
 
-    /// The comparison leaf for `op` over `nt`.
     pub(crate) fn cmp_leaf(&self, op: CmpOp, nt: NumType) -> DyadPtr {
         self.cmp[op as usize][nt as usize]
     }
 
-    /// The arithmetic leaf for `op` over rational values.
     pub(crate) fn rational_arith_leaf(&self, op: ArithOp) -> DyadPtr {
         self.rational_arith[op as usize]
     }
 
-    /// The comparison leaf for `op` over rational values.
     pub(crate) fn rational_cmp_leaf(&self, op: CmpOp) -> DyadPtr {
         self.rational_cmp[op as usize]
     }
 
-    /// Whether `leaf` is one of the rational leaves — what makes an operator
-    /// node a rational value, and what the compiler refuses.
+    /// What makes an operator node a rational value, and what the compiler refuses.
     pub(crate) fn is_rational_leaf(&self, leaf: DyadPtr) -> bool {
         !leaf.is_null()
             && (self.rational_arith.contains(&leaf) || self.rational_cmp.contains(&leaf))
     }
 
-    /// The store leaf writing at `nt`'s width.
     pub(crate) fn store_leaf(&self, nt: NumType) -> DyadPtr {
         self.store[nt as usize]
     }
 
-    /// The width a store leaf writes at — the reverse of [`Self::store_leaf`],
-    /// ten pointer compares. An `=` node's op slot carries the leaf its builder
-    /// chose, so the width is *in the node*; a reader that re-derives it from
-    /// the target's logos instead is the second copy of a decision already
-    /// made, and for a `type ?` or `dyad ?` box the two disagreed (#82: the
-    /// logos has no numeric tag, the leaf says `I64`). `None` for a pointer
-    /// that is not a store leaf.
+    /// The width is in the node: re-deriving it from the target's type disagrees for a
+    /// `type ?` or `dyad ?` box. `None` for a pointer that is not a store leaf.
     pub(crate) fn store_nt_of(&self, leaf: DyadPtr) -> Option<NumType> {
         if leaf.is_null() {
             return None;
@@ -143,13 +89,7 @@ impl OpLeaves {
         self.store.iter().position(|&l| l == leaf).map(|i| NumType::from_tag(i as u8))
     }
 
-    /// The width a comparison leaf compares at — the reverse of
-    /// [`Self::cmp_leaf`], sixty pointer compares at most. The comparison
-    /// builders (`==`, `<`, …) put the leaf they chose in the node's op slot,
-    /// and the interpreter's `cmp_run<OP, NT>` is that leaf; the compiler used
-    /// to classify the operands again to recover the same width, with its own
-    /// special case for two node-valued operands (#82, asymmetry 7). `None` for
-    /// a pointer that is not a comparison leaf.
+    /// The reverse of `cmp_leaf`; `None` for a pointer that is not a comparison leaf.
     pub(crate) fn cmp_nt_of(&self, leaf: DyadPtr) -> Option<NumType> {
         if leaf.is_null() {
             return None;
@@ -161,12 +101,9 @@ impl OpLeaves {
     }
 }
 
-/// Run a binary arithmetic node with the (operation, logos) pair baked in:
-/// evaluate both operands and apply the shared helper. The concrete op never
-/// reads a type from the node — its type *is* this instantiation.
+/// The concrete op never reads a type from the node; its type is this instantiation.
 fn arith_run<const OP: u8, const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a resolved binary operator application whose first two
-    // slots are its operands, as the family builders construct.
+    // SAFETY: `node` is a resolved binary application whose first two slots are its operands.
     unsafe {
         let (lhs, rhs) = operands(node);
         let l = rt.run(lhs)?;
@@ -175,10 +112,8 @@ fn arith_run<const OP: u8, const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Res
     }
 }
 
-/// Run a binary comparison node with the (operation, logos) pair baked in; the
-/// result is the i32 0/1 bool.
 fn cmp_run<const OP: u8, const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: as [`arith_run`].
+    // SAFETY: as `arith_run`.
     unsafe {
         let (lhs, rhs) = operands(node);
         let l = rt.run(lhs)?;
@@ -187,8 +122,6 @@ fn cmp_run<const OP: u8, const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Resul
     }
 }
 
-/// Run an assignment node with the target width baked in: evaluate the right
-/// operand, write it into the left operand's storage, yield the value.
 fn store_run<const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an assignment application `[lhs, rhs, op]`; `lhs` is a
     // typed variable whose storage the builder checked assignable.
@@ -204,8 +137,7 @@ fn store_run<const NT: u8>(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunEr
     }
 }
 
-/// One row of monomorphic shims: a family instantiated across all ten machine
-/// logos (a function item coerces to the `RunFn` pointer in a const array).
+/// A function item coerces to the `RunFn` pointer in a const array.
 macro_rules! shim_row {
     ($f:ident, $o:literal) => {
         [
@@ -256,9 +188,6 @@ const STORE_SHIMS: [RunFn; 10] = [
     store_run::<9>,
 ];
 
-/// Mint every concrete-op leaf from the shim tables — the one registration
-/// loop. Each leaf is a `callable` value under the `seed-native` convention,
-/// its entry the monomorphic shim's address.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
     let mut arith = [[std::ptr::null_mut(); 10]; 5];
     for (o, row) in ARITH_SHIMS.iter().enumerate() {
@@ -288,8 +217,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
     for (o, &run) in super::rational::CMP_RUNS.iter().enumerate() {
         rational_cmp[o] = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     }
-    // The single-native leaves are minted where their shims live (`and`, `or`,
-    // `convert`, the statement natives); their registrations fill these in.
+    // The single-native leaves are minted by their own registrations.
     OpLeaves {
         arith,
         cmp,
@@ -363,8 +291,6 @@ mod tests {
 
     #[test]
     fn the_op_slot_dispatches_through_the_graph_alone() {
-        // No table exists anywhere: a resolved node reaches its result through
-        // its op slot and nothing else.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
@@ -389,8 +315,6 @@ mod tests {
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
 
-        // Two committed i32 values and a node whose first two slots are they —
-        // exactly what a resolved `+` application will look like.
         let l = store.alloc_bytes(&20i32.to_ne_bytes());
         let lhs = store.alloc_raw(core.i32_, l);
         let r = store.alloc_bytes(&22i32.to_ne_bytes());
