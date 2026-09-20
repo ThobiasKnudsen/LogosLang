@@ -1292,8 +1292,7 @@ unsafe fn build_pass(
         // past [`crate::run::MAX_CALL_DEPTH`], park the fault and return 0
         // instead of claiming a frame the machine stack cannot hold. The
         // epilogue counts it out again.
-        let depth_addr =
-            builder.ins().iconst(ptr_ty, crate::run::CALL_DEPTH.as_ptr() as usize as i64);
+        let depth_addr = builder.ins().iconst(ptr_ty, crate::run::call_depth_ptr() as usize as i64);
         let depth = builder.ins().load(types::I64, MemFlagsData::new(), depth_addr, 0);
         let deeper = builder.ins().iadd_imm(depth, 1);
         builder.ins().store(MemFlagsData::new(), deeper, depth_addr, 0);

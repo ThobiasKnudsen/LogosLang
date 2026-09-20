@@ -188,7 +188,7 @@ pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *
     // SAFETY: `rt` was set by the runtime around this very jump and is live
     // for its duration.
     let saved = unsafe { ((*rt).activations.len(), (*rt).stack.mark(), (*rt).constructing) };
-    let depth = CALL_DEPTH.load(std::sync::atomic::Ordering::Relaxed);
+    let depth = CALL_DEPTH.with(|d| d.get());
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // SAFETY: as above; `argv` holds `argc` containers the compiled
         // caller stored; `fn_node` is the fn node the caller baked.
@@ -208,7 +208,7 @@ pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *
             (*rt).stack.release(saved.1);
             (*rt).constructing = saved.2;
         }
-        CALL_DEPTH.store(depth, std::sync::atomic::Ordering::Relaxed);
+        CALL_DEPTH.with(|d| d.set(depth));
     };
     match outcome {
         Ok(Ok(v)) => v,
@@ -263,14 +263,25 @@ pub unsafe extern "C" fn park_call_depth() -> i64 {
     0
 }
 
-/// The calls in flight across both tiers: the interpreter counts each
-/// interpreted call in and out ([`Runtime::apply_values`]), compiled code
-/// counts itself in and out in its prologue and epilogue, and both refuse
-/// the frame past [`MAX_CALL_DEPTH`]. One counter, so a chain that
-/// alternates tiers is one depth, and the limit means the same thing
-/// whichever tier a frame runs in. Written by compiled code as a plain
-/// word; the seed runs one thread.
-pub static CALL_DEPTH: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+thread_local! {
+    /// The calls in flight across both tiers: the interpreter counts each
+    /// interpreted call in and out ([`Runtime::apply_values`]), compiled code
+    /// counts itself in and out in its prologue and epilogue, and both refuse
+    /// the frame past [`MAX_CALL_DEPTH`]. One counter per thread, so a chain
+    /// that alternates tiers is one depth, and the limit means the same
+    /// thing whichever tier a frame runs in. Per thread, as [`PENDING`] and
+    /// [`CURRENT`] are, because a run is a thread's: a process-wide word
+    /// made one test's legitimate depth another's fault. Written by compiled
+    /// code as a plain word through [`call_depth_ptr`].
+    pub static CALL_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The address compiled code counts through ([`crate::compile::compile_fn`]):
+/// the calling thread's counter, baked at compile time, since a compiled
+/// function runs on the thread that compiled it — the seed has one.
+pub fn call_depth_ptr() -> *mut usize {
+    CALL_DEPTH.with(|d| d.as_ptr())
+}
 
 /// How deep interpreted calls may nest before the run faults (#80). The
 /// interpreter walks the body of each call on the Rust stack, so without a
@@ -688,7 +699,7 @@ impl<'a> Runtime<'a> {
         // The depth is the count of calls in flight in both tiers
         // ([`CALL_DEPTH`]); past the limit the run faults rather than letting
         // the Rust stack under `run` overflow and abort (#80, #119).
-        if CALL_DEPTH.load(std::sync::atomic::Ordering::Relaxed) >= MAX_CALL_DEPTH {
+        if CALL_DEPTH.with(|d| d.get()) >= MAX_CALL_DEPTH {
             return Err(RunError::CallDepth);
         }
         let mark = self.stack.mark();
@@ -697,11 +708,11 @@ impl<'a> Runtime<'a> {
             self.stack.release(mark);
             return Err(e);
         }
-        CALL_DEPTH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        CALL_DEPTH.with(|d| d.set(d.get() + 1));
         self.activations.push(base);
         let result = self.run(body);
         self.activations.pop();
-        CALL_DEPTH.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        CALL_DEPTH.with(|d| d.set(d.get() - 1));
         self.stack.release(mark);
         // A `-> void` function runs its body for effect and yields unit (0 bits),
         // matching the compiled void fn's `return 0`, so both tiers agree.
