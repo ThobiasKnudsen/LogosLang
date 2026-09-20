@@ -26,12 +26,16 @@ pub struct Store {
     chunks: Vec<Vec<Dyad>>,
     operands: Vec<Box<[DyadPtr]>>,
     blobs: Vec<Box<[u8]>>,
+    /// Boxed: a record's address is handed out and must survive the
+    /// vector's growth.
+    #[allow(clippy::vec_box)]
+    records: Vec<Box<Record>>,
 }
 
 impl Store {
     /// A fresh, empty store.
     pub fn new() -> Self {
-        Store { chunks: Vec::new(), operands: Vec::new(), blobs: Vec::new() }
+        Store { chunks: Vec::new(), operands: Vec::new(), blobs: Vec::new(), records: Vec::new() }
     }
 
     /// Store `dyad` and return its stable address (its id).
@@ -92,23 +96,14 @@ impl Store {
         ptr
     }
 
-    /// Store a name's record — five `dyad@` fields, `#[repr(C)]` — and return a
-    /// write pointer to it. It rides the operand arena: a record is exactly a
-    /// run of five pointers, which that arena already keeps 8-aligned and at a
-    /// stable address, so no third arena is needed.
+    /// Store a name's record (`#[repr(C)]`, seven eight-byte words) and
+    /// return a write pointer to it. Boxed, so its address is stable, and
+    /// kept for the store's lifetime like every other blob.
     pub fn alloc_record(&mut self, rec: Record) -> *mut Record {
-        // Seven eight-byte words in the struct's `#[repr(C)]` order; the
-        // rank travels as its bit pattern in a pointer-sized word, which is
-        // what the `f64` field at that offset reads back.
-        self.alloc_operands(&[
-            rec.dyad,
-            rec.scope,
-            rec.start,
-            rec.end,
-            rec.gate,
-            rec.name,
-            rec.lex_rank.to_bits() as usize as DyadPtr,
-        ]) as *mut Record
+        let mut boxed = Box::new(rec);
+        let ptr: *mut Record = &mut *boxed;
+        self.records.push(boxed);
+        ptr
     }
 
     /// Store literal bytes (e.g. a numeric literal's digits, or a variable's

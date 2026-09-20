@@ -311,7 +311,6 @@ fn header(kind: u8, assoc: Assoc, parse_rank: f64) -> [u8; PAYLOAD_OFF] {
     // CTOR_OFF..DTOR_OFF and DTOR_OFF..CODE_OFF stay zero: reserved; the code
     // at CODE_OFF..RUN_BODY_OFF and the held run body at
     // RUN_BODY_OFF..PAYLOAD_OFF are null until a type body sets them.
-    let _ = DTOR_OFF;
     h
 }
 

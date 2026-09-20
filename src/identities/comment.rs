@@ -9,7 +9,7 @@
 //! node in the value slot. A comment is invisible to value flow — the sequence
 //! machinery neither runs it nor lets it be a tail — and yields unit if anything
 //! forces it. Mid-expression `#`s remain trivia in the seed
-//! ([`Parser::skip_trivia`](crate::parse::Parser)); the full constructor form
+//! ([`Parser::skip_whitespace`](crate::parse::Parser)); the full constructor form
 //! arrives at self-hosting.
 
 use super::numtype::COMMENT_TAG;

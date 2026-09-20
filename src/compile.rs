@@ -936,16 +936,7 @@ impl Lowerer<'_, '_> {
         let input = *fields.add(FN_INPUT);
         let param_count =
             crate::identities::array::items(crate::identities::meta::record_fields_of(input)).len();
-        let out = *fields.add(FN_OUTPUT);
-        let ret = if is_void_type(out) {
-            None
-        } else if out == self.types.type_ {
-            Some(NumType::I64)
-        } else if crate::identities::numtype::is_scalar_type(out) {
-            Some(of_type_node(out))
-        } else {
-            return Err(CompileError::NotLowerable(out));
-        };
+        let ret = return_kind(self.types, *fields.add(FN_OUTPUT))?;
 
         // Lower each argument and widen it into its i64 bit-container.
         let args = (*node).value as *const DyadPtr; // [arg0 …, null] or null
@@ -1121,18 +1112,27 @@ unsafe fn compile_fn_body(
     // self-directing pass‹); every other compilable output is a scalar logos
     // the body's value widens to. A remaining non-scalar output (a record)
     // refuses cleanly.
-    let out = *fields.add(FN_OUTPUT);
-    let ret = if is_void_type(out) {
-        None
-    } else if out == types.type_ {
-        Some(NumType::I64)
-    } else if crate::identities::numtype::is_scalar_type(out) {
-        Some(of_type_node(out))
-    } else {
-        return Err(CompileError::NotLowerable(out));
-    };
+    let ret = return_kind(types, *fields.add(FN_OUTPUT))?;
     // The fn node is its own self-reference: a call to it inside `body` is recursion.
     compile_body(lower, types, fn_node, body, &params, ret)
+}
+
+/// How a function's declared output travels in the i64 container: not at
+/// all for `void`, as an address for a type value, at its width for a
+/// scalar; anything else (a record) is not compilable yet.
+///
+/// # Safety
+/// `out` must be a type node from the store.
+unsafe fn return_kind(types: &Core, out: DyadPtr) -> Result<Option<NumType>, CompileError> {
+    if is_void_type(out) {
+        Ok(None)
+    } else if out == types.type_ {
+        Ok(Some(NumType::I64))
+    } else if crate::identities::numtype::is_scalar_type(out) {
+        Ok(Some(of_type_node(out)))
+    } else {
+        Err(CompileError::NotLowerable(out))
+    }
 }
 
 /// `f.compile()`'s run half: compile `fn_node`'s body and install the finalized

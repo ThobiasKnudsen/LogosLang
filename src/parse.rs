@@ -235,6 +235,7 @@ impl ParsingTape {
     }
 
     /// A tape over `cells`, center on the first.
+    #[cfg(test)]
     pub fn from_cells(cells: Vec<Cell>) -> Self {
         let mut t = ParsingTape::new();
         for c in cells {
@@ -2225,23 +2226,10 @@ impl<'a> Parser<'a> {
         self.scopes
     }
 
-    /// Advance past trivia: ASCII whitespace and `#` line comments (a `#` runs to
-    /// the end of its line). Statement-level `#`s never reach this — the sequence
-    /// parser builds them into reflectable comment nodes first
-    /// ([`Parser::parse_comment`]) — so discarding here covers only
-    /// *mid-expression* `#`s, the seed's remaining approximation of the settled
-    /// design (DESIGN ›Text literals are plain values; `#` is the one comment
-    /// constructor‹); the full constructor form arrives at self-hosting.
-    fn skip_trivia(&mut self) {
-        // Whitespace only: `#` is an identity the driver lexes into a comment
-        // cell (DESIGN ›`#` is the one comment constructor‹), never trivia.
-        self.skip_whitespace();
-    }
-
     /// Consume the closing `)` that matches an opening `(`, or fail if the body
     /// ended at something else (or the end of input).
     pub(crate) fn expect_close(&mut self) -> Result<(), ParseError> {
-        self.skip_trivia();
+        self.skip_whitespace();
         let source = self.source;
         if self.pos >= source.len() {
             return Err(ParseError::UnclosedBracket);
@@ -2783,7 +2771,7 @@ impl<'a> Parser<'a> {
     /// (`id == self.logos.else_`). `None` at end of input or when nothing
     /// resolves.
     fn peek_token(&mut self) -> Option<(DyadPtr, usize)> {
-        self.skip_trivia();
+        self.skip_whitespace();
         let source = self.source;
         if self.pos >= source.len() {
             return None;
@@ -2874,7 +2862,8 @@ impl<'a> Parser<'a> {
     /// the generic driver.
     ///
     /// [`RECORD_TAG`]: crate::identities::meta::RECORD_TAG
-    pub fn parse_record(&mut self, record_logos: DyadPtr) -> Result<DyadPtr, ParseError> {
+    pub fn parse_record(&mut self) -> Result<DyadPtr, ParseError> {
+        let record_logos = self.types.type_;
         let (scope, fields_arr, size_bytes) = self.parse_field_list(false)?;
         let record = crate::identities::meta::record_layout(
             self.rt.store,
@@ -3415,7 +3404,11 @@ impl<'a> Parser<'a> {
                 }
                 def.ctor = read;
             }
-            SlotKind::Instance | SlotKind::Drop => return Err(ParseError::TypeBodyLine),
+            SlotKind::Instance | SlotKind::Drop => {
+                unreachable!(
+                    "`drop` returned above; `instance` is routed to instance_block_fill by `=`"
+                )
+            }
             // `shared run = fn …`: the function an instance of the type runs
             // and compiles as (#63; DESIGN ›Execution is function
             // application‹) — the 4 September shape, kept beside the bare
@@ -3669,7 +3662,7 @@ impl<'a> Parser<'a> {
         declared: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
         // The parameter list is a record; parse_record opens and closes its scope.
-        let input = self.parse_record(self.types.type_)?;
+        let input = self.parse_record()?;
         self.expect_arrow()?;
         // The return logos: the cells up to the body bracket, constructed to
         // one (`i32`, `@i32`, later `array i32`).
@@ -5415,8 +5408,7 @@ impl<'a> Parser<'a> {
                 // the type-slot test above matched a box too and *rebound* `x`
                 // to `a`'s storage, so `x = f64` silently wrote `a` (#82).
                 let place = self.alloc_local(t, 8);
-                let init =
-                    crate::identities::build_box_init(self.rt.store, self.types, place, read)?;
+                let init = crate::identities::build_init(self.rt.store, self.types, place, read)?;
                 self.scopes.rebind(record, place);
                 init
             } else if crate::identities::drop_model::is_owning_value(self.types, value) {
@@ -5440,8 +5432,7 @@ impl<'a> Parser<'a> {
                 );
                 // A pointer is 8 bytes (U64-wide), whatever it points at.
                 let place = self.alloc_local(owning_ty, 8);
-                let init =
-                    crate::identities::build_scalar_init(self.rt.store, self.types, place, value)?;
+                let init = crate::identities::build_init(self.rt.store, self.types, place, value)?;
                 self.scopes.rebind(record, place);
                 // `place` was just minted with the owning pointer logos (its
                 // destructor set), so the owning check passes; keeping it on
@@ -5480,8 +5471,7 @@ impl<'a> Parser<'a> {
                 let (ty_node, width) =
                     crate::identities::scalar_binding_type(self.rt.store, self.types, value);
                 let place = self.alloc_local(ty_node, width);
-                let init =
-                    crate::identities::build_scalar_init(self.rt.store, self.types, place, value)?;
+                let init = crate::identities::build_init(self.rt.store, self.types, place, value)?;
                 self.scopes.rebind(record, place);
                 init
             } else {

@@ -1047,7 +1047,7 @@ unsafe fn type_name(types: &Core, node: DyadPtr) -> String {
 /// fresh `@pointee` place, 8 bytes wide, so `p := &x` gets real storage that
 /// `p = &y` can rewire. The caller mints the place with this — frame-relative
 /// inside a function, absolute at top level — and pairs it with
-/// [`build_scalar_init`]. A bare rational (`x := 5`) stays a comptime binding
+/// [`build_init`]. A bare rational (`x := 5`) stays a comptime binding
 /// and never reaches here; a `fn`, logos, or unit value keeps its own binding.
 ///
 /// # Safety
@@ -1067,36 +1067,11 @@ pub(crate) unsafe fn scalar_binding_type(
     }
 }
 
-/// The `place = value` store that fills a fresh box — a `type ?` or `dyad ?`
-/// place — from a node value: what `x := a` builds when `a` is itself such a
-/// box, so that `x` gets its own eight bytes and a copy of what `a` holds
-/// (reads are copy by default, ruled 12 September 2026). `assign::build`
-/// checks what the box may take, exactly as a written `x = a` would.
-pub(crate) fn build_box_init(
-    store: &mut Store,
-    types: &Core,
-    place: DyadPtr,
-    value: DyadPtr,
-) -> Result<DyadPtr, ParseError> {
-    assign::build(store, types, types.assign, place, value)
-}
-
-/// Build a declaration's snapshot *initializer*: an `=` writing `value` into the
-/// pre-minted `place` (`place = value`), kept as the declaration's declared slot
-/// and re-run each time the declaration evaluates. The caller mints `place` (see
-/// [`scalar_binding_type`]) frame-relative inside a function or absolute at top
-/// level, then binds the name to it. Together they make `name := <expression>`
-/// an eager, per-entry snapshot (DESIGN ›declarations are immutable by
-/// default‹): the value is evaluated when the declaration runs, not re-evaluated
-/// on every read, and a local inside a loop body or a recursive call
-/// re-initializes on each entry (into its own per-call storage). It mirrors the
-/// construction case (`p := point(1, 2)`), which likewise binds the name to the
-/// place and keeps its `construct` node as a re-run initializer.
-///
-/// # Safety
-/// `place`/`value` must be reduced dyads from the store, `place` a scalar or
-/// pointer place whose logos matches `value`.
-pub(crate) unsafe fn build_scalar_init(
+/// Build the initializing store of a declaration, `place = value`, the same
+/// node `=` builds ([`assign::build`]): a scalar box takes the value at its
+/// width, a node box its address. One builder for both, since the store node
+/// does not care which (the reading rule decides at run, #82).
+pub(crate) fn build_init(
     store: &mut Store,
     types: &Core,
     place: DyadPtr,
@@ -1545,7 +1520,7 @@ unsafe fn commit_tail(
 /// `node` is a valid dyad from the store.
 unsafe fn check_type_tail(types: &Core, node: DyadPtr) -> Result<(), ParseError> {
     walk_tail(types, node, &mut |leaf| {
-        if is_type_value(types, types.through(leaf)) {
+        if is_type_value(types, leaf) {
             Ok(leaf)
         } else {
             Err(ParseError::TypeMismatch)

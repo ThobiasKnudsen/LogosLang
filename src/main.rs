@@ -49,11 +49,7 @@ impl Engine {
 /// # Safety
 /// `node` must be a valid dyad.
 unsafe fn is_statement_node(core: &Core, node: seed::dyad::DyadPtr) -> bool {
-    // An item that ran in the pass echoes as its expression would.
-    let node = seed::identities::ran::expr_of(core, node);
-    // A bare name is its record: what it names decides the echo.
-    let named = seed::record::through(core.record_, node);
-    let logos = (*named).ty;
+    let (named, logos) = tail_type(core, node);
     // A bare type *definition* is a statement, as a bare `fn` is. A place
     // holding a type is a value and echoes what it holds, like any variable —
     // the tag is what tells the two apart (DESIGN ›A type is a comptime
@@ -64,13 +60,32 @@ unsafe fn is_statement_node(core: &Core, node: seed::dyad::DyadPtr) -> bool {
     }
     // The rest is a result-type question — what an expression yields — which
     // is `numtype_of`'s, not the reading rule's (#82's second half).
+    is_silent_type(core, logos) || logos == core.fn_type || logos == core.drop_
+}
+
+/// What a line's tail is: an item that ran in the pass echoes as its
+/// expression would, and a bare name is its record, so what it names decides.
+/// The dyad behind the name and its type.
+///
+/// # Safety
+/// `node` must be a valid dyad.
+unsafe fn tail_type(
+    core: &Core,
+    node: seed::dyad::DyadPtr,
+) -> (seed::dyad::DyadPtr, seed::dyad::DyadPtr) {
+    let node = seed::identities::ran::expr_of(core, node);
+    let named = seed::record::through(core.record_, node);
+    (named, (*named).ty)
+}
+
+/// The statement types with no value worth printing in any mode: a
+/// declaration, the two stores, a compile, an import.
+fn is_silent_type(core: &Core, logos: seed::dyad::DyadPtr) -> bool {
     logos == core.declare_
         || logos == core.assign
         || logos == core.storeptr_
-        || logos == core.fn_type
         || logos == core.compile_
         || logos == core.import_
-        || logos == core.drop_
 }
 
 /// Whether an imported file's tail is a true statement, with no value worth
@@ -81,13 +96,7 @@ unsafe fn is_statement_node(core: &Core, node: seed::dyad::DyadPtr) -> bool {
 /// # Safety
 /// `node` must be a valid dyad.
 unsafe fn is_silent_tail(core: &Core, node: seed::dyad::DyadPtr) -> bool {
-    let node = seed::identities::ran::expr_of(core, node);
-    let logos = (*seed::record::through(core.record_, node)).ty;
-    logos == core.declare_
-        || logos == core.assign
-        || logos == core.storeptr_
-        || logos == core.compile_
-        || logos == core.import_
+    is_silent_type(core, tail_type(core, node).1)
 }
 
 fn main() -> ExitCode {

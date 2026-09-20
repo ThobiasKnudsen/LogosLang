@@ -594,9 +594,6 @@ impl<'a> Runtime<'a> {
     /// `f` must be a `fn` node from the store and `node` a node whose value
     /// is a null-terminated operand run (or null for a nullary call).
     pub unsafe fn apply(&mut self, f: DyadPtr, node: DyadPtr) -> Result<i64, RunError> {
-        if ((*f).value as *const DyadPtr).is_null() {
-            return Err(RunError::NotRunnable(f));
-        }
         let values = self.eval_args(f, node)?;
         self.apply_values(f, &values)
     }
@@ -757,9 +754,6 @@ impl<'a> Runtime<'a> {
     /// an offset its function's frame size covers.
     unsafe fn read_container(&mut self, node: DyadPtr) -> Result<i64, RunError> {
         let node = self.through(node);
-        if !crate::dyad::is_place((*node).value) {
-            return Err(RunError::BadValue);
-        }
         let slot = self.place_addr(node).ok_or(RunError::BadValue)?;
         Ok(std::ptr::read_unaligned(slot as *const i64))
     }
