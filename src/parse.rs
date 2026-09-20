@@ -81,7 +81,12 @@ pub struct Cell {
 impl Cell {
     /// An unconstructed cell pointing at `dyad`, lexed from `text` at
     /// `start..start + len`.
-    pub fn lexed(dyad: DyadPtr, text: &str, start: usize, len: usize) -> Self {
+    ///
+    /// # Safety
+    /// `text` must outlive every read of the cell's spelling: it is the
+    /// parser's source, an import's text (leaked for the run), or a string
+    /// node's store-lived bytes. `dyad` must be null or a dyad from the store.
+    pub unsafe fn lexed(dyad: DyadPtr, text: &str, start: usize, len: usize) -> Self {
         Cell {
             dyad,
             constructed: false,
@@ -93,7 +98,10 @@ impl Cell {
     }
 
     /// A constructed cell holding `dyad`, with no spelling of its own.
-    pub fn built(dyad: DyadPtr) -> Self {
+    ///
+    /// # Safety
+    /// `dyad` must be null or a dyad from the store.
+    pub unsafe fn built(dyad: DyadPtr) -> Self {
         Cell { dyad, constructed: true, bracket: false, text: None, start: 0, len: 0 }
     }
 
@@ -1307,7 +1315,9 @@ fn logos_constructor(
 ) -> Result<Constructed, ParseError> {
     // SAFETY: `id` is the identity whose slot `construct_of` just read.
     let f = unsafe { crate::identities::meta::constructor_of(id) };
-    p.run_logos_ctor(f, id, tape)
+    // SAFETY: `f` is the fn the type's constructor slot holds, `id` the
+    // resolved type, and the tape's cells are the driver's.
+    unsafe { p.run_logos_ctor(f, id, tape) }
 }
 
 /// The application constructor as a [`ConstructFn`] (see
@@ -1864,7 +1874,10 @@ pub(crate) fn lex_token(
     } else {
         r.record
     };
-    Ok(Some((Cell::lexed(dyad, text, start, r.matched), start + r.matched)))
+    // SAFETY: `text` is the caller's source (the parser's, or an import's
+    // held for the run); `dyad` is the record or fresh dyad the index gave.
+    let cell = unsafe { Cell::lexed(dyad, text, start, r.matched) };
+    Ok(Some((cell, start + r.matched)))
 }
 
 /// The lexer over a string, as `lex «…»` runs it (#62; DESIGN ›Text is the
@@ -2119,7 +2132,10 @@ impl<'a> Parser<'a> {
     /// record, so the body's name stays the dead one. And as a use, each
     /// name joins the lists of the functions being parsed, so a call of a
     /// caller is a use of what its callee reads.
-    pub(crate) fn check_call_reads(&mut self, callee: DyadPtr) -> Result<(), ParseError> {
+    ///
+    /// # Safety
+    /// `callee` must be null or a dyad from the store.
+    pub(crate) unsafe fn check_call_reads(&mut self, callee: DyadPtr) -> Result<(), ParseError> {
         if callee.is_null() {
             return Ok(());
         }
@@ -2289,7 +2305,8 @@ impl<'a> Parser<'a> {
         if let Some(scope) = self.cell_at(tape, 1)?.filter(|c| c.is_bracket()).map(|c| c.dyad) {
             // SAFETY: `scope` is the bracket's node from the store.
             let args = unsafe { self.args_of(scope) };
-            let node = self.build_call(id, &args)?;
+            // SAFETY: `id` is the resolved callee and `args` reduced dyads.
+            let node = unsafe { self.build_call(id, &args) }?;
             tape.remove(1);
             tape.place(node);
         } else {
@@ -2336,7 +2353,8 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
         let mut tape = ParsingTape::new();
-        tape.push(Cell::lexed(id, self.source, start, len));
+        // SAFETY: `self.source` outlives the parse; `id` came from the index.
+        tape.push(unsafe { Cell::lexed(id, self.source, start, len) });
         match construct(self, id, &mut tape)? {
             Constructed::Placed => Ok(tape.cell(0).filter(|c| c.constructed).map(|c| c.dyad)),
             Constructed::Decline => Ok(None),
@@ -2385,7 +2403,11 @@ impl<'a> Parser<'a> {
     /// driver makes no use of either. A run error is the checked
     /// [`ParseError::ConstructorFailed`]. What the constructor left is read
     /// off the cell by [`Parser::run_ctor`], applied or declined.
-    pub(crate) fn run_logos_ctor(
+    ///
+    /// # Safety
+    /// `f` must be a `fn` node and `owner` a type node, both from the store;
+    /// the tape's cells must hold dyads from the store.
+    pub(crate) unsafe fn run_logos_ctor(
         &mut self,
         f: DyadPtr,
         owner: DyadPtr,
@@ -3292,7 +3314,10 @@ impl<'a> Parser<'a> {
     /// Which slot `target` names, if any: a use of one of the slot words
     /// ([`Core::slots`]), or of `drop`. Whether that fill reaches a type
     /// being defined is [`Parser::filling_definition`]'s question.
-    pub(crate) fn slot_of(&self, target: DyadPtr) -> Option<SlotKind> {
+    ///
+    /// # Safety
+    /// `target` must be a dyad from the store.
+    pub(crate) unsafe fn slot_of(&self, target: DyadPtr) -> Option<SlotKind> {
         // The word arrives as the record of its use, or as the identity
         // itself when its own constructor stood aside (`drop`).
         // SAFETY: `target` is a reduced dyad from the store.
@@ -3354,7 +3379,10 @@ impl<'a> Parser<'a> {
         })
     }
 
-    pub(crate) fn slot_fill(
+    ///
+    /// # Safety
+    /// `value` must be a dyad from the store.
+    pub(crate) unsafe fn slot_fill(
         &mut self,
         kind: SlotKind,
         value: DyadPtr,
@@ -3502,7 +3530,8 @@ impl<'a> Parser<'a> {
                 };
                 self.definitions.last_mut().expect("checked above").this_param =
                     std::ptr::null_mut();
-                self.slot_fill(SlotKind::Parse, f?)
+                // SAFETY: `f` is the fn node just built over the body.
+                unsafe { self.slot_fill(SlotKind::Parse, f?) }
             }
             // A type's own run, what runs when the type itself is used
             // plainly, is not in the seed (#133), as for the wrapped form.
@@ -4953,7 +4982,10 @@ impl<'a> Parser<'a> {
     /// logos callee is a conversion (`i32(a)`), a record type constructs an
     /// instance, a type-returning callee resolves NOW at comptime; any other
     /// callee is an ordinary call.
-    pub(crate) fn build_call(
+    ///
+    /// # Safety
+    /// `callee` and every `arg` must be dyads from the store.
+    pub(crate) unsafe fn build_call(
         &mut self,
         callee: DyadPtr,
         args: &[DyadPtr],
@@ -6321,7 +6353,8 @@ impl<'a> Parser<'a> {
             if !cell.dyad.is_null() {
                 // SAFETY: a constructed cell holds a node from the store.
                 let callee = unsafe { (*cell.dyad).ty };
-                if let Err(e) = self.check_call_reads(callee) {
+                // SAFETY: `callee` is the resolved identity of the cell.
+                if let Err(e) = unsafe { self.check_call_reads(callee) } {
                     self.pos = cell.start;
                     return Err(e);
                 }
@@ -6736,7 +6769,7 @@ mod tests {
     }
 
     fn dyad_cells(tags: &[usize]) -> Vec<Cell> {
-        tags.iter().map(|&t| Cell::built(dyad(t))).collect()
+        tags.iter().map(|&t| unsafe { Cell::built(dyad(t)) }).collect()
     }
 
     #[test]
@@ -6756,7 +6789,7 @@ mod tests {
     fn insert_left_keeps_cursor_on_same_cell() {
         let mut t = ParsingTape::from_cells(dyad_cells(&[10, 11, 12]));
         t.set_cursor(1); // dyad(11)
-        t.insert(0, Cell::built(dyad(99))); // splice just left of the cursor
+        t.insert(0, unsafe { Cell::built(dyad(99)) }); // splice just left of the cursor
         assert_eq!(t.at(0).unwrap().dyad, dyad(11));
         assert_eq!(t.at(-1).unwrap().dyad, dyad(99));
         assert_eq!(t.len(), 4);
@@ -6767,7 +6800,7 @@ mod tests {
     fn insert_right_leaves_cursor() {
         let mut t = ParsingTape::from_cells(dyad_cells(&[10, 11, 12]));
         t.set_cursor(1); // dyad(11)
-        t.insert(1, Cell::built(dyad(99)));
+        t.insert(1, unsafe { Cell::built(dyad(99)) });
         assert_eq!(t.at(0).unwrap().dyad, dyad(11));
         assert_eq!(t.at(1).unwrap().dyad, dyad(99));
         assert_eq!(t.at(2).unwrap().dyad, dyad(12));
@@ -6794,7 +6827,7 @@ mod tests {
         assert!(t.at(0).is_none(), "past the end");
         assert_eq!(t.at(-1).unwrap().dyad, dyad(10), "the tail is still behind the center");
         assert_eq!(t.cursor(), t.len());
-        t.insert(1, Cell::built(dyad(7)));
+        t.insert(1, unsafe { Cell::built(dyad(7)) });
         assert_eq!(t.last().unwrap().dyad, dyad(7));
         assert_eq!(t.len(), 2);
     }
@@ -6805,8 +6838,8 @@ mod tests {
         // dyad, their spans kept tape-side) and constructed nodes on one
         // frontier, told apart by the tape's own flag, never by the dyad.
         let mut t = ParsingTape::new();
-        t.insert(0, Cell::lexed(dyad(3), "abc", 0, 3));
-        t.insert(1, Cell::built(dyad(7)));
+        t.insert(0, unsafe { Cell::lexed(dyad(3), "abc", 0, 3) });
+        t.insert(1, unsafe { Cell::built(dyad(7)) });
         assert_eq!(t.is_constructed(0), Some(false));
         assert_eq!(t.is_constructed(1), Some(true));
         assert_eq!(t.own_text(), Some("abc"));
@@ -6821,9 +6854,9 @@ mod tests {
         // tape (the mechanism behind token-rewriting operators); `place`
         // marks it constructed, and `reduce_here` spans the triple.
         let mut t = ParsingTape::from_cells(vec![
-            Cell::lexed(dyad(1), "a b c", 0, 1),
-            Cell::lexed(dyad(2), "a b c", 2, 1),
-            Cell::lexed(dyad(3), "a b c", 4, 1),
+            unsafe { Cell::lexed(dyad(1), "a b c", 0, 1) },
+            unsafe { Cell::lexed(dyad(2), "a b c", 2, 1) },
+            unsafe { Cell::lexed(dyad(3), "a b c", 4, 1) },
         ]);
         t.set_cursor(1);
         t.at_mut(1).unwrap().len = 2;
@@ -6989,7 +7022,7 @@ mod tests {
         t.set_constructed(0, false);
         assert!(!t.cell_at_mark(own).unwrap().constructed, "the flag is its own write");
         assert_eq!(t.edits(), edits + 2, "a flag write is an edit");
-        t.insert(1, Cell::built(dyad(8)));
+        t.insert(1, unsafe { Cell::built(dyad(8)) });
         assert_eq!(t.edits(), edits + 3, "a splice is an edit");
         t.remove(0);
         assert!(t.cell_at_mark(own).is_none(), "a removed cell is gone by its handle");
@@ -7002,7 +7035,9 @@ mod tests {
         // spellings (DESIGN ›Text is the quote‹, 14 September 2026), in
         // order, where one cell would land — and a tape spliced into itself
         // is copied first.
-        let frag = vec![Cell::lexed(dyad(1), "x y", 0, 1), Cell::lexed(dyad(2), "x y", 2, 1)];
+        let frag = vec![unsafe { Cell::lexed(dyad(1), "x y", 0, 1) }, unsafe {
+            Cell::lexed(dyad(2), "x y", 2, 1)
+        }];
         let mut t = ParsingTape::from_cells(dyad_cells(&[10, 11]));
         t.splice(1, frag.clone());
         let ids: Vec<_> = t.cells().iter().map(|c| c.dyad).collect();

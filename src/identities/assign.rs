@@ -70,7 +70,8 @@ fn construct(
             None => return Err(ParseError::MissingOperand),
         },
     };
-    let slot = p.slot_of(target);
+    // SAFETY: `target` is the reduced dyad of the cell to the left.
+    let slot = unsafe { p.slot_of(target) };
     if slot.is_some() && !p.filling_definition() {
         return Err(ParseError::SlotOutsideDefinition);
     }
@@ -95,7 +96,8 @@ fn construct(
     }
     let value = p.parse_expression()?;
     let node = if let Some(kind) = slot {
-        p.slot_fill(kind, value)?
+        // SAFETY: `value` is the reduced dyad of the right side.
+        unsafe { p.slot_fill(kind, value) }?
     } else {
         let types = p.types();
         build(p.store(), types, id, target, value)?

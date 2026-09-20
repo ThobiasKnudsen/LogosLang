@@ -198,7 +198,8 @@ fn construct(
             // SAFETY: `scope` is the bracket's node from the store.
             let args = unsafe { p.args_of(scope) };
             tape.remove(1);
-            p.build_call(id, &args)?
+            // SAFETY: `id` is this numeric type's node; `args` are reduced dyads.
+            unsafe { p.build_call(id, &args) }?
         }
         _ => p.stand_as_value(tape, id),
     };
