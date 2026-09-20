@@ -298,9 +298,26 @@ impl ParsingTape {
         self.node_at(offset).map(move |n| &mut self.nodes[n].cell)
     }
 
-    /// The cell at absolute index `i`, or `None` if out of range.
+    /// The cell at absolute index `i`, or `None` if out of range. Walks from
+    /// the head: a loop over the tape uses [`ParsingTape::iter`] instead.
     pub fn cell(&self, i: usize) -> Option<&Cell> {
         self.node_abs(i).map(|n| &self.nodes[n].cell)
+    }
+
+    /// Every cell on the tape in order, each with the handle of its node,
+    /// which [`ParsingTape::center_on`] takes: one walk of the list, where
+    /// `cell(i)` for each `i` walked it once per cell (#92: the boundary
+    /// driver was cubic in the segment's length because of that).
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (usize, &Cell)> + '_ {
+        std::iter::successors(self.head, move |&n| self.nodes[n].next)
+            .map(move |n| (n, &self.nodes[n].cell))
+    }
+
+    /// Move the center to the node `handle` names, a handle
+    /// [`ParsingTape::iter`] handed out for a cell still on the tape.
+    pub(crate) fn center_on(&mut self, handle: usize) {
+        debug_assert!(self.nodes[handle].linked, "a handle names a cell on the tape");
+        self.center = Some(handle);
     }
 
     /// The last cell on the tape, if any.
@@ -2691,8 +2708,8 @@ impl<'a> Parser<'a> {
             return Ok(None);
         }
         let mut left = ParsingTape::new();
-        for i in 0..n {
-            left.push(*tape.cell(i).expect("in range"));
+        for (_, c) in tape.iter().take(n) {
+            left.push(*c);
         }
         let items = self.construct_segment(&mut left)?;
         let target = match items.as_slice() {
@@ -6475,8 +6492,7 @@ impl<'a> Parser<'a> {
         let mark = tape.mark();
         loop {
             let mut found = None;
-            for i in 0..tape.len() {
-                let Some(c) = tape.cell(i) else { break };
+            for (n, c) in tape.iter() {
                 if c.constructed {
                     continue;
                 }
@@ -6493,11 +6509,11 @@ impl<'a> Parser<'a> {
                 if asleep {
                     continue;
                 }
-                found = Some((i, construct, id));
+                found = Some((n, construct, id));
                 break;
             }
-            let Some((i, construct, id)) = found else { break };
-            tape.set_cursor(i);
+            let Some((n, construct, id)) = found else { break };
+            tape.center_on(n);
             if let Err(e) = self.run_ctor(construct, id, tape, true) {
                 tape.restore(mark);
                 return Err(e);
@@ -6552,23 +6568,22 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Vec<(DyadPtr, usize)>, ParseError> {
-        let mut i = 0;
-        while i < tape.len() {
+        // Prose is lifted out beside the segment, in order.
+        let comment_ = self.types.comment_;
+        let prose: Vec<(usize, usize, DyadPtr)> = tape
+            .iter()
             // SAFETY: a constructed cell holds a node from the store.
-            let is_comment = matches!(tape.cell(i), Some(c) if c.constructed && unsafe { (*c.dyad).ty } == self.types.comment_);
-            if is_comment {
-                let d = tape.cell(i).expect("matched above").dyad;
-                self.lifted.push((tape.start_of(i), d));
-                tape.set_cursor(i);
-                tape.remove(0);
-            } else {
-                i += 1;
-            }
+            .filter(|(_, c)| c.constructed && unsafe { (*c.dyad).ty } == comment_)
+            .map(|(n, c)| (n, c.start, c.dyad))
+            .collect();
+        for (n, start, d) in prose {
+            self.lifted.push((start, d));
+            tape.center_on(n);
+            tape.remove(0);
         }
         loop {
             let mut best: Option<(usize, f64, ConstructFn, DyadPtr)> = None;
-            for i in 0..tape.len() {
-                let Some(c) = tape.cell(i) else { continue };
+            for (n, c) in tape.iter() {
                 if c.constructed {
                     continue;
                 }
@@ -6581,17 +6596,17 @@ impl<'a> Parser<'a> {
                     Some((_, bp, _, _)) => prec > bp || (prec == bp && right),
                 };
                 if better {
-                    best = Some((i, prec, construct, id));
+                    best = Some((n, prec, construct, id));
                 }
             }
-            let Some((i, _, construct, id)) = best else { break };
-            tape.set_cursor(i);
+            let Some((n, _, construct, id)) = best else { break };
+            tape.center_on(n);
             self.run_ctor(construct, id, tape, false)?;
         }
-        let mut items = Vec::with_capacity(tape.len());
-        for i in 0..tape.len() {
-            let cell = *tape.cell(i).expect("in range");
-            let start = tape.start_of(i);
+        let cells: Vec<Cell> = tape.iter().map(|(_, c)| *c).collect();
+        let mut items = Vec::with_capacity(cells.len());
+        for cell in cells {
+            let start = cell.start;
             items.push((self.as_operand(cell)?, start));
         }
         Ok(items)
