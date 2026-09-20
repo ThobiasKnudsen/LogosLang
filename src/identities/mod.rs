@@ -747,15 +747,14 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
         || logos == types.ge
         || logos == types.eq
         || logos == types.ne
-        || logos == types.or_
         || logos == types.not_
         || logos == types.return_
     {
         return Operand::Concrete(NumType::I32);
     }
-    // `and` over booleans is a boolean; over non-booleans it is a group, no
-    // number at all (see [`and`]).
-    if logos == types.and_ {
+    // `and`/`or` over booleans is a boolean; over non-booleans it is a group,
+    // no number at all (see [`and`]).
+    if logos == types.and_ || logos == types.or_ {
         return if crate::parse::is_bool_result(types, node) {
             Operand::Concrete(NumType::I32)
         } else {

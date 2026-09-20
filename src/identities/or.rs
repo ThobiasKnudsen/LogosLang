@@ -40,8 +40,12 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     (id, leaf)
 }
 
-/// Build `lhs or rhs` as `{type: or, value: [lhs, rhs, or_native]}`, requiring both
-/// operands to be `bool` ([`ParseError::NonBoolOperands`]).
+/// Build `lhs or rhs` as `{type: or, value: [lhs, rhs, or_native]}` over two
+/// booleans, or, over two non-booleans, the group that carries the
+/// connective (DESIGN ›The proof layer‹, 7 September 2026: "`and` and `or`
+/// on operands that are not booleans build a group that carries the
+/// connective"), exactly as [`super::and`] does; a boolean beside a
+/// non-boolean is [`ParseError::NonBoolOperands`].
 fn build(
     store: &mut Store,
     types: &Core,
@@ -50,8 +54,14 @@ fn build(
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store; reading their logos is safe.
-    if !unsafe { is_bool_result(types, lhs) && is_bool_result(types, rhs) } {
+    let (lb, rb) = unsafe { (is_bool_result(types, lhs), is_bool_result(types, rhs)) };
+    if lb != rb {
         return Err(ParseError::NonBoolOperands);
+    }
+    if !lb {
+        // A group of non-booleans: the consuming operator distributes over it.
+        let value = store.alloc_operands(&[lhs, rhs, std::ptr::null_mut()]);
+        return Ok(store.alloc_raw(or, value));
     }
     // Two bool literals fold now (a bare literal is pure, so nothing is lost),
     // like `==` over rationals or logos — what keeps a comptime chain comptime.

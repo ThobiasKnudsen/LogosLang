@@ -1607,8 +1607,8 @@ pub(crate) unsafe fn is_bool_result(types: &Core, node: DyadPtr) -> bool {
             None => false,
         };
     }
-    // `and` over two booleans is one; over two non-booleans it is a group.
-    if logos == types.and_ {
+    // `and`/`or` over two booleans is one; over two non-booleans it is a group.
+    if logos == types.and_ || logos == types.or_ {
         let (lhs, rhs) = crate::identities::operands(node);
         return is_bool_result(types, lhs) && is_bool_result(types, rhs);
     }
@@ -1619,7 +1619,6 @@ pub(crate) unsafe fn is_bool_result(types: &Core, node: DyadPtr) -> bool {
         || logos == types.le
         || logos == types.ge
         || logos == types.ne
-        || logos == types.or_
         || logos == types.not_
         || logos == types.tape.is_constructed
 }

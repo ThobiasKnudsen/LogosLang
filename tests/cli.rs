@@ -481,6 +481,19 @@ fn an_and_group_of_non_booleans_is_data_not_a_condition() {
 }
 
 #[test]
+fn an_or_group_of_non_booleans_is_data_like_the_and_group() {
+    // DESIGN ›The proof layer‹ (7 September 2026): "`and` and `or` on
+    // operands that are not booleans build a group that carries the
+    // connective". `or` built no group before (#95); now it is refused as a
+    // condition exactly as the `and` group is, and a boolean beside a
+    // non-boolean is still the operand error.
+    let (_echoes, stderr) = repl(b"x := i32 1\ny := i32 2\nif (x or y) (1) else (2)\n");
+    assert!(stderr.contains("must be a bool"), "stderr: {stderr}");
+    let (_echoes, stderr) = repl(b"x := i32 1\nx or true\n");
+    assert!(stderr.contains("must be bools"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_collection_member_demands_its_index_brackets() {
     // Element access is `[…]`; the call form is refused with a teaching
     // message, and the bare collection as a value waits for the array logos.
