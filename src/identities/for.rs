@@ -25,7 +25,7 @@
 use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
-use super::numtype::{self, ArithOp, CmpOp};
+use super::numtype::{self, CmpOp};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
@@ -87,7 +87,8 @@ fn one_bits(nt: numtype::NumType) -> i64 {
 
 /// Run: evaluate start (written to the variable), end, and step once; then
 /// rerun the body and increment while `var < end`. A non-positive step runs
-/// zero iterations. Yields unit.
+/// zero iterations, and a step past the counter's width ends the loop
+/// (#111: a wrapped counter would satisfy `var < end` again). Yields unit.
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid `for` node; its parts are valid dyads.
     unsafe {
@@ -107,7 +108,9 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
                 break;
             }
             rt.run(body)?;
-            let next = numtype::apply_arith(ArithOp::Add, nt, v, d);
+            let Some(next) = numtype::checked_add(nt, v, d) else {
+                break;
+            };
             numtype::write_scalar(var_ty, rt.place_addr(var).ok_or(RunError::BadValue)?, next);
         }
         Ok(0)

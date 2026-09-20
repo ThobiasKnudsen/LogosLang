@@ -3341,6 +3341,19 @@ mod tests {
     }
 
     #[test]
+    fn for_loop_whose_step_overshoots_the_width_ends_both_tiers() {
+        // #111: the increment past i32::MAX ended nowhere before, the counter
+        // wrapping negative and satisfying `i < end` again for two billion
+        // more iterations. Now the step that does not fit ends the loop, so
+        // exactly one iteration runs in each tier.
+        diff_typed_call(
+            "fn (d := i32 ?) -> i32 ( s := i32 0, for i in 2147483640..2147483647..d ( s = s + 1 ), s )",
+            "f(10)",
+            1,
+        );
+    }
+
+    #[test]
     fn for_loop_without_an_index_both_tiers() {
         // `for a..b (body)` with no index is the same loop without the variable
         // (DESIGN ›The scope's constructor is the driver‹, ruled 17 September

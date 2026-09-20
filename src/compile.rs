@@ -829,7 +829,18 @@ impl Lowerer<'_, '_> {
         let inc = if nt.is_float() {
             self.builder.ins().fadd(v2, d)
         } else {
-            self.builder.ins().iadd(v2, d)
+            // A step past the counter's width ends the loop (#111), as the
+            // interpreter's checked add does.
+            let (sum, overflow) = if nt.is_signed_int() {
+                self.builder.ins().sadd_overflow(v2, d)
+            } else {
+                self.builder.ins().uadd_overflow(v2, d)
+            };
+            let step_b = self.builder.create_block();
+            self.builder.ins().brif(overflow, exit, &[], step_b, &[]);
+            self.builder.switch_to_block(step_b);
+            self.builder.seal_block(step_b);
+            sum
         };
         self.write_place(var, ct, inc)?;
         self.builder.ins().jump(header, &[]);

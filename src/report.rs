@@ -278,7 +278,7 @@ pub fn run_message(e: &RunError) -> String {
         RunError::NotRunnable(_) => "this is not runnable".into(),
         RunError::BadValue => "a value here has no storage to read".into(),
         RunError::UncomputableLiteral => {
-            "a literal here has no exact value in its context logos".into()
+            "a literal here has no exact value in the type it lands in".into()
         }
         RunError::ArityMismatch => "a call's argument count does not match its function".into(),
         RunError::CompiledArity => "compiled calls take at most three arguments in v1".into(),
@@ -312,7 +312,7 @@ pub fn compile_message(e: &CompileError) -> String {
         CompileError::NotLowerable(_) => "this cannot be compiled yet".into(),
         CompileError::BadValue => "a value here has no storage to compile against".into(),
         CompileError::UncomputableLiteral => {
-            "a literal here has no exact value in its context logos".into()
+            "a literal here has no exact value in the type it lands in".into()
         }
         CompileError::UnsupportedArity(n) => {
             format!("compiled functions take at most three parameters in v1 (this one has {n})")

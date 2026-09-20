@@ -723,11 +723,17 @@ impl ScopeStack {
 
     /// Pop scopes until `depth` remain. An error propagating out of a nested
     /// parse skips the balancing pops; a caller that keeps the stack across
-    /// parses (the REPL) restores its known depth with this.
+    /// parses (the REPL) restores its known depth with this. The barriers of
+    /// the bodies closed this way go with them: a barrier left behind would
+    /// stand between every later top-level scope and the names it declares,
+    /// refusing `own`/`drop` for the rest of the session (#91).
     pub fn truncate(&mut self, depth: usize) {
         while self.open.len() > depth {
             self.pop();
         }
+        // A barrier's value is the index of the body scope it was pushed for,
+        // so it lives exactly while that scope is open.
+        self.barriers.retain(|&b| b < depth);
     }
 
     /// Accept the journalled acts: they are permanent, the undo log can be
@@ -7496,6 +7502,22 @@ mod tests {
         scopes.pop();
         scopes.pop_barrier();
         assert!(!scopes.crosses_barrier(outer));
+    }
+
+    #[test]
+    fn truncating_past_a_body_drops_its_barrier() {
+        // #91: a parse error inside a fn/while/for body skips the pop of its
+        // barrier; the REPL then restores the stack's depth with `truncate`,
+        // and the barrier must go with the body, or every later top-level
+        // `own`/`drop` is refused for the rest of the session.
+        let mut scopes = ScopeStack::new();
+        let (outer, body) = (dyad(100), dyad(101));
+        scopes.push(outer);
+        scopes.push_barrier();
+        scopes.push(body);
+        assert!(scopes.crosses_barrier(outer));
+        scopes.truncate(1);
+        assert!(!scopes.crosses_barrier(outer), "the closed body's barrier is gone");
     }
 
     #[test]

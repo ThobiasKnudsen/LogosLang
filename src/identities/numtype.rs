@@ -508,6 +508,30 @@ pub(crate) fn apply_arith(op: ArithOp, logos: NumType, l: i64, r: i64) -> i64 {
     }
 }
 
+/// Interpret `l`/`r` as `logos` and add them, `None` where the sum does not
+/// fit the type: what a `for` counter's step does at the end of its width
+/// (#111), so the loop ends there instead of wrapping around. A float sum
+/// always fits (it saturates to infinity).
+pub(crate) fn checked_add(logos: NumType, l: i64, r: i64) -> Option<i64> {
+    macro_rules! int {
+        ($t:ty) => {
+            (l as $t).checked_add(r as $t).map(|v| v as i64)
+        };
+    }
+    use NumType::*;
+    match logos {
+        I8 => int!(i8),
+        I16 => int!(i16),
+        I32 => int!(i32),
+        I64 => int!(i64),
+        U8 => int!(u8),
+        U16 => int!(u16),
+        U32 => int!(u32),
+        U64 => int!(u64),
+        F32 | F64 => Some(apply_arith(ArithOp::Add, logos, l, r)),
+    }
+}
+
 /// Interpret `l`/`r` as `logos` and apply the comparison `op`, returning the i32 0/1
 /// bool in an `i64`.
 pub(crate) fn apply_compare(op: CmpOp, logos: NumType, l: i64, r: i64) -> i64 {
