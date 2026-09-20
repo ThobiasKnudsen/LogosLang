@@ -2160,6 +2160,14 @@ fn runaway_depth_is_a_checked_error_not_an_abort() {
             // where the unguarded interpreter used to die in a debug build.
             let ending = "f := fn (n := i32 ?) -> i32 ( if (n < 1) (0) else (f(n - 1)) ), f(9000)";
             assert_eq!(run_script(ending), 0);
+            // The compiled tier shares the counter and the limit (#119): a
+            // runaway compiled recursion is the same checked error, never a
+            // machine stack overflow, and the ending one runs to its end.
+            let runaway_compiled = "f := fn (n := i32 ?) -> i32 ( f(n + 1) ), f.compile(), f(1)";
+            assert_eq!(run_script_result(runaway_compiled), Err(crate::run::RunError::CallDepth));
+            let ending_compiled =
+                "f := fn (n := i32 ?) -> i32 ( if (n < 1) (0) else (f(n - 1)) ), f.compile(), f(9000)";
+            assert_eq!(run_script(ending_compiled), 0);
         })
         .expect("the work thread must start");
     work.join().expect("depth guards hold");

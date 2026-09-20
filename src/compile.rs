@@ -1269,6 +1269,38 @@ unsafe fn build_pass(
         builder.switch_to_block(entry);
         builder.seal_block(entry);
 
+        // The depth guard, the compiled half of the interpreter's (#119): count
+        // this call into the shared depth ([`crate::run::CALL_DEPTH`]) and,
+        // past [`crate::run::MAX_CALL_DEPTH`], park the fault and return 0
+        // instead of claiming a frame the machine stack cannot hold. The
+        // epilogue counts it out again.
+        let depth_addr =
+            builder.ins().iconst(ptr_ty, crate::run::CALL_DEPTH.as_ptr() as usize as i64);
+        let depth = builder.ins().load(types::I64, MemFlagsData::new(), depth_addr, 0);
+        let deeper = builder.ins().iadd_imm(depth, 1);
+        builder.ins().store(MemFlagsData::new(), deeper, depth_addr, 0);
+        let over = builder.ins().icmp_imm(
+            IntCC::UnsignedGreaterThan,
+            deeper,
+            crate::run::MAX_CALL_DEPTH as i64,
+        );
+        let fault = builder.create_block();
+        let body_b = builder.create_block();
+        builder.ins().brif(over, fault, &[], body_b, &[]);
+        builder.switch_to_block(fault);
+        builder.seal_block(fault);
+        builder.ins().store(MemFlagsData::new(), depth, depth_addr, 0);
+        let mut park_sig = module.make_signature();
+        park_sig.returns.push(AbiParam::new(types::I64));
+        let park_sigref = builder.import_signature(park_sig);
+        let park =
+            builder.ins().iconst(ptr_ty, crate::run::park_call_depth as *const () as usize as i64);
+        builder.ins().call_indirect(park_sigref, park, &[]);
+        let zero = builder.ins().iconst(types::I64, 0);
+        builder.ins().return_(&[zero]);
+        builder.switch_to_block(body_b);
+        builder.seal_block(body_b);
+
         // The activation record: one explicit stack slot sized to the function's
         // frame — its parameters first, its frame-relative locals after — 8-byte
         // aligned. A frameless function (`self_fn` null for a bare expression,
@@ -1371,6 +1403,10 @@ unsafe fn build_pass(
             Some(nt) => widen_to_i64(&mut builder, value, nt),
             None => builder.ins().iconst(types::I64, 0),
         };
+        // Count this call out of the shared depth (the prologue counted it in).
+        let depth = builder.ins().load(types::I64, MemFlagsData::new(), depth_addr, 0);
+        let shallower = builder.ins().iadd_imm(depth, -1);
+        builder.ins().store(MemFlagsData::new(), shallower, depth_addr, 0);
         builder.ins().return_(&[ret64]);
         builder.finalize();
     }

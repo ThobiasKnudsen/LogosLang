@@ -146,6 +146,7 @@ pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *
     // SAFETY: `rt` was set by the runtime around this very jump and is live
     // for its duration.
     let saved = unsafe { ((*rt).activations.len(), (*rt).stack.mark(), (*rt).constructing) };
+    let depth = CALL_DEPTH.load(std::sync::atomic::Ordering::Relaxed);
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // SAFETY: as above; `argv` holds `argc` containers the compiled
         // caller stored; `fn_node` is the fn node the caller baked.
@@ -165,6 +166,7 @@ pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *
             (*rt).stack.release(saved.1);
             (*rt).constructing = saved.2;
         }
+        CALL_DEPTH.store(depth, std::sync::atomic::Ordering::Relaxed);
     };
     match outcome {
         Ok(Ok(v)) => v,
@@ -204,6 +206,29 @@ pub unsafe extern "C" fn park_null_pointer() -> i64 {
     PENDING.set(Some(RunError::NullPointer));
     0
 }
+
+/// The fault a compiled call raises when the calls in flight would exceed
+/// [`MAX_CALL_DEPTH`] (#119): the compiled prologue counts itself into
+/// [`CALL_DEPTH`], and on the limit parks this and returns 0 instead of
+/// claiming a frame the machine stack cannot hold, exactly as the
+/// interpreter refuses its own frame.
+///
+/// # Safety
+/// Called only by compiled code the seed emitted, on the over-limit arm of
+/// its prologue. It touches no memory of its own.
+pub unsafe extern "C" fn park_call_depth() -> i64 {
+    PENDING.set(Some(RunError::CallDepth));
+    0
+}
+
+/// The calls in flight across both tiers: the interpreter counts each
+/// interpreted call in and out ([`Runtime::apply_values`]), compiled code
+/// counts itself in and out in its prologue and epilogue, and both refuse
+/// the frame past [`MAX_CALL_DEPTH`]. One counter, so a chain that
+/// alternates tiers is one depth, and the limit means the same thing
+/// whichever tier a frame runs in. Written by compiled code as a plain
+/// word; the seed runs one thread.
+pub static CALL_DEPTH: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// How deep interpreted calls may nest before the run faults (#80). The
 /// interpreter walks the body of each call on the Rust stack, so without a
@@ -618,10 +643,10 @@ impl<'a> Runtime<'a> {
         if body.is_null() {
             return Err(RunError::NotRunnable(f));
         }
-        // The depth is the count of in-flight interpreted calls, which
-        // `activations` already is; past the limit the run faults rather than
-        // letting the Rust stack under `run` overflow and abort (#80).
-        if self.activations.len() >= MAX_CALL_DEPTH {
+        // The depth is the count of calls in flight in both tiers
+        // ([`CALL_DEPTH`]); past the limit the run faults rather than letting
+        // the Rust stack under `run` overflow and abort (#80, #119).
+        if CALL_DEPTH.load(std::sync::atomic::Ordering::Relaxed) >= MAX_CALL_DEPTH {
             return Err(RunError::CallDepth);
         }
         let mark = self.stack.mark();
@@ -630,9 +655,11 @@ impl<'a> Runtime<'a> {
             self.stack.release(mark);
             return Err(e);
         }
+        CALL_DEPTH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.activations.push(base);
         let result = self.run(body);
         self.activations.pop();
+        CALL_DEPTH.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         self.stack.release(mark);
         // A `-> void` function runs its body for effect and yields unit (0 bits),
         // matching the compiled void fn's `return 0`, so both tiers agree.
