@@ -2487,6 +2487,35 @@ fn pub_gates_a_fn_declaration() {
 }
 
 #[test]
+fn shared_stands_first_on_the_members_record() {
+    let (mut store, mut trie, core) = new_core();
+    let mut s = ScopeStack::new();
+    s.push(core.root_scope);
+    let mut p = Parser::new(
+        "t := type (instance = (shared y := i32 3, shared mut z := i32 4, v := i32 ?))",
+        &mut store,
+        &mut trie,
+        &core,
+        s,
+    );
+    let decl = p.parse_expression().unwrap();
+    // SAFETY: the type and the records of its members were just parsed.
+    unsafe {
+        let t = declare::declared_of(decl);
+        let mut body = ScopeStack::new();
+        body.push(crate::identities::meta::record_body_of(t));
+        let y = body.resolve(&trie, "y").unwrap().record;
+        let z = body.resolve(&trie, "z").unwrap().record;
+        assert!(Record::has_gate(y, core.shared_) && !Record::has_gate(y, core.mut_));
+        assert_eq!(
+            crate::identities::array::items(Record::read(z).gate),
+            &[core.shared_, core.mut_]
+        );
+    }
+    assert_eq!(parse_err("shared x := 5"), ParseError::SharedOutsideInstanceBlock);
+}
+
+#[test]
 fn a_name_is_written_only_if_declared_mut() {
     assert_eq!(run_script("mut x := i32 5,\nx = 6,\nx"), 6);
     assert_eq!(run_script("pub mut x := i32 5,\nx = 6,\nx"), 6);

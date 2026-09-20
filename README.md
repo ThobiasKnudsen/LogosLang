@@ -191,11 +191,11 @@ The seed runs:
 - `alloc`, `own`, `drop`, `free`, `defer`, and raw pointers;
 - `.compile()` with a deoptimizing JIT;
 - `import`, the command line as source, and the REPL;
-- `pub` and `mut` on a name's record: a name is written after its declaration only where it says `mut`.
+- `pub`, `mut` and `shared` on a name's record: a name is written after its declaration only where it says `mut`, and a write along a field path needs `mut` on every step.
 
 Specified in DESIGN.md and not yet built:
 
-- **The rest of the gates.** `lock`, `immut`, gates on field paths and through pointers, and gates as body nodes, one read-or-write rule for visibility, borrowing, and reflection alike.
+- **The rest of the gates.** `lock`, `immut`, the write permission through pointers, and gates as body nodes, one read-or-write rule for visibility, borrowing, and reflection alike.
 - **The borrow checker.** Many readers or one writer, checked per place, with lexical lifetimes.
 - **Error values.** `T!`, `try`, and `match`. Today every error is a fault that stops the run with one message.
 - **The rewriting engine.** Equality saturation over the graph: one engine for compiler optimization, computer algebra, and your own rewrites, driven by cost functions.

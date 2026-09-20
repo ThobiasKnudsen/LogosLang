@@ -121,13 +121,15 @@ impl Record {
         !gates.is_null() && super::array::items(gates).contains(&gate)
     }
 
+    /// Put `gate` first: the words are read right to left, so first keeps text order.
+    ///
     /// # Safety
     /// As `Record::read`; `array_ty` the `array` identity, `gate` an identity from the store.
     pub unsafe fn add_gate(store: &mut Store, array_ty: DyadPtr, dyad: DyadPtr, gate: DyadPtr) {
         let gates = (*Self::fields(dyad)).gate;
         let mut items =
             if gates.is_null() { Vec::new() } else { super::array::items(gates).to_vec() };
-        items.push(gate);
+        items.insert(0, gate);
         (*Self::fields(dyad)).gate = super::array::build(store, array_ty, &items);
     }
 

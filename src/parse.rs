@@ -2389,9 +2389,10 @@ impl<'a> Parser<'a> {
             // of the `&mut self` needed below.
             let source = self.source;
             let name = &source[start..start + len];
+            let word = self.scopes.resolve(self.trie, name).ok().map(|r| r.identity);
             // One place stored with the type, not a field of the layout; legal
             // in an `instance = (…)` block alone (DESIGN ›Two muts, and the storage partition‹).
-            if name == "shared" {
+            if word == Some(self.types.shared_) {
                 if !relaxed {
                     self.pos = start;
                     return Err(ParseError::SharedOutsideInstanceBlock);
@@ -2400,11 +2401,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
             // `mut` before a field or parameter gates its record, as before any name.
-            let gated = self
-                .scopes
-                .resolve(self.trie, name)
-                .ok()
-                .is_some_and(|r| r.identity == self.types.mut_);
+            let gated = word == Some(self.types.mut_);
             let (start, name) = if gated {
                 let (start, len) = self.lex_spelling().ok_or(ParseError::ExpectedField)?;
                 (start, &source[start..start + len])
@@ -2497,6 +2494,7 @@ impl<'a> Parser<'a> {
         }
         let field_scope = self.scopes.pop().expect("the field list's scope is open");
         self.definitions.last_mut().expect("checked above").in_block = true;
+        self.last_declared = std::ptr::null_mut();
         let items = self.shared_line();
         self.definitions.last_mut().expect("checked above").in_block = false;
         self.scopes.push(field_scope);
@@ -2532,6 +2530,12 @@ impl<'a> Parser<'a> {
                 self.pos = at;
                 return Err(ParseError::Resolve(ResolveError::Shadowed(name)));
             }
+            let record = self.last_declared;
+            if record.is_null() {
+                self.pos = at;
+                return Err(ParseError::SharedNeedsDeclaration);
+            }
+            self.add_gate(record, self.types.shared_)?;
         }
         // SAFETY: the pending records were minted by this parser's declares.
         unsafe { self.scopes.settle_item(body, item) };
