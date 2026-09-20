@@ -407,7 +407,7 @@ impl RegexTrie {
                 Some(v) if v.regex_key == regex_key => {
                     match v.records.iter().find(|&&r| is_live_in(r, scope)) {
                         // SAFETY: every stored pointer is a record dyad.
-                        Some(&r) => unsafe { Record::of(r).dyad },
+                        Some(&r) => unsafe { Record::read(r).dyad },
                         None => return Err(RegexTrieError::NodeNotFound),
                     }
                 }
@@ -599,7 +599,7 @@ enum Step {
 /// `scope`.
 fn is_live_in(record: DyadPtr, scope: DyadPtr) -> bool {
     // SAFETY: every pointer the trie stores is a record dyad from the store.
-    let fields = unsafe { Record::of(record) };
+    let fields = unsafe { Record::read(record) };
     fields.scope == scope && !fields.is_dead()
 }
 
@@ -647,7 +647,7 @@ mod tests {
     /// The fields behind a record dyad the trie returned.
     fn f(record: DyadPtr) -> Record {
         // SAFETY: only `rec`-built dyads are inserted in these tests.
-        unsafe { *Record::of(record) }
+        unsafe { Record::read(record) }
     }
 
     #[test]
@@ -779,7 +779,7 @@ mod tests {
         let via_ab = t.get("ab").unwrap().records[0];
         let via_cd = t.get("cd").unwrap().records[0];
         assert_eq!(via_ab, via_cd, "one record dyad, two paths");
-        unsafe { Record::of(via_ab).end = ender };
+        unsafe { Record::set_end(via_ab, ender) };
         assert_eq!(f(t.get("cd").unwrap().records[0]).end, ender);
     }
 
@@ -793,7 +793,7 @@ mod tests {
         let (old, new, ender) = (dummy(1), dummy(2), dummy(9));
         let old_rec = rec(old, root);
         t.insert("x", old_rec);
-        unsafe { Record::of(old_rec).end = ender };
+        unsafe { Record::set_end(old_rec, ender) };
         t.insert("x", rec(new, root));
         assert_eq!(t.get("x").unwrap().records.len(), 2);
 

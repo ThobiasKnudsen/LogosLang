@@ -120,13 +120,77 @@ impl Record {
         store.alloc_raw(record_ty, fields as *mut u8)
     }
 
-    /// The fields behind a record dyad.
+    /// A copy of the fields behind a record dyad. A copy, never a reference:
+    /// the record is read on every operand evaluation in both tiers
+    /// ([`through`]), and a reference minted from the raw pointer there would
+    /// alias whatever reference a caller up the chain still holds. The seven
+    /// words copy for the cost of one load each, and the borrow checker has
+    /// nothing to be lied to about.
     ///
     /// # Safety
     /// `dyad` must be a record dyad from the store (its type the `record`
     /// identity, its value from [`Record::alloc`]).
-    pub unsafe fn of<'a>(dyad: DyadPtr) -> &'a mut Record {
-        &mut *((*dyad).value as *mut Record)
+    pub unsafe fn read(dyad: DyadPtr) -> Record {
+        std::ptr::read(Self::fields(dyad))
+    }
+
+    /// The fields behind a record dyad, as the raw place they are. The
+    /// setters below write one field through it; no reference is created.
+    ///
+    /// # Safety
+    /// As [`Record::read`].
+    unsafe fn fields(dyad: DyadPtr) -> *mut Record {
+        (*dyad).value as *mut Record
+    }
+
+    /// Write the `scope` field: the declaration's writer ([`crate::parse::ScopeStack::declare`]).
+    ///
+    /// # Safety
+    /// As [`Record::read`].
+    pub unsafe fn set_scope(dyad: DyadPtr, scope: DyadPtr) {
+        (*Self::fields(dyad)).scope = scope;
+    }
+
+    /// Write the `dyad` field: a rebind's writer ([`crate::parse::ScopeStack::rebind`]).
+    ///
+    /// # Safety
+    /// As [`Record::read`].
+    pub unsafe fn set_dyad(dyad: DyadPtr, identity: DyadPtr) {
+        (*Self::fields(dyad)).dyad = identity;
+    }
+
+    /// Write the `start` field: the parser settling the declaring item.
+    ///
+    /// # Safety
+    /// As [`Record::read`].
+    pub unsafe fn set_start(dyad: DyadPtr, item: DyadPtr) {
+        (*Self::fields(dyad)).start = item;
+    }
+
+    /// Write the `end` field: `own`/`drop` ending the name, and the parser
+    /// settling or rolling that back.
+    ///
+    /// # Safety
+    /// As [`Record::read`].
+    pub unsafe fn set_end(dyad: DyadPtr, item: DyadPtr) {
+        (*Self::fields(dyad)).end = item;
+    }
+
+    /// Write the `end` field and hand back what it held.
+    ///
+    /// # Safety
+    /// As [`Record::read`].
+    pub unsafe fn replace_end(dyad: DyadPtr, item: DyadPtr) -> DyadPtr {
+        std::mem::replace(&mut (*Self::fields(dyad)).end, item)
+    }
+
+    /// Write the `lex_rank` field: a type body's `lex_rank = …` line and the
+    /// fresh-spelling patterns.
+    ///
+    /// # Safety
+    /// As [`Record::read`].
+    pub unsafe fn set_lex_rank(dyad: DyadPtr, rank: f64) {
+        (*Self::fields(dyad)).lex_rank = rank;
     }
 }
 
@@ -141,7 +205,7 @@ impl Record {
 /// identity.
 pub unsafe fn through(record_ty: DyadPtr, p: DyadPtr) -> DyadPtr {
     if !p.is_null() && (*p).ty == record_ty {
-        Record::of(p).dyad
+        (*Record::fields(p)).dyad
     } else {
         p
     }

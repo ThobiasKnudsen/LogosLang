@@ -674,7 +674,7 @@ impl ScopeStack {
         let s = self.open.pop()?;
         self.set.remove(&s);
         // SAFETY: every pending record is a record dyad from the store.
-        self.pending.retain(|p| unsafe { Record::of(p.record).scope } != s);
+        self.pending.retain(|p| unsafe { Record::read(p.record).scope } != s);
         Some(s)
     }
 
@@ -752,7 +752,7 @@ impl ScopeStack {
                 }
                 Journal::Ended { record, prev_end } => {
                     // SAFETY: a journalled record is a record dyad from the store.
-                    unsafe { Record::of(record).end = prev_end };
+                    unsafe { Record::set_end(record, prev_end) };
                 }
             }
         }
@@ -801,7 +801,7 @@ impl ScopeStack {
         let bytes = text.as_bytes();
         let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
         // SAFETY: every pointer the trie stores is a record dyad from the store.
-        let fields = |r: DyadPtr| unsafe { *Record::of(r) };
+        let fields = |r: DyadPtr| unsafe { Record::read(r) };
         // One candidate per record, at its longest match: a pattern with an
         // optional tail reports every end it can reach, and an alternation
         // holds the same record on each of its paths. A match with no live
@@ -900,7 +900,7 @@ impl ScopeStack {
         // enters the index as a literal key, never as a pattern (#110).
         let key = regex::escape(name);
         // SAFETY: `record` is a record dyad from the store, built for this name.
-        unsafe { Record::of(record).scope = scope };
+        unsafe { Record::set_scope(record, scope) };
         trie.insert(&key, record);
         self.journal.push(Journal::Declared { name: key, scope });
         self.pending.push(Pending { record, endpoint: Endpoint::Start });
@@ -931,13 +931,13 @@ impl ScopeStack {
         let scope = self.current().expect("declare needs an open scope");
         if let Some(records) = trie.records_for_key(key) {
             // SAFETY: every pointer the trie stores is a record dyad from the store.
-            let fields = |r: DyadPtr| unsafe { *Record::of(r) };
+            let fields = |r: DyadPtr| unsafe { Record::read(r) };
             if records.iter().any(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead()) {
                 return Err(ResolveError::Shadowed(key.to_string()));
             }
         }
         // SAFETY: `record` is a record dyad from the store, built for this pattern.
-        unsafe { Record::of(record).scope = scope };
+        unsafe { Record::set_scope(record, scope) };
         trie.insert(key, record);
         self.journal.push(Journal::Declared { name: key.to_string(), scope });
         self.pending.push(Pending { record, endpoint: Endpoint::Start });
@@ -956,7 +956,7 @@ impl ScopeStack {
     /// returned); this writes its `end` field through the pointer.
     pub unsafe fn mark_dead(&mut self, record: DyadPtr, node: DyadPtr) {
         // SAFETY: `record` is a record dyad the trie returned.
-        let prev_end = unsafe { std::mem::replace(&mut Record::of(record).end, node) };
+        let prev_end = unsafe { Record::replace_end(record, node) };
         self.journal.push(Journal::Ended { record, prev_end });
         self.pending.push(Pending { record, endpoint: Endpoint::End });
     }
@@ -965,19 +965,27 @@ impl ScopeStack {
     /// for that scope now points at the item, the declaring or ending line
     /// as a whole (an `own` inside an `if` body ends the outer name at the
     /// `if`, DESIGN ›Name resolution is scope-filtered‹).
-    pub fn settle_item(&mut self, scope: DyadPtr, item: DyadPtr) {
+    ///
+    /// # Safety
+    /// Every pending record must be a record dyad from the store (which
+    /// [`ScopeStack::declare`] and [`ScopeStack::mark_dead`] guarantee); `item`
+    /// is stored in its range field, never read.
+    pub unsafe fn settle_item(&mut self, scope: DyadPtr, item: DyadPtr) {
         let mut i = 0;
         while i < self.pending.len() {
+            let record = self.pending[i].record;
             // SAFETY: every pending record is a record dyad from the store.
-            let f = unsafe { Record::of(self.pending[i].record) };
-            if f.scope != scope {
+            if unsafe { Record::read(record).scope } != scope {
                 i += 1;
                 continue;
             }
             let p = self.pending.swap_remove(i);
-            match p.endpoint {
-                Endpoint::Start => f.start = item,
-                Endpoint::End => f.end = item,
+            // SAFETY: as above.
+            unsafe {
+                match p.endpoint {
+                    Endpoint::Start => Record::set_start(record, item),
+                    Endpoint::End => Record::set_end(record, item),
+                }
             }
         }
     }
@@ -1008,7 +1016,7 @@ impl ScopeStack {
         // enters the index as a literal key, never as a pattern (#110).
         let key = regex::escape(name);
         // SAFETY: `record` is a record dyad from the store, built for this name.
-        unsafe { Record::of(record).scope = scope };
+        unsafe { Record::set_scope(record, scope) };
         trie.insert(&key, record);
         self.journal.push(Journal::Declared { name: key, scope });
         self.pending.push(Pending { record, endpoint: Endpoint::Start });
@@ -1031,7 +1039,7 @@ impl ScopeStack {
         match trie.get(name) {
             Ok(m) if m.matched == name.len() => {
                 // SAFETY: every pointer the trie stores is a record dyad.
-                let fields = |r: DyadPtr| unsafe { *Record::of(r) };
+                let fields = |r: DyadPtr| unsafe { Record::read(r) };
                 Ok(m.records.iter().any(|&r| fields(r).scope == scope && !fields(r).is_dead()))
             }
             Ok(_) | Err(RegexTrieError::NodeNotFound) => Ok(false),
@@ -1052,7 +1060,7 @@ impl ScopeStack {
     /// field through the pointer.
     pub unsafe fn rebind(&mut self, record: DyadPtr, identity: DyadPtr) {
         // SAFETY: `record` is a record dyad from the store.
-        unsafe { Record::of(record).dyad = identity };
+        unsafe { Record::set_dyad(record, identity) };
     }
 }
 
@@ -2256,7 +2264,7 @@ impl<'a> Parser<'a> {
         }
         // SAFETY: a non-null record here came from the resolver or from a
         // function's own list: a record dyad from the store.
-        let scope = unsafe { Record::of(record).scope };
+        let scope = unsafe { Record::read(record).scope };
         let depth = self.scopes.position(scope).unwrap_or(0);
         for frame in &mut self.frames {
             if depth < frame.below && !frame.outer.contains(&record) {
@@ -2300,7 +2308,7 @@ impl<'a> Parser<'a> {
         let outer = unsafe { fn_outer(function) };
         for &record in outer {
             // SAFETY: as above.
-            let fields = unsafe { *Record::of(record) };
+            let fields = unsafe { Record::read(record) };
             let name = || {
                 if fields.name.is_null() {
                     String::new()
@@ -3204,7 +3212,8 @@ impl<'a> Parser<'a> {
             // SAFETY: `item` is a reduced dyad just parsed.
             let ty = unsafe { (*item).ty };
             if unsafe { crate::identities::numtype::is_comment_type(ty) } {
-                self.scopes.settle_item(body, item);
+                // SAFETY: the pending records were minted by this parser's declares.
+                unsafe { self.scopes.settle_item(body, item) };
             } else if ty == self.types.declare_ && declared.is_none() {
                 declared = Some(item);
             } else {
@@ -3229,7 +3238,8 @@ impl<'a> Parser<'a> {
                 return Err(ParseError::Resolve(ResolveError::Shadowed(name)));
             }
         }
-        self.scopes.settle_item(body, item);
+        // SAFETY: the pending records were minted by this parser's declares.
+        unsafe { self.scopes.settle_item(body, item) };
         Ok(())
     }
 
@@ -3353,7 +3363,7 @@ impl<'a> Parser<'a> {
             };
             // SAFETY: `record` is a record dyad `:=` minted before driving
             // its value, and it is live for the whole drive.
-            unsafe { Record::of(record).lex_rank = rank };
+            unsafe { Record::set_lex_rank(record, rank) };
         }
         if !def.ctor.is_null() {
             // SAFETY: `node` was just built; nothing has read its slot.
@@ -3384,7 +3394,8 @@ impl<'a> Parser<'a> {
         // is.
         while let Some(item) = self.parse_next() {
             let item = item?;
-            self.scopes.settle_item(scope, item);
+            // SAFETY: the pending records were minted by this parser's declares.
+            unsafe { self.scopes.settle_item(scope, item) };
             // SAFETY: `item` is a reduced dyad just parsed.
             let kind = unsafe {
                 let ty = (*item).ty;
@@ -3458,7 +3469,7 @@ impl<'a> Parser<'a> {
         // SAFETY: `target` is a reduced dyad from the store.
         unsafe {
             let id =
-                if (*target).ty == self.types.record_ { Record::of(target).dyad } else { target };
+                if (*target).ty == self.types.record_ { Record::read(target).dyad } else { target };
             if id == self.types.drop_ {
                 return Some(SlotKind::Drop);
             }
@@ -5225,7 +5236,8 @@ impl<'a> Parser<'a> {
             // The item is complete: the ranges of the names it declared or ended
             // in this scope now point at it (DESIGN ›Name resolution is
             // scope-filtered‹: the range runs between body items).
-            self.scopes.settle_item(scope, item);
+            // SAFETY: the pending records were minted by this parser's declares.
+            unsafe { self.scopes.settle_item(scope, item) };
             // A binding of an owning value inserts `defer free <place>` into this
             // scope's pending list (issue #49); drain it right after the statement
             // so the defer sits at its source position — the right LIFO rank
@@ -6008,7 +6020,7 @@ impl<'a> Parser<'a> {
                 // Through a settled box: `a:dyad.type` asks the type of what
                 // the name holds, and for `a := dyad ?` holding `i32` that is
                 // `type`, exactly as `x:dyad.type` for `x := i32 5` is `i32`.
-                let cell = self.settled_type(Record::of(lhs).dyad);
+                let cell = self.settled_type(Record::read(lhs).dyad);
                 return Ok(self.store.alloc_raw(types.dyad_, cell as *mut u8));
             }
             let (field, offset) = self.resolve_field(types.record_, nstart, nlen)?;
@@ -6823,7 +6835,7 @@ mod tests {
     /// The fields behind a record dyad.
     fn f(record: DyadPtr) -> Record {
         // SAFETY: only `rec`-built dyads reach the trie in these tests.
-        unsafe { *Record::of(record) }
+        unsafe { Record::read(record) }
     }
 
     fn dyad(tag: usize) -> DyadPtr {
@@ -7215,7 +7227,7 @@ mod tests {
 
             // `t[k]:dyad` reads the cell through its record: the `+` identity.
             let (v, s) = go("t[0]:dyad", &mut store, &mut trie, types, scopes);
-            assert_eq!(v as DyadPtr, Record::of(plus).dyad);
+            assert_eq!(v as DyadPtr, Record::read(plus).dyad);
             let (v, s) = go("t[0]:dyad.type", &mut store, &mut trie, types, s);
             assert_eq!(v as DyadPtr, core.type_, "an identity's type is the root");
 
@@ -7575,13 +7587,13 @@ mod tests {
         let a = |trie: &RegexTrie| f(trie.get("a").unwrap().records[0]);
         assert!(a(&trie).start.is_null());
 
-        scopes.settle_item(scope, dyad(10));
+        unsafe { scopes.settle_item(scope, dyad(10)) };
         assert_eq!(a(&trie).start, dyad(10));
         assert!(a(&trie).end.is_null());
 
         unsafe { scopes.mark_dead(a1, dyad(50)) };
         assert_eq!(a(&trie).end, dyad(50), "provisional: the own/drop node");
-        scopes.settle_item(scope, dyad(11));
+        unsafe { scopes.settle_item(scope, dyad(11)) };
         assert_eq!(a(&trie).end, dyad(11), "settled: the body item");
         assert_eq!(a(&trie).start, dyad(10), "start untouched by the end's settle");
 
@@ -7589,7 +7601,7 @@ mod tests {
         let b_rec = rec(dyad(3));
         unsafe { scopes.declare(&mut trie, "b", b_rec) }.unwrap();
         unsafe { scopes.rebind(b_rec, dyad(4)) };
-        scopes.settle_item(scope, dyad(12));
+        unsafe { scopes.settle_item(scope, dyad(12)) };
         let b = f(trie.get("b").unwrap().records[0]);
         assert_eq!((b.dyad, b.start), (dyad(4), dyad(12)));
     }

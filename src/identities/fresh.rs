@@ -51,7 +51,7 @@ pub(super) fn register(cx: &mut Cx) {
         let id = cx.store.alloc_raw(cx.type_, record);
         let entry = cx.declare(pattern, id);
         // SAFETY: `entry` is the record dyad `declare` just minted.
-        unsafe { crate::record::Record::of(entry).lex_rank = FRESH_LEX_RANK };
+        unsafe { crate::record::Record::set_lex_rank(entry, FRESH_LEX_RANK) };
     };
     mint(WORD);
     mint(SYMBOL);

@@ -534,7 +534,7 @@ fn run_slot_name(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         if record.is_null() {
             return Err(RunError::BadValue);
         }
-        let name = crate::record::Record::of(record).name;
+        let name = crate::record::Record::read(record).name;
         if name.is_null() {
             return Err(RunError::BadValue);
         }

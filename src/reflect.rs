@@ -183,7 +183,7 @@ pub unsafe fn describe(types: &CoreTypes, node: DyadPtr) -> Shape {
     // A name's record: read as the five pointers it is, before the generic
     // instance arm below would lay it out as a five-field record value.
     if logos == types.record_ {
-        let f = Record::of(node);
+        let f = Record::read(node);
         return Shape::Record {
             dyad: f.dyad,
             scope: f.scope,
@@ -524,7 +524,7 @@ mod tests {
         let mut names: Vec<String> = unsafe { crate::parse::fn_outer(roots[1]) }
             .iter()
             .map(|&r| unsafe {
-                let name = crate::identities::record::Record::of(r).name;
+                let name = crate::identities::record::Record::read(r).name;
                 String::from_utf8_lossy(text_of(name)).into_owned()
             })
             .collect();
