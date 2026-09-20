@@ -260,10 +260,13 @@ pub(super) fn build_alloc(
     init: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
     // SAFETY: `init` is a reduced dyad just parsed.
-    let pointee = match unsafe { crate::identities::numtype_of(types, init) } {
-        crate::identities::Operand::Concrete(_) | crate::identities::Operand::Pointer(_) => unsafe {
-            crate::identities::scalar_binding_type(store, types, init).0
-        },
+    let operand = unsafe { crate::identities::numtype_of(types, init) };
+    let pointee = match operand {
+        crate::identities::Operand::Concrete(_) | crate::identities::Operand::Pointer(_) => {
+            // SAFETY: as above, and the operand is scalar or pointer, what
+            // `scalar_binding_type` takes.
+            unsafe { crate::identities::scalar_binding_type(store, types, init).0 }
+        }
         _ => return Err(ParseError::UnsupportedOperands),
     };
     let value = store.alloc_operands(&[pointee, init, types.ops.alloc_]);
@@ -285,13 +288,16 @@ pub(crate) fn build_teardown(
 ) -> Result<DyadPtr, ParseError> {
     // SAFETY: `place` is a reduced dyad; its logos is a valid logos node.
     let logos = unsafe { (*place).ty };
+    // SAFETY: `logos` is a type node from the store (above).
     if unsafe { !numtype::is_pointer_type(logos) } {
         return Err(ParseError::BadAssignTarget);
     }
+    // SAFETY: a pointer type carries a record, which the destructor slot is in.
     if require_owning && unsafe { meta::destructor_of(logos).is_null() } {
         // A borrow or a non-owning pointer: nothing to move or drop.
         return Err(ParseError::BadAssignTarget);
     }
+    // SAFETY: as above: a pointer type's record holds its pointee.
     let pointee = unsafe { numtype::pointee_of(logos) };
     let leaf = if op_id == types.own_ {
         types.ops.own_

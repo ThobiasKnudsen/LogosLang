@@ -298,6 +298,7 @@ pub(crate) fn mold_to(node: DyadPtr, nt: NumType) -> Option<i64> {
     if p.is_null() {
         return None;
     }
+    // SAFETY: as above, and the blob is present.
     let (num, den) = unsafe { read_fraction(node) };
     if den == 0 {
         return None;
@@ -345,6 +346,7 @@ pub(crate) fn cast_to(node: DyadPtr, nt: NumType) -> Option<i64> {
     if p.is_null() {
         return None;
     }
+    // SAFETY: as above, and the blob is present.
     let (num, den) = unsafe { read_fraction(node) };
     if den == 0 {
         return None;

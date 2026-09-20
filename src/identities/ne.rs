@@ -59,6 +59,7 @@ fn build(
     let (l, r) =
         unsafe { (super::read::read_kind(types, lhs), super::read::read_kind(types, rhs)) };
     if l == Read::Identity && r == Read::Identity {
+        // SAFETY: `lhs`/`rhs` are reduced dyads from the store (above).
         let same = unsafe { types.through(lhs) == types.through(rhs) };
         return Ok(bool_mod::literal_node(store, types.bool_, !same));
     }

@@ -241,6 +241,8 @@ pub(crate) unsafe fn build_storeptr(
     let off_node = *(((*deref).value as *const DyadPtr).add(2));
     // What a store through this pointer writes is what a place of the pointee
     // reads as (#82): a scalar at its width, or an address.
+    // SAFETY: `pointee` is the deref node's pointee type (`deref_parts`), a
+    // node from the store.
     let pointee_read = unsafe { super::read::place_layout(types, pointee) };
     let pointer_pointee = matches!(pointee_read, Some((super::read::Read::Pointer(_), _)));
     if !pointer_pointee && !matches!(pointee_read, Some((super::read::Read::Scalar(_), _))) {

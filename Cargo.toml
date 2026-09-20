@@ -14,6 +14,11 @@ repository = "https://github.com/ThobiasKnudsen/LogosLang"
 name = "logos"
 path = "src/main.rs"
 
+# Every unsafe block names the invariant it rests on; the ci gate runs clippy
+# with warnings as errors, so a bare block fails the build (#134, #107).
+[lints.clippy]
+undocumented_unsafe_blocks = "warn"
+
 [dependencies]
 cranelift-codegen = "0.133.1"
 cranelift-frontend = "0.133.1"

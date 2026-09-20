@@ -2600,10 +2600,10 @@ impl<'a> Parser<'a> {
             }
         };
         let call = build_call(self.rt.store, f, &args);
-        // SAFETY: `call` was just built into the store; the tape and the
-        // store are reached only through the natives until `run` returns.
         // Inside the call, `caller.scope` reads the pass's position (#123).
         self.rt.enter_constructor();
+        // SAFETY: `call` was just built into the store; the tape and the
+        // store are reached only through the natives until `run` returns.
         let out = unsafe { self.run_on_pass(call) };
         self.rt.leave_constructor();
         out.map_err(|e| ParseError::ConstructorFailed(Box::new(crate::report::run_message(&e))))?;
@@ -3204,7 +3204,7 @@ impl<'a> Parser<'a> {
         for item in items? {
             // SAFETY: `item` is a reduced dyad just parsed.
             let ty = unsafe { (*item).ty };
-            if unsafe { crate::identities::numtype::is_comment_type(ty) } {
+            if ty == self.types.comment_ {
                 // SAFETY: the pending records were minted by this parser's declares.
                 unsafe { self.scopes.settle_item(body, item) };
             } else if ty == self.types.declare_ && declared.is_none() {
@@ -3753,9 +3753,8 @@ impl<'a> Parser<'a> {
         field_scope.push(scope);
         let field = field_scope.resolve(self.trie, name).map(|r| r.identity);
         // SAFETY: `fields` is the block's array node, its items the field dyads.
-        let index = field.ok().and_then(|f| {
-            unsafe { crate::identities::array::items(fields) }.iter().position(|&x| x == f)
-        });
+        let items = unsafe { crate::identities::array::items(fields) };
+        let index = field.ok().and_then(|f| items.iter().position(|&x| x == f));
         let Some(index) = index else {
             self.pos = at;
             return Err(ParseError::ThisFieldUnknown(Box::new(name.to_string())));
@@ -4301,16 +4300,13 @@ impl<'a> Parser<'a> {
         // inert delimiters read by position.
         let parts = self.drive_until_open(RightSide::Condition)?;
         let dotdot = self.types.dotdot_;
+        let types = self.types;
+        // The `..` cells are uses of that identity: its record, read through.
+        // SAFETY: every item `drive_until_open` returned is a dyad from the store.
+        let is_dotdot = |d: &DyadPtr| unsafe { types.through(*d) } == dotdot;
         let (start, end, step) = match parts.as_slice() {
-            // The `..` cells are uses of that identity: its record, read through.
-            [(s, _), (d, _), (e, _)] if unsafe { self.types.through(*d) } == dotdot => {
-                (*s, *e, None)
-            }
-            [(s, _), (d, _), (e, _), (d2, _), (st, _)]
-                if unsafe {
-                    self.types.through(*d) == dotdot && self.types.through(*d2) == dotdot
-                } =>
-            {
+            [(s, _), (d, _), (e, _)] if is_dotdot(d) => (*s, *e, None),
+            [(s, _), (d, _), (e, _), (d2, _), (st, _)] if is_dotdot(d) && is_dotdot(d2) => {
                 (*s, *e, Some(*st))
             }
             _ => return Err(ParseError::ExpectedRange),
@@ -4664,11 +4660,9 @@ impl<'a> Parser<'a> {
         // bracket is the member's argument list (empty: `f.compile()`).
         self.cell_at(tape, 2)?;
         let index = self.index_at(tape, 2);
+        let bracket = tape.at(2).filter(|c| c.is_bracket()).map(|c| c.dyad);
         // SAFETY: a bracket cell is a node from the store.
-        let call = match tape.at(2) {
-            Some(c) if c.is_bracket() => Some(unsafe { self.args_of(c.dyad) }),
-            _ => None,
-        };
+        let call = bracket.map(|d| unsafe { self.args_of(d) });
         let key = self.index_node_at(tape, 2);
         // SAFETY: `lhs` is a reduced dyad off the tape.
         let (node, consumed) = unsafe { self.field_access(lhs, nstart, nlen, index, key, call)? };
@@ -4748,9 +4742,9 @@ impl<'a> Parser<'a> {
                 let lhs = self.operand_dyad(left)?;
                 let types = self.types;
                 // SAFETY: `lhs` is a reduced dyad from the store.
-                if let Some(recv) =
-                    unsafe { crate::identities::tape::receiver_addr(self.rt.store, &types, lhs) }
-                {
+                let recv =
+                    unsafe { crate::identities::tape::receiver_addr(self.rt.store, &types, lhs) };
+                if let Some(recv) = recv {
                     let node =
                         crate::identities::tape::build_slot(self.rt.store, &types, recv, key);
                     tape.remove(-1);
@@ -5131,19 +5125,36 @@ impl<'a> Parser<'a> {
         // `defer free` on, so it would leak (issue #49; DESIGN's open
         // temporary-attachment point). Fail-closed until ownership-gated
         // parameters land (issue #53) and the callee can declare that it takes
-        // the value. SAFETY: `args` are reduced dyads just parsed.
+        // the value.
         for &arg in &args {
+            // SAFETY: `args` are reduced dyads just parsed.
             if unsafe { crate::identities::drop_model::is_owning_value(&self.types, arg) } {
                 return Err(ParseError::UnboundOwningValue);
             }
         }
-        // SAFETY: `callee` is a resolved dyad from the store.
-        if unsafe { crate::identities::is_numtype_node(&self.types, callee) } {
+        // SAFETY: `callee` is a resolved dyad from the store; a record type
+        // carries the record `code_of` and `run_body_of` read.
+        let (is_numtype, is_record) = unsafe {
+            (
+                crate::identities::is_numtype_node(&self.types, callee),
+                crate::identities::meta::is_record_type(callee),
+            )
+        };
+        let (code, run_body) = if is_record {
+            // SAFETY: as above.
+            unsafe {
+                (
+                    crate::identities::meta::code_of(callee),
+                    crate::identities::meta::run_body_of(callee),
+                )
+            }
+        } else {
+            (std::ptr::null_mut(), std::ptr::null_mut())
+        };
+        if is_numtype {
             // SAFETY: `callee` is a numtype node; `args` are reduced dyads.
             unsafe { crate::identities::build_cast(self.rt.store, &self.types, callee, &args) }
-        } else if unsafe { crate::identities::meta::is_record_type(callee) }
-            && !unsafe { crate::identities::meta::code_of(callee) }.is_null()
-        {
+        } else if is_record && !code.is_null() {
             // A type carrying a `code` applied to arguments is a call of that
             // function, the node typed by the type (#63; DESIGN ›Execution is
             // function application‹: "A node typed `^` thus runs and compiles
@@ -5153,16 +5164,13 @@ impl<'a> Parser<'a> {
             let mut args = args;
             // SAFETY: `callee` is a record type node with a code; `args` are
             // reduced dyads from the store.
-            unsafe {
-                let code = crate::identities::meta::code_of(callee);
-                crate::identities::commit_call_args(self.rt.store, &types, code, &mut args)?;
-            }
+            unsafe { crate::identities::commit_call_args(self.rt.store, &types, code, &mut args)? };
             Ok(build_call(self.rt.store, callee, &args))
-        } else if unsafe { crate::identities::meta::is_record_type(callee) } {
+        } else if is_record {
             // A type whose `run` is a held body has nothing that builds a node
             // running it yet (#133 slice 8); an instance of its fields alone
             // would stand for a call that never runs, so it is refused.
-            if !unsafe { crate::identities::meta::run_body_of(callee) }.is_null() {
+            if !run_body.is_null() {
                 return Err(ParseError::RunBodyHeld);
             }
             // A record logos applied to its field values constructs an
@@ -5205,6 +5213,7 @@ impl<'a> Parser<'a> {
             // `callee`/`call` are reduced dyads.
             if unsafe { self.returns_type(callee) } {
                 self.check_call_reads(callee)?;
+                // SAFETY: `call` was just built over reduced dyads.
                 unsafe { self.eval_type_call(call) }
             } else {
                 Ok(call)
@@ -5282,8 +5291,8 @@ impl<'a> Parser<'a> {
         // Prose is invisible to value flow, and so is a `defer` (it runs at exit,
         // never as the tail): the expression count and the tail below are taken
         // over the non-comment, non-defer expressions.
-        // SAFETY: `exprs` are reduced dyads just parsed/built.
         let defer_ = self.types.defer_;
+        // SAFETY: `exprs` are reduced dyads just parsed/built.
         let is_value = |e: DyadPtr| unsafe {
             !crate::identities::numtype::is_comment_type((*e).ty) && (*e).ty != defer_
         };
@@ -5548,6 +5557,12 @@ impl<'a> Parser<'a> {
             }
             _ => None,
         };
+        // SAFETY: `placeholder` is the node this call minted for the name and
+        // nothing has read a value from it (self-references inside the value
+        // captured only its address); `record` was minted above; `value` and
+        // `read` are the dyads the expression parse returned. The writes in
+        // this block are the fixpoint that makes the captured address mean
+        // the value.
         let declared = unsafe {
             if self.holes.remove(&value) {
                 // `x := i32 ?`: the place `?` built, with the declared type
@@ -6852,6 +6867,7 @@ enum RightSide {
 }
 
 #[cfg(test)]
+#[allow(clippy::undocumented_unsafe_blocks)] // a test reads the nodes it built a line above
 mod tests {
     use super::*;
 

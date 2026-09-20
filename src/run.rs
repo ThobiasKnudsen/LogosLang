@@ -264,11 +264,13 @@ impl FrameStack {
             self.chunk += 1;
             self.cursor = 0;
         }
-        let base = unsafe { self.chunks[self.chunk].as_mut_ptr().add(self.cursor) };
         // Chunks are reused after release, so the claim is re-zeroed: a typed
         // declaration with no initializer must read the same zeroed
-        // "undefined" the compiled tier's zeroed stack slot gives.
-        unsafe { std::ptr::write_bytes(base, 0, size) };
+        // "undefined" the compiled tier's zeroed stack slot gives. The slice
+        // is bounds-checked; the chunk was chosen or grown above to hold it.
+        let claim = &mut self.chunks[self.chunk][self.cursor..self.cursor + size];
+        claim.fill(0);
+        let base = claim.as_mut_ptr();
         self.cursor += size;
         base
     }

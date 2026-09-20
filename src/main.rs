@@ -338,8 +338,8 @@ fn repl() -> ExitCode {
             let parsed = p.parse_expression();
             let end = p.offset();
             let value = match parsed {
-                // SAFETY: `node` was just parsed into the engine's store.
                 Ok(node) if line[end..].trim_start().is_empty() => {
+                    // SAFETY: `node` was just parsed into the engine's store.
                     Some(unsafe { p.value_of(node) })
                 }
                 _ => None,
@@ -408,9 +408,9 @@ fn repl() -> ExitCode {
 
         // Statements still ran — for their effect — they just do not echo.
         match value {
-            // SAFETY: `display_node` is a valid dyad whose value `bits` is
-            // (an import's run yields its tail's bits).
             Some(Ok(bits)) if !is_statement => {
+                // SAFETY: `display_node` is a valid dyad whose value `bits` is
+                // (an import's run yields its tail's bits).
                 println!("{}", unsafe {
                     seed::identities::display_value(&types, display_node, bits)
                 })

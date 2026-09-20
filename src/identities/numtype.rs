@@ -181,10 +181,13 @@ fn construct(
         // discovery): the anonymous typed value. SAFETY: a dyad cell is a
         // node from the store; `id` is this numeric logos's registered node.
         Some(c)
+            // SAFETY: a constructed, non-bracket cell holds a node from the store.
             if c.constructed && !c.is_bracket() && unsafe { (*c.dyad).ty } == types.rational =>
         {
             let l = c.dyad;
             tape.remove(1);
+            // SAFETY: `l` is that node, rational-typed by the guard; `id` is
+            // this numeric type's registered node.
             unsafe { super::commit_literal_to(p.store(), &types, l, id) }?
         }
         // `i32(x)`: the bracket is this logos's to read — a conversion (DESIGN

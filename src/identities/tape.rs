@@ -373,6 +373,11 @@ unsafe fn tape_of(rt: &mut Runtime, recv: DyadPtr) -> Result<*mut ParsingTape, R
 }
 
 fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an application this file\'s `build_*` helpers built:
+    // its value an operand record of dyads from the store, reached only
+    // through the op-slot leaf that helper installed; `tape_of` checks the
+    // handle before it is used (its owner touches the tape only through
+    // the natives until the constructor returns, `Parser::run_logos_ctor`).
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         let tape = tape_of(rt, *ops)?;
@@ -390,6 +395,11 @@ fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 /// September 2026: "the write replaces the pointer and nothing more … no
 /// write to `tape[k]` ever sets it"); the flag is the constructor's line.
 fn run_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an application this file\'s `build_*` helpers built:
+    // its value an operand record of dyads from the store, reached only
+    // through the op-slot leaf that helper installed; `tape_of` checks the
+    // handle before it is used (its owner touches the tape only through
+    // the natives until the constructor returns, `Parser::run_logos_ctor`).
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         let tape = tape_of(rt, *ops)?;
@@ -405,6 +415,11 @@ fn run_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 /// `t.is_constructed[k] = flag`: the flag set or cleared by the constructor
 /// (19 September 2026). Off the tape it is the checked error, as the read is.
 fn run_flag_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an application this file\'s `build_*` helpers built:
+    // its value an operand record of dyads from the store, reached only
+    // through the op-slot leaf that helper installed; `tape_of` checks the
+    // handle before it is used (its owner touches the tape only through
+    // the natives until the constructor returns, `Parser::run_logos_ctor`).
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         let tape = tape_of(rt, *ops)?;
@@ -418,6 +433,11 @@ fn run_flag_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 }
 
 fn run_is_constructed(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an application this file\'s `build_*` helpers built:
+    // its value an operand record of dyads from the store, reached only
+    // through the op-slot leaf that helper installed; `tape_of` checks the
+    // handle before it is used (its owner touches the tape only through
+    // the natives until the constructor returns, `Parser::run_logos_ctor`).
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         let tape = tape_of(rt, *ops)?;
@@ -438,6 +458,11 @@ fn run_is_constructed(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> 
 /// the checked error, as `is_constructed` is. The node is built into the
 /// parser's store, as a retype's cell is, so the read needs one attached.
 fn run_spelling(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an application this file\'s `build_*` helpers built:
+    // its value an operand record of dyads from the store, reached only
+    // through the op-slot leaf that helper installed; `tape_of` checks the
+    // handle before it is used (its owner touches the tape only through
+    // the natives until the constructor returns, `Parser::run_logos_ctor`).
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         let tape = tape_of(rt, *ops)?;
@@ -458,6 +483,11 @@ fn run_spelling(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 /// `parsing_tape` place, read as a receiver is; its cells are copied out
 /// first, so a tape spliced into itself is well-defined.
 fn run_insert(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an application this file\'s `build_*` helpers built:
+    // its value an operand record of dyads from the store, reached only
+    // through the op-slot leaf that helper installed; `tape_of` checks the
+    // handle before it is used (its owner touches the tape only through
+    // the natives until the constructor returns, `Parser::run_logos_ctor`).
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         let tape = tape_of(rt, *ops)?;
@@ -478,6 +508,11 @@ fn run_insert(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 }
 
 fn run_remove(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an application this file\'s `build_*` helpers built:
+    // its value an operand record of dyads from the store, reached only
+    // through the op-slot leaf that helper installed; `tape_of` checks the
+    // handle before it is used (its owner touches the tape only through
+    // the natives until the constructor returns, `Parser::run_logos_ctor`).
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         let tape = tape_of(rt, *ops)?;
@@ -487,6 +522,11 @@ fn run_remove(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 }
 
 fn run_recenter(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an application this file\'s `build_*` helpers built:
+    // its value an operand record of dyads from the store, reached only
+    // through the op-slot leaf that helper installed; `tape_of` checks the
+    // handle before it is used (its owner touches the tape only through
+    // the natives until the constructor returns, `Parser::run_logos_ctor`).
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         let tape = tape_of(rt, *ops)?;
@@ -509,6 +549,11 @@ unsafe fn slot_cell(
 }
 
 fn run_slot_dyad(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an application this file\'s `build_*` helpers built:
+    // its value an operand record of dyads from the store, reached only
+    // through the op-slot leaf that helper installed; `tape_of` checks the
+    // handle before it is used (its owner touches the tape only through
+    // the natives until the constructor returns, `Parser::run_logos_ctor`).
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         match slot_cell(rt, ops)? {
@@ -523,6 +568,11 @@ fn run_slot_dyad(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 /// `t.spelling[k]`). A cell holding no record — a fresh spelling's dyad, a
 /// constructed node — has no name: the checked error, as `a:type` is.
 fn run_slot_name(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an application this file\'s `build_*` helpers built:
+    // its value an operand record of dyads from the store, reached only
+    // through the op-slot leaf that helper installed; `tape_of` checks the
+    // handle before it is used (its owner touches the tape only through
+    // the natives until the constructor returns, `Parser::run_logos_ctor`).
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         let tape = tape_of(rt, *ops)?;
@@ -543,6 +593,11 @@ fn run_slot_name(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 }
 
 fn run_cell_type(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an application this file\'s `build_*` helpers built:
+    // its value an operand record of dyads from the store, reached only
+    // through the op-slot leaf that helper installed; `tape_of` checks the
+    // handle before it is used (its owner touches the tape only through
+    // the natives until the constructor returns, `Parser::run_logos_ctor`).
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         match slot_cell(rt, ops)? {

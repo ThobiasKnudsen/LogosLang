@@ -68,9 +68,8 @@ fn build(
     // Two bool literals fold now (a bare literal is pure, so nothing is lost),
     // like `==` over rationals or logos — what keeps a comptime chain comptime.
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
-    if let (Some(a), Some(b)) =
-        unsafe { (bool_literal_value(types, lhs), bool_literal_value(types, rhs)) }
-    {
+    let literals = unsafe { (bool_literal_value(types, lhs), bool_literal_value(types, rhs)) };
+    if let (Some(a), Some(b)) = literals {
         return Ok(bool_mod::literal_node(store, types.bool_, a && b));
     }
     let value = store.alloc_operands(&[lhs, rhs, types.ops.and_]);

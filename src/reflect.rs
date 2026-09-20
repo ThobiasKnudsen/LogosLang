@@ -291,6 +291,7 @@ pub unsafe fn text_of<'a>(node: DyadPtr) -> &'a [u8] {
 }
 
 #[cfg(test)]
+#[allow(clippy::undocumented_unsafe_blocks)] // a test reads the nodes it built a line above
 mod tests {
     use super::*;
     use crate::identities::Core;

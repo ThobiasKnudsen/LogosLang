@@ -390,6 +390,7 @@ impl Core {
             Assoc::Left,
             &["exprs", "op"],
         );
+        // SAFETY: `scope_` was minted above and nothing has read its value yet.
         unsafe {
             (*scope_).value = record;
         }
@@ -1666,6 +1667,7 @@ pub(crate) unsafe fn build_cast(
 }
 
 #[cfg(test)]
+#[allow(clippy::undocumented_unsafe_blocks)] // a test reads the nodes it built a line above
 mod tests {
     use super::*;
     use crate::compile::{compile_fn, compile_nullary_i32};

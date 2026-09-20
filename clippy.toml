@@ -1,0 +1,4 @@
+# A SAFETY comment may sit above the statement or the attributes that hold the
+# unsafe block, not only on the line right above the block (the seed's habit).
+accept-comment-above-statement = true
+accept-comment-above-attributes = true

@@ -716,6 +716,7 @@ impl Lowerer<'_, '_> {
         els: DyadPtr,
     ) -> Result<Value, CompileError> {
         let c = self.lower(cond)?;
+        // SAFETY: `then`/`els` are the dyads the caller's contract covers.
         self.branch(c, |s| unsafe { s.lower(then) }, |s| unsafe { s.lower(els) })
     }
 
@@ -854,6 +855,7 @@ impl Lowerer<'_, '_> {
         self.branch(
             c,
             |s| {
+                // SAFETY: `then` is the dyad the caller's contract covers.
                 unsafe { s.lower(then) }?;
                 Ok(s.const_i32(0))
             },
@@ -868,6 +870,7 @@ impl Lowerer<'_, '_> {
     /// `a`/`b` must be valid dyads from the store.
     pub unsafe fn lower_and(&mut self, a: DyadPtr, b: DyadPtr) -> Result<Value, CompileError> {
         let va = self.lower(a)?;
+        // SAFETY: `b` is the dyad the caller's contract covers.
         self.branch(va, |s| unsafe { s.lower(b) }, |s| Ok(s.const_i32(0)))
     }
 
@@ -878,6 +881,7 @@ impl Lowerer<'_, '_> {
     /// `a`/`b` must be valid dyads from the store.
     pub unsafe fn lower_or(&mut self, a: DyadPtr, b: DyadPtr) -> Result<Value, CompileError> {
         let va = self.lower(a)?;
+        // SAFETY: `b` is the dyad the caller's contract covers.
         self.branch(va, |s| Ok(s.const_i32(1)), |s| unsafe { s.lower(b) })
     }
 

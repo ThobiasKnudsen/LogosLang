@@ -128,24 +128,31 @@ pub(super) fn build(
     // the reading rule.
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let (lhs_d, rhs_d) = unsafe { (types.through(lhs), types.through(rhs)) };
+    // SAFETY: `through` hands back its argument or the dyad a record names,
+    // both dyads from the store.
+    let (lhs_ty, rhs_ty) = unsafe { ((*lhs_d).ty, (*rhs_d).ty) };
     // `t[k] = cell`: a tape slot as the target (#60), the pointer replaced and
     // nothing more; `t.is_constructed[k] = flag`: the flag, the constructor's
     // own word (19 September 2026); `this.f = v`: a field of the node being
     // built, the operand's graph (#133 slice 6).
-    if unsafe { (*lhs_d).ty } == types.tape.slot {
+    if lhs_ty == types.tape.slot {
+        // SAFETY: `lhs_d` is a tape slot node, `rhs` a reduced dyad.
         return Ok(unsafe { super::tape::build_write(store, types, lhs_d, rhs) });
     }
-    if unsafe { (*lhs_d).ty } == types.tape.is_constructed {
+    if lhs_ty == types.tape.is_constructed {
         // SAFETY: `rhs` is a reduced dyad from the store.
         if !unsafe { crate::parse::is_bool_result(types, rhs) } {
             return Err(ParseError::FlagTakesBool);
         }
+        // SAFETY: `lhs_d` is a flag slot node, `rhs` a reduced bool dyad.
         return Ok(unsafe { super::tape::build_flag_write(store, types, lhs_d, rhs) });
     }
-    if unsafe { (*lhs_d).ty } == types.this.slot {
+    if lhs_ty == types.this.slot {
+        // SAFETY: `lhs_d` is a `this` field slot node, `rhs` a reduced dyad.
         return Ok(unsafe { super::this::build_write(store, types, lhs_d, rhs) });
     }
-    if unsafe { (*lhs_d).ty } == types.deref_ {
+    if lhs_ty == types.deref_ {
+        // SAFETY: `lhs_d` is a deref node, `rhs` a reduced dyad.
         return unsafe { super::pointer::build_storeptr(store, types, lhs_d, rhs) };
     }
     // What the target is, by the reading rule (#82). A scalar place — a numeric
@@ -187,22 +194,22 @@ pub(super) fn build(
             return Ok(store.alloc_raw(op, value));
         }
         Read::Scalar(_) | Read::Pointer(_) if marked => {}
-        // SAFETY: a `Literal` read is a rational node with its fraction blob.
         Read::Literal => {
+            // SAFETY: a `Literal` read is a rational node with its fraction blob.
             return Err(ParseError::AssignToLiteral(Box::new(unsafe {
                 super::rational::spell(lhs_d)
-            })))
+            })));
         }
         _ => return Err(ParseError::BadAssignTarget),
     }
     // A literal into a pointer would become a wild address.
     // SAFETY: as above.
     let lhs_pointer = unsafe { is_pointer_type((*lhs_d).ty) };
-    if lhs_pointer && unsafe { (*rhs_d).ty } == types.rational {
+    if lhs_pointer && rhs_ty == types.rational {
         return Err(ParseError::TypeMismatch);
     }
     // `=` returns nothing: an assignment as the value assigned is the error.
-    if unsafe { (*rhs_d).ty } == types.assign || unsafe { (*rhs_d).ty } == types.storeptr_ {
+    if rhs_ty == types.assign || rhs_ty == types.storeptr_ {
         return Err(ParseError::StatementAsValue);
     }
     // A literal right side commits to the target's logos (the typed slot); a
@@ -223,10 +230,9 @@ pub(super) fn build(
     // freeing memory the store owns, and a bare owning name leaves two places
     // whose teardowns free one block (#79). Both aborted the process with a
     // double free at scope exit; both are the checked error here.
-    // SAFETY: `lhs_d`/`rhs` are reduced dyads from the store.
-    if super::drop_model::is_owning_place(lhs_d)
-        && !unsafe { super::drop_model::is_owning_value(types, rhs) }
-    {
+    // SAFETY: `rhs` is a reduced dyad from the store.
+    let rhs_owning = unsafe { super::drop_model::is_owning_value(types, rhs) };
+    if super::drop_model::is_owning_place(lhs_d) && !rhs_owning {
         return Err(ParseError::NonOwningIntoOwning);
     }
     // SAFETY: `lhs` is a typed variable checked assignable above.

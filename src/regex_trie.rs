@@ -627,6 +627,7 @@ fn flatten(path: &[Segment]) -> Vec<Step> {
 }
 
 #[cfg(test)]
+#[allow(clippy::undocumented_unsafe_blocks)] // a test reads the nodes it built a line above
 mod tests {
     use super::*;
     use crate::dyad::Dyad;
