@@ -1187,6 +1187,8 @@ pub enum ParseError {
     GateNeedsDeclaration,
     /// A declaration was gated twice (`pub pub x := …`).
     DoubleGate,
+    /// `x = …` on a name not declared `mut`; carries the name.
+    NotMutable(Box<String>),
     /// An `import` was not followed by a path token.
     ExpectedPath,
     /// A `regex` was not followed by a `«…»` quote.
@@ -1413,6 +1415,9 @@ pub struct Parser<'a> {
     /// innermost last: what a `lex_rank = …` line writes. A stand-in for a
     /// definition writing a record field from inside `:=`.
     filling: Vec<DyadPtr>,
+    /// The record of the last declaration that reduced: what a gate word to
+    /// its left marks.
+    last_declared: DyadPtr,
     /// Open function frames, innermost last: empty at top level, where
     /// declarations get global storage; inside a function each local claims
     /// the next byte offset in the top frame.
@@ -1578,6 +1583,7 @@ impl<'a> Parser<'a> {
             types,
             pending_fn: std::ptr::null_mut(),
             filling: Vec::new(),
+            last_declared: std::ptr::null_mut(),
             lifted: Vec::new(),
             queued: std::collections::VecDeque::new(),
             discovering: false,
@@ -2386,6 +2392,18 @@ impl<'a> Parser<'a> {
                 self.shared_member(start)?;
                 continue;
             }
+            // `mut` before a field or parameter gates its record, as before any name.
+            let gated = self
+                .scopes
+                .resolve(self.trie, name)
+                .ok()
+                .is_some_and(|r| r.identity == self.types.mut_);
+            let (start, name) = if gated {
+                let (start, len) = self.lex_spelling().ok_or(ParseError::ExpectedField)?;
+                (start, &source[start..start + len])
+            } else {
+                (start, name)
+            };
             // A slot fill inside the block is written `shared run = (…)`: an
             // unmarked one would be a per-instance default, not in the seed.
             if relaxed {
@@ -2419,7 +2437,7 @@ impl<'a> Parser<'a> {
             let field = self.rt.store.alloc_raw(logos, std::ptr::null_mut());
             // The field's name is not stored on the record: declaring it puts
             // a record in the one name index (DESIGN ›Name resolution is scope-filtered‹).
-            if relaxed {
+            let record = if relaxed {
                 // One block, one no-shadowing rule: a field is checked against
                 // the `shared` members too, which live in the type's own scope.
                 let body = self
@@ -2431,9 +2449,12 @@ impl<'a> Parser<'a> {
                     self.pos = start;
                     return Err(ParseError::Resolve(ResolveError::Shadowed(name.to_string())));
                 }
-                self.declare_field_name(name, field, start)?;
+                self.declare_field_name(name, field, start)?
             } else {
-                self.declare_name(name, field, start)?;
+                self.declare_name(name, field, start)?
+            };
+            if gated {
+                self.add_gate(record, self.types.mut_)?;
             }
             fields.push(field);
             if !self.consume_separator() {
@@ -4249,6 +4270,27 @@ impl<'a> Parser<'a> {
     }
 
     /// The six fields, the spelling as a string node (`a:name`).
+    /// A gate word marks the declaration that just reduced to its right.
+    pub(crate) fn gate_declared(&mut self, gate: DyadPtr) -> Result<(), ParseError> {
+        let record = self.last_declared;
+        if record.is_null() {
+            return Err(ParseError::GateNeedsDeclaration);
+        }
+        self.add_gate(record, gate)
+    }
+
+    /// Add `gate` to a name's record, once.
+    pub(crate) fn add_gate(&mut self, record: DyadPtr, gate: DyadPtr) -> Result<(), ParseError> {
+        // SAFETY: `record` is a record dyad from the store.
+        unsafe {
+            if Record::has_gate(record, gate) {
+                return Err(ParseError::DoubleGate);
+            }
+            Record::add_gate(self.rt.store, self.types.array_, record, gate);
+        }
+        Ok(())
+    }
+
     fn mint_record(&mut self, identity: DyadPtr, scope: DyadPtr, spelling: &[u8]) -> DyadPtr {
         let name =
             crate::identities::string::build_text(self.rt.store, self.types.string_, spelling);
@@ -4695,6 +4737,7 @@ impl<'a> Parser<'a> {
         self.filling.push(record);
         let value = self.parse_expression();
         self.filling.pop();
+        self.last_declared = record;
         self.pending_fn = std::ptr::null_mut();
         let value = value?;
         // A bare name as the value is its record (a use); the fixpoint
@@ -5050,18 +5093,17 @@ impl<'a> Parser<'a> {
                 if (*node).ty != self.types.comment_ {
                     tail = node;
                 }
-                if (*node).ty == self.types.declare_
-                    && crate::identities::declare::gate_of(node) == self.types.pub_
-                {
+                if (*node).ty == self.types.declare_ {
                     let name_node = *((*node).value as *const DyadPtr);
                     let name = String::from_utf8_lossy(crate::identities::string::text(name_node))
                         .into_owned();
-                    let identity = self
+                    let resolved = self
                         .scopes
                         .resolve(self.trie, &name)
-                        .map_err(|_| format!("pub name `{name}` did not stay resolvable"))?
-                        .identity;
-                    pubs.push((name, identity));
+                        .map_err(|_| format!("name `{name}` did not stay resolvable"))?;
+                    if Record::has_gate(resolved.record, self.types.pub_) {
+                        pubs.push((name, resolved.identity));
+                    }
                 }
             }
         }

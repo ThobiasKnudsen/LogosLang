@@ -8,7 +8,7 @@ metalogos := fn (i := i32 ?) -> logos (
     else if (i==2) (f64)
     else (logos)
 ),
-a := metalogos(3) ?,
+mut a := metalogos(3) ?,
 if (a:dyad.type == i32) (a=9)
 else if (a:dyad.type == f32 or a:dyad.type == f64) (a=9.9)
 else if (a:dyad.type == logos) (a=i32),

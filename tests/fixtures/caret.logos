@@ -10,7 +10,7 @@
         rhs := i32 ?,
         output := type ?,
         shared run = (
-            r := this.output 1,
+            mut r := this.output 1,
             for 0..this.rhs ( r = r * this.lhs ),
             r
         )

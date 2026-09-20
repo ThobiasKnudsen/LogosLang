@@ -25,6 +25,14 @@ fn test_record(record_ty: DyadPtr, identity: DyadPtr) -> DyadPtr {
     Box::into_raw(Box::new(crate::dyad::Dyad { ty: record_ty, value: fields as *mut u8 }))
 }
 
+/// A hand-built record of a variable the test writes.
+fn mut_record(store: &mut Store, core: &Core, identity: DyadPtr) -> DyadPtr {
+    let record = test_record(core.record_, identity);
+    // SAFETY: `record` was just built; its fields are a leaked `Record`.
+    unsafe { Record::add_gate(store, core.array_, record, core.mut_) };
+    record
+}
+
 #[test]
 fn parses_a_equals_a_plus_one() {
     let (mut store, mut trie, core) = new_core();
@@ -33,7 +41,7 @@ fn parses_a_equals_a_plus_one() {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
     let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
 
     let root = {
         let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core, scopes);
@@ -63,7 +71,7 @@ fn runs_a_equals_a_plus_one() {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
     let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
 
     let root = {
         let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core, scopes);
@@ -87,7 +95,7 @@ fn runs_a_compound_function_by_walking_its_body() {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&41i32.to_ne_bytes());
     let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
 
     let main = {
         let mut p =
@@ -467,7 +475,7 @@ fn jit_matches_the_interpreter() {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
     let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
 
     let root = {
         let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core, scopes);
@@ -500,7 +508,7 @@ fn assign_to_a_wide_variable_stores_at_full_width_both_tiers() {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&0i64.to_ne_bytes());
     let a = store.alloc_raw(core.numtypes[NumType::I64 as usize], crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
 
     let func = {
         let mut p = Parser::new(
@@ -648,7 +656,7 @@ fn plus_is_abstract_and_resolves_to_a_concrete_op() {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&10i32.to_ne_bytes());
     let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
 
     let func = {
         let mut p =
@@ -997,7 +1005,7 @@ fn if_over_a_parameter_matches_between_tiers() {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
             let mut p = Parser::new(
-                "fn (n := i32 ?) -> i32 ( if (n < 1) (100) else (200) )",
+                "fn (mut n := i32 ?) -> i32 ( if (n < 1) (100) else (200) )",
                 &mut store,
                 &mut trie,
                 &core,
@@ -1047,7 +1055,7 @@ fn else_less_if_is_a_unit_statement_both_tiers() {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&41i32.to_ne_bytes());
     let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
     let func = {
         let mut p = Parser::new(
             "fn () -> void ( if (a < 100) (a = a + 1) )",
@@ -1096,7 +1104,7 @@ fn the_else_binds_to_the_outer_if_across_a_bracketed_branch() {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&5i32.to_ne_bytes());
     let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
     let func = {
         let mut p = Parser::new(
             "fn () -> void ( if (a < 1) ( if (a < 1) (a = a + 1) ) else (a = a + 2) )",
@@ -1127,7 +1135,7 @@ fn assignment_commits_a_literal_to_the_targets_type() {
     s.push(core.root_scope);
     let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
     let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
-    unsafe { s.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
+    unsafe { s.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
     let mut p = Parser::new("a = 3.5", &mut store, &mut trie, &core, s);
     assert_eq!(p.parse_expression(), Err(ParseError::UncomputableLiteral));
 }
@@ -1179,7 +1187,7 @@ fn compiled_calls_pass_floats_across_the_boundary() {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&2.5f64.to_bits().to_ne_bytes());
     let a = store.alloc_raw(core.numtypes[NumType::F64 as usize], crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
 
     let g = {
         let mut s = ScopeStack::new();
@@ -1338,27 +1346,27 @@ fn hash_comments_are_trivia() {
 #[test]
 fn while_loop_sums_both_tiers() {
     diff_nullary_fn(
-        "fn () -> i32 ( a := i32 0, i := i32 0, while (i < 5) ( a = a + i, i = i + 1 ), a )",
+        "fn () -> i32 ( mut a := i32 0, mut i := i32 0, while (i < 5) ( a = a + i, i = i + 1 ), a )",
         10,
     );
 }
 
 #[test]
 fn while_false_never_runs_its_body() {
-    diff_nullary_fn("fn () -> i32 ( a := i32 7, a = 7, while (a < 0) (a = 0), a )", 7);
+    diff_nullary_fn("fn () -> i32 ( mut a := i32 7, a = 7, while (a < 0) (a = 0), a )", 7);
 }
 
 #[test]
 fn for_loop_sums_a_range_both_tiers() {
-    diff_nullary_fn("fn () -> i32 ( s := i32 0, for i in 0..10 ( s = s + i ), s )", 45);
-    diff_nullary_fn("fn () -> i32 ( s := i32 0, for i in 0..10..2 ( s = s + i ), s )", 20);
-    diff_nullary_fn("fn () -> i32 ( s := i32 7, for i in 5..5 ( s = 0 ), s )", 7);
+    diff_nullary_fn("fn () -> i32 ( mut s := i32 0, for i in 0..10 ( s = s + i ), s )", 45);
+    diff_nullary_fn("fn () -> i32 ( mut s := i32 0, for i in 0..10..2 ( s = s + i ), s )", 20);
+    diff_nullary_fn("fn () -> i32 ( mut s := i32 7, for i in 5..5 ( s = 0 ), s )", 7);
 }
 
 #[test]
 fn for_loop_endpoints_resolve_a_common_type() {
     diff_typed_call(
-        "fn (n := i64 ?) -> i64 ( s := i64 0, s = 0, for i in n..(n + 3) ( s = s + i ), s )",
+        "fn (n := i64 ?) -> i64 ( mut s := i64 0, s = 0, for i in n..(n + 3) ( s = s + i ), s )",
         "f(5000000000)",
         15_000_000_003,
     );
@@ -1366,7 +1374,7 @@ fn for_loop_endpoints_resolve_a_common_type() {
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
     let mut p = Parser::new(
-        "fn (a := i32 ?, b := i64 ?) -> void ( for i in a..b ( a = 0 ) )",
+        "fn (mut a := i32 ?, b := i64 ?) -> void ( for i in a..b ( a = 0 ) )",
         &mut store,
         &mut trie,
         &core,
@@ -1378,7 +1386,7 @@ fn for_loop_endpoints_resolve_a_common_type() {
 #[test]
 fn for_loop_with_a_runtime_non_positive_step_runs_zero_iterations() {
     diff_typed_call(
-        "fn (d := i32 ?) -> i32 ( s := i32 3, s = 3, for i in 0..10..d ( s = 0 ), s )",
+        "fn (d := i32 ?) -> i32 ( mut s := i32 3, s = 3, for i in 0..10..d ( s = 0 ), s )",
         "f(0)",
         3,
     );
@@ -1388,7 +1396,7 @@ fn for_loop_with_a_runtime_non_positive_step_runs_zero_iterations() {
 fn for_loop_whose_step_overshoots_the_width_ends_both_tiers() {
     // A wrapped counter would satisfy `i < end` again; the step that does not fit ends the loop after one iteration.
     diff_typed_call(
-        "fn (d := i32 ?) -> i32 ( s := i32 0, for i in 2147483640..2147483647..d ( s = s + 1 ), s )",
+        "fn (d := i32 ?) -> i32 ( mut s := i32 0, for i in 2147483640..2147483647..d ( s = s + 1 ), s )",
         "f(10)",
         1,
     );
@@ -1396,15 +1404,15 @@ fn for_loop_whose_step_overshoots_the_width_ends_both_tiers() {
 
 #[test]
 fn for_loop_without_an_index_both_tiers() {
-    diff_nullary_fn("fn () -> i32 ( s := i32 0, for 0..10 ( s = s + 1 ), s )", 10);
-    diff_nullary_fn("fn () -> i32 ( s := i32 0, for 0..10..2 ( s = s + 1 ), s )", 5);
+    diff_nullary_fn("fn () -> i32 ( mut s := i32 0, for 0..10 ( s = s + 1 ), s )", 10);
+    diff_nullary_fn("fn () -> i32 ( mut s := i32 0, for 0..10..2 ( s = s + 1 ), s )", 5);
     diff_typed_call(
-        "fn (n := i32 ?) -> i32 ( s := i32 0, s = 0, for 0..n ( s = s + 2 ), s )",
+        "fn (n := i32 ?) -> i32 ( mut s := i32 0, s = 0, for 0..n ( s = s + 2 ), s )",
         "f(4)",
         8,
     );
     diff_typed_call(
-        "fn (n := i32 ?) -> i32 ( s := i32 0, s = 0, for n..(n + 3) ( s = s + 1 ), s )",
+        "fn (n := i32 ?) -> i32 ( mut s := i32 0, s = 0, for n..(n + 3) ( s = s + 1 ), s )",
         "f(4)",
         3,
     );
@@ -1608,7 +1616,7 @@ fn pointers_mutate_caller_state_through_calls_both_tiers() {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(
-            "fn () -> i32 ( x := i32 41, x = 41, incr(&x), x )",
+            "fn () -> i32 ( mut x := i32 41, x = 41, incr(&x), x )",
             &mut store,
             &mut trie,
             &core,
@@ -1633,7 +1641,7 @@ fn pointers_mutate_caller_state_through_calls_both_tiers() {
 fn pointer_variables_rewire_both_tiers() {
     // The explicit `p = &x` makes the body idempotent: the interpreted run leaves p on y.
     diff_nullary_fn(
-        "fn () -> i32 ( x := i32 10, y := i32 20, x = 10, y = 20, p := &x, p = &x, s := i32 0, s = p@, p = &y, s + p@ )",
+        "fn () -> i32 ( mut x := i32 10, mut y := i32 20, x = 10, y = 20, mut p := &x, p = &x, mut s := i32 0, s = p@, p = &y, s + p@ )",
         30,
     );
 }
@@ -1686,7 +1694,7 @@ fn record_pointer_fields_hold_addresses_both_tiers() {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(
-            "fn () -> i32 ( x := i32 7, x = 7, h := holder(&x), h.r@ + 1 )",
+            "fn () -> i32 ( mut x := i32 7, x = 7, h := holder(&x), h.r@ + 1 )",
             &mut store,
             &mut trie,
             &core,
@@ -1707,11 +1715,14 @@ fn record_pointer_fields_hold_addresses_both_tiers() {
 
 #[test]
 fn pointer_misuse_is_rejected() {
-    assert_eq!(parse_err("( x := i32 1, x@ )"), ParseError::UnsupportedOperands);
-    assert_eq!(parse_err("( x := i32 1, p := &x, p + 1 )"), ParseError::UnsupportedOperands);
-    assert_eq!(parse_err("( x := i32 1, p := &x, p = 5 )"), ParseError::TypeMismatch);
+    assert_eq!(parse_err("( mut x := i32 1, x@ )"), ParseError::UnsupportedOperands);
+    assert_eq!(
+        parse_err("( mut x := i32 1, mut p := &x, p + 1 )"),
+        ParseError::UnsupportedOperands
+    );
+    assert_eq!(parse_err("( mut x := i32 1, mut p := &x, p = 5 )"), ParseError::TypeMismatch);
     assert_eq!(parse_err("( y := 5, &y )"), ParseError::BadAddressOf);
-    assert_eq!(parse_err("fn () -> i32 ( x := i32 1, x = 1, &x )"), ParseError::TypeMismatch);
+    assert_eq!(parse_err("fn () -> i32 ( mut x := i32 1, x = 1, &x )"), ParseError::TypeMismatch);
 }
 
 #[test]
@@ -1720,14 +1731,14 @@ fn a_compiled_store_into_a_node_box_takes_its_width_from_the_leaf() {
     for tail in ["", "f.compile(), "] {
         assert_eq!(
             run_script(&format!(
-                "a := type ?, f := fn () -> i32 ( a = i32, 5 ),\n{tail}f(), a == i32"
+                "mut a := type ?, f := fn () -> i32 ( a = i32, 5 ),\n{tail}f(), a == i32"
             )),
             1,
             "type box, {tail:?}"
         );
         assert_eq!(
             run_script(&format!(
-                "a := dyad ?, f := fn () -> i32 ( a = f64, 5 ),\n{tail}f(), a == f64"
+                "mut a := dyad ?, f := fn () -> i32 ( a = f64, 5 ),\n{tail}f(), a == f64"
             )),
             1,
             "dyad box, {tail:?}"
@@ -1884,7 +1895,7 @@ fn address_of_a_parameter_works_both_tiers() {
 
 #[test]
 fn parameter_reassignment_works_both_tiers() {
-    diff_typed_call("fn (a := i32 ?) -> i32 ( a = a + 1, a )", "f(41)", 42);
+    diff_typed_call("fn (mut a := i32 ?) -> i32 ( a = a + 1, a )", "f(41)", 42);
 }
 
 /// Parse `src` as a whole script and run it with the compiler attached, so `f.compile()` works.
@@ -1908,7 +1919,7 @@ fn run_script(src: &str) -> i64 {
 #[test]
 fn interpreted_recursion_stacks_frames() {
     // 1..=500 sums right only if no call's frame aliases another's.
-    let src = "f := fn (n := i64 ?) -> i64 ( m := i64 0, m = n, if (n == 0) (0) else (m + f(n - 1)) ),\nf(500)";
+    let src = "f := fn (n := i64 ?) -> i64 ( mut m := i64 0, m = n, if (n == 0) (0) else (m + f(n - 1)) ),\nf(500)";
     assert_eq!(run_script(src), 125_250);
 }
 
@@ -1950,7 +1961,7 @@ fn compile_member_before_and_after_agree() {
 
 /// A power operator defined in Logos, spelled with a word so the script needs no fresh symbol.
 const POW_TYPE: &str = "pw := type (\n\
-     instance = ( a := ?, b := i32 ?, output := type ?, shared run = ( r := this.output 1, for 0..this.b ( r = r * this.a ), r ) ),\n\
+     instance = ( a := ?, b := i32 ?, output := type ?, shared run = ( mut r := this.output 1, for 0..this.b ( r = r * this.a ), r ) ),\n\
      parse_rank = *.parse_rank + 1,\n\
      associativity = right,\n\
      parse = (\n\
@@ -2078,7 +2089,7 @@ fn an_addressed_local_stays_in_memory_under_promotion() {
 fn a_promoted_loop_matches_the_interpreter() {
     assert_eq!(
         run_script(
-            "sum_to := fn (n := i64 ?) -> i64 ( i := i64 0, s := i64 0, while (i < n) ( s = s + i, i = i + 1 ), s ),\nbefore := sum_to(1000),\nsum_to.compile(),\nbefore + sum_to(1000)"
+            "sum_to := fn (n := i64 ?) -> i64 ( mut i := i64 0, mut s := i64 0, while (i < n) ( s = s + i, i = i + 1 ), s ),\nbefore := sum_to(1000),\nsum_to.compile(),\nbefore + sum_to(1000)"
         ),
         999_000
     );
@@ -2234,9 +2245,12 @@ fn construction_and_field_access_are_checked() {
 
 #[test]
 fn assigning_into_a_comptime_binding_is_rejected() {
-    assert_eq!(parse_err("( x := 5, x = 7 )"), ParseError::AssignToLiteral(Box::new("5".into())));
     assert_eq!(
-        parse_err("( x := 5/2, x = 7 )"),
+        parse_err("( mut x := 5, x = 7 )"),
+        ParseError::AssignToLiteral(Box::new("5".into()))
+    );
+    assert_eq!(
+        parse_err("( mut x := 5/2, x = 7 )"),
         ParseError::AssignToLiteral(Box::new("5/2".into()))
     );
     assert_eq!(parse_err("( 5 = 7 )"), ParseError::AssignToLiteral(Box::new("5".into())));
@@ -2337,9 +2351,18 @@ fn declaration_binds_a_name_to_a_value() {
         assert_eq!(rt.run(x_ref).unwrap(), 5);
         assert_eq!(rt.run(decl).unwrap(), 0);
     }
+    // SAFETY: `x_ref` is the record of `x`.
     unsafe {
-        assert!(declare::gate_of(decl).is_null());
+        assert!(!Record::has_gate(x_ref, core.pub_) && !Record::has_gate(x_ref, core.mut_));
     }
+}
+
+/// The record a use of `name` points at.
+fn use_of(store: &mut Store, trie: &mut RegexTrie, core: &Core, name: &str) -> DyadPtr {
+    let mut s = ScopeStack::new();
+    s.push(core.root_scope);
+    let mut p = Parser::new(name, store, trie, core, s);
+    p.parse_expression().unwrap()
 }
 
 #[test]
@@ -2373,7 +2396,7 @@ fn the_view_reads_roles_and_raw_value_at_the_graph_level() {
 }
 
 #[test]
-fn pub_fills_a_declarations_gate_slot() {
+fn pub_marks_the_names_record() {
     let (mut store, mut trie, core) = new_core();
 
     let decl = {
@@ -2385,7 +2408,6 @@ fn pub_fills_a_declarations_gate_slot() {
     // SAFETY: `decl` is the declare node just parsed.
     unsafe {
         assert_eq!((*decl).ty, core.declare_);
-        assert_eq!(declare::gate_of(decl), core.pub_);
         let bound = declare::declared_of(decl);
         assert_eq!((*bound).ty, core.rational);
         assert_eq!(rational::mold(bound), Some(5));
@@ -2402,6 +2424,11 @@ fn pub_fills_a_declarations_gate_slot() {
         assert_eq!(rt.run(decl).unwrap(), 0);
         assert_eq!(rt.run(x_ref).unwrap(), 6);
     }
+    let x = use_of(&mut store, &mut trie, &core, "x");
+    // SAFETY: `x` is the record of `x`.
+    unsafe {
+        assert!(Record::has_gate(x, core.pub_) && !Record::has_gate(x, core.mut_));
+    }
 }
 
 #[test]
@@ -2417,7 +2444,11 @@ fn pub_gates_a_typed_declaration() {
     // SAFETY: `decl` is the declare node just parsed.
     unsafe {
         assert_eq!((*decl).ty, core.declare_);
-        assert_eq!(declare::gate_of(decl), core.pub_);
+    }
+    let x = use_of(&mut store, &mut trie, &core, "x");
+    // SAFETY: `x` is the record of `x`.
+    unsafe {
+        assert!(Record::has_gate(x, core.pub_));
     }
 }
 
@@ -2440,10 +2471,35 @@ fn pub_gates_a_fn_declaration() {
     // SAFETY: `decl` is the declare node just parsed; its binding is the fn.
     unsafe {
         assert_eq!((*decl).ty, core.declare_);
-        assert_eq!(declare::gate_of(decl), core.pub_);
         let f = declare::declared_of(decl);
         assert_eq!((*f).ty, core.fn_type);
     }
+    let double = use_of(&mut store, &mut trie, &core, "double");
+    // SAFETY: `double` is the record of `double`.
+    unsafe {
+        assert!(Record::has_gate(double, core.pub_));
+    }
+}
+
+#[test]
+fn a_name_is_written_only_if_declared_mut() {
+    assert_eq!(run_script("mut x := i32 5,\nx = 6,\nx"), 6);
+    assert_eq!(run_script("pub mut x := i32 5,\nx = 6,\nx"), 6);
+    assert_eq!(
+        parse_err_after(&["x := i32 5"], "x = 6"),
+        ParseError::NotMutable(Box::new("x".into()))
+    );
+    assert_eq!(
+        parse_err_after(&["x := i32 ?"], "x = 6"),
+        ParseError::NotMutable(Box::new("x".into()))
+    );
+    assert_eq!(parse_err("mut mut x := 5"), ParseError::DoubleGate);
+    assert_eq!(parse_err("mut 5"), ParseError::GateNeedsDeclaration);
+    assert_eq!(run_script("f := fn (mut a := i32 ?) -> i32 ( a = a + 1, a ),\nf(4)"), 5);
+    assert_eq!(
+        parse_err("f := fn (a := i32 ?) -> i32 ( a = a + 1, a )"),
+        ParseError::NotMutable(Box::new("a".into()))
+    );
 }
 
 #[test]
@@ -2655,7 +2711,7 @@ fn recursion_with_a_local_accumulator_both_tiers() {
     // SAFETY: a self-contained recursive definition and literal calls.
     unsafe {
         assert_recursion_both_tiers(
-            &["fact := fn (n := i32 ?) -> i32 ( acc := i32 1, if (n < 1) (acc) else (acc = n * fact(n - 1), acc) )"],
+            &["fact := fn (n := i32 ?) -> i32 ( mut acc := i32 1, if (n < 1) (acc) else (acc = n * fact(n - 1), acc) )"],
             "fact",
             &[(0, 1), (1, 1), (5, 120), (7, 5040)],
         );
@@ -2668,7 +2724,7 @@ fn recursion_with_a_typed_declaration_local_both_tiers() {
     // SAFETY: a self-contained recursive definition and literal calls.
     unsafe {
         assert_recursion_both_tiers(
-            &["f := fn (n := i32 ?) -> i32 ( a := i32 ?, a = a + n, if (n < 1) (a) else (f(n - 1), a) )"],
+            &["f := fn (n := i32 ?) -> i32 ( mut a := i32 ?, a = a + n, if (n < 1) (a) else (f(n - 1), a) )"],
             "f",
             &[(0, 0), (1, 1), (5, 5)],
         );
@@ -2747,14 +2803,14 @@ fn parse_err_after(defs: &[&str], src: &str) -> ParseError {
 
 #[test]
 fn assignment_rejects_a_cross_type_right_side() {
-    let defs = &["a := i64 1", "b := i32 2"];
+    let defs = &["mut a := i64 1", "mut b := i32 2"];
     assert_eq!(parse_err_after(defs, "a = b"), ParseError::TypeMismatch);
     assert_eq!(parse_err_after(defs, "b = a"), ParseError::TypeMismatch);
 }
 
 #[test]
 fn assignment_rejects_pointer_type_mismatches() {
-    let defs = &["x := i32 7", "y := f64 2.5", "p := &x", "b := i32 2"];
+    let defs = &["x := i32 7", "y := f64 2.5", "mut p := &x", "mut b := i32 2"];
     assert_eq!(parse_err_after(defs, "p = &y"), ParseError::TypeMismatch);
     assert_eq!(parse_err_after(defs, "p = b"), ParseError::TypeMismatch);
     assert_eq!(parse_err_after(defs, "b = p"), ParseError::TypeMismatch);
@@ -2766,7 +2822,7 @@ fn assignment_accepts_a_matching_pointer_and_rewires() {
     let (mut store, mut trie, core) = new_core();
     let mut rt = Runtime::new(&core, &mut store);
     let mut result = 0;
-    for line in ["x := i32 7", "y := i32 9", "p := &x", "p@", "p = &y", "p@"] {
+    for line in ["x := i32 7", "y := i32 9", "mut p := &x", "p@", "p = &y", "p@"] {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(line, rt.store, &mut trie, &core, s);
@@ -2882,7 +2938,7 @@ fn diff_var_fn(nt: NumType, init: i64, fn_src: &str, expect: i64) {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&init.to_ne_bytes()[..nt.bytes()]);
     let a = store.alloc_raw(core.numtypes[nt as usize], crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
     let func = {
         let mut p = Parser::new(fn_src, &mut store, &mut trie, &core, scopes);
         p.parse_expression().unwrap()
@@ -3018,7 +3074,7 @@ fn void_function_runs_its_body_for_effect() {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&41i32.to_ne_bytes());
     let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", test_record(core.record_, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
     let func = {
         let mut p =
             Parser::new("fn () -> void ( a = a + 1 )", &mut store, &mut trie, &core, scopes);

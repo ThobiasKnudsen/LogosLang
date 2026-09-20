@@ -80,12 +80,15 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::AssignToLiteral(lit) => format!(
             "`{lit}` is a literal with no storage: `x := {lit}` names the number \
              itself, so `=` has nothing to write into. Declare a type, as in \
-             `x := i32 5`, to make a place"
+             `mut x := i32 5`, to make a place"
         ),
         ParseError::GateNeedsDeclaration => {
-            "`pub` must be followed by a declaration".into()
+            "a gate word (`pub`, `mut`) must be followed by a declaration".into()
         }
-        ParseError::DoubleGate => "this declaration is already marked `pub`".into(),
+        ParseError::DoubleGate => "this gate word already stands on the declaration".into(),
+        ParseError::NotMutable(name) => {
+            format!("`{name}` is not `mut`: a name is written after its declaration only when declared `mut {name} := …`")
+        }
         ParseError::ExpectedPath => "`import` must be followed by a file path".into(),
         ParseError::ExpectedPattern => "`regex` must be followed by a «…» pattern".into(),
         ParseError::ExpectedQuote => "`lex` must be followed by a «…» quote".into(),

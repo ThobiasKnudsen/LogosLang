@@ -20,14 +20,14 @@ Every snippet in this section runs on today's seed. Try them with `logos '…'` 
 
 ```logos
 x := i32 5,      # declare x: a type followed by a value
-y := x + 1,      # declare y: the type is read from the value
-y = 7,           # reassign an existing name
-z := i32 ?,      # declare with no value yet: ? is a hole
+mut y := x + 1,  # declare y: the type is read from the value; mut lets = write it
+y = 7,
+mut z := i32 ?,  # declare with no value yet: ? is a hole
 z = 9,
 x + y + z        # 21
 ```
 
-`:=` declares and `=` reassigns. Writing `=` to a name that was never declared is an error, so a typo cannot create a variable. A name cannot be declared twice while the first is alive: there is no shadowing. `:=` copies, so after `y := x` a write to `y` leaves `x` alone. There are no annotations on the left of `:=`, only a name: `x := i32 5` reads as "x is an i32 holding 5", and `x := i32 ?` as "x is an i32 with nothing in it yet".
+`:=` declares and `=` writes a name declared `mut`. Writing `=` to a name that was never declared, or to one declared without `mut`, is an error, so a typo cannot create a variable and a name is only ever changed where its declaration says so. A name cannot be declared twice while the first is alive: there is no shadowing. `:=` copies, so after `y := x` a write to `y` leaves `x` alone. Left of `:=` stand the name and its gate words, `mut` and `pub`, nothing else: `x := i32 5` reads as "x is an i32 holding 5", and `mut x := i32 ?` as "x is an i32 with nothing in it yet, to be written".
 
 ### The comma
 
@@ -62,9 +62,9 @@ fact(20)                       # 2432902008176640000
 ### Control flow
 
 ```logos
-s := i32 0,
+mut s := i32 0,
 for i in 0..5 ( if i % 2 == 0 ( s = s + i ) ),
-j := i32 0,
+mut j := i32 0,
 while j < 5 ( s = s + j, j = j + 1 ),
 if s > 10 (s) else (0)         # 16
 ```
@@ -87,7 +87,7 @@ A function can return a type. The call runs during the pass, and the result is a
 
 ```logos
 pick := fn (i := i32 ?) -> type ( if (i == 0) (i32) else (f64) ),
-a := pick(1) ?,                # a is an f64 with no value yet
+mut a := pick(1) ?,            # a is an f64 with no value yet
 a = 2.5,
 pick(0) == i32                 # true
 ```
@@ -120,8 +120,8 @@ b@ + inner - 98                        # 42, then b is freed at program end
 
 ```logos
 sum_to := fn (n := i64 ?) -> i64 (
-    i := i64 0,
-    s := i64 0,
+    mut i := i64 0,
+    mut s := i64 0,
     while i < n (
         s = s + i,
         i = i + 1
@@ -141,7 +141,7 @@ logos import ./lib.logos                 # run a file top to bottom
 logos 'import ./lib.logos, double(21)'   # ...and call something it exposes
 ```
 
-There is no `main`. The top level is the program, and the file's last value is its result. An imported file runs inside its own scope and sees only the built-in names and its own imports, never the importer's, so it means the same thing wherever it is imported. A file loads once per run, and an import cycle is an error. Today's seed exposes only the names a file marks `pub`, spelled `pub name := …`, which is also the ruled spelling; the v0.1.0 preview drops gates entirely: every top-level name is visible, and `pub` and `mut` land together after it.
+There is no `main`. The top level is the program, and the file's last value is its result. An imported file runs inside its own scope and sees only the built-in names and its own imports, never the importer's, so it means the same thing wherever it is imported. A file loads once per run, and an import cycle is an error. A file exposes only the names it marks `pub`, spelled `pub name := …`; a name is written after its declaration only when declared `mut`, and `pub mut` does both.
 
 ## Defining the language from inside
 
@@ -154,7 +154,7 @@ This is what the first public preview is built to show. An operator is a type wi
         rhs := i32 ?,
         output := type ?,                    # the result type, written per node by parse
         shared run = (                       # what every ^ node computes, over its fields
-            r := this.output 1,
+            mut r := this.output 1,
             for 0..this.rhs ( r = r * this.lhs ),
             r
         )
@@ -190,11 +190,12 @@ The seed runs:
 - functions returning `type`, dependent declarations, and comptime `if`;
 - `alloc`, `own`, `drop`, `free`, `defer`, and raw pointers;
 - `.compile()` with a deoptimizing JIT;
-- `import`, the command line as source, and the REPL.
+- `import`, the command line as source, and the REPL;
+- `pub` and `mut` on a name's record: a name is written after its declaration only where it says `mut`.
 
 Specified in DESIGN.md and not yet built:
 
-- **Gates.** `pub`, `mut`, and `lock` as entries on a name's record, one read-or-write rule for visibility, borrowing, and reflection alike.
+- **The rest of the gates.** `lock`, `immut`, gates on field paths and through pointers, and gates as body nodes, one read-or-write rule for visibility, borrowing, and reflection alike.
 - **The borrow checker.** Many readers or one writer, checked per place, with lexical lifetimes.
 - **Error values.** `T!`, `try`, and `match`. Today every error is a fault that stops the run with one message.
 - **The rewriting engine.** Equality saturation over the graph: one engine for compiler optimization, computer algebra, and your own rewrites, driven by cost functions.

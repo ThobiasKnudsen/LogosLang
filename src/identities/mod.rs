@@ -126,6 +126,7 @@ pub struct Core {
     pub defer_: DyadPtr,
     /// The gate word; its constructor fills the declare node's gate slot.
     pub pub_: DyadPtr,
+    pub mut_: DyadPtr,
     /// Its node is the trace of the load; running it re-yields the file's tail.
     pub import_: DyadPtr,
     /// The cell type; a value of it is the view `a:dyad`.
@@ -264,7 +265,7 @@ impl Core {
         op_leaves.return_ = return_leaf;
         let (declare_, declare_leaf, declare_tok) = declare::register(&mut cx, &callables);
         op_leaves.declare_ = declare_leaf;
-        let pub_ = gate::register(&mut cx);
+        let (pub_, mut_) = gate::register(&mut cx);
         let (import_, import_leaf) = import::register(&mut cx, &callables);
         op_leaves.import_ = import_leaf;
         let dyad_ = dyad::register(&mut cx);
@@ -363,6 +364,7 @@ impl Core {
             free_,
             defer_,
             pub_,
+            mut_,
             import_,
             dyad_,
             record_,

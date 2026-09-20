@@ -26,6 +26,7 @@ pub struct Record {
     /// The body item holding the `own` or `drop` that made the name dead (the node itself
     /// while that item is still parsing); null while the name is alive.
     pub end: DyadPtr,
+    /// The gate words on the name in text order, an `array` node; null while none.
     pub gate: DyadPtr,
     /// The spelling as a string node; a pattern identity's pattern text. Null only on a
     /// record a test builds by hand.
@@ -111,6 +112,34 @@ impl Record {
     /// As `Record::read`.
     pub unsafe fn set_lex_rank(dyad: DyadPtr, rank: f64) {
         (*Self::fields(dyad)).lex_rank = rank;
+    }
+
+    /// # Safety
+    /// As `Record::read`; `gate` an identity from the store.
+    pub unsafe fn has_gate(dyad: DyadPtr, gate: DyadPtr) -> bool {
+        let gates = (*Self::fields(dyad)).gate;
+        !gates.is_null() && super::array::items(gates).contains(&gate)
+    }
+
+    /// # Safety
+    /// As `Record::read`; `array_ty` the `array` identity, `gate` an identity from the store.
+    pub unsafe fn add_gate(store: &mut Store, array_ty: DyadPtr, dyad: DyadPtr, gate: DyadPtr) {
+        let gates = (*Self::fields(dyad)).gate;
+        let mut items =
+            if gates.is_null() { Vec::new() } else { super::array::items(gates).to_vec() };
+        items.push(gate);
+        (*Self::fields(dyad)).gate = super::array::build(store, array_ty, &items);
+    }
+
+    /// # Safety
+    /// As `Record::read`; the record's `name` must be null or a string node.
+    pub unsafe fn spelling(dyad: DyadPtr) -> String {
+        let name = (*Self::fields(dyad)).name;
+        if name.is_null() {
+            String::new()
+        } else {
+            String::from_utf8_lossy(super::string::text(name)).into_owned()
+        }
     }
 }
 

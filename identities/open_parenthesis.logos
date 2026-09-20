@@ -7,13 +7,14 @@
 # constructor taking what it needs from the fully lexed segment, left or right, any arity, with no lookahead; a
 # cell still unconstructed afterwards is the checked error. the constructed cells, in order, are the scope's
 # expressions, the array the scope dyad's value references. no holding, no re-invocation.
+
 ( := type (
     parse_rank = …
     associativity = left
     parse = (
         body := array @dyad ()
-        first := 1
-        i := 1
+        mut first := 1
+        mut i := 1
         while true (
             cell := tape[i]
             if cell == lex «)»[0] or cell == lex «,»[0] (

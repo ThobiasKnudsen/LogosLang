@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `:=`, the declaration operator, and the `declare` node it builds:
-//! `[name, declared, gate, op]`, real graph structure, so anything downstream
+//! `[name, declared, op]`, real graph structure, so anything downstream
 //! sees that a declaration happened without re-reading source. Running one
 //! runs its initializer for effect and yields unit.
 
@@ -19,11 +19,6 @@ use crate::store::Store;
 /// The declared binding (or construction initializer); the name string node sits at 0.
 const DECL_DECLARED: usize = 1;
 
-/// The gate slot: null for an unmarked declaration (private, fail-closed), or
-/// the gate identity it was written under. An operand slot, not a flag.
-/// DESIGN ›Metadata has three homes‹
-const DECL_GATE: usize = 2;
-
 /// The trie longest-matches `:=` over the record read `:`.
 /// Returns `(declare identity, leaf, := token)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr) {
@@ -37,7 +32,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
         meta::TUPLE_TAG,
         meta::prec::INERT,
         Assoc::Left,
-        &["name", "declared", "gate", "op"],
+        &["name", "declared", "op"],
     );
     let declare = cx.store.alloc_raw(cx.type_, record);
     cx.lower.insert(declare, lower);
@@ -45,8 +40,6 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     (declare, leaf, token)
 }
 
-/// The gate slot is null at build; a gate word's constructor fills it after
-/// the declaration reduces.
 pub(crate) fn build(
     store: &mut Store,
     declare: DyadPtr,
@@ -54,7 +47,7 @@ pub(crate) fn build(
     name: DyadPtr,
     declared: DyadPtr,
 ) -> DyadPtr {
-    let value = store.alloc_operands(&[name, declared, std::ptr::null_mut(), op]);
+    let value = store.alloc_operands(&[name, declared, op]);
     store.alloc_raw(declare, value)
 }
 
@@ -62,23 +55,6 @@ pub(crate) fn build(
 /// `node` must be a declare node as [`build`] lays it out.
 pub(crate) unsafe fn declared_of(node: DyadPtr) -> DyadPtr {
     *((*node).value as *const DyadPtr).add(DECL_DECLARED)
-}
-
-/// The visibility read `import` performs is exactly this slot.
-///
-/// # Safety
-/// As [`declared_of`].
-pub(crate) unsafe fn gate_of(node: DyadPtr) -> DyadPtr {
-    *((*node).value as *const DyadPtr).add(DECL_GATE)
-}
-
-/// Patched in place: the gate word runs right after the declaration reduces,
-/// before anything reads the slot.
-///
-/// # Safety
-/// As [`declared_of`]; `gate` must be a registered gate identity.
-pub(crate) unsafe fn set_gate(node: DyadPtr, gate: DyadPtr) {
-    *((*node).value as *mut DyadPtr).add(DECL_GATE) = gate;
 }
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {

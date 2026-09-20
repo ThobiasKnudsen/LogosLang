@@ -1,4 +1,4 @@
 # count the even numbers below ten; the loop needs no index
-count := i32 0,
+mut count := i32 0,
 for 0..10..2 ( count = count + 1 ),
 count

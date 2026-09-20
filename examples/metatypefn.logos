@@ -22,7 +22,7 @@ metatype := fn (i := i32 ?) -> type (
 # metatype(2) call below jumps to the installed machine code.
 metatype.compile(),
 b := type,
-a := metatype(2) ?,
+mut a := metatype(2) ?,
 if (a:dyad.type == i32) (a=9)
 else if (a:dyad.type == f32 or a:dyad.type == f64) (a=9.9)
 else if (a:dyad.type == type) (a=i32),

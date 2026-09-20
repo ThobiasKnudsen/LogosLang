@@ -422,19 +422,19 @@ mod tests {
     #[test]
     fn an_owning_place_takes_only_an_owning_value() {
         assert_eq!(
-            parse_err("x := i32 1, a := alloc i32 5, a = &x"),
+            parse_err("x := i32 1, mut a := alloc i32 5, a = &x"),
             ParseError::NonOwningIntoOwning
         );
         assert_eq!(
-            parse_err("a := alloc i32 5, b := alloc i32 6, a = b"),
+            parse_err("mut a := alloc i32 5, b := alloc i32 6, a = b"),
             ParseError::NonOwningIntoOwning
         );
-        assert_eq!(run("x := i32 1, p := &x, p = &x, p@").0, 1);
-        assert_eq!(run("a := alloc i32 5, a@ = 9, a@"), (9, 0));
+        assert_eq!(run("x := i32 1, mut p := &x, p = &x, p@").0, 1);
+        assert_eq!(run("mut a := alloc i32 5, a@ = 9, a@"), (9, 0));
 
         // The displaced block is not freed yet; the leak is pinned as a number.
-        assert_eq!(run("a := alloc i32 5, a = alloc i32 6, a@"), (6, 1));
-        assert_eq!(run("a := alloc i32 5, b := alloc i32 6, a = own b, a@"), (6, 1));
+        assert_eq!(run("mut a := alloc i32 5, a = alloc i32 6, a@"), (6, 1));
+        assert_eq!(run("mut a := alloc i32 5, b := alloc i32 6, a = own b, a@"), (6, 1));
     }
 
     fn free_log() -> Vec<i64> {
@@ -527,7 +527,7 @@ mod tests {
     #[test]
     fn a_write_after_own_is_refused() {
         assert_eq!(
-            parse_err("a := alloc i32 7,\nb := own a,\na = b"),
+            parse_err("mut a := alloc i32 7,\nb := own a,\na = b"),
             ParseError::Resolve(ResolveError::Dead("a".into()))
         );
     }
@@ -561,7 +561,7 @@ mod tests {
     fn a_move_of_an_outer_name_inside_a_loop_body_is_refused() {
         // The next pass would read a dead name.
         assert_eq!(
-            parse_err("a := alloc i32 7,\nc := i32 1,\nwhile (c == 1) ( b := own a, c = 0 )"),
+            parse_err("a := alloc i32 7,\nmut c := i32 1,\nwhile (c == 1) ( b := own a, c = 0 )"),
             ParseError::OwnOfOuterName
         );
         assert_eq!(
@@ -703,17 +703,19 @@ mod tests {
         // Calling a function is a use of each outer name its body reads, at the call.
         assert_eq!(
             parse_err(
-                "n := i32 0,\nclimb := fn () -> i32 ( n = n + 1, n ),\nclimb(),\ndrop n,\nclimb()"
+                "mut n := i32 0,\nclimb := fn () -> i32 ( n = n + 1, n ),\nclimb(),\ndrop n,\nclimb()"
             ),
             ParseError::Resolve(ResolveError::Dead("n".into()))
         );
         assert_eq!(
-            parse_err("n := i32 0,\nclimb := fn () -> i32 ( n ),\ndrop n,\nn := i32 10,\nclimb()"),
+            parse_err(
+                "mut n := i32 0,\nclimb := fn () -> i32 ( n ),\ndrop n,\nmut n := i32 10,\nclimb()"
+            ),
             ParseError::Resolve(ResolveError::Dead("n".into()))
         );
         let (v, live) =
-            run("n := i32 0,\nclimb := fn () -> i32 ( n = n + 1, n ),\nclimb(),\ndrop n,\n\
-             n := i32 10,\nclimb2 := fn () -> i32 ( n = n + 1, n ),\nclimb2()");
+            run("mut n := i32 0,\nclimb := fn () -> i32 ( n = n + 1, n ),\nclimb(),\ndrop n,\n\
+             mut n := i32 10,\nclimb2 := fn () -> i32 ( n = n + 1, n ),\nclimb2()");
         assert_eq!(v, 11);
         assert_eq!(live, 0);
     }
@@ -800,7 +802,7 @@ mod tests {
 
     #[test]
     fn a_loop_body_frees_every_iteration() {
-        let (_v, live) = run("i := i32 0,\nwhile (i < 3) ( p := alloc i32 5, i = i + 1 ),\ni");
+        let (_v, live) = run("mut i := i32 0,\nwhile (i < 3) ( p := alloc i32 5, i = i + 1 ),\ni");
         assert_eq!(live, 0, "no allocation outlives its iteration");
         assert_eq!(free_log().len(), 3, "one free per iteration");
     }

@@ -13,13 +13,14 @@
 # is this one definition. A field read such as (a ^ b).lhs walks into the
 # instance and runs nothing. The instance block comes first: a body's this.f
 # names a field declared above it.
+
 ^ := type (
     instance = (
         lhs := ?,
         rhs := i32 ?,
         output := type ?,
         shared run = (
-            r := this.output 1,
+            mut r := this.output 1,
             for 0..this.rhs ( r = r * this.lhs ),
             r
         )
