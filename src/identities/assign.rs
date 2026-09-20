@@ -196,6 +196,15 @@ pub(super) fn build(
             let value = store.alloc_operands(&[lhs, rhs, types.ops.store_leaf(NumType::I64)]);
             return Ok(store.alloc_raw(op, value));
         }
+        // A rational place takes a rational value, or a literal boxed as
+        // one (#133 slice 8, part 4).
+        Read::Container(t) if t == types.rational => {
+            // SAFETY: `rhs` is a reduced dyad from the store.
+            let value = unsafe { super::rational::rational_operand(store, types, rhs) }
+                .ok_or(ParseError::TypeMismatch)?;
+            let value = store.alloc_operands(&[lhs, value, types.ops.store_leaf(NumType::I64)]);
+            return Ok(store.alloc_raw(op, value));
+        }
         Read::Scalar(_) | Read::Pointer(_) if marked => {}
         Read::Literal => {
             // SAFETY: a `Literal` read is a rational node with its fraction blob.
@@ -220,7 +229,7 @@ pub(super) fn build(
     // ([`super::check_store_type`]).
     // SAFETY: as above.
     let rhs = unsafe {
-        if (*rhs_d).ty == types.rational {
+        if (*rhs_d).ty == types.rational && !crate::dyad::is_place((*rhs_d).value) {
             let nt = of_type_node((*lhs_d).ty);
             commit_if_literal(store, types, rhs, &Operand::Literal, (*lhs_d).ty, nt)?
         } else {

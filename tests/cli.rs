@@ -363,14 +363,61 @@ fn a_run_body_sees_its_definition_and_its_own_locals_only() {
 fn a_run_body_over_bare_literal_operands_is_a_rational_specialization() {
     // A bare literal written into `lhs := ?` gives the field type
     // `rational_number` (ruled 20 September 2026: the literal's type, no
-    // silent i32), a set of its own. Its body needs `rational_number 1` and
-    // `*` over a rational place, which the seed does not have yet (#133
-    // slice 8, part 4): today the construction fails at that line.
+    // silent i32), a set of its own, whose body runs over rational places
+    // and operators; and a node every value field of which is a literal is
+    // comptime, so it folds at construction as `2 * 3` does and its literal
+    // molds where it lands (DESIGN ›Deferral is authored‹: "every
+    // constructor is a partial evaluator"). caret.logos's tail through the
+    // bare body: 9 + 512 + 18.
     let src = format!("{POWER}, 2 ^ 3");
     let out = logos().args([&src]).output().unwrap();
-    assert!(!out.status.success());
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("the run body of `^` could not be constructed"), "stderr: {stderr}");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "8");
+    let src = format!(
+        "{POWER}, f := fn (x := i32 ?) -> i32 ( x^3 + 1 ), f.compile(), \
+         f(2) + 2 ^ 3 ^ 2 + 2 * 3 ^ 2"
+    );
+    let out = logos().args([&src]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "539");
+    // A rational place as an operand is evaluated at run: the set's function
+    // runs interpreted, and a function may yield the type; an inexact result
+    // stays exact.
+    let (echoes, stderr) = repl(
+        format!(
+            "{POWER}\nq := rational_number 2\nq ^ 3\n\
+             h := fn (n := i32 ?) -> rational_number ( 2.5 ^ n )\nh(2)\n"
+        )
+        .as_bytes(),
+    );
+    assert_eq!(echoes, ["8", "25/4"], "stderr: {stderr}");
+}
+
+#[test]
+fn rational_places_and_operators_run_interpreted_and_are_refused_compiled() {
+    // `rational_number ?` and `rational_number 2` make places of the type
+    // (DESIGN ›Numeric literals are uncommitted until context classifies
+    // them‹: "the result *stays* `rational_number`"); the operators over
+    // them carry the exact fraction; a place shows its number.
+    let (echoes, stderr) = repl(
+        b"q := rational_number 2\nr := rational_number 3\nq * r\nq / 3\nq = q * 2\nq\n\
+          q < 5\nx := rational_number ?\nx = 7\nx\nk := fn () -> rational_number ( q )\nk()\n",
+    );
+    assert_eq!(echoes, ["6", "2/3", "4", "true", "7", "4"], "stderr: {stderr}");
+    // Crossing into a machine type is explicit, and the seed has no such
+    // conversion yet: a rational value in a typed slot is the mismatch, and
+    // the compiler refuses a rational place (arbitrary precision deferred).
+    for (src, expect) in [
+        ("q := rational_number 2, q + i32 1", "do not match"),
+        ("k := fn () -> i32 ( q := rational_number 2, q ), k()", "do not match"),
+        ("q := rational_number 2, z := i32 4, z = q", "do not match"),
+        ("g := fn () -> i32 ( q := rational_number 2, q = q * 2, 4 ), g.compile()", "compiled"),
+    ] {
+        let out = logos().args([src]).output().unwrap();
+        assert!(!out.status.success(), "{src} succeeded");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
 }
 
 #[test]

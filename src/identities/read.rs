@@ -248,6 +248,9 @@ pub unsafe fn place_layout(types: &Core, t: DyadPtr) -> Option<(Read, usize)> {
     let t = super::type_identity_of(types, t)?;
     let kind = meta::kind_of(t)?;
     match kind {
+        // A place of `rational_number` holds a rational value's address
+        // (#133 slice 8, part 4; [`super::rational::box_literal`]).
+        meta::FRACTION_TAG => Some((Read::Container(t), 8)),
         k if k < VOID_TAG => {
             let nt = numtype::of_type_node(t);
             Some((Read::Scalar(nt), nt.bytes()))

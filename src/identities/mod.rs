@@ -705,7 +705,13 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
         return numtype_of(types, ran::expr_of(types, node));
     }
     if logos == types.rational {
-        return Operand::Literal;
+        // A literal molds where it lands; a place of the type holds a
+        // rational value, which no machine type takes silently.
+        return if crate::dyad::is_place((*node).value) {
+            Operand::NonNumeric
+        } else {
+            Operand::Literal
+        };
     }
     // An arithmetic operator's result type is its left operand's: resolution
     // committed both operands to one type and stored the concrete op — not a
@@ -876,6 +882,10 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
             }
             if !out.is_null() && numtype::is_pointer_type(out) {
                 return Operand::Pointer(numtype::pointee_of(out));
+            }
+            // A call yielding a rational value (#133 slice 8, part 4).
+            if !out.is_null() && out == types.rational {
+                return Operand::NonNumeric;
             }
         }
         return Operand::Concrete(call_return_numtype(logos));
@@ -1145,6 +1155,15 @@ pub unsafe fn display_value(types: &Core, node: DyadPtr, bits: i64) -> String {
     // bool storage), so only a direct bool-valued expression renders this way.
     if crate::parse::is_bool_result(types, node) {
         return if bits != 0 { "true" } else { "false" }.to_string();
+    }
+    // A rational value — a place of the type, a boxed literal, an operation
+    // or call yielding one — carries the number's address (#133 slice 8,
+    // part 4): show the number.
+    if rational::is_rational_value(types, node) {
+        let held = bits as usize as DyadPtr;
+        if !held.is_null() && (*held).ty == types.rational {
+            return rational::spell(held);
+        }
     }
     // From here the reading rule says what the bits are (#82): the rest of
     // this function used to re-derive it with four tests of its own.
@@ -1491,7 +1510,7 @@ unsafe fn commit_tail(
     output: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
     walk_tail(types, node, &mut |leaf| {
-        if (*leaf).ty == types.rational {
+        if (*leaf).ty == types.rational && !crate::dyad::is_place((*leaf).value) {
             let nt = numtype::of_type_node(output);
             let bits = rational::mold_to(leaf, nt).ok_or(ParseError::UncomputableLiteral)?;
             let value = store.alloc_bytes(&bits.to_ne_bytes()[..nt.bytes()]);
@@ -1500,6 +1519,11 @@ unsafe fn commit_tail(
         // A pointer cannot be a numeric function's value (commit_tail runs only
         // for numeric outputs); rejecting here beats an invalid widen at the ABI.
         if let Operand::Pointer(_) = numtype_of(types, leaf) {
+            return Err(ParseError::TypeMismatch);
+        }
+        // A rational value at run time has no machine form until it is
+        // converted (#133 slice 8, part 4): crossing types is explicit.
+        if rational::is_rational_value(types, leaf) {
             return Err(ParseError::TypeMismatch);
         }
         Ok(leaf)

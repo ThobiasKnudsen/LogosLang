@@ -178,7 +178,7 @@ The seed runs:
 
 - the dyad cell, `type` as a value, the dyad view, and type comparison by identity;
 - `:=`, `=`, `?`, juxtaposition, and `,`;
-- integer, float, and boolean primitives with conversions, and compile-time rationals;
+- integer, float, and boolean primitives with conversions, compile-time rationals, and rational places and operators in the interpreter;
 - `if`, `while`, `for`, functions, scopes, recursion, and records;
 - types defined with their own parse_rank, associativity, and a constructor written in Logos, run during the parse over the tape;
 - functions returning `type`, dependent declarations, and comptime `if`;

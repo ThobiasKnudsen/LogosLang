@@ -172,18 +172,30 @@ fn build_op(
             if let Some(folded) = rational::fold_arith(store, types, a, lhs, rhs)? {
                 return Ok(folded);
             }
+            let leaf = types.ops.rational_arith_leaf(a);
             // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
-            let ([lhs, rhs], nt) = unsafe { resolve_binary(store, types, lhs, rhs) }?;
-            // `%` over floats mints no leaf: there is no machine float
-            // remainder (Cranelift has none), so the node cannot exist.
-            if matches!(a, ArithOp::Rem) && nt.is_float() {
-                return Err(ParseError::UnsupportedOperands);
+            if let Some(slots) = unsafe { rational_slots(store, types, lhs, rhs, leaf) }? {
+                slots
+            } else {
+                // SAFETY: as above.
+                let ([lhs, rhs], nt) = unsafe { resolve_binary(store, types, lhs, rhs) }?;
+                // `%` over floats mints no leaf: there is no machine float
+                // remainder (Cranelift has none), so the node cannot exist.
+                if matches!(a, ArithOp::Rem) && nt.is_float() {
+                    return Err(ParseError::UnsupportedOperands);
+                }
+                [lhs, rhs, types.ops.arith_leaf(a, nt)]
             }
-            [lhs, rhs, types.ops.arith_leaf(a, nt)]
         }
         Family::Cmp(c) => {
             if let Some(v) = rational::compare_literals(types, c, lhs, rhs) {
                 return Ok(bool_mod::literal_node(store, types.bool_, v));
+            }
+            let leaf = types.ops.rational_cmp_leaf(c);
+            // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
+            if let Some(slots) = unsafe { rational_slots(store, types, lhs, rhs, leaf) }? {
+                let value = store.alloc_operands(&slots);
+                return Ok(store.alloc_raw(op, value));
             }
             if matches!(c, CmpOp::Eq | CmpOp::Ne) {
                 if let Some(node) = build_identity_compare(store, types, op, c, lhs, rhs) {
@@ -197,6 +209,30 @@ fn build_op(
     };
     let value = store.alloc_operands(&slots);
     Ok(store.alloc_raw(op, value))
+}
+
+/// A rational operation at run time (#133 slice 8, part 4; DESIGN ›Numeric
+/// literals are uncommitted until context classifies them‹: the result
+/// "*stays* `rational_number`"): when either side is a rational value, the
+/// other must be one too, or a literal, which is boxed
+/// ([`rational::rational_operand`]); a concrete number beside a rational is
+/// the mismatch, crossing being explicit. `None` when neither side is one.
+///
+/// # Safety
+/// `lhs`/`rhs` are valid dyads from the store.
+unsafe fn rational_slots(
+    store: &mut Store,
+    types: &Core,
+    lhs: DyadPtr,
+    rhs: DyadPtr,
+    leaf: DyadPtr,
+) -> Result<Option<[DyadPtr; 3]>, ParseError> {
+    if !rational::is_rational_value(types, lhs) && !rational::is_rational_value(types, rhs) {
+        return Ok(None);
+    }
+    let l = rational::rational_operand(store, types, lhs).ok_or(ParseError::TypeMismatch)?;
+    let r = rational::rational_operand(store, types, rhs).ok_or(ParseError::TypeMismatch)?;
+    Ok(Some([l, r, leaf]))
 }
 
 /// `==`/`!=` over what is not two numbers. What the two operands are is the

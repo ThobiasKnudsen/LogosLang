@@ -23,6 +23,7 @@ use super::numtype::{ArithOp, CmpOp, NumType};
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;
 use crate::parse::{Constructed, ParseError, Parser, ParsingTape};
+use crate::run::{RunError, Runtime};
 use crate::store::Store;
 use crate::Core;
 
@@ -36,6 +37,10 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     // operator (else `a-1` would lex as `a` then the literal `-1`); a negative
     // literal is the prefix `-` negating the literal at parse time ([`negate`]).
     cx.declare(r"[0-9]+(?:\.[0-9]+)?", id);
+    // The type's own name (ruled 20 September 2026: the type for number
+    // literals is `rational_number`): `rational_number ?` is a place of it,
+    // `rational_number 1` the literal as a runtime value ([`convert`]).
+    cx.declare("rational_number", id);
     cx.metas.insert(id, construct);
     id
 }
@@ -48,6 +53,11 @@ fn construct(
     tape: &mut ParsingTape,
 ) -> Result<Constructed, ParseError> {
     let span = tape.own_text().ok_or(ParseError::BadLiteral)?;
+    if !span.starts_with(|c: char| c.is_ascii_digit()) {
+        // The type's name, or a cell a run body's `this.output` folded to
+        // the type: the conversion form, or the type standing as itself.
+        return convert(p, tape);
+    }
     let node = build(p.store(), id, span)?;
     // A `-` directly to the left with no completed operand before it is the
     // negative literal, folded now, at discovery (DESIGN ›Numeric literals‹:
@@ -109,7 +119,7 @@ pub(crate) fn fold_arith(
     unsafe {
         // A comptime binding used as an operand is its record: fold through it.
         let (lhs, rhs) = (types.through(lhs), types.through(rhs));
-        if (*lhs).ty != rational || (*rhs).ty != rational {
+        if !is_literal(rational, lhs) || !is_literal(rational, rhs) {
             return Ok(None);
         }
         let (n1, d1) = read_fraction(lhs);
@@ -167,7 +177,7 @@ pub(crate) fn compare_literals(
     // SAFETY: `lhs`/`rhs` are valid dyads; a rational-typed one holds a `[num, den]` blob.
     unsafe {
         let (lhs, rhs) = (types.through(lhs), types.through(rhs));
-        if (*lhs).ty != rational || (*rhs).ty != rational {
+        if !is_literal(rational, lhs) || !is_literal(rational, rhs) {
             return None;
         }
         let (n1, d1) = read_fraction(lhs);
@@ -186,6 +196,15 @@ pub(crate) fn compare_literals(
 }
 
 /// Reduce an `i128` fraction to lowest terms with a positive denominator.
+/// Whether `node` is a literal of the type — its fraction inline — and not
+/// a place of the type, which holds a value's address (#133 slice 8, part 4).
+///
+/// # Safety
+/// `node` must be null or a valid dyad from the store.
+unsafe fn is_literal(rational: DyadPtr, node: DyadPtr) -> bool {
+    !node.is_null() && (*node).ty == rational && !crate::dyad::is_place((*node).value)
+}
+
 fn reduce(mut num: i128, mut den: i128) -> (i128, i128) {
     if den < 0 {
         num = -num;
@@ -364,6 +383,170 @@ pub(crate) fn cast_to(node: DyadPtr, nt: NumType) -> Option<i64> {
     // target width through the shared cast so it matches a runtime `i64`→`nt` convert.
     Some(super::numtype::apply_cast(NumType::I64, nt, num / den))
 }
+
+/// The type applied to a value (#133 slice 8, part 4): `rational_number 1`
+/// yields the literal boxed as a runtime rational value ([`box_literal`]),
+/// `rational_number r` a rational value as it is, and with nothing of the
+/// kind to its right the type stands as itself, so `rational_number ?` is a
+/// place of the type. A concrete number is not converted here: crossing
+/// into a rational at run time is not in the seed.
+fn convert(p: &mut Parser, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
+    let types = p.types();
+    let Some(right) = p.cell_at(tape, 1)? else {
+        return Ok(Constructed::Decline);
+    };
+    if !right.constructed {
+        return Ok(Constructed::Decline);
+    }
+    // SAFETY: a constructed cell's dyad is a node from the store.
+    let value = unsafe { rational_operand(p.store(), types, right.dyad) };
+    match value {
+        Some(v) => {
+            tape.remove(1);
+            tape.place(v);
+            Ok(Constructed::Placed)
+        }
+        None => Ok(Constructed::Decline),
+    }
+}
+
+/// A rational as a runtime value (#133 slice 8, part 4; DESIGN ›Numeric
+/// literals are uncommitted until context classifies them‹: "the operation
+/// is carried exactly over the number's reduced fraction … and the result
+/// *stays* `rational_number`"): the address of a literal node, carried in
+/// the `i64` container as a type value is. A literal standing where a
+/// rational value is wanted is boxed as a `dyad` view of itself, whose run
+/// is that address; a place of type `rational_number` holds one
+/// ([`super::read::place_layout`]); the operators over such values are the
+/// leaves below, interpreted only — the compiler refuses a rational place,
+/// since DESIGN defers arbitrary precision.
+pub(crate) fn box_literal(store: &mut Store, types: &Core, lit: DyadPtr) -> DyadPtr {
+    store.alloc_raw(types.dyad_, lit.cast())
+}
+
+/// Whether `node` reads as a rational value at run time: a place of the
+/// type, a boxed literal, an operator node over rationals, or a call whose
+/// output is the type. A bare literal is not one: it molds where it lands.
+///
+/// # Safety
+/// `node` must be null or a valid dyad from the store.
+pub(crate) unsafe fn is_rational_value(types: &Core, node: DyadPtr) -> bool {
+    use super::read::{read_kind, Dispatch, Read};
+    let node = types.through(node);
+    if node.is_null() {
+        return false;
+    }
+    let ty = (*node).ty;
+    if ty == types.ran_ {
+        return is_rational_value(types, super::ran::expr_of(types, node));
+    }
+    if ty == types.scope {
+        return crate::parse::last_sequence_expr(node)
+            .is_some_and(|last| is_rational_value(types, last));
+    }
+    match read_kind(types, node) {
+        Read::Container(t) => t == types.rational,
+        Read::Address => {
+            let viewed = (*node).value as DyadPtr;
+            !viewed.is_null() && (*viewed).ty == types.rational
+        }
+        Read::Executable(Dispatch::Call(f)) => {
+            let fields = (*f).value as *const DyadPtr;
+            !fields.is_null() && *fields.add(crate::parse::FN_OUTPUT) == types.rational
+        }
+        Read::Executable(Dispatch::Leaf(leaf)) => types.ops.is_rational_leaf(leaf),
+        _ => false,
+    }
+}
+
+/// `node` as an operand of a rational operation: a literal boxed, a
+/// rational value as it is, anything else `None`.
+///
+/// # Safety
+/// As [`is_rational_value`].
+pub(crate) unsafe fn rational_operand(
+    store: &mut Store,
+    types: &Core,
+    node: DyadPtr,
+) -> Option<DyadPtr> {
+    let read = types.through(node);
+    if !read.is_null() && (*read).ty == types.rational && !crate::dyad::is_place((*read).value) {
+        return Some(box_literal(store, types, read));
+    }
+    is_rational_value(types, node).then_some(node)
+}
+
+/// The two operands of a rational operator node, read as the addresses they
+/// carry.
+///
+/// # Safety
+/// `node` must be a binary operator node whose first two slots are its
+/// operands, as [`super::binary`] builds.
+unsafe fn operand_values(rt: &mut Runtime, node: DyadPtr) -> Result<(DyadPtr, DyadPtr), RunError> {
+    let ops = (*node).value as *const DyadPtr;
+    let l = rt.run(*ops)? as DyadPtr;
+    let r = rt.run(*ops.add(1))? as DyadPtr;
+    if l.is_null() || r.is_null() {
+        return Err(RunError::Uninitialized);
+    }
+    Ok((l, r))
+}
+
+/// An arithmetic leaf over rational values: fold the two as the parser
+/// folds two literals, and yield the result's address.
+///
+/// # Safety
+/// As [`operand_values`].
+unsafe fn fold_at_run(rt: &mut Runtime, node: DyadPtr, op: ArithOp) -> Result<i64, RunError> {
+    let (l, r) = operand_values(rt, node)?;
+    let types: *const Core = rt.types();
+    // SAFETY: the `Core` outlives the runtime that borrowed it.
+    let types = &*types;
+    match fold_arith(rt.store(), types, op, l, r) {
+        Ok(Some(v)) => Ok(v as i64),
+        _ => Err(RunError::UncomputableLiteral),
+    }
+}
+
+/// A comparison leaf over rational values.
+///
+/// # Safety
+/// As [`operand_values`].
+unsafe fn compare_at_run(rt: &mut Runtime, node: DyadPtr, op: CmpOp) -> Result<i64, RunError> {
+    let (l, r) = operand_values(rt, node)?;
+    let types: *const Core = rt.types();
+    // SAFETY: the `Core` outlives the runtime that borrowed it.
+    let types = &*types;
+    compare_literals(types, op, l, r).map(i64::from).ok_or(RunError::UncomputableLiteral)
+}
+
+macro_rules! rational_leaf {
+    ($name:ident, $call:ident, $op:expr) => {
+        fn $name(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+            // SAFETY: `node` is a binary operator node the family builder
+            // constructed over rational operands.
+            unsafe { $call(rt, node, $op) }
+        }
+    };
+}
+rational_leaf!(run_add, fold_at_run, ArithOp::Add);
+rational_leaf!(run_sub, fold_at_run, ArithOp::Sub);
+rational_leaf!(run_mul, fold_at_run, ArithOp::Mul);
+rational_leaf!(run_div, fold_at_run, ArithOp::Div);
+rational_leaf!(run_rem, fold_at_run, ArithOp::Rem);
+rational_leaf!(run_lt, compare_at_run, CmpOp::Lt);
+rational_leaf!(run_gt, compare_at_run, CmpOp::Gt);
+rational_leaf!(run_le, compare_at_run, CmpOp::Le);
+rational_leaf!(run_ge, compare_at_run, CmpOp::Ge);
+rational_leaf!(run_eq, compare_at_run, CmpOp::Eq);
+rational_leaf!(run_ne, compare_at_run, CmpOp::Ne);
+
+/// The run of each arithmetic operator over rationals, indexed as
+/// [`ArithOp`] is.
+pub(crate) const ARITH_RUNS: [crate::run::RunFn; 5] = [run_add, run_sub, run_mul, run_div, run_rem];
+/// The run of each comparison over rationals, indexed as [`CmpOp`] is.
+pub(crate) const CMP_RUNS: [crate::run::RunFn; 6] =
+    [run_lt, run_gt, run_le, run_ge, run_eq, run_ne];
 
 #[cfg(test)]
 mod tests {

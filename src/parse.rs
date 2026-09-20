@@ -3763,21 +3763,78 @@ impl<'a> Parser<'a> {
         node: DyadPtr,
         at: usize,
         spelling: &str,
-    ) -> Result<(), ParseError> {
+    ) -> Result<Option<DyadPtr>, ParseError> {
         let ty = (*node).ty;
         let held = crate::identities::meta::run_body_of(ty);
         if held.is_null() {
-            return Ok(());
+            return Ok(None);
         }
         let Some(key) = self.field_type_key(ty, node)? else {
-            return Ok(());
+            return Ok(None);
         };
         let mut spec = crate::identities::run_body::lookup(held, &key);
         if spec.is_null() {
             spec = self.construct_run_body(ty, held, &key, at, spelling)?;
         }
         crate::identities::run_body::set_spec(node, spec);
-        Ok(())
+        self.fold_comptime_node(ty, node, spec)
+    }
+
+    /// A node every value field of which is a literal is comptime, and its
+    /// constructor is a partial evaluator (DESIGN ›Deferral is authored‹:
+    /// "every constructor is a partial evaluator"): as `2 * 3` folds, so does
+    /// `2 ^ 3` — the node runs now, on the pass, and its literal stands in
+    /// its place, which is what lets the result mold where it lands, as in
+    /// `f(2) + 2 ^ 3 ^ 2` (#133 slice 8, part 4). A node with a field
+    /// evaluated at run stays a node.
+    ///
+    /// # Safety
+    /// As [`Parser::resolve_specialization`]; `spec` the node's function.
+    unsafe fn fold_comptime_node(
+        &mut self,
+        ty: DyadPtr,
+        node: DyadPtr,
+        spec: DyadPtr,
+    ) -> Result<Option<DyadPtr>, ParseError> {
+        use crate::identities::read::{read_kind, Read};
+        let types = self.types;
+        let fields = crate::identities::array::items(crate::identities::meta::record_fields_of(ty));
+        let slots = (*node).value as *const DyadPtr;
+        for (i, &field) in fields.iter().enumerate() {
+            if (*field).ty == types.type_ {
+                continue;
+            }
+            let slot = types.through(*slots.add(i));
+            let comptime = match read_kind(types, slot) {
+                Read::Literal => true,
+                Read::Scalar(_) => !crate::dyad::is_place((*slot).value),
+                Read::Address => {
+                    let viewed = (*slot).value as DyadPtr;
+                    !viewed.is_null() && (*viewed).ty == types.rational
+                }
+                _ => false,
+            };
+            if !comptime {
+                return Ok(None);
+            }
+        }
+        let fields = (*spec).value as *const DyadPtr;
+        if fields.is_null() {
+            return Ok(None);
+        }
+        let out = *fields.add(FN_OUTPUT);
+        let numeric = crate::identities::is_numtype_node(types, out);
+        if !numeric && out != types.rational {
+            return Ok(None);
+        }
+        let bits = self
+            .run_on_pass(node)
+            .map_err(|e| ParseError::ConstructorFailed(Box::new(crate::report::run_message(&e))))?;
+        Ok(Some(if numeric {
+            self.scalar_value(crate::identities::numtype::of_type_node(out), bits)
+        } else {
+            bits as DyadPtr
+        }))
     }
 
     /// The field-type set a node was built with, one type per instance
@@ -3818,18 +3875,34 @@ impl<'a> Parser<'a> {
                 }
                 held
             } else if !declared.is_null() {
-                if matches!(numtype_of(types, slot), Operand::Literal)
-                    && crate::identities::is_numtype_node(types, declared)
-                {
+                if matches!(numtype_of(types, slot), Operand::Literal) {
                     let lit = types.through(slot);
-                    *slots.add(i) =
-                        crate::identities::commit_literal_to(self.rt.store, types, lit, declared)?;
+                    if declared == types.rational {
+                        *slots.add(i) =
+                            crate::identities::rational::box_literal(self.rt.store, types, lit);
+                    } else if crate::identities::is_numtype_node(types, declared) {
+                        *slots.add(i) = crate::identities::commit_literal_to(
+                            self.rt.store,
+                            types,
+                            lit,
+                            declared,
+                        )?;
+                    }
                 }
                 declared
+            } else if crate::identities::rational::is_rational_value(types, slot) {
+                types.rational
             } else {
                 match numtype_of(types, slot) {
                     Operand::Concrete(nt) => types.numtypes[nt as usize],
-                    Operand::Literal => types.rational,
+                    Operand::Literal => {
+                        // The literal's own type (ruled 20 September 2026),
+                        // boxed as the value the call passes.
+                        let lit = types.through(slot);
+                        *slots.add(i) =
+                            crate::identities::rational::box_literal(self.rt.store, types, lit);
+                        types.rational
+                    }
                     Operand::Pointer(_) | Operand::NonNumeric => return Ok(None),
                 }
             };
@@ -5794,7 +5867,13 @@ impl<'a> Parser<'a> {
         // none. Decided before the chain below because a `let` chain would
         // need the 2024 edition.
         // SAFETY: `read` is a reduced dyad from the store.
+        // A rational value gets a place of `rational_number` (#133 slice 8,
+        // part 4); a bare literal still names the number itself.
+        // SAFETY: `read` is a dyad from the store.
+        let rational = unsafe { crate::identities::rational::is_rational_value(self.types, read) };
+        // SAFETY: as above.
         let box_ty = match unsafe { crate::identities::read::read_kind(self.types, read) } {
+            _ if rational => Some(self.types.rational),
             crate::identities::read::Read::Container(t)
                 if t == self.types.type_ || t == self.types.dyad_ =>
             {
@@ -6828,7 +6907,13 @@ impl<'a> Parser<'a> {
                 let spelling = cell.spelling().to_string();
                 // SAFETY: the node is the one `run_logos_ctor` minted for
                 // `id`, `[field…, null, spec]`.
-                unsafe { self.resolve_specialization(cell.dyad, cell.start, &spelling)? };
+                let folded =
+                    unsafe { self.resolve_specialization(cell.dyad, cell.start, &spelling)? };
+                // A comptime node folded: its literal stands in the cell.
+                if let Some(lit) = folded {
+                    tape.place(lit);
+                    return Ok(());
+                }
             }
             // Constructed: a node that runs a function's body — a call, or a
             // node of a type carrying a `run` — is a use of every outer name

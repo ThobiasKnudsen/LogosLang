@@ -37,6 +37,10 @@ pub struct OpLeaves {
     pub(crate) arith: [[DyadPtr; 10]; 5],
     /// `[CmpOp][NumType]` → leaf.
     pub(crate) cmp: [[DyadPtr; 10]; 6],
+    /// The arithmetic and comparison leaves over rational values (#133
+    /// slice 8, part 4), interpreted only.
+    pub(crate) rational_arith: [DyadPtr; 5],
+    pub(crate) rational_cmp: [DyadPtr; 6],
     /// `[NumType]` → the `=` store leaf writing at that width (a pointer target
     /// stores as its 8-byte address, `U64`, per `numtype::of_type_node`).
     pub(crate) store: [DyadPtr; 10],
@@ -101,6 +105,23 @@ impl OpLeaves {
     /// The comparison leaf for `op` over `nt`.
     pub(crate) fn cmp_leaf(&self, op: CmpOp, nt: NumType) -> DyadPtr {
         self.cmp[op as usize][nt as usize]
+    }
+
+    /// The arithmetic leaf for `op` over rational values.
+    pub(crate) fn rational_arith_leaf(&self, op: ArithOp) -> DyadPtr {
+        self.rational_arith[op as usize]
+    }
+
+    /// The comparison leaf for `op` over rational values.
+    pub(crate) fn rational_cmp_leaf(&self, op: CmpOp) -> DyadPtr {
+        self.rational_cmp[op as usize]
+    }
+
+    /// Whether `leaf` is one of the rational leaves — what makes an operator
+    /// node a rational value, and what the compiler refuses.
+    pub(crate) fn is_rational_leaf(&self, leaf: DyadPtr) -> bool {
+        !leaf.is_null()
+            && (self.rational_arith.contains(&leaf) || self.rational_cmp.contains(&leaf))
     }
 
     /// The store leaf writing at `nt`'s width.
@@ -259,11 +280,21 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
     for (n, &shim) in STORE_SHIMS.iter().enumerate() {
         store[n] = callable::mint(cx.store, cs.callable, shim as usize, cs.seed_native);
     }
+    let mut rational_arith = [std::ptr::null_mut(); 5];
+    for (o, &run) in super::rational::ARITH_RUNS.iter().enumerate() {
+        rational_arith[o] = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
+    }
+    let mut rational_cmp = [std::ptr::null_mut(); 6];
+    for (o, &run) in super::rational::CMP_RUNS.iter().enumerate() {
+        rational_cmp[o] = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
+    }
     // The single-native leaves are minted where their shims live (`and`, `or`,
     // `convert`, the statement natives); their registrations fill these in.
     OpLeaves {
         arith,
         cmp,
+        rational_arith,
+        rational_cmp,
         store,
         and_: std::ptr::null_mut(),
         or_: std::ptr::null_mut(),

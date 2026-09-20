@@ -200,6 +200,11 @@ impl Lowerer<'_, '_> {
             // compiler keeps (DESIGN ›The backend interface‹). An identity with
             // no rule cannot be compiled; neither can an operand record with
             // nothing in its op slot.
+            // A rational operation or place is interpreted only (#133 slice
+            // 8, part 4): DESIGN defers arbitrary precision.
+            Read::Executable(Dispatch::Leaf(leaf)) if self.types.ops.is_rational_leaf(leaf) => {
+                Err(CompileError::NotLowerable(node))
+            }
             Read::Executable(Dispatch::Leaf(_)) => match self.lower.get(&op).copied() {
                 Some(f) => f(self, node),
                 None => Err(CompileError::NotLowerable(op)),
@@ -217,6 +222,7 @@ impl Lowerer<'_, '_> {
             Read::Address => Ok(self.builder.ins().iconst(types::I64, (*node).value as i64)),
             // A place holding a node address — a `type ?` or `dyad ?` box, a
             // bare parameter's slot: its eight bytes, frame or global alike.
+            Read::Container(t) if t == self.types.rational => Err(CompileError::NotLowerable(node)),
             Read::Container(_) => self.read_place(node, types::I64),
             // A rational literal molds to its i32 value now, an immediate.
             Read::Literal => match crate::identities::rational::mold(node) {
