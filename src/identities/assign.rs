@@ -52,6 +52,7 @@ fn construct(
             None => return Err(ParseError::MissingOperand),
         },
     };
+    p.check_path_write(target)?;
     // SAFETY: `target` is the reduced dyad of the cell to the left.
     let slot = unsafe { p.slot_of(target) };
     if slot.is_some() && !p.filling_definition() {

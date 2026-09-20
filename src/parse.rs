@@ -1418,6 +1418,11 @@ pub struct Parser<'a> {
     /// The record of the last declaration that reduced: what a gate word to
     /// its left marks.
     last_declared: DyadPtr,
+    /// The records along the path a field place was reached by, root first:
+    /// what a write into it must be granted by.
+    paths: HashMap<DyadPtr, Vec<DyadPtr>>,
+    /// The record of the name left of the `.` being constructed, or null.
+    member_root: DyadPtr,
     /// Open function frames, innermost last: empty at top level, where
     /// declarations get global storage; inside a function each local claims
     /// the next byte offset in the top frame.
@@ -1584,6 +1589,8 @@ impl<'a> Parser<'a> {
             pending_fn: std::ptr::null_mut(),
             filling: Vec::new(),
             last_declared: std::ptr::null_mut(),
+            paths: HashMap::new(),
+            member_root: std::ptr::null_mut(),
             lifted: Vec::new(),
             queued: std::collections::VecDeque::new(),
             discovering: false,
@@ -3936,7 +3943,7 @@ impl<'a> Parser<'a> {
             if pointee.is_null() || !crate::identities::meta::is_record_type(pointee) {
                 return Err(ParseError::UnsupportedOperands);
             }
-            let (field, offset) = self.resolve_field(pointee, nstart, nlen)?;
+            let (field, offset, _) = self.resolve_field(pointee, nstart, nlen)?;
             let types = self.types;
             return Ok((
                 crate::identities::pointer::build_deref(
@@ -3958,9 +3965,18 @@ impl<'a> Parser<'a> {
         {
             return Err(ParseError::UnsupportedOperands);
         }
-        let (field, offset) = self.resolve_field(record_logos, nstart, nlen)?;
+        let (field, offset, record) = self.resolve_field(record_logos, nstart, nlen)?;
         let addr = (*lhs).value.wrapping_add(offset);
-        Ok((self.rt.store.alloc_raw((*field).ty, addr), 0))
+        let node = self.rt.store.alloc_raw((*field).ty, addr);
+        // Every record along the path grants a write into the place: the
+        // name the path starts at, then each field.
+        let mut path = self.paths.get(&lhs).cloned().unwrap_or_default();
+        if path.is_empty() && !self.member_root.is_null() {
+            path.push(self.member_root);
+        }
+        path.push(record);
+        self.paths.insert(node, path);
+        Ok((node, 0))
     }
 
     /// `.`'s constructor: the member read of `tape[-1]` named by the cell to
@@ -3973,8 +3989,8 @@ impl<'a> Parser<'a> {
         // The left is read as it stands: an identity's fields are read off the
         // token before its own constructor wakes (DESIGN ›Text is the quote‹),
         // so a callable to the left is the identity itself, not a call in waiting.
-        let lhs = match tape.at(-1).copied() {
-            Some(cell) => self.operand_dyad(cell)?,
+        let (lhs, root) = match tape.at(-1).copied() {
+            Some(cell) => (self.operand_dyad(cell)?, cell.record(self.types)),
             None => return Err(ParseError::MissingOperand),
         };
         // The member is read by its spelling at the offset it was lexed at: a
@@ -3998,8 +4014,11 @@ impl<'a> Parser<'a> {
         // SAFETY: a bracket cell is a node from the store.
         let call = bracket.map(|d| unsafe { self.args_of(d) });
         let key = self.index_node_at(tape, 2);
+        self.member_root = root;
         // SAFETY: `lhs` is a reduced dyad off the tape.
-        let (node, consumed) = unsafe { self.field_access(lhs, nstart, nlen, index, key, call)? };
+        let access = unsafe { self.field_access(lhs, nstart, nlen, index, key, call) };
+        self.member_root = std::ptr::null_mut();
+        let (node, consumed) = access?;
         for _ in 0..(1 + consumed) {
             tape.remove(1);
         }
@@ -4098,19 +4117,20 @@ impl<'a> Parser<'a> {
         record_logos: DyadPtr,
         nstart: usize,
         nlen: usize,
-    ) -> Result<(DyadPtr, usize), ParseError> {
+    ) -> Result<(DyadPtr, usize, DyadPtr), ParseError> {
         let source = self.source;
         let name = &source[nstart..nstart + nlen];
         let mut field_scope = ScopeStack::new();
         field_scope.push(crate::identities::meta::record_scope_of(record_logos));
-        let field = field_scope.resolve(self.trie, name).map_err(ParseError::Resolve)?.identity;
+        let resolved = field_scope.resolve(self.trie, name).map_err(ParseError::Resolve)?;
+        let field = resolved.identity;
         let (fields, _) = crate::identities::instance::layout(record_logos)?;
         let (_, _, offset) = fields
             .iter()
             .copied()
             .find(|&(f, _, _)| f == field)
             .ok_or(ParseError::ExpectedField)?;
-        Ok((field, offset))
+        Ok((field, offset, resolved.record))
     }
 
     /// A function whose declared return type is `type`: it yields a type,
@@ -4277,6 +4297,20 @@ impl<'a> Parser<'a> {
             return Err(ParseError::GateNeedsDeclaration);
         }
         self.add_gate(record, gate)
+    }
+
+    /// A write into a place reached by a path is granted by every record
+    /// along it; a place reached no such way passes here.
+    pub(crate) fn check_path_write(&self, target: DyadPtr) -> Result<(), ParseError> {
+        for &record in self.paths.get(&target).map_or(&[][..], Vec::as_slice) {
+            // SAFETY: the path holds record dyads from the store.
+            unsafe {
+                if !Record::has_gate(record, self.types.mut_) {
+                    return Err(ParseError::NotMutable(Box::new(Record::spelling(record))));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Add `gate` to a name's record, once.
@@ -5194,7 +5228,7 @@ impl<'a> Parser<'a> {
                 let cell = self.settled_type(Record::read(lhs).dyad);
                 return Ok(self.rt.store.alloc_raw(types.dyad_, cell as *mut u8));
             }
-            let (field, offset) = self.resolve_field(types.record_, nstart, nlen)?;
+            let (field, offset, _) = self.resolve_field(types.record_, nstart, nlen)?;
             let addr = (*lhs).value.wrapping_add(offset);
             // `a:name`: a `string`-typed place over the slot, marked as one so
             // the reading rule sees the container it is (no place of type `string` exists in a layout).
@@ -5332,6 +5366,9 @@ impl<'a> Parser<'a> {
                 let mut members = ScopeStack::new();
                 members.push(body);
                 let r = members.resolve(self.trie, name).map_err(|_| ParseError::BadReflectRead)?;
+                // Through the type the member's own gate decides: the type
+                // stands as a namespace here, not as a container.
+                self.paths.insert(r.identity, vec![r.record]);
                 Ok(r.identity)
             }
         }

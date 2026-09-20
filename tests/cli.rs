@@ -987,9 +987,23 @@ fn assignment_returns_nothing() {
     let (_e, stderr) = repl(b"mut a := i32 1\ny := (a = 2) + 1\n");
     assert!(!stderr.is_empty(), "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        b"p := type (instance = (v := i32 ?))\nq := p(1)\nq.v = 3\nq.v\nmut a := i32 1\na = a + 1\na\n",
+        b"p := type (instance = (mut v := i32 ?))\nmut q := p(1)\nq.v = 3\nq.v\nmut a := i32 1\na = a + 1\na\n",
     );
     assert_eq!(echoes, ["3", "2"], "stderr: {stderr}");
+}
+
+#[test]
+fn a_write_along_a_path_needs_mut_on_every_step() {
+    for (src, expect) in [
+        (&b"p := type (instance = (mut v := i32 ?))\nq := p(1)\nq.v = 3\n"[..], "`q` is not `mut`"),
+        (b"p := type (instance = (v := i32 ?))\nmut q := p(1)\nq.v = 3\n", "`v` is not `mut`"),
+        (b"t := type (instance = (shared y := i32 3))\nt.y = 4\n", "`y` is not `mut`"),
+    ] {
+        let (_e, stderr) = repl(src);
+        assert!(stderr.contains(expect), "{}: stderr: {stderr}", String::from_utf8_lossy(src));
+    }
+    let (echoes, stderr) = repl(b"t := type (instance = (shared mut y := i32 3))\nt.y = 4\nt.y\n");
+    assert_eq!(echoes, ["4"], "stderr: {stderr}");
 }
 
 #[test]

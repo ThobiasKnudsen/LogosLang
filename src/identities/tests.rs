@@ -2143,8 +2143,13 @@ fn a_literal_into_a_pointer_parameter_is_rejected() {
 fn declare_point(store: &mut Store, trie: &mut RegexTrie, core: &Core) {
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
-    let mut p =
-        Parser::new("point := logos (instance = (x := i32 ?, y := i32 ?))", store, trie, core, s);
+    let mut p = Parser::new(
+        "point := logos (instance = (mut x := i32 ?, y := i32 ?))",
+        store,
+        trie,
+        core,
+        s,
+    );
     p.parse_expression().unwrap();
 }
 
@@ -2157,7 +2162,7 @@ fn record_instances_construct_read_and_write_fields_both_tiers() {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(
-            "fn () -> i32 ( p := point(3, 4), p.x = p.x + 36, p.x + p.y + 2 )",
+            "fn () -> i32 ( mut p := point(3, 4), p.x = p.x + 36, p.x + p.y + 2 )",
             &mut store,
             &mut trie,
             &core,
