@@ -2528,6 +2528,31 @@ fn a_name_is_written_only_if_declared_mut() {
         ParseError::NotMutable(Box::new("x".into()))
     );
     assert_eq!(parse_err("mut mut x := 5"), ParseError::DoubleGate);
+    assert_eq!(
+        parse_err_after(&["immut x := i32 5"], "x = 6"),
+        ParseError::Immutable(Box::new("x".into()))
+    );
+    assert_eq!(
+        parse_err_after(&["immut mut x := i32 5"], "x = 6"),
+        ParseError::Immutable(Box::new("x".into()))
+    );
+    assert_eq!(
+        parse_err("f := fn (immut a := i32 ?) -> i32 ( a = 1, a )"),
+        ParseError::Immutable(Box::new("a".into()))
+    );
+    assert_eq!(
+        parse_err(
+            "t := type (instance = (immut a := i32 ?), parse = ( this.a = tape[-1], tape[0] = this ))"
+        ),
+        ParseError::Immutable(Box::new("a".into()))
+    );
+    // An `immut` sibling never written blocks nothing: the other fill parses.
+    assert_eq!(
+        run_script(
+            "t := type (instance = (a := i32 ?, immut b := i32 ?), parse = ( this.a = tape[-1], tape[0] = this, tape.is_constructed[0] = true, tape.remove(-1) )),\n1"
+        ),
+        1
+    );
     assert_eq!(parse_err("mut 5"), ParseError::GateNeedsDeclaration);
     assert_eq!(run_script("f := fn (mut a := i32 ?) -> i32 ( a = a + 1, a ),\nf(4)"), 5);
     assert_eq!(

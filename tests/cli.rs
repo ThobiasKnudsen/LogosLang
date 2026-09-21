@@ -998,6 +998,7 @@ fn a_write_along_a_path_needs_mut_on_every_step() {
         (&b"p := type (instance = (mut v := i32 ?))\nq := p(1)\nq.v = 3\n"[..], "`q` is not `mut`"),
         (b"p := type (instance = (v := i32 ?))\nmut q := p(1)\nq.v = 3\n", "`v` is not `mut`"),
         (b"t := type (instance = (shared y := i32 3))\nt.y = 4\n", "`y` is not `mut`"),
+        (b"p := type (instance = (immut v := i32 ?))\nmut q := p(1)\nq.v = 3\n", "`v` is `immut`"),
     ] {
         let (_e, stderr) = repl(src);
         assert!(stderr.contains(expect), "{}: stderr: {stderr}", String::from_utf8_lossy(src));

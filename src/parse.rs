@@ -1189,6 +1189,8 @@ pub enum ParseError {
     DoubleGate,
     /// `x = …` on a name not declared `mut`; carries the name.
     NotMutable(Box<String>),
+    /// A write into a name or field declared `immut`; carries the name.
+    Immutable(Box<String>),
     /// An `import` was not followed by a path token.
     ExpectedPath,
     /// A `regex` was not followed by a `«…»` quote.
@@ -1423,6 +1425,9 @@ pub struct Parser<'a> {
     paths: HashMap<DyadPtr, Vec<DyadPtr>>,
     /// The record of the name left of the `.` being constructed, or null.
     member_root: DyadPtr,
+    /// The field record behind each `this.f` slot a parse body built: the
+    /// constructor's fill, granted by default and vetoed by `immut`.
+    fills: HashMap<DyadPtr, DyadPtr>,
     /// Open function frames, innermost last: empty at top level, where
     /// declarations get global storage; inside a function each local claims
     /// the next byte offset in the top frame.
@@ -1591,6 +1596,7 @@ impl<'a> Parser<'a> {
             last_declared: std::ptr::null_mut(),
             paths: HashMap::new(),
             member_root: std::ptr::null_mut(),
+            fills: HashMap::new(),
             lifted: Vec::new(),
             queued: std::collections::VecDeque::new(),
             discovering: false,
@@ -2400,9 +2406,9 @@ impl<'a> Parser<'a> {
                 self.shared_member(start)?;
                 continue;
             }
-            // `mut` before a field or parameter gates its record, as before any name.
-            let gated = word == Some(self.types.mut_);
-            let (start, name) = if gated {
+            // `mut` or `immut` before a field or parameter gates its record, as before any name.
+            let gate = word.filter(|&w| w == self.types.mut_ || w == self.types.immut_);
+            let (start, name) = if gate.is_some() {
                 let (start, len) = self.lex_spelling().ok_or(ParseError::ExpectedField)?;
                 (start, &source[start..start + len])
             } else {
@@ -2457,8 +2463,8 @@ impl<'a> Parser<'a> {
             } else {
                 self.declare_name(name, field, start)?
             };
-            if gated {
-                self.add_gate(record, self.types.mut_)?;
+            if let Some(gate) = gate {
+                self.add_gate(record, gate)?;
             }
             fields.push(field);
             if !self.consume_separator() {
@@ -2970,17 +2976,22 @@ impl<'a> Parser<'a> {
         };
         let mut field_scope = ScopeStack::new();
         field_scope.push(scope);
-        let field = field_scope.resolve(self.trie, name).map(|r| r.identity);
+        let resolved = field_scope.resolve(self.trie, name).ok();
+        let field = resolved.as_ref().map(|r| r.identity);
         // SAFETY: `fields` is the block's array node, its items the field dyads.
         let items = unsafe { crate::identities::array::items(fields) };
-        let index = field.ok().and_then(|f| items.iter().position(|&x| x == f));
+        let index = field.and_then(|f| items.iter().position(|&x| x == f));
         let Some(index) = index else {
             self.pos = at;
             return Err(ParseError::ThisFieldUnknown(Box::new(name.to_string())));
         };
         let k = self.scalar_value(crate::identities::numtype::NumType::U64, index as i64);
         let types = self.types;
-        Ok(crate::identities::this::build_slot(self.rt.store, types, this, k))
+        let node = crate::identities::this::build_slot(self.rt.store, types, this, k);
+        if let Some(r) = resolved {
+            self.fills.insert(node, r.record);
+        }
+        Ok(node)
     }
 
     /// The field's parameter place, the frame place the node's operand is
@@ -4304,11 +4315,23 @@ impl<'a> Parser<'a> {
     }
 
     /// A write into a place reached by a path is granted by every record
-    /// along it; a place reached no such way passes here.
+    /// along it, `immut` vetoing first; the constructor's fill of its fresh
+    /// node is granted unless `immut` vetoes it; a place reached no such way passes here.
     pub(crate) fn check_path_write(&self, target: DyadPtr) -> Result<(), ParseError> {
+        if let Some(&record) = self.fills.get(&target) {
+            // SAFETY: a fill's record is a record dyad from the store.
+            if unsafe { Record::has_gate(record, self.types.immut_) } {
+                // SAFETY: as above.
+                return Err(ParseError::Immutable(Box::new(unsafe { Record::spelling(record) })));
+            }
+            return Ok(());
+        }
         for &record in self.paths.get(&target).map_or(&[][..], Vec::as_slice) {
             // SAFETY: the path holds record dyads from the store.
             unsafe {
+                if Record::has_gate(record, self.types.immut_) {
+                    return Err(ParseError::Immutable(Box::new(Record::spelling(record))));
+                }
                 if !Record::has_gate(record, self.types.mut_) {
                     return Err(ParseError::NotMutable(Box::new(Record::spelling(record))));
                 }

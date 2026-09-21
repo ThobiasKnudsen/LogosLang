@@ -1,11 +1,12 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `pub`, `mut` and `shared`: the gate words, each a prefix word over a
-//! declaration (`pub x := 5`, `mut x := i32 ?`, `pub mut x := 5`) that adds
-//! itself to the name's record, first in the set, so the set reads in text
-//! order. Unmarked stays private and unwritable, so there is no `private`
-//! word to write. `shared` is read by the instance block's own reader.
+//! `pub`, `mut`, `immut` and `shared`: the gate words, each a prefix word
+//! over a declaration (`pub x := 5`, `mut x := i32 ?`, `pub mut x := 5`) that
+//! adds itself to the name's record, first in the set, so the set reads in
+//! text order. Unmarked stays private and unwritable, so there is no
+//! `private` word to write; `immut` vetoes the one write a field gets by
+//! default, its constructor's fill. `shared` is read by the instance block's own reader.
 //! DESIGN ›Read and write are one mechanism across the system‹
 
 use super::{meta, Cx};
@@ -13,8 +14,8 @@ use crate::dyad::DyadPtr;
 use crate::parse::{Constructed, ParseError};
 
 /// No node is ever typed by a gate word; its identity exists to stand on a
-/// record. Returns `pub`, `mut`, `shared`.
-pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr) {
+/// record. Returns `pub`, `mut`, `immut`, `shared`.
+pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     let word = |cx: &mut Cx, name: &str| {
         let record = meta::record_assoc(
             cx.store,
@@ -30,9 +31,11 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr) {
     cx.metas.insert(pub_, construct);
     let mut_ = word(cx, "mut");
     cx.metas.insert(mut_, construct);
+    let immut_ = word(cx, "immut");
+    cx.metas.insert(immut_, construct);
     let shared_ = word(cx, "shared");
     cx.metas.insert(shared_, outside_block);
-    (pub_, mut_, shared_)
+    (pub_, mut_, immut_, shared_)
 }
 
 /// The tape meets `shared` only outside an instance block, whose reader takes

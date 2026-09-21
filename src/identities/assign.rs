@@ -93,11 +93,16 @@ pub(super) fn build(
     lhs: DyadPtr,
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    // A name is written only if its record carries `mut`.
+    // A name is written only if its record carries `mut` and no `immut`.
     // SAFETY: `lhs` is a reduced dyad from the store; one of the record type is a record.
     unsafe {
-        if (*lhs).ty == types.record_ && !crate::record::Record::has_gate(lhs, types.mut_) {
-            return Err(ParseError::NotMutable(Box::new(crate::record::Record::spelling(lhs))));
+        if (*lhs).ty == types.record_ {
+            if crate::record::Record::has_gate(lhs, types.immut_) {
+                return Err(ParseError::Immutable(Box::new(crate::record::Record::spelling(lhs))));
+            }
+            if !crate::record::Record::has_gate(lhs, types.mut_) {
+                return Err(ParseError::NotMutable(Box::new(crate::record::Record::spelling(lhs))));
+            }
         }
     }
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
