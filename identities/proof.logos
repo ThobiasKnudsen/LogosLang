@@ -2,7 +2,7 @@ proof := type (
     parse = (
         ?
     )
-    instance = (
+    fields = (
         holes := array dyad ()
         premises := array dyad ()
         pattern := dyad ?

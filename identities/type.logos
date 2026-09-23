@@ -1,22 +1,22 @@
 # The ground, written in ordinary Logos: `type` is an instance of itself (`type : type`, the self-loop every
 # classification chain ends in) and the definition keyword, `x := type ( … )`. Like every type it is read in
 # two halves (ruled 19 September 2026, DESIGN ›The constructor is a field‹). Its BARE lines say how its own
-# spelling parses: `type` reads its own bracket and turns it into a new type. Its INSTANCE block says what
+# spelling parses: `type` reads its own bracket and turns it into a new type. Its FIELDS block says what
 # every instance, that is every type, holds and does: the predeclared slots, written out here once and left
-# unfilled. Every other instance block starts with these same slots and fills them with `=`, on its bare lines
-# for itself and inside its instance block for its instances; type.logos alone declares them, which is why
+# unfilled. Every other fields block starts with these same slots and fills them with `=`, on its bare lines
+# for itself and inside its fields block for its instances; type.logos alone declares them, which is why
 # `parse := parse ?` names the slot after its type here and nowhere else: the ground is hand-built by the seed,
 # and nothing predeclares the slots for it. lex_rank is not here: it lives on the record (14 September 2026).
-# The instance block comes first in every type body (ruled 20 September 2026): a body's this.f names a field declared above it.
+# The fields block comes first in every type body (ruled 20 September 2026): a body's this.f names a field declared above it.
 
 type := type (
-    instance = (
+    fields = (
         parse_rank := f64 ?
         associativity := ?
         parse := parse ?
         run := run ?
         drop := drop ?
-        instance := instance ?
+        fields := fields ?
     )
 
     parse_rank = f64 2.0

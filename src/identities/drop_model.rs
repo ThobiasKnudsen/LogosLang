@@ -855,7 +855,7 @@ mod tests {
     fn a_node_of_a_run_type_is_a_use_of_every_name_its_body_reads() {
         const POW: &str = "n := i32 2,\n\
             ^ := type (\n\
-                instance = ( a := i32 ?, b := i32 ?, output := type ?, shared run = ( this.a * this.b * n ) ),\n\
+                fields = ( a := i32 ?, b := i32 ?, output := type ?, shared run = ( this.a * this.b * n ) ),\n\
                 parse_rank = *.parse_rank + 1,\n\
                 associativity = right,\n\
                 parse = (\n\

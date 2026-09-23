@@ -145,14 +145,14 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::TypeBodyLine => {
-            "a type body line fills a slot (`parse_rank = …`, `instance = (…)`) or is prose".into()
+            "a type body line fills a slot (`parse_rank = …`, `fields = (…)`) or is prose".into()
         }
-        ParseError::DoubleInstance => "a type body has one `instance = (…)` block".into(),
-        ParseError::MemberOutsideInstanceBlock => {
-            "a type body's own lines only fill slots with `=`; a member, shared or per instance, is declared inside `instance = (…)`".into()
+        ParseError::DoubleFields => "a type body has one `fields = (…)` block".into(),
+        ParseError::MemberOutsideFieldsBlock => {
+            "a type body's own lines only fill slots with `=`; a member, shared or per instance, is declared inside `fields = (…)`".into()
         }
-        ParseError::SharedOutsideInstanceBlock => {
-            "`shared` marks a member inside `instance = (…)` and stands nowhere else".into()
+        ParseError::SharedOutsideFieldsBlock => {
+            "`shared` marks a member inside `fields = (…)` and stands nowhere else".into()
         }
         ParseError::SharedNeedsDeclaration => {
             "`shared` must be followed by a declaration, `shared name := value`".into()
@@ -184,11 +184,11 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::SlotNeedsBody(_) => {
             "`run` is a bare body over the instance's fields, `shared run = (…)`".into()
         }
-        ParseError::ThisNeedsInstanceBlock => {
-            "`this.f` reads a field of the node being built, and this type declares none: write the `instance = (…)` block above the body".into()
+        ParseError::ThisNeedsFieldsBlock => {
+            "`this.f` reads a field of the node being built, and this type declares none: write the `fields = (…)` block above the body".into()
         }
         ParseError::ThisFieldUnknown(name) => {
-            format!("`this.{name}`: no field `{name}` is declared in the `instance = (…)` block above")
+            format!("`this.{name}`: no field `{name}` is declared in the `fields = (…)` block above")
         }
         ParseError::FlagTakesBool => {
             "`tape.is_constructed[k] = …` takes a bool, `true` or `false`".into()
@@ -200,17 +200,17 @@ pub fn parse_message(e: &ParseError) -> String {
             format!("the run body of `{name}` could not be constructed for these field types:\n{rendered}")
         }
         ParseError::SlotOutsideDefinition => {
-            "a slot is filled on a line of the type body itself: `parse_rank = …` on a bare line, `shared run = (…)` inside `instance = (…)`".into()
+            "a slot is filled on a line of the type body itself: `parse_rank = …` on a bare line, `shared run = (…)` inside `fields = (…)`".into()
         }
         ParseError::OwnRunNotInSeed => {
-            "a type's own `run` is not in the seed; an instance's run is `shared run = (…)` inside `instance = (…)`".into()
+            "a type's own `run` is not in the seed; an instance's run is `shared run = (…)` inside `fields = (…)`".into()
         }
-        ParseError::InstanceSlotNotInSeed => {
-            "inside `instance = (…)` only `shared run = (…)` fills a slot yet; the instances' other slots are not in the seed (#133)".into()
+        ParseError::FieldsSlotNotInSeed => {
+            "inside `fields = (…)` only `shared run = (…)` fills a slot yet; the instances' other slots are not in the seed (#133)".into()
         }
         ParseError::DropSlotNotInSeed => "the `drop` slot is not in the seed yet (#133)".into(),
-        ParseError::InstanceSlotNeedsShared => {
-            "a slot fill inside `instance = (…)` is written `shared run = (…)`; an unmarked fill would be a per-instance default, not in the seed".into()
+        ParseError::FieldsSlotNeedsShared => {
+            "a slot fill inside `fields = (…)` is written `shared run = (…)`; an unmarked fill would be a per-instance default, not in the seed".into()
         }
         ParseError::LexRankNeedsName => {
             "lex_rank is the name's: write it in a declaration, `x := type (lex_rank = …)`, \

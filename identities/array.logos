@@ -6,11 +6,11 @@
 # The mint is a type like any other, read in two halves. Its BARE lines say how its own spelling parses:
 # a group to its right becomes an array instance; nothing to its right and it sets its flag and stands as itself,
 # the type (`t := array i32`, `a := array i32 ?`; ruled 19 September 2026: "it should rather just be itself in
-# constructed state"). Its INSTANCE block says what its INSTANCES hold and do, every line marked shared (one
+# constructed state"). Its FIELDS block says what its INSTANCES hold and do, every line marked shared (one
 # place for every instance) or left per instance (ruled 19 September 2026): the fields it declares, and the
 # predeclared slots it fills, the drop that frees the elements and the instances' own parse trio, which runs
 # when an array instance appears on the tape and consumes a [k] to its right, or sets its flag and stands when
-# nothing follows (`a = b`). A body in the instance block reached through an instance — a.size_bytes(), the
+# nothing follows (`a = b`). A body in the fields block reached through an instance — a.size_bytes(), the
 # instances' parse woken by a's appearance, drop — binds `this` to that instance and reads its fields as
 # this.size (ruled 19 September 2026); the fields this. reaches are declared above the body. In the type's own
 # parse `this` is the fresh instance being built (18 September 2026). No run: an array used plainly is its own
@@ -18,16 +18,16 @@
 #
 # Stand-ins, and the rulings this file leans on:
 #   the parse_rank lines take power.logos's `*.parse_rank + 1` (Thobias, 23 September 2026);
-#   the slots of an instance block are PREDECLARED (ruled 19 September 2026, DESIGN ›The constructor is a field‹):
-#     every instance block starts with the same slots type's own declares (parse_rank, associativity, parse, run,
-#     drop, instance), unfilled; a type fills them with `=`, `shared` for one place across its instances, unmarked
+#   the slots of a fields block are PREDECLARED (ruled 19 September 2026, DESIGN ›The constructor is a field‹):
+#     every fields block starts with the same slots type's own declares (parse_rank, associativity, parse, run,
+#     drop, fields), unfilled; a type fills them with `=`, `shared` for one place across its instances, unmarked
 #     for a per-instance default; so no line here declares a slot and no right side names a slot type;
 #   one `drop` word (ruled 19 September 2026): its parse looks right; `=` there means the slot
 #     fill, anything else is the statement dropping what follows, so `drop x` works in every scope and the
 #     predeclared slot names are the core words themselves, never a second declaration;
 #   `⊆` on types is not in the seed.
 # The seed's array is array-of-@dyad with no spelling and no element access (src/identities/array.rs).
-# The instance block comes first in every type body (ruled 20 September 2026): a body's this.f names a field declared above it.
+# The fields block comes first in every type body (ruled 20 September 2026): a body's this.f names a field declared above it.
 
 array_mints := hashmap type -> type
 
@@ -35,7 +35,7 @@ get_mint := fn (t := type ?) -> type (
     mut mint := array_mints[t]
     if mint != ? return mint
     mint = type (
-        instance = (
+        fields = (
             shared element_type := t,
             mut ptr := @element_type ?,
             mut size := u64 0,

@@ -5,7 +5,7 @@
 # declared it before its `:=`, and once declared it lexes glued to its
 # operands (`x^3`). The pinned demo itself is identities/power.logos.
 ^ := type (
-    instance = (
+    fields = (
         lhs := ?,
         rhs := i32 ?,
         output := type ?,

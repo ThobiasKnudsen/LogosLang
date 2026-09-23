@@ -6,7 +6,7 @@
 //! adds itself to the name's record, first in the set, so the set reads in
 //! text order. Unmarked stays private and unwritable, so there is no
 //! `private` word to write; `immut` vetoes the one write a field gets by
-//! default, its constructor's fill. `shared` is read by the instance block's own reader.
+//! default, its constructor's fill. `shared` is read by the fields block's own reader.
 //! DESIGN ›Read and write are one mechanism across the system‹
 
 use super::{meta, Cx};
@@ -38,14 +38,14 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     (pub_, mut_, immut_, shared_)
 }
 
-/// The tape meets `shared` only outside an instance block, whose reader takes
+/// The tape meets `shared` only outside a fields block, whose reader takes
 /// the word itself.
 fn outside_block(
     _p: &mut crate::parse::Parser,
     _id: DyadPtr,
     _tape: &mut crate::parse::ParsingTape,
 ) -> Result<Constructed, ParseError> {
-    Err(ParseError::SharedOutsideInstanceBlock)
+    Err(ParseError::SharedOutsideFieldsBlock)
 }
 
 /// Anything but a declaration to the right is a parse error, not a silent

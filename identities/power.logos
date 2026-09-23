@@ -1,7 +1,7 @@
 # The language defines itself: a power operator `^` written in ordinary Logos,
 # used in the same file, and compiled with f.compile().
 #
-# An operator is a type read in two halves. Its INSTANCE block says what its
+# An operator is a type read in two halves. Its FIELDS block says what its
 # instances hold and do: the operands as named fields, the output the parse
 # writes per instance, and the run every instance shares, a bare body over the
 # fields. Its BARE lines say how its own spelling parses: where it binds
@@ -11,11 +11,11 @@
 # marks constructed itself). The run is lexed once here and constructed once
 # per set of field types a ^ node is built with, so `^` over i32 and over f64
 # is this one definition. A field read such as (a ^ b).lhs walks into the
-# instance and runs nothing. The instance block comes first: a body's this.f
+# instance and runs nothing. The fields block comes first: a body's this.f
 # names a field declared above it.
 
 ^ := type (
-    instance = (
+    fields = (
         lhs := ?,
         rhs := i32 ?,
         output := type ?,

@@ -153,25 +153,24 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
           t.parse_rank\nt.associativity == right\nright:dyad.type == type\n",
     );
     assert_eq!(echoes, ["71.0", "true", "true"], "stderr: {stderr}");
-    let (echoes, stderr) = repl(
-        b"g := type (instance = (shared y := 3, shared z := y + 3))\ng.y\ng.z\ng.parse_rank\n",
-    );
+    let (echoes, stderr) =
+        repl(b"g := type (fields = (shared y := 3, shared z := y + 3))\ng.y\ng.z\ng.parse_rank\n");
     assert_eq!(echoes, ["3", "6", "91.0"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        b"g := type (instance = (shared y := i32 7, shared z := i32 (y + 3)))\ng.y\ng.z\ng.y + 1\n",
+        b"g := type (fields = (shared y := i32 7, shared z := i32 (y + 3)))\ng.y\ng.z\ng.y + 1\n",
     );
     assert_eq!(echoes, ["7", "10", "8"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        b"p := type (instance = (shared k := 10, v := i32 ?))\nq := p(2)\nq.v\np.k\np.size_bytes\n",
+        b"p := type (fields = (shared k := 10, v := i32 ?))\nq := p(2)\nq.v\np.k\np.size_bytes\n",
     );
     assert_eq!(echoes, ["2", "10", "4"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        b"t := type (instance = (shared # \xc2\xabnote\xc2\xbb y := 3, shared z := 4 # \xc2\xabtail\xc2\xbb, v := i32 ?))\n\
+        b"t := type (fields = (shared # \xc2\xabnote\xc2\xbb y := 3, shared z := 4 # \xc2\xabtail\xc2\xbb, v := i32 ?))\n\
           t.y\nt.z\nt.size_bytes\n",
     );
     assert_eq!(echoes, ["3", "4", "4"], "stderr: {stderr}");
     let (echoes, stderr) =
-        repl(b"h := fn () -> i32 ( p := @i32 ?, p@ )\ng := type (instance = (shared y := h()))\n");
+        repl(b"h := fn () -> i32 ( p := @i32 ?, p@ )\ng := type (fields = (shared y := h()))\n");
     assert!(
         echoes.is_empty() && stderr.contains("a type body's own declaration failed"),
         "stderr: {stderr}"
@@ -187,10 +186,9 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
     assert!(stderr.contains("lex_rank is the name's"), "stderr: {stderr}");
     let (echoes, stderr) = repl(b"s := type (precedence = 5)\n");
     assert!(echoes.is_empty() && stderr.contains("unknown name"), "stderr: {stderr}");
-    let (echoes, stderr) = repl(b"c := type (instance = (shared run = 5))\n");
+    let (echoes, stderr) = repl(b"c := type (fields = (shared run = 5))\n");
     assert!(echoes.is_empty() && stderr.contains("`shared run = (…)`"), "stderr: {stderr}");
-    let (echoes, stderr) =
-        repl(b"x := 1\np := type (instance = (x := i32 ?))\nq := p(2)\nq.x\nx\n");
+    let (echoes, stderr) = repl(b"x := 1\np := type (fields = (x := i32 ?))\nq := p(2)\nq.x\nx\n");
     assert_eq!(echoes, ["2", "1"], "stderr: {stderr}");
 }
 
@@ -198,7 +196,7 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
 fn any_spelling_the_index_can_hold_is_nameable() {
     let (echoes, stderr) = repl(
         b"^ := i32 5\n^ + 1\na := i32 1\nab2 := i32 2\nab2 + a\nmut x := i32 5\nx=-1\nx\n\
-          p := type (instance = (v := i32 ?))\nq := p(7)\nr := &q\nrr := &r\nrr@@.v\nx^2\n",
+          p := type (fields = (v := i32 ?))\nq := p(7)\nr := &q\nrr := &r\nrr@@.v\nx^2\n",
     );
     assert_eq!(echoes, ["6", "3", "-1", "7"], "stderr: {stderr}");
     assert!(stderr.contains("<repl>:1:2: error:"), "stderr: {stderr}");
@@ -216,7 +214,7 @@ fn the_power_demo_prints_nine() {
 }
 
 /// The power operator with the bare run body, on one line for the REPL.
-const POWER: &str = "^ := type ( instance = ( lhs := ?, rhs := i32 ?, output := type ?, \
+const POWER: &str = "^ := type ( fields = ( lhs := ?, rhs := i32 ?, output := type ?, \
     shared run = ( mut r := this.output 1, for 0..this.rhs ( r = r * this.lhs ), r ) ), \
     parse_rank = *.parse_rank + 1, associativity = right, \
     parse = ( this.lhs = tape[-1], this.rhs = tape[1], this.output = tape[-1]:dyad.type, \
@@ -384,7 +382,7 @@ fn the_slot_words_are_names_only_inside_a_type_body() {
     // shadow an outer name and are gone again at the close.
     let (echoes, stderr) = repl(
         b"run := 5\nrun + 1\nparse := i32 2\nparse * 3\n\
-          m := type (instance = (a := i32 ?, output := type ?, shared run = ( this.a + this.a )), \
+          m := type (fields = (a := i32 ?, output := type ?, shared run = ( this.a + this.a )), \
           parse_rank = *.parse_rank + 1, \
           parse = ( this.a = tape[-1], this.output = i32, tape[0] = this, \
           tape.is_constructed[0] = true, tape.remove(-1) ))\n\
@@ -404,7 +402,7 @@ fn a_slot_body_is_read_bare() {
     let (_echoes, stderr) = repl(b"tape := 1\nsp := type (parse = ( tape.recenter(0) ))\n");
     assert!(stderr.contains("shadowed"), "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        b"minus := type (instance = (a := i32 ?, b := i32 ?, output := type ?, shared run = ( this.a - this.b )), \
+        b"minus := type (fields = (a := i32 ?, b := i32 ?, output := type ?, shared run = ( this.a - this.b )), \
           parse_rank = +.parse_rank, associativity = left, \
           parse = ( this.a = tape[-1], this.b = tape[1], this.output = i32, tape[0] = this, \
           tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ))\n\
@@ -416,7 +414,7 @@ fn a_slot_body_is_read_bare() {
     // run that calls a function whose body reads an operator constructs.
     let (echoes, stderr) = repl(
         b"sq := fn (a := i32 ?) -> i32 ( a * a )\n\
-          squared := type (instance = (a := i32 ?, output := type ?, shared run = ( sq(this.a) )), \
+          squared := type (fields = (a := i32 ?, output := type ?, shared run = ( sq(this.a) )), \
           parse_rank = *.parse_rank + 1, \
           parse = ( this.a = tape[-1], this.output = i32, tape[0] = this, \
           tape.is_constructed[0] = true, tape.remove(-1) ))\n\
@@ -424,13 +422,13 @@ fn a_slot_body_is_read_bare() {
     );
     assert_eq!(echoes, ["16"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        b"t := type (instance = (a := i32 ?, shared run = ( s := \xc2\xaba ) b\xc2\xbb, \
+        b"t := type (fields = (a := i32 ?, shared run = ( s := \xc2\xaba ) b\xc2\xbb, \
           # \xc2\xab ) \xc2\xbb (( x[0] ), 5 ))))\n\
           t:dyad.type == type\n",
     );
     assert_eq!(echoes, ["true"], "stderr: {stderr}");
     let out = logos()
-        .args(["t := type (instance = (shared run = ( x[0], # c ) d\n5 ))),\n\
+        .args(["t := type (fields = (shared run = ( x[0], # c ) d\n5 ))),\n\
                 t:dyad.type == type"])
         .output()
         .unwrap();
@@ -443,36 +441,36 @@ fn a_type_body_refuses_what_is_not_its_own() {
     for (src, expect) in [
         (&b"t := type (parse_rank := 5)\n"[..], "shadowed"),
         (b"y := 1\ng := type (y := 3)\n", "shadowed"),
-        (b"t := type (instance = (a := i32 ?), instance = (b := i32 ?))\n", "one `instance"),
-        (b"g := type (y := 3)\n", "inside `instance"),
-        (b"g := type (instance = (shared))\n", "followed by a declaration"),
+        (b"t := type (fields = (a := i32 ?), fields = (b := i32 ?))\n", "one `fields"),
+        (b"g := type (y := 3)\n", "inside `fields"),
+        (b"g := type (fields = (shared))\n", "followed by a declaration"),
         (b"f := fn (shared a := i32 ?) -> void ( a )\n", "nowhere else"),
         (b"parse_rank = 3\n", "unknown name"),
         (b"d := i32 5\ndrop = 3\n", "a line of the type body itself"),
         (b"t := type (parse = ( parse_rank = 3 ))\n", "a line of the type body itself"),
         (b"t := type (run = ( 1 ))\n", "`shared run = (…)`"),
-        (b"t := type (instance = (run = 5))\n", "marked"),
-        (b"t := type (instance = (shared parse_rank = 5))\n", "other slots"),
-        (b"t := type (instance = (shared parse = ( tape.recenter(0) )))\n", "other slots"),
-        (b"t := type (instance = (shared instance = (a := i32 ?)))\n", "other slots"),
-        (b"t := type (instance = (shared drop = 5))\n", "`drop` slot"),
+        (b"t := type (fields = (run = 5))\n", "marked"),
+        (b"t := type (fields = (shared parse_rank = 5))\n", "other slots"),
+        (b"t := type (fields = (shared parse = ( tape.recenter(0) )))\n", "other slots"),
+        (b"t := type (fields = (shared fields = (a := i32 ?)))\n", "other slots"),
+        (b"t := type (fields = (shared drop = 5))\n", "`drop` slot"),
         (b"t := type (parse = ( this.a = tape[-1] ))\n", "declares none"),
-        (b"t := type (instance = (a := ?), parse = ( this.b = tape[-1] ))\n", "no field `b`"),
+        (b"t := type (fields = (a := ?), parse = ( this.b = tape[-1] ))\n", "no field `b`"),
         (
-            b"t := type (instance = (a := ?), parse = ( tape.is_constructed[0] = 5 ))\n",
+            b"t := type (fields = (a := ?), parse = ( tape.is_constructed[0] = 5 ))\n",
             "takes a bool",
         ),
-        (b"p := type (instance = (y := i32 ?, shared y := 3))\n", "shadowed"),
-        (b"p := type (instance = (shared y := 3, y := i32 ?))\n", "shadowed"),
-        (b"t := type (instance = (shared := i32 ?))\n", "followed by a declaration"),
+        (b"p := type (fields = (y := i32 ?, shared y := 3))\n", "shadowed"),
+        (b"p := type (fields = (shared y := 3, y := i32 ?))\n", "shadowed"),
+        (b"t := type (fields = (shared := i32 ?))\n", "followed by a declaration"),
         (b"t := type (5)\n", "a type body line"),
-        (b"t := type (instance)\n", "a type body line"),
+        (b"t := type (fields)\n", "a type body line"),
         (b"t := type (associativity = 5)\n", "`left` or `right`"),
         (b"t := type (parse = fn (mut a := i32 ?) -> void ( a = 1 ))\n", "`parse = (…)`"),
         (b"t := type (parse = 5)\n", "`parse = (…)`"),
-        (b"t := type (instance = (shared run = 5))\n", "`shared run = (…)`"),
-        (b"t := type (instance = (shared run = ( 5 )))\nt(1)\n", "the call form of a type"),
-        (b"t := type (instance = (shared run = ( 5 )),\n", "never closed"),
+        (b"t := type (fields = (shared run = 5))\n", "`shared run = (…)`"),
+        (b"t := type (fields = (shared run = ( 5 )))\nt(1)\n", "the call form of a type"),
+        (b"t := type (fields = (shared run = ( 5 )),\n", "never closed"),
         (
             b"g := fn (n := i32 ?) -> type ( type (parse_rank = n) )\n",
             "known when the type is defined",
@@ -952,11 +950,11 @@ fn a_field_the_record_has_not_is_the_same_error_as_an_undeclared_dot_field() {
             .join("`…`")
     }
     let (_e, via_record) = repl(b"x := i32 5\nx:type\n");
-    let (_e, via_dot) = repl(b"p := type (instance = (a := i32 ?))\nq := p(1)\nq.scope\n");
+    let (_e, via_dot) = repl(b"p := type (fields = (a := i32 ?))\nq := p(1)\nq.scope\n");
     assert_eq!(message(&via_record), message(&via_dot), "record: {via_record}\ndot: {via_dot}");
     assert!(via_record.contains("not in scope"), "stderr: {via_record}");
     let (_e, via_record) = repl(b"x := i32 5\nx:nonexistent\n");
-    let (_e, via_dot) = repl(b"p := type (instance = (a := i32 ?))\nq := p(1)\nq.nonexistent\n");
+    let (_e, via_dot) = repl(b"p := type (fields = (a := i32 ?))\nq := p(1)\nq.nonexistent\n");
     assert_eq!(message(&via_record), message(&via_dot), "record: {via_record}\ndot: {via_dot}");
     assert!(via_record.contains("unknown name"), "stderr: {via_record}");
 }
@@ -988,7 +986,7 @@ fn assignment_returns_nothing() {
     let (_e, stderr) = repl(b"mut a := i32 1\ny := (a = 2) + 1\n");
     assert!(!stderr.is_empty(), "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        b"p := type (instance = (mut v := i32 ?))\nmut q := p(1)\nq.v = 3\nq.v\nmut a := i32 1\na = a + 1\na\n",
+        b"p := type (fields = (mut v := i32 ?))\nmut q := p(1)\nq.v = 3\nq.v\nmut a := i32 1\na = a + 1\na\n",
     );
     assert_eq!(echoes, ["3", "2"], "stderr: {stderr}");
 }
@@ -996,22 +994,22 @@ fn assignment_returns_nothing() {
 #[test]
 fn a_write_along_a_path_needs_mut_on_every_step() {
     for (src, expect) in [
-        (&b"p := type (instance = (mut v := i32 ?))\nq := p(1)\nq.v = 3\n"[..], "`q` is not `mut`"),
-        (b"p := type (instance = (v := i32 ?))\nmut q := p(1)\nq.v = 3\n", "`v` is not `mut`"),
-        (b"t := type (instance = (shared y := i32 3))\nt.y = 4\n", "`y` is not `mut`"),
-        (b"p := type (instance = (immut v := i32 ?))\nmut q := p(1)\nq.v = 3\n", "`v` is `immut`"),
+        (&b"p := type (fields = (mut v := i32 ?))\nq := p(1)\nq.v = 3\n"[..], "`q` is not `mut`"),
+        (b"p := type (fields = (v := i32 ?))\nmut q := p(1)\nq.v = 3\n", "`v` is not `mut`"),
+        (b"t := type (fields = (shared y := i32 3))\nt.y = 4\n", "`y` is not `mut`"),
+        (b"p := type (fields = (immut v := i32 ?))\nmut q := p(1)\nq.v = 3\n", "`v` is `immut`"),
     ] {
         let (_e, stderr) = repl(src);
         assert!(stderr.contains(expect), "{}: stderr: {stderr}", String::from_utf8_lossy(src));
     }
-    let (echoes, stderr) = repl(b"t := type (instance = (shared mut y := i32 3))\nt.y = 4\nt.y\n");
+    let (echoes, stderr) = repl(b"t := type (fields = (shared mut y := i32 3))\nt.y = 4\nt.y\n");
     assert_eq!(echoes, ["4"], "stderr: {stderr}");
 }
 
 #[test]
 fn a_tight_read_lexes_its_right_cell_on_demand_and_stops_at_a_boundary() {
     let (echoes, stderr) = repl(
-        b"x := i32 5\n(x:end, 3)\np := type (instance = (a := i32 ?))\nq := p(1)\n(q.a, 2)\nq.a\n\
+        b"x := i32 5\n(x:end, 3)\np := type (fields = (a := i32 ?))\nq := p(1)\n(q.a, 2)\nq.a\n\
           r := &q\nr@.a\npp := &r\npp@@.a\nx:dyad.type == i32\n",
     );
     assert_eq!(echoes, ["3", "2", "1", "1", "1", "true"], "stderr: {stderr}");
@@ -1072,7 +1070,7 @@ fn the_dyad_box_holds_any_node_and_says_what_it_holds() {
 
 #[test]
 fn only_a_marked_place_is_written_or_addressed() {
-    let pw = "pw := type ( instance = ( mut a := i32 ?, mut b := i32 ?, output := type ?, shared run = ( this.a * this.b ) ), \
+    let pw = "pw := type ( fields = ( mut a := i32 ?, mut b := i32 ?, output := type ?, shared run = ( this.a * this.b ) ), \
               parse_rank = *.parse_rank + 1, associativity = right, \
               parse = ( this.a = tape[-1], this.b = tape[1], this.output = i32, tape[0] = this, \
               tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
@@ -1087,7 +1085,7 @@ fn only_a_marked_place_is_written_or_addressed() {
         assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
     }
     let (echoes, stderr) = repl(
-        b"mut x := i32 5\nx = 6\np := &x\np@\nw := type (instance = (y := i64 ?))\nq := w(7)\nr := &q\nr@.y\n\
+        b"mut x := i32 5\nx = 6\np := &x\np@\nw := type (fields = (y := i64 ?))\nq := w(7)\nr := &q\nr@.y\n\
           mut a := type ?\nmut b := type ?\na = i32\nb = a\nb == i32\nmut d := dyad ?\nd = x:dyad\nd:dyad.type == i32\n",
     );
     assert_eq!(echoes, ["6", "7", "true", "true"], "stderr: {stderr}");
@@ -1123,7 +1121,7 @@ fn a_dyad_is_built_from_a_type_and_a_value() {
         &b"dyad (bool, 0)\n"[..],
         b"p := dyad (@i32, 5)\n",
         b"dyad (void, 0)\n",
-        b"g := type (instance = (x := i32 ?))\ndyad (g, 5)\n",
+        b"g := type (fields = (x := i32 ?))\ndyad (g, 5)\n",
     ] {
         let (echoes, stderr) = repl(src);
         assert!(
@@ -1263,7 +1261,7 @@ fn a_pointer_parameter_takes_a_pointer_of_the_same_type_however_spelled() {
          f := fn (p := @@i32 ?) -> i32 ( p@@ )\n\
          f(q)\n\
          f(px)\n\
-         pt := type (instance = (h := @@i32 ?))\n\
+         pt := type (fields = (h := @@i32 ?))\n\
          v := pt(q)\n\
          v.h@@\n\
          w := pt(px)\n"

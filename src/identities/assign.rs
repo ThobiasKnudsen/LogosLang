@@ -58,8 +58,8 @@ fn construct(
     if slot.is_some() && !p.filling_definition() {
         return Err(ParseError::SlotOutsideDefinition);
     }
-    if slot == Some(crate::parse::SlotKind::Instance) {
-        let node = p.instance_block_fill()?;
+    if slot == Some(crate::parse::SlotKind::Fields) {
+        let node = p.fields_block_fill()?;
         tape.place(node);
         return Ok(crate::parse::Constructed::Placed);
     }

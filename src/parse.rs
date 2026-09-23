@@ -856,7 +856,7 @@ impl ScopeStack {
         Ok(())
     }
 
-    /// The sibling check, run too across the two halves of an `instance = (…)`
+    /// The sibling check, run too across the two halves of a `fields = (…)`
     /// block, whose `shared` members live in the type's own scope and whose
     /// fields live in the list's (DESIGN ›The constructor is a field‹).
     pub fn declared_in(
@@ -947,7 +947,7 @@ pub unsafe fn fn_outer<'a>(fn_node: DyadPtr) -> &'a [DyadPtr] {
 /// order (DESIGN ›The constructor is a field‹). `drop` is not here: it is the
 /// statement keyword, which `=` takes as the slot's name.
 pub const SLOT_NAMES: [&str; 6] =
-    ["parse_rank", "lex_rank", "associativity", "parse", "run", "instance"];
+    ["parse_rank", "lex_rank", "associativity", "parse", "run", "fields"];
 
 /// Each open bracket recurses through `parse_sequence` and `(`'s constructor,
 /// so a wall of `(` costs Rust stack like a runaway recursion: sized well
@@ -972,7 +972,7 @@ pub enum SlotKind {
     Associativity = 2,
     Parse = 3,
     Run = 4,
-    Instance = 5,
+    Fields = 5,
     /// The `drop` keyword left of `=`: no spelling in `SLOT_NAMES`, since the
     /// word is the statement's.
     Drop = 6,
@@ -993,13 +993,13 @@ impl SlotKind {
             2 => SlotKind::Associativity,
             3 => SlotKind::Parse,
             4 => SlotKind::Run,
-            _ => SlotKind::Instance,
+            _ => SlotKind::Fields,
         }
     }
 }
 
 /// What a `type (…)` body's lines have filled so far: the head the type node
-/// takes at the close, the constructor, and the instance block's layout.
+/// takes at the close, the constructor, and the fields block's layout.
 struct OpenType {
     scope: DyadPtr,
     /// The six slot words as this definition's own markers, declared into the body's scope.
@@ -1017,7 +1017,7 @@ struct OpenType {
     /// The hidden `this` parameter of the `parse` body being read; null
     /// otherwise.
     this_param: DyadPtr,
-    /// True while a `shared` line of the instance block is being parsed: a
+    /// True while a `shared` line of the fields block is being parsed: a
     /// slot fill there is the instances' slot, on a bare line the type's own.
     in_block: bool,
 }
@@ -1079,25 +1079,25 @@ pub enum ParseError {
     /// A line of a `type (…)` body that neither fills a slot, lays out its
     /// instances, nor is prose.
     TypeBodyLine,
-    /// A second `instance = (…)` block in one type body.
-    DoubleInstance,
+    /// A second `fields = (…)` block in one type body.
+    DoubleFields,
     /// A bare `:=` line in a type body: members are declared inside
-    /// `instance = (…)`.
-    MemberOutsideInstanceBlock,
-    /// `shared` outside an `instance = (…)` block.
-    SharedOutsideInstanceBlock,
+    /// `fields = (…)`.
+    MemberOutsideFieldsBlock,
+    /// `shared` outside a `fields = (…)` block.
+    SharedOutsideFieldsBlock,
     /// `shared` not followed by a `name := value` declaration.
     SharedNeedsDeclaration,
     /// A slot word left of `=` where no type is being defined.
     SlotOutsideDefinition,
     /// A bare `run = …` line: a type's own run, which nothing in the seed runs.
     OwnRunNotInSeed,
-    /// The instances' parse trio (or a nested `instance`) in the block.
-    InstanceSlotNotInSeed,
+    /// The instances' parse trio (or a nested `fields`) in the block.
+    FieldsSlotNotInSeed,
     /// A `drop = …` fill, on a bare line or in the block.
     DropSlotNotInSeed,
-    /// A slot word inside the instance block without `shared`.
-    InstanceSlotNeedsShared,
+    /// A slot word inside the fields block without `shared`.
+    FieldsSlotNeedsShared,
     /// A binding in a type body inserted a teardown, which no scope exit runs.
     DeferInTypeBody,
     /// A type body's own declaration failed while running at the definition;
@@ -1130,9 +1130,9 @@ pub enum ParseError {
     /// the type's spelling at the use and the failure rendered against the
     /// body's text.
     RunBodyFailed { name: String, rendered: String },
-    /// `this.f` in a parse body of a type with no `instance = (…)` block.
-    ThisNeedsInstanceBlock,
-    /// `this.f` naming no field of the instance block; carries `f`.
+    /// `this.f` in a parse body of a type with no `fields = (…)` block.
+    ThisNeedsFieldsBlock,
+    /// `this.f` naming no field of the fields block; carries `f`.
     ThisFieldUnknown(Box<String>),
     /// `tape.is_constructed[k] = v` with a `v` that is no bool.
     FlagTakesBool,
@@ -1437,7 +1437,7 @@ pub struct Parser<'a> {
     /// at parse are rejected while non-zero. Comptime-taken `if` branches do not count.
     runtime_depth: u32,
     /// The type definitions open around the position, innermost last; slot
-    /// fills and the `instance = (…)` block write into the top.
+    /// fills and the `fields = (…)` block write into the top.
     definitions: Vec<OpenType>,
     /// The open scopes, innermost last, the base entry the top level; its
     /// length is the bracket depth.
@@ -2378,7 +2378,7 @@ impl<'a> Parser<'a> {
     }
 
     /// A `fn`'s parameter list checks each name against every open scope, since
-    /// the body reopens the list's scope; an `instance = (…)` block's fields
+    /// the body reopens the list's scope; a `fields = (…)` block's fields
     /// against their siblings alone (`relaxed`; DESIGN ›The constructor is a field‹).
     fn parse_field_list(&mut self, relaxed: bool) -> Result<(DyadPtr, DyadPtr, u64), ParseError> {
         self.expect_open()?;
@@ -2397,11 +2397,11 @@ impl<'a> Parser<'a> {
             let name = &source[start..start + len];
             let word = self.scopes.resolve(self.trie, name).ok().map(|r| r.identity);
             // One place stored with the type, not a field of the layout; legal
-            // in an `instance = (…)` block alone (DESIGN ›Two muts, and the storage partition‹).
+            // in a `fields = (…)` block alone (DESIGN ›Two muts, and the storage partition‹).
             if word == Some(self.types.shared_) {
                 if !relaxed {
                     self.pos = start;
-                    return Err(ParseError::SharedOutsideInstanceBlock);
+                    return Err(ParseError::SharedOutsideFieldsBlock);
                 }
                 self.shared_member(start)?;
                 continue;
@@ -2417,12 +2417,11 @@ impl<'a> Parser<'a> {
             // A slot fill inside the block is written `shared run = (…)`: an
             // unmarked one would be a per-instance default, not in the seed.
             if relaxed {
-                let def =
-                    self.definitions.last().expect("a relaxed field list is an instance block");
+                let def = self.definitions.last().expect("a relaxed field list is a fields block");
                 let id = self.scopes.resolve(self.trie, name).ok().map(|r| r.identity);
                 if id.is_some_and(|id| id == self.types.drop_ || def.slots.contains(&id)) {
                     self.pos = start;
-                    return Err(ParseError::InstanceSlotNeedsShared);
+                    return Err(ParseError::FieldsSlotNeedsShared);
                 }
             }
             // `name := T ?` declares the field's type through the hole `?`
@@ -2450,11 +2449,8 @@ impl<'a> Parser<'a> {
             let record = if relaxed {
                 // One block, one no-shadowing rule: a field is checked against
                 // the `shared` members too, which live in the type's own scope.
-                let body = self
-                    .definitions
-                    .last()
-                    .expect("a relaxed field list is an instance block")
-                    .scope;
+                let body =
+                    self.definitions.last().expect("a relaxed field list is a fields block").scope;
                 if self.scopes.declared_in(self.trie, name, body).map_err(ParseError::Resolve)? {
                     self.pos = start;
                     return Err(ParseError::Resolve(ResolveError::Shadowed(name.to_string())));
@@ -2483,7 +2479,7 @@ impl<'a> Parser<'a> {
         Ok((scope, fields_arr, size_bytes))
     }
 
-    /// `shared name := value` in an `instance = (…)` block: one place stored
+    /// `shared name := value` in a `fields = (…)` block: one place stored
     /// with the type, declared in the body scope (DESIGN ›Two muts, and the
     /// storage partition‹). The block stays one scope for no-shadowing.
     fn shared_member(&mut self, at: usize) -> Result<(), ParseError> {
@@ -2491,7 +2487,7 @@ impl<'a> Parser<'a> {
             Some(def) => def.scope,
             None => {
                 self.pos = at;
-                return Err(ParseError::SharedOutsideInstanceBlock);
+                return Err(ParseError::SharedOutsideFieldsBlock);
             }
         };
         if self.consume_token(self.types.declare_tok) {
@@ -2577,7 +2573,7 @@ impl<'a> Parser<'a> {
     }
 
     /// An ordinary scope whose bare lines fill the type's own slots and whose
-    /// `instance = (…)` block holds what lives on instances (DESIGN ›The
+    /// `fields = (…)` block holds what lives on instances (DESIGN ›The
     /// constructor is a field‹); every other line must be prose, since nothing runs a type body later.
     pub fn parse_type_body(&mut self, id: DyadPtr) -> Result<DyadPtr, ParseError> {
         self.expect_open()?;
@@ -2701,10 +2697,10 @@ impl<'a> Parser<'a> {
                 }
             };
             match kind {
-                // A bare `instance` line stands as the marker and declares nothing.
+                // A bare `fields` line stands as the marker and declares nothing.
                 BodyLine::Other => return Err(ParseError::TypeBodyLine),
                 BodyLine::Declare if !self.is_slot_fill(item) => {
-                    return Err(ParseError::MemberOutsideInstanceBlock);
+                    return Err(ParseError::MemberOutsideFieldsBlock);
                 }
                 BodyLine::Prose | BodyLine::Declare => {}
             }
@@ -2715,20 +2711,20 @@ impl<'a> Parser<'a> {
     /// The block of per-instance fields, parsed as a field list checked
     /// against its siblings alone; `=` calls this before reading its right
     /// side, since the bracket is a field list, not an expression.
-    pub(crate) fn instance_block_fill(&mut self) -> Result<DyadPtr, ParseError> {
+    pub(crate) fn fields_block_fill(&mut self) -> Result<DyadPtr, ParseError> {
         let def = self.definitions.last().expect("slot_of found an open definition");
-        // `shared instance = (…)` inside the block is the instances' own slot,
+        // `shared fields = (…)` inside the block is the instances' own slot,
         // not in the seed; the enclosing block is stored only when its list
         // closes, so the double-block check below would not see it.
         if def.in_block {
-            return Err(ParseError::InstanceSlotNotInSeed);
+            return Err(ParseError::FieldsSlotNotInSeed);
         }
         if def.instance.is_some() {
-            return Err(ParseError::DoubleInstance);
+            return Err(ParseError::DoubleFields);
         }
         let instance = self.parse_field_list(true)?;
         self.definitions.last_mut().expect("checked above").instance = Some(instance);
-        Ok(self.slot_declare(SlotKind::Instance))
+        Ok(self.slot_declare(SlotKind::Fields))
     }
 
     /// A use of one of the slot words, or of `drop`; whether the fill reaches
@@ -2800,16 +2796,16 @@ impl<'a> Parser<'a> {
         value: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
-        // Inside the instance block `shared run = (…)` is the instances' run;
+        // Inside the fields block `shared run = (…)` is the instances' run;
         // the instances' parse trio and drop there, and a type's own run or
         // drop on a bare line, are not in the seed yet (stand-in for #133).
         let in_block = self.definitions.last().expect("slot_of found an open definition").in_block;
         match kind {
             SlotKind::Drop => return Err(ParseError::DropSlotNotInSeed),
             SlotKind::Run if !in_block => return Err(ParseError::OwnRunNotInSeed),
-            SlotKind::Parse if in_block => return Err(ParseError::InstanceSlotNotInSeed),
+            SlotKind::Parse if in_block => return Err(ParseError::FieldsSlotNotInSeed),
             SlotKind::Parse | SlotKind::Run => return Err(ParseError::SlotNeedsBody(kind)),
-            _ if in_block => return Err(ParseError::InstanceSlotNotInSeed),
+            _ if in_block => return Err(ParseError::FieldsSlotNotInSeed),
             _ => {}
         }
         // SAFETY: `value` is a reduced dyad from the store.
@@ -2841,9 +2837,9 @@ impl<'a> Parser<'a> {
                     return Err(ParseError::BadAssociativity);
                 };
             }
-            SlotKind::Parse | SlotKind::Run | SlotKind::Instance | SlotKind::Drop => {
+            SlotKind::Parse | SlotKind::Run | SlotKind::Fields | SlotKind::Drop => {
                 unreachable!(
-                    "body slots and `drop` returned above; `instance` is routed to instance_block_fill by `=`"
+                    "body slots and `drop` returned above; `fields` is routed to fields_block_fill by `=`"
                 )
             }
         }
@@ -2881,7 +2877,7 @@ impl<'a> Parser<'a> {
         let types = self.types;
         let in_block = self.definitions.last().expect("slot_of found an open definition").in_block;
         match kind {
-            SlotKind::Parse if in_block => Err(ParseError::InstanceSlotNotInSeed),
+            SlotKind::Parse if in_block => Err(ParseError::FieldsSlotNotInSeed),
             SlotKind::Parse => {
                 let at = self.pos;
                 // The two names `parse` declares into its body: `tape`, centred
@@ -2972,7 +2968,7 @@ impl<'a> Parser<'a> {
         let this = def.this_param;
         let Some((scope, fields, _)) = def.instance else {
             self.pos = at;
-            return Err(ParseError::ThisNeedsInstanceBlock);
+            return Err(ParseError::ThisNeedsFieldsBlock);
         };
         let mut field_scope = ScopeStack::new();
         field_scope.push(scope);
@@ -3012,7 +3008,7 @@ impl<'a> Parser<'a> {
             self.pos = at;
             return Err(ParseError::ThisFieldUnknown(Box::new(name.to_string())));
         };
-        // SAFETY: the fields are the instance block's declaration dyads.
+        // SAFETY: the fields are the fields block's declaration dyads.
         let is_type = unsafe { (*fields[i]).ty } == self.types.type_;
         Ok(if is_type { key[i] } else { places[i] })
     }
@@ -6336,7 +6332,7 @@ mod tests {
             go("sq := fn (a := i32 ?) -> i32 ( a * a )", &mut store, &mut trie, types, scopes);
         let (_, s) = go(
             "squared := type ( \
-                instance = ( a := i32 ?, output := type ?, shared run = ( sq(this.a) ) ), \
+                fields = ( a := i32 ?, output := type ?, shared run = ( sq(this.a) ) ), \
                 parse_rank = *.parse_rank + 1, \
                 parse = ( this.a = tape[-1], this.output = i32, tape[0] = this, \
                           tape.is_constructed[0] = true, tape.remove(-1) ) )",

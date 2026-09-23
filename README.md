@@ -74,12 +74,12 @@ if s > 10 (s) else (0)         # 16
 ### Records
 
 ```logos
-point := type ( instance = ( x := i32 ?, y := i32 ? ) ),
+point := type ( fields = ( x := i32 ?, y := i32 ? ) ),
 p := point (3, 4),
 p.x + p.y                      # 7
 ```
 
-`type` is both the root of every type chain and the keyword that defines one. Every member lives in the `instance = ( … )` block: an unmarked one is a field of every instance, a `shared` one is stored once with the type and read as `point.member`. The body's own lines fill the type's slots (`parse_rank`, `associativity`, `parse`). A type with per-instance fields is a record. A type whose members are all shared is a namespace.
+`type` is both the root of every type chain and the keyword that defines one. Every member lives in the `fields = ( … )` block: an unmarked one is a field of every instance, a `shared` one is stored once with the type and read as `point.member`. The body's own lines fill the type's slots (`parse_rank`, `associativity`, `parse`). A type with per-instance fields is a record. A type whose members are all shared is a namespace.
 
 ### Types are values
 
@@ -149,7 +149,7 @@ This is what the first public preview is built to show. An operator is a type wi
 
 ```logos
 ^ := type (
-    instance = (
+    fields = (
         lhs := ?,                            # the operands: one field per cell consumed
         rhs := i32 ?,
         output := type ?,                    # the result type, written per node by parse
@@ -176,7 +176,7 @@ f.compile(),
 f(2)
 ```
 
-The parser hands every constructor the *parsing tape*, the cells around it: `tape[0]` is its own cell, negative offsets are to its left, positive to its right, and it may read, write, insert, and remove, and read the text a cell was lexed from, `tape.spelling[k]`. Text is the quote: `lex «…»` is the lexer as an identity, handing back the text's cells unconstructed as a tape fragment, and `tape.insert(k, lex «* 2»)` splices them in with their spellings, so a constructor can write code as text and let the driver construct it. `this` is the fresh node the constructor builds, its fields the instance block's; a write into a cell replaces the pointer and nothing more, and the constructor says when its cell is done with `tape.is_constructed[0] = true`. Precedence is one number per identity, so a new operator slots between any two existing ones by writing its number relative to theirs. `fn` is the shorthand for a type whose parse_rank, associativity, and constructor are the defaults of a call. Everything above runs today. A slot body has no parameter list: `parse` runs over `tape` and `this`, and `shared run = (…)` is lexed once at the definition and constructed once per set of field types a node is built with, so `^` over i32 and over f64 is one definition.
+The parser hands every constructor the *parsing tape*, the cells around it: `tape[0]` is its own cell, negative offsets are to its left, positive to its right, and it may read, write, insert, and remove, and read the text a cell was lexed from, `tape.spelling[k]`. Text is the quote: `lex «…»` is the lexer as an identity, handing back the text's cells unconstructed as a tape fragment, and `tape.insert(k, lex «* 2»)` splices them in with their spellings, so a constructor can write code as text and let the driver construct it. `this` is the fresh node the constructor builds, its fields the fields block's; a write into a cell replaces the pointer and nothing more, and the constructor says when its cell is done with `tape.is_constructed[0] = true`. Precedence is one number per identity, so a new operator slots between any two existing ones by writing its number relative to theirs. `fn` is the shorthand for a type whose parse_rank, associativity, and constructor are the defaults of a call. Everything above runs today. A slot body has no parameter list: `parse` runs over `tape` and `this`, and `shared run = (…)` is lexed once at the definition and constructed once per set of field types a node is built with, so `^` over i32 and over f64 is one definition.
 
 ## What runs today, and what does not
 
