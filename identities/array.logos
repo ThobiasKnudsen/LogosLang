@@ -17,7 +17,7 @@
 # value, and a field read such as (a ^ b).lhs never runs anything.
 #
 # Stand-ins, and the rulings this file leans on:
-#   the parse_rank numbers (…);
+#   the parse_rank lines take power.logos's `*.parse_rank + 1` (Thobias, 23 September 2026);
 #   the slots of an instance block are PREDECLARED (ruled 19 September 2026, DESIGN ›The constructor is a field‹):
 #     every instance block starts with the same slots type's own declares (parse_rank, associativity, parse, run,
 #     drop, instance), unfilled; a type fills them with `=`, `shared` for one place across its instances, unmarked
@@ -48,7 +48,7 @@ get_mint := fn (t := type ?) -> type (
                 free this.ptr
             ),
 
-            shared parse_rank = …,
+            shared parse_rank = *.parse_rank + 1,
             shared associativity = left,
             shared parse = (
                 if tape[1]:dyad.type == square_brackets (
@@ -65,7 +65,7 @@ get_mint := fn (t := type ?) -> type (
             )
         ),
 
-        parse_rank = …,
+        parse_rank = *.parse_rank + 1,
         associativity = left,
         parse = (
             if tape[1]:dyad.type == scope (
@@ -84,7 +84,7 @@ get_mint := fn (t := type ?) -> type (
 )
 
 pub array := type (
-    parse_rank = …,
+    parse_rank = *.parse_rank + 1,
     associativity = right,
     parse = (
         if tape[1]:dyad.type != type
