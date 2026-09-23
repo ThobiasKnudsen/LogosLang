@@ -4,6 +4,6 @@ scope := type (
 
     )
     fields = (
-        self := array dyad ()
+        dyads := array dyad ()
     )
 )
