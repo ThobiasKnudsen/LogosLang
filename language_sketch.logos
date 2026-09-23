@@ -10,7 +10,7 @@ assign(declare(&mut logos, «[0-9]+(?:\.[0-9]+)?»), rational_number, ?)   # una
 
 parsing_tape := type (
     # the working frontier: Logic Graph with a string extension (DESIGN ›Source becomes runnable‹, ›The scope's
-    # constructor is the driver‹). a cell resolved from a spelling is the record the trie returned (tape[1]:scope,
+    # constructor is the driver‹). a cell resolved from a spelling is the binding the trie returned (tape[1]:scope,
     # tape[1]:type), a constructed cell is its dyad, is_constructed telling which (ruled 7 September 2026) — never a
     # token wrapper — and is_constructed is the tape's own record, a list parallel to the cells, never a field of
     # the dyad (ruled 2 September 2026). tape[k] lexes lazily on demand; a constructor is handed a re-centered
@@ -21,14 +21,14 @@ parsing_tape := type (
     fields = (
         code := string ?                              # the source not yet lexed
         code_offset := u64 ?                          # where lexing continues
-        cells := doublylinkedlist @dyad ()            # a resolved cell is the record the trie returned (a dyad of type record), a constructed cell its dyad: one pointer type serves both (ruled 8 September 2026)
+        cells := doublylinkedlist @dyad ()            # a resolved cell is the binding the trie returned (a dyad of type binding), a constructed cell its dyad: one pointer type serves both (ruled 8 September 2026)
         is_constructed := doublylinkedlist bool ()    # parallel to cells; read tape.is_constructed[k] (ruled 9 September 2026: the flag is the
                                                       # tape's own list, so the read is that list's element, never a field of the dyad)
                                                       # written true only by the cell's own constructor, tape.is_constructed[0] = true, when it has constructed
                                                       # something; a write to tape[k] never sets it (ruled 19 September 2026)
         spelling := doublylinkedlist string ()        # parallel to cells; read tape.spelling[k] (ruled 14 September 2026): the text the cell was
                                                       # lexed from, «» for a cell nothing lexed. how := learns a fresh name (tape.spelling[-1]) and
-                                                      # a literal's constructor its digits (tape.spelling[0]); the record knows only its own
+                                                      # a literal's constructor its digits (tape.spelling[0]); the binding knows only its own
                                                       # spelling (a:name), never what was matched here
         center := @dyad ?                             # tape[0]: the center is a node of the list (DESIGN; the seed's list ruled 9 September 2026)
         shared insert := fn (k := i64 ?, cells := parsing_tape ?) -> void ( ? )   # splice a fragment in: the macro mechanism. lex «…» returns a
@@ -47,9 +47,9 @@ caller := ?   # where it was called from: for a constructor the appearance of it
               # (ruled 15 September 2026, #123; a walk down stops at a section boundary, a function's scopes counting as one)
 
 mut := type (
-    # a gate word (DESIGN ›mut is a gate on the record‹, ruled 5-7 September 2026; its place ruled 15 September 2026): a
+    # a gate word (DESIGN ›mut is a gate on the binding‹, ruled 5-7 September 2026; its place ruled 15 September 2026): a
     # prefix word on the NAME, left of :=, mut x := 5, pub mut x := i32 5, superseding the right-side x := mut 5 of
-    # 5 September. It is the entry «write allowed from the declaring scope and its descendants»; the record := fills
+    # 5 September. It is the entry «write allowed from the declaring scope and its descendants»; the binding := fills
     # takes it where the gate type and := meet on the tape, on the name's side, so mut never reaches across := (the
     # target := ? this body once held is gone with that). gates combine as grants and vetoes, ? being silence; lock
     # seals the set, immut x removes this entry. Standing anywhere else, f(mut i32 5), it is a gate value where none is
@@ -60,7 +60,7 @@ mut := type (
         ?                                 # drive the declaration to the right (its name, then :=, or another gate word first); when it
                                           # stands constructed at tape[1], this mut node is the gate: a body node referring to that name
                                           # (ruled 15 September 2026), its creation a write at the name's :gate voted on by the gates
-                                          # already standing there (none refuses while no lock), and the name's record caches it;
+                                          # already standing there (none refuses while no lock), and the name's binding caches it;
                                           # nothing declared there is the checked error
     )
 )
@@ -146,18 +146,18 @@ xor := ?
 not := ?
 
 
-mut a := i32 32       # mut gates a's record, never the type (5 September 2026), standing beside the name (15 September 2026); the dyad is two pointers, no phase, no mutability bit
-record of a {         # the trie entry (id_context renamed record, 7 September 2026): one per declared name, itself a dyad of type record
+mut a := i32 32       # mut gates a's binding, never the type (5 September 2026), standing beside the name (15 September 2026); the dyad is two pointers, no phase, no mutability bit
+binding of a {        # the trie entry (id_context renamed record 7 September 2026, binding 24 September 2026): one per declared name, itself a dyad of type binding
     dyad -> a
     scope -> (the scope a was declared in)
     start -> (the := node that declared a)
     end -> null                                        # to scope end, unless own a / drop a ends the name earlier
     gate -> [read own scope, write own scope while null, mut]   # ordered set, grants and vetoes; lock would seal it
-    name -> «a»                                        # the spelling the trie holds; a:name (ruled 14 September 2026: the record is the lex level,
+    name -> «a»                                        # the spelling the trie holds; a:name (ruled 14 September 2026: the binding is the lex level,
                                                        # every fact tied to the name; the dyad is the other level, and := binds only that)
     lex_rank -> 0                                      # ranks the spelling at a text position; name data, never crosses := (14 September 2026)
 }
-a {                   # the dyad: type and value, nothing else; a:type reads its type, a:scope and a:gate read the record
+a {                   # the dyad: type and value, nothing else; a:type reads its type, a:scope and a:gate read the binding
     type -> i32
     value -> 32
 }
@@ -172,7 +172,7 @@ type {
   value -> {
     type -> type
     value -> {
-      # member NAMES are record entries in the shared name index, not data
+      # member NAMES are bindings in the shared name index, not data
       # stored here (per-record names hashtable: rejected)
       fields -> {
         type -> array
@@ -219,11 +219,11 @@ a = a + 1
 {
     type:@dyad -> =
     value:@void -> {
-        lhs:@dyad -> a                        # a use points at a's RECORD, a dyad of type record whose reading rule reads a's cell; :dyad reaches the cell (ruled 8 September 2026)
+        lhs:@dyad -> a                        # a use points at a's BINDING, a dyad of type binding whose reading rule reads a's cell; :dyad reaches the cell (ruled 8 September 2026)
         rhs:@dyad -> {
             type:@dyad -> +
             value:@void -> {
-                lhs:@dyad -> a                # the same record
+                lhs:@dyad -> a                # the same binding
                 rhs:@dyad -> {
                     type:@dyad -> rational_number
                     value:@void -> [num 1, den 1]     # a reduced fraction — never text
