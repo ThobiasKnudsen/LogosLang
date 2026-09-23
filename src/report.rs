@@ -297,6 +297,7 @@ pub fn run_message(e: &RunError) -> String {
         RunError::NoFragment => "insert takes a tape fragment".into(),
         RunError::NoThis => "`this` holds no node here".into(),
         RunError::BadIndex(k) => format!("an index cannot be negative ({k})"),
+        RunError::BadCount(n) => format!("an alloc count cannot be negative ({n})"),
         RunError::NotDerefable => "only a scalar or a pointer is read through a pointer".into(),
         RunError::NoLayout(_) => "this type has no field layout to construct".into(),
         RunError::EmptyScope => "a scope with nothing in it has no value".into(),

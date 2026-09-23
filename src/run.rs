@@ -46,6 +46,8 @@ pub enum RunError {
     NoThis,
     /// A negative index.
     BadIndex(i64),
+    /// A negative cell count in `alloc`.
+    BadCount(i64),
     /// A pointer whose pointee is neither scalar nor pointer.
     NotDerefable,
     /// A construction of a type with no field layout.

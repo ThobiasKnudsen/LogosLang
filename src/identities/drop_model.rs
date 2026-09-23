@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The drop model: `alloc`, `own`, `drop`, `free`, and `defer`, one mechanism in one
-//! file. `alloc T v` yields an owning `@T` (a pointer type with a non-null destructor);
-//! binding it inserts `defer free <place>`, and `own`/`drop` empty the place to null so
+//! file. `alloc n of T v` yields an owning `@T` to the first of n cells (a pointer type
+//! with a non-null destructor), `alloc n` an `@u8` over n bytes; binding it inserts
+//! `defer free <place>`, and `own`/`drop` empty the place to null so
 //! a pending teardown no-ops. None of the five lower. DESIGN ›Explicit heap, and no implicit
 //! destruction‹.
 
@@ -19,9 +20,10 @@ use crate::parse::{Assoc, ParseError};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
-/// `alloc` is `[pointee, init, op]`.
+/// `alloc` is `[pointee, count, init, op]`; `init` is null in the byte form.
 const ALLOC_POINTEE: usize = 0;
-const ALLOC_INIT: usize = 1;
+const ALLOC_COUNT: usize = 1;
+const ALLOC_INIT: usize = 2;
 /// `free`/`drop`/`own` are `[place, pointee, op]`.
 const TEARDOWN_PLACE: usize = 0;
 const TEARDOWN_POINTEE: usize = 1;
@@ -34,6 +36,8 @@ pub(super) struct DropModel {
     pub drop_: DyadPtr,
     pub free_: DyadPtr,
     pub defer_: DyadPtr,
+    /// The word between `alloc`'s count and its value; constructs nothing itself.
+    pub of_: DyadPtr,
     /// `free`'s run native, also the owning pointer's stored destructor.
     pub teardown_leaf: DyadPtr,
     pub own_leaf: DyadPtr,
@@ -47,14 +51,33 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     // at it, so `drop` reaches the same code as an inserted `free`.
     let teardown_leaf = callable::mint_native(cx.store, cs.callable, run_teardown, cs.seed_native);
 
-    let alloc_ =
-        keyword(cx, "alloc", meta::prec::PREFIX, &["pointee", "init", "op"], |p, _id, tape| {
-            let init = p.take_right(tape)?;
+    let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
+    let of_ = cx.store.alloc_raw(cx.type_, record);
+    cx.declare("of", of_);
+
+    let alloc_ = keyword(
+        cx,
+        "alloc",
+        meta::prec::PREFIX,
+        &["pointee", "count", "init", "op"],
+        |p, _id, tape| {
+            let of_ = p.types().of_;
+            if p.marker_right(tape, of_) {
+                return Err(ParseError::MissingOperand);
+            }
+            let count = p.take_right(tape)?;
+            let init = if p.marker_right(tape, of_) {
+                tape.remove(1);
+                Some(p.take_right(tape)?)
+            } else {
+                None
+            };
             let types = p.types();
-            let node = build_alloc(p.store(), types, init)?;
+            let node = build_alloc(p.store(), types, count, init)?;
             tape.place(node);
             Ok(crate::parse::Constructed::Placed)
-        });
+        },
+    );
     let alloc_leaf = callable::mint_native(cx.store, cs.callable, run_alloc, cs.seed_native);
 
     let own_ =
@@ -119,6 +142,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         drop_,
         free_,
         defer_,
+        of_,
         teardown_leaf,
         own_leaf,
         drop_leaf,
@@ -141,24 +165,38 @@ fn keyword(
     id
 }
 
-/// A scalar's `Layout` is `(width, width)`: every scalar width is a power of two, so it
-/// is a valid alignment.
+/// A block is `[byte count as u64, pad][cells…]`, the header `HEADER` bytes and the
+/// block aligned to it, which is at or above every scalar width: the span's size lives
+/// before its first cell, where `free` reads it back.
+const HEADER: usize = 16;
+
+fn block_layout(total: usize) -> Option<std::alloc::Layout> {
+    std::alloc::Layout::from_size_align(HEADER.checked_add(total)?, HEADER).ok()
+}
+
+/// Null when the allocator refuses; the cells start zeroed.
 ///
 /// # Safety
-/// `width` must be a non-zero scalar width; the block is freed exactly once by
-/// `heap_free` with the same `width`.
-unsafe fn heap_alloc(width: usize) -> *mut u8 {
-    let layout = std::alloc::Layout::from_size_align(width, width)
-        .expect("a scalar width is a valid power-of-two layout");
-    std::alloc::alloc(layout)
+/// The block is freed exactly once by `heap_free` with the returned address.
+unsafe fn heap_alloc(total: usize) -> *mut u8 {
+    let Some(layout) = block_layout(total) else {
+        return std::ptr::null_mut();
+    };
+    let base = std::alloc::alloc_zeroed(layout);
+    if base.is_null() {
+        return base;
+    }
+    (base as *mut u64).write(total as u64);
+    base.add(HEADER)
 }
 
 /// # Safety
-/// `ptr` must be a live block from `heap_alloc` with the same `width`.
-unsafe fn heap_free(ptr: *mut u8, width: usize) {
-    let layout = std::alloc::Layout::from_size_align(width, width)
-        .expect("a scalar width is a valid power-of-two layout");
-    std::alloc::dealloc(ptr, layout);
+/// `ptr` must be a live address from `heap_alloc`.
+unsafe fn heap_free(ptr: *mut u8) {
+    let base = ptr.sub(HEADER);
+    let total = (base as *const u64).read() as usize;
+    let layout = block_layout(total).expect("a live block was laid out once already");
+    std::alloc::dealloc(base, layout);
 }
 
 /// # Safety
@@ -167,23 +205,36 @@ unsafe fn pointee_width(pointee: DyadPtr) -> usize {
     numtype::of_type_node(pointee).bytes()
 }
 
-/// The pointee type is the initializer's own type (`alloc i32 5` allocates an `i32`);
-/// a non-scalar initializer is rejected.
+/// The pointee is the value's own type (`alloc 2 of i32 5` allocates two `i32`), `u8` with
+/// no value; the count must be an integer, and a non-scalar value is rejected.
 pub(super) fn build_alloc(
     store: &mut Store,
     types: &Core,
-    init: DyadPtr,
+    count: DyadPtr,
+    init: Option<DyadPtr>,
 ) -> Result<DyadPtr, ParseError> {
-    // SAFETY: `init` is a reduced dyad just parsed.
-    let operand = unsafe { crate::identities::numtype_of(types, init) };
-    let pointee = match operand {
-        crate::identities::Operand::Concrete(_) | crate::identities::Operand::Pointer(_) => {
-            // SAFETY: as above; the operand is scalar or pointer, what `scalar_binding_type` takes.
-            unsafe { crate::identities::scalar_binding_type(store, types, init).0 }
+    use crate::identities::Operand;
+    // SAFETY: `count` and `init` are reduced dyads just parsed.
+    unsafe {
+        match crate::identities::numtype_of(types, count) {
+            Operand::Literal => {}
+            Operand::Concrete(nt) if !nt.is_float() => {}
+            _ => return Err(ParseError::UnsupportedOperands),
         }
-        _ => return Err(ParseError::UnsupportedOperands),
+    }
+    let pointee = match init {
+        None => types.numtypes[numtype::NumType::U8 as usize],
+        // SAFETY: as above.
+        Some(init) => match unsafe { crate::identities::numtype_of(types, init) } {
+            Operand::Concrete(_) | Operand::Pointer(_) => {
+                // SAFETY: as above; the operand is scalar or pointer, what `scalar_binding_type` takes.
+                unsafe { crate::identities::scalar_binding_type(store, types, init).0 }
+            }
+            _ => return Err(ParseError::UnsupportedOperands),
+        },
     };
-    let value = store.alloc_operands(&[pointee, init, types.ops.alloc_]);
+    let init = init.unwrap_or(std::ptr::null_mut());
+    let value = store.alloc_operands(&[pointee, count, init, types.ops.alloc_]);
     Ok(store.alloc_raw(types.alloc_, value))
 }
 
@@ -302,18 +353,30 @@ pub(crate) unsafe fn is_owning_value(types: &Core, node: DyadPtr) -> bool {
 
 /// The runtime notes the live allocation so leaks and double frees are observable.
 fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is an `alloc` node `[pointee, init, op]` from the store.
+    // SAFETY: `node` is an `alloc` node `[pointee, count, init, op]` from the store.
     unsafe {
         let slots = (*node).value as *const DyadPtr;
         let pointee = *slots.add(ALLOC_POINTEE);
+        let count = rt.run(*slots.add(ALLOC_COUNT))?;
+        if count < 0 {
+            return Err(RunError::BadCount(count));
+        }
         let init = *slots.add(ALLOC_INIT);
-        let bits = rt.run(init)?;
+        let bits = if init.is_null() { None } else { Some(rt.run(init)?) };
         let width = pointee_width(pointee);
-        let mem = heap_alloc(width);
+        let count = count as usize;
+        let Some(total) = count.checked_mul(width) else {
+            return Err(RunError::OutOfMemory);
+        };
+        let mem = heap_alloc(total);
         if mem.is_null() {
             return Err(RunError::OutOfMemory);
         }
-        numtype::write_scalar(pointee, mem, bits);
+        if let Some(bits) = bits {
+            for k in 0..count {
+                numtype::write_scalar(pointee, mem.add(k * width), bits);
+            }
+        }
         rt.note_alloc();
         Ok(mem as i64)
     }
@@ -326,7 +389,6 @@ fn run_teardown(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     unsafe {
         let slots = (*node).value as *const DyadPtr;
         let place = *slots.add(TEARDOWN_PLACE);
-        let pointee = *slots.add(TEARDOWN_POINTEE);
         let slot = rt.place_addr(place).ok_or(RunError::NoActivation)?;
         if slot.is_null() {
             return Err(RunError::Uninitialized);
@@ -337,8 +399,10 @@ fn run_teardown(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         }
         // Tests observe teardown order (LIFO) by the value each freed block held.
         #[cfg(test)]
-        FREE_LOG.with(|log| log.borrow_mut().push(numtype::read_scalar(pointee, ptr)));
-        heap_free(ptr, pointee_width(pointee));
+        let held = numtype::read_scalar(*slots.add(TEARDOWN_POINTEE), ptr);
+        #[cfg(test)]
+        FREE_LOG.with(|log| log.borrow_mut().push(held));
+        heap_free(ptr);
         rt.note_free();
         std::ptr::write_unaligned(slot as *mut i64, 0);
         Ok(0)
@@ -401,6 +465,10 @@ mod tests {
 
     /// Parse and run `src`; returns the tail value and the count of still-live heap blocks.
     fn run(src: &str) -> (i64, usize) {
+        try_run(src).expect("run")
+    }
+
+    fn try_run(src: &str) -> Result<(i64, usize), RunError> {
         FREE_LOG.with(|l| l.borrow_mut().clear());
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
@@ -415,26 +483,26 @@ mod tests {
         };
         let mut rt = Runtime::new(&core, &mut store).with_compiler(&core.lower);
         // SAFETY: `root` is the scope just parsed into `store`, which outlives `rt`.
-        let bits = unsafe { rt.run(root) }.expect("run");
-        (bits, rt.live_allocs())
+        let bits = unsafe { rt.run(root) }?;
+        Ok((bits, rt.live_allocs()))
     }
 
     #[test]
     fn an_owning_place_takes_only_an_owning_value() {
         assert_eq!(
-            parse_err("x := i32 1, mut a := alloc i32 5, a = &x"),
+            parse_err("x := i32 1, mut a := alloc 1 of i32 5, a = &x"),
             ParseError::NonOwningIntoOwning
         );
         assert_eq!(
-            parse_err("mut a := alloc i32 5, b := alloc i32 6, a = b"),
+            parse_err("mut a := alloc 1 of i32 5, b := alloc 1 of i32 6, a = b"),
             ParseError::NonOwningIntoOwning
         );
         assert_eq!(run("x := i32 1, mut p := &x, p = &x, p@").0, 1);
-        assert_eq!(run("mut a := alloc i32 5, a@ = 9, a@"), (9, 0));
+        assert_eq!(run("mut a := alloc 1 of i32 5, a@ = 9, a@"), (9, 0));
 
         // The displaced block is not freed yet; the leak is pinned as a number.
-        assert_eq!(run("mut a := alloc i32 5, a = alloc i32 6, a@"), (6, 1));
-        assert_eq!(run("mut a := alloc i32 5, b := alloc i32 6, a = own b, a@"), (6, 1));
+        assert_eq!(run("mut a := alloc 1 of i32 5, a = alloc 1 of i32 6, a@"), (6, 1));
+        assert_eq!(run("mut a := alloc 1 of i32 5, b := alloc 1 of i32 6, a = own b, a@"), (6, 1));
     }
 
     fn free_log() -> Vec<i64> {
@@ -454,22 +522,48 @@ mod tests {
     }
 
     #[test]
+    fn alloc_counts_its_cells_and_fills_them_from_the_value() {
+        assert_eq!(run("n := i32 3,\na := alloc n of i32 7,\na@"), (7, 0));
+        assert_eq!(run("a := alloc 2 of i32 ?,\na@ = 4,\na@"), (4, 0));
+        assert_eq!(run("a := alloc 0 of i32 1,\n9"), (9, 0));
+    }
+
+    #[test]
+    fn alloc_of_a_bare_count_is_that_many_zeroed_bytes() {
+        assert_eq!(run("a := alloc 8,\na@"), (0, 0));
+        assert_eq!(run("mut a := alloc 8,\na@ = 200,\na@"), (200, 0));
+        // The count-less spelling is gone: `i32 2` is a count, so this is two bytes.
+        assert_eq!(run("a := alloc i32 2,\na@"), (0, 0));
+    }
+
+    #[test]
+    fn alloc_needs_an_integer_count_and_a_value_after_of() {
+        assert_eq!(parse_err("a := alloc f64 2 of i32 1"), ParseError::UnsupportedOperands);
+        assert_eq!(parse_err("a := alloc 2 of"), ParseError::MissingOperand);
+        assert_eq!(parse_err("a := alloc of i32 1"), ParseError::MissingOperand);
+        assert!(matches!(
+            try_run("n := i32 0 - 1,\na := alloc n of i32 1,\n1"),
+            Err(RunError::BadCount(-1))
+        ));
+    }
+
+    #[test]
     fn alloc_reads_back_and_frees_at_scope_exit() {
-        let (v, live) = run("a := alloc i32 5,\na@");
+        let (v, live) = run("a := alloc 1 of i32 5,\na@");
         assert_eq!(v, 5);
         assert_eq!(live, 0, "scope exit frees the allocation");
     }
 
     #[test]
     fn alloc_inside_a_function_frees_when_the_call_returns() {
-        let (v, live) = run("main := fn () -> i32 ( p := alloc i32 42, p@ ),\nmain()");
+        let (v, live) = run("main := fn () -> i32 ( p := alloc 1 of i32 42, p@ ),\nmain()");
         assert_eq!(v, 42);
         assert_eq!(live, 0, "the call's frame scope frees its alloc");
     }
 
     #[test]
     fn early_drop_does_not_double_free() {
-        let (v, live) = run("a := alloc i32 3,\ndrop a,\n99");
+        let (v, live) = run("a := alloc 1 of i32 3,\ndrop a,\n99");
         assert_eq!(v, 99);
         assert_eq!(live, 0, "drop frees once; the deferred free no-ops");
         assert_eq!(free_log(), vec![3], "exactly one free happened");
@@ -477,7 +571,7 @@ mod tests {
 
     #[test]
     fn own_moves_ownership_and_the_source_scope_frees_nothing() {
-        let (v, live) = run("a := alloc i32 7,\nb := own a,\nb@");
+        let (v, live) = run("a := alloc 1 of i32 7,\nb := own a,\nb@");
         assert_eq!(v, 7);
         assert_eq!(live, 0, "the moved pointer is freed once, through b");
         assert_eq!(free_log(), vec![7], "own does not double-free the source");
@@ -485,7 +579,7 @@ mod tests {
 
     #[test]
     fn own_out_of_an_inner_block_frees_at_the_outer_owner() {
-        let (v, live) = run("b := ( a := alloc i32 8, own a ),\nb@");
+        let (v, live) = run("b := ( a := alloc 1 of i32 8, own a ),\nb@");
         assert_eq!(v, 8);
         assert_eq!(live, 0);
         assert_eq!(free_log(), vec![8], "freed once, at the outer owner");
@@ -493,7 +587,7 @@ mod tests {
 
     #[test]
     fn teardown_runs_lifo() {
-        let (_v, live) = run("a := alloc i32 10,\nb := alloc i32 20,\n0");
+        let (_v, live) = run("a := alloc 1 of i32 10,\nb := alloc 1 of i32 20,\n0");
         assert_eq!(live, 0);
         assert_eq!(free_log(), vec![20, 10], "LIFO := last ? allocated frees first");
     }
@@ -502,7 +596,7 @@ mod tests {
     fn a_dropped_name_takes_no_later_free() {
         // A later `free a` is a use of a dead name, refused before anything runs.
         assert_eq!(
-            parse_err("a := alloc i32 4,\ndrop a,\nfree a,\n1"),
+            parse_err("a := alloc 1 of i32 4,\ndrop a,\nfree a,\n1"),
             ParseError::Resolve(ResolveError::Dead("a".into()))
         );
     }
@@ -510,7 +604,7 @@ mod tests {
     #[test]
     fn a_dead_name_may_be_redeclared_after_own() {
         // LIFO: the new `a` (9) frees before `b` (7).
-        let (v, live) = run("a := alloc i32 7,\nb := own a,\na := alloc i32 9,\na@ + b@");
+        let (v, live) = run("a := alloc 1 of i32 7,\nb := own a,\na := alloc 1 of i32 9,\na@ + b@");
         assert_eq!(v, 16);
         assert_eq!(live, 0);
         assert_eq!(free_log(), vec![9, 7], "fresh place, old teardown a no-op");
@@ -519,7 +613,7 @@ mod tests {
     #[test]
     fn a_read_after_own_is_refused() {
         assert_eq!(
-            parse_err("a := alloc i32 7,\nb := own a,\na@"),
+            parse_err("a := alloc 1 of i32 7,\nb := own a,\na@"),
             ParseError::Resolve(ResolveError::Dead("a".into()))
         );
     }
@@ -527,7 +621,7 @@ mod tests {
     #[test]
     fn a_write_after_own_is_refused() {
         assert_eq!(
-            parse_err("mut a := alloc i32 7,\nb := own a,\na = b"),
+            parse_err("mut a := alloc 1 of i32 7,\nb := own a,\na = b"),
             ParseError::Resolve(ResolveError::Dead("a".into()))
         );
     }
@@ -537,7 +631,7 @@ mod tests {
         // While the line is still parsing the entry's `end` is the `drop` node itself.
         assert_eq!(
             parse_err(
-                "h := fn (x := i32 ?, p := @i32 ?) -> i32 ( x ),\na := alloc i32 1,\nh(drop a, a)"
+                "h := fn (x := i32 ?, p := @i32 ?) -> i32 ( x ),\na := alloc 1 of i32 1,\nh(drop a, a)"
             ),
             ParseError::Resolve(ResolveError::Dead("a".into()))
         );
@@ -547,11 +641,11 @@ mod tests {
     fn a_move_inside_a_nested_block_ends_the_outer_name_after_the_block() {
         // Maybe-moved is moved for the name; the run-time null decides whether its teardown fires.
         assert_eq!(
-            parse_err("a := alloc i32 7,\nc := i32 1,\nif (c == 1) ( b := own a, b@ ),\na@"),
+            parse_err("a := alloc 1 of i32 7,\nc := i32 1,\nif (c == 1) ( b := own a, b@ ),\na@"),
             ParseError::Resolve(ResolveError::Dead("a".into()))
         );
         let (v, live) =
-            run("a := alloc i32 7,\nc := i32 1,\nif (c == 1) ( b := own a, b@ ),\na := alloc i32 9,\na@");
+            run("a := alloc 1 of i32 7,\nc := i32 1,\nif (c == 1) ( b := own a, b@ ),\na := alloc 1 of i32 9,\na@");
         assert_eq!(v, 9);
         assert_eq!(live, 0);
         assert_eq!(free_log(), vec![7, 9], "b frees at the if's exit, the new a at the end");
@@ -561,15 +655,17 @@ mod tests {
     fn a_move_of_an_outer_name_inside_a_loop_body_is_refused() {
         // The next pass would read a dead name.
         assert_eq!(
-            parse_err("a := alloc i32 7,\nmut c := i32 1,\nwhile (c == 1) ( b := own a, c = 0 )"),
+            parse_err(
+                "a := alloc 1 of i32 7,\nmut c := i32 1,\nwhile (c == 1) ( b := own a, c = 0 )"
+            ),
             ParseError::OwnOfOuterName
         );
         assert_eq!(
-            parse_err("a := alloc i32 7,\nfor i in 0..2 ( b := own a )"),
+            parse_err("a := alloc 1 of i32 7,\nfor i in 0..2 ( b := own a )"),
             ParseError::OwnOfOuterName
         );
         assert_eq!(
-            parse_err("a := alloc i32 7,\nfor i in 0..2 ( drop a )"),
+            parse_err("a := alloc 1 of i32 7,\nfor i in 0..2 ( drop a )"),
             ParseError::OwnOfOuterName
         );
     }
@@ -599,11 +695,11 @@ mod tests {
     fn a_move_of_an_outer_name_inside_a_fn_body_is_refused() {
         // A function may own only what its parameters hand it.
         assert_eq!(
-            parse_err("a := alloc i32 7,\nf := fn () -> i32 ( b := own a, b@ )"),
+            parse_err("a := alloc 1 of i32 7,\nf := fn () -> i32 ( b := own a, b@ )"),
             ParseError::OwnOfOuterName
         );
         assert_eq!(
-            parse_err("mk := fn () -> @i32 ( p := alloc i32 7, own p ),\nmk()"),
+            parse_err("mk := fn () -> @i32 ( p := alloc 1 of i32 7, own p ),\nmk()"),
             ParseError::OwnershipAcrossReturn
         );
     }
@@ -617,7 +713,8 @@ mod tests {
         scopes.push(core.root_scope);
         let types = &core;
         let scope = {
-            let mut p = Parser::new("a := alloc i32 5,\n0", &mut store, &mut trie, types, scopes);
+            let mut p =
+                Parser::new("a := alloc 1 of i32 5,\n0", &mut store, &mut trie, types, scopes);
             p.parse_sequence().expect("parse")
         };
         // SAFETY: `scope` is a sequence node; its body is an array of exprs.
@@ -642,7 +739,8 @@ mod tests {
         scopes.push(core.root_scope);
         let types = &core;
         let scope = {
-            let mut p = Parser::new("a := alloc i32 5,\na@", &mut store, &mut trie, types, scopes);
+            let mut p =
+                Parser::new("a := alloc 1 of i32 5,\na@", &mut store, &mut trie, types, scopes);
             p.parse_sequence().expect("parse")
         };
         // SAFETY: the scope body holds the inserted `defer free a`, whose place slot is `a`.
@@ -666,7 +764,7 @@ mod tests {
     fn an_unbound_owning_temporary_is_rejected_not_leaked() {
         // An owning value handed straight to a call has no name to hang its `free` on.
         assert_eq!(
-            parse_err("f := fn (p := @i32 ?) -> i32 ( p@ ),\nf(alloc i32 5)"),
+            parse_err("f := fn (p := @i32 ?) -> i32 ( p@ ),\nf(alloc 1 of i32 5)"),
             ParseError::UnboundOwningValue
         );
     }
@@ -675,11 +773,11 @@ mod tests {
     fn ownership_may_not_escape_a_scope_as_its_value() {
         // The scope's `defer free` would run on the way out and hand back a freed pointer.
         assert_eq!(
-            parse_err("mk := fn () -> @i32 ( p := alloc i32 7, p ),\nmk()"),
+            parse_err("mk := fn () -> @i32 ( p := alloc 1 of i32 7, p ),\nmk()"),
             ParseError::OwningEscape
         );
         assert_eq!(
-            parse_err("mk := fn () -> @i32 ( p := alloc i32 7, return p ),\nmk()"),
+            parse_err("mk := fn () -> @i32 ( p := alloc 1 of i32 7, return p ),\nmk()"),
             ParseError::OwningEscape
         );
     }
@@ -689,11 +787,11 @@ mod tests {
         // A return type cannot yet say it transfers ownership, so the caller would not know it
         // owes a `free`.
         assert_eq!(
-            parse_err("mk := fn () -> @i32 ( p := alloc i32 7, own p ),\nmk()"),
+            parse_err("mk := fn () -> @i32 ( p := alloc 1 of i32 7, own p ),\nmk()"),
             ParseError::OwnershipAcrossReturn
         );
         assert_eq!(
-            parse_err("mk := fn () -> @i32 ( alloc i32 7 ),\nmk()"),
+            parse_err("mk := fn () -> @i32 ( alloc 1 of i32 7 ),\nmk()"),
             ParseError::OwnershipAcrossReturn
         );
     }
@@ -724,11 +822,11 @@ mod tests {
     fn a_call_reading_a_dropped_owning_pointer_is_refused() {
         // A dropped name's place may hold anything, here a freed block.
         assert_eq!(
-            parse_err("p := alloc i32 5,\nf := fn () -> i32 ( p@ ),\ndrop p,\nf()"),
+            parse_err("p := alloc 1 of i32 5,\nf := fn () -> i32 ( p@ ),\ndrop p,\nf()"),
             ParseError::Resolve(ResolveError::Dead("p".into()))
         );
         let (v, live) = run(
-            "p := alloc i32 5,\nf := fn (q := @i32 ?) -> i32 ( q@ ),\nr := alloc i32 4,\ndrop p,\nf(r)",
+            "p := alloc 1 of i32 5,\nf := fn (q := @i32 ?) -> i32 ( q@ ),\nr := alloc 1 of i32 4,\ndrop p,\nf(r)",
         );
         assert_eq!(v, 4);
         assert_eq!(live, 0);
@@ -786,7 +884,7 @@ mod tests {
 
     #[test]
     fn own_hands_ownership_to_an_enclosing_binder() {
-        let (v, live) = run("b := ( a := alloc i32 8, own a ),\nb@");
+        let (v, live) = run("b := ( a := alloc 1 of i32 8, own a ),\nb@");
         assert_eq!(v, 8);
         assert_eq!(live, 0);
         assert_eq!(free_log(), vec![8], "freed once, by the outer owner");
@@ -802,7 +900,8 @@ mod tests {
 
     #[test]
     fn a_loop_body_frees_every_iteration() {
-        let (_v, live) = run("mut i := i32 0,\nwhile (i < 3) ( p := alloc i32 5, i = i + 1 ),\ni");
+        let (_v, live) =
+            run("mut i := i32 0,\nwhile (i < 3) ( p := alloc 1 of i32 5, i = i + 1 ),\ni");
         assert_eq!(live, 0, "no allocation outlives its iteration");
         assert_eq!(free_log().len(), 3, "one free per iteration");
     }
@@ -810,7 +909,7 @@ mod tests {
     #[test]
     fn the_compiled_tier_reads_heap_memory_identically() {
         let (v, live) = run(
-            "f := fn (p := @i32 ?) -> i32 ( p@ + 1 ),\na := alloc i32 41,\nb := f(a),\nf.compile(),\nc := f(a),\nb + c",
+            "f := fn (p := @i32 ?) -> i32 ( p@ + 1 ),\na := alloc 1 of i32 41,\nb := f(a),\nf.compile(),\nc := f(a),\nb + c",
         );
         assert_eq!(v, 84, "interpreted and compiled reads agree");
         assert_eq!(live, 0);
@@ -825,7 +924,7 @@ mod tests {
         let mut scopes = ScopeStack::new();
         scopes.push(core.root_scope);
         let types = &core;
-        let src = "main := fn () -> i32 ( p := alloc i32 5, p@ ),\nmain.compile()";
+        let src = "main := fn () -> i32 ( p := alloc 1 of i32 5, p@ ),\nmain.compile()";
         let root = {
             let mut p =
                 Parser::new(src, &mut store, &mut trie, types, scopes).with_lower(&core.lower);

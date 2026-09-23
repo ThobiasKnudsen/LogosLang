@@ -339,6 +339,7 @@ mod tests {
             ("->", prec::INERT, false),
             ("else", prec::INERT, false),
             ("in", prec::INERT, false),
+            ("of", prec::INERT, false),
             ("..", prec::RANGE, false),
             ("i32", prec::APPLY, true),
             ("f64", prec::APPLY, true),

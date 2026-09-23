@@ -4304,6 +4304,11 @@ impl<'a> Parser<'a> {
         Ok(node)
     }
 
+    /// Whether the cell right of the center is the unconstructed marker word `id`.
+    pub(crate) fn marker_right(&self, tape: &ParsingTape, id: DyadPtr) -> bool {
+        tape.at(1).is_some_and(|cell| !cell.constructed && self.cell_identity(cell) == id)
+    }
+
     /// The six fields, the spelling as a string node (`a:name`).
     /// A gate word marks the declaration that just reduced to its right.
     pub(crate) fn gate_declared(&mut self, gate: DyadPtr) -> Result<(), ParseError> {

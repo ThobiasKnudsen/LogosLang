@@ -603,7 +603,8 @@ fn the_repl_rolls_back_a_failed_lines_declarations() {
 
 #[test]
 fn the_repl_keeps_an_owning_binding_alive_across_lines() {
-    let (echoes, stderr) = repl(b"a := alloc i32 5\na@\nr := ( b := alloc i32 20, b@ )\nr\n");
+    let (echoes, stderr) =
+        repl(b"a := alloc 1 of i32 5\na@\nr := ( b := alloc 1 of i32 20, b@ )\nr\n");
     assert_eq!(echoes, ["5", "20"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
@@ -640,7 +641,7 @@ fn an_imported_function_may_read_its_own_sections_private_names() {
 
 #[test]
 fn a_failed_repl_line_restores_a_moved_name() {
-    let (echoes, stderr) = repl(b"a := alloc i32 5\nr := ( b := own a, b@ ) + nosuch\na@\n");
+    let (echoes, stderr) = repl(b"a := alloc 1 of i32 5\nr := ( b := own a, b@ ) + nosuch\na@\n");
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
     assert!(stderr.contains("unknown name"), "stderr: {stderr}");
     assert!(!stderr.contains("dead"), "stderr: {stderr}");

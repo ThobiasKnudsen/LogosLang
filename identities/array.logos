@@ -25,8 +25,7 @@
 #   one `drop` word (ruled 19 September 2026): its parse looks right; `=` there means the slot
 #     fill, anything else is the statement dropping what follows, so `drop x` works in every scope and the
 #     predeclared slot names are the core words themselves, never a second declaration;
-#   `alloc n of T` is the 8 September respelling, wording pending; `⊆` on types and the trailing @ for the
-#     dereference are the older sketch's spellings.
+#   `⊆` on types is not in the seed.
 # The seed's array is array-of-@dyad with no spelling and no element access (src/identities/array.rs).
 # The instance block comes first in every type body (ruled 20 September 2026): a body's this.f names a field declared above it.
 

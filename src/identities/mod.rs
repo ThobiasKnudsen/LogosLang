@@ -164,6 +164,7 @@ pub struct Core {
     pub arrow_: DyadPtr,
     pub else_: DyadPtr,
     pub in_: DyadPtr,
+    pub of_: DyadPtr,
     pub dotdot_: DyadPtr,
     pub dot_: DyadPtr,
     pub at_: DyadPtr,
@@ -290,8 +291,8 @@ impl Core {
         op_leaves.drop_ = dm.drop_leaf;
         op_leaves.teardown_ = dm.teardown_leaf;
         op_leaves.defer_ = dm.defer_leaf;
-        let (alloc_, own_, drop_, free_, defer_) =
-            (dm.alloc_, dm.own_, dm.drop_, dm.free_, dm.defer_);
+        let (alloc_, own_, drop_, free_, defer_, of_) =
+            (dm.alloc_, dm.own_, dm.drop_, dm.free_, dm.defer_, dm.of_);
         let tape = tape::register(&mut cx, &callables, scope_, array_, void);
         let this = this::register(&mut cx, &callables);
         let lex = lex::register(&mut cx, &callables);
@@ -394,6 +395,7 @@ impl Core {
             arrow_,
             else_,
             in_,
+            of_,
             dotdot_,
             dot_,
             at_,

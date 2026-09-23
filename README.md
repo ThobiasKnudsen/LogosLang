@@ -104,13 +104,13 @@ x:dyad.type == i32 and i32:dyad.type == type    # true: a type's type is the roo
 ### Pointers and the heap
 
 ```logos
-a := alloc i32 40,                     # an owning pointer; alloc inserts `defer free` here
-b := own a,                            # move: a is dead from this line on, b owns the memory
-inner := ( c := alloc i32 100, c@ ),   # c is freed when its scope closes
-b@ + inner - 98                        # 42, then b is freed at program end
+a := alloc 1 of i32 40,                      # an owning pointer; alloc inserts `defer free` here
+b := own a,                                  # move: a is dead from this line on, b owns the memory
+inner := ( c := alloc 1 of i32 100, c@ ),    # c is freed when its scope closes
+b@ + inner - 98                              # 42, then b is freed at program end
 ```
 
-`@T` is a pointer type, `p@` dereferences, `&x` takes an address. Locals live on the stack and go away with their scope. Heap memory is explicit: `alloc` returns an owning pointer and inserts a visible `defer free` into the scope that owns it. Teardowns run last-in first-out at scope exit. `own` moves ownership by ending the old name at parse time, and `drop x` runs a destructor and ends the name now. Nothing is destroyed behind your back: every teardown is graph structure you can read. The borrow checker that will prove these uses safe is specified but not yet built, so pointers are unchecked today.
+`@T` is a pointer type, `p@` dereferences, `&x` takes an address. Locals live on the stack and go away with their scope. Heap memory is explicit: `alloc n of T v` returns an owning pointer to `n` cells (`alloc n` to `n` bytes) and inserts a visible `defer free` into the scope that owns it. Teardowns run last-in first-out at scope exit. `own` moves ownership by ending the old name at parse time, and `drop x` runs a destructor and ends the name now. Nothing is destroyed behind your back: every teardown is graph structure you can read. The borrow checker that will prove these uses safe is specified but not yet built, so pointers are unchecked today.
 
 ### Comments and strings
 
