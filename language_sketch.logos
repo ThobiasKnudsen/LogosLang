@@ -11,7 +11,7 @@ assign(declare(&mut logos, «[0-9]+(?:\.[0-9]+)?»), rational_number, ?)   # una
 parsing_tape := type (
     # the working frontier: Logic Graph with a string extension (DESIGN ›Source becomes runnable‹, ›The scope's
     # constructor is the driver‹). a cell resolved from a spelling is the record the trie returned (tape[1]:scope,
-    # tape[1]:dyad), a constructed cell is its dyad, is_constructed telling which (ruled 7 September 2026) — never a
+    # tape[1]:type), a constructed cell is its dyad, is_constructed telling which (ruled 7 September 2026) — never a
     # token wrapper — and is_constructed is the tape's own record, a list parallel to the cells, never a field of
     # the dyad (ruled 2 September 2026). tape[k] lexes lazily on demand; a constructor is handed a re-centered
     # view, tape[0] being its own cell, negative offsets its left context, positive its right. the tape runs
@@ -36,7 +36,7 @@ parsing_tape := type (
                                                                                  # a bare array @dyad has no place for the text a cell was lexed from)
         shared remove := fn (k := i64 ?) -> void ( ? )                    # drop a cell before it lexes or after
         # tape[k]: the instance's constructor consumes the [ ] to its right (ruled 9 September 2026: [ is ( in
-        # square brackets, its interior any expression); tape[k]:dyad is the cell, tape[k]:dyad.type = T a fresh
+        # square brackets, its interior any expression); tape[k]:dyad is the cell, tape[k]:type = T a fresh
         # node of type T with an empty operand record, tape[k]:dyad.value.operands.append(a and b) fills it
     )
 )
@@ -65,10 +65,10 @@ mut := type (
     )
 )
 
-p1 := conjecture ( a + a -> 2 * a ) where ( a:dyad.type is number )           # value rule: licenses rewriting a+a into 2*a; no proof = an assumption where cited, an axiom where a scope registers it
-p2 := conjecture ( a + a == 2 * a -> true ) where ( a:dyad.type is number )   # truth rule: the primitive form, states any proposition
-p3 := conjecture ( a / a -> 1 ) where ( a:dyad.type is number and a != 0 )   # with a premise: where is one boolean, a hole's type a premise like any other
-p4 := conjecture ( (a + a) / a -> 2 ) where ( a:dyad.type is number and a != 0 ) proof (
+p1 := conjecture ( a + a -> 2 * a ) where ( a:type is number )           # value rule: licenses rewriting a+a into 2*a; no proof = an assumption where cited, an axiom where a scope registers it
+p2 := conjecture ( a + a == 2 * a -> true ) where ( a:type is number )   # truth rule: the primitive form, states any proposition
+p3 := conjecture ( a / a -> 1 ) where ( a:type is number and a != 0 )   # with a premise: where is one boolean, a hole's type a premise like any other
+p4 := conjecture ( (a + a) / a -> 2 ) where ( a:type is number and a != 0 ) proof (
     (a + a) / a
     -> p1(a + a) / a                # the derivation is a chain of -> steps, each call written where it applies
     -> mul_div_assoc((2 * a) / a)
@@ -76,7 +76,7 @@ p4 := conjecture ( (a + a) / a -> 2 ) where ( a:dyad.type is number and a != 0 )
     -> mul_one(2 * 1)
     -> 2
 )
-p5 := conjecture ( x <= x ^ 2 + 1 -> true ) where ( x:dyad.type is number ) proof (   # a boolean mapping is goal reduction: each line is implied by the next, down to true (ruled 8 September 2026)
+p5 := conjecture ( x <= x ^ 2 + 1 -> true ) where ( x:type is number ) proof (   # a boolean mapping is goal reduction: each line is implied by the next, down to true (ruled 8 September 2026)
     x <= x ^ 2 + 1
     -> sub_lhs(0 <= x ^ 2 - x + 1)          # an iff rule over the inequality
     -> 0 <= complete_square((x - 1/2) ^ 2 + 3/4)   # a value rewrite inside the line, == on the subterm
@@ -157,7 +157,7 @@ record of a {         # the trie entry (id_context renamed record, 7 September 2
                                                        # every fact tied to the name; the dyad is the other level, and := binds only that)
     lex_rank -> 0                                      # ranks the spelling at a text position; name data, never crosses := (14 September 2026)
 }
-a {                   # the dyad: type and value, nothing else; a:dyad reaches it, a:scope and a:gate read the record
+a {                   # the dyad: type and value, nothing else; a:type reads its type, a:scope and a:gate read the record
     type -> i32
     value -> 32
 }
