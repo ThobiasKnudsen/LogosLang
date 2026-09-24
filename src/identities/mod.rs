@@ -55,6 +55,7 @@ pub(crate) mod ops;
 mod or;
 mod paren;
 pub(crate) mod pointer;
+pub mod print;
 pub mod ran;
 pub(crate) mod rational;
 mod regex_mod;
@@ -139,6 +140,7 @@ pub struct Core {
     pub tape: tape::TapeIds,
     pub this: this::ThisIds,
     pub lex: lex::LexIds,
+    pub print: print::PrintIds,
     pub run_body: run_body::RunBodyIds,
     pub here: here::HereIds,
     /// The passive node a `[i]` cell carries.
@@ -296,6 +298,7 @@ impl Core {
         let tape = tape::register(&mut cx, &callables, scope_, array_, void);
         let this = this::register(&mut cx, &callables);
         let lex = lex::register(&mut cx, &callables);
+        let print = print::register(&mut cx, &callables);
         let run_body = run_body::register(&mut cx);
         let here = here::register(&mut cx, &callables);
         // Last: the `binding` type's fields are `@dyad` places, so it waits for `dyad` and `@`.
@@ -377,6 +380,7 @@ impl Core {
             tape,
             this,
             lex,
+            print,
             run_body,
             here,
             index_,

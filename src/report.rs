@@ -94,7 +94,10 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::ExpectedPath => "`import` must be followed by a file path".into(),
         ParseError::ExpectedPattern => "`regex` must be followed by a «…» pattern".into(),
-        ParseError::ExpectedQuote => "`lex` must be followed by a «…» quote".into(),
+        ParseError::ExpectedQuote(word) => format!("`{word}` must be followed by a «…» quote"),
+        ParseError::InterpolationPending => {
+            "`{…}` in a `print` quote is not interpolated yet: strings are not live values in the seed; print plain text".into()
+        }
         ParseError::InsertTakesTape => {
             "`insert` splices a tape: give it a `lex «…»` fragment or a parsing_tape value".into()
         }
@@ -293,7 +296,8 @@ pub fn run_message(e: &RunError) -> String {
                 .into()
         }
         RunError::MalformedFn(_) => "a parameter of this function has no frame slot".into(),
-        RunError::NotText => "lex takes a string".into(),
+        RunError::NotText => "`lex` and `print` take a string".into(),
+        RunError::Output(why) => format!("print could not write to stdout: {why}"),
         RunError::NoTape => "there is no tape behind this receiver".into(),
         RunError::OffTape => "this index is off the tape".into(),
         RunError::NoName => "this cell holds no name".into(),
