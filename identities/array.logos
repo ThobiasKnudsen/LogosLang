@@ -29,11 +29,11 @@
 # The seed's array is array-of-@dyad with no spelling and no element access (src/identities/array.rs).
 # The fields block comes first in every type body (ruled 20 September 2026): a body's this.f names a field declared above it.
 
-array_mints := hashmap type -> type
+array_mints := hashmap type -> type,
 
 get_mint := fn (t := type ?) -> type (
-    mut mint := array_mints[t]
-    if mint != ? return mint
+    mut mint := array_mints[t],
+    if mint != ? return mint,
     mint = type (
         fields = (
             shared element_type := t,
@@ -78,10 +78,10 @@ get_mint := fn (t := type ?) -> type (
             ),
             tape.is_constructed[0] = true
         )
-    )
-    array_mints[t] = mint
+    ),
+    array_mints[t] = mint,
     mint
-)
+),
 
 pub array := type (
     parse_rank = *.parse_rank + 1,

@@ -215,6 +215,19 @@ fn the_power_demo_prints_nine() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "9\n");
 }
 
+#[test]
+#[ignore = "stand-in for #137: the seed cannot run array.logos yet"]
+fn the_array_written_in_logos_reads_an_element_and_its_size() {
+    let out = logos().args(["import", "./identities/array.logos"]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    for (tail, printed) in [("a[1]", "2\n"), ("a.size_bytes()", "12\n")] {
+        let src = format!("import ./identities/array.logos, a := array i32 (1, 2, 3), {tail}");
+        let out = logos().arg(&src).output().unwrap();
+        assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), printed, "{src}");
+    }
+}
+
 /// The power operator with the bare run body, on one line for the REPL.
 const POWER: &str = "^ := type ( fields = ( lhs := ?, rhs := i32 ?, output := type ?, \
     shared run = ( mut r := this.output 1, for 0..this.rhs ( r = r * this.lhs ), r ) ), \
