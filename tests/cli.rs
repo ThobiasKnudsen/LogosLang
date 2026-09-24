@@ -647,7 +647,7 @@ fn a_constructor_tells_a_square_bracket_cell_from_a_scope_by_its_type() {
 #[test]
 fn a_hashmap_is_read_and_written_by_key() {
     let (echoes, stderr) = repl(
-        b"m := hashmap i32 -> i64 ?\n\
+        b"m := hashmap i32 -> i64\n\
           m[3] = 40\n\
           m[-1] = 3000000000\n\
           m[3] + 2\n\
@@ -655,16 +655,16 @@ fn a_hashmap_is_read_and_written_by_key() {
           x := i32 3\n\
           m[x] = m[x] * 2\n\
           m[3]\n\
-          f := fn (n := i64 ?) -> i64 ( w := hashmap u8 -> i64 ?, w[1] = n, w[1] + w[1] )\n\
+          f := fn (n := i64 ?) -> i64 ( w := hashmap u8 -> i64, w[1] = n, w[1] + w[1] )\n\
           f(5)\n\
           f(7)\n\
-          hashmap i32 -> i64 == hashmap i32 -> i64\n\
-          hashmap i32 -> i64 == hashmap i64 -> i32\n",
+          (hashmap i32 -> i64):type == m:type\n\
+          (hashmap i32 -> i64):type == (hashmap i64 -> i32):type\n",
     );
     assert_eq!(echoes, ["42", "3000000000", "80", "10", "14", "true", "false"], "stderr: {stderr}");
 
     // A number cannot be the unknown, so a missing key of a number-valued map is the checked error.
-    let (echoes, stderr) = repl(b"m := hashmap i32 -> i64 ?\nm[1] = 1\nm[2]\nm[1]\n");
+    let (echoes, stderr) = repl(b"m := hashmap i32 -> i64\nm[1] = 1\nm[2]\nm[1]\n");
     assert_eq!(echoes, ["1"], "stderr: {stderr}");
     assert!(stderr.contains("the map holds no value at this key"), "stderr: {stderr}");
 }
@@ -672,7 +672,7 @@ fn a_hashmap_is_read_and_written_by_key() {
 #[test]
 fn a_hashmap_of_types_hands_back_the_unknown_for_a_missing_key() {
     let (echoes, stderr) = repl(
-        b"mints := hashmap type -> type ?\n\
+        b"mints := hashmap type -> type\n\
           mints[i32] = f64\n\
           mut t := mints[i32]\n\
           t == f64\n\
@@ -686,6 +686,24 @@ fn a_hashmap_of_types_hands_back_the_unknown_for_a_missing_key() {
 }
 
 #[test]
+fn a_declared_hashmap_is_empty_and_readable_at_once() {
+    // Before any write, with or without `?`: no read veto, as `t := i32 ?` has.
+    let (echoes, stderr) = repl(
+        b"m := hashmap type -> type\n\
+          mut u := m[i32]\n\
+          u\n\
+          n := hashmap i32 -> i64 ?\n\
+          n[1]\n\
+          n[1] = 2\n\
+          n[1]\n\
+          f := fn (w := hashmap i32 -> i64 ?) -> i64 ( 1 )\n",
+    );
+    assert_eq!(echoes, ["type ?", "2"], "stderr: {stderr}");
+    assert!(stderr.contains("the map holds no value at this key"), "stderr: {stderr}");
+    assert!(!stderr.contains("<repl>"), "no line is refused at parse: {stderr}");
+}
+
+#[test]
 fn a_hashmap_checks_its_shape_and_its_key_and_value_types() {
     for line in ["hashmap i32 i32", "hashmap f64 -> i32", "hashmap i32 -> bool", "hashmap i32"] {
         let (_echoes, stderr) = repl(format!("{line}\n").as_bytes());
@@ -693,7 +711,7 @@ fn a_hashmap_checks_its_shape_and_its_key_and_value_types() {
     }
     for line in ["m[i32] = 1", "m[1] = i32", "n[1] = 2", "n[i32] = 2"] {
         let (_echoes, stderr) = repl(
-            format!("m := hashmap i32 -> i32 ?\nn := hashmap type -> type ?\n{line}\n").as_bytes(),
+            format!("m := hashmap i32 -> i32\nn := hashmap type -> type\n{line}\n").as_bytes(),
         );
         assert!(stderr.contains("these types do not match"), "{line}: {stderr}");
     }

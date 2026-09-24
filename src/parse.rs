@@ -1746,7 +1746,7 @@ impl<'a> Parser<'a> {
     /// Inside a function the place is frame-relative, the next offset after
     /// the parameters, its storage per call; at top level an absolute global
     /// blob. The value is a `FRAME_TAG` offset or a real address respectively.
-    fn alloc_local(&mut self, ty_node: DyadPtr, width: usize) -> DyadPtr {
+    pub(crate) fn alloc_local(&mut self, ty_node: DyadPtr, width: usize) -> DyadPtr {
         let place = if self.frames.is_empty() {
             // Tagged as storage, so a place and a definition's record are
             // told apart everywhere, not only where a frame exists.
@@ -5197,9 +5197,17 @@ impl<'a> Parser<'a> {
             if self.holes.remove(&value) {
                 // `x := i32 ?`: the place `?` built is what the name binds to;
                 // nothing initializes it, and `?`'s entry refuses a read until
-                // a sibling write fills it.
+                // a sibling write fills it. A hashmap's zeroed place is already
+                // its empty map, so nothing is unknown to refuse.
                 self.scopes.rebind(binding, value);
-                Binding::add_gate(self.rt.store, self.types.array_, binding, self.types.unknown);
+                if !crate::identities::hashmap::is_hashmap(self.types, (*value).ty) {
+                    Binding::add_gate(
+                        self.rt.store,
+                        self.types.array_,
+                        binding,
+                        self.types.unknown,
+                    );
+                }
                 value
             } else if (*read).ty == self.types.construct_ {
                 let ops = (*read).value as *mut DyadPtr;

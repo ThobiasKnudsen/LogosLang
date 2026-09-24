@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `hashmap K -> V`, the native map the seed owes (DESIGN ›The reflection boundary
-//! is callable-versus-data‹): the type, interned per `(K, V)`; `m[k]` read and
-//! `m[k] = v` write (›The dyad's read surface‹). An instance's eight bytes hold
-//! its table in the store, null until the first write; no field names them, so
-//! no Logos code forges one. The natives run interpreted.
+//! is callable-versus-data‹): an empty map of the type interned per `(K, V)`, or
+//! that type before `?`; `m[k]` read and `m[k] = v` write (›The dyad's read
+//! surface‹). An instance's eight bytes hold its table in the store, null, the
+//! empty map, until the first write; no field names them, so no Logos code forges
+//! one. The natives run interpreted.
 
 use super::callable::{self, Callables};
 use super::read::{read_kind, Read};
@@ -54,7 +55,9 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables, array_ty: DyadPtr) -> Hashma
     HashmapIds { hashmap, mints, get, get_leaf, put, put_leaf }
 }
 
-/// `hashmap K -> V`: consumes the three cells to its right and places the interned type.
+/// `hashmap K -> V`: consumes the three cells to its right and places a fresh empty
+/// map, or the interned type when `?` follows, for `?` to read (DESIGN ›The
+/// reflection boundary is callable-versus-data‹).
 fn construct(p: &mut Parser, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
     let types = p.types();
     let key = param(p, tape, 1)?;
@@ -67,7 +70,10 @@ fn construct(p: &mut Parser, tape: &mut ParsingTape) -> Result<Constructed, Pars
         tape.remove(1);
     }
     // SAFETY: `key` and `value` are type identities from the store.
-    let node = unsafe { mint(p.store(), types, key, value) };
+    let ty = unsafe { mint(p.store(), types, key, value) };
+    let hole_follows =
+        p.cell_at(tape, 1)?.is_some_and(|c| !c.constructed && c.identity(types) == types.unknown);
+    let node = if hole_follows { ty } else { p.alloc_local(ty, 8) };
     tape.place(node);
     Ok(Constructed::Placed)
 }
@@ -134,6 +140,12 @@ unsafe fn params_of(types: &Core, t: DyadPtr) -> Option<(DyadPtr, DyadPtr)> {
         .iter()
         .find(|[_, _, m]| *m == t)
         .map(|&[k, v, _]| (k, v))
+}
+
+/// # Safety
+/// `t` must be null or a dyad from the store.
+pub(crate) unsafe fn is_hashmap(types: &Core, t: DyadPtr) -> bool {
+    params_of(types, t).is_some()
 }
 
 /// The value type a get node yields; `None` for any other node.
@@ -253,8 +265,8 @@ unsafe fn table_slot(rt: &mut Runtime, map: DyadPtr) -> Result<*mut *mut Table, 
 
 /// A missing key hands back the unknown where the value type's places hold it, and
 /// is the checked error where they do not (DESIGN ›Declarations are immutable by
-/// default‹). Stand-in for #38: the unknown is a null node, what an unwritten
-/// `type ?` place reads as.
+/// default‹). The unknown is a null node, what an unwritten `type ?` place reads
+/// as, a stand-in for #38.
 fn run_get(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a get node `build_get` built; the slot is an instance's eight
     // bytes, null or a table `run_put` allocated in the store.
