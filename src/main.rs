@@ -68,6 +68,7 @@ fn is_silent_type(core: &Core, logos: seed::dyad::DyadPtr) -> bool {
         || logos == core.compile_
         || logos == core.import_
         || logos == core.print.print
+        || logos == core.hashmap.put
 }
 
 /// Whether an imported file's tail prints nothing. Narrower than the REPL's
