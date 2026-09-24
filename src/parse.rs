@@ -1068,6 +1068,9 @@ struct OpenScope {
     /// The `defer free <place>` nodes the scope's owning bindings inserted,
     /// drained into the body after each statement.
     defers: Vec<DyadPtr>,
+    /// The places those teardowns free, once drained: no tail or `return`
+    /// leaving the scope may hand one out.
+    owned: Vec<DyadPtr>,
     /// Items parsed at depth 0 and not yet run: `drain` runs them when the
     /// pass needs a value, the scope's own run otherwise.
     unrun: Vec<DyadPtr>,
@@ -1181,8 +1184,7 @@ pub enum ParseError {
     TypeMismatch,
     /// A number literal had no exact value in the type it was committed to.
     UncomputableLiteral,
-    /// A `return` in a non-tail position: with no unwinding yet it would
-    /// silently not exit, so it is rejected rather than mis-run.
+    /// A `return` before the tail with no function around it to leave.
     EarlyReturn,
     /// A unit-valued statement (a `while` loop) stood where a value is required.
     StatementAsValue,
@@ -1581,6 +1583,10 @@ struct OpenFn {
     /// The bindings of the outer names the body has read so far, first-read
     /// order, each once: the function's `FN_OUTER` list.
     outer: Vec<DyadPtr>,
+    /// `open`'s length outside the body: the scopes a `return` leaves are the ones past it.
+    open_below: usize,
+    /// Every `return` in the body, committed to the result type as the tail is.
+    returns: Vec<DyadPtr>,
 }
 
 /// A scalar at its own width; anything else the 8-byte container the call
@@ -3425,7 +3431,13 @@ impl<'a> Parser<'a> {
         // A call frame is an instance of its function, so a parameter resolves
         // to a frame slot as a local does (DESIGN ›Resolution is one rule‹). The
         // barrier begins at the current depth, so a lesser depth is outside the function.
-        self.frames.push(OpenFn { size: 0, below: self.scopes.depth(), outer: Vec::new() });
+        self.frames.push(OpenFn {
+            size: 0,
+            below: self.scopes.depth(),
+            outer: Vec::new(),
+            open_below: self.open.len(),
+            returns: Vec::new(),
+        });
         let depth = self.frames.len();
         // SAFETY: `input` is the record just built; each parameter's value slot is still the null `parse_record` left there.
         unsafe {
@@ -3483,7 +3495,7 @@ impl<'a> Parser<'a> {
         if unsafe { crate::identities::drop_model::is_owning_value(self.types, body) } {
             return Err(ParseError::OwnershipAcrossReturn);
         }
-        let OpenFn { size: frame_size, outer, .. } =
+        let OpenFn { size: frame_size, outer, returns, .. } =
             self.frames.pop().expect("parse_fn pushed a frame");
 
         // A comptime-rational tail commits to the declared return type here,
@@ -3491,6 +3503,10 @@ impl<'a> Parser<'a> {
         // SAFETY: `body`/`output` are valid dyads just built.
         let body =
             unsafe { crate::identities::commit_fn_body(self.rt.store, self.types, body, output)? };
+        for r in returns {
+            // SAFETY: `r` is a `return` node built in this body.
+            unsafe { crate::identities::commit_fn_body(self.rt.store, self.types, r, output)? };
+        }
 
         let frame = if frame_size == 0 {
             std::ptr::null_mut()
@@ -3513,6 +3529,29 @@ impl<'a> Parser<'a> {
             outer,
         ]);
         Ok(self.rt.store.alloc_raw(fn_type, value))
+    }
+
+    /// A `return` just built: inside a function it leaves every scope open
+    /// since the body began, so it may not hand out a place their teardowns
+    /// free, nor an owning value; the body's close commits it to the result type.
+    ///
+    /// # Safety
+    /// `node` must be a `return` node `[value, op]` from the store.
+    pub(crate) unsafe fn note_return(&mut self, node: DyadPtr) -> Result<(), ParseError> {
+        let Some(frame) = self.frames.last() else {
+            return Ok(());
+        };
+        let types = self.types;
+        let value = *((*node).value as *const DyadPtr);
+        let place = types.through(value);
+        if self.open[frame.open_below..].iter().any(|s| s.owned.contains(&place)) {
+            return Err(ParseError::OwningEscape);
+        }
+        if crate::identities::drop_model::is_owning_value(types, value) {
+            return Err(ParseError::OwnershipAcrossReturn);
+        }
+        self.frames.last_mut().expect("checked above").returns.push(node);
+        Ok(())
     }
 
     /// `if cond ( then )` with an optional `else ( else )`: the node is
@@ -3702,7 +3741,7 @@ impl<'a> Parser<'a> {
 
     /// `while ( cond ) ( body )`: the node is `[cond, body]`, a statement
     /// yielding unit; the body's value is thrown away (DESIGN ›a loop body's
-    /// is thrown away‹), and a `return` in it is rejected since v1 has no unwinding.
+    /// is thrown away‹); a `return` in it leaves the enclosing function.
     pub fn parse_while(&mut self, while_id: DyadPtr) -> Result<DyadPtr, ParseError> {
         let items = self.drive_until_open(RightSide::Condition)?;
         let cond = self.one_of(items)?;
@@ -3721,7 +3760,7 @@ impl<'a> Parser<'a> {
         self.scopes.pop_barrier();
         self.runtime_depth -= 1;
         // SAFETY: `body` is the reduced dyad just parsed.
-        if unsafe { contains_return(types, body) } {
+        if self.frames.is_empty() && unsafe { contains_return(types, body) } {
             return Err(ParseError::EarlyReturn);
         }
         let value = self.rt.store.alloc_operands(&[cond, body, self.types.ops.while_]);
@@ -3804,7 +3843,7 @@ impl<'a> Parser<'a> {
         self.scopes.pop();
         self.scopes.pop_barrier();
         // SAFETY: `body` is the reduced dyad just parsed.
-        if unsafe { contains_return(types, body) } {
+        if self.frames.is_empty() && unsafe { contains_return(types, body) } {
             return Err(ParseError::EarlyReturn);
         }
 
@@ -4727,9 +4766,6 @@ impl<'a> Parser<'a> {
         let scope = self.open_scope();
         self.open.push(OpenScope::default());
         let array_ = self.types.array_;
-        // The places this scope's own teardowns will free: what the escape
-        // check below tests its tail against.
-        let mut owned_here: Vec<DyadPtr> = Vec::new();
         while let Some(item) = self.parse_next() {
             let item = item?;
             // SAFETY: the pending bindings were minted by this parser's declares;
@@ -4745,7 +4781,8 @@ impl<'a> Parser<'a> {
                     // SAFETY: `d` is a `defer free <place>` node the binding site
                     // just built; `scope` a scope `open_scope` minted.
                     unsafe {
-                        owned_here.push(crate::identities::drop_model::teardown_place_of(d));
+                        let place = crate::identities::drop_model::teardown_place_of(d);
+                        self.open[depth].owned.push(place);
                         crate::identities::scope::push_item(self.rt.store, array_, scope, d);
                     }
                 }
@@ -4760,7 +4797,7 @@ impl<'a> Parser<'a> {
         };
         // What the block parsed and did not run runs when the block runs;
         // what it did run stands in the body as its result.
-        self.open.pop();
+        let owned_here = self.open.pop().expect("pushed above").owned;
         // Prose and a `defer` (it runs at exit, never as the tail) are
         // invisible to value flow.
         let defer_ = self.types.defer_;
@@ -4781,13 +4818,12 @@ impl<'a> Parser<'a> {
             }
             (_, 1) => Ok(exprs[0]),
             _ => {
-                // A `return` anywhere but the tail would run without exiting
-                // (no unwinding yet).
+                // Outside a function a `return` before the tail has nothing to leave.
                 let types = self.types;
                 let tail = exprs.iter().rposition(|&e| is_value(e)).expect("values >= 1");
                 for (i, &e) in exprs.iter().enumerate() {
                     // SAFETY: `e` is a reduced dyad just parsed.
-                    if i != tail && unsafe { contains_return(types, e) } {
+                    if i != tail && self.frames.is_empty() && unsafe { contains_return(types, e) } {
                         return Err(ParseError::EarlyReturn);
                     }
                 }

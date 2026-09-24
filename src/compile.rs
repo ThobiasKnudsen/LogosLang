@@ -130,6 +130,10 @@ pub struct Lowerer<'a, 'f> {
     /// Offset → register variable and type; a promoted place never touches its
     /// frame memory. Empty on the analysis pass.
     promoted: &'a HashMap<usize, (Variable, types::Type)>,
+    /// The declared result, `None` for `-> void`: what a `return` widens.
+    ret: Option<NumType>,
+    /// The call-depth counter the epilogue counts this call out of.
+    depth_addr: Value,
 }
 
 impl Lowerer<'_, '_> {
@@ -737,6 +741,30 @@ impl Lowerer<'_, '_> {
         )
     }
 
+    /// `return X` leaves the function from wherever it stands, counting the
+    /// call out as the epilogue does. What follows it is unreachable, so the
+    /// value handed back to the enclosing lowering is a zero of `X`'s type.
+    ///
+    /// # Safety
+    /// `value` must be a valid dyad from the store.
+    pub unsafe fn lower_return(&mut self, value: DyadPtr) -> Result<Value, CompileError> {
+        let v = self.lower(value)?;
+        let ret64 = match self.ret {
+            Some(nt) => widen_to_i64(self.builder, v, nt),
+            None => self.builder.ins().iconst(types::I64, 0),
+        };
+        count_out(self.builder, self.depth_addr);
+        self.builder.ins().return_(&[ret64]);
+        let after = self.builder.create_block();
+        self.builder.switch_to_block(after);
+        self.builder.seal_block(after);
+        Ok(match self.builder.func.dfg.value_type(v) {
+            types::F32 => self.builder.ins().f32const(0.0),
+            types::F64 => self.builder.ins().f64const(0.0),
+            ty => self.builder.ins().iconst(ty, 0),
+        })
+    }
+
     /// Short-circuit: `b` is not evaluated when `a` is false.
     ///
     /// # Safety
@@ -1155,6 +1183,8 @@ unsafe fn build_pass(
                 frame_slot,
                 collect,
                 promoted: &promoted,
+                ret,
+                depth_addr,
             };
             lw.lower(root)?
         };
@@ -1164,10 +1194,7 @@ unsafe fn build_pass(
             Some(nt) => widen_to_i64(&mut builder, value, nt),
             None => builder.ins().iconst(types::I64, 0),
         };
-        // Count this call out (the prologue counted it in).
-        let depth = builder.ins().load(types::I64, MemFlagsData::new(), depth_addr, 0);
-        let shallower = builder.ins().iadd_imm(depth, -1);
-        builder.ins().store(MemFlagsData::new(), shallower, depth_addr, 0);
+        count_out(&mut builder, depth_addr);
         builder.ins().return_(&[ret64]);
         builder.finalize();
     }
@@ -1201,6 +1228,13 @@ fn narrow_from_i64(b: &mut FunctionBuilder, v: Value, nt: NumType) -> Value {
             }
         }
     }
+}
+
+/// The call leaves: the prologue counted it in.
+fn count_out(b: &mut FunctionBuilder, depth_addr: Value) {
+    let depth = b.ins().load(types::I64, MemFlagsData::new(), depth_addr, 0);
+    let shallower = b.ins().iadd_imm(depth, -1);
+    b.ins().store(MemFlagsData::new(), shallower, depth_addr, 0);
 }
 
 /// Sign-extend signed integers, zero-extend unsigned, reinterpret float bits,

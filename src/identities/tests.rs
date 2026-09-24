@@ -1423,7 +1423,7 @@ fn for_loop_shapes_are_checked() {
     assert_eq!(parse_err("for i in 0..10..0 ( 1 )"), ParseError::BadStep);
     assert_eq!(parse_err("for i in 10..0..-1 ( 1 )"), ParseError::BadStep);
     assert_eq!(parse_err("fn () -> i32 ( for i in 0..3 ( 1 ) )"), ParseError::StatementAsValue);
-    assert_eq!(parse_err("fn () -> void ( for i in 0..3 ( return 1 ) )"), ParseError::EarlyReturn);
+    assert_eq!(parse_err("for i in 0..3 ( return 1 )"), ParseError::EarlyReturn);
     assert_eq!(parse_err("for i 0..3 ( 1 )"), ParseError::ExpectedIn);
     assert_eq!(parse_err("for i in 0 ( 1 )"), ParseError::ExpectedRange);
     assert_eq!(parse_err("fn () -> i32 ( for 0..3 ( 1 ) )"), ParseError::StatementAsValue);
@@ -1444,8 +1444,23 @@ fn a_while_loop_is_not_a_value() {
 }
 
 #[test]
-fn a_return_inside_a_while_body_is_rejected() {
-    assert_eq!(parse_err("fn () -> void ( while (1 < 2) (return 1) )"), ParseError::EarlyReturn);
+fn a_return_inside_a_loop_leaves_the_function() {
+    assert_eq!(parse_err("while (1 < 2) (return 1)"), ParseError::EarlyReturn);
+    diff_typed_call(
+        "fn (n := i32 ?) -> i32 ( mut k := i32 0, while (k < 100) ( k = k + 1, if (k == n) (return k * 2) ), 0 )",
+        "f(7)",
+        14,
+    );
+    diff_typed_call(
+        "fn (n := i32 ?) -> i32 ( for i in 0..n ( if (i == 3) (return i * 10) ), 0 - 1 )",
+        "f(9)",
+        30,
+    );
+    diff_typed_call(
+        "fn (n := i32 ?) -> i32 ( for i in 0..n ( if (i == 3) (return i * 10) ), 0 - 1 )",
+        "f(2)",
+        -1,
+    );
 }
 
 #[test]
@@ -2295,11 +2310,38 @@ fn block_local_declarations_do_not_leak() {
 }
 
 #[test]
-fn an_early_return_in_a_sequence_is_rejected() {
+fn an_early_return_leaves_the_function_and_outside_one_is_refused() {
     assert_eq!(parse_err("( return 1, 2 )"), ParseError::EarlyReturn);
+    diff_nullary_fn("fn () -> i32 ( if (true) (return 1) else (0), 2 )", 1);
+    diff_typed_call("fn (n := i32 ?) -> i32 ( if (n > 2) (return 7), n + 1 )", "f(5)", 7);
+    diff_typed_call("fn (n := i32 ?) -> i32 ( if (n > 2) (return 7), n + 1 )", "f(1)", 2);
+    // The literal commits to the declared result, as the tail's does.
+    diff_typed_call(
+        "fn (n := i64 ?) -> i64 ( if (n > 2) (return 5000000000), n )",
+        "f(3)",
+        5_000_000_000,
+    );
+    // Through a block bound to a name: the function is left, not the block.
+    diff_typed_call("fn (n := i32 ?) -> i32 ( x := ( return 5 ), x + 1 )", "f(0)", 5);
     assert_eq!(
-        parse_err("fn () -> i32 ( if (true) (return 1) else (0), 2 )"),
-        ParseError::EarlyReturn
+        parse_err("fn (n := i32 ?) -> type ( if (n > 2) (return 5), i32 )"),
+        ParseError::TypeMismatch
+    );
+}
+
+#[test]
+fn an_early_return_hands_out_no_place_a_scope_it_leaves_frees() {
+    assert_eq!(
+        parse_err("fn (n := i32 ?) -> i32 ( p := alloc 1 of i32 7, if (n > 2) (return p), 0 )"),
+        ParseError::OwningEscape
+    );
+    assert_eq!(
+        parse_err("fn (n := i32 ?) -> i32 ( ( p := alloc 1 of i32 7, if (n > 2) (return p) ), 0 )"),
+        ParseError::OwningEscape
+    );
+    assert_eq!(
+        parse_err("fn (n := i32 ?) -> i32 ( if (n > 2) (return alloc 1 of i32 7), 0 )"),
+        ParseError::OwnershipAcrossReturn
     );
 }
 

@@ -146,14 +146,31 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
                 defers.push(expr);
                 continue;
             }
-            last = rt.run(expr)?;
+            match rt.run(expr) {
+                Ok(v) => last = v,
+                // A `return` leaves through this scope, so the teardowns held so far run.
+                Err(RunError::Return(v)) => {
+                    run_teardowns(rt, &defers)?;
+                    return Err(RunError::Return(v));
+                }
+                // A body error skips the held teardowns.
+                Err(e) => return Err(e),
+            }
         }
-        // No unwinding: a body error above skips the held teardowns.
-        for &d in defers.iter().rev() {
-            rt.run(super::drop_model::deferred_inner_of(d))?;
-        }
+        run_teardowns(rt, &defers)?;
         Ok(last)
     }
+}
+
+/// LIFO, as `defer` runs at scope exit.
+///
+/// # Safety
+/// `defers` must be `defer` nodes from the store.
+unsafe fn run_teardowns(rt: &mut Runtime, defers: &[DyadPtr]) -> Result<(), RunError> {
+    for &d in defers.iter().rev() {
+        rt.run(super::drop_model::deferred_inner_of(d))?;
+    }
+    Ok(())
 }
 
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {

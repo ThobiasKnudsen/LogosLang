@@ -555,6 +555,14 @@ mod tests {
     }
 
     #[test]
+    fn an_early_return_runs_the_teardowns_of_every_scope_it_leaves() {
+        let f = "f := fn (n := i32 ?) -> i32 ( p := alloc 1 of i32 42, \
+                 ( q := alloc 1 of i32 1, for i in 0..n ( if (i == 2) (return p@ + q@) ) ), 0 ),\n";
+        assert_eq!(run(&format!("{f}f(5)")), (43, 0));
+        assert_eq!(run(&format!("{f}f(1)")), (0, 0));
+    }
+
+    #[test]
     fn alloc_inside_a_function_frees_when_the_call_returns() {
         let (v, live) = run("main := fn () -> i32 ( p := alloc 1 of i32 42, p@ ),\nmain()");
         assert_eq!(v, 42);
