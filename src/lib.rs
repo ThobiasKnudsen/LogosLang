@@ -15,7 +15,7 @@ pub mod report;
 pub mod run;
 pub mod store;
 
-pub use identities::{dyad, record, Core};
+pub use identities::{binding, dyad, Core};
 
 /// The stack every thread that runs Logos must have. The parser recurses per
 /// bracket and the interpreter per call, so the depth guards mean one thing only

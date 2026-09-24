@@ -85,7 +85,7 @@ pub(crate) fn fold_arith(
     let rational = types.rational;
     // SAFETY: `lhs`/`rhs` are valid dyads; a rational-typed one holds a `[num, den]` blob.
     unsafe {
-        // A comptime binding used as an operand is its record: fold through it.
+        // A comptime name used as an operand is its binding: fold through it.
         let (lhs, rhs) = (types.through(lhs), types.through(rhs));
         if !is_literal(rational, lhs) || !is_literal(rational, rhs) {
             return Ok(None);

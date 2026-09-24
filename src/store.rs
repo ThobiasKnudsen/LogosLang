@@ -5,28 +5,28 @@
 //! since a node's address is its id. Nothing is freed individually.
 //! DESIGN ›The store is keyed by address‹.
 
+use crate::binding::Binding;
 use crate::dyad::{Dyad, DyadPtr};
-use crate::record::Record;
 
 /// Each chunk is allocated to exactly this capacity and never grown, so its
 /// buffer never reallocates and the addresses into it stay stable.
 const CHUNK: usize = 4096;
 
 /// Dyads in fixed-capacity chunks, plus boxed side blobs (operand runs, literal
-/// bytes, records); every address handed out stays valid for the store's life.
+/// bytes, bindings); every address handed out stays valid for the store's life.
 #[derive(Default)]
 pub struct Store {
     chunks: Vec<Vec<Dyad>>,
     operands: Vec<Box<[DyadPtr]>>,
     blobs: Vec<Box<[u8]>>,
-    /// Boxed: a record's address is handed out and must survive the vector's growth.
+    /// Boxed: a binding's address is handed out and must survive the vector's growth.
     #[allow(clippy::vec_box)]
-    records: Vec<Box<Record>>,
+    bindings: Vec<Box<Binding>>,
 }
 
 impl Store {
     pub fn new() -> Self {
-        Store { chunks: Vec::new(), operands: Vec::new(), blobs: Vec::new(), records: Vec::new() }
+        Store { chunks: Vec::new(), operands: Vec::new(), blobs: Vec::new(), bindings: Vec::new() }
     }
 
     pub fn alloc(&mut self, dyad: Dyad) -> DyadPtr {
@@ -74,10 +74,10 @@ impl Store {
         ptr
     }
 
-    pub fn alloc_record(&mut self, rec: Record) -> *mut Record {
+    pub fn alloc_binding(&mut self, rec: Binding) -> *mut Binding {
         let mut boxed = Box::new(rec);
-        let ptr: *mut Record = &mut *boxed;
-        self.records.push(boxed);
+        let ptr: *mut Binding = &mut *boxed;
+        self.bindings.push(boxed);
         ptr
     }
 

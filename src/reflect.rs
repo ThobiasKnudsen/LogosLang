@@ -5,12 +5,12 @@
 //! with no per-identity Rust. [`describe`] dispatches as `run` does, through
 //! the node's type and its record. Machine code is the reflection boundary.
 
+use crate::binding::Binding;
 use crate::dyad::DyadPtr;
 use crate::identities::instance;
 use crate::identities::meta;
 use crate::identities::numtype::{self, NumType, ADDR_TAG, COMMENT_TAG, STRING_TAG, VOID_TAG};
 use crate::identities::read::{read_kind, Read};
-use crate::record::Record;
 use crate::Core;
 
 /// One operand slot: its role-name string node and the operand standing in it
@@ -99,10 +99,10 @@ pub enum Shape {
         /// Null on every identity but the owning pointer.
         destructor: DyadPtr,
     },
-    /// A name's record: the dyad it names, its scope, its range, its gate set.
+    /// A name's binding: the dyad it names, its scope, its range, its gate set.
     /// A use of a name stores one, so a walker follows `dyad` to the value.
     /// DESIGN ›The dyad's read surface‹.
-    Record { dyad: DyadPtr, scope: DyadPtr, start: DyadPtr, end: DyadPtr, gate: DyadPtr },
+    Binding { dyad: DyadPtr, scope: DyadPtr, start: DyadPtr, end: DyadPtr, gate: DyadPtr },
     /// A place holding a node address, a `type ?` or `dyad ?` box: eight bytes
     /// known when the program runs.
     Container,
@@ -129,11 +129,11 @@ pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
             size_bytes: meta::record_size_of(node),
         };
     }
-    // A name's record reads as its five pointers, before the instance arm
+    // A name's binding reads as its five pointers, before the instance arm
     // below would lay it out as a five-field record value.
-    if logos == types.record_ {
-        let f = Record::read(node);
-        return Shape::Record {
+    if logos == types.binding_ {
+        let f = Binding::read(node);
+        return Shape::Binding {
             dyad: f.dyad,
             scope: f.scope,
             start: f.start,
@@ -255,7 +255,7 @@ mod tests {
     }
 
     #[test]
-    fn a_use_of_a_name_is_its_record_and_reads_through() {
+    fn a_use_of_a_name_is_its_binding_and_reads_through() {
         let (mut store, core, roots) = parse_all(&["x := i32 41", "x + 1"]);
         let types = &core;
         // SAFETY: all nodes were just parsed into the store.
@@ -263,9 +263,9 @@ mod tests {
             let Shape::Tuple { slots } = describe(types, roots[1]) else {
                 panic!("an application should be a tuple");
             };
-            let Shape::Record { dyad, scope, start, end, gate } = describe(types, slots[0].node)
+            let Shape::Binding { dyad, scope, start, end, gate } = describe(types, slots[0].node)
             else {
-                panic!("a named operand should be its record");
+                panic!("a named operand should be its binding");
             };
             assert_eq!(describe(types, dyad), Shape::Scalar(NumType::I32));
             assert_eq!(scope, core.root_scope);
@@ -279,20 +279,20 @@ mod tests {
     }
 
     #[test]
-    fn a_name_and_its_alias_have_two_records_over_one_dyad() {
+    fn a_name_and_its_alias_have_two_bindings_over_one_dyad() {
         let (_store, core, roots) = parse_all(&["y := i32", "y", "i32"]);
         let types = &core;
         // SAFETY: all nodes were just parsed into the store.
         unsafe {
-            let Shape::Record { dyad: via_y, .. } = describe(types, roots[1]) else {
-                panic!("a bare name is its record");
+            let Shape::Binding { dyad: via_y, .. } = describe(types, roots[1]) else {
+                panic!("a bare name is its binding");
             };
-            let Shape::Record { dyad: via_i32, .. } = describe(types, roots[2]) else {
-                panic!("a bare name is its record");
+            let Shape::Binding { dyad: via_i32, .. } = describe(types, roots[2]) else {
+                panic!("a bare name is its binding");
             };
             assert_eq!(via_y, via_i32, "both names point at the one dyad");
             assert_eq!(via_y, core.i32_);
-            assert_ne!(roots[1], roots[2], "two names, two records");
+            assert_ne!(roots[1], roots[2], "two names, two bindings");
         }
     }
 
@@ -422,11 +422,11 @@ mod tests {
     fn the_outer_slot_lists_exactly_the_names_read_from_outside() {
         let (_store, _core, roots) =
             parse_all(&["n := i32 0", "fn (a := i32 ?) -> i32 ( b := a, n + b + n )"]);
-        // SAFETY: the second root is the fn value just parsed; its list holds record dyads.
+        // SAFETY: the second root is the fn value just parsed; its list holds binding dyads.
         let mut names: Vec<String> = unsafe { crate::parse::fn_outer(roots[1]) }
             .iter()
             .map(|&r| unsafe {
-                let name = crate::identities::record::Record::read(r).name;
+                let name = crate::identities::binding::Binding::read(r).name;
                 String::from_utf8_lossy(text_of(name)).into_owned()
             })
             .collect();
@@ -697,7 +697,7 @@ mod tests {
                 Shape::Call { .. } => "call",
                 Shape::Instance { .. } => "instance",
                 Shape::RecordLogos { .. } => "record-logos",
-                Shape::Record { .. } => "record",
+                Shape::Binding { .. } => "binding",
                 Shape::LogosNode { .. } => "logos",
                 Shape::Container => "container",
                 Shape::Undefined => "undefined",

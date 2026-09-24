@@ -184,12 +184,12 @@ impl Lowerer<'_, '_> {
         self.builder.ins().iconst(types::I32, i64::from(v))
     }
 
-    /// The reading rule over an operand: a record operand yields the dyad it names.
+    /// The reading rule over an operand: a binding operand yields the dyad it names.
     ///
     /// # Safety
     /// `p` must be null or a valid dyad from the store.
     pub(crate) unsafe fn through(&self, p: DyadPtr) -> DyadPtr {
-        crate::record::through(self.types.record_, p)
+        crate::binding::through(self.types.binding_, p)
     }
 
     /// A place's address as an SSA pointer: a baked `iconst` for a global,

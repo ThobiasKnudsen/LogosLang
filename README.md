@@ -94,7 +94,7 @@ pick(0) == i32                 # true
 
 ### Reflection
 
-`.` reads the fields a value's type defines, and a value's type is not one of them. To read the cell itself, ask for the dyad view with `:`, which reads a name's record rather than its value: `x:dyad` is the cell, `x:scope` the scope `x` was declared in, `x:name` its spelling.
+`.` reads the fields a value's type defines, and a value's type is not one of them. To read the cell itself, ask for the dyad view with `:`, which reads a name's binding rather than its value: `x:dyad` is the cell, `x:scope` the scope `x` was declared in, `x:name` its spelling.
 
 ```logos
 x := i32 5,
@@ -191,7 +191,7 @@ The seed runs:
 - `alloc`, `own`, `drop`, `free`, `defer`, and raw pointers;
 - `.compile()` with a deoptimizing JIT;
 - `import`, the command line as source, and the REPL;
-- `pub`, `mut`, `immut` and `shared` on a name's record: a name is written after its declaration only where it says `mut`, a write along a field path needs `mut` on every step, and `immut` on a field refuses even its constructor's fill.
+- `pub`, `mut`, `immut` and `shared` on a name's binding: a name is written after its declaration only where it says `mut`, a write along a field path needs `mut` on every step, and `immut` on a field refuses even its constructor's fill.
 
 Specified in DESIGN.md and not yet built:
 

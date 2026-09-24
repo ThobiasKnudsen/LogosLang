@@ -43,9 +43,9 @@ fn construct(
     // right, so `=` takes the keyword's use as the slot's name unconstructed.
     let target = match tape.at(-1) {
         Some(c) if tape.cursor() == 1 && !c.constructed && c.identity(types) == types.drop_ => {
-            let record = c.dyad;
+            let binding = c.dyad;
             tape.remove(-1);
-            record
+            binding
         }
         _ => match p.construct_left(tape)? {
             Some(target) => target,
@@ -93,21 +93,25 @@ pub(super) fn build(
     lhs: DyadPtr,
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    // A name is written only if its record carries `mut` and no `immut`.
-    // SAFETY: `lhs` is a reduced dyad from the store; one of the record type is a record.
+    // A name is written only if its binding carries `mut` and no `immut`.
+    // SAFETY: `lhs` is a reduced dyad from the store; one of the `binding` type is a binding.
     unsafe {
-        if (*lhs).ty == types.record_ {
-            if crate::record::Record::has_gate(lhs, types.immut_) {
-                return Err(ParseError::Immutable(Box::new(crate::record::Record::spelling(lhs))));
+        if (*lhs).ty == types.binding_ {
+            if crate::binding::Binding::has_gate(lhs, types.immut_) {
+                return Err(ParseError::Immutable(Box::new(crate::binding::Binding::spelling(
+                    lhs,
+                ))));
             }
-            if !crate::record::Record::has_gate(lhs, types.mut_) {
-                return Err(ParseError::NotMutable(Box::new(crate::record::Record::spelling(lhs))));
+            if !crate::binding::Binding::has_gate(lhs, types.mut_) {
+                return Err(ParseError::NotMutable(Box::new(crate::binding::Binding::spelling(
+                    lhs,
+                ))));
             }
         }
     }
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let (lhs_d, rhs_d) = unsafe { (types.through(lhs), types.through(rhs)) };
-    // SAFETY: `through` hands back its argument or the dyad a record names.
+    // SAFETY: `through` hands back its argument or the dyad a binding names.
     let (lhs_ty, rhs_ty) = unsafe { ((*lhs_d).ty, (*rhs_d).ty) };
     if lhs_ty == types.tape.slot {
         // SAFETY: `lhs_d` is a tape slot node, `rhs` a reduced dyad.

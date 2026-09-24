@@ -3,7 +3,7 @@
 
 //! `pub`, `mut`, `immut` and `shared`: the gate words, each a prefix word
 //! over a declaration (`pub x := 5`, `mut x := i32 ?`, `pub mut x := 5`) that
-//! adds itself to the name's record, first in the set, so the set reads in
+//! adds itself to the name's binding, first in the set, so the set reads in
 //! text order. Unmarked stays private and unwritable, so there is no
 //! `private` word to write; `immut` vetoes the one write a field gets by
 //! default, its constructor's fill. `shared` is read by the fields block's own reader.
@@ -14,7 +14,7 @@ use crate::dyad::DyadPtr;
 use crate::parse::{Constructed, ParseError};
 
 /// No node is ever typed by a gate word; its identity exists to stand on a
-/// record. Returns `pub`, `mut`, `immut`, `shared`.
+/// binding. Returns `pub`, `mut`, `immut`, `shared`.
 pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     let word = |cx: &mut Cx, name: &str| {
         let record = meta::record_assoc(

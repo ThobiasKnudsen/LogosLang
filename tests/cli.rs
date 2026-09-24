@@ -364,7 +364,7 @@ fn a_constructor_written_in_logos_runs_during_the_parse() {
 }
 
 #[test]
-fn a_record_carries_its_spelling() {
+fn a_binding_carries_its_spelling() {
     let (echoes, stderr) = repl(b"x := 5\nx:name\nif:name\n");
     assert_eq!(echoes, ["x", "if"], "stderr: {stderr}");
     let (_echoes, stderr) = repl(b"a := i32 1\n(a + 1):name\n");
@@ -925,7 +925,7 @@ fn a_line_starting_with_a_dash_is_source_not_a_flag() {
 }
 
 #[test]
-fn the_record_read_answers_scope_range_and_gate() {
+fn the_binding_read_answers_scope_range_and_gate() {
     let (echoes, stderr) = repl(
         b"x := i32 5\nx:end\nx:gate\nx:scope\n(x + x):scope\ny := i32\ny:dyad.type == type\ny == i32\n",
     );
@@ -933,12 +933,12 @@ fn the_record_read_answers_scope_range_and_gate() {
     assert_eq!(&echoes[..2], ["0", "0"], "end and gate are null");
     assert_ne!(echoes[2], "0", "x was declared somewhere");
     assert_eq!(echoes[2], echoes[3], "a constructed node's :scope is the scope open at the read");
-    assert_eq!(&echoes[4..], ["true", "true"], "an alias is its own record over the same dyad");
+    assert_eq!(&echoes[4..], ["true", "true"], "an alias is its own binding over the same dyad");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
 
 #[test]
-fn a_field_the_record_has_not_is_the_same_error_as_an_undeclared_dot_field() {
+fn a_field_the_binding_has_not_is_the_same_error_as_an_undeclared_dot_field() {
     // The message names the spelling, the one thing the two probes differ in, so it is blanked before comparing.
     fn message(stderr: &str) -> String {
         let m = stderr.lines().next().and_then(|l| l.split("error: ").nth(1)).unwrap_or("");
@@ -949,18 +949,18 @@ fn a_field_the_record_has_not_is_the_same_error_as_an_undeclared_dot_field() {
             .collect::<Vec<_>>()
             .join("`…`")
     }
-    let (_e, via_record) = repl(b"x := i32 5\nx:type\n");
+    let (_e, via_binding) = repl(b"x := i32 5\nx:type\n");
     let (_e, via_dot) = repl(b"p := type (fields = (a := i32 ?))\nq := p(1)\nq.scope\n");
-    assert_eq!(message(&via_record), message(&via_dot), "record: {via_record}\ndot: {via_dot}");
-    assert!(via_record.contains("not in scope"), "stderr: {via_record}");
-    let (_e, via_record) = repl(b"x := i32 5\nx:nonexistent\n");
+    assert_eq!(message(&via_binding), message(&via_dot), "binding: {via_binding}\ndot: {via_dot}");
+    assert!(via_binding.contains("not in scope"), "stderr: {via_binding}");
+    let (_e, via_binding) = repl(b"x := i32 5\nx:nonexistent\n");
     let (_e, via_dot) = repl(b"p := type (fields = (a := i32 ?))\nq := p(1)\nq.nonexistent\n");
-    assert_eq!(message(&via_record), message(&via_dot), "record: {via_record}\ndot: {via_dot}");
-    assert!(via_record.contains("unknown name"), "stderr: {via_record}");
+    assert_eq!(message(&via_binding), message(&via_dot), "binding: {via_binding}\ndot: {via_dot}");
+    assert!(via_binding.contains("unknown name"), "stderr: {via_binding}");
 }
 
 #[test]
-fn the_dyad_view_is_spelled_with_the_record_read() {
+fn the_dyad_view_is_spelled_with_the_binding_read() {
     let (_echoes, stderr) = repl(b"x := i32 5\n(dyad x).type\n");
     assert!(!stderr.is_empty(), "the old spelling no longer parses");
     let (echoes, stderr) = repl(b"x := i32 5\nx:dyad.type == i32\n");

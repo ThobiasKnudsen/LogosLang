@@ -236,7 +236,7 @@ mod tests {
                 core.fn_type,
                 core.scope,
                 core.ran_,
-                core.record_,
+                core.binding_,
                 core.i32_,
                 core.bool_,
                 core.void_,

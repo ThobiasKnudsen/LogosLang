@@ -2,24 +2,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The seed's hand-built core identities, one file each: the node cell (`dyad`),
-//! the name record (`record`), and every primitive. `Core::build` wires them into
+//! the name binding (`binding`), and every primitive. `Core::build` wires them into
 //! the graph; parse and run behaviour ride the graph as callable leaves, and only
 //! the Cranelift lowering is still a native table.
 
 use std::collections::HashMap;
 
+use crate::binding::Binding;
 use crate::compile::LowerTable;
 use crate::dyad::DyadPtr;
 use crate::parse::{Assoc, ConstructFn, ParseError, FN_OUTPUT};
-use crate::record::Record;
 use crate::regex_trie::RegexTrie;
 use crate::store::Store;
 
 pub use numtype::NumType;
 
+pub mod binding;
 pub mod dyad;
 pub mod read;
-pub mod record;
 
 mod and;
 pub(crate) mod array;
@@ -133,8 +133,8 @@ pub struct Core {
     pub import_: DyadPtr,
     /// The cell type; a value of it is the view `a:dyad`.
     pub dyad_: DyadPtr,
-    pub record_: DyadPtr,
-    /// `:`, the record read.
+    pub binding_: DyadPtr,
+    /// `:`, the binding read.
     pub colon_: DyadPtr,
     pub tape: tape::TapeIds,
     pub this: this::ThisIds,
@@ -179,9 +179,9 @@ impl Core {
         let type_ = logos_mod::register_root(store);
         let scope_ = scope::register(store, type_);
         let root_scope = store.alloc_raw(scope_, std::ptr::null_mut());
-        // `record` and `string` are minted before the first declaration, which needs
+        // `binding` and `string` are minted before the first declaration, which needs
         // both; their own definitions are filled in below.
-        let record_ = store.alloc_raw(type_, std::ptr::null_mut());
+        let binding_ = store.alloc_raw(type_, std::ptr::null_mut());
         let string_ = store.alloc_raw(type_, std::ptr::null_mut());
         let fn_type = fn_mod::register(store, type_);
 
@@ -191,7 +191,7 @@ impl Core {
             type_,
             fn_type,
             root_scope,
-            record_,
+            binding_,
             string_,
             metas: HashMap::new(),
             lower: HashMap::new(),
@@ -298,8 +298,8 @@ impl Core {
         let lex = lex::register(&mut cx, &callables);
         let run_body = run_body::register(&mut cx);
         let here = here::register(&mut cx, &callables);
-        // Last: the record type's fields are `@dyad` places, so it waits for `dyad` and `@`.
-        record::register_type(&mut cx, scope_, array_, dyad_, numtypes[NumType::F64 as usize]);
+        // Last: the `binding` type's fields are `@dyad` places, so it waits for `dyad` and `@`.
+        binding::register_type(&mut cx, scope_, array_, dyad_, numtypes[NumType::F64 as usize]);
         op_leaves.scope_ = scope::register_exec(&mut cx, scope_, &callables);
         let (ran_, ran_leaf) = ran::register(&mut cx, &callables);
         op_leaves.ran_ = ran_leaf;
@@ -372,7 +372,7 @@ impl Core {
             shared_,
             import_,
             dyad_,
-            record_,
+            binding_,
             colon_,
             tape,
             this,
@@ -405,12 +405,12 @@ impl Core {
         }
     }
 
-    /// A record yields the dyad it names; anything else passes through.
+    /// A binding yields the dyad it names; anything else passes through.
     ///
     /// # Safety
     /// `p` must be null or a valid dyad from the store.
     pub unsafe fn through(&self, p: DyadPtr) -> DyadPtr {
-        record::through(self.record_, p)
+        binding::through(self.binding_, p)
     }
 }
 
@@ -421,16 +421,16 @@ pub(crate) struct Cx<'a> {
     type_: DyadPtr,
     fn_type: DyadPtr,
     root_scope: DyadPtr,
-    /// Minted first: every declaration allocates a record dyad of this type.
-    record_: DyadPtr,
-    /// Minted before any declaration: every record's name is a string node.
+    /// Minted first: every declaration allocates a binding dyad of this type.
+    binding_: DyadPtr,
+    /// Minted before any declaration: every binding's name is a string node.
     string_: DyadPtr,
     metas: HashMap<DyadPtr, ConstructFn>,
     lower: LowerTable,
 }
 
 impl Cx<'_> {
-    /// Declare `spelling` at the root scope; returns the name's record.
+    /// Declare `spelling` at the root scope; returns the name's binding.
     pub(crate) fn declare(&mut self, spelling: &str, id: DyadPtr) -> DyadPtr {
         let root = self.root_scope;
         self.declare_in(root, spelling, id)
@@ -439,9 +439,9 @@ impl Cx<'_> {
     /// A native record type's field names live in the type's own scope.
     pub(crate) fn declare_in(&mut self, scope: DyadPtr, spelling: &str, id: DyadPtr) -> DyadPtr {
         let name = string::build_text(self.store, self.string_, spelling.as_bytes());
-        let record = Record::alloc(self.store, self.record_, Record::new(id, scope, name));
-        self.trie.insert(spelling, record);
-        record
+        let binding = Binding::alloc(self.store, self.binding_, Binding::new(id, scope, name));
+        self.trie.insert(spelling, binding);
+        binding
     }
 }
 
@@ -713,7 +713,7 @@ unsafe fn commit_if_literal(
     nt: NumType,
 ) -> Result<DyadPtr, ParseError> {
     if let Operand::Literal = op {
-        // A comptime binding used here is its record; the literal folds through it.
+        // A comptime name used here is its binding; the literal folds through it.
         let bits =
             rational::mold_to(types.through(node), nt).ok_or(ParseError::UncomputableLiteral)?;
         let value = store.alloc_bytes(&bits.to_ne_bytes()[..nt.bytes()]);
@@ -763,8 +763,8 @@ unsafe fn type_name(types: &Core, node: DyadPtr) -> String {
     if node == types.bool_ {
         return "bool".to_string();
     }
-    if node == types.record_ {
-        return "record".to_string();
+    if node == types.binding_ {
+        return "binding".to_string();
     }
     match meta::kind_of(node) {
         Some(t) if t <= NumType::F64 as u8 => NumType::from_tag(t).spelling().to_string(),
