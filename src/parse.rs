@@ -1090,8 +1090,12 @@ pub enum ParseError {
     SharedNeedsDeclaration,
     /// A slot word left of `=` where no type is being defined.
     SlotOutsideDefinition,
-    /// A bare `run = …` line: a type's own run, which nothing in the seed runs.
-    OwnRunNotInSeed,
+    /// A bare `run = …` line, or `t.run`: `run` is a slot of the instances alone.
+    NoOwnRun,
+    /// `t.x` where `x` is a member of `t`'s fields block, read `t.fields.x`.
+    MemberThroughFields(String),
+    /// `t.fields.x` where `x` is a place per node, not stored with the type.
+    PerNodeThroughType(String),
     /// The instances' parse trio (or a nested `fields`) in the block.
     FieldsSlotNotInSeed,
     /// A `drop = …` fill, on a bare line or in the block.
@@ -1427,6 +1431,9 @@ pub struct Parser<'a> {
     /// The bindings along the path a field place was reached by, root first:
     /// what a write into it must be granted by.
     paths: HashMap<DyadPtr, Vec<DyadPtr>>,
+    /// Each view a `t.fields` read built, to its type: the step a following
+    /// `.x` reads the block through.
+    fields_views: HashMap<DyadPtr, DyadPtr>,
     /// The binding of the name left of the `.` being constructed, or null.
     member_root: DyadPtr,
     /// The field binding behind each `this.f` slot a parse body built: the
@@ -1599,6 +1606,7 @@ impl<'a> Parser<'a> {
             filling: Vec::new(),
             last_declared: std::ptr::null_mut(),
             paths: HashMap::new(),
+            fields_views: HashMap::new(),
             member_root: std::ptr::null_mut(),
             fills: HashMap::new(),
             lifted: Vec::new(),
@@ -2803,13 +2811,14 @@ impl<'a> Parser<'a> {
         value: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
-        // Inside the fields block `shared run = (…)` is the instances' run;
-        // the instances' parse trio and drop there, and a type's own run or
-        // drop on a bare line, are not in the seed yet (stand-in for #133).
+        // Inside the fields block `shared run = (…)` is the instances' run, and
+        // a type has no run of its own; the instances' parse trio and drop
+        // there, and a type's own drop on a bare line, are not in the seed yet
+        // (stand-in for #133).
         let in_block = self.definitions.last().expect("slot_of found an open definition").in_block;
         match kind {
             SlotKind::Drop => return Err(ParseError::DropSlotNotInSeed),
-            SlotKind::Run if !in_block => return Err(ParseError::OwnRunNotInSeed),
+            SlotKind::Run if !in_block => return Err(ParseError::NoOwnRun),
             SlotKind::Parse if in_block => return Err(ParseError::FieldsSlotNotInSeed),
             SlotKind::Parse | SlotKind::Run => return Err(ParseError::SlotNeedsBody(kind)),
             _ if in_block => return Err(ParseError::FieldsSlotNotInSeed),
@@ -2905,7 +2914,7 @@ impl<'a> Parser<'a> {
                 def.ctor = f;
                 Ok(self.slot_declare(SlotKind::Parse))
             }
-            SlotKind::Run if !in_block => Err(ParseError::OwnRunNotInSeed),
+            SlotKind::Run if !in_block => Err(ParseError::NoOwnRun),
             SlotKind::Run => {
                 // The body with its brackets is copied into the store (a
                 // source may not outlive the type, the store does) and lexed
@@ -3840,6 +3849,9 @@ impl<'a> Parser<'a> {
             if self.run_body.as_ref().is_some_and(|rb| lhs == rb.this_param) {
                 return self.run_body_field(name, nstart).map(|n| (n, 0));
             }
+            if let Some(&logos) = self.fields_views.get(&lhs) {
+                return self.fields_member(lhs, logos, name).map(|n| (n, 0));
+            }
             if (*lhs).ty == self.types.dyad_ {
                 return self.view_member(lhs, name).map(|n| (n, 0));
             }
@@ -3952,7 +3964,13 @@ impl<'a> Parser<'a> {
             if pointee.is_null() || !crate::identities::meta::is_record_type(pointee) {
                 return Err(ParseError::UnsupportedOperands);
             }
-            let (field, offset, _) = self.resolve_field(pointee, nstart, nlen)?;
+            let (field, offset, _) = match self.resolve_field(pointee, nstart, nlen) {
+                Ok(found) => found,
+                Err(e) => {
+                    let name = &self.source[nstart..nstart + nlen];
+                    return self.shared_member_read(pointee, name).map(|n| (n, 0)).ok_or(e);
+                }
+            };
             let types = self.types;
             return Ok((
                 crate::identities::pointer::build_deref(
@@ -3974,7 +3992,13 @@ impl<'a> Parser<'a> {
         {
             return Err(ParseError::UnsupportedOperands);
         }
-        let (field, offset, binding) = self.resolve_field(record_logos, nstart, nlen)?;
+        let (field, offset, binding) = match self.resolve_field(record_logos, nstart, nlen) {
+            Ok(found) => found,
+            Err(e) => {
+                let name = &self.source[nstart..nstart + nlen];
+                return self.shared_member_read(record_logos, name).map(|n| (n, 0)).ok_or(e);
+            }
+        };
         let addr = (*lhs).value.wrapping_add(offset);
         let node = self.rt.store.alloc_raw((*field).ty, addr);
         // Every binding along the path grants a write into the place: the
@@ -5338,7 +5362,7 @@ impl<'a> Parser<'a> {
     }
 
     /// The shared metadata stored once per type: `.arity`, `.roles[i]`,
-    /// `.parse_rank`, `.associativity`, `.parse`, `.run`, `.fields`,
+    /// `.parse_rank`, `.associativity`, `.parse`, `.fields`,
     /// `.size_bytes`, `.scope`; a null slot is the honest undefined and errors until `?` exists.
     ///
     /// # Safety
@@ -5386,17 +5410,15 @@ impl<'a> Parser<'a> {
                 }
                 Ok(self.rt.store.alloc_raw(self.types.dyad_, c as *mut u8))
             }
-            "run" => {
-                let held = meta::run_body_of(logos);
-                if held.is_null() {
-                    return Err(ParseError::BadReflectRead);
-                }
-                Ok(held)
+            "run" => Err(ParseError::NoOwnRun),
+            "fields" if meta::is_record_type(logos) => {
+                let view = self
+                    .rt
+                    .store
+                    .alloc_raw(self.types.dyad_, meta::record_fields_of(logos) as *mut u8);
+                self.fields_views.insert(view, logos);
+                Ok(view)
             }
-            "fields" if meta::is_record_type(logos) => Ok(self
-                .rt
-                .store
-                .alloc_raw(self.types.dyad_, meta::record_fields_of(logos) as *mut u8)),
             "size_bytes" if meta::is_record_type(logos) => {
                 Ok(self.scalar_value(NumType::I64, meta::record_size_of(logos) as i64))
             }
@@ -5405,26 +5427,89 @@ impl<'a> Parser<'a> {
                 .store
                 .alloc_raw(self.types.dyad_, meta::record_scope_of(logos) as *mut u8)),
             "type" => Err(ParseError::TypeIsColonRead),
-            // A member of the type's own definition body, resolved against
-            // the body scope alone (DESIGN ›The constructor is a field‹).
-            _ => {
-                let body = if meta::is_record_type(logos) {
-                    meta::record_body_of(logos)
-                } else {
-                    std::ptr::null_mut()
-                };
-                if body.is_null() {
-                    return Err(ParseError::BadReflectRead);
-                }
-                let mut members = ScopeStack::new();
-                members.push(body);
-                let r = members.resolve(self.trie, name).map_err(|_| ParseError::BadReflectRead)?;
-                // Through the type the member's own gate decides: the type
-                // stands as a namespace here, not as a container.
-                self.paths.insert(r.identity, vec![r.binding]);
-                Ok(r.identity)
+            // A type's `.` answers only for the slots `type` declares; what its
+            // instances hold is reached through `.fields` (DESIGN ›Resolution is one rule‹).
+            _ if self.shared_member_of(logos, name).is_some() => {
+                Err(ParseError::MemberThroughFields(name.to_string()))
             }
+            _ if self.per_node_field_of(logos, name) => {
+                Err(ParseError::PerNodeThroughType(name.to_string()))
+            }
+            _ => Err(ParseError::BadReflectRead),
         }
+    }
+
+    /// `t.fields.x`: a `shared` member of `t`, the instances' `run`, or else
+    /// the view's own `.type` and `.value`.
+    ///
+    /// # Safety
+    /// `view` must be the `dyad` view `.fields` built over `logos`, a record type.
+    unsafe fn fields_member(
+        &mut self,
+        view: DyadPtr,
+        logos: DyadPtr,
+        name: &str,
+    ) -> Result<DyadPtr, ParseError> {
+        // The held body is no function until a node's field types construct
+        // it, so it is read through a view, as `.parse` reads a native leaf.
+        if name == "run" {
+            let held = crate::identities::meta::run_body_of(logos);
+            if held.is_null() {
+                return Err(ParseError::BadReflectRead);
+            }
+            return Ok(self.rt.store.alloc_raw(self.types.dyad_, held as *mut u8));
+        }
+        if let Some(identity) = self.shared_member_read(logos, name) {
+            return Ok(identity);
+        }
+        if self.per_node_field_of(logos, name) {
+            return Err(ParseError::PerNodeThroughType(name.to_string()));
+        }
+        self.view_member(view, name)
+    }
+
+    /// A `shared` member of `logos`, one place stored with the type, read
+    /// through the type or a node alike: the member's own gate decides a
+    /// write, since the place is no node's.
+    ///
+    /// # Safety
+    /// `logos` must be a type identity node from the store.
+    unsafe fn shared_member_read(&mut self, logos: DyadPtr, name: &str) -> Option<DyadPtr> {
+        let (identity, binding) = self.shared_member_of(logos, name)?;
+        self.paths.insert(identity, vec![binding]);
+        Some(identity)
+    }
+
+    /// The identity and binding of `logos`'s `shared` member `name`, declared
+    /// in the definition body's scope.
+    ///
+    /// # Safety
+    /// `logos` must be a type identity node from the store.
+    unsafe fn shared_member_of(&self, logos: DyadPtr, name: &str) -> Option<(DyadPtr, DyadPtr)> {
+        use crate::identities::meta;
+        if !meta::is_record_type(logos) {
+            return None;
+        }
+        let body = meta::record_body_of(logos);
+        if body.is_null() {
+            return None;
+        }
+        let mut members = ScopeStack::new();
+        members.push(body);
+        let r = members.resolve(self.trie, name).ok()?;
+        Some((r.identity, r.binding))
+    }
+
+    /// # Safety
+    /// `logos` must be a type identity node from the store.
+    unsafe fn per_node_field_of(&self, logos: DyadPtr, name: &str) -> bool {
+        use crate::identities::meta;
+        if !meta::is_record_type(logos) {
+            return false;
+        }
+        let mut fields = ScopeStack::new();
+        fields.push(meta::record_scope_of(logos));
+        fields.resolve(self.trie, name).is_ok()
     }
 
     /// Fresh storage holding `bits` at `nt`'s width: the reflection counts
