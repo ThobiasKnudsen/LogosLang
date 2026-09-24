@@ -2332,8 +2332,7 @@ fn declaration_binds_a_name_to_a_value() {
     let bound = unsafe { declare::declared_of(decl) };
     unsafe {
         assert_eq!((*decl).ty, core.declare_);
-        let name_node = *((*decl).value as *const DyadPtr);
-        assert_eq!(crate::identities::string::text(name_node), b"x");
+        assert_eq!(crate::record::Record::spelling(declare::binding_of(decl)), "x");
         assert_eq!((*bound).ty, core.rational);
         assert_eq!(rational::mold(bound), Some(5));
     }

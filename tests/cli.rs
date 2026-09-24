@@ -1224,6 +1224,70 @@ fn caller_scope_is_the_use_site_and_here_scope_the_body() {
 }
 
 #[test]
+fn a_scope_is_read_by_path_and_reading_runs_nothing() {
+    let (echoes, stderr) = repl(
+        "mut n := i32 0\n\
+         x := i32 1\n\
+         g := ( a := i32 1, b := a + 1, n = n + 1, b )\n\
+         s := g:start.rhs\n\
+         s.dyads.size\n\
+         s.dyads[0].lhs:name\n\
+         s.dyads[0].rhs:dyad.type == i32\n\
+         s.dyads[1].rhs.lhs:name\n\
+         s.scope == here.scope\n\
+         s == g:start.rhs\n\
+         t := s\n\
+         t.dyads[3]:name\n\
+         n\n\
+         here.scope.dyads[1].lhs:name\n\
+         ( c := i32 1, here.scope.dyads.size )\n"
+            .as_bytes(),
+    );
+    assert_eq!(
+        echoes,
+        ["4", "a", "true", "a", "true", "true", "b", "1", "x", "1"],
+        "stderr: {stderr}"
+    );
+
+    let (_echoes, stderr) = repl(
+        b"g := ( a := i32 1, a )\n\
+          g:start.rhs.dyads[2]\n\
+          k := i32 0\n\
+          g:start.rhs.dyads[k]\n\
+          mut m := g:start.rhs\n\
+          m.dyads\n",
+    );
+    assert_eq!(stderr.matches("this read does not fit the node's type").count(), 2, "{stderr}");
+    assert!(stderr.contains("this operator cannot compute over these operands"), "{stderr}");
+}
+
+#[test]
+fn a_declaration_on_the_command_line_is_its_names_start() {
+    let out = logos().arg("x := i32 1, y := x + 2, y:start.rhs.lhs:name").output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "x\n");
+}
+
+#[test]
+fn a_nodes_fields_are_read_by_name_without_running_it() {
+    let power = "^ := type ( fields = ( lhs := ?, rhs := i32 ?, output := type ?, \
+                 shared run = ( mut r := this.output 1, for 0..this.rhs ( r = r * this.lhs ), r ) ), \
+                 parse_rank = *.parse_rank + 1, associativity = right, \
+                 parse = ( this.lhs = tape[-1], this.rhs = tape[1], this.output = tape[-1]:dyad.type, \
+                 tape[0] = this, tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
+    for (tail, want) in [
+        ("(2 ^ 3).lhs", "2"),
+        ("(2 ^ 3).rhs", "3"),
+        ("f := fn (x := i32 ?) -> i32 ( (x ^ 3).lhs ), f(5)", "5"),
+        ("x := i32 1, (x + 2).lhs", "1"),
+    ] {
+        let out = logos().arg(format!("{power}, {tail}")).output().unwrap();
+        assert!(out.status.success(), "{tail}: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{tail}");
+    }
+}
+
+#[test]
 fn a_pointer_type_applies_to_any_type() {
     let (echoes, stderr) = repl(
         "mut p := @dyad ?\n\

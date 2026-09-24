@@ -551,9 +551,12 @@ mod tests {
             let Shape::Tuple { slots } = describe(types, roots[0]) else {
                 panic!("a declaration should be a tuple");
             };
-            assert_eq!(text_of(slots[0].role), b"name");
-            assert_eq!(text_of(slots[0].node), b"x");
-            let Shape::Tuple { slots: init } = describe(types, slots[1].node) else {
+            assert_eq!(text_of(slots[0].role), b"lhs");
+            assert!(matches!(describe(types, slots[0].node), Shape::Record { .. }));
+            assert_eq!(Record::spelling(slots[0].node), "x");
+            assert_eq!(text_of(slots[1].role), b"rhs");
+            assert_eq!(text_of(slots[2].role), b"declared");
+            let Shape::Tuple { slots: init } = describe(types, slots[2].node) else {
                 panic!("a scalar binding's initializer should be a tuple");
             };
             assert_eq!(text_of(init[0].role), b"lhs");

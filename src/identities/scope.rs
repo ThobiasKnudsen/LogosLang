@@ -3,7 +3,8 @@
 
 //! `scope`: the type of a scope node, the parser's membership marker and, for
 //! a block, the sequence node itself: `[exprs, op, parent]`, the parent link
-//! set at [`mint`] and the expressions filled at [`fill`] when the block closes.
+//! set at [`mint`], the expressions (the `dyads` field) pushed as each line
+//! completes, and the op set at [`fill`] when the block closes.
 //! DESIGN ›Meta-navigation walks the graph; the scope stack is the graph's own spine‹
 
 use cranelift_codegen::ir::Value;
@@ -38,12 +39,40 @@ pub(crate) fn mint(store: &mut Store, scope_ty: DyadPtr, parent: DyadPtr) -> Dya
     store.alloc_raw(scope_ty, value)
 }
 
+/// The block closed: it runs as a sequence over its `dyads`.
+///
 /// # Safety
 /// `node` must be a scope [`mint`] built; nothing else may hold its slots.
-pub(crate) unsafe fn fill(node: DyadPtr, exprs: DyadPtr, op: DyadPtr) {
-    let slots = (*node).value as *mut DyadPtr;
-    *slots.add(EXPRS) = exprs;
-    *slots.add(OP) = op;
+pub(crate) unsafe fn fill(node: DyadPtr, op: DyadPtr) {
+    *((*node).value as *mut DyadPtr).add(OP) = op;
+}
+
+/// The scope's `dyads`, made empty on first read; null for a scope minted
+/// with no value (the root, a type's member scope), which holds none.
+///
+/// # Safety
+/// `node` must be a scope node from the store.
+pub(crate) unsafe fn dyads(store: &mut Store, array_ty: DyadPtr, node: DyadPtr) -> DyadPtr {
+    if (*node).value.is_null() {
+        return std::ptr::null_mut();
+    }
+    let slot = ((*node).value as *mut DyadPtr).add(EXPRS);
+    if (*slot).is_null() {
+        *slot = array::build(store, array_ty, &[]);
+    }
+    *slot
+}
+
+/// A line of the scope is complete: it joins `dyads` while the scope is still
+/// open, so a read inside it sees the lines above.
+///
+/// # Safety
+/// `node` must be a scope node from the store; `item` a reduced dyad.
+pub(crate) unsafe fn push_item(store: &mut Store, array_ty: DyadPtr, node: DyadPtr, item: DyadPtr) {
+    let arr = dyads(store, array_ty, node);
+    if !arr.is_null() {
+        array::push(store, arr, item);
+    }
 }
 
 /// Null for a scope that is no sequence: a record or parameter scope, or one

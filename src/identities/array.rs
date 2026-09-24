@@ -29,6 +29,28 @@ pub(crate) fn build(store: &mut Store, array_: DyadPtr, items: &[DyadPtr]) -> Dy
     store.alloc_raw(array_, value)
 }
 
+/// Append `item` in place, so whoever holds the node sees the new length. The
+/// data run doubles when full; its capacity is implied by the length: none
+/// at zero, else the next power of two, at least four.
+///
+/// # Safety
+/// `node` must be an array node that [`build`] made empty and only `push` grew.
+pub(crate) unsafe fn push(store: &mut Store, node: DyadPtr, item: DyadPtr) {
+    let (len, data) = parts(node);
+    let full = len == 0 || (len >= 4 && len.is_power_of_two());
+    let data = if full {
+        let mut grown = vec![std::ptr::null_mut(); (len + 1).next_power_of_two().max(4)];
+        grown[..len].copy_from_slice(items(node));
+        let grown = store.alloc_operands(&grown) as *mut DyadPtr;
+        std::ptr::write_unaligned((*node).value.add(DATA_OFF) as *mut *mut DyadPtr, grown);
+        grown
+    } else {
+        data as *mut DyadPtr
+    };
+    *data.add(len) = item;
+    std::ptr::write_unaligned((*node).value.add(LEN_OFF) as *mut u64, (len + 1) as u64);
+}
+
 /// The `(len, data)` of an array node.
 ///
 /// # Safety
