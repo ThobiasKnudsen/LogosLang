@@ -3967,6 +3967,20 @@ impl<'a> Parser<'a> {
             if let Some(&logos) = self.fields_views.get(&lhs) {
                 return self.fields_member(lhs, logos, name).map(|n| (n, 0));
             }
+            // A scope cell's lines, read when the constructor runs.
+            {
+                use crate::identities::tape;
+                let (types, store) = (self.types, &mut *self.rt.store);
+                if (*lhs).ty == types.tape.slot && name == "dyads" {
+                    return Ok(match key {
+                        Some(i) => (tape::build_cell_dyad_at(store, types, lhs, i), 1),
+                        None => (tape::build_cell_dyads(store, types, lhs), 0),
+                    });
+                }
+                if (*lhs).ty == types.tape.cell_dyads && name == "size" {
+                    return Ok((tape::build_cell_dyads_size(store, types, lhs), 0));
+                }
+            }
             if let Some(node) = self.known_node(lhs, self.member_root) {
                 if let Some(read) = self.reached_member(node, name, index, key.is_some())? {
                     return Ok(read);

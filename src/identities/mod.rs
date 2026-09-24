@@ -553,9 +553,14 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
         || logos == types.tape.cell_type
         || logos == types.tape.spelling
         || logos == types.tape.slot_name
+        || logos == types.tape.cell_dyads
+        || logos == types.tape.cell_dyad_at
         || logos == types.this.slot
     {
         return Operand::Pointer(types.dyad_);
+    }
+    if logos == types.tape.cell_dyads_size {
+        return Operand::Concrete(NumType::U64);
     }
     // `here`, `caller.scope` and `.back` yield a node's address, as `x:scope` does.
     if logos == types.here.here || logos == types.here.caller_scope || logos == types.here.back {

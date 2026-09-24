@@ -48,6 +48,8 @@ pub enum RunError {
     NoThis,
     /// A negative index.
     BadIndex(i64),
+    /// An index at or past the end of what it reads.
+    PastEnd { index: i64, size: usize },
     /// A negative cell count in `alloc`.
     BadCount(i64),
     /// A pointer whose pointee is neither scalar nor pointer.

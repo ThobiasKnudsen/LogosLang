@@ -1368,6 +1368,28 @@ fn a_scope_is_read_by_path_and_reading_runs_nothing() {
 }
 
 #[test]
+fn a_constructor_reads_the_scope_cell_to_its_right_line_by_line() {
+    let lib = "import tests/fixtures/scope_cell_lines.logos";
+    for (line, want) in
+        [("first (7, 8, 9) + last (7, 8, 9)", "16"), ("first (scope (1, 2), 3)", "2")]
+    {
+        let out = logos().arg(format!("{lib}, {line}")).output().unwrap();
+        assert!(out.status.success(), "{line}: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{line}");
+    }
+    for (line, want) in [
+        ("first 5", "this node is not a scope"),
+        ("first ()", "index 0 is past the end (0 items)"),
+        ("last ()", "an index cannot be negative"),
+    ] {
+        let out = logos().arg(format!("{lib}, {line}")).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{line}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(want), "{line}: {stderr}");
+    }
+}
+
+#[test]
 fn scope_by_name_is_the_bracket_and_alone_is_the_type() {
     for (line, want) in [
         ("scope (1, 2, 3)", "3"),
