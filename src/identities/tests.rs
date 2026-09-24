@@ -2073,6 +2073,31 @@ fn a_node_of_a_run_type_runs_the_function_built_for_its_fields() {
 }
 
 #[test]
+fn a_parse_is_ranked_by_what_it_takes_from_its_right() {
+    let (mut store, mut trie, core) = new_core();
+    for def in [
+        "q := type ( fields = ( shared parse = ( tape.is_constructed[0] = true ) ), \
+         parse_rank = dyad.parse_rank, parse = ( tape.is_constructed[0] = true ) )",
+        "chooser := type ( parse_rank = fn.parse_rank, parse = ( tape.is_constructed[0] = true ) )",
+    ] {
+        let mut s = ScopeStack::new();
+        s.push(core.root_scope);
+        Parser::new(def, &mut store, &mut trie, &core, s).parse_expression().unwrap();
+    }
+    let [q, chooser] = ["q", "chooser"].map(|name| use_of(&mut store, &mut trie, &core, name));
+    // SAFETY: each is the binding of a type with a record head.
+    unsafe {
+        let [q, chooser] = [q, chooser].map(|b| Binding::read(b).dyad);
+        let apply = meta::parse_rank_of(core.dyad_);
+        assert_eq!(meta::parse_rank_of(q), apply);
+        // An unfilled `shared parse_rank` is application's.
+        assert_eq!(meta::instances_parse_rank_of(q), apply);
+        assert_eq!(meta::parse_rank_of(chooser), meta::parse_rank_of(core.fn_type));
+        assert!(meta::parse_rank_of(chooser) > apply);
+    }
+}
+
+#[test]
 fn a_node_of_a_run_type_compiles_as_a_call_of_its_function() {
     // Only the caller compiles; the node's function stays interpreted behind the boundary.
     assert_eq!(
