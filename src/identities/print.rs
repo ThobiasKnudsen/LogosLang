@@ -1,8 +1,9 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `print «…»`: the output word. The node `[text, op]` writes its quote's
-//! text and a newline to stdout each time it runs, and yields unit.
+//! `print «…»`: the output word. The node `[parts, op]` writes its quote
+//! and a newline to stdout each time it runs, and yields unit: `parts` holds
+//! the text runs and the `{…}` expressions, each run and shown as echo shows it.
 //! DESIGN ›The command line is Logos source‹
 
 use std::io::Write;
@@ -28,7 +29,7 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> PrintIds {
         meta::TUPLE_TAG,
         meta::prec::IMPORT,
         crate::parse::Assoc::Left,
-        &["text", "op"],
+        &["parts", "op"],
     );
     let print = cx.store.alloc_raw(cx.type_, record);
     cx.declare("print", print);
@@ -37,25 +38,31 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> PrintIds {
     PrintIds { print, leaf }
 }
 
-pub(crate) fn build(store: &mut Store, types: &Core, text: DyadPtr) -> DyadPtr {
-    let value = store.alloc_operands(&[text, types.print.leaf]);
+pub(crate) fn build(store: &mut Store, types: &Core, parts: &[DyadPtr]) -> DyadPtr {
+    let parts = super::array::build(store, types.array_, parts);
+    let value = store.alloc_operands(&[parts, types.print.leaf]);
     store.alloc_raw(types.print.print, value)
 }
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a `print` node from the store; its text operand is the quote's string node.
+    let mut line = Vec::new();
+    // SAFETY: `node` is a `print` node from the store; its parts operand is the
+    // array `build` made, of string nodes and parsed expressions.
     unsafe {
-        let ops = (*node).value as *const DyadPtr;
-        let text = rt.through(*ops);
-        if text.is_null() || (*text).ty != rt.types().string_ || (*text).value.is_null() {
-            return Err(RunError::NotText);
+        let parts = *((*node).value as *const DyadPtr);
+        for &part in super::array::items(parts) {
+            if (*part).ty == rt.types().string_ {
+                line.extend_from_slice(super::string::text(part));
+            } else {
+                let bits = rt.run(part)?;
+                line.extend_from_slice(super::display_value(rt.types(), part, bits).as_bytes());
+            }
         }
-        let mut line = super::string::text(text).to_vec();
-        line.push(b'\n');
-        std::io::stdout()
-            .lock()
-            .write_all(&line)
-            .map_err(|e| RunError::Output(Box::new(e.to_string())))?;
     }
+    line.push(b'\n');
+    std::io::stdout()
+        .lock()
+        .write_all(&line)
+        .map_err(|e| RunError::Output(Box::new(e.to_string())))?;
     Ok(0)
 }

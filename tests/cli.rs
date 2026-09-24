@@ -1254,9 +1254,39 @@ fn print_writes_its_quote_each_time_it_runs_and_is_a_statement() {
     let (echoes, stderr) = repl("print «hi»\n1 + 1\n".as_bytes());
     assert_eq!(echoes, ["hi", "2"], "stderr: {stderr}");
 
-    let (_echoes, stderr) = repl("print 5\nprint «answer {x}»\n".as_bytes());
+    let (_echoes, stderr) = repl("print 5\n".as_bytes());
     assert!(stderr.contains("`print` must be followed by a «…» quote"), "stderr: {stderr}");
-    assert!(stderr.contains("not interpolated yet"), "stderr: {stderr}");
+}
+
+#[test]
+fn print_interpolates_braces_as_echo_shows_them_and_escapes_them_with_a_backslash() {
+    let out = logos()
+        .arg(
+            "sum := i32 20, double := fn (n := i32 ?) -> i32 ( return n * 2 ), \
+             print «answer {double(sum) + 2}», print «{1 < 2} {f64 5.5} \\{x\\} a\\b», \
+             f := fn (n := i32 ?) -> i32 ( print «n={n}», n ), f(3), f(4)",
+        )
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "answer 42\ntrue 5.5 {x} a\\b\nn=3\nn=4\n4\n");
+
+    // A constructor's print runs at parse time.
+    let (echoes, stderr) =
+        repl("m := type (parse = ( print «parsing {1 + 1}», tape.remove(0) ))\n1 m\n".as_bytes());
+    assert_eq!(echoes, ["parsing 2", "1"], "stderr: {stderr}");
+
+    for (src, message) in [
+        ("print «{x»", "this `{` has no `}`"),
+        ("print «x}»", "this `}` closes no `{`"),
+        ("print «{nope}»", "unknown name `nope`"),
+        ("print «{1, 2}»", "expected one expression"),
+        ("print «{}»", "nothing to evaluate"),
+    ] {
+        let out = logos().arg(src).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(message), "{src}: {stderr}");
+    }
 }
 
 #[test]

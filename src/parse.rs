@@ -1208,8 +1208,10 @@ pub enum ParseError {
     ExpectedPattern,
     /// A `lex` or `print` was not followed by a `«…»` quote; carries the word.
     ExpectedQuote(&'static str),
-    /// A `{` in a `print` quote, whose interpolation waits on live strings.
-    InterpolationPending,
+    /// A `{` in a `print` quote with no `}` after it.
+    UnclosedInterpolation,
+    /// A `}` in a `print` quote with no `{` before it.
+    StrayInterpolationClose,
     /// `tape.insert(k, …)` was handed something that is not a tape: `insert`
     /// splices a tape into a tape (DESIGN ›Text is the quote‹).
     InsertTakesTape,
@@ -5177,15 +5179,86 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
         let quote = self.quote_after("print")?;
-        // A brace is refused rather than printed as text until strings are live
-        // and `{…}` interpolates (stand-in for #140).
+        let end = self.pos;
         // SAFETY: `quote` is the string node the `«…»` constructor just built.
-        if unsafe { crate::identities::string::text(quote) }.contains(&b'{') {
-            return Err(ParseError::InterpolationPending);
-        }
-        let node = crate::identities::print::build(self.rt.store, self.types, quote);
+        let len = unsafe { crate::identities::string::text(quote) }.len();
+        // The literal has no escapes, so its text is the source between the guillemets.
+        let inner = end - 2 - len;
+        let parts = self.print_parts(inner, inner + len)?;
+        self.pos = end;
+        let node = crate::identities::print::build(self.rt.store, self.types, &parts);
         tape.place(node);
         Ok(Constructed::Placed)
+    }
+
+    /// A print quote's text runs and `{…}` expressions, each expression parsed
+    /// here, in the scope the `print` appears in; `\{` and `\}` are the braces
+    /// as text.
+    fn print_parts(&mut self, from: usize, to: usize) -> Result<Vec<DyadPtr>, ParseError> {
+        let source = self.source;
+        let bytes = source.as_bytes();
+        let mut parts = Vec::new();
+        let mut text = Vec::new();
+        let mut i = from;
+        while i < to {
+            match bytes[i] {
+                b'\\' if i + 1 < to && matches!(bytes[i + 1], b'{' | b'}') => {
+                    text.push(bytes[i + 1]);
+                    i += 2;
+                }
+                b'}' => {
+                    self.pos = i;
+                    return Err(ParseError::StrayInterpolationClose);
+                }
+                b'{' => {
+                    let Some(close) = source[i + 1..to].find('}').map(|k| i + 1 + k) else {
+                        self.pos = i;
+                        return Err(ParseError::UnclosedInterpolation);
+                    };
+                    if !text.is_empty() {
+                        let t = crate::identities::string::build_text(
+                            self.rt.store,
+                            self.types.string_,
+                            &text,
+                        );
+                        parts.push(t);
+                        text.clear();
+                    }
+                    parts.push(self.parse_within(i + 1, close)?);
+                    i = close + 1;
+                }
+                b => {
+                    text.push(b);
+                    i += 1;
+                }
+            }
+        }
+        if !text.is_empty() || parts.is_empty() {
+            parts.push(crate::identities::string::build_text(
+                self.rt.store,
+                self.types.string_,
+                &text,
+            ));
+        }
+        Ok(parts)
+    }
+
+    /// One expression over `source[from..to]` alone: the source is cut at `to`
+    /// so the segment ends there, and offsets stay those of the whole line.
+    fn parse_within(&mut self, from: usize, to: usize) -> Result<DyadPtr, ParseError> {
+        let whole = self.source;
+        self.source = &whole[..to];
+        self.pos = from;
+        let parsed = self.parse_expression().and_then(|expr| {
+            self.skip_whitespace();
+            if self.pos < to {
+                Err(ParseError::Trailing)
+            } else {
+                Ok(expr)
+            }
+        });
+        self.source = whole;
+        parsed
     }
 
     /// The `«…»` string node to the right of a raw-text word, consumed at discovery.
