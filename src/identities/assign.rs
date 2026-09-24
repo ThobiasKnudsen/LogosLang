@@ -77,7 +77,9 @@ fn construct(
         unsafe { p.slot_fill(kind, target, value) }?
     } else {
         let types = p.types();
-        build(p.store(), types, id, target, value)?
+        let node = build(p.store(), types, id, target, value)?;
+        p.note_write(node);
+        node
     };
     tape.place(node);
     Ok(crate::parse::Constructed::Placed)

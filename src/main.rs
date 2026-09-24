@@ -281,6 +281,8 @@ fn repl() -> ExitCode {
             let value = match parsed {
                 Ok(node) if line[end..].trim_start().is_empty() => {
                     // SAFETY: `node` was just parsed into the engine's store.
+                    unsafe { p.fill_if_sibling_write(node) };
+                    // SAFETY: as above.
                     Some(unsafe { p.value_of(node) })
                 }
                 _ => None,

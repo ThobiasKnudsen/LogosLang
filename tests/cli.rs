@@ -172,7 +172,7 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
     );
     assert_eq!(echoes, ["3", "4", "4"], "stderr: {stderr}");
     let (echoes, stderr) =
-        repl(b"h := fn () -> i32 ( p := @i32 ?, p@ )\ng := type (fields = (shared y := h()))\n");
+        repl(b"h := fn () -> i32 ( n := i64 0 - 1, p := alloc n of i32 0, 1 )\ng := type (fields = (shared y := h()))\n");
     assert!(
         echoes.is_empty() && stderr.contains("a type body's own declaration failed"),
         "stderr: {stderr}"
@@ -829,9 +829,14 @@ fn a_logos_declaration_names_the_non_numeric_gap() {
 #[test]
 fn a_logos_variable_declares_fills_once_and_becomes_the_type() {
     let (echoes, stderr) =
-        repl(b"mut a := logos ?\na:type == logos\na == i32\na = i32\na == i32\ny := a 5\ny\n");
-    assert_eq!(echoes, ["true", "false", "true", "5"], "stderr: {stderr}");
+        repl(b"mut a := logos ?\na:type == logos\na = i32\na == i32\ny := a 5\ny\n");
+    assert_eq!(echoes, ["true", "true", "5"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
+    let (echoes, stderr) = repl(b"mut a := logos ?\na == i32\n");
+    assert!(
+        echoes.is_empty() && stderr.contains("`a` is read before it is written"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -839,7 +844,8 @@ fn a_logos_box_is_written_as_often_as_you_like() {
     let (echoes, stderr) = repl(b"mut a := logos ?\na = i32\na = f64\na\n");
     assert_eq!(echoes, ["f64"], "stderr: {stderr}");
 
-    let (echoes, stderr) = repl(b"mut a := logos ?\ng := fn () -> i32 ( a = i32, 1 )\ng()\na\n");
+    let (echoes, stderr) =
+        repl(b"mut a := logos ?\na = f64\ng := fn () -> i32 ( a = i32, 1 )\ng()\na\n");
     assert_eq!(echoes, ["1", "i32"], "stderr: {stderr}");
 
     let (_e, stderr) = repl(b"mut a := logos ?\na = 5\n");
@@ -850,7 +856,7 @@ fn a_logos_box_is_written_as_often_as_you_like() {
 fn logical_operators_fold_over_bool_literals() {
     let (echoes, stderr) = repl(
         b"true or false\ntrue and true\nnot (true)\n\
-          mut a := logos ?\nif (a:type == f32 or a:type == logos) (a = f64) else (a = i32)\na == f64\n",
+          mut a := logos ?\na = i32\nif (a:type == f32 or a:type == logos) (a = f64) else (a = i32)\na == f64\n",
     );
     assert_eq!(echoes, ["true", "true", "false", "true"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -860,8 +866,8 @@ fn logical_operators_fold_over_bool_literals() {
 fn a_comptime_if_drops_the_untaken_branch_unparsed() {
     // `a = 9.9` under `a := i32 ?` would be a parse error if it were ever parsed; that this runs proves the branch was skipped.
     let (echoes, stderr) = repl(
-        b"mut a := i32 ?\nif (a:type == i32) (a = 9) else (a = 9.9)\na\n\
-          mut b := f64 ?\nif (b:type == i32) (b = 1) else if (b:type == f64) (b = 2.5) else (b = 3)\nb\n",
+        b"mut a := i32 ?\na = 0\nif (a:type == i32) (a = 9) else (a = 9.9)\na\n\
+          mut b := f64 ?\nb = 0\nif (b:type == i32) (b = 1) else if (b:type == f64) (b = 2.5) else (b = 3)\nb\n",
     );
     assert_eq!(echoes, ["9", "2.5"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -1071,15 +1077,15 @@ fn a_type_box_is_an_ordinary_variable() {
 
     let (echoes, stderr) = repl(b"b := type ?\nz := b ?\n");
     assert!(
-        echoes.is_empty() && stderr.contains("known only when the program runs"),
+        echoes.is_empty() && stderr.contains("`b` is read before it is written"),
         "stderr: {stderr}"
     );
 }
 
 #[test]
 fn the_dyad_box_says_what_it_holds() {
-    let (echoes, stderr) = repl(b"mut a := dyad ?\na\na = i32\na:type == type\na == i32\na\n");
-    assert_eq!(echoes, ["dyad ?", "true", "true", "i32"], "stderr: {stderr}");
+    let (echoes, stderr) = repl(b"mut a := dyad ?\na = i32\na:type == type\na == i32\na\n");
+    assert_eq!(echoes, ["true", "true", "i32"], "stderr: {stderr}");
 
     let (echoes, stderr) = repl(b"mut a := dyad ?\na = i32\ny := a 5\ny\n");
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
@@ -1203,7 +1209,7 @@ fn the_pass_runs_only_as_far_as_it_must_in_order_and_never_twice() {
         b"( mut a := type ?, a = i32, mut x := a 5, x )\nq := ( p := @i32 ?, p@ )\nq := i32 4\nq\n",
     );
     assert_eq!(echoes, ["5", "4"], "stderr: {stderr}");
-    assert!(stderr.contains("holds nothing yet"), "stderr: {stderr}");
+    assert!(stderr.contains("`p` is read before it is written"), "stderr: {stderr}");
 }
 
 #[test]

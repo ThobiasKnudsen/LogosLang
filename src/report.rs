@@ -89,6 +89,9 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::Immutable(name) => {
             format!("`{name}` is `immut`: it is written nowhere, not even by its constructor")
         }
+        ParseError::Unwritten(name) => format!(
+            "`{name}` is read before it is written: give it a value with `{name} = …` in the same block first"
+        ),
         ParseError::NotMutable(name) => {
             format!("`{name}` is not `mut`: a name is written after its declaration only when declared `mut {name} := …`")
         }
