@@ -59,7 +59,7 @@ fn construct(
         return Err(ParseError::SlotOutsideDefinition);
     }
     if slot == Some(crate::parse::SlotKind::Fields) {
-        let node = p.fields_block_fill()?;
+        let node = p.fields_block_fill(target)?;
         tape.place(node);
         return Ok(crate::parse::Constructed::Placed);
     }
@@ -67,14 +67,14 @@ fn construct(
     if matches!(slot, Some(crate::parse::SlotKind::Parse | crate::parse::SlotKind::Run))
         && p.at_open()
     {
-        let node = p.slot_body_fill(slot.expect("matched above"))?;
+        let node = p.slot_body_fill(slot.expect("matched above"), target)?;
         tape.place(node);
         return Ok(crate::parse::Constructed::Placed);
     }
     let value = p.parse_expression()?;
     let node = if let Some(kind) = slot {
         // SAFETY: `value` is the reduced dyad of the right side.
-        unsafe { p.slot_fill(kind, value) }?
+        unsafe { p.slot_fill(kind, target, value) }?
     } else {
         let types = p.types();
         build(p.store(), types, id, target, value)?

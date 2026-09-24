@@ -617,8 +617,8 @@ impl ScopeStack {
         self.barriers.retain(|&b| b < depth);
     }
 
-    /// Endpoints still pending belong to a top level with no body array to
-    /// settle against and are dropped.
+    /// A kept line: the undo log goes, and an endpoint still pending is
+    /// dropped (the REPL settles the line's first, at `close_item`).
     pub fn commit(&mut self) {
         self.journal.clear();
         self.pending.clear();
@@ -830,6 +830,20 @@ impl ScopeStack {
         }
     }
 
+    /// `item` is a complete line of the innermost scope: the names it declared
+    /// or ended settle on it, and it joins the scope's `dyads`.
+    ///
+    /// # Safety
+    /// As [`ScopeStack::settle_item`]; `array_ty` the `array` identity.
+    pub unsafe fn close_item(&mut self, store: &mut Store, array_ty: DyadPtr, item: DyadPtr) {
+        let scope = self.current().expect("a line closes inside an open scope");
+        // SAFETY: the caller's contract.
+        unsafe {
+            self.settle_item(scope, item);
+            crate::identities::scope::push_item(store, array_ty, scope, item);
+        }
+    }
+
     /// Checked against its siblings alone (DESIGN ›The constructor is a
     /// field‹): a live binding of the spelling in an enclosing scope stands
     /// beside it, both live until this scope closes.
@@ -979,13 +993,6 @@ pub enum SlotKind {
 }
 
 impl SlotKind {
-    fn name(self) -> &'static str {
-        match self {
-            SlotKind::Drop => "drop",
-            kind => SLOT_NAMES[kind as usize],
-        }
-    }
-
     fn of(i: usize) -> Self {
         match i {
             0 => SlotKind::ParseRank,
@@ -1434,6 +1441,9 @@ pub struct Parser<'a> {
     /// Each view a `t.fields` read built, to its type: the step a following
     /// `.x` reads the block through.
     fields_views: HashMap<DyadPtr, DyadPtr>,
+    /// Each value a run type's node folded to at parse, and that node, whose
+    /// fields a `.` on the value still reads.
+    unfolded: HashMap<DyadPtr, DyadPtr>,
     /// The binding of the name left of the `.` being constructed, or null.
     member_root: DyadPtr,
     /// The field binding behind each `this.f` slot a parse body built: the
@@ -1607,6 +1617,7 @@ impl<'a> Parser<'a> {
             last_declared: std::ptr::null_mut(),
             paths: HashMap::new(),
             fields_views: HashMap::new(),
+            unfolded: HashMap::new(),
             member_root: std::ptr::null_mut(),
             fills: HashMap::new(),
             lifted: Vec::new(),
@@ -1793,6 +1804,15 @@ impl<'a> Parser<'a> {
     /// input.
     pub fn offset(&self) -> usize {
         self.pos
+    }
+
+    /// A driver's top-level line is complete: see [`ScopeStack::close_item`].
+    ///
+    /// # Safety
+    /// `item` must be a line this parser just returned.
+    pub unsafe fn close_item(&mut self, item: DyadPtr) {
+        // SAFETY: the pending bindings were minted by this parser's declares.
+        unsafe { self.scopes.close_item(self.rt.store, self.types.array_, item) }
     }
 
     /// The top level's `defer free` nodes, which no `parse_sequence` drained
@@ -2533,9 +2553,8 @@ impl<'a> Parser<'a> {
             return Err(ParseError::SharedNeedsDeclaration);
         };
         if !self.is_slot_fill(item) {
-            let name = std::str::from_utf8(self.declared_name(item))
-                .expect("a spelling is source text")
-                .to_string();
+            // SAFETY: a declaration that fills no slot is `:=`'s, its lhs the binding.
+            let name = unsafe { Binding::spelling(crate::identities::declare::binding_of(item)) };
             if self
                 .scopes
                 .declared_in(self.trie, &name, field_scope)
@@ -2569,12 +2588,6 @@ impl<'a> Parser<'a> {
             items.push(self.parse_next().expect("a queued item comes out first")?);
         }
         Ok(items)
-    }
-
-    /// The string node at 0 of a declare node's value.
-    fn declared_name(&self, item: DyadPtr) -> &[u8] {
-        // SAFETY: `item` is a declare node from the store.
-        unsafe { crate::reflect::text_of(*((*item).value as *const DyadPtr)) }
     }
 
     /// A slot fill's item declares the definition's own marker.
@@ -2723,7 +2736,7 @@ impl<'a> Parser<'a> {
     /// The block of per-instance fields, parsed as a field list checked
     /// against its siblings alone; `=` calls this before reading its right
     /// side, since the bracket is a field list, not an expression.
-    pub(crate) fn fields_block_fill(&mut self) -> Result<DyadPtr, ParseError> {
+    pub(crate) fn fields_block_fill(&mut self, target: DyadPtr) -> Result<DyadPtr, ParseError> {
         let def = self.definitions.last().expect("slot_of found an open definition");
         // `shared fields = (…)` inside the block is the instances' own slot,
         // not in the seed; the enclosing block is stored only when its list
@@ -2736,7 +2749,7 @@ impl<'a> Parser<'a> {
         }
         let instance = self.parse_field_list(true)?;
         self.definitions.last_mut().expect("checked above").instance = Some(instance);
-        Ok(self.slot_declare(SlotKind::Fields))
+        Ok(self.slot_declare(SlotKind::Fields, target, instance.1))
     }
 
     /// A use of one of the slot words, or of `drop`; whether the fill reaches
@@ -2808,6 +2821,7 @@ impl<'a> Parser<'a> {
     pub(crate) unsafe fn slot_fill(
         &mut self,
         kind: SlotKind,
+        target: DyadPtr,
         value: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
@@ -2859,29 +2873,25 @@ impl<'a> Parser<'a> {
                 )
             }
         }
-        Ok(self.slot_declare(kind))
+        Ok(self.slot_declare(kind, target, value))
     }
 
-    /// The line's item for a slot fill: a declare node over the slot word,
-    /// declaring the definition's marker, which is how the body's close tells
-    /// a fill from a member declaration.
-    fn slot_declare(&mut self, kind: SlotKind) -> DyadPtr {
+    /// The line's item for a slot fill: a declare node over the slot word's
+    /// use and the right side, declaring the definition's marker, which is how
+    /// the body's close tells a fill from a member declaration.
+    fn slot_declare(&mut self, kind: SlotKind, target: DyadPtr, rhs: DyadPtr) -> DyadPtr {
         let types = self.types;
         let def = self.definitions.last().expect("a slot is filled inside a definition");
         let marker = match kind {
             SlotKind::Drop => unreachable!("the drop slot is refused before it is filled"),
             kind => def.slots[kind as usize],
         };
-        let name_node = crate::identities::string::build_text(
-            self.rt.store,
-            types.string_,
-            kind.name().as_bytes(),
-        );
         crate::identities::declare::build(
             self.rt.store,
             types.declare_,
             types.ops.declare_,
-            name_node,
+            target,
+            rhs,
             marker,
         )
     }
@@ -2889,7 +2899,11 @@ impl<'a> Parser<'a> {
     /// A slot body read bare, no parameter list (DESIGN ›Execution is function
     /// application‹): `parse` over a hidden `tape`/`this` record, `run` held as
     /// its lexed tape and constructed per field-type set (DESIGN ›Deferral is authored‹).
-    pub(crate) fn slot_body_fill(&mut self, kind: SlotKind) -> Result<DyadPtr, ParseError> {
+    pub(crate) fn slot_body_fill(
+        &mut self,
+        kind: SlotKind,
+        target: DyadPtr,
+    ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
         let in_block = self.definitions.last().expect("slot_of found an open definition").in_block;
         match kind {
@@ -2912,7 +2926,7 @@ impl<'a> Parser<'a> {
                 def.this_param = std::ptr::null_mut();
                 let f = f?;
                 def.ctor = f;
-                Ok(self.slot_declare(SlotKind::Parse))
+                Ok(self.slot_declare(SlotKind::Parse, target, f))
             }
             SlotKind::Run if !in_block => Err(ParseError::NoOwnRun),
             SlotKind::Run => {
@@ -2933,7 +2947,7 @@ impl<'a> Parser<'a> {
                 let cells = Box::into_raw(Box::new(fragment));
                 let body = crate::identities::run_body::build(self.rt.store, types, text, cells);
                 self.definitions.last_mut().expect("checked above").run_body = body;
-                Ok(self.slot_declare(SlotKind::Run))
+                Ok(self.slot_declare(SlotKind::Run, target, body))
             }
             _ => unreachable!("`=` reads a bare body for `parse` and `run` only"),
         }
@@ -3110,11 +3124,13 @@ impl<'a> Parser<'a> {
         let bits = self
             .run_on_pass(node)
             .map_err(|e| ParseError::ConstructorFailed(Box::new(crate::report::run_message(&e))))?;
-        Ok(Some(if numeric {
+        let folded = if numeric {
             self.scalar_value(crate::identities::numtype::of_type_node(out), bits)
         } else {
             bits as DyadPtr
-        }))
+        };
+        self.unfolded.insert(folded, node);
+        Ok(Some(folded))
     }
 
     /// One type per instance field in order (DESIGN ›Execution is function
@@ -3795,6 +3811,103 @@ impl<'a> Parser<'a> {
         Ok(self.rt.store.alloc_raw(for_id, value))
     }
 
+    /// A field of a node reached by path, itself reached (DESIGN ›The dyad's
+    /// read surface‹: a node's fields get you more nodes): a scope's `dyads`
+    /// and `dyads[k]`, an array's `size`, an operator node's operand by its
+    /// role. `None` leaves the read to the rules for any `@dyad` value.
+    ///
+    /// # Safety
+    /// `node` must be a node from the store.
+    unsafe fn reached_member(
+        &mut self,
+        node: DyadPtr,
+        name: &str,
+        index: Option<usize>,
+        bracket: bool,
+    ) -> Result<Option<(DyadPtr, usize)>, ParseError> {
+        use crate::identities::{array, numtype::NumType, scope};
+        let types = self.types;
+        let ty = (*node).ty;
+        if ty == types.scope && name == "dyads" {
+            let arr = scope::dyads(self.rt.store, types.array_, node);
+            if arr.is_null() {
+                return Err(ParseError::BadReflectRead);
+            }
+            return match index {
+                Some(k) => {
+                    let item = *array::items(arr).get(k).ok_or(ParseError::BadReflectRead)?;
+                    Ok(Some((self.path_operand(item), 1)))
+                }
+                // An index known only at run: every read here folds at parse.
+                None if bracket => Err(ParseError::BadReflectRead),
+                None => Ok(Some((self.reach(arr), 0))),
+            };
+        }
+        if ty == types.array_ && name == "size" {
+            let size = array::items(node).len() as i64;
+            return Ok(Some((self.scalar_value(NumType::U64, size), 0)));
+        }
+        Ok(self.node_field(node, name)?.map(|n| (n, 0)))
+    }
+
+    /// Field `name` of a node, as [`Parser::path_operand`] yields it: an
+    /// operator node's operand by its role, a run type's field in declaration
+    /// order. `None` when the node's type defines no such field.
+    ///
+    /// # Safety
+    /// `node` must be a node from the store.
+    unsafe fn node_field(
+        &mut self,
+        node: DyadPtr,
+        name: &str,
+    ) -> Result<Option<DyadPtr>, ParseError> {
+        use crate::identities::{array, meta};
+        let ty = (*node).ty;
+        let value = (*node).value;
+        if ty.is_null() || value.is_null() || crate::dyad::is_place(value) {
+            return Ok(None);
+        }
+        let slot = match meta::kind_of(ty) {
+            Some(meta::TUPLE_TAG | meta::LIST_TAG) => (0..meta::arity_of(ty))
+                .find(|&i| crate::reflect::text_of(meta::role_of(ty, i)) == name.as_bytes()),
+            // `[field…, null, spec]`: the fields are the nodes the constructor filled.
+            Some(meta::RECORD_TAG) if !meta::run_body_of(ty).is_null() => {
+                let mut fields = ScopeStack::new();
+                fields.push(meta::record_scope_of(ty));
+                fields.resolve(self.trie, name).ok().and_then(|r| {
+                    array::items(meta::record_fields_of(ty)).iter().position(|&f| f == r.identity)
+                })
+            }
+            _ => None,
+        };
+        let Some(i) = slot else {
+            return Ok(None);
+        };
+        let field = *(value as *const DyadPtr).add(i);
+        if field.is_null() {
+            return Err(ParseError::BadReflectRead);
+        }
+        Ok(Some(self.path_operand(field)))
+    }
+
+    /// A node reached by path, as a value: itself when reading it runs
+    /// nothing (a name, a literal, a place), else its address, so reading a
+    /// path never runs code.
+    ///
+    /// # Safety
+    /// `node` must be a node from the store.
+    unsafe fn path_operand(&mut self, node: DyadPtr) -> DyadPtr {
+        use crate::identities::read::{read_kind, Read};
+        let types = self.types;
+        let runs = (*node).ty != types.binding_
+            && ((*node).ty == types.scope || matches!(read_kind(types, node), Read::Executable(_)));
+        if runs {
+            self.reach(node)
+        } else {
+            node
+        }
+    }
+
     /// The cell after `for` decides: a spelling followed by `in` is the name;
     /// a fresh spelling not followed by `in` wanted it, since nothing declared
     /// lexes there; anything else begins the range, and the cursor goes back.
@@ -3852,6 +3965,13 @@ impl<'a> Parser<'a> {
             if let Some(&logos) = self.fields_views.get(&lhs) {
                 return self.fields_member(lhs, logos, name).map(|n| (n, 0));
             }
+            if let Some(node) = self.known_node(lhs, self.member_root) {
+                if let Some(read) = self.reached_member(node, name, index, key.is_some())? {
+                    return Ok(read);
+                }
+            }
+            // `(2 ^ 3).lhs`: the node a comptime value was folded from keeps its fields.
+            let lhs = self.unfolded.get(&lhs).copied().unwrap_or(lhs);
             if (*lhs).ty == self.types.dyad_ {
                 return self.view_member(lhs, name).map(|n| (n, 0));
             }
@@ -3864,8 +3984,7 @@ impl<'a> Parser<'a> {
                     return Err(ParseError::BadReflectRead);
                 }
                 let node = if (*lhs).ty == h.here {
-                    let scope = crate::identities::here::scope_of_here(lhs);
-                    self.address_value(self.types.dyad_, scope)
+                    self.reach(crate::identities::here::scope_of_here(lhs))
                 } else {
                     crate::identities::here::build_caller_scope(self.rt.store, self.types)
                 };
@@ -3910,6 +4029,9 @@ impl<'a> Parser<'a> {
                     return Err(ParseError::BadReflectRead);
                 }
                 return Ok((operand, 1));
+            }
+            if let Some(field) = self.node_field(lhs, name)? {
+                return Ok((field, 0));
             }
             // `.compile` is the fn type's shared member (DESIGN ›Execution is
             // function application‹); the name-compare stands in for resolution
@@ -4588,17 +4710,15 @@ impl<'a> Parser<'a> {
         }
         let scope = self.open_scope();
         self.open.push(OpenScope::default());
-        let mut exprs = Vec::new();
+        let array_ = self.types.array_;
         // The places this scope's own teardowns will free: what the escape
         // check below tests its tail against.
         let mut owned_here: Vec<DyadPtr> = Vec::new();
         while let Some(item) = self.parse_next() {
             let item = item?;
-            exprs.push(item);
-            // The item is complete: the ranges of the names it declared or
-            // ended now point at it.
-            // SAFETY: the pending bindings were minted by this parser's declares.
-            unsafe { self.scopes.settle_item(scope, item) };
+            // SAFETY: the pending bindings were minted by this parser's declares;
+            // `scope` is the innermost open scope, minted by `open_scope` above.
+            unsafe { self.scopes.close_item(self.rt.store, array_, item) };
             // A binding's `defer free <place>` is drained right after its
             // statement, so the defer sits at its source position, the right
             // LIFO rank among other statements' defers.
@@ -4606,13 +4726,22 @@ impl<'a> Parser<'a> {
             if !self.open[depth].defers.is_empty() {
                 let drained = std::mem::take(&mut self.open[depth].defers);
                 for &d in &drained {
-                    // SAFETY: `d` is a `defer free <place>` node the binding site just built.
-                    owned_here.push(unsafe { crate::identities::drop_model::teardown_place_of(d) });
+                    // SAFETY: `d` is a `defer free <place>` node the binding site
+                    // just built; `scope` a scope `open_scope` minted.
+                    unsafe {
+                        owned_here.push(crate::identities::drop_model::teardown_place_of(d));
+                        crate::identities::scope::push_item(self.rt.store, array_, scope, d);
+                    }
                 }
-                exprs.extend(drained);
             }
         }
         self.scopes.pop();
+        // SAFETY: `scope` was minted by `open_scope` with a value, so it has an
+        // array; the store outlives the slice and nothing pushes to it below.
+        let exprs = unsafe {
+            crate::identities::scope::dyads(self.rt.store, array_, scope);
+            crate::identities::scope::exprs_of(scope).expect("a block scope has dyads")
+        };
         // What the block parsed and did not run runs when the block runs;
         // what it did run stands in the body as its result.
         self.open.pop();
@@ -4628,10 +4757,9 @@ impl<'a> Parser<'a> {
             // An empty `( )`, or a bracket holding only prose: the scope node
             // with nothing to run, yielding unit.
             (0, _) => {
-                let arr = crate::identities::array::build(self.rt.store, self.types.array_, &exprs);
                 // SAFETY: `scope` was minted by `open_scope` above and is unaliased.
                 unsafe {
-                    crate::identities::scope::fill(scope, arr, self.types.ops.scope_);
+                    crate::identities::scope::fill(scope, self.types.ops.scope_);
                 }
                 Ok(scope)
             }
@@ -4664,12 +4792,9 @@ impl<'a> Parser<'a> {
                 if owned_here.contains(&unsafe { types.through(tail_value) }) {
                     return Err(ParseError::OwningEscape);
                 }
-                // A scope IS an array: the expression list lives behind its
-                // own array node, never inline in the scope's value.
-                let arr = crate::identities::array::build(self.rt.store, self.types.array_, &exprs);
                 // SAFETY: `scope` was minted by `open_scope` above and is unaliased.
                 unsafe {
-                    crate::identities::scope::fill(scope, arr, self.types.ops.scope_);
+                    crate::identities::scope::fill(scope, self.types.ops.scope_);
                 }
                 Ok(scope)
             }
@@ -4924,18 +5049,12 @@ impl<'a> Parser<'a> {
                 placeholder
             }
         };
-        // The declaration is graph structure: a declare node carrying the
-        // spelling, the binding, and its native.
-        let name_node = crate::identities::string::build_text(
-            self.rt.store,
-            self.types.string_,
-            name.as_bytes(),
-        );
         let node = crate::identities::declare::build(
             self.rt.store,
             self.types.declare_,
             self.types.ops.declare_,
-            name_node,
+            binding,
+            value,
             declared,
         );
         tape.remove(-1); // the name token, consumed
@@ -5192,15 +5311,15 @@ impl<'a> Parser<'a> {
         let mut tail = std::ptr::null_mut();
         while let Some(item) = self.parse_next() {
             let node = item.map_err(|e| crate::report::parse_message(&e))?;
+            // SAFETY: `node` is the line `parse_next` just returned.
+            unsafe { self.close_item(node) };
             // SAFETY: `node` was just parsed into the store, which outlives the pass.
             unsafe {
                 if (*node).ty != self.types.comment_ {
                     tail = node;
                 }
                 if (*node).ty == self.types.declare_ {
-                    let name_node = *((*node).value as *const DyadPtr);
-                    let name = String::from_utf8_lossy(crate::identities::string::text(name_node))
-                        .into_owned();
+                    let name = Binding::spelling(crate::identities::declare::binding_of(node));
                     let resolved = self
                         .scopes
                         .resolve(self.trie, &name)
@@ -5265,10 +5384,11 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// On a binding, `type` is the type of the dyad the name stands for and any
-    /// other field the instance-field read in `binding`'s own scope; on a
-    /// constructed node `type` is its own and the path answers the rest
-    /// (DESIGN ›Meta-navigation‹), `start`/`end` null.
+    /// On a binding, `type` is the type of the dyad the name stands for,
+    /// `start` the declaring line once it is complete, and any other field the
+    /// instance-field read in `binding`'s own scope; on a constructed node
+    /// `type` is its own and the path answers the rest (DESIGN ›Meta-navigation‹),
+    /// `start`/`end` null.
     ///
     /// # Safety
     /// `lhs` must be a valid dyad from the store.
@@ -5285,6 +5405,12 @@ impl<'a> Parser<'a> {
         if name == "dyad" || name == "value" {
             return Err(ParseError::CellNotReachable);
         }
+        // A name answers from its own binding; a node reached by path from itself.
+        let lhs = if (*lhs).ty == types.binding_ {
+            lhs
+        } else {
+            self.known_node(lhs, std::ptr::null_mut()).unwrap_or(lhs)
+        };
         // Read when the constructor runs.
         if (*lhs).ty == types.tape.slot {
             if name == "type" {
@@ -5304,6 +5430,12 @@ impl<'a> Parser<'a> {
                     return Err(ParseError::BadReflectRead);
                 }
                 return Ok((*cell).ty);
+            }
+            // `b:start`: the declaring line, once it is complete, is a node
+            // like any other (DESIGN ›The dyad's read surface‹).
+            let start = Binding::read(lhs).start;
+            if name == "start" && !start.is_null() {
+                return Ok(self.path_operand(start));
             }
             let (field, offset, _) = self.resolve_field(types.binding_, nstart, nlen)?;
             let addr = (*lhs).value.wrapping_add(offset);
@@ -5338,6 +5470,48 @@ impl<'a> Parser<'a> {
     /// run time like any pointer variable.
     fn address_value(&mut self, pointee: DyadPtr, addr: DyadPtr) -> DyadPtr {
         crate::identities::pointer::address_value(self.rt.store, self.types, pointee, addr)
+    }
+
+    /// `node` reached by path: as a value its address, so using it runs nothing;
+    /// the reads after it fold through [`Parser::known_node`].
+    fn reach(&mut self, node: DyadPtr) -> DyadPtr {
+        self.address_value(self.types.dyad_, node)
+    }
+
+    /// The node an `@dyad` value stands for when the parse knows it: an
+    /// address no `=` writes, or a name `root` no `=` can move, followed through
+    /// its declaring line to the right side as written (DESIGN ›The dyad's read
+    /// surface‹: a binding gets you a dyad or a node).
+    ///
+    /// # Safety
+    /// `value` must be a dyad from the store; `root` null or a binding dyad.
+    unsafe fn known_node(&self, value: DyadPtr, root: DyadPtr) -> Option<DyadPtr> {
+        use crate::identities::{declare, read};
+        let types = self.types;
+        if !root.is_null() {
+            if Binding::has_gate(root, types.mut_) {
+                return None;
+            }
+            let start = Binding::read(root).start;
+            if start.is_null()
+                || (*start).ty != types.declare_
+                || declare::binding_of(start) != root
+            {
+                return None;
+            }
+            let rhs = declare::rhs_of(start);
+            let next = if (*rhs).ty == types.binding_ { rhs } else { std::ptr::null_mut() };
+            return self.known_node(types.through(rhs), next);
+        }
+        let stored = (*value).value;
+        if stored.is_null()
+            || crate::dyad::is_place(stored)
+            || !matches!(read::read_kind(types, value), read::Read::Pointer(p) if p == types.dyad_)
+        {
+            return None;
+        }
+        let node = *(stored as *const DyadPtr);
+        (!node.is_null() && self.rt.store.contains(node)).then_some(node)
     }
 
     /// Exactly the cell's two fields, `.type` and `.value` (DESIGN ›The dyad's

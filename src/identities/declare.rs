@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `:=`, the declaration operator, and the `declare` node it builds:
-//! `[name, declared, op]`, real graph structure, so anything downstream
+//! `[lhs, rhs, declared, op]`, the binding, the right side as written, and
+//! what the seed made of it, real graph structure, so anything downstream
 //! sees that a declaration happened without re-reading source. Running one
-//! runs its initializer for effect and yields unit.
+//! runs `declared` for effect and yields unit.
 
 use cranelift_codegen::ir::Value;
 
@@ -16,8 +17,10 @@ use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
-/// The declared binding (or construction initializer); the name string node sits at 0.
-const DECL_DECLARED: usize = 1;
+const DECL_LHS: usize = 0;
+const DECL_RHS: usize = 1;
+/// The declared binding, construction initializer or snapshot the run executes.
+const DECL_DECLARED: usize = 2;
 
 /// The trie longest-matches `:=` over the binding read `:`.
 /// Returns `(declare identity, leaf, := token)`.
@@ -32,7 +35,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
         meta::TUPLE_TAG,
         meta::prec::INERT,
         Assoc::Left,
-        &["name", "declared", "op"],
+        &["lhs", "rhs", "declared", "op"],
     );
     let declare = cx.store.alloc_raw(cx.type_, record);
     cx.lower.insert(declare, lower);
@@ -44,11 +47,24 @@ pub(crate) fn build(
     store: &mut Store,
     declare: DyadPtr,
     op: DyadPtr,
-    name: DyadPtr,
+    lhs: DyadPtr,
+    rhs: DyadPtr,
     declared: DyadPtr,
 ) -> DyadPtr {
-    let value = store.alloc_operands(&[name, declared, op]);
+    let value = store.alloc_operands(&[lhs, rhs, declared, op]);
     store.alloc_raw(declare, value)
+}
+
+/// # Safety
+/// `node` must be a declare node as [`build`] lays it out.
+pub(crate) unsafe fn binding_of(node: DyadPtr) -> DyadPtr {
+    *((*node).value as *const DyadPtr).add(DECL_LHS)
+}
+
+/// # Safety
+/// `node` must be a declare node as [`build`] lays it out.
+pub(crate) unsafe fn rhs_of(node: DyadPtr) -> DyadPtr {
+    *((*node).value as *const DyadPtr).add(DECL_RHS)
 }
 
 /// # Safety

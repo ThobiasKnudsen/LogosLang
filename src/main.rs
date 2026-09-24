@@ -144,7 +144,11 @@ fn run_line(source: &str) -> ExitCode {
     let mut ran_something = false;
     while let Some(item) = p.parse_next() {
         let node = match item {
-            Ok(node) => node,
+            Ok(node) => {
+                // SAFETY: `node` is the line `parse_next` just returned.
+                unsafe { p.close_item(node) };
+                node
+            }
             Err(ParseError::Run(e)) => {
                 eprintln!("{path}: run error: {}", report::run_message(&e));
                 return ExitCode::FAILURE;
@@ -350,6 +354,8 @@ fn repl() -> ExitCode {
             // Unreachable: every line that parsed whole had its value read above.
             None => {}
         }
+        // SAFETY: `node` is the line just parsed; its pending bindings are this line's declares.
+        unsafe { scopes.close_item(&mut engine.store, engine.core.array_, node) };
         scopes.commit();
     }
 }
