@@ -224,7 +224,10 @@ pub fn parse_message(e: &ParseError) -> String {
             "`{name}` is a place in each node, not stored with the type: read it through a node"
         ),
         ParseError::FieldsSlotNotInSeed => {
-            "inside `fields = (…)` only `shared run = (…)` fills a slot yet; the instances' other slots are not in the seed (#133)".into()
+            "inside `fields = (…)` a `shared` line fills `run`, `parse`, `parse_rank` or `associativity`; a nested `fields` is not in the seed yet (#133), and `lex_rank` is a name's, not the instances'".into()
+        }
+        ParseError::InstancesParseNeedsOwnParse => {
+            "the instances' `parse` reads an instance its type's own `parse` built: fill `parse = (…)` on a bare line of the body too; an instance built by applying the type is not in the seed here".into()
         }
         ParseError::DropSlotNotInSeed => "the `drop` slot is not in the seed yet (#133)".into(),
         ParseError::FieldsSlotNeedsShared => {
