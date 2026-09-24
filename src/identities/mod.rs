@@ -145,8 +145,8 @@ pub struct Core {
     pub error: error::ErrorIds,
     pub run_body: run_body::RunBodyIds,
     pub here: here::HereIds,
-    /// The passive node a `[i]` cell carries.
-    pub index_: DyadPtr,
+    /// The identity of the cell a `[` lands, as `scope` is a `(`'s.
+    pub square_brackets: DyadPtr,
     /// `array` of `dyad@`; a sequence's expression list lives behind one, never inline.
     pub array_: DyadPtr,
     pub callable_: DyadPtr,
@@ -280,7 +280,7 @@ impl Core {
         hole::register(&mut cx);
         let (sep_, left_, right_) = logos_mod::register_syntax(&mut cx);
         fresh::register(&mut cx);
-        let (construct_, construct_leaf, dot_, index_, open_sq_, close_sq_) =
+        let (construct_, construct_leaf, dot_, square_brackets, open_sq_, close_sq_) =
             instance::register(&mut cx, &callables);
         op_leaves.construct_ = construct_leaf;
         let (deref_, storeptr_, addr_, deref_leaf, storeptr_leaf, addr_leaf, at_) =
@@ -387,7 +387,7 @@ impl Core {
             error,
             run_body,
             here,
-            index_,
+            square_brackets,
             callable_: callables.callable,
             convention_: callables.convention,
             conv_seed_native: callables.seed_native,
