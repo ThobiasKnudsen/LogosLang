@@ -3,7 +3,8 @@
 
 //! `here` and `caller`: where a line is written, and where it was called from.
 //! `here.scope` folds to the scope open at the appearance; `caller.scope`
-//! answers, inside a constructor, the scope of the appearance being built.
+//! answers, inside a constructor, the scope of the appearance being built;
+//! a scope's `.back` is the scope it stands in.
 //! DESIGN ›Meta-navigation walks the graph; the scope stack is the graph's own spine‹
 
 use super::callable::{self, Callables};
@@ -13,7 +14,7 @@ use crate::run::{RunError, Runtime};
 use crate::store::Store;
 use crate::Core;
 
-/// The two spelled identities, the two nodes `.scope` builds, and their run leaves.
+/// The two spelled identities, the `caller.scope` and `.back` nodes, and their run leaves.
 #[derive(Debug, Clone, Copy)]
 pub struct HereIds {
     pub here: DyadPtr,
@@ -23,13 +24,13 @@ pub struct HereIds {
     /// `caller.scope`: never spelled, built by `.` over a `caller` node.
     pub caller_scope: DyadPtr,
     pub caller_scope_leaf: DyadPtr,
-    /// A scope's `.scope`: never spelled, built by `.` over a scope address.
-    pub scope_of: DyadPtr,
-    pub scope_of_leaf: DyadPtr,
+    /// A scope's `.back`: never spelled, built by `.` over a scope address.
+    pub back: DyadPtr,
+    pub back_leaf: DyadPtr,
 }
 
 /// `here` and `caller` at a literal's rank, nullary words constructed at
-/// discovery; the two `.scope` nodes inert, since no spelling reaches them.
+/// discovery; `caller.scope` and `.back` inert, since no spelling reaches them.
 pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> HereIds {
     let word = |cx: &mut Cx, rank: f64, roles: &[&str]| {
         let record =
@@ -47,8 +48,8 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> HereIds {
     let caller_scope = word(cx, meta::prec::INERT, &["op"]);
     let caller_scope_leaf =
         callable::mint_native(cx.store, cs.callable, run_caller_scope, cs.seed_native);
-    let scope_of = word(cx, meta::prec::INERT, &["scope", "op"]);
-    let scope_of_leaf = callable::mint_native(cx.store, cs.callable, run_scope_of, cs.seed_native);
+    let back = word(cx, meta::prec::INERT, &["scope", "op"]);
+    let back_leaf = callable::mint_native(cx.store, cs.callable, run_back, cs.seed_native);
     HereIds {
         here,
         here_leaf,
@@ -56,8 +57,8 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> HereIds {
         caller_leaf,
         caller_scope,
         caller_scope_leaf,
-        scope_of,
-        scope_of_leaf,
+        back,
+        back_leaf,
     }
 }
 
@@ -79,9 +80,9 @@ pub(crate) fn build_caller_scope(store: &mut Store, types: &Core) -> DyadPtr {
 
 /// `[scope, op]`, `scope` what stands left of the `.`, read for its address
 /// when the node runs.
-pub(crate) fn build_scope_of(store: &mut Store, types: &Core, of: DyadPtr) -> DyadPtr {
-    let value = store.alloc_operands(&[of, types.here.scope_of_leaf]);
-    store.alloc_raw(types.here.scope_of, value)
+pub(crate) fn build_back(store: &mut Store, types: &Core, of: DyadPtr) -> DyadPtr {
+    let value = store.alloc_operands(&[of, types.here.back_leaf]);
+    store.alloc_raw(types.here.back, value)
 }
 
 /// # Safety
@@ -90,7 +91,7 @@ pub(crate) unsafe fn scope_of_here(node: DyadPtr) -> DyadPtr {
     *((*node).value as *const DyadPtr)
 }
 
-/// Whether `.scope` on `node` reads a parent link: an `@dyad` value, or a
+/// Whether `.back` on `node` reads a parent link: an `@dyad` value, or a
 /// node whose run yields one.
 ///
 /// # Safety
@@ -101,7 +102,7 @@ pub(crate) unsafe fn yields_scope_address(types: &Core, node: DyadPtr) -> bool {
         return false;
     }
     let h = types.here;
-    if (*d).ty == h.caller_scope || (*d).ty == h.scope_of {
+    if (*d).ty == h.caller_scope || (*d).ty == h.back {
         return true;
     }
     matches!(super::read::read_kind(types, d), super::read::Read::Pointer(p) if p == types.dyad_)
@@ -123,8 +124,8 @@ fn run_caller_scope(rt: &mut Runtime, _node: DyadPtr) -> Result<i64, RunError> {
 
 /// The operand's address must be a node of the store, never a dereference of
 /// bits that are no node.
-fn run_scope_of(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a `scope_of` node from the store; its operand is a reduced dyad.
+fn run_back(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a `back` node from the store; its operand is a reduced dyad.
     unsafe {
         let of = *((*node).value as *const DyadPtr);
         let addr = rt.run(of)?;

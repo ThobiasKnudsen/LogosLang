@@ -3857,8 +3857,9 @@ impl<'a> Parser<'a> {
                 };
                 return Ok((node, 0));
             }
-            if name == "scope" && crate::identities::here::yields_scope_address(self.types, lhs) {
-                let node = crate::identities::here::build_scope_of(self.rt.store, self.types, lhs);
+            // A scope's link up is `.back`; `.scope` is the scope of a spot, a call or a name.
+            if name == "back" && crate::identities::here::yields_scope_address(self.types, lhs) {
+                let node = crate::identities::here::build_back(self.rt.store, self.types, lhs);
                 return Ok((node, 0));
             }
             if crate::identities::is_type_value(self.types, lhs) {
@@ -6195,10 +6196,10 @@ mod tests {
         scopes.push(core.root_scope);
         let (root, scopes) = go("here.scope", &mut store, &mut trie, types, scopes);
         assert_eq!(root as usize, core.root_scope as usize);
-        let (above, scopes) = go("here.scope.scope", &mut store, &mut trie, types, scopes);
+        let (above, scopes) = go("here.scope.back", &mut store, &mut trie, types, scopes);
         assert_eq!(above, 0, "the arche has no enclosing scope");
         // Past the arche is the checked error, never a dereference.
-        let mut p = Parser::new("here.scope.scope.scope", &mut store, &mut trie, types, scopes);
+        let mut p = Parser::new("here.scope.back.back", &mut store, &mut trie, types, scopes);
         let node = p.parse_expression().unwrap();
         let scopes = p.into_scopes();
         let mut rt = crate::run::Runtime::new(types, &mut store);
