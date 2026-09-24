@@ -553,6 +553,61 @@ fn a_square_bracket_is_a_paren_that_closes_only_itself() {
 }
 
 #[test]
+fn a_hashmap_is_read_and_written_by_key() {
+    let (echoes, stderr) = repl(
+        b"m := hashmap i32 -> i64 ?\n\
+          m[3] = 40\n\
+          m[-1] = 3000000000\n\
+          m[3] + 2\n\
+          m[-1]\n\
+          x := i32 3\n\
+          m[x] = m[x] * 2\n\
+          m[3]\n\
+          f := fn (n := i64 ?) -> i64 ( w := hashmap u8 -> i64 ?, w[1] = n, w[1] + w[1] )\n\
+          f(5)\n\
+          f(7)\n\
+          hashmap i32 -> i64 == hashmap i32 -> i64\n\
+          hashmap i32 -> i64 == hashmap i64 -> i32\n",
+    );
+    assert_eq!(echoes, ["42", "3000000000", "80", "10", "14", "true", "false"], "stderr: {stderr}");
+
+    // A number cannot be the unknown, so a missing key of a number-valued map is the checked error.
+    let (echoes, stderr) = repl(b"m := hashmap i32 -> i64 ?\nm[1] = 1\nm[2]\nm[1]\n");
+    assert_eq!(echoes, ["1"], "stderr: {stderr}");
+    assert!(stderr.contains("the map holds no value at this key"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_hashmap_of_types_hands_back_the_unknown_for_a_missing_key() {
+    let (echoes, stderr) = repl(
+        b"mints := hashmap type -> type ?\n\
+          mints[i32] = f64\n\
+          mut t := mints[i32]\n\
+          t == f64\n\
+          t = mints[u8]\n\
+          t\n\
+          mints[mints[i32]] = i8\n\
+          mut u := mints[f64]\n\
+          u == i8\n",
+    );
+    assert_eq!(echoes, ["true", "type ?", "true"], "stderr: {stderr}");
+}
+
+#[test]
+fn a_hashmap_checks_its_shape_and_its_key_and_value_types() {
+    for line in ["hashmap i32 i32", "hashmap f64 -> i32", "hashmap i32 -> bool", "hashmap i32"] {
+        let (_echoes, stderr) = repl(format!("{line}\n").as_bytes());
+        assert!(stderr.contains("`hashmap` is followed by `K -> V`"), "{line}: {stderr}");
+    }
+    for line in ["m[i32] = 1", "m[1] = i32", "n[1] = 2", "n[i32] = 2"] {
+        let (_echoes, stderr) = repl(
+            format!("m := hashmap i32 -> i32 ?\nn := hashmap type -> type ?\n{line}\n").as_bytes(),
+        );
+        assert!(stderr.contains("these types do not match"), "{line}: {stderr}");
+    }
+}
+
+#[test]
 fn dot_type_is_a_guided_error() {
     let (_echoes, stderr) = repl(b"x := i32 5\nx.type\n");
     assert!(stderr.contains("x:type"), "stderr: {stderr}");

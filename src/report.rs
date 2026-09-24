@@ -101,6 +101,11 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::StrayInterpolationClose => {
             "this `}` closes no `{`: write `\\}` to print a brace".into()
         }
+        ParseError::HashmapShape => {
+            "`hashmap` is followed by `K -> V`: a key type, `->`, a value type, each `type`, \
+             `dyad` or an integer type"
+                .into()
+        }
         ParseError::InsertTakesTape => {
             "`insert` splices a tape: give it a `lex «…»` fragment or a parsing_tape value".into()
         }
@@ -309,6 +314,9 @@ pub fn run_message(e: &RunError) -> String {
         RunError::Output(why) => format!("print could not write to stdout: {why}"),
         RunError::NoTape => "there is no tape behind this receiver".into(),
         RunError::OffTape => "this index is off the tape".into(),
+        RunError::MissingKey => {
+            "the map holds no value at this key, and a number cannot be the unknown `?`".into()
+        }
         RunError::NoName => "this cell holds no name".into(),
         RunError::NoFragment => "insert takes a tape fragment".into(),
         RunError::NoThis => "`this` holds no node here".into(),

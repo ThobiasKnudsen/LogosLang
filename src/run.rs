@@ -40,6 +40,8 @@ pub enum RunError {
     NoTape,
     /// A tape index the tape does not hold.
     OffTape,
+    /// A map read at a key it does not hold, where the value type cannot hold `?`.
+    MissingKey,
     /// `t[k]:name` on a cell holding no named binding.
     NoName,
     /// `insert` of a null fragment.

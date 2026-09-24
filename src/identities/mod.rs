@@ -39,6 +39,7 @@ mod fn_mod;
 mod for_mod;
 pub(crate) mod fresh;
 mod gate;
+pub(crate) mod hashmap;
 pub mod here;
 mod hole;
 #[path = "if.rs"]
@@ -138,6 +139,7 @@ pub struct Core {
     /// `:`, the binding read.
     pub colon_: DyadPtr,
     pub tape: tape::TapeIds,
+    pub hashmap: hashmap::HashmapIds,
     pub this: this::ThisIds,
     pub lex: lex::LexIds,
     pub print: print::PrintIds,
@@ -296,6 +298,7 @@ impl Core {
         let (alloc_, own_, drop_, free_, defer_, of_) =
             (dm.alloc_, dm.own_, dm.drop_, dm.free_, dm.defer_, dm.of_);
         let tape = tape::register(&mut cx, &callables, scope_, array_, void);
+        let hashmap = hashmap::register(&mut cx, &callables, array_);
         let this = this::register(&mut cx, &callables);
         let lex = lex::register(&mut cx, &callables);
         let print = print::register(&mut cx, &callables);
@@ -378,6 +381,7 @@ impl Core {
             binding_,
             colon_,
             tape,
+            hashmap,
             this,
             lex,
             print,
@@ -556,6 +560,9 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
         || logos == types.this.slot
     {
         return Operand::Pointer(types.dyad_);
+    }
+    if logos == types.hashmap.get {
+        return hashmap::operand_of(types, node);
     }
     // `here`, `caller.scope` and `.back` yield a node's address, as `x:scope` does.
     if logos == types.here.here || logos == types.here.caller_scope || logos == types.here.back {
