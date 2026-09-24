@@ -140,6 +140,11 @@ pub fn parse_message(e: &ParseError) -> String {
              `x:type` and its fields with `x.f`"
                 .into()
         }
+        ParseError::UnsettledInclusion => {
+            "`⊆` answers only for a type and itself or two integer types; \
+             between other types what each can hold is not settled yet"
+                .into()
+        }
         ParseError::CtorArity => {
             "this construction's argument count does not match the fields".into()
         }
@@ -348,6 +353,11 @@ pub fn run_message(e: &RunError) -> String {
         }
         RunError::CallerSpot => {
             "`caller` alone is not a value the seed reads; read `caller.scope`".into()
+        }
+        RunError::UnsettledInclusion => {
+            "`⊆` answers only for a type and itself or two integer types; \
+             between other types what each can hold is not settled yet"
+                .into()
         }
         RunError::NullPointer => "this pointer holds nothing yet".into(),
         RunError::Return(_) => "`return` found no function to leave".into(),

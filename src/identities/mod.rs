@@ -65,6 +65,7 @@ mod return_mod;
 pub(crate) mod run_body;
 pub(crate) mod scope;
 pub(crate) mod string;
+mod subset;
 pub mod tape;
 pub mod this;
 #[path = "while.rs"]
@@ -101,6 +102,7 @@ pub struct Core {
     pub and_: DyadPtr,
     pub or_: DyadPtr,
     pub not_: DyadPtr,
+    pub subset: DyadPtr,
     pub if_: DyadPtr,
     pub while_: DyadPtr,
     pub for_: DyadPtr,
@@ -259,6 +261,8 @@ impl Core {
         op_leaves.or_ = or_leaf;
         let (not_, not_leaf) = not::register(&mut cx, &callables);
         op_leaves.not_ = not_leaf;
+        let (subset, subset_leaf) = subset::register(&mut cx, &callables);
+        op_leaves.subset_ = subset_leaf;
         let (if_, if_leaf, else_) = if_mod::register(&mut cx, &callables);
         op_leaves.if_ = if_leaf;
         let (while_, while_leaf) = while_mod::register(&mut cx, &callables);
@@ -355,6 +359,7 @@ impl Core {
             and_,
             or_,
             not_,
+            subset,
             if_,
             while_,
             for_,
@@ -542,6 +547,7 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
         || logos == types.eq
         || logos == types.ne
         || logos == types.not_
+        || logos == types.subset
         || logos == types.return_
     {
         return Operand::Concrete(NumType::I32);

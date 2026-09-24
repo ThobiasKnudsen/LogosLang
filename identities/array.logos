@@ -25,7 +25,7 @@
 #   one `drop` word (ruled 19 September 2026): its parse looks right; `=` there means the slot
 #     fill, anything else is the statement dropping what follows, so `drop x` works in every scope and the
 #     predeclared slot names are the core words themselves, never a second declaration;
-#   `⊆` on types is not in the seed.
+#   `⊆` between types is a seed native (ruled 25 September 2026).
 # The seed's array is array-of-@dyad with no spelling and no element access (src/identities/array.rs).
 # The fields block comes first in every type body (ruled 20 September 2026): a body's this.f names a field declared above it.
 

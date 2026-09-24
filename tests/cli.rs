@@ -645,6 +645,48 @@ fn a_constructor_tells_a_square_bracket_cell_from_a_scope_by_its_type() {
 }
 
 #[test]
+fn inclusion_between_integer_types_follows_their_value_ranges() {
+    let (echoes, stderr) = repl(
+        "u8 ⊆ u16\nu8 ⊆ i16\ni8 ⊆ u64\nu16 ⊆ i16\nu64 ⊆ i64\ni8 ⊆ i64\ni32 ⊆ i32\n\
+         bool ⊆ bool\nnot u8 ⊆ i8\nx := u8 3\nnot x:type ⊆ u16\n"
+            .as_bytes(),
+    );
+    assert_eq!(
+        echoes,
+        ["true", "true", "false", "false", "false", "true", "true", "true", "true", "false"],
+        "stderr: {stderr}"
+    );
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
+fn inclusion_the_design_leaves_open_is_a_checked_error() {
+    for src in ["f32 ⊆ f64\n", "i32 ⊆ f64\n", "bool ⊆ i32\n", "i32 ⊆ type\n", "u8 ⊆ dyad\n"]
+    {
+        let (echoes, stderr) = repl(src.as_bytes());
+        assert!(echoes.is_empty() && stderr.contains("not settled"), "{src}: stderr: {stderr}");
+    }
+    let (echoes, stderr) = repl("1 ⊆ 2\n".as_bytes());
+    assert!(echoes.is_empty() && stderr.contains("cannot compute"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_parse_body_checks_that_an_index_type_fits_the_size_type() {
+    let q = "q := type ( fields = ( shared size := u64 ? ), parse_rank = 60, parse = ( \
+             if (not tape[1]:type ⊆ this.size:type) \
+             (error «the index type is not within the size type»), \
+             tape.remove(1), tape[0] = i32 1, tape.is_constructed[0] = true ) )";
+    let out = logos().args([&format!("{q}, q (u32 3)")]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1");
+    for (arg, expect) in [("i8 3", "not within the size type"), ("f64 3.0", "not settled")] {
+        let out = logos().args([&format!("{q}, q ({arg})")]).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && stderr.contains(expect), "{arg}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn dot_type_is_a_guided_error() {
     let (_echoes, stderr) = repl(b"x := i32 5\nx.type\n");
     assert!(stderr.contains("x:type"), "stderr: {stderr}");

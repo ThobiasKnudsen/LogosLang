@@ -327,6 +327,7 @@ mod tests {
             ("fn", prec::READER, true),
             ("if", prec::READER, true),
             ("not", prec::NOT, true),
+            ("⊆", prec::EQUALITY, true),
             ("while", prec::READER, true),
             ("for", prec::READER, true),
             ("&", prec::ADDRESS, true),
