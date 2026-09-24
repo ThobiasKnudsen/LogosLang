@@ -215,11 +215,16 @@ fn build_identity_compare(
         let truth = if matches!(c, CmpOp::Eq) { same } else { !same };
         return Some(bool_mod::literal_node(store, types.bool_, truth));
     }
-    let addressed = |k: Read| matches!(k, Read::Identity | Read::Container(_) | Read::Address);
+    // A tape cell's `:type` is read at run, and it yields the type's address.
+    let addressed = |n: DyadPtr, k: Read| {
+        matches!(k, Read::Identity | Read::Container(_) | Read::Address)
+            // SAFETY: as above.
+            || unsafe { (*types.through(n)).ty == types.tape.cell_type }
+    };
     // SAFETY: as above.
     let pointer =
         |n: DyadPtr| unsafe { matches!(super::numtype_of(types, n), super::Operand::Pointer(_)) };
-    if (addressed(l) && addressed(r)) || (pointer(lhs) && pointer(rhs)) {
+    if (addressed(lhs, l) && addressed(rhs, r)) || (pointer(lhs) && pointer(rhs)) {
         let value = store.alloc_operands(&[lhs, rhs, types.ops.cmp_leaf(c, NumType::I64)]);
         return Some(store.alloc_raw(op, value));
     }

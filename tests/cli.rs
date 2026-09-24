@@ -553,6 +553,23 @@ fn a_square_bracket_is_a_paren_that_closes_only_itself() {
 }
 
 #[test]
+fn a_constructor_tells_a_square_bracket_cell_from_a_scope_by_its_type() {
+    let probe = "probe := type ( parse_rank = *.parse_rank + 1, parse = ( \
+                 if (tape[1]:type == square_brackets) (print «brackets») else (print «other»), \
+                 if (tape[1]:type != square_brackets) (print «not brackets»), \
+                 tape.remove(1), tape.remove(0) ) )";
+    let src = format!(
+        "{probe}, probe [1, 2], probe (3), x := i32 4, probe x, square_brackets:type == type"
+    );
+    let out = logos().args([&src]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "brackets\nother\nnot brackets\nother\nnot brackets\ntrue\n"
+    );
+}
+
+#[test]
 fn dot_type_is_a_guided_error() {
     let (_echoes, stderr) = repl(b"x := i32 5\nx.type\n");
     assert!(stderr.contains("x:type"), "stderr: {stderr}");

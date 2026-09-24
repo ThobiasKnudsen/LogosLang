@@ -4223,7 +4223,7 @@ impl<'a> Parser<'a> {
         let d = c.dyad;
         // SAFETY: a dyad cell is a node from the store; an index node's value is its interior first.
         unsafe {
-            if (*d).ty != self.types.index_ {
+            if (*d).ty != self.types.square_brackets {
                 return None;
             }
             Some(*((*d).value as *const DyadPtr))
@@ -4231,8 +4231,8 @@ impl<'a> Parser<'a> {
     }
 
     /// `[` is `(` in square brackets: the interior parsed as any bracket's,
-    /// closed by its `]`. It lands the passive index cell (DESIGN ›The
-    /// constructor is a field‹), or right after a tape value the element read
+    /// closed by its `]`. It lands a `square_brackets` cell (DESIGN ›The
+    /// scope's constructor is the driver‹), or right after a tape value the element read
     /// `t[k]`, folded here since a tape value has no constructor of its own yet.
     pub(crate) fn construct_index(
         &mut self,
@@ -4259,7 +4259,7 @@ impl<'a> Parser<'a> {
             }
         }
         let value = self.rt.store.alloc_operands(&[key, std::ptr::null_mut()]);
-        let node = self.rt.store.alloc_raw(self.types.index_, value);
+        let node = self.rt.store.alloc_raw(self.types.square_brackets, value);
         tape.place(node);
         Ok(Constructed::Placed)
     }
