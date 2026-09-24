@@ -1525,6 +1525,9 @@ pub struct Parser<'a> {
     /// The stop mode of the segment being lexed, so a lazy read inside a
     /// constructor stops at the same boundaries the loop would.
     lex_mode: Option<RightSide>,
+    /// While an `if` reads a bare branch: the depth of the branch's own scope,
+    /// where `else` and `,` end it; a nested bracket reads them as usual.
+    else_ends: Option<usize>,
     /// The pass's one runtime (DESIGN ›Build and run are one self-directing
     /// pass‹): one runtime keeps the frame arena and the allocation ledger
     /// whole across the pass.
@@ -1670,6 +1673,7 @@ impl<'a> Parser<'a> {
             discovering: false,
             member_asleep: false,
             lex_mode: None,
+            else_ends: None,
             holes: HashSet::new(),
             last_write: (std::ptr::null_mut(), std::ptr::null_mut()),
             frames: Vec::new(),
@@ -2092,11 +2096,6 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// The one moment a bracket reader may read source.
-    pub(crate) fn discovering(&self) -> bool {
-        self.discovering
-    }
-
     /// `dyad (T, v)` builds a store-owned cell of type `T` (DESIGN ›Feasibility‹):
     /// a numeric `T` takes a literal `v` committed to its width, any other `T`
     /// takes `v` as the node the value points at. Without a bracket, `dyad` stands as its value.
@@ -2261,6 +2260,103 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Whether an `if` condition ends before `next` (DESIGN ›Expressions are
+    /// self-delimiting‹): it is the first complete expression, so it ends once
+    /// complete at a token that does not read to its left. It is complete when
+    /// it ends in a value, or in identities that could still read a right side
+    /// but stand right of a comparison, where they are the compared value; those
+    /// still take a value word (`x == i32 1`), and a `(` there is the body.
+    /// `next` is `None` for a `(` a bracket reader peeks at unlexed.
+    fn if_condition_ends(&self, tape: &ParsingTape, next: Option<&Cell>) -> bool {
+        let id = next.map_or(self.types.open_, |c| self.cell_identity(c));
+        let open = id == self.types.open_;
+        if !open && next.is_some_and(|c| !c.constructed) && self.reads_left(id) {
+            return false;
+        }
+        let cells: Vec<Cell> = tape.iter().map(|(_, c)| *c).collect();
+        let Some(last) = cells.last() else { return false };
+        if self.ends_value(last) {
+            return true;
+        }
+        let readers = cells
+            .iter()
+            .rev()
+            .take_while(|c| {
+                !c.constructed
+                    && !self.ends_value(c)
+                    && self.precedence_of_cell(self.cell_identity(c))
+                        >= crate::identities::meta::prec::OPEN
+            })
+            .count();
+        let Some(before) = cells.len().checked_sub(readers + 1).map(|k| cells[k]) else {
+            return false;
+        };
+        let t = self.types;
+        let compared = [t.eq, t.ne, t.lt, t.gt, t.le, t.ge].contains(&self.cell_identity(&before));
+        readers > 0
+            && !before.constructed
+            && compared
+            && (open || next.is_some_and(|c| !self.is_value_word(c, id)))
+    }
+
+    /// Whether a bracket reader takes the `(` at the cursor: only when woken
+    /// at discovery, the one moment it may read source, and not where the `(`
+    /// ends a complete `if` condition, being the body.
+    pub(crate) fn reads_own_bracket(&mut self, tape: &ParsingTape) -> bool {
+        self.discovering
+            && self.at_open()
+            && !(self.lex_mode == Some(RightSide::IfCondition)
+                && self.if_condition_ends(tape, None))
+    }
+
+    /// An operand, or `?`, which reads only to its left.
+    fn ends_value(&self, cell: &Cell) -> bool {
+        self.is_operand_cell(cell)
+            || (!cell.constructed && self.cell_identity(cell) == self.types.unknown)
+    }
+
+    /// An infix operator, a tight read, an index, or a token a construct
+    /// spells between its parts; `else` ends a branch instead.
+    fn reads_left(&self, id: DyadPtr) -> bool {
+        if id == self.types.else_ {
+            return false;
+        }
+        // SAFETY: `id` is null or a resolved identity; roles are read only off an operand record.
+        self.is_delimiter(id)
+            || unsafe {
+                self.identity_head(id).is_some_and(|h| {
+                    matches!(
+                        crate::identities::meta::kind_of(h),
+                        Some(
+                            crate::identities::meta::TUPLE_TAG | crate::identities::meta::LIST_TAG
+                        )
+                    ) && crate::identities::meta::arity_of(h) > 0
+                        && crate::reflect::text_of(crate::identities::meta::role_of(h, 0)) == b"lhs"
+                })
+            }
+    }
+
+    /// A literal, a plain name, or a data type: what a type standing to its
+    /// left may take as its value.
+    fn is_value_word(&self, cell: &Cell, id: DyadPtr) -> bool {
+        use crate::identities::meta;
+        if cell.constructed || self.is_operand_cell(cell) {
+            return true;
+        }
+        if self.precedence_of_cell(id) == meta::prec::LITERAL {
+            return true;
+        }
+        // SAFETY: `id` is null or a resolved identity from the store.
+        unsafe {
+            self.identity_head(id).is_some_and(|h| {
+                !matches!(
+                    meta::kind_of(h),
+                    Some(meta::TUPLE_TAG | meta::LIST_TAG | meta::TOKEN_TAG)
+                )
+            })
+        }
+    }
+
     /// The one seam every constructor goes through: a reduced dyad passes; a
     /// resolved token yields the name's binding (DESIGN ›The dyad's read
     /// surface‹); a fresh-name token re-resolves its span for the precise error.
@@ -2411,6 +2507,11 @@ impl<'a> Parser<'a> {
 
     pub(crate) fn at_open(&mut self) -> bool {
         matches!(self.peek_token(), Some((id, _)) if id == self.types.open_)
+    }
+
+    /// The `,` or `else` after an `if`'s bare branch, left to the enclosing scope and the `if`.
+    fn at_branch_end(&mut self) -> bool {
+        matches!(self.peek_token(), Some((id, _)) if id == self.types.sep_ || id == self.types.else_)
     }
 
     fn consume_separator(&mut self) -> bool {
@@ -3356,6 +3457,7 @@ impl<'a> Parser<'a> {
         let saved_pending_fn = std::mem::replace(&mut self.pending_fn, std::ptr::null_mut());
         let saved_runtime_depth = std::mem::replace(&mut self.runtime_depth, 0);
         let saved_lex_mode = self.lex_mode.take();
+        let saved_else_ends = self.else_ends.take();
         let saved_lifted = std::mem::take(&mut self.lifted);
         let saved_queued = std::mem::take(&mut self.queued);
         let saved_discovering = std::mem::replace(&mut self.discovering, false);
@@ -3373,6 +3475,7 @@ impl<'a> Parser<'a> {
         self.pending_fn = saved_pending_fn;
         self.runtime_depth = saved_runtime_depth;
         self.lex_mode = saved_lex_mode;
+        self.else_ends = saved_else_ends;
         self.lifted = saved_lifted;
         self.queued = saved_queued;
         self.discovering = saved_discovering;
@@ -3657,11 +3760,12 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// `if cond ( then )` with an optional `else ( else )`: the node is
+    /// `if cond then` with an optional `else else`: the node is
     /// `[cond, then, else]`, else null when absent, so an else-less `if` is a
-    /// statement. Branches are always parenthesized, so there is no dangling else; `if` opens no scope.
+    /// statement. Each branch is a bracket or the next expression, and a bare
+    /// `else` binds to the nearest `if`; `if` opens no scope.
     pub fn parse_if(&mut self, if_type: DyadPtr) -> Result<DyadPtr, ParseError> {
-        let items = self.drive_until_open(RightSide::Condition)?;
+        let items = self.drive_until_open(RightSide::IfCondition)?;
         let cond = self.one_of(items)?;
         let types = self.types;
         // SAFETY: `cond` is the reduced dyad just parsed.
@@ -3670,7 +3774,7 @@ impl<'a> Parser<'a> {
         }
 
         // A comptime condition resolves the conditional now, in the one pass:
-        // the untaken branch's tokens are dropped unlexed, so nothing inside
+        // an untaken bracket's tokens are dropped unlexed, so nothing inside
         // is resolved, committed or declared, and branches for other comptime types coexist.
         // SAFETY: `cond` is the reduced dyad just parsed.
         if let Some(truth) = unsafe { bool_literal_value(types, cond) } {
@@ -3680,9 +3784,7 @@ impl<'a> Parser<'a> {
         // A runtime branch may or may not run, so parse-time rebinding is off
         // inside it.
         self.runtime_depth += 1;
-        self.expect_open()?;
-        let then = self.parse_sequence()?;
-        self.expect_close()?;
+        let then = self.parse_branch()?;
 
         // `else if …` is sugar: the `if` right after `else` becomes the
         // else-branch directly, so a chain nests right-associatively.
@@ -3690,10 +3792,7 @@ impl<'a> Parser<'a> {
             if self.consume_token(self.types.if_) {
                 self.parse_if(if_type)?
             } else {
-                self.expect_open()?;
-                let els = self.parse_sequence()?;
-                self.expect_close()?;
-                els
+                self.parse_branch()?
             }
         } else {
             std::ptr::null_mut()
@@ -3704,9 +3803,42 @@ impl<'a> Parser<'a> {
         Ok(self.rt.store.alloc_raw(if_type, value))
     }
 
+    /// A branch of `if`: a bracket, or the next expression, which ends before
+    /// an `else` (DESIGN ›Expressions are self-delimiting‹).
+    fn parse_branch(&mut self) -> Result<DyadPtr, ParseError> {
+        if self.at_open() {
+            self.expect_open()?;
+            let body = self.parse_sequence()?;
+            self.expect_close()?;
+            return Ok(body);
+        }
+        // A bare branch is a scope as a bracket is, holding one expression.
+        self.skip_whitespace();
+        let start = self.pos;
+        let was = self.else_ends.replace(self.open.len() + 1);
+        let body = self.parse_sequence();
+        self.else_ends = was;
+        if self.pos == start {
+            return Err(ParseError::Empty);
+        }
+        body
+    }
+
+    /// An untaken branch: a bracket is dropped unlexed; a bare one is parsed
+    /// and dropped, since only constructing it finds where it ends.
+    fn skip_branch(&mut self) -> Result<(), ParseError> {
+        if self.at_open() {
+            return self.skip_group();
+        }
+        self.runtime_depth += 1;
+        let dead = self.parse_branch();
+        self.runtime_depth -= 1;
+        dead.map(|_| ())
+    }
+
     /// True with an else: the then-branch is the result and the else-tail is
-    /// dropped unparsed. False: the then-branch is dropped unparsed. An
-    /// else-less `if` stays a statement node either way, since it yields unit.
+    /// dropped. False: the then-branch is dropped. An else-less `if` stays a
+    /// statement node either way, since it yields unit.
     fn parse_comptime_if(
         &mut self,
         if_type: DyadPtr,
@@ -3714,11 +3846,9 @@ impl<'a> Parser<'a> {
         truth: bool,
     ) -> Result<DyadPtr, ParseError> {
         if truth {
-            self.expect_open()?;
-            let then = self.parse_sequence()?;
-            self.expect_close()?;
+            let then = self.parse_branch()?;
             if self.consume_else() {
-                self.skip_else_tail()?;
+                self.skip_else_tail(if_type)?;
                 return Ok(then);
             }
             let value = self.rt.store.alloc_operands(&[
@@ -3729,15 +3859,12 @@ impl<'a> Parser<'a> {
             ]);
             return Ok(self.rt.store.alloc_raw(if_type, value));
         }
-        self.skip_group()?;
+        self.skip_branch()?;
         if self.consume_else() {
             if self.consume_token(self.types.if_) {
                 return self.parse_if(if_type);
             }
-            self.expect_open()?;
-            let els = self.parse_sequence()?;
-            self.expect_close()?;
-            return Ok(els);
+            return self.parse_branch();
         }
         let value =
             self.rt.store.alloc_operands(&[cond, cond, std::ptr::null_mut(), self.types.ops.if_]);
@@ -3800,19 +3927,25 @@ impl<'a> Parser<'a> {
         Err(ParseError::UnclosedBracket)
     }
 
-    /// Drop the dead tail after a taken `else`: `if ( cond ) ( then )` links
-    /// while further `else`s follow, or the final `( body )`.
-    fn skip_else_tail(&mut self) -> Result<(), ParseError> {
+    /// Drop the dead tail after a taken `else`: `if ( cond ) then` links
+    /// while further `else`s follow, or the final branch. A bare condition's
+    /// end is found only by constructing it, so that link is parsed and dropped.
+    fn skip_else_tail(&mut self, if_type: DyadPtr) -> Result<(), ParseError> {
         loop {
-            if self.consume_token(self.types.if_) {
-                self.skip_group()?; // ( cond )
-                self.skip_group()?; // ( then )
-                if self.consume_else() {
-                    continue;
-                }
+            if !self.consume_token(self.types.if_) {
+                return self.skip_branch();
+            }
+            if !self.at_open() {
+                self.runtime_depth += 1;
+                let dead = self.parse_if(if_type);
+                self.runtime_depth -= 1;
+                return dead.map(|_| ());
+            }
+            self.skip_group()?; // ( cond )
+            self.skip_branch()?;
+            if !self.consume_else() {
                 return Ok(());
             }
-            return self.skip_group(); // else ( body )
         }
     }
 
@@ -5054,7 +5187,11 @@ impl<'a> Parser<'a> {
                 return Some(Ok(item));
             }
             self.skip_whitespace();
-            if self.pos >= self.source.len() || self.at_close() {
+            let bare_branch = self.else_ends == Some(self.open.len());
+            if self.pos >= self.source.len()
+                || self.at_close()
+                || (bare_branch && self.at_branch_end())
+            {
                 return None;
             }
             let mut tape = ParsingTape::new();
@@ -5068,7 +5205,7 @@ impl<'a> Parser<'a> {
             };
             // The `,` is consumed once the segment before it is constructed; a
             // `,` where nothing stands is purely for the reader.
-            if matches!(boundary, Boundary::Comma) {
+            if matches!(boundary, Boundary::Comma) && !bare_branch {
                 self.consume_separator();
             }
             if items.len() > 1 {
@@ -6446,8 +6583,12 @@ impl<'a> Parser<'a> {
                 self.pos = start;
                 return Ok(Some(Boundary::Close));
             }
+            if id == self.types.else_ && self.else_ends == Some(self.open.len()) {
+                self.pos = start;
+                return Ok(Some(Boundary::Else));
+            }
             if let Some(mode) = self.lex_mode {
-                if id == self.types.open_ && !tape.is_empty() {
+                if mode != RightSide::IfCondition && id == self.types.open_ && !tape.is_empty() {
                     // In a condition a `(` after an unconstructed identity with
                     // a constructor is that identity's (DESIGN ›`X (…)` is one
                     // spelling, and X's constructor decides‹); a return type takes no bracket, so there the first `(` is the body.
@@ -6459,6 +6600,12 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
+        }
+        if self.lex_mode == Some(RightSide::IfCondition)
+            && self.if_condition_ends(tape, Some(&cell))
+        {
+            self.pos = start;
+            return Ok(Some(Boundary::Open));
         }
         tape.push(cell);
         if !cell.constructed {
@@ -6657,8 +6804,11 @@ enum Boundary {
     Comma,
     Close,
     Eof,
-    /// The `(` a right-side read stops before (its caller's bracket).
+    /// Where a right-side read stops: its caller's bracket, or the start of
+    /// an `if`'s bare branch.
     Open,
+    /// The `else` that ends an `if`'s bare branch.
+    Else,
 }
 
 /// What a right-side read is for, which decides whose a `(` inside it is.
@@ -6669,6 +6819,8 @@ enum RightSide {
     /// The first bracket is the body, and an identity that reads its own
     /// bracket is not woken.
     ReturnType,
+    /// Ends at the first complete expression; see `if_condition_ends`.
+    IfCondition,
 }
 
 #[cfg(test)]

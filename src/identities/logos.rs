@@ -28,7 +28,7 @@ pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr) {
     cx.metas.insert(cx.type_, |p, id, tape| {
         // The bracket is read at discovery only; woken at a boundary (`-> type`)
         // the classifier stands as itself.
-        if p.discovering() && p.at_open() {
+        if p.reads_own_bracket(tape) {
             let node = p.parse_type_body(id)?;
             tape.place(node);
             return Ok(crate::parse::Constructed::Placed);

@@ -696,6 +696,7 @@ fn a_parse_body_checks_that_an_index_type_fits_the_size_type() {
         let out = logos().args([&format!("{q}, q ({arg})")]).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(!out.status.success() && stderr.contains(expect), "{arg}: stderr: {stderr}");
+    }
 }
 
 #[test]
@@ -769,6 +770,22 @@ fn a_hashmap_checks_its_shape_and_its_key_and_value_types() {
         );
         assert!(stderr.contains("these types do not match"), "{line}: {stderr}");
     }
+}
+
+#[test]
+fn a_constructor_writes_its_ifs_without_brackets() {
+    let probe = "probe := type ( parse_rank = *.parse_rank + 1, parse = (\n\
+                 if tape[1]:type == square_brackets print «brackets» else print «other»,\n\
+                 if tape[1]:type == scope (\n    print «scope»\n),\n\
+                 if not tape[1]:type == square_brackets\n    print «not brackets»,\n\
+                 tape.remove(1), tape.remove(0) ) )";
+    let src = format!("{probe}, probe [1, 2], probe (3, 4), x := i32 4, probe x");
+    let out = logos().args([&src]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "brackets\nother\nscope\nnot brackets\nother\nnot brackets\n"
+    );
 }
 
 #[test]

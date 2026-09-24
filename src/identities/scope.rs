@@ -28,7 +28,7 @@ pub(super) fn register(store: &mut Store, type_: DyadPtr) -> DyadPtr {
 pub(super) fn register_exec(cx: &mut Cx, scope_: DyadPtr, cs: &Callables) -> DyadPtr {
     cx.declare("scope", scope_);
     cx.metas.insert(scope_, |p, id, tape| {
-        if p.discovering() && p.at_open() {
+        if p.reads_own_bracket(tape) {
             p.expect_open()?;
             let body = p.parse_sequence()?;
             p.expect_close()?;
