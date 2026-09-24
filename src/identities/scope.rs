@@ -13,6 +13,7 @@ use super::callable::{self, Callables};
 use super::{array, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
+use crate::parse::Constructed;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
@@ -22,7 +23,22 @@ pub(super) fn register(store: &mut Store, type_: DyadPtr) -> DyadPtr {
 }
 
 /// Returns the sequence leaf a sequence node references from its op slot.
+/// DESIGN ›The scope's constructor is the driver‹: `scope (…)` is `(…)`; with
+/// no bracket to its right, `scope` stands as the type.
 pub(super) fn register_exec(cx: &mut Cx, scope_: DyadPtr, cs: &Callables) -> DyadPtr {
+    cx.declare("scope", scope_);
+    cx.metas.insert(scope_, |p, id, tape| {
+        if p.discovering() && p.at_open() {
+            p.expect_open()?;
+            let body = p.parse_sequence()?;
+            p.expect_close()?;
+            tape.place_bracket(body);
+        } else {
+            let value = p.stand_as_value(tape, id);
+            tape.place(value);
+        }
+        Ok(Constructed::Placed)
+    });
     cx.lower.insert(scope_, lower);
     callable::mint_native(cx.store, cs.callable, run, cs.seed_native)
 }

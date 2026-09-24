@@ -1368,6 +1368,24 @@ fn a_scope_is_read_by_path_and_reading_runs_nothing() {
 }
 
 #[test]
+fn scope_by_name_is_the_bracket_and_alone_is_the_type() {
+    for (line, want) in [
+        ("scope (1, 2, 3)", "3"),
+        ("g := scope ( a := i32 1, a ), g:start.rhs.dyads.size", "2"),
+        ("g := scope ( a := i32 1, a ), g:start.rhs.dyads[0].lhs:name", "a"),
+        ("f := fn () -> i32 ( scope ( 4 ) ), f.compile(), f()", "4"),
+        ("scope == scope", "true"),
+        ("t := scope, t == scope", "true"),
+        ("here.scope:type == scope", "true"),
+        ("x := i32 1, x:scope == here.scope", "true"),
+    ] {
+        let out = logos().arg(line).output().unwrap();
+        assert!(out.status.success(), "{line}: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{line}");
+    }
+}
+
+#[test]
 fn a_declaration_on_the_command_line_is_its_names_start() {
     let out = logos().arg("x := i32 1, y := x + 2, y:start.rhs.lhs:name").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));

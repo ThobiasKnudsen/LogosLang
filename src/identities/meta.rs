@@ -79,7 +79,7 @@ pub(crate) mod prec {
     /// `:=` and `=`: each reads its left and drives its right side to the boundary.
     pub const DECLARE: f64 = 93.0;
     /// The identities that read their own bracket or right side: `fn`, `for`, `while`, `defer`,
-    /// `type`, `if`.
+    /// `type`, `if`, `scope`.
     pub const READER: f64 = 92.0;
     /// `(`: the discovery threshold.
     pub const OPEN: f64 = 90.0;

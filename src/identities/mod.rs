@@ -235,7 +235,7 @@ impl Core {
         let record = meta::operand_record(
             &mut cx,
             meta::TUPLE_TAG,
-            meta::prec::INERT,
+            meta::prec::READER,
             Assoc::Left,
             &["exprs", "op"],
         );
