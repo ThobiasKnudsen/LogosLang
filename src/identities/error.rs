@@ -1,9 +1,9 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `error «…»`: the one error primitive. The node `[text, op]` never returns:
-//! running it aborts the run with its quote's text as the message.
-//! DESIGN ›Error handling‹
+//! `error «…»`: the one error primitive. The node `[parts, op]` never returns:
+//! running it aborts the run with its quote's text as the message, `{…}` read
+//! as `print` reads it. DESIGN ›Error handling‹
 
 use super::callable::{self, Callables};
 use super::{meta, Cx};
@@ -26,7 +26,7 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> ErrorIds {
         meta::TUPLE_TAG,
         meta::prec::IMPORT,
         crate::parse::Assoc::Left,
-        &["text", "op"],
+        &["parts", "op"],
     );
     let error = cx.store.alloc_raw(cx.type_, record);
     cx.declare("error", error);
@@ -35,19 +35,13 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> ErrorIds {
     ErrorIds { error, leaf }
 }
 
-pub(crate) fn build(store: &mut Store, types: &Core, text: DyadPtr) -> DyadPtr {
-    let value = store.alloc_operands(&[text, types.error.leaf]);
+pub(crate) fn build(store: &mut Store, types: &Core, parts: &[DyadPtr]) -> DyadPtr {
+    let parts = super::array::build(store, types.array_, parts);
+    let value = store.alloc_operands(&[parts, types.error.leaf]);
     store.alloc_raw(types.error.error, value)
 }
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is an `error` node from the store; its text operand is the quote's string node.
-    unsafe {
-        let text = rt.through(*((*node).value as *const DyadPtr));
-        if text.is_null() || (*text).ty != rt.types().string_ || (*text).value.is_null() {
-            return Err(RunError::NotText);
-        }
-        let message = String::from_utf8_lossy(super::string::text(text)).into_owned();
-        Err(RunError::Raised(Box::new(message)))
-    }
+    let message = super::print::render(rt, node)?;
+    Err(RunError::Raised(Box::new(String::from_utf8_lossy(&message).into_owned())))
 }

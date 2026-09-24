@@ -45,9 +45,21 @@ pub(crate) fn build(store: &mut Store, types: &Core, parts: &[DyadPtr]) -> DyadP
 }
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    let mut line = render(rt, node)?;
+    line.push(b'\n');
+    std::io::stdout()
+        .lock()
+        .write_all(&line)
+        .map_err(|e| RunError::Output(Box::new(e.to_string())))?;
+    Ok(0)
+}
+
+/// The text of a `print` or `error` node: its text runs as written, each
+/// `{…}` run and shown as the echo shows it.
+pub(crate) fn render(rt: &mut Runtime, node: DyadPtr) -> Result<Vec<u8>, RunError> {
     let mut line = Vec::new();
-    // SAFETY: `node` is a `print` node from the store; its parts operand is the
-    // array `build` made, of string nodes and parsed expressions.
+    // SAFETY: `node` is a `print` or `error` node from the store; its parts
+    // operand is the array its `build` made, of string nodes and parsed expressions.
     unsafe {
         let parts = *((*node).value as *const DyadPtr);
         for &part in super::array::items(parts) {
@@ -59,10 +71,5 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             }
         }
     }
-    line.push(b'\n');
-    std::io::stdout()
-        .lock()
-        .write_all(&line)
-        .map_err(|e| RunError::Output(Box::new(e.to_string())))?;
-    Ok(0)
+    Ok(line)
 }

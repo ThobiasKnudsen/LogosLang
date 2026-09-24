@@ -32,7 +32,7 @@ pub enum RunError {
     NoWholeRead,
     /// A parameter with no frame slot.
     MalformedFn(DyadPtr),
-    /// `lex` or `error` handed something other than a string.
+    /// `lex` handed something other than a string.
     NotText,
     /// `print` failed to write stdout; the I/O error's sentence.
     Output(Box<String>),

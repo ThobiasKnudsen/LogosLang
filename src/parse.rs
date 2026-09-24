@@ -5389,14 +5389,7 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        let quote = self.quote_after("print")?;
-        let end = self.pos;
-        // SAFETY: `quote` is the string node the `«…»` constructor just built.
-        let len = unsafe { crate::identities::string::text(quote) }.len();
-        // The literal has no escapes, so its text is the source between the guillemets.
-        let inner = end - 2 - len;
-        let parts = self.print_parts(inner, inner + len)?;
-        self.pos = end;
+        let parts = self.interpolated_quote("print")?;
         let node = crate::identities::print::build(self.rt.store, self.types, &parts);
         tape.place(node);
         Ok(Constructed::Placed)
@@ -5406,16 +5399,29 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        let quote = self.quote_after("error")?;
-        let node = crate::identities::error::build(self.rt.store, self.types, quote);
+        let parts = self.interpolated_quote("error")?;
+        let node = crate::identities::error::build(self.rt.store, self.types, &parts);
         tape.place(node);
         Ok(Constructed::Placed)
     }
 
-    /// A print quote's text runs and `{…}` expressions, each expression parsed
-    /// here, in the scope the `print` appears in; `\{` and `\}` are the braces
-    /// as text.
-    fn print_parts(&mut self, from: usize, to: usize) -> Result<Vec<DyadPtr>, ParseError> {
+    /// The `«…»` to the right of `print` or `error`, read into its parts.
+    fn interpolated_quote(&mut self, word: &'static str) -> Result<Vec<DyadPtr>, ParseError> {
+        let quote = self.quote_after(word)?;
+        let end = self.pos;
+        // SAFETY: `quote` is the string node the `«…»` constructor just built.
+        let len = unsafe { crate::identities::string::text(quote) }.len();
+        // The literal has no escapes, so its text is the source between the guillemets.
+        let inner = end - 2 - len;
+        let parts = self.quote_parts(inner, inner + len)?;
+        self.pos = end;
+        Ok(parts)
+    }
+
+    /// A `print` or `error` quote's text runs and `{…}` expressions, each
+    /// expression parsed here, in the scope the word appears in; `\{` and `\}`
+    /// are the braces as text.
+    fn quote_parts(&mut self, from: usize, to: usize) -> Result<Vec<DyadPtr>, ParseError> {
         let source = self.source;
         let bytes = source.as_bytes();
         let mut parts = Vec::new();

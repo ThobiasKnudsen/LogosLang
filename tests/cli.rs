@@ -1391,7 +1391,7 @@ fn print_interpolates_braces_as_echo_shows_them_and_escapes_them_with_a_backslas
 fn error_aborts_the_run_with_its_message() {
     let out = logos()
         .arg(
-            "f := fn (x := i32 ?) -> i32 ( if (x > 2) (error «too big») else (x) ), \
+            "f := fn (x := i32 ?) -> i32 ( if (x > 2) (error «too big: {x}») else (x) ), \
              print «{f(1)}», f(5), print «never»",
         )
         .output()
@@ -1399,7 +1399,7 @@ fn error_aborts_the_run_with_its_message() {
     assert_eq!(out.status.code(), Some(1), "a plain failure exit, not a signal");
     assert_eq!(String::from_utf8_lossy(&out.stdout), "1\n");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("run error: too big"), "stderr: {stderr}");
+    assert!(stderr.contains("run error: too big: 5"), "stderr: {stderr}");
 
     let out = logos().arg("t := type (parse = (error «not here»)), t").output().unwrap();
     assert_eq!(out.status.code(), Some(1));
@@ -1410,6 +1410,34 @@ fn error_aborts_the_run_with_its_message() {
     assert_eq!(echoes, ["2"], "stderr: {stderr}");
     assert!(stderr.contains("run error: boom"), "stderr: {stderr}");
     assert!(stderr.contains("`error` must be followed by a «…» quote"), "stderr: {stderr}");
+}
+
+#[test]
+fn error_interpolates_braces_exactly_as_print_does() {
+    let out = logos()
+        .arg(
+            "n := 3, f := fn (i := i32 ?) -> i32 ( if (i >= n) (error «index {i} is past {n - 1}») else (i) ), \
+             f(1), f(4)",
+        )
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("run error: index 4 is past 2"), "stderr: {stderr}");
+
+    let out = logos().arg("error «{1 < 2} {f64 5.5} \\{x\\}»").output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("run error: true 5.5 {x}"), "stderr: {stderr}");
+
+    for (src, message) in [
+        ("error «{x»", "this `{` has no `}`"),
+        ("error «x}»", "this `}` closes no `{`"),
+        ("error «{nope}»", "unknown name `nope`"),
+    ] {
+        let out = logos().arg(src).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(message), "{src}: {stderr}");
+    }
 }
 
 #[test]
