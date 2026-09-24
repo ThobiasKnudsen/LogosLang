@@ -1,0 +1,22 @@
+# Constructors that read the scope cell to their right line by line:
+# `tape[1].dyads[i]` and `tape[1].dyads.size`.
+pub first := type (
+    parse_rank = *.parse_rank + 1,
+    associativity = left,
+    parse = (
+        tape[0] = tape[1].dyads[0],
+        tape.is_constructed[0] = true,
+        tape.remove(1)
+    )
+),
+pub last := type (
+    parse_rank = *.parse_rank + 1,
+    associativity = left,
+    parse = (
+        mut k := u64 0,
+        for i in 0..tape[1].dyads.size ( k = k + 1 ),
+        tape[0] = tape[1].dyads[k - 1],
+        tape.is_constructed[0] = true,
+        tape.remove(1)
+    )
+)

@@ -228,6 +228,24 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
     }
 }
 
+#[test]
+fn next_power_of_two_is_written_in_logos() {
+    for (n, want) in [(0, 1), (1, 1), (5, 8), (8, 8), (9, 16)] {
+        let out = logos()
+            .arg(format!("import identities/next_power_of_two.logos, next_power_of_two({n})"))
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "n = {n}");
+    }
+    let out = logos()
+        .arg("import identities/next_power_of_two.logos, next_power_of_two.compile(), next_power_of_two(1000)")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "1024\n");
+}
+
 /// The power operator with the bare run body, on one line for the REPL.
 const POWER: &str = "^ := type ( fields = ( lhs := ?, rhs := i32 ?, output := type ?, \
     shared run = ( mut r := this.output 1, for 0..this.rhs ( r = r * this.lhs ), r ) ), \
@@ -1452,6 +1470,46 @@ fn a_scope_is_read_by_path_and_reading_runs_nothing() {
     );
     assert_eq!(stderr.matches("this read does not fit the node's type").count(), 2, "{stderr}");
     assert!(stderr.contains("this operator cannot compute over these operands"), "{stderr}");
+}
+
+#[test]
+fn a_constructor_reads_the_scope_cell_to_its_right_line_by_line() {
+    let lib = "import tests/fixtures/scope_cell_lines.logos";
+    for (line, want) in
+        [("first (7, 8, 9) + last (7, 8, 9)", "16"), ("first (scope (1, 2), 3)", "2")]
+    {
+        let out = logos().arg(format!("{lib}, {line}")).output().unwrap();
+        assert!(out.status.success(), "{line}: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{line}");
+    }
+    for (line, want) in [
+        ("first 5", "this node is not a scope"),
+        ("first ()", "index 0 is past the end (0 items)"),
+        ("last ()", "an index cannot be negative"),
+    ] {
+        let out = logos().arg(format!("{lib}, {line}")).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{line}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(want), "{line}: {stderr}");
+    }
+}
+
+#[test]
+fn scope_by_name_is_the_bracket_and_alone_is_the_type() {
+    for (line, want) in [
+        ("scope (1, 2, 3)", "3"),
+        ("g := scope ( a := i32 1, a ), g:start.rhs.dyads.size", "2"),
+        ("g := scope ( a := i32 1, a ), g:start.rhs.dyads[0].lhs:name", "a"),
+        ("f := fn () -> i32 ( scope ( 4 ) ), f.compile(), f()", "4"),
+        ("scope == scope", "true"),
+        ("t := scope, t == scope", "true"),
+        ("here.scope:type == scope", "true"),
+        ("x := i32 1, x:scope == here.scope", "true"),
+    ] {
+        let out = logos().arg(line).output().unwrap();
+        assert!(out.status.success(), "{line}: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{line}");
+    }
 }
 
 #[test]

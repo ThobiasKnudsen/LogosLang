@@ -3,7 +3,8 @@
 
 //! `parsing_tape` and the tape's affordances as identities: `t[k]` read and write,
 //! `t.is_constructed[k]`, `t.spelling[k]`, `t.insert`, `t.remove`, `t.recenter`, and
-//! the cell reads `t[k]:name` and `t[k]:type`. The type's one field,
+//! the cell reads `t[k]:name` and `t[k]:type`, and a scope cell's `t[k].dyads`,
+//! `t[k].dyads.size` and `t[k].dyads[i]`. The type's one field,
 //! `cells`, is the seed's `ParsingTape` handle. The natives run interpreted; nothing lowers.
 
 use super::callable::{self, Callables};
@@ -42,6 +43,15 @@ pub struct TapeIds {
     /// `t[k]:type`: the type of the dyad the cell names, read.
     pub cell_type: DyadPtr,
     pub cell_type_leaf: DyadPtr,
+    /// `t[k].dyads`: the scope cell's `dyads` array, as its address.
+    pub cell_dyads: DyadPtr,
+    pub cell_dyads_leaf: DyadPtr,
+    /// `t[k].dyads.size`, a `u64`.
+    pub cell_dyads_size: DyadPtr,
+    pub cell_dyads_size_leaf: DyadPtr,
+    /// `t[k].dyads[i]`: the scope cell's line i, as its address.
+    pub cell_dyad_at: DyadPtr,
+    pub cell_dyad_at_leaf: DyadPtr,
 }
 
 /// The members are declared in the type's own scope, where `.` resolves them; the
@@ -93,6 +103,9 @@ pub(super) fn register(
     let (recenter, recenter_leaf) = op(cx, &["tape", "k", "op"], run_recenter);
     let (slot_name, slot_name_leaf) = op(cx, &["tape", "k", "op"], run_slot_name);
     let (cell_type, cell_type_leaf) = op(cx, &["tape", "k", "op"], run_cell_type);
+    let (cell_dyads, cell_dyads_leaf) = op(cx, &["tape", "k", "op"], run_cell_dyads);
+    let (cell_dyads_size, cell_dyads_size_leaf) = op(cx, &["tape", "k", "op"], run_cell_dyads_size);
+    let (cell_dyad_at, cell_dyad_at_leaf) = op(cx, &["tape", "k", "i", "op"], run_cell_dyad_at);
     for (name, id) in [
         ("is_constructed", is_constructed),
         ("spelling", spelling),
@@ -124,6 +137,12 @@ pub(super) fn register(
         slot_name_leaf,
         cell_type,
         cell_type_leaf,
+        cell_dyads,
+        cell_dyads_leaf,
+        cell_dyads_size,
+        cell_dyads_size_leaf,
+        cell_dyad_at,
+        cell_dyad_at_leaf,
     }
 }
 
@@ -224,6 +243,36 @@ pub(crate) unsafe fn build_slot_name(store: &mut Store, types: &Core, slot: Dyad
 pub(crate) unsafe fn build_cell_type(store: &mut Store, types: &Core, slot: DyadPtr) -> DyadPtr {
     let (recv, k) = slot_parts(slot);
     node(store, types.tape.cell_type, types.tape.cell_type_leaf, &[recv, k])
+}
+
+/// # Safety
+/// `slot` must be a slot node from `build_slot`.
+pub(crate) unsafe fn build_cell_dyads(store: &mut Store, types: &Core, slot: DyadPtr) -> DyadPtr {
+    let (recv, k) = slot_parts(slot);
+    node(store, types.tape.cell_dyads, types.tape.cell_dyads_leaf, &[recv, k])
+}
+
+/// # Safety
+/// `dyads` must be a node from `build_cell_dyads`.
+pub(crate) unsafe fn build_cell_dyads_size(
+    store: &mut Store,
+    types: &Core,
+    dyads: DyadPtr,
+) -> DyadPtr {
+    let (recv, k) = slot_parts(dyads);
+    node(store, types.tape.cell_dyads_size, types.tape.cell_dyads_size_leaf, &[recv, k])
+}
+
+/// # Safety
+/// `slot` must be a slot node from `build_slot`; `i` a reduced dyad.
+pub(crate) unsafe fn build_cell_dyad_at(
+    store: &mut Store,
+    types: &Core,
+    slot: DyadPtr,
+    i: DyadPtr,
+) -> DyadPtr {
+    let (recv, k) = slot_parts(slot);
+    node(store, types.tape.cell_dyad_at, types.tape.cell_dyad_at_leaf, &[recv, k, i])
 }
 
 /// `flag` is a bool, checked by `=`.
@@ -441,6 +490,52 @@ fn run_cell_type(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         match slot_cell(rt, ops)? {
             Some((_, _, cell)) => Ok((*cell).ty as i64),
             None => Err(RunError::OffTape),
+        }
+    }
+}
+
+/// The scope the cell holds.
+unsafe fn scope_cell(rt: &mut Runtime, ops: *const DyadPtr) -> Result<DyadPtr, RunError> {
+    let Some((_, _, cell)) = slot_cell(rt, ops)? else {
+        return Err(RunError::OffTape);
+    };
+    if (*cell).ty != rt.types().scope {
+        return Err(RunError::NotAScope(cell));
+    }
+    Ok(cell)
+}
+
+/// A scope that never held a line has none.
+unsafe fn cell_lines<'a>(rt: &mut Runtime, ops: *const DyadPtr) -> Result<&'a [DyadPtr], RunError> {
+    Ok(super::scope::exprs_of(scope_cell(rt, ops)?).unwrap_or(&[]))
+}
+
+fn run_cell_dyads(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
+    unsafe {
+        let cell = scope_cell(rt, (*node).value as *const DyadPtr)?;
+        let array_ty = rt.types().array_;
+        Ok(super::scope::dyads(rt.store(), array_ty, cell) as i64)
+    }
+}
+
+fn run_cell_dyads_size(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
+    unsafe { Ok(cell_lines(rt, (*node).value as *const DyadPtr)?.len() as i64) }
+}
+
+fn run_cell_dyad_at(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
+    unsafe {
+        let ops = (*node).value as *const DyadPtr;
+        let lines = cell_lines(rt, ops)?;
+        let i = rt.run(*ops.add(2))?;
+        if i < 0 {
+            return Err(RunError::BadIndex(i));
+        }
+        match lines.get(i as usize) {
+            Some(&line) => Ok(line as i64),
+            None => Err(RunError::PastEnd { index: i, size: lines.len() }),
         }
     }
 }

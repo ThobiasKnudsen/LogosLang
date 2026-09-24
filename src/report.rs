@@ -71,7 +71,7 @@ pub fn parse_message(e: &ParseError) -> String {
             "this literal has no exact value in the type it lands in".into()
         }
         ParseError::EarlyReturn => {
-            "`return` must be the last expression of its scope".into()
+            "outside a function, `return` must be the last expression of its scope".into()
         }
         ParseError::StatementAsValue => {
             "a statement yields no value and cannot stand here".into()
@@ -320,6 +320,9 @@ pub fn run_message(e: &RunError) -> String {
         RunError::NoFragment => "insert takes a tape fragment".into(),
         RunError::NoThis => "`this` holds no node here".into(),
         RunError::BadIndex(k) => format!("an index cannot be negative ({k})"),
+        RunError::PastEnd { index, size } => {
+            format!("index {index} is past the end ({size} items)")
+        }
         RunError::BadCount(n) => format!("an alloc count cannot be negative ({n})"),
         RunError::NotDerefable => "only a scalar or a pointer is read through a pointer".into(),
         RunError::NoLayout(_) => "this type has no field layout to construct".into(),
@@ -347,6 +350,7 @@ pub fn run_message(e: &RunError) -> String {
             "`caller` alone is not a value the seed reads; read `caller.scope`".into()
         }
         RunError::NullPointer => "this pointer holds nothing yet".into(),
+        RunError::Return(_) => "`return` found no function to leave".into(),
         RunError::CallDepth => {
             format!(
                 "calls nested deeper than {}: is this recursion ending?",

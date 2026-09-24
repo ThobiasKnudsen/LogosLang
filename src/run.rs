@@ -50,6 +50,8 @@ pub enum RunError {
     NoThis,
     /// A negative index.
     BadIndex(i64),
+    /// An index at or past the end of what it reads.
+    PastEnd { index: i64, size: usize },
     /// A negative cell count in `alloc`.
     BadCount(i64),
     /// A pointer whose pointee is neither scalar nor pointer.
@@ -80,6 +82,9 @@ pub enum RunError {
     Faulted(Box<String>),
     /// Calls nested deeper than [`MAX_CALL_DEPTH`].
     CallDepth,
+    /// Not an error: `return X` on its way out to the call it leaves, which
+    /// takes the value.
+    Return(i64),
     /// A read or write through a pointer holding nothing.
     NullPointer,
     /// `lex «…»` under a runtime with no lexer attached; only the parser attaches one.
@@ -450,6 +455,11 @@ impl<'a> Runtime<'a> {
         self.types
     }
 
+    /// Whether an interpreted call is in flight: what a `return` leaves.
+    pub(crate) fn in_call(&self) -> bool {
+        !self.activations.is_empty()
+    }
+
     /// A binding operand yields the dyad it names. DESIGN ›The dyad's read surface‹.
     ///
     /// # Safety
@@ -523,7 +533,10 @@ impl<'a> Runtime<'a> {
         }
         CALL_DEPTH.with(|d| d.set(d.get() + 1));
         self.activations.push(base);
-        let result = self.run(body);
+        let result = match self.run(body) {
+            Err(RunError::Return(v)) => Ok(v),
+            other => other,
+        };
         self.activations.pop();
         CALL_DEPTH.with(|d| d.set(d.get() - 1));
         self.stack.release(mark);
