@@ -1276,6 +1276,8 @@ pub enum ParseError {
     TypeIsColonRead,
     /// `:dyad` or `:value`: nothing reaches a value's cell as a whole.
     CellNotReachable,
+    /// `⊆` over two different types that are not both integer types.
+    UnsettledInclusion,
     /// A record construction's argument count did not match its field count.
     CtorArity,
     /// A `for` followed by a fresh spelling and then not by `in`: a fresh
@@ -1354,6 +1356,7 @@ pub(crate) unsafe fn is_bool_result(types: &Core, node: DyadPtr) -> bool {
         || logos == types.ge
         || logos == types.ne
         || logos == types.not_
+        || logos == types.subset
         || logos == types.tape.is_constructed
 }
 

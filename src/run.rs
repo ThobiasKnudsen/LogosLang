@@ -95,6 +95,8 @@ pub enum RunError {
     NoCaller,
     /// `caller` read as a value; the seed reads `caller.scope` only.
     CallerSpot,
+    /// `⊆` over two different types that are not both integer types.
+    UnsettledInclusion,
 }
 
 thread_local! {
