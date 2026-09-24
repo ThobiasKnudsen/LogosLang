@@ -4340,11 +4340,20 @@ impl<'a> Parser<'a> {
         } else {
             (*read).ty
         };
-        // The pointee rides on the reading rule's answer.
-        let Some((crate::identities::read::Read::Pointer(pointee), _)) =
-            crate::identities::read::place_layout(self.types, ptr_ty)
-        else {
-            return Err(ParseError::UnsupportedOperands);
+        let pointee = if ptr_ty == self.types.plus || ptr_ty == self.types.minus {
+            // A pointer step, `(p + k)@`: its pointee is the stepped pointer's.
+            match crate::identities::numtype_of(self.types, read) {
+                crate::identities::Operand::Pointer(pointee) => pointee,
+                _ => return Err(ParseError::UnsupportedOperands),
+            }
+        } else {
+            // The pointee rides on the reading rule's answer.
+            let Some((crate::identities::read::Read::Pointer(pointee), _)) =
+                crate::identities::read::place_layout(self.types, ptr_ty)
+            else {
+                return Err(ParseError::UnsupportedOperands);
+            };
+            pointee
         };
         let types = self.types;
         Ok(crate::identities::pointer::build_deref(self.rt.store, types, lhs, pointee, 0))
