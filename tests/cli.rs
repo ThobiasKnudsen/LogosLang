@@ -270,6 +270,49 @@ fn a_shared_member_is_read_through_a_node_bare_and_through_the_type_by_fields() 
 }
 
 #[test]
+fn the_instances_parse_wakes_on_an_instance_with_this_bound_to_it() {
+    // The type's own parse builds the instance and hands the cell on; the
+    // instances' parse then reads it as `this` and consumes the cell to its right.
+    let q = "q := type ( fields = ( size := ?, shared parse_rank = 60, shared associativity = left, \
+             shared parse = ( tape[0] = this.size, tape.remove(1), tape.is_constructed[0] = true ) ), \
+             parse_rank = 61, parse = ( this.size = tape[1], tape[0] = this, tape.remove(1) ) )";
+    for (src, expect) in [
+        (format!("{q}, q i32 5 i32 7"), "5"),
+        (format!("{q}, f := fn () -> i32 ( q i32 8 i32 0 ), f()"), "8"),
+    ] {
+        let out = logos().args([&src]).output().unwrap();
+        assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), expect, "{src}");
+    }
+    // Without the instances' parse the handed-on instance is left unconstructed.
+    let out = logos()
+        .args(["q := type ( fields = ( size := ? ), parse_rank = 61, \
+                parse = ( this.size = tape[1], tape[0] = this, tape.remove(1) ) ), q i32 5"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("left its own cell unconstructed"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_shared_member_read_through_this_is_the_member_itself() {
+    // `this.element_type` folds to the identity, so `alloc … of` has a static pointee.
+    let q =
+        "q := type ( fields = ( shared element_type := i32, v := ? ), parse_rank = 60, parse = ( \
+             tape[0] = alloc 1 of this.element_type 9, tape.is_constructed[0] = true ) )";
+    let out = logos().args([&format!("{q}, a := q, a@ + 1")]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "10");
+    let out = logos()
+        .args(["q := type ( fields = ( shared element_type := i32, v := ? ), parse_rank = 60, \
+                parse = ( this.element_type = i64, tape[0] = this, tape.is_constructed[0] = true ) ), q"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("not an assignable place"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_constructed_run_body_is_kept_on_the_type_across_repl_lines() {
     // A later line is its own parser, so it must find the i32 body built by the first use.
     let (echoes, stderr) = repl(
@@ -482,9 +525,10 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"t := type (parse = ( parse_rank = 3 ))\n", "a line of the type body itself"),
         (b"t := type (run = ( 1 ))\n", "no `run` of its own"),
         (b"t := type (fields = (run = 5))\n", "marked"),
-        (b"t := type (fields = (shared parse_rank = 5))\n", "other slots"),
-        (b"t := type (fields = (shared parse = ( tape.recenter(0) )))\n", "other slots"),
-        (b"t := type (fields = (shared fields = (a := i32 ?)))\n", "other slots"),
+        (b"t := type (fields = (shared lex_rank = 5))\n", "a name's"),
+        (b"t := type (fields = (shared associativity = 5))\n", "`left` or `right`"),
+        (b"t := type (fields = (shared parse = ( tape.recenter(0) )))\n", "type's own `parse`"),
+        (b"t := type (fields = (shared fields = (a := i32 ?)))\n", "nested `fields`"),
         (b"t := type (fields = (shared drop = 5))\n", "`drop` slot"),
         (b"t := type (parse = ( this.a = tape[-1] ))\n", "declares none"),
         (b"t := type (fields = (a := ?), parse = ( this.b = tape[-1] ))\n", "no field `b`"),
