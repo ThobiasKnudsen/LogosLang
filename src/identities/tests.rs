@@ -862,6 +862,50 @@ fn comparison_siblings_are_bool_conditions_for_if() {
 }
 
 #[test]
+fn an_if_needs_no_brackets_in_both_tiers() {
+    diff_nullary_fn("fn () -> i32 ( if 5 > 3 100 else 200 )", 100);
+    diff_nullary_fn("fn () -> i32 ( if 2 == 3 100 else if 3 == 3 300 else 200 )", 300);
+    diff_nullary_fn("fn () -> i32 ( if 2 == 3 (100) else if 3 > 4 (300) else 200 )", 200);
+    let chain = "fn (n := i32 ?) -> i32 ( if n > 2 7 else if n > 0 (1) else 0 )";
+    diff_typed_call(chain, "f(5)", 7);
+    diff_typed_call(chain, "f(1)", 1);
+    diff_typed_call(chain, "f(0)", 0);
+    diff_typed_call("fn (n := i32 ?) -> i32 ( if n > 2 return 7, n + 1 )", "f(5)", 7);
+    diff_typed_call("fn (n := i32 ?) -> i32 ( if n > 2 return 7, n + 1 )", "f(1)", 2);
+    let assign = "fn (n := i32 ?) -> i32 ( mut k := i32 0, if n > 2 k = 1 else k = 2, k )";
+    diff_typed_call(assign, "f(5)", 1);
+    diff_typed_call(assign, "f(1)", 2);
+    // A bare `else` binds to the nearest `if`.
+    diff_typed_call("fn (n := i32 ?) -> i32 ( if n > 0 if n > 5 1 else 2 else 3 )", "f(3)", 2);
+}
+
+#[test]
+fn an_if_condition_is_its_first_complete_expression() {
+    assert_eq!(run_script("mut m := type ?, m = ?, if m != ? (1) else (2)"), 2);
+    assert_eq!(run_script("mut m := type ?, m = i32, if m != ? 1 else 2"), 1);
+    // Right of a comparison a `(` is the body, though the identity could take it.
+    assert_eq!(run_script("x := i32 1, if x:type == scope (10) else (20)"), 20);
+    assert_eq!(run_script("x := i32 1, if x:type == i32 (10) else (20)"), 10);
+    assert_eq!(run_script("x := i32 1, p := &x, if p:type == @i32 (10) else (20)"), 10);
+    // A value word is still the type's, and a condition not yet complete keeps its `(`.
+    assert_eq!(run_script("x := i32 1, if x == i32 1 (10) else (20)"), 10);
+    assert_eq!(run_script("f := fn (a := i32 ?) -> i32 (a), if f(1) == 1 (10) else (20)"), 10);
+    assert_eq!(run_script("x := i32 1, if not (x == 2) (10) else (20)"), 10);
+    // A call right of a comparison: `1 == f` is complete, so `(1)` is the body.
+    assert_eq!(
+        script_parse_err("f := fn (a := i32 ?) -> i32 (a), if 1 == f(1) (10) else (20)"),
+        ParseError::UnsupportedOperands
+    );
+    assert_eq!(run_script("f := fn (a := i32 ?) -> i32 (a), if 1 == (f(1)) (10) else (20)"), 10);
+    // Bare bodies on their own lines, as identities/array.logos writes them.
+    assert_eq!(run_script("x := i32 1,\nif not x:type == i32\n    error «not i32»,\n5"), 5);
+    assert!(run_script_result("x := i32 1,\nif x:type == i32\n    error «is i32»,\n5").is_err());
+    // A bare branch is a scope, as a bracket is.
+    assert!(matches!(script_parse_err("x := i32 1, if x == 1 y := 2, y"), ParseError::Resolve(_)));
+    assert_eq!(script_parse_err("if 1 == 1 else 2"), ParseError::Empty);
+}
+
+#[test]
 fn comparison_siblings_resolve_to_their_concrete_ops() {
     let (mut store, mut trie, core) = new_core();
 

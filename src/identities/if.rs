@@ -1,8 +1,8 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `if ( cond ) ( then )` with an optional `else ( else )`: the node is
-//! `[cond, then, else]`, the else slot null when absent. The surface parse
+//! `if cond then` with an optional `else else`, each branch a bracket or the
+//! next expression: the node is `[cond, then, else]`, the else slot null when absent. The surface parse
 //! lives in [`crate::parse::Parser::parse_if`]; here the identity, its run
 //! native and lowering, and the `else` token.
 
