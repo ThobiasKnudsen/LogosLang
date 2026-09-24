@@ -51,9 +51,9 @@ get_mint := fn (t := type ?) -> type (
             shared parse_rank = *.parse_rank + 1,
             shared associativity = left,
             shared parse = (
-                if tape[1]:dyad.type == square_brackets (
-                    index := tape[1]:dyad.value.index,
-                    if not index:dyad.type ⊆ this.size:dyad.type
+                if tape[1]:type == square_brackets (
+                    index := tape[1].index,
+                    if not index:type ⊆ this.size:type
                         error «the index type is not within the size type, so the index could lie outside the array»,
                     tape[0] = scope (
                         if index >= this.size error «index out of range: the index is at or past the array's size»,
@@ -68,11 +68,11 @@ get_mint := fn (t := type ?) -> type (
         parse_rank = *.parse_rank + 1,
         associativity = left,
         parse = (
-            if tape[1]:dyad.type == scope (
-                this.size = tape[1]:dyad.value.size,
+            if tape[1]:type == scope (
+                this.size = tape[1].size,
                 this.capacity = next_power_of_two(this.size),
                 this.ptr = alloc this.capacity of this.element_type,
-                for i in 0..this.size ( (this.ptr + i)@ = tape[1]:dyad.value[i] ),
+                for i in 0..this.size ( (this.ptr + i)@ = tape[1][i] ),
                 tape[0] = this,
                 tape.remove(1)
             ),
@@ -87,9 +87,9 @@ pub array := type (
     parse_rank = *.parse_rank + 1,
     associativity = right,
     parse = (
-        if tape[1]:dyad.type != type
+        if tape[1]:type != type
             error «id after array is not a type»,
-        t := tape[1]:dyad,
+        t := tape[1],
         tape[0] = get_mint(t),
         tape.remove(1)
     )

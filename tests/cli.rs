@@ -138,8 +138,8 @@ fn the_repl_imports_once_per_session_and_keeps_pub_names() {
 fn the_view_reads_the_cell_and_operands_are_ordinary_fields() {
     // `(x + x)` has arity 3: operands[2] is the resolved callable leaf, not an i32.
     let (echoes, stderr) = repl(
-        b"x := i32 5\nx:dyad.type == i32\n(x + x):dyad.type.arity\n\
-          (x + x).operands[0]:dyad.type == i32\n(x + x).operands[2]:dyad.type == i32\n\
+        b"x := i32 5\nx:type == i32\n(x + x):type.arity\n\
+          (x + x).operands[0]:type == i32\n(x + x).operands[2]:type == i32\n\
           (x + x).operands[0]\n",
     );
     assert_eq!(echoes, ["true", "3", "true", "false", "5"], "stderr: {stderr}");
@@ -150,7 +150,7 @@ fn the_view_reads_the_cell_and_operands_are_ordinary_fields() {
 fn a_type_body_fills_its_slots_and_declares_its_members() {
     let (echoes, stderr) = repl(
         b"t := type (parse_rank = *.parse_rank + 1, associativity = right)\n\
-          t.parse_rank\nt.associativity == right\nright:dyad.type == type\n",
+          t.parse_rank\nt.associativity == right\nright:type == type\n",
     );
     assert_eq!(echoes, ["71.0", "true", "true"], "stderr: {stderr}");
     let (echoes, stderr) =
@@ -217,7 +217,7 @@ fn the_power_demo_prints_nine() {
 const POWER: &str = "^ := type ( fields = ( lhs := ?, rhs := i32 ?, output := type ?, \
     shared run = ( mut r := this.output 1, for 0..this.rhs ( r = r * this.lhs ), r ) ), \
     parse_rank = *.parse_rank + 1, associativity = right, \
-    parse = ( this.lhs = tape[-1], this.rhs = tape[1], this.output = tape[-1]:dyad.type, \
+    parse = ( this.lhs = tape[-1], this.rhs = tape[1], this.output = tape[-1]:type, \
     tape[0] = this, tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
 
 #[test]
@@ -320,21 +320,21 @@ fn rational_places_and_operators_run_interpreted_and_are_refused_compiled() {
 fn a_pattern_spelling_is_declared_through_regex() {
     // `<=>` beats `<=` `>` by length at equal rank; the core's `..` is spelled `\.\.`.
     let (echoes, stderr) = repl(
-        b"regex \xc2\xab[0-9]+[kK]\xc2\xbb := type ()\n(5k):dyad.type == type\n\
-          regex \xc2\xab<=>\xc2\xbb := type ()\n(<=>):dyad.type == type\n\
+        b"regex \xc2\xab[0-9]+[kK]\xc2\xbb := type ()\n(5k):type == type\n\
+          regex \xc2\xab<=>\xc2\xbb := type ()\n(<=>):type == type\n\
           regex \xc2\xab\\.\\.\xc2\xbb := type ()\n",
     );
     assert_eq!(echoes, ["true", "true"], "stderr: {stderr}");
     assert!(stderr.contains("shadowed"), "stderr: {stderr}");
     let (echoes, stderr) = repl(
         b"regex \xc2\xab[a-z][0-9]\xc2\xbb := type ()\nregex \xc2\xaba[0-9]\xc2\xbb := type ()\na1\n\
-          regex \xc2\xabb[0-9]\xc2\xbb := type (lex_rank = 1)\n(b1):dyad.type == type\n",
+          regex \xc2\xabb[0-9]\xc2\xbb := type (lex_rank = 1)\n(b1):type == type\n",
     );
     assert_eq!(echoes, ["true"], "stderr: {stderr}");
     assert!(stderr.contains("same lex_rank"), "stderr: {stderr}");
     let (echoes, stderr) = repl(
         b"regex \xc2\xab[unclosed\xc2\xbb := type ()\nregex 5\n\
-          regex \xc2\xabz[0-9]\xc2\xbb := type (\nregex \xc2\xabz[0-9]\xc2\xbb := type ()\n(z1):dyad.type == type\n",
+          regex \xc2\xabz[0-9]\xc2\xbb := type (\nregex \xc2\xabz[0-9]\xc2\xbb := type ()\n(z1):type == type\n",
     );
     assert_eq!(echoes, ["true"], "stderr: {stderr}");
     assert!(stderr.contains("does not compile"), "stderr: {stderr}");
@@ -349,7 +349,7 @@ fn a_constructor_written_in_logos_runs_during_the_parse() {
     // A parse that consumes nothing sets its flag and stands as itself.
     let (echoes, stderr) = repl(
         b"noop := type (parse = ( tape.is_constructed[0] = true ))\n\
-          t := noop\nt:dyad.type == type\nnoop.parse_rank\n",
+          t := noop\nt:type == type\nnoop.parse_rank\n",
     );
     assert_eq!(echoes, ["true", "91.0"], "stderr: {stderr}");
     let (_echoes, stderr) = repl(b"bad := type (parse = ( tape[5] ))\nx := bad\n");
@@ -424,12 +424,12 @@ fn a_slot_body_is_read_bare() {
     let (echoes, stderr) = repl(
         b"t := type (fields = (a := i32 ?, shared run = ( s := \xc2\xaba ) b\xc2\xbb, \
           # \xc2\xab ) \xc2\xbb (( x[0] ), 5 ))))\n\
-          t:dyad.type == type\n",
+          t:type == type\n",
     );
     assert_eq!(echoes, ["true"], "stderr: {stderr}");
     let out = logos()
         .args(["t := type (fields = (shared run = ( x[0], # c ) d\n5 ))),\n\
-                t:dyad.type == type"])
+                t:type == type"])
         .output()
         .unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -521,14 +521,22 @@ fn a_square_bracket_is_a_paren_that_closes_only_itself() {
 }
 
 #[test]
-fn dot_logos_off_the_view_is_a_guided_error() {
+fn dot_type_is_a_guided_error() {
     let (_echoes, stderr) = repl(b"x := i32 5\nx.type\n");
-    assert!(stderr.contains("dyad view"), "stderr: {stderr}");
+    assert!(stderr.contains("x:type"), "stderr: {stderr}");
+}
+
+#[test]
+fn nothing_reaches_the_cell_as_a_whole() {
+    for src in [&b"x := i32 5\nx:dyad\n"[..], b"x := i32 5\nx:value\n"] {
+        let (echoes, stderr) = repl(src);
+        assert!(echoes.is_empty() && stderr.contains("as a whole"), "stderr: {stderr}");
+    }
 }
 
 #[test]
 fn a_reflect_read_that_does_not_fit_is_an_error() {
-    let (_echoes, stderr) = repl(b"x := i32 5\nx:dyad.operands[0]\n");
+    let (_echoes, stderr) = repl(b"x := i32 5\n(x + x):type.roles[5]\n");
     assert!(stderr.contains("does not fit"), "stderr: {stderr}");
 }
 
@@ -685,8 +693,8 @@ fn the_repl_binds_a_name_to_a_type() {
 #[test]
 fn logos_is_a_value_reflected_by_dot_logos_and_compared_by_identity() {
     let (echoes, stderr) = repl(
-        b"i32 == i32\ni32 == f64\ni32 != f64\ni32:dyad.type == logos\ni32:dyad.type == i32\n\
-          x := i32 5\nx:dyad.type == i32\nx:dyad.type == f64\nt := logos\ni32:dyad.type == t\nlogos:dyad.type == logos\n",
+        b"i32 == i32\ni32 == f64\ni32 != f64\ni32:type == logos\ni32:type == i32\n\
+          x := i32 5\nx:type == i32\nx:type == f64\nt := logos\ni32:type == t\nlogos:type == logos\n",
     );
     assert_eq!(
         echoes,
@@ -749,7 +757,7 @@ fn a_type_call_with_a_runtime_argument_is_rejected() {
 
 #[test]
 fn a_logos_declaration_declares_a_place_of_that_type() {
-    let (echoes, stderr) = repl(b"mut a := i32 ?\na:dyad.type == i32\na = 9\na\n");
+    let (echoes, stderr) = repl(b"mut a := i32 ?\na:type == i32\na = 9\na\n");
     assert_eq!(echoes, ["true", "9"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
@@ -758,7 +766,7 @@ fn a_logos_declaration_declares_a_place_of_that_type() {
 fn a_dependent_typed_declaration_takes_a_computed_type() {
     let (echoes, stderr) = repl(
         b"metalogos := fn (i := i32 ?) -> logos (if (i==0)(i32) else (f64))\n\
-          mut b := metalogos(1) ?\nb:dyad.type == f64\nb = 7\nb\n",
+          mut b := metalogos(1) ?\nb:type == f64\nb = 7\nb\n",
     );
     assert_eq!(echoes, ["true", "7.0"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -789,7 +797,7 @@ fn a_logos_declaration_names_the_non_numeric_gap() {
 #[test]
 fn a_logos_variable_declares_fills_once_and_becomes_the_type() {
     let (echoes, stderr) =
-        repl(b"mut a := logos ?\na:dyad.type == logos\na == i32\na = i32\na == i32\ny := a 5\ny\n");
+        repl(b"mut a := logos ?\na:type == logos\na == i32\na = i32\na == i32\ny := a 5\ny\n");
     assert_eq!(echoes, ["true", "false", "true", "5"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
@@ -810,7 +818,7 @@ fn a_logos_box_is_written_as_often_as_you_like() {
 fn logical_operators_fold_over_bool_literals() {
     let (echoes, stderr) = repl(
         b"true or false\ntrue and true\nnot (true)\n\
-          mut a := logos ?\nif (a:dyad.type == f32 or a:dyad.type == logos) (a = f64) else (a = i32)\na == f64\n",
+          mut a := logos ?\nif (a:type == f32 or a:type == logos) (a = f64) else (a = i32)\na == f64\n",
     );
     assert_eq!(echoes, ["true", "true", "false", "true"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -820,8 +828,8 @@ fn logical_operators_fold_over_bool_literals() {
 fn a_comptime_if_drops_the_untaken_branch_unparsed() {
     // `a = 9.9` under `a := i32 ?` would be a parse error if it were ever parsed; that this runs proves the branch was skipped.
     let (echoes, stderr) = repl(
-        b"mut a := i32 ?\nif (a:dyad.type == i32) (a = 9) else (a = 9.9)\na\n\
-          mut b := f64 ?\nif (b:dyad.type == i32) (b = 1) else if (b:dyad.type == f64) (b = 2.5) else (b = 3)\nb\n",
+        b"mut a := i32 ?\nif (a:type == i32) (a = 9) else (a = 9.9)\na\n\
+          mut b := f64 ?\nif (b:type == i32) (b = 1) else if (b:type == f64) (b = 2.5) else (b = 3)\nb\n",
     );
     assert_eq!(echoes, ["9", "2.5"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -927,7 +935,7 @@ fn a_line_starting_with_a_dash_is_source_not_a_flag() {
 #[test]
 fn the_record_read_answers_scope_range_and_gate() {
     let (echoes, stderr) = repl(
-        b"x := i32 5\nx:end\nx:gate\nx:scope\n(x + x):scope\ny := i32\ny:dyad.type == type\ny == i32\n",
+        b"x := i32 5\nx:end\nx:gate\nx:scope\n(x + x):scope\ny := i32\ny:type == type\ny == i32\n",
     );
     assert_eq!(echoes.len(), 6, "stderr: {stderr}");
     assert_eq!(&echoes[..2], ["0", "0"], "end and gate are null");
@@ -949,7 +957,7 @@ fn a_field_the_record_has_not_is_the_same_error_as_an_undeclared_dot_field() {
             .collect::<Vec<_>>()
             .join("`…`")
     }
-    let (_e, via_record) = repl(b"x := i32 5\nx:type\n");
+    let (_e, via_record) = repl(b"x := i32 5\nx:i32\n");
     let (_e, via_dot) = repl(b"p := type (fields = (a := i32 ?))\nq := p(1)\nq.scope\n");
     assert_eq!(message(&via_record), message(&via_dot), "record: {via_record}\ndot: {via_dot}");
     assert!(via_record.contains("not in scope"), "stderr: {via_record}");
@@ -960,17 +968,17 @@ fn a_field_the_record_has_not_is_the_same_error_as_an_undeclared_dot_field() {
 }
 
 #[test]
-fn the_dyad_view_is_spelled_with_the_record_read() {
+fn a_type_is_read_with_the_record_read() {
     let (_echoes, stderr) = repl(b"x := i32 5\n(dyad x).type\n");
     assert!(!stderr.is_empty(), "the old spelling no longer parses");
-    let (echoes, stderr) = repl(b"x := i32 5\nx:dyad.type == i32\n");
+    let (echoes, stderr) = repl(b"x := i32 5\nx:type == i32\n");
     assert_eq!(echoes, ["true"], "stderr: {stderr}");
 }
 
 #[test]
 fn a_tight_read_runs_over_a_keyword_before_its_constructor_wakes() {
     let (echoes, stderr) = repl(
-        b"mut x := i32 5\nif:scope\ntype:dyad.type == type\nfn:dyad.type == type\n\
+        b"mut x := i32 5\nif:scope\ntype:type == type\nfn:type == type\n\
           f := fn () -> i32 ( if (x < 9) (x = 1) else (x = 2), x )\nf()\n",
     );
     assert_eq!(echoes.len(), 4, "stderr: {stderr}");
@@ -1010,7 +1018,7 @@ fn a_write_along_a_path_needs_mut_on_every_step() {
 fn a_tight_read_lexes_its_right_cell_on_demand_and_stops_at_a_boundary() {
     let (echoes, stderr) = repl(
         b"x := i32 5\n(x:end, 3)\np := type (fields = (a := i32 ?))\nq := p(1)\n(q.a, 2)\nq.a\n\
-          r := &q\nr@.a\npp := &r\npp@@.a\nx:dyad.type == i32\n",
+          r := &q\nr@.a\npp := &r\npp@@.a\nx:type == i32\n",
     );
     assert_eq!(echoes, ["3", "2", "1", "1", "1", "true"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -1034,11 +1042,9 @@ fn a_type_box_is_an_ordinary_variable() {
 }
 
 #[test]
-fn the_dyad_box_holds_any_node_and_says_what_it_holds() {
-    let (echoes, stderr) = repl(
-        b"mut a := dyad ?\na\na = i32\na:dyad.type == type\na == i32\na\n          x := i32 7\na = x:dyad\na:dyad.type == i32\na:dyad.type == type\n",
-    );
-    assert_eq!(echoes, ["dyad ?", "true", "true", "i32", "true", "false"], "stderr: {stderr}");
+fn the_dyad_box_says_what_it_holds() {
+    let (echoes, stderr) = repl(b"mut a := dyad ?\na\na = i32\na:type == type\na == i32\na\n");
+    assert_eq!(echoes, ["dyad ?", "true", "true", "i32"], "stderr: {stderr}");
 
     let (echoes, stderr) = repl(b"mut a := dyad ?\na = i32\ny := a 5\ny\n");
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
@@ -1086,7 +1092,7 @@ fn only_a_marked_place_is_written_or_addressed() {
     }
     let (echoes, stderr) = repl(
         b"mut x := i32 5\nx = 6\np := &x\np@\nw := type (fields = (y := i64 ?))\nq := w(7)\nr := &q\nr@.y\n\
-          mut a := type ?\nmut b := type ?\na = i32\nb = a\nb == i32\nmut d := dyad ?\nd = x:dyad\nd:dyad.type == i32\n",
+          mut a := type ?\nmut b := type ?\na = i32\nb = a\nb == i32\nmut d := dyad ?\nd = i32\nd:type == type\n",
     );
     assert_eq!(echoes, ["6", "7", "true", "true"], "stderr: {stderr}");
 }
@@ -1107,7 +1113,7 @@ fn declaring_from_a_box_copies_it() {
 #[test]
 fn a_dyad_is_built_from_a_type_and_a_value() {
     let (echoes, stderr) =
-        repl(b"c := dyad (i32, 7)\nc\nc:dyad.type == i32\ndyad (i32, 7):dyad.type == i32\nc + 1\n");
+        repl(b"c := dyad (i32, 7)\nc\nc:type == i32\ndyad (i32, 7):type == i32\nc + 1\n");
     assert_eq!(echoes, ["7", "true", "true", "8"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
     let (_e, stderr) = repl(b"dyad (i32)\n");
@@ -1277,7 +1283,7 @@ fn a_constructors_outcome_is_read_off_its_own_cell() {
         b"r1 := type (parse = ( tape.is_constructed[0] = true, tape.recenter(1) ))\n\
           r2 := type (parse = ( tape.is_constructed[0] = true, tape.recenter(-1) ))\n\
           r3 := type (parse = ( tape.is_constructed[0] = true, tape.recenter(99) ))\n\
-          a := r1\nb := r2\nc := r3\na:dyad.type == type\nb:dyad.type == type\nc:dyad.type == type\n",
+          a := r1\nb := r2\nc := r3\na:type == type\nb:type == type\nc:type == type\n",
     );
     assert_eq!(echoes, ["true", "true", "true"], "stderr: {stderr}");
     for src in [

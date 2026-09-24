@@ -1,9 +1,10 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `:`, the record read: `a:scope`, `a:name`, `a:dyad` read a name's record
-//! itself, bypassing its reading rule, at `.`'s precedence, so `a:dyad.type`
-//! is `(a:dyad).type`. The reads live in [`crate::parse::Parser::construct_record_read`].
+//! `:`, the record read: `a:scope`, `a:name` read a name's record itself, bypassing
+//! its reading rule, and `a:type` the type of the dyad it stands for, at `.`'s
+//! precedence, so `a:type.arity` is `(a:type).arity`. The reads live in
+//! [`crate::parse::Parser::construct_record_read`].
 //! DESIGN ›The dyad's read surface‹
 
 use super::{meta, Cx};

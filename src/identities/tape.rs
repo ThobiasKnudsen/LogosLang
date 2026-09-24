@@ -3,7 +3,7 @@
 
 //! `parsing_tape` and the tape's affordances as identities: `t[k]` read and write,
 //! `t.is_constructed[k]`, `t.spelling[k]`, `t.insert`, `t.remove`, `t.recenter`, and
-//! the cell reads `t[k]:dyad`, `t[k]:name`, `t[k]:dyad.type`. The type's one field,
+//! the cell reads `t[k]:name` and `t[k]:type`. The type's one field,
 //! `cells`, is the seed's `ParsingTape` handle. The natives run interpreted; nothing lowers.
 
 use super::callable::{self, Callables};
@@ -36,13 +36,10 @@ pub struct TapeIds {
     pub remove_leaf: DyadPtr,
     pub recenter: DyadPtr,
     pub recenter_leaf: DyadPtr,
-    /// `t[k]:dyad`: the cell the slot holds, read through a record to the dyad it names.
-    pub slot_dyad: DyadPtr,
-    pub slot_dyad_leaf: DyadPtr,
     /// `t[k]:name`: the spelling of the record the cell holds, a string node.
     pub slot_name: DyadPtr,
     pub slot_name_leaf: DyadPtr,
-    /// `t[k]:dyad.type`: the cell's type, read.
+    /// `t[k]:type`: the type of the dyad the cell names, read.
     pub cell_type: DyadPtr,
     pub cell_type_leaf: DyadPtr,
 }
@@ -94,7 +91,6 @@ pub(super) fn register(
     let (insert, insert_leaf) = op(cx, &["tape", "k", "cells", "op"], run_insert);
     let (remove, remove_leaf) = op(cx, &["tape", "k", "op"], run_remove);
     let (recenter, recenter_leaf) = op(cx, &["tape", "k", "op"], run_recenter);
-    let (slot_dyad, slot_dyad_leaf) = op(cx, &["tape", "k", "op"], run_slot_dyad);
     let (slot_name, slot_name_leaf) = op(cx, &["tape", "k", "op"], run_slot_name);
     let (cell_type, cell_type_leaf) = op(cx, &["tape", "k", "op"], run_cell_type);
     for (name, id) in [
@@ -124,8 +120,6 @@ pub(super) fn register(
         remove_leaf,
         recenter,
         recenter_leaf,
-        slot_dyad,
-        slot_dyad_leaf,
         slot_name,
         slot_name_leaf,
         cell_type,
@@ -220,26 +214,15 @@ unsafe fn slot_parts(over: DyadPtr) -> (DyadPtr, DyadPtr) {
 
 /// # Safety
 /// `slot` must be a slot node from `build_slot`.
-pub(crate) unsafe fn build_slot_dyad(store: &mut Store, types: &Core, slot: DyadPtr) -> DyadPtr {
-    let (recv, k) = slot_parts(slot);
-    node(store, types.tape.slot_dyad, types.tape.slot_dyad_leaf, &[recv, k])
-}
-
-/// # Safety
-/// `slot` must be a slot node from `build_slot`.
 pub(crate) unsafe fn build_slot_name(store: &mut Store, types: &Core, slot: DyadPtr) -> DyadPtr {
     let (recv, k) = slot_parts(slot);
     node(store, types.tape.slot_name, types.tape.slot_name_leaf, &[recv, k])
 }
 
 /// # Safety
-/// `slot_dyad` must be a node from `build_slot_dyad`.
-pub(crate) unsafe fn build_cell_type(
-    store: &mut Store,
-    types: &Core,
-    slot_dyad: DyadPtr,
-) -> DyadPtr {
-    let (recv, k) = slot_parts(slot_dyad);
+/// `slot` must be a slot node from `build_slot`.
+pub(crate) unsafe fn build_cell_type(store: &mut Store, types: &Core, slot: DyadPtr) -> DyadPtr {
+    let (recv, k) = slot_parts(slot);
     node(store, types.tape.cell_type, types.tape.cell_type_leaf, &[recv, k])
 }
 
@@ -426,17 +409,6 @@ unsafe fn slot_cell(
     let tape = tape_of(rt, *ops)?;
     let k = rt.run(*ops.add(1))? as isize;
     Ok((*tape).at(k).map(|c| (tape, k, rt.through(c.dyad))))
-}
-
-fn run_slot_dyad(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
-    unsafe {
-        let ops = (*node).value as *const DyadPtr;
-        match slot_cell(rt, ops)? {
-            Some((_, _, cell)) => Ok(cell as i64),
-            None => Err(RunError::OffTape),
-        }
-    }
 }
 
 /// The identity's name, never the appearance's text (that is `t.spelling[k]`); a cell

@@ -31,7 +31,7 @@
     parse = (
         this.lhs = tape[-1],
         this.rhs = tape[1],
-        this.output = tape[-1]:dyad.type,
+        this.output = tape[-1]:type,
         tape[0] = this,
         tape.is_constructed[0] = true,
         tape.remove(1),

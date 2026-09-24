@@ -1228,9 +1228,11 @@ pub enum ParseError {
     /// A collection member (`.operands`, `.roles`) without its `[index]`: the
     /// bare collection as a first-class value waits for the array type.
     ExpectedIndexBracket,
-    /// `.logos` on something that is not a dyad view: a value's type is never
-    /// one of its own fields; the view puts it there, `x:dyad.type`.
-    TypeNeedsView,
+    /// `.type` on something that is not a dyad: a value's type is never one of
+    /// its own fields; `:` reads it, `x:type`.
+    TypeIsColonRead,
+    /// `:dyad` or `:value`: nothing reaches a value's cell as a whole.
+    CellNotReachable,
     /// A record construction's argument count did not match its field count.
     CtorArity,
     /// A `for` followed by a fresh spelling and then not by `in`: a fresh
@@ -3833,16 +3835,6 @@ impl<'a> Parser<'a> {
             if self.run_body.as_ref().is_some_and(|rb| lhs == rb.this_param) {
                 return self.run_body_field(name, nstart).map(|n| (n, 0));
             }
-            // `t[k]:dyad.type`: the cell's type, read.
-            if (*lhs).ty == self.types.tape.slot_dyad {
-                let types = self.types;
-                return match name {
-                    "type" => {
-                        Ok((crate::identities::tape::build_cell_type(self.rt.store, types, lhs), 0))
-                    }
-                    _ => Err(ParseError::BadReflectRead),
-                };
-            }
             if (*lhs).ty == self.types.dyad_ {
                 return self.view_member(lhs, name).map(|n| (n, 0));
             }
@@ -3879,7 +3871,7 @@ impl<'a> Parser<'a> {
                 return Err(ParseError::TypeKnownOnlyAtRun);
             }
             if name == "type" {
-                return Err(ParseError::TypeNeedsView);
+                return Err(ParseError::TypeIsColonRead);
             }
             // An operator node's slots are the fields its own type defines:
             // `.operands[i]` fetches one, no view involved; a null slot is the checked error until `?`.
@@ -5223,9 +5215,10 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// On a record, `dyad` is the view `{type: dyad, value: <the cell>}` and
-    /// any other field the instance-field read in `record`'s own scope; on a
-    /// constructed node the path answers (DESIGN ›Meta-navigation‹), `start`/`end` null.
+    /// On a record, `type` is the type of the dyad the name stands for and any
+    /// other field the instance-field read in `record`'s own scope; on a
+    /// constructed node `type` is its own and the path answers the rest
+    /// (DESIGN ›Meta-navigation‹), `start`/`end` null.
     ///
     /// # Safety
     /// `lhs` must be a valid dyad from the store.
@@ -5238,10 +5231,14 @@ impl<'a> Parser<'a> {
         let types = self.types;
         let source = self.source;
         let name = &source[nstart..nstart + nlen];
-        // `t[k]:dyad`: the cell the slot holds, read when the constructor runs.
+        // The binding's `dyad` field is storage, not a spelling.
+        if name == "dyad" || name == "value" {
+            return Err(ParseError::CellNotReachable);
+        }
+        // Read when the constructor runs.
         if (*lhs).ty == types.tape.slot {
-            if name == "dyad" {
-                return Ok(crate::identities::tape::build_slot_dyad(self.rt.store, types, lhs));
+            if name == "type" {
+                return Ok(crate::identities::tape::build_cell_type(self.rt.store, types, lhs));
             }
             // `t[k]:name`: the spelling of the record the cell holds.
             if name == "name" {
@@ -5250,11 +5247,13 @@ impl<'a> Parser<'a> {
             return Err(ParseError::ExpectedField);
         }
         if (*lhs).ty == types.record_ {
-            if name == "dyad" {
-                // Through a settled box: `a:dyad.type` asks the type of what
-                // the name holds.
+            if name == "type" {
+                // Through a settled box: the type of what the name holds.
                 let cell = self.settled_type(Record::read(lhs).dyad);
-                return Ok(self.rt.store.alloc_raw(types.dyad_, cell as *mut u8));
+                if cell.is_null() {
+                    return Err(ParseError::BadReflectRead);
+                }
+                return Ok((*cell).ty);
             }
             let (field, offset, _) = self.resolve_field(types.record_, nstart, nlen)?;
             let addr = (*lhs).value.wrapping_add(offset);
@@ -5273,7 +5272,7 @@ impl<'a> Parser<'a> {
             return Ok(self.rt.store.alloc_raw((*field).ty, addr));
         }
         let value = match name {
-            "dyad" => return Ok(self.rt.store.alloc_raw(types.dyad_, lhs as *mut u8)),
+            "type" => return Ok((*lhs).ty),
             "scope" => self.scopes.current().unwrap_or(std::ptr::null_mut()),
             "start" | "end" | "gate" => std::ptr::null_mut(),
             _ => {
@@ -5295,7 +5294,7 @@ impl<'a> Parser<'a> {
     /// read surface‹); nothing else reads through the view, and nothing here writes.
     ///
     /// # Safety
-    /// `view` must be a view node as `a:dyad` builds it.
+    /// `view` must be a node of type `dyad`.
     unsafe fn view_member(&mut self, view: DyadPtr, name: &str) -> Result<DyadPtr, ParseError> {
         let viewed = (*view).value as DyadPtr;
         if viewed.is_null() {
@@ -5379,7 +5378,7 @@ impl<'a> Parser<'a> {
                 .rt
                 .store
                 .alloc_raw(self.types.dyad_, meta::record_scope_of(logos) as *mut u8)),
-            "type" => Err(ParseError::TypeNeedsView),
+            "type" => Err(ParseError::TypeIsColonRead),
             // A member of the type's own definition body, resolved against
             // the body scope alone (DESIGN ›The constructor is a field‹).
             _ => {
@@ -6391,9 +6390,7 @@ mod tests {
             );
             scopes.declare(&mut trie, "t", rec).unwrap();
 
-            let (v, s) = go("t[0]:dyad", &mut store, &mut trie, types, scopes);
-            assert_eq!(v as DyadPtr, Record::read(plus).dyad);
-            let (v, s) = go("t[0]:dyad.type", &mut store, &mut trie, types, s);
+            let (v, s) = go("t[0]:type", &mut store, &mut trie, types, scopes);
             assert_eq!(v as DyadPtr, core.type_, "an identity's type is the root");
 
             let (_, s) = go(
