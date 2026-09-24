@@ -33,6 +33,7 @@ mod comment;
 mod convert;
 pub(crate) mod declare;
 pub(crate) mod drop_model;
+pub mod error;
 #[path = "fn.rs"]
 mod fn_mod;
 #[path = "for.rs"]
@@ -141,6 +142,7 @@ pub struct Core {
     pub this: this::ThisIds,
     pub lex: lex::LexIds,
     pub print: print::PrintIds,
+    pub error: error::ErrorIds,
     pub run_body: run_body::RunBodyIds,
     pub here: here::HereIds,
     /// The passive node a `[i]` cell carries.
@@ -299,6 +301,7 @@ impl Core {
         let this = this::register(&mut cx, &callables);
         let lex = lex::register(&mut cx, &callables);
         let print = print::register(&mut cx, &callables);
+        let error = error::register(&mut cx, &callables);
         let run_body = run_body::register(&mut cx);
         let here = here::register(&mut cx, &callables);
         // Last: the `binding` type's fields are `@dyad` places, so it waits for `dyad` and `@`.
@@ -381,6 +384,7 @@ impl Core {
             this,
             lex,
             print,
+            error,
             run_body,
             here,
             index_,

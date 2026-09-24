@@ -1206,7 +1206,7 @@ pub enum ParseError {
     ExpectedPath,
     /// A `regex` was not followed by a `«…»` quote.
     ExpectedPattern,
-    /// A `lex` or `print` was not followed by a `«…»` quote; carries the word.
+    /// A `lex`, `print` or `error` was not followed by a `«…»` quote; carries the word.
     ExpectedQuote(&'static str),
     /// A `{` in a `print` quote with no `}` after it.
     UnclosedInterpolation,
@@ -5187,6 +5187,16 @@ impl<'a> Parser<'a> {
         let parts = self.print_parts(inner, inner + len)?;
         self.pos = end;
         let node = crate::identities::print::build(self.rt.store, self.types, &parts);
+        tape.place(node);
+        Ok(Constructed::Placed)
+    }
+
+    pub(crate) fn construct_error(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        let quote = self.quote_after("error")?;
+        let node = crate::identities::error::build(self.rt.store, self.types, quote);
         tape.place(node);
         Ok(Constructed::Placed)
     }
