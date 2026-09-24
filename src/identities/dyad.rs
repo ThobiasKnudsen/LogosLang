@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The node cell: a `type` pointer and a `value` pointer, its identity its address.
-//! `dyad` is also the spelled type whose constructor builds a cell, `dyad (type, value)`;
-//! the view `a:dyad` reads a cell's two slots. DESIGN ›A dyad is a type and a value‹.
+//! `dyad` is also the spelled type whose constructor builds a cell, `dyad (type, value)`.
+//! DESIGN ›A dyad is a type and a value‹.
 
 use super::{meta, Cx};
 

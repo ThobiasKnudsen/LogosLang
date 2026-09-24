@@ -131,7 +131,7 @@ pub struct Core {
     pub shared_: DyadPtr,
     /// Its node is the trace of the load; running it re-yields the file's tail.
     pub import_: DyadPtr,
-    /// The cell type; a value of it is the view `a:dyad`.
+    /// The cell type.
     pub dyad_: DyadPtr,
     pub binding_: DyadPtr,
     /// `:`, the binding read.
@@ -546,7 +546,6 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     // A tape or `this` read yields a cell's address, an `@dyad` value: a write stores
     // what it yields, never its own address.
     if logos == types.tape.slot
-        || logos == types.tape.slot_dyad
         || logos == types.tape.cell_type
         || logos == types.tape.spelling
         || logos == types.tape.slot_name

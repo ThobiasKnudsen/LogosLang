@@ -123,9 +123,12 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::ExpectedIndexBracket => {
             "expected `[index]` — element access is `[…]`, `(…)` is application".into()
         }
-        ParseError::TypeNeedsView => {
-            "a value's type is not one of its fields — read it through the \
-             dyad view: x:dyad.type"
+        ParseError::TypeIsColonRead => {
+            "a value's type is not one of its fields — read it with `:`: x:type".into()
+        }
+        ParseError::CellNotReachable => {
+            "nothing reaches a value's cell as a whole — read its type with \
+             `x:type` and its fields with `x.f`"
                 .into()
         }
         ParseError::CtorArity => {

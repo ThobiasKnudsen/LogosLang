@@ -1755,9 +1755,11 @@ fn a_bool_literal_agrees_across_tiers() {
 }
 
 #[test]
-fn a_dyad_view_lowers_to_the_node_it_views() {
+fn a_type_read_agrees_across_tiers() {
     assert_eq!(
-        run_script("x := i32 5, f := fn () -> i64 ( x:dyad ), a := f(), f.compile(), a == f()"),
+        run_script(
+            "x := i32 5, f := fn () -> bool ( x:type == i32 ), a := f(), f.compile(), a == f()"
+        ),
         1
     );
 }
@@ -1967,7 +1969,7 @@ const POW_TYPE: &str = "pw := type (\n\
      parse = (\n\
          this.a = tape[-1],\n\
          this.b = tape[1],\n\
-         this.output = tape[-1]:dyad.type,\n\
+         this.output = tape[-1]:type,\n\
          tape[0] = this,\n\
          tape.is_constructed[0] = true,\n\
          tape.remove(1),\n\
@@ -2366,7 +2368,7 @@ fn use_of(store: &mut Store, trie: &mut RegexTrie, core: &Core, name: &str) -> D
 }
 
 #[test]
-fn the_view_reads_roles_and_raw_value_at_the_graph_level() {
+fn a_type_read_reaches_roles_at_the_graph_level() {
     let (mut store, mut trie, core) = new_core();
 
     let mut s = ScopeStack::new();
@@ -2375,23 +2377,11 @@ fn the_view_reads_roles_and_raw_value_at_the_graph_level() {
     let x = store.alloc_raw(core.i32_, crate::dyad::global_place(x_val));
     unsafe { s.declare(&mut trie, "x", test_binding(core.binding_, x)) }.unwrap();
 
-    let mut p = Parser::new("(x + x):dyad.type.roles[0]", &mut store, &mut trie, &core, s);
+    let mut p = Parser::new("(x + x):type.roles[0]", &mut store, &mut trie, &core, s);
     let role = p.parse_expression().unwrap();
     // SAFETY: `role` is the role-name string node the read just yielded.
     unsafe {
         assert_eq!(crate::identities::string::text(role), b"lhs");
-    }
-    let mut s = p.into_scopes();
-    s.truncate(1);
-
-    let mut p = Parser::new("x:dyad.value", &mut store, &mut trie, &core, s);
-    let value = p.parse_expression().unwrap();
-    // SAFETY: `value` is the u64 value node the read just built.
-    unsafe {
-        assert_eq!((*value).ty, core.numtypes[NumType::U64 as usize]);
-        let mut rt = Runtime::new(&core, &mut store);
-        // The slot holds the storage marked as a place; the view shows the slot, not the address behind it.
-        assert_eq!(rt.run(value).unwrap(), crate::dyad::global_place(x_val) as i64);
     }
 }
 

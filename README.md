@@ -94,11 +94,11 @@ pick(0) == i32                 # true
 
 ### Reflection
 
-`.` reads the fields a value's type defines, and a value's type is not one of them. To read the cell itself, ask for the dyad view with `:`, which reads a name's binding rather than its value: `x:dyad` is the cell, `x:scope` the scope `x` was declared in, `x:name` its spelling.
+`.` reads the fields a value's type defines, and a value's type is not one of them. Its type is read with `:`, which reads a name's binding rather than its value: `x:type` is the type of what `x` holds, `x:scope` the scope `x` was declared in, `x:name` its spelling.
 
 ```logos
 x := i32 5,
-x:dyad.type == i32 and i32:dyad.type == type    # true: a type's type is the root
+x:type == i32 and i32:type == type      # true: a type's type is the root
 ```
 
 ### Pointers and the heap
@@ -164,7 +164,7 @@ This is what the first public preview is built to show. An operator is a type wi
     parse = (                                # runs at every appearance of ^
         this.lhs = tape[-1],                 # this: the fresh ^ node, filled by name
         this.rhs = tape[1],
-        this.output = tape[-1]:dyad.type,    # the result follows the base's type
+        this.output = tape[-1]:type,         # the result follows the base's type
         tape[0] = this,                      # placed in its own cell
         tape.is_constructed[0] = true,       # and marked done, by the constructor itself
         tape.remove(1),

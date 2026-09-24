@@ -269,7 +269,7 @@ mod tests {
              5,\n\
              «hi»,\n\
              # prose\n\
-             x:dyad,\n\
+             w.fields,\n\
              i32 1 + i32 2,\n\
              f(1, 2),\n\
              ?",
@@ -326,7 +326,7 @@ mod tests {
                  parse = (\n\
                      this.a = tape[-1],\n\
                      this.b = tape[1],\n\
-                     this.output = tape[-1]:dyad.type,\n\
+                     this.output = tape[-1]:type,\n\
                      tape[0] = this,\n\
                      tape.is_constructed[0] = true,\n\
                      tape.remove(1),\n\
