@@ -205,9 +205,15 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::SlotOutsideDefinition => {
             "a slot is filled on a line of the type body itself: `parse_rank = …` on a bare line, `shared run = (…)` inside `fields = (…)`".into()
         }
-        ParseError::OwnRunNotInSeed => {
-            "a type's own `run` is not in the seed; an instance's run is `shared run = (…)` inside `fields = (…)`".into()
+        ParseError::NoOwnRun => {
+            "a type has no `run` of its own: its instances' run is filled with `shared run = (…)` inside `fields = (…)` and read through the type as `t.fields.run`".into()
         }
+        ParseError::MemberThroughFields(name) => format!(
+            "`{name}` is a member of the type's fields block: read it through the type as `.fields.{name}`, or through a node bare"
+        ),
+        ParseError::PerNodeThroughType(name) => format!(
+            "`{name}` is a place in each node, not stored with the type: read it through a node"
+        ),
         ParseError::FieldsSlotNotInSeed => {
             "inside `fields = (…)` only `shared run = (…)` fills a slot yet; the instances' other slots are not in the seed (#133)".into()
         }

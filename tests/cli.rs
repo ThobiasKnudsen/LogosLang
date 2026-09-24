@@ -153,20 +153,22 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
           t.parse_rank\nt.associativity == right\nright:type == type\n",
     );
     assert_eq!(echoes, ["71.0", "true", "true"], "stderr: {stderr}");
-    let (echoes, stderr) =
-        repl(b"g := type (fields = (shared y := 3, shared z := y + 3))\ng.y\ng.z\ng.parse_rank\n");
+    let (echoes, stderr) = repl(
+        b"g := type (fields = (shared y := 3, shared z := y + 3))\ng.fields.y\ng.fields.z\ng.parse_rank\n",
+    );
     assert_eq!(echoes, ["3", "6", "91.0"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        b"g := type (fields = (shared y := i32 7, shared z := i32 (y + 3)))\ng.y\ng.z\ng.y + 1\n",
+        b"g := type (fields = (shared y := i32 7, shared z := i32 (y + 3)))\n\
+          g.fields.y\ng.fields.z\ng.fields.y + 1\n",
     );
     assert_eq!(echoes, ["7", "10", "8"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        b"p := type (fields = (shared k := 10, v := i32 ?))\nq := p(2)\nq.v\np.k\np.size_bytes\n",
+        b"p := type (fields = (shared k := 10, v := i32 ?))\nq := p(2)\nq.v\nq.k\np.fields.k\np.size_bytes\n",
     );
-    assert_eq!(echoes, ["2", "10", "4"], "stderr: {stderr}");
+    assert_eq!(echoes, ["2", "10", "10", "4"], "stderr: {stderr}");
     let (echoes, stderr) = repl(
         b"t := type (fields = (shared # \xc2\xabnote\xc2\xbb y := 3, shared z := 4 # \xc2\xabtail\xc2\xbb, v := i32 ?))\n\
-          t.y\nt.z\nt.size_bytes\n",
+          t.fields.y\nt.fields.z\nt.size_bytes\n",
     );
     assert_eq!(echoes, ["3", "4", "4"], "stderr: {stderr}");
     let (echoes, stderr) =
@@ -235,6 +237,36 @@ fn a_held_run_body_is_constructed_once_per_field_type_set_in_both_tiers() {
     let out = logos().args([&src]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "25");
+}
+
+#[test]
+fn a_shared_member_is_read_through_a_node_bare_and_through_the_type_by_fields() {
+    let point = "point := type ( fields = ( x := i32 ?, y := i32 ?, shared dims := i32 2 ) ), \
+                 p := point (1, 2)";
+    for (read, expect) in [("p.dims", "2"), ("point.fields.dims", "2"), ("p.x", "1")] {
+        let out = logos().args([&format!("{point}, {read}")]).output().unwrap();
+        assert!(out.status.success(), "{read}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), expect, "{read}");
+    }
+    for (read, expect) in [
+        ("point.dims", "`.fields.dims`"),
+        ("point.x", "a place in each node"),
+        ("point.fields.x", "a place in each node"),
+        ("point.fields.run", "does not fit"),
+        ("point.run", "no `run` of its own"),
+    ] {
+        let out = logos().args([&format!("{point}, {read}")]).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(expect), "{read}: stderr: {stderr}");
+    }
+    // The instances' run is one place, read through the type; the type has none of its own.
+    let out =
+        logos().args([&format!("{POWER}, r := ^.fields.run, ^.fields.run")]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "dyad");
+    let out = logos().args([&format!("{POWER}, ^.run")]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("no `run` of its own"), "stderr: {stderr}");
 }
 
 #[test]
@@ -448,7 +480,7 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"parse_rank = 3\n", "unknown name"),
         (b"d := i32 5\ndrop = 3\n", "a line of the type body itself"),
         (b"t := type (parse = ( parse_rank = 3 ))\n", "a line of the type body itself"),
-        (b"t := type (run = ( 1 ))\n", "`shared run = (…)`"),
+        (b"t := type (run = ( 1 ))\n", "no `run` of its own"),
         (b"t := type (fields = (run = 5))\n", "marked"),
         (b"t := type (fields = (shared parse_rank = 5))\n", "other slots"),
         (b"t := type (fields = (shared parse = ( tape.recenter(0) )))\n", "other slots"),
@@ -1004,14 +1036,17 @@ fn a_write_along_a_path_needs_mut_on_every_step() {
     for (src, expect) in [
         (&b"p := type (fields = (mut v := i32 ?))\nq := p(1)\nq.v = 3\n"[..], "`q` is not `mut`"),
         (b"p := type (fields = (v := i32 ?))\nmut q := p(1)\nq.v = 3\n", "`v` is not `mut`"),
-        (b"t := type (fields = (shared y := i32 3))\nt.y = 4\n", "`y` is not `mut`"),
+        (b"t := type (fields = (shared y := i32 3))\nt.fields.y = 4\n", "`y` is not `mut`"),
+        (b"t := type (fields = (shared y := i32 3))\nq := t()\nq.y = 4\n", "`y` is not `mut`"),
         (b"p := type (fields = (immut v := i32 ?))\nmut q := p(1)\nq.v = 3\n", "`v` is `immut`"),
     ] {
         let (_e, stderr) = repl(src);
         assert!(stderr.contains(expect), "{}: stderr: {stderr}", String::from_utf8_lossy(src));
     }
-    let (echoes, stderr) = repl(b"t := type (fields = (shared mut y := i32 3))\nt.y = 4\nt.y\n");
-    assert_eq!(echoes, ["4"], "stderr: {stderr}");
+    let (echoes, stderr) = repl(
+        b"t := type (fields = (shared mut y := i32 3, v := i32 ?))\nq := t(1)\nt.fields.y = 4\nq.y\nq.y = 5\nt.fields.y\n",
+    );
+    assert_eq!(echoes, ["4", "5"], "stderr: {stderr}");
 }
 
 #[test]

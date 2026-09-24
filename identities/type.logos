@@ -7,6 +7,8 @@
 # for itself and inside its fields block for its instances; type.logos alone declares them, which is why
 # `parse := parse ?` names the slot after its type here and nowhere else: the ground is hand-built by the seed,
 # and nothing predeclares the slots for it. lex_rank is not here: it lives on the binding (14 September 2026).
+# run is not here either: a type has no run of its own, and every fields block holds its instances' run,
+# filled `shared run = (…)` and read through the type as `t.fields.run`.
 # The fields block comes first in every type body (ruled 20 September 2026): a body's this.f names a field declared above it.
 
 type := type (
@@ -14,7 +16,6 @@ type := type (
         parse_rank := f64 ?
         associativity := ?
         parse := parse ?
-        run := run ?
         drop := drop ?
         fields := fields ?
     )
