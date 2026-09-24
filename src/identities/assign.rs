@@ -119,6 +119,10 @@ pub(super) fn build(
         // SAFETY: `lhs_d` is a tape slot node, `rhs` a reduced dyad.
         return Ok(unsafe { super::tape::build_write(store, types, lhs_d, rhs) });
     }
+    if lhs_ty == types.hashmap.get {
+        // SAFETY: `lhs_d` is a get node, `rhs` a reduced dyad.
+        return unsafe { super::hashmap::build_put(store, types, lhs_d, rhs) };
+    }
     if lhs_ty == types.tape.is_constructed {
         // SAFETY: `rhs` is a reduced dyad from the store.
         if !unsafe { crate::parse::is_bool_result(types, rhs) } {
@@ -153,6 +157,8 @@ pub(super) fn build(
                     }
                 }
                 Read::Address => t == types.dyad_,
+                // SAFETY: as above.
+                Read::Executable(_) => (unsafe { super::hashmap::box_of(types, rhs) }) == Some(t),
                 _ => false,
             };
             if !ok {

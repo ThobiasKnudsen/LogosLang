@@ -1243,6 +1243,9 @@ pub enum ParseError {
     /// `tape.insert(k, …)` was handed something that is not a tape: `insert`
     /// splices a tape into a tape (DESIGN ›Text is the quote‹).
     InsertTakesTape,
+    /// `hashmap` not followed by `K -> V`, or a key or value type whose values are
+    /// not one word read by value.
+    HashmapShape,
     /// A constructor edited the tape and returned with its own cell still
     /// unconstructed and still its own identity: neither a decline nor a
     /// construction. Carries the cell's spelling.
@@ -1746,7 +1749,7 @@ impl<'a> Parser<'a> {
     /// Inside a function the place is frame-relative, the next offset after
     /// the parameters, its storage per call; at top level an absolute global
     /// blob. The value is a `FRAME_TAG` offset or a real address respectively.
-    fn alloc_local(&mut self, ty_node: DyadPtr, width: usize) -> DyadPtr {
+    pub(crate) fn alloc_local(&mut self, ty_node: DyadPtr, width: usize) -> DyadPtr {
         let place = if self.frames.is_empty() {
             // Tagged as storage, so a place and a definition's record are
             // told apart everywhere, not only where a frame exists.
@@ -4420,6 +4423,15 @@ impl<'a> Parser<'a> {
                     tape.place(node);
                     return Ok(Constructed::Placed);
                 }
+                // SAFETY: `lhs` and `key` are reduced dyads from the store.
+                let get = unsafe {
+                    crate::identities::hashmap::build_get(self.rt.store, types, lhs, key)
+                }?;
+                if let Some(node) = get {
+                    tape.remove(-1);
+                    tape.place(node);
+                    return Ok(Constructed::Placed);
+                }
             }
         }
         // SAFETY: `scope` is the block `parse_block` minted, closed.
@@ -5195,16 +5207,25 @@ impl<'a> Parser<'a> {
             {
                 Some(t)
             }
-            _ => None,
+            // SAFETY: as above.
+            _ => unsafe { crate::identities::hashmap::box_of(self.types, read) },
         };
         // SAFETY: `placeholder` was minted for the name and nothing has read a value from it; `binding`, `value` and `read` are dyads from the store.
         let declared = unsafe {
             if self.holes.remove(&value) {
                 // `x := i32 ?`: the place `?` built is what the name binds to;
                 // nothing initializes it, and `?`'s entry refuses a read until
-                // a sibling write fills it.
+                // a sibling write fills it. A hashmap's zeroed place is already
+                // its empty map, so nothing is unknown to refuse.
                 self.scopes.rebind(binding, value);
-                Binding::add_gate(self.rt.store, self.types.array_, binding, self.types.unknown);
+                if !crate::identities::hashmap::is_hashmap(self.types, (*value).ty) {
+                    Binding::add_gate(
+                        self.rt.store,
+                        self.types.array_,
+                        binding,
+                        self.types.unknown,
+                    );
+                }
                 value
             } else if (*read).ty == self.types.construct_ {
                 let ops = (*read).value as *mut DyadPtr;
