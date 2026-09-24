@@ -29,6 +29,8 @@
 # The seed's array is array-of-@dyad with no spelling and no element access (src/identities/array.rs).
 # The fields block comes first in every type body (ruled 20 September 2026): a body's this.f names a field declared above it.
 
+import ./next_power_of_two.logos,
+
 array_mints := hashmap type -> type
 
 get_mint := fn (t := type ?) -> type (
