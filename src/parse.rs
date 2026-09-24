@@ -5177,8 +5177,8 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
         let quote = self.quote_after("print")?;
-        // Stand-in for #140: `{…}` interpolates once strings are live; until then
-        // a brace is refused rather than printed as text.
+        // A brace is refused rather than printed as text until strings are live
+        // and `{…}` interpolates (stand-in for #140).
         // SAFETY: `quote` is the string node the `«…»` constructor just built.
         if unsafe { crate::identities::string::text(quote) }.contains(&b'{') {
             return Err(ParseError::InterpolationPending);
