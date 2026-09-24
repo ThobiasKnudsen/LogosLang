@@ -1208,11 +1208,11 @@ fn caller_scope_is_the_use_site_and_here_scope_the_body() {
          w := type (parse = ( seen = caller.scope, tape.remove(0) ))\n\
          g := fn () -> i32 ( 1 w )\n\
          seen == here.scope\n\
-         seen.scope.scope == here.scope\n\
+         seen.back.back == here.scope\n\
          g()\n\
          h := fn () -> i32 ( seen = here.scope, 2 )\n\
          h()\n\
-         seen.scope.scope == here.scope\n"
+         seen.back.back == here.scope\n"
             .as_bytes(),
     );
     assert_eq!(echoes, ["false", "true", "1", "2", "true"], "stderr: {stderr}");
@@ -1235,7 +1235,7 @@ fn a_pointer_type_applies_to_any_type() {
          p == here.scope\n\
          g := fn () -> i32 ( f(here.scope) )\n\
          g()\n\
-         p.scope.scope.scope == here.scope\n\
+         p.back.back.back == here.scope\n\
          v := @void ?\n\
          t := fn (s := @void ?) -> i32 ( 1 )\n"
             .as_bytes(),
@@ -1244,6 +1244,13 @@ fn a_pointer_type_applies_to_any_type() {
     assert!(stderr.is_empty(), "stderr: {stderr}");
     // A place or literal after `@` is refused; its bytes used to be read as a record and crash.
     let (_echoes, stderr) = repl(b"x := i32 5\nq := @x ?\nq := @5 ?\n");
+    assert_eq!(
+        stderr.matches("this operator cannot compute over these operands").count(),
+        2,
+        "stderr: {stderr}"
+    );
+    // A scope's link up is `.back`; `.scope` on a scope is a field it does not have.
+    let (_echoes, stderr) = repl(b"mut p := @dyad ?\np = here.scope\np.scope\nhere.scope.scope\n");
     assert_eq!(
         stderr.matches("this operator cannot compute over these operands").count(),
         2,

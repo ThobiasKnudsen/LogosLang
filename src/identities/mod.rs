@@ -554,9 +554,8 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     {
         return Operand::Pointer(types.dyad_);
     }
-    // `here` and the `.scope` reads yield a node's address, as `x:scope` does.
-    if logos == types.here.here || logos == types.here.caller_scope || logos == types.here.scope_of
-    {
+    // `here`, `caller.scope` and `.back` yield a node's address, as `x:scope` does.
+    if logos == types.here.here || logos == types.here.caller_scope || logos == types.here.back {
         return Operand::Pointer(types.dyad_);
     }
     if logos == types.convert {
