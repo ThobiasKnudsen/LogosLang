@@ -38,7 +38,7 @@ pub enum RunError {
     NoTape,
     /// A tape index the tape does not hold.
     OffTape,
-    /// `t[k]:name` on a cell holding no named record.
+    /// `t[k]:name` on a cell holding no named binding.
     NoName,
     /// `insert` of a null fragment.
     NoFragment,
@@ -446,12 +446,12 @@ impl<'a> Runtime<'a> {
         self.types
     }
 
-    /// A record operand yields the dyad it names. DESIGN ›The dyad's read surface‹.
+    /// A binding operand yields the dyad it names. DESIGN ›The dyad's read surface‹.
     ///
     /// # Safety
     /// `p` must be null or a valid dyad from the store.
     pub(crate) unsafe fn through(&self, p: DyadPtr) -> DyadPtr {
-        crate::record::through(self.types.record_, p)
+        crate::binding::through(self.types.binding_, p)
     }
 
     /// The machine address a place denotes: absolute for a global, `frame base

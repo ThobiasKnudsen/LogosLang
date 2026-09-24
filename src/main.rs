@@ -47,7 +47,7 @@ unsafe fn is_statement_node(core: &Core, node: seed::dyad::DyadPtr) -> bool {
     is_silent_type(core, logos) || logos == core.fn_type || logos == core.drop_
 }
 
-/// The dyad a line's tail names (through its ran item and its record) and its type.
+/// The dyad a line's tail names (through its ran item and its binding) and its type.
 ///
 /// # Safety
 /// `node` must be a valid dyad.
@@ -56,7 +56,7 @@ unsafe fn tail_type(
     node: seed::dyad::DyadPtr,
 ) -> (seed::dyad::DyadPtr, seed::dyad::DyadPtr) {
     let node = seed::identities::ran::expr_of(core, node);
-    let named = seed::record::through(core.record_, node);
+    let named = seed::binding::through(core.binding_, node);
     (named, (*named).ty)
 }
 

@@ -19,7 +19,7 @@ use crate::store::Store;
 /// The declared binding (or construction initializer); the name string node sits at 0.
 const DECL_DECLARED: usize = 1;
 
-/// The trie longest-matches `:=` over the record read `:`.
+/// The trie longest-matches `:=` over the binding read `:`.
 /// Returns `(declare identity, leaf, := token)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::DECLARE);

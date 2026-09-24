@@ -9,18 +9,18 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+use crate::binding::Binding;
 use crate::dyad::DyadPtr;
-use crate::record::Record;
 use crate::regex_trie::{RegexTrie, RegexTrieError};
 use crate::store::Store;
 use crate::Core;
 
-/// One cell of the tape: a dyad pointer (a record, a fresh dyad, or the built
+/// One cell of the tape: a dyad pointer (a binding, a fresh dyad, or the built
 /// node) plus the tape's own two facts, the flag and the lexed spelling
 /// (DESIGN ›The scope's constructor is the driver‹).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cell {
-    /// The record, the fresh dyad, or the node.
+    /// The binding, the fresh dyad, or the node.
     pub dyad: DyadPtr,
     pub constructed: bool,
     /// The constructed cell is the group a `(` landed, so the identity to its
@@ -72,17 +72,17 @@ impl Cell {
         self.start + self.len
     }
 
-    /// The record read through to its dyad, a fresh dyad or a node itself.
+    /// The binding read through to its dyad, a fresh dyad or a node itself.
     pub fn identity(&self, types: &Core) -> DyadPtr {
         // SAFETY: a cell's dyad is null or a dyad from the store.
         unsafe { types.through(self.dyad) }
     }
 
-    /// Null when the cell holds no record (a fresh spelling, a minted
+    /// Null when the cell holds no binding (a fresh spelling, a minted
     /// identity, a constructed node).
-    pub fn record(&self, types: &Core) -> DyadPtr {
+    pub fn binding(&self, types: &Core) -> DyadPtr {
         // SAFETY: a cell's dyad is null or a dyad from the store.
-        if !self.constructed && !self.dyad.is_null() && unsafe { (*self.dyad).ty } == types.record_
+        if !self.constructed && !self.dyad.is_null() && unsafe { (*self.dyad).ty } == types.binding_
         {
             self.dyad
         } else {
@@ -97,7 +97,7 @@ impl Cell {
     }
 
     /// The finished group `(` leaves, which the identity to its left may
-    /// claim; a *named* scope value is a record, so `f s` is no call.
+    /// claim; a *named* scope value is a binding, so `f s` is no call.
     pub fn is_bracket(&self) -> bool {
         self.constructed && self.bracket
     }
@@ -446,8 +446,8 @@ pub struct Resolved {
     /// Bytes consumed from the start of the input.
     pub matched: usize,
     /// What a use of the name points at (DESIGN ›The dyad's read surface‹).
-    pub record: DyadPtr,
-    /// The record's dyad.
+    pub binding: DyadPtr,
+    /// The binding's dyad.
     pub identity: DyadPtr,
     /// The scope the winning declaration was made in: what a rebind that
     /// completes it must target.
@@ -489,8 +489,8 @@ fn unknown_spelling(text: &str) -> String {
 enum Journal {
     /// Rollback removes the live entry.
     Declared { name: String, scope: DyadPtr },
-    /// Rollback restores the `end` the record had before.
-    Ended { record: DyadPtr, prev_end: DyadPtr },
+    /// Rollback restores the `end` the binding had before.
+    Ended { binding: DyadPtr, prev_end: DyadPtr },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -504,7 +504,7 @@ enum Endpoint {
 #[derive(Debug)]
 struct Pending {
     /// Its own `scope` says which scope's next item settles it.
-    record: DyadPtr,
+    binding: DyadPtr,
     endpoint: Endpoint,
 }
 
@@ -512,7 +512,7 @@ struct Pending {
 /// keyword's constructor can mark it dead with the node it built.
 #[derive(Debug)]
 pub(crate) struct Ended {
-    pub(crate) record: DyadPtr,
+    pub(crate) binding: DyadPtr,
 }
 
 /// The open scopes with an O(1) membership set: a cache over the parent link
@@ -567,8 +567,8 @@ impl ScopeStack {
     pub fn pop(&mut self) -> Option<DyadPtr> {
         let s = self.open.pop()?;
         self.set.remove(&s);
-        // SAFETY: every pending record is a record dyad from the store.
-        self.pending.retain(|p| unsafe { Record::read(p.record).scope } != s);
+        // SAFETY: every pending binding is a binding dyad from the store.
+        self.pending.retain(|p| unsafe { Binding::read(p.binding).scope } != s);
         Some(s)
     }
 
@@ -633,9 +633,9 @@ impl ScopeStack {
                     // A failed removal means the entry was already pruned.
                     let _ = trie.remove(&name, scope);
                 }
-                Journal::Ended { record, prev_end } => {
-                    // SAFETY: a journalled record is a record dyad from the store.
-                    unsafe { Record::set_end(record, prev_end) };
+                Journal::Ended { binding, prev_end } => {
+                    // SAFETY: a journalled binding is a binding dyad from the store.
+                    unsafe { Binding::set_end(binding, prev_end) };
                 }
             }
         }
@@ -667,10 +667,10 @@ impl ScopeStack {
         let matches = trie.get_all_matches(text).map_err(ResolveError::Index)?;
         let bytes = text.as_bytes();
         let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
-        // SAFETY: every pointer the trie stores is a record dyad from the store.
-        let fields = |r: DyadPtr| unsafe { Record::read(r) };
-        // One candidate per record, at its longest match: an optional tail
-        // reports every end, an alternation holds the record on each path.
+        // SAFETY: every pointer the trie stores is a binding dyad from the store.
+        let fields = |r: DyadPtr| unsafe { Binding::read(r) };
+        // One candidate per binding, at its longest match: an optional tail
+        // reports every end, an alternation holds the binding on each path.
         let mut cands: Vec<(DyadPtr, usize, bool)> = Vec::new();
         let mut why_none: Option<ResolveError> = None;
         for m in &matches {
@@ -681,41 +681,41 @@ impl ScopeStack {
                 continue;
             }
             // At the frontier "range covers the point" is exactly "not dead".
-            // Two live records of one spelling are a field's or a slot word's,
+            // Two live bindings of one spelling are a field's or a slot word's,
             // declared against their siblings alone: the innermost open
             // scope's wins (DESIGN ›The constructor is a field‹).
-            let record = m
-                .records
+            let binding = m
+                .bindings
                 .iter()
                 .copied()
                 .filter(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead())
                 .max_by_key(|&r| self.position(fields(r).scope));
-            let Some(record) = record else {
+            let Some(binding) = binding else {
                 let spelling = text[..m.matched].to_string();
-                if m.records.iter().any(|&r| self.is_open(fields(r).scope)) {
+                if m.bindings.iter().any(|&r| self.is_open(fields(r).scope)) {
                     why_none = Some(ResolveError::Dead(spelling));
                 } else if why_none.is_none() {
                     why_none = Some(ResolveError::OutOfScope(spelling));
                 }
                 continue;
             };
-            match cands.iter_mut().find(|(r, _, _)| *r == record) {
+            match cands.iter_mut().find(|(r, _, _)| *r == binding) {
                 Some(e) => e.1 = e.1.max(m.matched),
-                None => cands.push((record, m.matched, fresh)),
+                None => cands.push((binding, m.matched, fresh)),
             }
         }
         let mut best: Option<(f64, usize, Resolved)> = None;
         let mut tied = false;
-        for (record, matched, fresh) in cands {
-            let f = fields(record);
-            // Off its record: a second name for one identity ranks on its own.
+        for (binding, matched, fresh) in cands {
+            let f = fields(binding);
+            // Off its binding: a second name for one identity ranks on its own.
             let rank = f.lex_rank;
             let better = match &best {
                 None => true,
                 Some((r, n, _)) => rank > *r || (rank == *r && matched > *n),
             };
             if better {
-                let r = Resolved { fresh, matched, record, identity: f.dyad, scope: f.scope };
+                let r = Resolved { fresh, matched, binding, identity: f.dyad, scope: f.scope };
                 best = Some((rank, matched, r));
                 tied = false;
             } else if matches!(&best, Some((r, n, _)) if rank == *r && matched == *n) {
@@ -733,12 +733,12 @@ impl ScopeStack {
     /// name is free to redeclare, a fresh entry beside the dead one.
     ///
     /// # Safety
-    /// `record` must be a record dyad from the store; this writes its `scope`.
+    /// `binding` must be a binding dyad from the store; this writes its `scope`.
     pub unsafe fn declare(
         &mut self,
         trie: &mut RegexTrie,
         name: &str,
-        record: DyadPtr,
+        binding: DyadPtr,
     ) -> Result<(), ResolveError> {
         let scope = self.current().expect("declare needs an open scope");
         match self.resolve(trie, name) {
@@ -749,11 +749,11 @@ impl ScopeStack {
         }
         // The spelling enters the index as a literal key, never as a pattern.
         let key = regex::escape(name);
-        // SAFETY: `record` is a record dyad from the store, built for this name.
-        unsafe { Record::set_scope(record, scope) };
-        trie.insert(&key, record);
+        // SAFETY: `binding` is a binding dyad from the store, built for this name.
+        unsafe { Binding::set_scope(binding, scope) };
+        trie.insert(&key, binding);
         self.journal.push(Journal::Declared { name: key, scope });
-        self.pending.push(Pending { record, endpoint: Endpoint::Start });
+        self.pending.push(Pending { binding, endpoint: Endpoint::Start });
         Ok(())
     }
 
@@ -764,30 +764,30 @@ impl ScopeStack {
     /// intersection.
     ///
     /// # Safety
-    /// `record` must be a record dyad from the store; this writes its `scope`.
+    /// `binding` must be a binding dyad from the store; this writes its `scope`.
     ///
     /// # Safety
-    /// `record` must be a record dyad from the store ([`Record::alloc`]); this
+    /// `binding` must be a binding dyad from the store ([`Binding::alloc`]); this
     /// writes its `scope` field through the pointer.
     pub unsafe fn declare_pattern(
         &mut self,
         trie: &mut RegexTrie,
         key: &str,
-        record: DyadPtr,
+        binding: DyadPtr,
     ) -> Result<(), ResolveError> {
         let scope = self.current().expect("declare needs an open scope");
-        if let Some(records) = trie.records_for_key(key) {
-            // SAFETY: every pointer the trie stores is a record dyad from the store.
-            let fields = |r: DyadPtr| unsafe { Record::read(r) };
-            if records.iter().any(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead()) {
+        if let Some(bindings) = trie.bindings_for_key(key) {
+            // SAFETY: every pointer the trie stores is a binding dyad from the store.
+            let fields = |r: DyadPtr| unsafe { Binding::read(r) };
+            if bindings.iter().any(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead()) {
                 return Err(ResolveError::Shadowed(key.to_string()));
             }
         }
-        // SAFETY: `record` is a record dyad from the store, built for this pattern.
-        unsafe { Record::set_scope(record, scope) };
-        trie.insert(key, record);
+        // SAFETY: `binding` is a binding dyad from the store, built for this pattern.
+        unsafe { Binding::set_scope(binding, scope) };
+        trie.insert(key, binding);
         self.journal.push(Journal::Declared { name: key.to_string(), scope });
-        self.pending.push(Pending { record, endpoint: Endpoint::Start });
+        self.pending.push(Pending { binding, endpoint: Endpoint::Start });
         Ok(())
     }
 
@@ -795,12 +795,12 @@ impl ScopeStack {
     /// the body item (DESIGN ›Memory and concurrency‹).
     ///
     /// # Safety
-    /// `record` must be a record dyad from the store; this writes its `end`.
-    pub unsafe fn mark_dead(&mut self, record: DyadPtr, node: DyadPtr) {
-        // SAFETY: `record` is a record dyad the trie returned.
-        let prev_end = unsafe { Record::replace_end(record, node) };
-        self.journal.push(Journal::Ended { record, prev_end });
-        self.pending.push(Pending { record, endpoint: Endpoint::End });
+    /// `binding` must be a binding dyad from the store; this writes its `end`.
+    pub unsafe fn mark_dead(&mut self, binding: DyadPtr, node: DyadPtr) {
+        // SAFETY: `binding` is a binding dyad the trie returned.
+        let prev_end = unsafe { Binding::replace_end(binding, node) };
+        self.journal.push(Journal::Ended { binding, prev_end });
+        self.pending.push(Pending { binding, endpoint: Endpoint::End });
     }
 
     /// Every endpoint pending for `scope` now points at `item`, the line as a
@@ -808,39 +808,39 @@ impl ScopeStack {
     /// (DESIGN ›Name resolution is scope-filtered‹).
     ///
     /// # Safety
-    /// Every pending record must be a record dyad from the store; `item` is
+    /// Every pending binding must be a binding dyad from the store; `item` is
     /// stored, never read.
     pub unsafe fn settle_item(&mut self, scope: DyadPtr, item: DyadPtr) {
         let mut i = 0;
         while i < self.pending.len() {
-            let record = self.pending[i].record;
-            // SAFETY: every pending record is a record dyad from the store.
-            if unsafe { Record::read(record).scope } != scope {
+            let binding = self.pending[i].binding;
+            // SAFETY: every pending binding is a binding dyad from the store.
+            if unsafe { Binding::read(binding).scope } != scope {
                 i += 1;
                 continue;
             }
             let p = self.pending.swap_remove(i);
-            // SAFETY: every pending record is a record dyad from the store.
+            // SAFETY: every pending binding is a binding dyad from the store.
             unsafe {
                 match p.endpoint {
-                    Endpoint::Start => Record::set_start(record, item),
-                    Endpoint::End => Record::set_end(record, item),
+                    Endpoint::Start => Binding::set_start(binding, item),
+                    Endpoint::End => Binding::set_end(binding, item),
                 }
             }
         }
     }
 
     /// Checked against its siblings alone (DESIGN ›The constructor is a
-    /// field‹): a live record of the spelling in an enclosing scope stands
+    /// field‹): a live binding of the spelling in an enclosing scope stands
     /// beside it, both live until this scope closes.
     ///
     /// # Safety
-    /// `record` must be a record dyad from the store; this writes its `scope`.
+    /// `binding` must be a binding dyad from the store; this writes its `scope`.
     pub unsafe fn declare_field(
         &mut self,
         trie: &mut RegexTrie,
         name: &str,
-        record: DyadPtr,
+        binding: DyadPtr,
     ) -> Result<(), ResolveError> {
         let scope = self.current().expect("declare needs an open scope");
         if self.declared_in(trie, name, scope)? {
@@ -848,11 +848,11 @@ impl ScopeStack {
         }
         // The spelling enters the index as a literal key, never as a pattern.
         let key = regex::escape(name);
-        // SAFETY: `record` is a record dyad from the store, built for this name.
-        unsafe { Record::set_scope(record, scope) };
-        trie.insert(&key, record);
+        // SAFETY: `binding` is a binding dyad from the store, built for this name.
+        unsafe { Binding::set_scope(binding, scope) };
+        trie.insert(&key, binding);
         self.journal.push(Journal::Declared { name: key, scope });
-        self.pending.push(Pending { record, endpoint: Endpoint::Start });
+        self.pending.push(Pending { binding, endpoint: Endpoint::Start });
         Ok(())
     }
 
@@ -867,9 +867,9 @@ impl ScopeStack {
     ) -> Result<bool, ResolveError> {
         match trie.get(name) {
             Ok(m) if m.matched == name.len() => {
-                // SAFETY: every pointer the trie stores is a record dyad.
-                let fields = |r: DyadPtr| unsafe { Record::read(r) };
-                Ok(m.records.iter().any(|&r| fields(r).scope == scope && !fields(r).is_dead()))
+                // SAFETY: every pointer the trie stores is a binding dyad.
+                let fields = |r: DyadPtr| unsafe { Binding::read(r) };
+                Ok(m.bindings.iter().any(|&r| fields(r).scope == scope && !fields(r).is_dead()))
             }
             Ok(_) | Err(RegexTrieError::NodeNotFound) => Ok(false),
             Err(e) => Err(ResolveError::Index(e)),
@@ -877,14 +877,14 @@ impl ScopeStack {
     }
 
     /// The name becomes another spelling of an existing identity (a type), so
-    /// pointer-identity checks see the original; the record's range, journal
+    /// pointer-identity checks see the original; the binding's range, journal
     /// entry and pending endpoint are untouched.
     ///
     /// # Safety
-    /// `record` must be a record dyad from the store; this writes its `dyad`.
-    pub unsafe fn rebind(&mut self, record: DyadPtr, identity: DyadPtr) {
-        // SAFETY: `record` is a record dyad from the store.
-        unsafe { Record::set_dyad(record, identity) };
+    /// `binding` must be a binding dyad from the store; this writes its `dyad`.
+    pub unsafe fn rebind(&mut self, binding: DyadPtr, identity: DyadPtr) {
+        // SAFETY: `binding` is a binding dyad from the store.
+        unsafe { Binding::set_dyad(binding, identity) };
     }
 }
 
@@ -905,7 +905,7 @@ pub const FN_BCODE: usize = 3;
 /// A `u64` leaf: the frame's byte size, parameters first, then the locals at
 /// their offsets; null for none. Both tiers read it on entry.
 pub const FN_FRAME: usize = 4;
-/// An `array` of the records of the outer names the body reads, in
+/// An `array` of the bindings of the outer names the body reads, in
 /// first-read order, or null; read at every call (DESIGN ›`own` and `drop`
 /// are static‹).
 pub const FN_OUTER: usize = 5;
@@ -1005,7 +1005,7 @@ struct OpenType {
     /// The six slot words as this definition's own markers, declared into the body's scope.
     slots: [DyadPtr; 6],
     parse_rank: f64,
-    /// From a `lex_rank = …` line; written onto the declaration's record at
+    /// From a `lex_rank = …` line; written onto the declaration's binding at
     /// the close.
     lex_rank: Option<f64>,
     assoc: Assoc,
@@ -1413,19 +1413,19 @@ pub struct Parser<'a> {
     /// `parse_fn` publishes the signature onto it before the body parses, so
     /// a recursive self-call resolves its types.
     pending_fn: DyadPtr,
-    /// The records of the declarations whose right side is being driven,
+    /// The bindings of the declarations whose right side is being driven,
     /// innermost last: what a `lex_rank = …` line writes. A stand-in for a
-    /// definition writing a record field from inside `:=`.
+    /// definition writing a binding field from inside `:=`.
     filling: Vec<DyadPtr>,
-    /// The record of the last declaration that reduced: what a gate word to
+    /// The binding of the last declaration that reduced: what a gate word to
     /// its left marks.
     last_declared: DyadPtr,
-    /// The records along the path a field place was reached by, root first:
+    /// The bindings along the path a field place was reached by, root first:
     /// what a write into it must be granted by.
     paths: HashMap<DyadPtr, Vec<DyadPtr>>,
-    /// The record of the name left of the `.` being constructed, or null.
+    /// The binding of the name left of the `.` being constructed, or null.
     member_root: DyadPtr,
-    /// The field record behind each `this.f` slot a parse body built: the
+    /// The field binding behind each `this.f` slot a parse body built: the
     /// constructor's fill, granted by default and vetoed by `immut`.
     fills: HashMap<DyadPtr, DyadPtr>,
     /// Open function frames, innermost last: empty at top level, where
@@ -1520,9 +1520,9 @@ pub(crate) fn lex_token(
     let dyad = if r.fresh {
         store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut())
     } else {
-        r.record
+        r.binding
     };
-    // SAFETY: `text` outlives the cell (the caller's contract); `dyad` is the index's record or a fresh dyad.
+    // SAFETY: `text` outlives the cell (the caller's contract); `dyad` is the index's binding or a fresh dyad.
     let cell = unsafe { Cell::lexed(dyad, text, start, r.matched) };
     Ok(Some((cell, start + r.matched)))
 }
@@ -1555,7 +1555,7 @@ struct OpenFn {
     /// The scope depth the function's barrier begins at: a name declared
     /// below it is from outside the function.
     below: usize,
-    /// The records of the outer names the body has read so far, first-read
+    /// The bindings of the outer names the body has read so far, first-read
     /// order, each once: the function's `FN_OUTER` list.
     outer: Vec<DyadPtr>,
 }
@@ -1710,25 +1710,25 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// For every open function whose barrier the record's scope lies below,
-    /// the read is of an outer name and the record joins its `FN_OUTER` list
+    /// For every open function whose barrier the binding's scope lies below,
+    /// the read is of an outer name and the binding joins its `FN_OUTER` list
     /// once; a scope on no stack (a section's) lies below every function.
-    fn note_outer_read(&mut self, record: DyadPtr) {
-        if record.is_null() || self.frames.is_empty() {
+    fn note_outer_read(&mut self, binding: DyadPtr) {
+        if binding.is_null() || self.frames.is_empty() {
             return;
         }
-        // SAFETY: a non-null record came from the resolver or a function's list: a record dyad.
-        let scope = unsafe { Record::read(record).scope };
+        // SAFETY: a non-null binding came from the resolver or a function's list: a binding dyad.
+        let scope = unsafe { Binding::read(binding).scope };
         let depth = self.scopes.position(scope).unwrap_or(0);
         for frame in &mut self.frames {
-            if depth < frame.below && !frame.outer.contains(&record) {
-                frame.outer.push(record);
+            if depth < frame.below && !frame.outer.contains(&binding) {
+                frame.outer.push(binding);
             }
         }
     }
 
     /// A call is a use of every outer name the callee's body reads (DESIGN
-    /// ›`own` and `drop` are static‹): each listed record is checked as a bare
+    /// ›`own` and `drop` are static‹): each listed binding is checked as a bare
     /// use here would be, and joins the lists of the functions being parsed.
     ///
     /// # Safety
@@ -1741,16 +1741,16 @@ impl<'a> Parser<'a> {
         if unsafe { (*callee).ty } != self.types.fn_type {
             return Ok(());
         }
-        // SAFETY: `callee` is a function node; its list holds record dyads.
+        // SAFETY: `callee` is a function node; its list holds binding dyads.
         let outer = unsafe { fn_outer(callee) };
-        for &record in outer {
-            // SAFETY: a function's outer list holds record dyads from the store.
-            let fields = unsafe { Record::read(record) };
+        for &binding in outer {
+            // SAFETY: a function's outer list holds binding dyads from the store.
+            let fields = unsafe { Binding::read(binding) };
             let name = || {
                 if fields.name.is_null() {
                     String::new()
                 } else {
-                    // SAFETY: a record's `name` is a string node.
+                    // SAFETY: a binding's `name` is a string node.
                     String::from_utf8_lossy(unsafe { crate::identities::string::text(fields.name) })
                         .into_owned()
                 }
@@ -1762,7 +1762,7 @@ impl<'a> Parser<'a> {
             if fields.is_dead() {
                 return Err(ParseError::Resolve(ResolveError::Dead(name())));
             }
-            self.note_outer_read(record);
+            self.note_outer_read(binding);
         }
         Ok(())
     }
@@ -2161,27 +2161,27 @@ impl<'a> Parser<'a> {
     }
 
     /// The one seam every constructor goes through: a reduced dyad passes; a
-    /// resolved token yields the name's record (DESIGN ›The dyad's read
+    /// resolved token yields the name's binding (DESIGN ›The dyad's read
     /// surface‹); a fresh-name token re-resolves its span for the precise error.
     pub(crate) fn as_operand(&mut self, cell: Cell) -> Result<DyadPtr, ParseError> {
         match cell {
             c if c.constructed => Ok(c.dyad),
             c => {
-                let (id, record) = if c.is_fresh() {
+                let (id, binding) = if c.is_fresh() {
                     match self.resolve_fresh(c.spelling()) {
-                        Ok(r) => (r.identity, r.record),
+                        Ok(r) => (r.identity, r.binding),
                         Err(e) => {
                             self.pos = c.start;
                             return Err(ParseError::Resolve(e));
                         }
                     }
                 } else {
-                    (self.cell_identity(&c), c.record(self.types))
+                    (self.cell_identity(&c), c.binding(self.types))
                 };
                 // SAFETY: `id` is a resolved dyad from the store.
                 unsafe { self.check_capture(id)? };
-                self.note_outer_read(record);
-                Ok(if record.is_null() { id } else { record })
+                self.note_outer_read(binding);
+                Ok(if binding.is_null() { id } else { binding })
             }
         }
     }
@@ -2229,10 +2229,10 @@ impl<'a> Parser<'a> {
 
     /// What a constructor places when it "stands as its own value" (DESIGN
     /// ›The scope's constructor is the driver‹): the use of the name, its
-    /// record, when the cell was lexed; the bare identity for a minted token.
+    /// binding, when the cell was lexed; the bare identity for a minted token.
     pub(crate) fn stand_as_value(&self, tape: &ParsingTape, id: DyadPtr) -> DyadPtr {
-        match tape.at(0).map(|c| c.record(self.types)) {
-            Some(record) if !record.is_null() => record,
+        match tape.at(0).map(|c| c.binding(self.types)) {
+            Some(binding) if !binding.is_null() => binding,
             _ => id,
         }
     }
@@ -2406,7 +2406,7 @@ impl<'a> Parser<'a> {
                 self.shared_member(start)?;
                 continue;
             }
-            // `mut` or `immut` before a field or parameter gates its record, as before any name.
+            // `mut` or `immut` before a field or parameter gates its binding, as before any name.
             let gate = word.filter(|&w| w == self.types.mut_ || w == self.types.immut_);
             let (start, name) = if gate.is_some() {
                 let (start, len) = self.lex_spelling().ok_or(ParseError::ExpectedField)?;
@@ -2445,8 +2445,8 @@ impl<'a> Parser<'a> {
             };
             let field = self.rt.store.alloc_raw(logos, std::ptr::null_mut());
             // The field's name is not stored on the record: declaring it puts
-            // a record in the one name index (DESIGN ›Name resolution is scope-filtered‹).
-            let record = if relaxed {
+            // a binding in the one name index (DESIGN ›Name resolution is scope-filtered‹).
+            let binding = if relaxed {
                 // One block, one no-shadowing rule: a field is checked against
                 // the `shared` members too, which live in the type's own scope.
                 let body =
@@ -2460,7 +2460,7 @@ impl<'a> Parser<'a> {
                 self.declare_name(name, field, start)?
             };
             if let Some(gate) = gate {
-                self.add_gate(record, gate)?;
+                self.add_gate(binding, gate)?;
             }
             fields.push(field);
             if !self.consume_separator() {
@@ -2507,7 +2507,7 @@ impl<'a> Parser<'a> {
             // SAFETY: `item` is a reduced dyad just parsed.
             let ty = unsafe { (*item).ty };
             if ty == self.types.comment_ {
-                // SAFETY: the pending records were minted by this parser's declares.
+                // SAFETY: the pending bindings were minted by this parser's declares.
                 unsafe { self.scopes.settle_item(body, item) };
             } else if ty == self.types.declare_ && declared.is_none() {
                 declared = Some(item);
@@ -2532,14 +2532,14 @@ impl<'a> Parser<'a> {
                 self.pos = at;
                 return Err(ParseError::Resolve(ResolveError::Shadowed(name)));
             }
-            let record = self.last_declared;
-            if record.is_null() {
+            let binding = self.last_declared;
+            if binding.is_null() {
                 self.pos = at;
                 return Err(ParseError::SharedNeedsDeclaration);
             }
-            self.add_gate(record, self.types.shared_)?;
+            self.add_gate(binding, self.types.shared_)?;
         }
-        // SAFETY: the pending records were minted by this parser's declares.
+        // SAFETY: the pending bindings were minted by this parser's declares.
         unsafe { self.scopes.settle_item(body, item) };
         Ok(())
     }
@@ -2592,9 +2592,9 @@ impl<'a> Parser<'a> {
             self.rt.store.alloc_raw(self.types.type_, head)
         });
         for (name, &marker) in SLOT_NAMES.iter().zip(&slots) {
-            let record = self.mint_record(marker, words, name.as_bytes());
-            // SAFETY: `record` was minted by `Record::alloc` just above.
-            unsafe { self.scopes.declare_field(self.trie, name, record) }
+            let binding = self.mint_binding(marker, words, name.as_bytes());
+            // SAFETY: `binding` was minted by `Binding::alloc` just above.
+            unsafe { self.scopes.declare_field(self.trie, name, binding) }
                 .map_err(ParseError::Resolve)?;
         }
         let scope = self.open_scope();
@@ -2657,13 +2657,13 @@ impl<'a> Parser<'a> {
         );
         let node = self.rt.store.alloc_raw(id, layout.cast());
         if let Some(rank) = def.lex_rank {
-            // The rank is the name's, not the type's: it goes on the record of
+            // The rank is the name's, not the type's: it goes on the binding of
             // the declaration this body is the value of.
-            let Some(&record) = self.filling.last() else {
+            let Some(&binding) = self.filling.last() else {
                 return Err(ParseError::LexRankNeedsName);
             };
-            // SAFETY: `record` is a record dyad `:=` minted before driving its value, live for the whole drive.
-            unsafe { Record::set_lex_rank(record, rank) };
+            // SAFETY: `binding` is a binding dyad `:=` minted before driving its value, live for the whole drive.
+            unsafe { Binding::set_lex_rank(binding, rank) };
         }
         if !def.ctor.is_null() {
             // SAFETY: `node` was just built; nothing has read its slot.
@@ -2683,7 +2683,7 @@ impl<'a> Parser<'a> {
         // this loop only checks what each line is.
         while let Some(item) = self.parse_next() {
             let item = item?;
-            // SAFETY: the pending records were minted by this parser's declares.
+            // SAFETY: the pending bindings were minted by this parser's declares.
             unsafe { self.scopes.settle_item(scope, item) };
             // SAFETY: `item` is a reduced dyad just parsed.
             let kind = unsafe {
@@ -2733,12 +2733,15 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `target` must be a dyad from the store.
     pub(crate) unsafe fn slot_of(&self, target: DyadPtr) -> Option<SlotKind> {
-        // The record of the word's use, or the identity itself when its
+        // The binding of the word's use, or the identity itself when its
         // constructor stood aside (`drop`).
         // SAFETY: `target` is a reduced dyad from the store.
         unsafe {
-            let id =
-                if (*target).ty == self.types.record_ { Record::read(target).dyad } else { target };
+            let id = if (*target).ty == self.types.binding_ {
+                Binding::read(target).dyad
+            } else {
+                target
+            };
             if id == self.types.drop_ {
                 return Some(SlotKind::Drop);
             }
@@ -2985,7 +2988,7 @@ impl<'a> Parser<'a> {
         let types = self.types;
         let node = crate::identities::this::build_slot(self.rt.store, types, this, k);
         if let Some(r) = resolved {
-            self.fills.insert(node, r.record);
+            self.fills.insert(node, r.binding);
         }
         Ok(node)
     }
@@ -3365,7 +3368,7 @@ impl<'a> Parser<'a> {
                 ParseError::Empty => ParseError::ExpectedReturnType,
                 e => e,
             })?;
-            // A named return type is a use of that name: its record, read
+            // A named return type is a use of that name: its binding, read
             // through to the type it names.
             // SAFETY: `out` is a reduced dyad from the store.
             unsafe { self.types.through(out) }
@@ -3704,7 +3707,7 @@ impl<'a> Parser<'a> {
         let parts = self.drive_until_open(RightSide::Condition)?;
         let dotdot = self.types.dotdot_;
         let types = self.types;
-        // The `..` cells are uses of that identity: its record, read through.
+        // The `..` cells are uses of that identity: its binding, read through.
         // SAFETY: every item `drive_until_open` returned is a dyad from the store.
         let is_dotdot = |d: &DyadPtr| unsafe { types.through(*d) } == dotdot;
         let (start, end, step) = match parts.as_slice() {
@@ -3976,16 +3979,16 @@ impl<'a> Parser<'a> {
         {
             return Err(ParseError::UnsupportedOperands);
         }
-        let (field, offset, record) = self.resolve_field(record_logos, nstart, nlen)?;
+        let (field, offset, binding) = self.resolve_field(record_logos, nstart, nlen)?;
         let addr = (*lhs).value.wrapping_add(offset);
         let node = self.rt.store.alloc_raw((*field).ty, addr);
-        // Every record along the path grants a write into the place: the
+        // Every binding along the path grants a write into the place: the
         // name the path starts at, then each field.
         let mut path = self.paths.get(&lhs).cloned().unwrap_or_default();
         if path.is_empty() && !self.member_root.is_null() {
             path.push(self.member_root);
         }
-        path.push(record);
+        path.push(binding);
         self.paths.insert(node, path);
         Ok((node, 0))
     }
@@ -4001,7 +4004,7 @@ impl<'a> Parser<'a> {
         // token before its own constructor wakes (DESIGN ›Text is the quote‹),
         // so a callable to the left is the identity itself, not a call in waiting.
         let (lhs, root) = match tape.at(-1).copied() {
-            Some(cell) => (self.operand_dyad(cell)?, cell.record(self.types)),
+            Some(cell) => (self.operand_dyad(cell)?, cell.binding(self.types)),
             None => return Err(ParseError::MissingOperand),
         };
         // The member is read by its spelling at the offset it was lexed at: a
@@ -4141,7 +4144,7 @@ impl<'a> Parser<'a> {
             .copied()
             .find(|&(f, _, _)| f == field)
             .ok_or(ParseError::ExpectedField)?;
-        Ok((field, offset, resolved.record))
+        Ok((field, offset, resolved.binding))
     }
 
     /// A function whose declared return type is `type`: it yields a type,
@@ -4187,7 +4190,7 @@ impl<'a> Parser<'a> {
     /// `lhs` must be a reduced dyad from the store.
     pub(crate) unsafe fn build_deref(&mut self, lhs: DyadPtr) -> Result<DyadPtr, ParseError> {
         // The pointer expression is stored as it stands (a use of a name is
-        // its record); its type is read through the reading rule.
+        // its binding); its type is read through the reading rule.
         let read = self.types.through(lhs);
         let ptr_ty = if (*read).ty == self.types.deref_ {
             crate::identities::pointer::deref_parts(read).1
@@ -4271,11 +4274,11 @@ impl<'a> Parser<'a> {
                     self.pos = cell.start;
                     return Err(ParseError::OwnOfOuterName);
                 }
-                Some(Ended { record: r.record })
+                Some(Ended { binding: r.binding })
             } else {
                 None
             };
-            self.note_outer_read(r.record);
+            self.note_outer_read(r.binding);
             (r.identity, ended)
         };
         // SAFETY: `node` is a resolved dyad from the store.
@@ -4308,59 +4311,59 @@ impl<'a> Parser<'a> {
     /// The six fields, the spelling as a string node (`a:name`).
     /// A gate word marks the declaration that just reduced to its right.
     pub(crate) fn gate_declared(&mut self, gate: DyadPtr) -> Result<(), ParseError> {
-        let record = self.last_declared;
-        if record.is_null() {
+        let binding = self.last_declared;
+        if binding.is_null() {
             return Err(ParseError::GateNeedsDeclaration);
         }
-        self.add_gate(record, gate)
+        self.add_gate(binding, gate)
     }
 
-    /// A write into a place reached by a path is granted by every record
+    /// A write into a place reached by a path is granted by every binding
     /// along it, `immut` vetoing first; the constructor's fill of its fresh
     /// node is granted unless `immut` vetoes it; a place reached no such way passes here.
     pub(crate) fn check_path_write(&self, target: DyadPtr) -> Result<(), ParseError> {
-        if let Some(&record) = self.fills.get(&target) {
-            // SAFETY: a fill's record is a record dyad from the store.
-            if unsafe { Record::has_gate(record, self.types.immut_) } {
+        if let Some(&binding) = self.fills.get(&target) {
+            // SAFETY: a fill's binding is a binding dyad from the store.
+            if unsafe { Binding::has_gate(binding, self.types.immut_) } {
                 // SAFETY: as above.
-                return Err(ParseError::Immutable(Box::new(unsafe { Record::spelling(record) })));
+                return Err(ParseError::Immutable(Box::new(unsafe { Binding::spelling(binding) })));
             }
             return Ok(());
         }
-        for &record in self.paths.get(&target).map_or(&[][..], Vec::as_slice) {
-            // SAFETY: the path holds record dyads from the store.
+        for &binding in self.paths.get(&target).map_or(&[][..], Vec::as_slice) {
+            // SAFETY: the path holds binding dyads from the store.
             unsafe {
-                if Record::has_gate(record, self.types.immut_) {
-                    return Err(ParseError::Immutable(Box::new(Record::spelling(record))));
+                if Binding::has_gate(binding, self.types.immut_) {
+                    return Err(ParseError::Immutable(Box::new(Binding::spelling(binding))));
                 }
-                if !Record::has_gate(record, self.types.mut_) {
-                    return Err(ParseError::NotMutable(Box::new(Record::spelling(record))));
+                if !Binding::has_gate(binding, self.types.mut_) {
+                    return Err(ParseError::NotMutable(Box::new(Binding::spelling(binding))));
                 }
             }
         }
         Ok(())
     }
 
-    /// Add `gate` to a name's record, once.
-    pub(crate) fn add_gate(&mut self, record: DyadPtr, gate: DyadPtr) -> Result<(), ParseError> {
-        // SAFETY: `record` is a record dyad from the store.
+    /// Add `gate` to a name's binding, once.
+    pub(crate) fn add_gate(&mut self, binding: DyadPtr, gate: DyadPtr) -> Result<(), ParseError> {
+        // SAFETY: `binding` is a binding dyad from the store.
         unsafe {
-            if Record::has_gate(record, gate) {
+            if Binding::has_gate(binding, gate) {
                 return Err(ParseError::DoubleGate);
             }
-            Record::add_gate(self.rt.store, self.types.array_, record, gate);
+            Binding::add_gate(self.rt.store, self.types.array_, binding, gate);
         }
         Ok(())
     }
 
-    fn mint_record(&mut self, identity: DyadPtr, scope: DyadPtr, spelling: &[u8]) -> DyadPtr {
+    fn mint_binding(&mut self, identity: DyadPtr, scope: DyadPtr, spelling: &[u8]) -> DyadPtr {
         let name =
             crate::identities::string::build_text(self.rt.store, self.types.string_, spelling);
-        Record::alloc(self.rt.store, self.types.record_, Record::new(identity, scope, name))
+        Binding::alloc(self.rt.store, self.types.binding_, Binding::new(identity, scope, name))
     }
 
-    /// One record per declared name, a dyad of type `record` (DESIGN ›`mut` is
-    /// a gate on the record‹); an error is reported at `at`, the name's own
+    /// One binding per declared name, a dyad of type `binding` (DESIGN ›`mut` is
+    /// a gate on the binding‹); an error is reported at `at`, the name's own
     /// offset, so the caret lands on the name.
     pub(crate) fn declare_name(
         &mut self,
@@ -4369,13 +4372,13 @@ impl<'a> Parser<'a> {
         at: usize,
     ) -> Result<DyadPtr, ParseError> {
         let scope = self.scopes.current().expect("declare needs an open scope");
-        let record = self.mint_record(identity, scope, name.as_bytes());
-        // SAFETY: `record` was minted by `Record::alloc` just above.
-        if let Err(e) = unsafe { self.scopes.declare(self.trie, name, record) } {
+        let binding = self.mint_binding(identity, scope, name.as_bytes());
+        // SAFETY: `binding` was minted by `Binding::alloc` just above.
+        if let Err(e) = unsafe { self.scopes.declare(self.trie, name, binding) } {
             self.pos = at;
             return Err(ParseError::Resolve(e));
         }
-        Ok(record)
+        Ok(binding)
     }
 
     /// The pattern twin of `declare_name`.
@@ -4386,13 +4389,13 @@ impl<'a> Parser<'a> {
         at: usize,
     ) -> Result<DyadPtr, ParseError> {
         let scope = self.scopes.current().expect("declare needs an open scope");
-        let record = self.mint_record(identity, scope, key.as_bytes());
-        // SAFETY: `record` was minted by `Record::alloc` just above.
-        if let Err(e) = unsafe { self.scopes.declare_pattern(self.trie, key, record) } {
+        let binding = self.mint_binding(identity, scope, key.as_bytes());
+        // SAFETY: `binding` was minted by `Binding::alloc` just above.
+        if let Err(e) = unsafe { self.scopes.declare_pattern(self.trie, key, binding) } {
             self.pos = at;
             return Err(ParseError::Resolve(e));
         }
-        Ok(record)
+        Ok(binding)
     }
 
     /// Checked against its siblings alone; a failure is reported at `at`.
@@ -4403,20 +4406,20 @@ impl<'a> Parser<'a> {
         at: usize,
     ) -> Result<DyadPtr, ParseError> {
         let scope = self.scopes.current().expect("declare needs an open scope");
-        let record = self.mint_record(identity, scope, name.as_bytes());
-        // SAFETY: `record` was minted by `Record::alloc` just above.
-        if let Err(e) = unsafe { self.scopes.declare_field(self.trie, name, record) } {
+        let binding = self.mint_binding(identity, scope, name.as_bytes());
+        // SAFETY: `binding` was minted by `Binding::alloc` just above.
+        if let Err(e) = unsafe { self.scopes.declare_field(self.trie, name, binding) } {
             self.pos = at;
             return Err(ParseError::Resolve(e));
         }
-        Ok(record)
+        Ok(binding)
     }
 
     /// `node` has emptied `ended`'s place: its name is dead from here on
     /// (DESIGN ›Memory and concurrency‹).
     pub(crate) fn mark_dead(&mut self, ended: Ended, node: DyadPtr) {
-        // SAFETY: `ended.record` is the record the resolver returned for the operand.
-        unsafe { self.scopes.mark_dead(ended.record, node) };
+        // SAFETY: `ended.binding` is the binding the resolver returned for the operand.
+        unsafe { self.scopes.mark_dead(ended.binding, node) };
     }
 
     fn consume_else(&mut self) -> bool {
@@ -4575,7 +4578,7 @@ impl<'a> Parser<'a> {
             exprs.push(item);
             // The item is complete: the ranges of the names it declared or
             // ended now point at it.
-            // SAFETY: the pending records were minted by this parser's declares.
+            // SAFETY: the pending bindings were minted by this parser's declares.
             unsafe { self.scopes.settle_item(scope, item) };
             // A binding's `defer free <place>` is drained right after its
             // statement, so the defer sits at its source position, the right
@@ -4785,8 +4788,8 @@ impl<'a> Parser<'a> {
         } else {
             self.declare_name(name, placeholder, tok.start)
         };
-        let record = match declared {
-            Ok(record) => record,
+        let binding = match declared {
+            Ok(binding) => binding,
             Err(e) => {
                 // The stuck point is the name itself (it is what shadows).
                 self.pos = tok.start;
@@ -4794,15 +4797,15 @@ impl<'a> Parser<'a> {
             }
         };
         // A `fn` literal opening the value publishes its signature onto the
-        // placeholder; the record is the one a `lex_rank = …` line in the value writes.
+        // placeholder; the binding is the one a `lex_rank = …` line in the value writes.
         self.pending_fn = placeholder;
-        self.filling.push(record);
+        self.filling.push(binding);
         let value = self.parse_expression();
         self.filling.pop();
-        self.last_declared = record;
+        self.last_declared = binding;
         self.pending_fn = std::ptr::null_mut();
         let value = value?;
-        // A bare name as the value is its record (a use); the fixpoint
+        // A bare name as the value is its binding (a use); the fixpoint
         // inspects the dyad behind it and keeps `value` as what the initializer stores.
         // SAFETY: `value` is a dyad from the store.
         let read = unsafe { self.types.through(value) };
@@ -4821,12 +4824,12 @@ impl<'a> Parser<'a> {
             }
             _ => None,
         };
-        // SAFETY: `placeholder` was minted for the name and nothing has read a value from it; `record`, `value` and `read` are dyads from the store.
+        // SAFETY: `placeholder` was minted for the name and nothing has read a value from it; `binding`, `value` and `read` are dyads from the store.
         let declared = unsafe {
             if self.holes.remove(&value) {
                 // `x := i32 ?`: the place `?` built is what the name binds to;
                 // nothing initializes it.
-                self.scopes.rebind(record, value);
+                self.scopes.rebind(binding, value);
                 value
             } else if (*read).ty == self.types.construct_ {
                 let ops = (*read).value as *mut DyadPtr;
@@ -4839,14 +4842,14 @@ impl<'a> Parser<'a> {
                 == crate::identities::read::Read::Identity
             {
                 // A type value: the name becomes another spelling of the type.
-                self.scopes.rebind(record, read);
+                self.scopes.rebind(binding, read);
                 read
             } else if let Some(t) = box_ty {
                 // A box on the right: reads are copy by default, so `x` gets
                 // its own box and a copy of what `a` holds.
                 let place = self.alloc_local(t, 8);
                 let init = crate::identities::build_init(self.rt.store, self.types, place, read)?;
-                self.scopes.rebind(record, place);
+                self.scopes.rebind(binding, place);
                 init
             } else if crate::identities::drop_model::is_owning_value(self.types, value) {
                 // An owning value lands in a place here, the one site that
@@ -4863,7 +4866,7 @@ impl<'a> Parser<'a> {
                 // A pointer is 8 bytes (U64-wide), whatever it points at.
                 let place = self.alloc_local(owning_ty, 8);
                 let init = crate::identities::build_init(self.rt.store, self.types, place, value)?;
-                self.scopes.rebind(record, place);
+                self.scopes.rebind(binding, place);
                 // The owning check is kept on to guard a future caller
                 // inserting a free over a borrow.
                 let free_node = crate::identities::drop_model::build_teardown(
@@ -4894,7 +4897,7 @@ impl<'a> Parser<'a> {
                     crate::identities::scalar_binding_type(self.rt.store, self.types, value);
                 let place = self.alloc_local(ty_node, width);
                 let init = crate::identities::build_init(self.rt.store, self.types, place, value)?;
-                self.scopes.rebind(record, place);
+                self.scopes.rebind(binding, place);
                 init
             } else {
                 (*placeholder).ty = (*read).ty;
@@ -5163,7 +5166,7 @@ impl<'a> Parser<'a> {
                         .scopes
                         .resolve(self.trie, &name)
                         .map_err(|_| format!("name `{name}` did not stay resolvable"))?;
-                    if Record::has_gate(resolved.record, self.types.pub_) {
+                    if Binding::has_gate(resolved.binding, self.types.pub_) {
                         pubs.push((name, resolved.identity));
                     }
                 }
@@ -5195,9 +5198,9 @@ impl<'a> Parser<'a> {
     }
 
     /// `:`'s constructor (DESIGN ›The dyad's read surface‹): a field of the
-    /// record to the left, the cell taken as it stands, never through the
+    /// binding to the left, the cell taken as it stands, never through the
     /// reading rule; the member is the raw spelling at the cell to the right.
-    pub(crate) fn construct_record_read(
+    pub(crate) fn construct_binding_read(
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
@@ -5216,20 +5219,20 @@ impl<'a> Parser<'a> {
             return Err(ParseError::ExpectedField);
         };
         // SAFETY: `lhs` is a dyad off the tape.
-        let node = unsafe { self.record_read(lhs, nstart, nlen)? };
+        let node = unsafe { self.binding_read(lhs, nstart, nlen)? };
         tape.remove(1);
         tape.remove(-1);
         tape.place(node);
         Ok(Constructed::Placed)
     }
 
-    /// On a record, `dyad` is the view `{type: dyad, value: <the cell>}` and
-    /// any other field the instance-field read in `record`'s own scope; on a
+    /// On a binding, `dyad` is the view `{type: dyad, value: <the cell>}` and
+    /// any other field the instance-field read in `binding`'s own scope; on a
     /// constructed node the path answers (DESIGN ›Meta-navigation‹), `start`/`end` null.
     ///
     /// # Safety
     /// `lhs` must be a valid dyad from the store.
-    unsafe fn record_read(
+    unsafe fn binding_read(
         &mut self,
         lhs: DyadPtr,
         nstart: usize,
@@ -5243,20 +5246,20 @@ impl<'a> Parser<'a> {
             if name == "dyad" {
                 return Ok(crate::identities::tape::build_slot_dyad(self.rt.store, types, lhs));
             }
-            // `t[k]:name`: the spelling of the record the cell holds.
+            // `t[k]:name`: the spelling of the binding the cell holds.
             if name == "name" {
                 return Ok(crate::identities::tape::build_slot_name(self.rt.store, types, lhs));
             }
             return Err(ParseError::ExpectedField);
         }
-        if (*lhs).ty == types.record_ {
+        if (*lhs).ty == types.binding_ {
             if name == "dyad" {
                 // Through a settled box: `a:dyad.type` asks the type of what
                 // the name holds.
-                let cell = self.settled_type(Record::read(lhs).dyad);
+                let cell = self.settled_type(Binding::read(lhs).dyad);
                 return Ok(self.rt.store.alloc_raw(types.dyad_, cell as *mut u8));
             }
-            let (field, offset, _) = self.resolve_field(types.record_, nstart, nlen)?;
+            let (field, offset, _) = self.resolve_field(types.binding_, nstart, nlen)?;
             let addr = (*lhs).value.wrapping_add(offset);
             // `a:name`: a `string`-typed place over the slot, marked as one so
             // the reading rule sees the container it is (no place of type `string` exists in a layout).
@@ -5277,8 +5280,8 @@ impl<'a> Parser<'a> {
             "scope" => self.scopes.current().unwrap_or(std::ptr::null_mut()),
             "start" | "end" | "gate" => std::ptr::null_mut(),
             _ => {
-                // Not a field of a record: the same error a record read gives.
-                self.resolve_field(types.record_, nstart, nlen)?;
+                // Not a field of a binding: the same error a binding read gives.
+                self.resolve_field(types.binding_, nstart, nlen)?;
                 return Err(ParseError::ExpectedField);
             }
         };
@@ -5344,7 +5347,7 @@ impl<'a> Parser<'a> {
             "parse_rank" => {
                 Ok(self.scalar_value(NumType::F64, meta::parse_rank_of(logos).to_bits() as i64))
             }
-            // `lex_rank` is the name's record's, not the type's, so it falls to
+            // `lex_rank` is the name's binding's, not the type's, so it falls to
             // the unknown-member error below. Associativity's values are the identities `left` and `right`.
             "associativity" => Ok(match meta::assoc_of(logos) {
                 Assoc::Left => self.types.left_,
@@ -5396,7 +5399,7 @@ impl<'a> Parser<'a> {
                 let r = members.resolve(self.trie, name).map_err(|_| ParseError::BadReflectRead)?;
                 // Through the type the member's own gate decides: the type
                 // stands as a namespace here, not as a container.
-                self.paths.insert(r.identity, vec![r.record]);
+                self.paths.insert(r.identity, vec![r.binding]);
                 Ok(r.identity)
             }
         }
@@ -5432,7 +5435,7 @@ impl<'a> Parser<'a> {
         // read is honest only if everything parsed before it has run; so where
         // parse order is run order, its cell is the point the pass runs to.
         if self.runtime_depth == 0 && !cell.is_fresh() {
-            // SAFETY: the record the trie resolved is a dyad from the store.
+            // SAFETY: the binding the trie resolved is a dyad from the store.
             let is_box = unsafe {
                 matches!(
                     crate::identities::read::read_kind(self.types, cell.identity(self.types)),
@@ -5521,7 +5524,7 @@ impl<'a> Parser<'a> {
         }
         if let Ok(r) = self.resolve_fresh(cell.spelling()) {
             if r.matched == cell.len {
-                cell.dyad = r.record;
+                cell.dyad = r.binding;
             }
         }
     }
@@ -5648,8 +5651,8 @@ impl<'a> Parser<'a> {
         // Dispatching the cell's identity is the body's read of its name: a
         // callee, an operator, a keyword alike.
         if let Some(c) = tape.at(0) {
-            let record = c.record(self.types);
-            self.note_outer_read(record);
+            let binding = c.binding(self.types);
+            self.note_outer_read(binding);
         }
         let was = std::mem::replace(&mut self.discovering, discovery);
         let outcome = construct(self, id, tape);
@@ -5712,7 +5715,7 @@ impl<'a> Parser<'a> {
             self.pos = cell.start;
             return Err(ParseError::CellLeftUnconstructed(Box::new(cell.spelling().to_string())));
         }
-        // The identity stands as its own value: the use of its name, its record.
+        // The identity stands as its own value: the use of its name, its binding.
         let value = self.stand_as_value(tape, id);
         tape.place(value);
         Ok(())
@@ -6023,23 +6026,23 @@ enum RightSide {
 mod tests {
     use super::*;
 
-    /// A record dyad for `identity`, leaked like the dyads below.
+    /// A binding dyad for `identity`, leaked like the dyads below.
     fn rec(identity: DyadPtr) -> DyadPtr {
         rec_in(identity, std::ptr::null_mut())
     }
 
     fn rec_in(identity: DyadPtr, scope: DyadPtr) -> DyadPtr {
-        let fields = Box::into_raw(Box::new(Record::new(identity, scope, std::ptr::null_mut())));
+        let fields = Box::into_raw(Box::new(Binding::new(identity, scope, std::ptr::null_mut())));
         Box::into_raw(Box::new(crate::dyad::Dyad {
             ty: std::ptr::null_mut(),
             value: fields as *mut u8,
         }))
     }
 
-    /// The fields behind a record dyad.
-    fn f(record: DyadPtr) -> Record {
+    /// The fields behind a binding dyad.
+    fn f(binding: DyadPtr) -> Binding {
         // SAFETY: only `rec`-built dyads reach the trie in these tests.
-        unsafe { Record::read(record) }
+        unsafe { Binding::read(binding) }
     }
 
     /// A distinct sentinel address per tag, never dereferenced.
@@ -6230,8 +6233,8 @@ mod tests {
         assert_eq!(plus.len(), 1);
         let cell = *plus.at(0).unwrap();
         assert!(!cell.constructed);
-        assert_eq!(cell.identity(types), types.plus, "the cell points at `+`'s record");
-        assert!(!cell.record(types).is_null());
+        assert_eq!(cell.identity(types), types.plus, "the cell points at `+`'s binding");
+        assert!(!cell.binding(types).is_null());
         assert_eq!(plus.spelling(0), Some("+"));
 
         let group = lex_fragment(&scopes, &trie, &mut store, "(a, b)").unwrap();
@@ -6358,8 +6361,8 @@ mod tests {
     #[test]
     fn a_constructor_writes_a_cell_from_logos() {
         // The write and the flag are two lines: `t[0] = g` repoints, `t.is_constructed[0] = true` marks.
+        use crate::binding::Binding;
         use crate::identities::Core;
-        use crate::record::Record;
         use crate::regex_trie::RegexTrie;
         use crate::store::Store;
 
@@ -6384,15 +6387,15 @@ mod tests {
             let storage = store.alloc_bytes(&(tape as usize as u64).to_ne_bytes());
             // Marked as storage, as the parser marks every place it allocates.
             let t = store.alloc_raw(core.tape.parsing_tape, crate::dyad::global_place(storage));
-            let rec = Record::alloc(
+            let rec = Binding::alloc(
                 &mut store,
-                core.record_,
-                Record::new(t, core.root_scope, std::ptr::null_mut()),
+                core.binding_,
+                Binding::new(t, core.root_scope, std::ptr::null_mut()),
             );
             scopes.declare(&mut trie, "t", rec).unwrap();
 
             let (v, s) = go("t[0]:dyad", &mut store, &mut trie, types, scopes);
-            assert_eq!(v as DyadPtr, Record::read(plus).dyad);
+            assert_eq!(v as DyadPtr, Binding::read(plus).dyad);
             let (v, s) = go("t[0]:dyad.type", &mut store, &mut trie, types, s);
             assert_eq!(v as DyadPtr, core.type_, "an identity's type is the root");
 
@@ -6409,7 +6412,7 @@ mod tests {
             assert_ne!(c.dyad, plus, "the pointer is replaced");
             assert_eq!(
                 types.through(c.dyad),
-                types.through(s.resolve(&trie, "g").unwrap().record),
+                types.through(s.resolve(&trie, "g").unwrap().binding),
                 "the cell now names g"
             );
             let (v, s) = go("t.is_constructed[0]", &mut store, &mut trie, types, s);
@@ -6429,8 +6432,8 @@ mod tests {
 
     #[test]
     fn the_tape_affordances_are_reachable_from_logos() {
+        use crate::binding::Binding;
         use crate::identities::Core;
-        use crate::record::Record;
         use crate::regex_trie::RegexTrie;
         use crate::store::Store;
 
@@ -6458,10 +6461,10 @@ mod tests {
             let storage = store.alloc_bytes(&(tape as usize as u64).to_ne_bytes());
             // Marked as storage, as the parser marks every place it allocates.
             let t = store.alloc_raw(core.tape.parsing_tape, crate::dyad::global_place(storage));
-            let rec = Record::alloc(
+            let rec = Binding::alloc(
                 &mut store,
-                core.record_,
-                Record::new(t, core.root_scope, std::ptr::null_mut()),
+                core.binding_,
+                Binding::new(t, core.root_scope, std::ptr::null_mut()),
             );
             scopes.declare(&mut trie, "t", rec).unwrap();
 
@@ -6511,7 +6514,7 @@ mod tests {
             let (v, s) = go("t.is_constructed[0]", &mut store, &mut trie, types, s);
             assert_eq!(v, 0, "a spliced cell is unconstructed");
             let (v, s) = go("t[0]", &mut store, &mut trie, types, s);
-            assert_eq!((*(v as DyadPtr)).ty, core.record_, "the spliced cell is a record");
+            assert_eq!((*(v as DyadPtr)).ty, core.binding_, "the spliced cell is a binding");
             assert_eq!(types.through(v as DyadPtr), core.rational, "the number pattern's");
             let (v, s) = go("t.spelling[0]", &mut store, &mut trie, types, s);
             assert_eq!(
@@ -6529,7 +6532,7 @@ mod tests {
             assert_eq!(p.parse_expression().unwrap_err(), ParseError::InsertTakesTape);
             let s = p.into_scopes();
 
-            // A use of a name handed in is its record; the flag is untouched.
+            // A use of a name handed in is its binding; the flag is untouched.
             let (_, s) = go("t[0] = t", &mut store, &mut trie, types, s);
             assert!(!(*tape).at(0).unwrap().constructed);
             assert_eq!((*tape).at(0).unwrap().dyad, rec);
@@ -6666,8 +6669,8 @@ mod tests {
         assert_eq!(scopes.resolve(&trie, "a").unwrap().identity, dyad(2));
         // The dead entry is still indexed: its range is what reflection reads.
         let m = trie.get("a").unwrap();
-        assert_eq!(m.records.len(), 2);
-        assert!(m.records.iter().any(|&c| f(c).dyad == dyad(1) && f(c).end == dyad(50)));
+        assert_eq!(m.bindings.len(), 2);
+        assert!(m.bindings.iter().any(|&c| f(c).dyad == dyad(1) && f(c).end == dyad(50)));
     }
 
     #[test]
@@ -6685,7 +6688,7 @@ mod tests {
         scopes.rollback(&mut trie);
 
         assert_eq!(scopes.resolve(&trie, "a").unwrap().identity, dyad(1));
-        assert_eq!(trie.get("a").unwrap().records.len(), 1);
+        assert_eq!(trie.get("a").unwrap().bindings.len(), 1);
     }
 
     #[test]
@@ -6713,7 +6716,7 @@ mod tests {
         scopes.push(scope);
         let a1 = rec(dyad(1));
         unsafe { scopes.declare(&mut trie, "a", a1) }.unwrap();
-        let a = |trie: &RegexTrie| f(trie.get("a").unwrap().records[0]);
+        let a = |trie: &RegexTrie| f(trie.get("a").unwrap().bindings[0]);
         assert!(a(&trie).start.is_null());
 
         unsafe { scopes.settle_item(scope, dyad(10)) };
@@ -6726,12 +6729,12 @@ mod tests {
         assert_eq!(a(&trie).end, dyad(11), "settled: the body item");
         assert_eq!(a(&trie).start, dyad(10), "start untouched by the end's settle");
 
-        // A rebind keeps the range, and the pending endpoint holds the record.
+        // A rebind keeps the range, and the pending endpoint holds the binding.
         let b_rec = rec(dyad(3));
         unsafe { scopes.declare(&mut trie, "b", b_rec) }.unwrap();
         unsafe { scopes.rebind(b_rec, dyad(4)) };
         unsafe { scopes.settle_item(scope, dyad(12)) };
-        let b = f(trie.get("b").unwrap().records[0]);
+        let b = f(trie.get("b").unwrap().bindings[0]);
         assert_eq!((b.dyad, b.start), (dyad(4), dyad(12)));
     }
 
@@ -6766,7 +6769,7 @@ mod tests {
     }
 
     #[test]
-    fn two_live_records_resolve_to_the_innermost_scope() {
+    fn two_live_bindings_resolve_to_the_innermost_scope() {
         let mut trie = RegexTrie::new();
         let (a, b) = (dyad(100), dyad(101));
         trie.insert("z", rec_in(dyad(1), a));

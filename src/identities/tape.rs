@@ -36,10 +36,10 @@ pub struct TapeIds {
     pub remove_leaf: DyadPtr,
     pub recenter: DyadPtr,
     pub recenter_leaf: DyadPtr,
-    /// `t[k]:dyad`: the cell the slot holds, read through a record to the dyad it names.
+    /// `t[k]:dyad`: the cell the slot holds, read through a binding to the dyad it names.
     pub slot_dyad: DyadPtr,
     pub slot_dyad_leaf: DyadPtr,
-    /// `t[k]:name`: the spelling of the record the cell holds, a string node.
+    /// `t[k]:name`: the spelling of the binding the cell holds, a string node.
     pub slot_name: DyadPtr,
     pub slot_name_leaf: DyadPtr,
     /// `t[k]:dyad.type`: the cell's type, read.
@@ -418,7 +418,7 @@ fn run_recenter(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// The cell, read through a record to the dyad it names; `None` past the frontier.
+/// The cell, read through a binding to the dyad it names; `None` past the frontier.
 unsafe fn slot_cell(
     rt: &mut Runtime,
     ops: *const DyadPtr,
@@ -440,7 +440,7 @@ fn run_slot_dyad(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 }
 
 /// The identity's name, never the appearance's text (that is `t.spelling[k]`); a cell
-/// holding no record has no name.
+/// holding no binding has no name.
 fn run_slot_name(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
     unsafe {
@@ -450,11 +450,11 @@ fn run_slot_name(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let Some(c) = (*tape).at(k).copied() else {
             return Err(RunError::OffTape);
         };
-        let record = c.record(rt.types());
-        if record.is_null() {
+        let binding = c.binding(rt.types());
+        if binding.is_null() {
             return Err(RunError::NoName);
         }
-        let name = crate::record::Record::read(record).name;
+        let name = crate::binding::Binding::read(binding).name;
         if name.is_null() {
             return Err(RunError::NoName);
         }

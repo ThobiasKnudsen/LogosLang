@@ -16,21 +16,21 @@ fn new_core() -> (Store, RegexTrie, Core) {
     (store, trie, core)
 }
 
-/// A record dyad naming `identity`, for a name a test declares by hand; leaked
+/// A binding dyad naming `identity`, for a name a test declares by hand; leaked
 /// like every test-built dyad. A hand-minted variable must carry the storage
 /// mark (`crate::dyad::global_place`), or the reading rule takes it for a literal.
-fn test_record(record_ty: DyadPtr, identity: DyadPtr) -> DyadPtr {
+fn test_binding(binding_ty: DyadPtr, identity: DyadPtr) -> DyadPtr {
     let fields =
-        Box::into_raw(Box::new(Record::new(identity, std::ptr::null_mut(), std::ptr::null_mut())));
-    Box::into_raw(Box::new(crate::dyad::Dyad { ty: record_ty, value: fields as *mut u8 }))
+        Box::into_raw(Box::new(Binding::new(identity, std::ptr::null_mut(), std::ptr::null_mut())));
+    Box::into_raw(Box::new(crate::dyad::Dyad { ty: binding_ty, value: fields as *mut u8 }))
 }
 
-/// A hand-built record of a variable the test writes.
-fn mut_record(store: &mut Store, core: &Core, identity: DyadPtr) -> DyadPtr {
-    let record = test_record(core.record_, identity);
-    // SAFETY: `record` was just built; its fields are a leaked `Record`.
-    unsafe { Record::add_gate(store, core.array_, record, core.mut_) };
-    record
+/// A hand-built binding of a variable the test writes.
+fn mut_binding(store: &mut Store, core: &Core, identity: DyadPtr) -> DyadPtr {
+    let binding = test_binding(core.binding_, identity);
+    // SAFETY: `binding` was just built; its fields are a leaked `Binding`.
+    unsafe { Binding::add_gate(store, core.array_, binding, core.mut_) };
+    binding
 }
 
 #[test]
@@ -41,7 +41,7 @@ fn parses_a_equals_a_plus_one() {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
     let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_binding(&mut store, &core, a)) }.unwrap();
 
     let root = {
         let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core, scopes);
@@ -71,7 +71,7 @@ fn runs_a_equals_a_plus_one() {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
     let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_binding(&mut store, &core, a)) }.unwrap();
 
     let root = {
         let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core, scopes);
@@ -95,7 +95,7 @@ fn runs_a_compound_function_by_walking_its_body() {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&41i32.to_ne_bytes());
     let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_binding(&mut store, &core, a)) }.unwrap();
 
     let main = {
         let mut p =
@@ -242,7 +242,7 @@ fn compiles_and_runs_a_fn_with_arguments() {
     let call = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        unsafe { s.declare(&mut trie, "add", test_record(core.record_, add)) }.unwrap();
+        unsafe { s.declare(&mut trie, "add", test_binding(core.binding_, add)) }.unwrap();
         let mut p = Parser::new("add(40, 2)", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
@@ -289,7 +289,7 @@ fn calls_a_function_with_arguments() {
     let call = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        unsafe { s.declare(&mut trie, "add", test_record(core.record_, add)) }.unwrap();
+        unsafe { s.declare(&mut trie, "add", test_binding(core.binding_, add)) }.unwrap();
         let mut p = Parser::new("add(40, 2)", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
@@ -323,7 +323,7 @@ fn calling_with_the_wrong_arity_errors() {
     let call = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        unsafe { s.declare(&mut trie, "add", test_record(core.record_, add)) }.unwrap();
+        unsafe { s.declare(&mut trie, "add", test_binding(core.binding_, add)) }.unwrap();
         let mut p = Parser::new("add(40)", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
@@ -475,7 +475,7 @@ fn jit_matches_the_interpreter() {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
     let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_binding(&mut store, &core, a)) }.unwrap();
 
     let root = {
         let mut p = Parser::new("a = a + 1", &mut store, &mut trie, &core, scopes);
@@ -508,7 +508,7 @@ fn assign_to_a_wide_variable_stores_at_full_width_both_tiers() {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&0i64.to_ne_bytes());
     let a = store.alloc_raw(core.numtypes[NumType::I64 as usize], crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_binding(&mut store, &core, a)) }.unwrap();
 
     let func = {
         let mut p = Parser::new(
@@ -634,7 +634,7 @@ fn compiling_an_uninitialized_read_errors_instead_of_crashing() {
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
     let x = store.alloc_raw(core.i32_, std::ptr::null_mut());
-    unsafe { scopes.declare(&mut trie, "x", test_record(core.record_, x)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "x", test_binding(core.binding_, x)) }.unwrap();
 
     let node = {
         let mut p = Parser::new("x", &mut store, &mut trie, &core, scopes);
@@ -656,7 +656,7 @@ fn plus_is_abstract_and_resolves_to_a_concrete_op() {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&10i32.to_ne_bytes());
     let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_binding(&mut store, &core, a)) }.unwrap();
 
     let func = {
         let mut p =
@@ -728,7 +728,7 @@ fn parses_and_runs_bool_literals() {
             let mut p = Parser::new(src, &mut store, &mut trie, &core, s);
             p.parse_expression().unwrap()
         };
-        // SAFETY: `node` is the literal just parsed, a use of `true`'s record.
+        // SAFETY: `node` is the literal just parsed, a use of `true`'s binding.
         unsafe {
             assert_eq!((*core.through(node)).ty, core.bool_);
         }
@@ -923,7 +923,7 @@ fn logical_operators_short_circuit_on_the_interpreter() {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let y = store.alloc_raw(core.i32_, std::ptr::null_mut());
-        unsafe { s.declare(&mut trie, "y", test_record(core.record_, y)) }.unwrap();
+        unsafe { s.declare(&mut trie, "y", test_binding(core.binding_, y)) }.unwrap();
     }
     let mut rt = Runtime::new(&core, &mut store);
 
@@ -1016,7 +1016,7 @@ fn if_over_a_parameter_matches_between_tiers() {
         let call = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            unsafe { s.declare(&mut trie, "f", test_record(core.record_, func)) }.unwrap();
+            unsafe { s.declare(&mut trie, "f", test_binding(core.binding_, func)) }.unwrap();
             let src = format!("f({arg})");
             let mut p = Parser::new(&src, &mut store, &mut trie, &core, s);
             p.parse_expression().unwrap()
@@ -1055,7 +1055,7 @@ fn else_less_if_is_a_unit_statement_both_tiers() {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&41i32.to_ne_bytes());
     let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_binding(&mut store, &core, a)) }.unwrap();
     let func = {
         let mut p = Parser::new(
             "fn () -> void ( if (a < 100) (a = a + 1) )",
@@ -1104,7 +1104,7 @@ fn the_else_binds_to_the_outer_if_across_a_bracketed_branch() {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&5i32.to_ne_bytes());
     let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_binding(&mut store, &core, a)) }.unwrap();
     let func = {
         let mut p = Parser::new(
             "fn () -> void ( if (a < 1) ( if (a < 1) (a = a + 1) ) else (a = a + 2) )",
@@ -1135,7 +1135,7 @@ fn assignment_commits_a_literal_to_the_targets_type() {
     s.push(core.root_scope);
     let a_val = store.alloc_bytes(&0i32.to_ne_bytes());
     let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
-    unsafe { s.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
+    unsafe { s.declare(&mut trie, "a", mut_binding(&mut store, &core, a)) }.unwrap();
     let mut p = Parser::new("a = 3.5", &mut store, &mut trie, &core, s);
     assert_eq!(p.parse_expression(), Err(ParseError::UncomputableLiteral));
 }
@@ -1160,7 +1160,7 @@ fn compiled_calls_between_compiled_functions_are_width_general() {
     let outer = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        unsafe { s.declare(&mut trie, "mul", test_record(core.record_, mul)) }.unwrap();
+        unsafe { s.declare(&mut trie, "mul", test_binding(core.binding_, mul)) }.unwrap();
         let mut p =
             Parser::new("fn () -> i64 ( mul(2000000000, 3) )", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
@@ -1187,7 +1187,7 @@ fn compiled_calls_pass_floats_across_the_boundary() {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&2.5f64.to_bits().to_ne_bytes());
     let a = store.alloc_raw(core.numtypes[NumType::F64 as usize], crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_binding(&mut store, &core, a)) }.unwrap();
 
     let g = {
         let mut s = ScopeStack::new();
@@ -1196,7 +1196,7 @@ fn compiled_calls_pass_floats_across_the_boundary() {
             Parser::new("fn (x := f64 ?) -> f64 ( x + 0.5 )", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
-    unsafe { scopes.declare(&mut trie, "g", test_record(core.record_, g)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "g", test_binding(core.binding_, g)) }.unwrap();
     let outer = {
         let mut p = Parser::new("fn () -> f64 ( g(a) )", &mut store, &mut trie, &core, scopes);
         p.parse_expression().unwrap()
@@ -1272,7 +1272,7 @@ fn compiled_call_with_wrong_arity_refuses_to_compile() {
     let outer = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        unsafe { s.declare(&mut trie, "add", test_record(core.record_, add)) }.unwrap();
+        unsafe { s.declare(&mut trie, "add", test_binding(core.binding_, add)) }.unwrap();
         let mut p = Parser::new("fn () -> i32 ( add(40) )", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
@@ -1298,7 +1298,7 @@ fn an_argument_that_does_not_fit_its_parameter_is_rejected() {
     };
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
-    unsafe { s.declare(&mut trie, "f", test_record(core.record_, func)) }.unwrap();
+    unsafe { s.declare(&mut trie, "f", test_binding(core.binding_, func)) }.unwrap();
     let mut p = Parser::new("f(2.5)", &mut store, &mut trie, &core, s);
     assert_eq!(p.parse_expression(), Err(ParseError::UncomputableLiteral));
 }
@@ -2208,7 +2208,7 @@ fn record_fields_lay_out_mixed_widths() {
     let call = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        unsafe { s.declare(&mut trie, "f", test_record(core.record_, func)) }.unwrap();
+        unsafe { s.declare(&mut trie, "f", test_binding(core.binding_, func)) }.unwrap();
         let mut p = Parser::new("f(5000000000)", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
@@ -2351,13 +2351,13 @@ fn declaration_binds_a_name_to_a_value() {
         assert_eq!(rt.run(x_ref).unwrap(), 5);
         assert_eq!(rt.run(decl).unwrap(), 0);
     }
-    // SAFETY: `x_ref` is the record of `x`.
+    // SAFETY: `x_ref` is the binding of `x`.
     unsafe {
-        assert!(!Record::has_gate(x_ref, core.pub_) && !Record::has_gate(x_ref, core.mut_));
+        assert!(!Binding::has_gate(x_ref, core.pub_) && !Binding::has_gate(x_ref, core.mut_));
     }
 }
 
-/// The record a use of `name` points at.
+/// The binding a use of `name` points at.
 fn use_of(store: &mut Store, trie: &mut RegexTrie, core: &Core, name: &str) -> DyadPtr {
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
@@ -2373,7 +2373,7 @@ fn the_view_reads_roles_and_raw_value_at_the_graph_level() {
     s.push(core.root_scope);
     let x_val = store.alloc_bytes(&5i32.to_ne_bytes());
     let x = store.alloc_raw(core.i32_, crate::dyad::global_place(x_val));
-    unsafe { s.declare(&mut trie, "x", test_record(core.record_, x)) }.unwrap();
+    unsafe { s.declare(&mut trie, "x", test_binding(core.binding_, x)) }.unwrap();
 
     let mut p = Parser::new("(x + x):dyad.type.roles[0]", &mut store, &mut trie, &core, s);
     let role = p.parse_expression().unwrap();
@@ -2396,7 +2396,7 @@ fn the_view_reads_roles_and_raw_value_at_the_graph_level() {
 }
 
 #[test]
-fn pub_marks_the_names_record() {
+fn pub_marks_the_names_binding() {
     let (mut store, mut trie, core) = new_core();
 
     let decl = {
@@ -2425,9 +2425,9 @@ fn pub_marks_the_names_record() {
         assert_eq!(rt.run(x_ref).unwrap(), 6);
     }
     let x = use_of(&mut store, &mut trie, &core, "x");
-    // SAFETY: `x` is the record of `x`.
+    // SAFETY: `x` is the binding of `x`.
     unsafe {
-        assert!(Record::has_gate(x, core.pub_) && !Record::has_gate(x, core.mut_));
+        assert!(Binding::has_gate(x, core.pub_) && !Binding::has_gate(x, core.mut_));
     }
 }
 
@@ -2446,9 +2446,9 @@ fn pub_gates_a_typed_declaration() {
         assert_eq!((*decl).ty, core.declare_);
     }
     let x = use_of(&mut store, &mut trie, &core, "x");
-    // SAFETY: `x` is the record of `x`.
+    // SAFETY: `x` is the binding of `x`.
     unsafe {
-        assert!(Record::has_gate(x, core.pub_));
+        assert!(Binding::has_gate(x, core.pub_));
     }
 }
 
@@ -2475,14 +2475,14 @@ fn pub_gates_a_fn_declaration() {
         assert_eq!((*f).ty, core.fn_type);
     }
     let double = use_of(&mut store, &mut trie, &core, "double");
-    // SAFETY: `double` is the record of `double`.
+    // SAFETY: `double` is the binding of `double`.
     unsafe {
-        assert!(Record::has_gate(double, core.pub_));
+        assert!(Binding::has_gate(double, core.pub_));
     }
 }
 
 #[test]
-fn shared_stands_first_on_the_members_record() {
+fn shared_stands_first_on_the_members_binding() {
     let (mut store, mut trie, core) = new_core();
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
@@ -2494,16 +2494,16 @@ fn shared_stands_first_on_the_members_record() {
         s,
     );
     let decl = p.parse_expression().unwrap();
-    // SAFETY: the type and the records of its members were just parsed.
+    // SAFETY: the type and the bindings of its members were just parsed.
     unsafe {
         let t = declare::declared_of(decl);
         let mut body = ScopeStack::new();
         body.push(crate::identities::meta::record_body_of(t));
-        let y = body.resolve(&trie, "y").unwrap().record;
-        let z = body.resolve(&trie, "z").unwrap().record;
-        assert!(Record::has_gate(y, core.shared_) && !Record::has_gate(y, core.mut_));
+        let y = body.resolve(&trie, "y").unwrap().binding;
+        let z = body.resolve(&trie, "z").unwrap().binding;
+        assert!(Binding::has_gate(y, core.shared_) && !Binding::has_gate(y, core.mut_));
         assert_eq!(
-            crate::identities::array::items(Record::read(z).gate),
+            crate::identities::array::items(Binding::read(z).gate),
             &[core.shared_, core.mut_]
         );
     }
@@ -2907,7 +2907,7 @@ fn compiled_function_calls_another_compiled_function() {
     let outer = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        unsafe { s.declare(&mut trie, "add", test_record(core.record_, add)) }.unwrap();
+        unsafe { s.declare(&mut trie, "add", test_binding(core.binding_, add)) }.unwrap();
         let mut p = Parser::new("fn () -> i32 ( add(40, 2) )", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
@@ -2941,7 +2941,7 @@ fn diff_typed_call(fn_src: &str, call_src: &str, expect: i64) {
     let call = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        unsafe { s.declare(&mut trie, "f", test_record(core.record_, func)) }.unwrap();
+        unsafe { s.declare(&mut trie, "f", test_binding(core.binding_, func)) }.unwrap();
         let mut p = Parser::new(call_src, &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
@@ -2992,7 +2992,7 @@ fn diff_var_fn(nt: NumType, init: i64, fn_src: &str, expect: i64) {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&init.to_ne_bytes()[..nt.bytes()]);
     let a = store.alloc_raw(core.numtypes[nt as usize], crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_binding(&mut store, &core, a)) }.unwrap();
     let func = {
         let mut p = Parser::new(fn_src, &mut store, &mut trie, &core, scopes);
         p.parse_expression().unwrap()
@@ -3128,7 +3128,7 @@ fn void_function_runs_its_body_for_effect() {
     scopes.push(core.root_scope);
     let a_val = store.alloc_bytes(&41i32.to_ne_bytes());
     let a = store.alloc_raw(core.i32_, crate::dyad::global_place(a_val));
-    unsafe { scopes.declare(&mut trie, "a", mut_record(&mut store, &core, a)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "a", mut_binding(&mut store, &core, a)) }.unwrap();
     let func = {
         let mut p =
             Parser::new("fn () -> void ( a = a + 1 )", &mut store, &mut trie, &core, scopes);

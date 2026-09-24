@@ -4,14 +4,14 @@
 //! The hybrid regex-trie, the lexing name index. Literal prefixes ride a
 //! byte-path; residual regex chunks are branches, matched separately so
 //! lookup is true longest-match, a literal beating a regex at equal length.
-//! Values are record dyads the store owns; resolution policy is the parser's.
+//! Values are binding dyads the store owns; resolution policy is the parser's.
 
 use std::cell::RefCell;
 
 use regex::bytes::Regex;
 
+use crate::binding::Binding;
 use crate::dyad::DyadPtr;
-use crate::record::Record;
 
 use crate::regex_splitting::{is_pure_literal, regex_splitting, Segment};
 
@@ -29,21 +29,21 @@ pub enum RegexTrieError {
 }
 
 /// The value at an end-of-word node; every alternation path of one `insert`
-/// holds the same record pointers.
+/// holds the same binding pointers.
 #[derive(Debug)]
 pub struct Leaf {
     pub regex_key: String,
-    pub records: Vec<DyadPtr>,
+    pub bindings: Vec<DyadPtr>,
 }
 
-/// `records` is the full candidate list, one per declaring scope; the parser
+/// `bindings` is the full candidate list, one per declaring scope; the parser
 /// picks the one live in the open scopes.
 #[derive(Debug)]
 pub struct MatchResult<'a> {
     /// Bytes consumed from the start of the input.
     pub matched: usize,
     pub regex_key: &'a str,
-    pub records: &'a [DyadPtr],
+    pub bindings: &'a [DyadPtr],
 }
 
 struct RegexEntry {
@@ -193,38 +193,38 @@ impl RegexTrie {
         Some(current)
     }
 
-    /// The records under exactly `key` as inserted: a declaration-time question,
+    /// The bindings under exactly `key` as inserted: a declaration-time question,
     /// unlike [`get`](Self::get), which asks what a text lexes as.
-    pub fn records_for_key(&self, key: &str) -> Option<&[DyadPtr]> {
+    pub fn bindings_for_key(&self, key: &str) -> Option<&[DyadPtr]> {
         let path = regex_splitting(key).into_iter().next()?;
         let node = self.locate(&path).filter(|n| n.check_eow())?;
         let leaf = node.leaf_value.as_ref().filter(|v| v.regex_key == key)?;
-        Some(&leaf.records)
+        Some(&leaf.bindings)
     }
 
-    /// Appends: a spelling carries one record per scope it is declared in. The
+    /// Appends: a spelling carries one binding per scope it is declared in. The
     /// no-shadowing rule is the parser's; the trie only stores.
-    pub fn insert(&mut self, key: &str, record: DyadPtr) {
+    pub fn insert(&mut self, key: &str, binding: DyadPtr) {
         debug_assert!(!key.is_empty());
 
         if is_pure_literal(key) {
-            return self.insert_literal_fast(key, record);
+            return self.insert_literal_fast(key, binding);
         }
 
         for path in &regex_splitting(key) {
             let leaf = Self::walk_create(self, path);
             leaf.ensure_eow();
-            push_record(&mut leaf.leaf_value, key, record);
+            push_binding(&mut leaf.leaf_value, key, binding);
         }
     }
 
-    fn insert_literal_fast(&mut self, s: &str, record: DyadPtr) {
+    fn insert_literal_fast(&mut self, s: &str, binding: DyadPtr) {
         let mut current = self;
         for &c in s.as_bytes() {
             current = current.lit_child_or_create(c);
         }
         current.ensure_eow();
-        push_record(&mut current.leaf_value, s, record);
+        push_binding(&mut current.leaf_value, s, binding);
     }
 
     /// Longest match at the start of `string`; a literal beats a regex of
@@ -233,7 +233,7 @@ impl RegexTrie {
         debug_assert!(!string.is_empty());
         match self.longest(string.as_bytes(), 0)? {
             Some((matched, leaf)) => {
-                Ok(MatchResult { matched, regex_key: &leaf.regex_key, records: &leaf.records })
+                Ok(MatchResult { matched, regex_key: &leaf.regex_key, bindings: &leaf.bindings })
             }
             None => Err(RegexTrieError::NodeNotFound),
         }
@@ -289,7 +289,7 @@ impl RegexTrie {
                     out.push(MatchResult {
                         matched: pos,
                         regex_key: &v.regex_key,
-                        records: &v.records,
+                        bindings: &v.bindings,
                     });
                 }
             }
@@ -316,9 +316,9 @@ impl RegexTrie {
         Ok(out)
     }
 
-    /// Remove the live record declared in `scope` for `regex_key` and return
-    /// the identity it denoted. A dead record in the same scope stays, its
-    /// range being what reflection reads; a leaf is pruned only when its last record goes.
+    /// Remove the live binding declared in `scope` for `regex_key` and return
+    /// the identity it denoted. A dead binding in the same scope stays, its
+    /// range being what reflection reads; a leaf is pruned only when its last binding goes.
     pub fn remove(&mut self, regex_key: &str, scope: DyadPtr) -> Result<DyadPtr, RegexTrieError> {
         debug_assert!(!regex_key.is_empty());
         let paths = regex_splitting(regex_key);
@@ -329,9 +329,9 @@ impl RegexTrie {
             let node = self.locate(path).filter(|n| n.check_eow());
             let ident = match node.and_then(|n| n.leaf_value.as_ref()) {
                 Some(v) if v.regex_key == regex_key => {
-                    match v.records.iter().find(|&&r| is_live_in(r, scope)) {
-                        // SAFETY: every stored pointer is a record dyad.
-                        Some(&r) => unsafe { Record::read(r).dyad },
+                    match v.bindings.iter().find(|&&r| is_live_in(r, scope)) {
+                        // SAFETY: every stored pointer is a binding dyad.
+                        Some(&r) => unsafe { Binding::read(r).dyad },
                         None => return Err(RegexTrieError::NodeNotFound),
                     }
                 }
@@ -356,8 +356,8 @@ impl RegexTrie {
     fn prune_remove(node: &mut RegexTrie, steps: &[Step], i: usize, scope: DyadPtr) -> bool {
         if i == steps.len() {
             if let Some(leaf) = &mut node.leaf_value {
-                leaf.records.retain(|&r| !is_live_in(r, scope));
-                if leaf.records.is_empty() {
+                leaf.bindings.retain(|&r| !is_live_in(r, scope));
+                if leaf.bindings.is_empty() {
                     node.leaf_value = None;
                     let eow = node.child_indices[EOW];
                     if eow != NONE {
@@ -508,16 +508,16 @@ enum Step {
     Regex(String),
 }
 
-fn is_live_in(record: DyadPtr, scope: DyadPtr) -> bool {
-    // SAFETY: every pointer the trie stores is a record dyad from the store.
-    let fields = unsafe { Record::read(record) };
+fn is_live_in(binding: DyadPtr, scope: DyadPtr) -> bool {
+    // SAFETY: every pointer the trie stores is a binding dyad from the store.
+    let fields = unsafe { Binding::read(binding) };
     fields.scope == scope && !fields.is_dead()
 }
 
-fn push_record(leaf: &mut Option<Leaf>, key: &str, record: DyadPtr) {
+fn push_binding(leaf: &mut Option<Leaf>, key: &str, binding: DyadPtr) {
     match leaf {
-        Some(l) => l.records.push(record),
-        None => *leaf = Some(Leaf { regex_key: key.to_string(), records: vec![record] }),
+        Some(l) => l.bindings.push(binding),
+        None => *leaf = Some(Leaf { regex_key: key.to_string(), bindings: vec![binding] }),
     }
 }
 
@@ -546,15 +546,15 @@ mod tests {
         Box::into_raw(Box::new(Dyad { ty: std::ptr::null_mut(), value: tag as *mut u8 }))
     }
 
-    /// A leaked record dyad in `scope` for `identity`.
+    /// A leaked binding dyad in `scope` for `identity`.
     fn rec(identity: DyadPtr, scope: DyadPtr) -> DyadPtr {
-        let fields = Box::into_raw(Box::new(Record::new(identity, scope, std::ptr::null_mut())));
+        let fields = Box::into_raw(Box::new(Binding::new(identity, scope, std::ptr::null_mut())));
         Box::into_raw(Box::new(Dyad { ty: std::ptr::null_mut(), value: fields as *mut u8 }))
     }
 
-    fn f(record: DyadPtr) -> Record {
+    fn f(binding: DyadPtr) -> Binding {
         // SAFETY: only `rec`-built dyads are inserted in these tests.
-        unsafe { Record::read(record) }
+        unsafe { Binding::read(binding) }
     }
 
     #[test]
@@ -570,13 +570,13 @@ mod tests {
         let m = t.get(":=").unwrap();
         assert_eq!(m.matched, 2);
         assert_eq!(m.regex_key, ":=");
-        assert_eq!(f(m.records[0]).dyad, colon_eq);
+        assert_eq!(f(m.bindings[0]).dyad, colon_eq);
 
         let m = t.get(":x").unwrap();
         assert_eq!(m.matched, 1);
-        assert_eq!(f(m.records[0]).dyad, colon);
+        assert_eq!(f(m.bindings[0]).dyad, colon);
 
-        assert_eq!(f(t.get("=").unwrap().records[0]).dyad, eq);
+        assert_eq!(f(t.get("=").unwrap().bindings[0]).dyad, eq);
     }
 
     #[test]
@@ -587,7 +587,7 @@ mod tests {
         t.insert("[0-9]+", rec(num, root));
         let m = t.get("123abc").unwrap();
         assert_eq!(m.matched, 3);
-        assert_eq!(f(m.records[0]).dyad, num);
+        assert_eq!(f(m.bindings[0]).dyad, num);
     }
 
     #[test]
@@ -598,8 +598,8 @@ mod tests {
         t.insert("if", rec(kw, root));
         t.insert("[a-z]+", rec(ident, root));
 
-        assert_eq!(f(t.get("if").unwrap().records[0]).dyad, kw);
-        assert_eq!(f(t.get("foo").unwrap().records[0]).dyad, ident);
+        assert_eq!(f(t.get("if").unwrap().bindings[0]).dyad, kw);
+        assert_eq!(f(t.get("foo").unwrap().bindings[0]).dyad, ident);
     }
 
     #[test]
@@ -619,8 +619,8 @@ mod tests {
         t.insert("x", rec(id_inner, inner));
 
         let m = t.get("x").unwrap();
-        assert_eq!(m.records.len(), 2);
-        let ids: Vec<_> = m.records.iter().map(|&c| f(c).dyad).collect();
+        assert_eq!(m.bindings.len(), 2);
+        let ids: Vec<_> = m.bindings.iter().map(|&c| f(c).dyad).collect();
         assert!(ids.contains(&id_outer) && ids.contains(&id_inner));
     }
 
@@ -635,7 +635,7 @@ mod tests {
         t.insert("widget", rec(widget, root));
         let m = t.get("widget = 1").unwrap();
         assert_eq!(m.matched, 6);
-        assert_eq!(f(m.records[0]).dyad, widget);
+        assert_eq!(f(m.bindings[0]).dyad, widget);
     }
 
     #[test]
@@ -645,8 +645,8 @@ mod tests {
         let d = dummy(7);
         t.insert("ab|cd", rec(d, root));
         assert_eq!(t.get("ab").unwrap().matched, 2);
-        assert_eq!(f(t.get("ab").unwrap().records[0]).dyad, d);
-        assert_eq!(f(t.get("cd").unwrap().records[0]).dyad, d);
+        assert_eq!(f(t.get("ab").unwrap().bindings[0]).dyad, d);
+        assert_eq!(f(t.get("cd").unwrap().bindings[0]).dyad, d);
 
         assert_eq!(t.remove("ab|cd", root).unwrap(), d);
         assert!(t.get("ab").is_err());
@@ -663,40 +663,40 @@ mod tests {
 
         assert_eq!(t.remove("x", inner).unwrap(), id_inner);
         let m = t.get("x").unwrap();
-        assert_eq!(m.records.len(), 1);
-        assert_eq!(f(m.records[0]).dyad, id_outer);
+        assert_eq!(m.bindings.len(), 1);
+        assert_eq!(f(m.bindings[0]).dyad, id_outer);
     }
 
     #[test]
-    fn alternation_paths_share_one_record_dyad() {
+    fn alternation_paths_share_one_binding_dyad() {
         let root = dummy(100);
         let mut t = RegexTrie::new();
         let (d, ender) = (dummy(7), dummy(8));
         t.insert("ab|cd", rec(d, root));
-        let via_ab = t.get("ab").unwrap().records[0];
-        let via_cd = t.get("cd").unwrap().records[0];
-        assert_eq!(via_ab, via_cd, "one record dyad, two paths");
-        unsafe { Record::set_end(via_ab, ender) };
-        assert_eq!(f(t.get("cd").unwrap().records[0]).end, ender);
+        let via_ab = t.get("ab").unwrap().bindings[0];
+        let via_cd = t.get("cd").unwrap().bindings[0];
+        assert_eq!(via_ab, via_cd, "one binding dyad, two paths");
+        unsafe { Binding::set_end(via_ab, ender) };
+        assert_eq!(f(t.get("cd").unwrap().bindings[0]).end, ender);
     }
 
     #[test]
     fn remove_takes_only_the_live_context() {
-        // A name ended and redeclared in one scope has a dead and a live record there.
+        // A name ended and redeclared in one scope has a dead and a live binding there.
         let root = dummy(100);
         let mut t = RegexTrie::new();
         let (old, new, ender) = (dummy(1), dummy(2), dummy(9));
         let old_rec = rec(old, root);
         t.insert("x", old_rec);
-        unsafe { Record::set_end(old_rec, ender) };
+        unsafe { Binding::set_end(old_rec, ender) };
         t.insert("x", rec(new, root));
-        assert_eq!(t.get("x").unwrap().records.len(), 2);
+        assert_eq!(t.get("x").unwrap().bindings.len(), 2);
 
         assert_eq!(t.remove("x", root).unwrap(), new);
         let m = t.get("x").unwrap();
-        assert_eq!(m.records.len(), 1);
-        assert_eq!(f(m.records[0]).dyad, old);
-        assert!(f(m.records[0]).is_dead());
+        assert_eq!(m.bindings.len(), 1);
+        assert_eq!(f(m.bindings[0]).dyad, old);
+        assert!(f(m.bindings[0]).is_dead());
         assert_eq!(t.remove("x", root), Err(RegexTrieError::NodeNotFound));
     }
 
@@ -709,7 +709,7 @@ mod tests {
         t.insert("foobar", rec(foobar, root));
         assert_eq!(t.remove("foo", root).unwrap(), foo);
         assert!(t.get("foo").is_err());
-        assert_eq!(f(t.get("foobar").unwrap().records[0]).dyad, foobar);
+        assert_eq!(f(t.get("foobar").unwrap().bindings[0]).dyad, foobar);
     }
 
     #[test]
@@ -734,9 +734,9 @@ mod tests {
         ms.sort_by_key(|m| m.matched);
         assert_eq!(ms.len(), 2);
         assert_eq!(ms[0].matched, 1);
-        assert_eq!(f(ms[0].records[0]).dyad, lit_a);
+        assert_eq!(f(ms[0].bindings[0]).dyad, lit_a);
         assert_eq!(ms[1].matched, 3);
-        assert_eq!(f(ms[1].records[0]).dyad, ident);
+        assert_eq!(f(ms[1].bindings[0]).dyad, ident);
     }
 
     #[test]
@@ -750,10 +750,10 @@ mod tests {
 
         let m = t.get("if").unwrap();
         assert_eq!(m.matched, 2);
-        assert_eq!(f(m.records[0]).dyad, kw);
+        assert_eq!(f(m.bindings[0]).dyad, kw);
         let m = t.get("iffy").unwrap();
         assert_eq!(m.matched, 4);
-        assert_eq!(f(m.records[0]).dyad, ident);
+        assert_eq!(f(m.bindings[0]).dyad, ident);
     }
 
     #[test]
@@ -765,7 +765,7 @@ mod tests {
         t.insert("[a-z]+", rec(long, root));
         let m = t.get("abc").unwrap();
         assert_eq!(m.matched, 3);
-        assert_eq!(f(m.records[0]).dyad, long);
+        assert_eq!(f(m.bindings[0]).dyad, long);
     }
 
     #[test]
@@ -787,10 +787,10 @@ mod tests {
         t.insert("ab", d(1));
         t.insert("a[0-9]", d(2));
         t.insert("a[0-9]", d(3));
-        assert_eq!(t.records_for_key("ab"), Some(&[d(1)][..]));
-        assert_eq!(t.records_for_key("a[0-9]"), Some(&[d(2), d(3)][..]));
-        assert_eq!(t.records_for_key("a"), None);
-        assert_eq!(t.records_for_key("a[0-9]x"), None);
-        assert_eq!(t.records_for_key("[0-9]"), None);
+        assert_eq!(t.bindings_for_key("ab"), Some(&[d(1)][..]));
+        assert_eq!(t.bindings_for_key("a[0-9]"), Some(&[d(2), d(3)][..]));
+        assert_eq!(t.bindings_for_key("a"), None);
+        assert_eq!(t.bindings_for_key("a[0-9]x"), None);
+        assert_eq!(t.bindings_for_key("[0-9]"), None);
     }
 }
