@@ -1195,8 +1195,10 @@ pub enum ParseError {
     ExpectedPath,
     /// A `regex` was not followed by a `«…»` quote.
     ExpectedPattern,
-    /// A `lex` was not followed by a `«…»` quote.
-    ExpectedQuote,
+    /// A `lex` or `print` was not followed by a `«…»` quote; carries the word.
+    ExpectedQuote(&'static str),
+    /// A `{` in a `print` quote, whose interpolation waits on live strings.
+    InterpolationPending,
     /// `tape.insert(k, …)` was handed something that is not a tape: `insert`
     /// splices a tape into a tape (DESIGN ›Text is the quote‹).
     InsertTakesTape,
@@ -5021,19 +5023,39 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
+        let quote = self.quote_after("lex")?;
+        let node = crate::identities::lex::build(self.rt.store, self.types, quote);
+        tape.place(node);
+        Ok(Constructed::Placed)
+    }
+
+    pub(crate) fn construct_print(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        let quote = self.quote_after("print")?;
+        // Stand-in for #140: `{…}` interpolates once strings are live; until then
+        // a brace is refused rather than printed as text.
+        // SAFETY: `quote` is the string node the `«…»` constructor just built.
+        if unsafe { crate::identities::string::text(quote) }.contains(&b'{') {
+            return Err(ParseError::InterpolationPending);
+        }
+        let node = crate::identities::print::build(self.rt.store, self.types, quote);
+        tape.place(node);
+        Ok(Constructed::Placed)
+    }
+
+    /// The `«…»` string node to the right of a raw-text word, consumed at discovery.
+    fn quote_after(&mut self, word: &'static str) -> Result<DyadPtr, ParseError> {
         self.skip_whitespace();
         let source = self.source;
         let start = self.pos;
         if !source[start..].starts_with('«') {
-            return Err(ParseError::ExpectedQuote);
+            return Err(ParseError::ExpectedQuote(word));
         }
         let r = self.scopes.resolve(self.trie, &source[start..]).map_err(ParseError::Resolve)?;
         self.pos += r.matched;
-        let quote =
-            self.construct_leaf(r.identity, start, r.matched)?.ok_or(ParseError::ExpectedQuote)?;
-        let node = crate::identities::lex::build(self.rt.store, self.types, quote);
-        tape.place(node);
-        Ok(Constructed::Placed)
+        self.construct_leaf(r.identity, start, r.matched)?.ok_or(ParseError::ExpectedQuote(word))
     }
 
     /// The node placed at discovery carries the scope open at its appearance

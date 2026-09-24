@@ -1208,6 +1208,23 @@ fn lex_splices_text_built_fragments() {
 }
 
 #[test]
+fn print_writes_its_quote_each_time_it_runs_and_is_a_statement() {
+    let out = logos()
+        .arg("print «a», f := fn () -> i32 ( print «in f», 7 ), f(), f(), print «»")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "a\nin f\nin f\n\n7\n");
+
+    let (echoes, stderr) = repl("print «hi»\n1 + 1\n".as_bytes());
+    assert_eq!(echoes, ["hi", "2"], "stderr: {stderr}");
+
+    let (_echoes, stderr) = repl("print 5\nprint «answer {x}»\n".as_bytes());
+    assert!(stderr.contains("`print` must be followed by a «…» quote"), "stderr: {stderr}");
+    assert!(stderr.contains("not interpolated yet"), "stderr: {stderr}");
+}
+
+#[test]
 fn caller_scope_is_the_use_site_and_here_scope_the_body() {
     let (echoes, stderr) = repl(
         "mut seen := here.scope\n\

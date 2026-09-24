@@ -33,7 +33,7 @@ impl Engine {
 }
 
 /// The echo rule: a declaration, an assignment, a bare fn or type definition,
-/// a compile, or an import is a statement and stays silent; everything else echoes.
+/// a compile, an import, or a print is a statement and stays silent; everything else echoes.
 ///
 /// # Safety
 /// `node` must be a valid dyad.
@@ -67,6 +67,7 @@ fn is_silent_type(core: &Core, logos: seed::dyad::DyadPtr) -> bool {
         || logos == core.storeptr_
         || logos == core.compile_
         || logos == core.import_
+        || logos == core.print.print
 }
 
 /// Whether an imported file's tail prints nothing. Narrower than the REPL's
