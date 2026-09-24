@@ -645,6 +645,19 @@ fn a_constructor_tells_a_square_bracket_cell_from_a_scope_by_its_type() {
 }
 
 #[test]
+fn a_constructor_reads_a_square_bracket_cell_by_its_dyads() {
+    let first = "first := type ( parse_rank = *.parse_rank + 1, associativity = left, parse = ( \
+                 tape[0] = tape[1].dyads[0], tape.is_constructed[0] = true, tape.remove(1) ) )";
+    let count = "count := type ( parse_rank = *.parse_rank + 1, parse = ( \
+                 if (tape[1].dyads.size == 2) (print «two») else (print «not two»), \
+                 tape.remove(1), tape.remove(0) ) )";
+    let src = format!("{first}, {count}, count [1, 2], count [3], first [3]");
+    let out = logos().args([&src]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "two\nnot two\n3\n");
+}
+
+#[test]
 fn dot_type_is_a_guided_error() {
     let (_echoes, stderr) = repl(b"x := i32 5\nx.type\n");
     assert!(stderr.contains("x:type"), "stderr: {stderr}");

@@ -57,7 +57,7 @@ pub(super) fn register(
         meta::TUPLE_TAG,
         meta::prec::INERT,
         crate::parse::Assoc::Left,
-        &["key", "op"],
+        &["dyads", "op"],
     );
     let square_brackets = cx.store.alloc_raw(cx.type_, record);
     cx.declare("square_brackets", square_brackets);
