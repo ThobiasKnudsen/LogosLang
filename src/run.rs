@@ -32,10 +32,12 @@ pub enum RunError {
     NoWholeRead,
     /// A parameter with no frame slot.
     MalformedFn(DyadPtr),
-    /// `lex` or `print` handed something other than a string.
+    /// `lex` or `error` handed something other than a string.
     NotText,
     /// `print` failed to write stdout; the I/O error's sentence.
     Output(Box<String>),
+    /// `error «…»` ran; its quote's text.
+    Raised(Box<String>),
     /// A tape affordance with no tape behind its receiver.
     NoTape,
     /// A tape index the tape does not hold.

@@ -1303,6 +1303,31 @@ fn print_interpolates_braces_as_echo_shows_them_and_escapes_them_with_a_backslas
 }
 
 #[test]
+fn error_aborts_the_run_with_its_message() {
+    let out = logos()
+        .arg(
+            "f := fn (x := i32 ?) -> i32 ( if (x > 2) (error «too big») else (x) ), \
+             print «{f(1)}», f(5), print «never»",
+        )
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "a plain failure exit, not a signal");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "1\n");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("run error: too big"), "stderr: {stderr}");
+
+    let out = logos().arg("t := type (parse = (error «not here»)), t").output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("not here"), "stderr: {stderr}");
+
+    let (echoes, stderr) = repl("error «boom»\nerror 5\n1 + 1\n".as_bytes());
+    assert_eq!(echoes, ["2"], "stderr: {stderr}");
+    assert!(stderr.contains("run error: boom"), "stderr: {stderr}");
+    assert!(stderr.contains("`error` must be followed by a «…» quote"), "stderr: {stderr}");
+}
+
+#[test]
 fn caller_scope_is_the_use_site_and_here_scope_the_body() {
     let (echoes, stderr) = repl(
         "mut seen := here.scope\n\

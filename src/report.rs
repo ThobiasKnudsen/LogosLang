@@ -305,8 +305,9 @@ pub fn run_message(e: &RunError) -> String {
                 .into()
         }
         RunError::MalformedFn(_) => "a parameter of this function has no frame slot".into(),
-        RunError::NotText => "`lex` takes a string".into(),
+        RunError::NotText => "`lex` and `error` take a string".into(),
         RunError::Output(why) => format!("print could not write to stdout: {why}"),
+        RunError::Raised(message) => message.to_string(),
         RunError::NoTape => "there is no tape behind this receiver".into(),
         RunError::OffTape => "this index is off the tape".into(),
         RunError::NoName => "this cell holds no name".into(),
