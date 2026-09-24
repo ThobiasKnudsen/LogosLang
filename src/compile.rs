@@ -376,6 +376,8 @@ impl Lowerer<'_, '_> {
         let (lhs, rhs) = operands(node);
         let nt = match numtype_of(self.types, lhs) {
             Operand::Concrete(nt) => nt,
+            // A pointer step: the offset was scaled to `i64` bytes at parse.
+            Operand::Pointer(_) => NumType::I64,
             _ => {
                 return Err(CompileError::Internal(
                     "a resolved arithmetic node has a numeric operand",

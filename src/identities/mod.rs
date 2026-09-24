@@ -684,7 +684,7 @@ pub(crate) unsafe fn resolve_binary(
     let a = numtype_of(types, lhs);
     let b = numtype_of(types, rhs);
     let nt = match (&a, &b) {
-        // No pointer arithmetic in the seed.
+        // A pointer step is built before this; any other pointer operand is refused.
         (Operand::Pointer(_), _) | (_, Operand::Pointer(_)) => {
             return Err(ParseError::UnsupportedOperands)
         }

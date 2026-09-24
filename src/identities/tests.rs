@@ -1717,7 +1717,7 @@ fn record_pointer_fields_hold_addresses_both_tiers() {
 fn pointer_misuse_is_rejected() {
     assert_eq!(parse_err("( mut x := i32 1, x@ )"), ParseError::UnsupportedOperands);
     assert_eq!(
-        parse_err("( mut x := i32 1, mut p := &x, p + 1 )"),
+        parse_err("( mut x := i32 1, mut p := &x, p * 2 )"),
         ParseError::UnsupportedOperands
     );
     assert_eq!(parse_err("( mut x := i32 1, mut p := &x, p = 5 )"), ParseError::TypeMismatch);
@@ -1893,6 +1893,36 @@ fn a_read_or_write_through_the_hole_is_the_checked_error_both_tiers() {
 fn address_of_a_parameter_works_both_tiers() {
     diff_typed_call("fn (a := i32 ?) -> i32 ( q := &a, q@ )", "f(7)", 7);
     diff_typed_call("fn (a := i32 ?) -> i32 ( q := &a, q@ = 5, a )", "f(7)", 5);
+}
+
+#[test]
+fn a_pointer_steps_by_whole_cells_both_tiers() {
+    // Cell k of the span `alloc n of T v` made is `(p + k)@`, for any cell width.
+    assert_eq!(
+        run_script("a := alloc 3 of i32 7, b := a + 1, b@ = 9, (a + 2)@ = 11, a@ + (a + 1)@ * 10 + (b + 1)@ * 100 + (b - 1)@ * 1000"),
+        8197
+    );
+    assert_eq!(
+        run_script("a := alloc 4 of i64 3, k := i32 3, (a + k)@ = 40, i := u8 1, (a + i)@ = 5, (a + 3)@ + (a + 1)@ + (a + 2)@"),
+        48
+    );
+    assert_eq!(
+        run_script("holder := logos (fields = (r := @i32 ?)), a := alloc 3 of i32 4, h := holder(a), (h.r + 2)@ = 8, (h.r + 2)@ + a@"),
+        12
+    );
+    let walk = "f := fn (p := @i32 ?, n := i32 ?) -> i32 ( for i in 0..n ( (p + i)@ = i * 10 ), mut s := i32 0, for i in 0..n ( s = s + (p + n - 1 - i)@ ), s )";
+    assert_eq!(run_script(&format!("{walk}, a := alloc 4 of i32 0, f(a, 4)")), 60);
+    assert_eq!(run_script(&format!("{walk}, f.compile(), a := alloc 4 of i32 0, f(a, 4)")), 60);
+}
+
+#[test]
+fn a_pointer_steps_only_by_an_integer_on_its_right() {
+    let defs = &["p := @i32 ?", "q := @i32 ?"];
+    assert_eq!(parse_err_after(defs, "p * 2"), ParseError::UnsupportedOperands);
+    assert_eq!(parse_err_after(defs, "p + q"), ParseError::UnsupportedOperands);
+    assert_eq!(parse_err_after(defs, "1 + p"), ParseError::UnsupportedOperands);
+    assert_eq!(parse_err_after(defs, "p + f64 1"), ParseError::UnsupportedOperands);
+    assert_eq!(parse_err_after(defs, "p + 1.5"), ParseError::UncomputableLiteral);
 }
 
 #[test]
