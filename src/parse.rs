@@ -1202,6 +1202,8 @@ pub enum ParseError {
     NotMutable(Box<String>),
     /// A write into a name or field declared `immut`; carries the name.
     Immutable(Box<String>),
+    /// A read of a name declared `T ?` before a sibling write filled it; carries the name.
+    Unwritten(Box<String>),
     /// An `import` was not followed by a path token.
     ExpectedPath,
     /// A `regex` was not followed by a `«…»` quote.
@@ -1479,6 +1481,8 @@ pub struct Parser<'a> {
     /// The valueless places `?` built: a `:=` binds its name straight to such
     /// a place, no snapshot and no initializer.
     holes: HashSet<DyadPtr>,
+    /// The last `=` node built and the scope it was built in.
+    last_write: (DyadPtr, DyadPtr),
     /// Whether the constructor now running was woken at discovery, its token
     /// just lexed and the source after it unread, rather than at the boundary:
     /// an identity that reads its own bracket reads source only at discovery.
@@ -1627,6 +1631,7 @@ impl<'a> Parser<'a> {
             discovering: false,
             lex_mode: None,
             holes: HashSet::new(),
+            last_write: (std::ptr::null_mut(), std::ptr::null_mut()),
             frames: Vec::new(),
             runtime_depth: 0,
             definitions: Vec::new(),
@@ -2093,19 +2098,26 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// `?`'s constructor (DESIGN ›Declarations are immutable by default‹): a
-    /// fresh dyad with both slots undefined, or with a type to its left that
+    /// `?`'s constructor (DESIGN ›Declarations are immutable by default‹): the
+    /// one unknown standing as its value, or with a type to its left that
     /// type's valueless place, the cells to the left consumed.
     pub(crate) fn construct_hole(
         &mut self,
+        id: DyadPtr,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
         let types = self.types;
         let base = match tape.at(-1).copied() {
             Some(cell) => {
                 // A fresh name to the left is not a type; leave it for the
-                // boundary's own report.
-                if cell.is_fresh() {
+                // boundary's own report. An operator still waiting for its
+                // turn (`x != ?`) is no type either.
+                let left = self.cell_identity(&cell);
+                let waiting = !cell.constructed
+                    && !cell.is_fresh()
+                    && self.ctor_of(left).is_some()
+                    && self.precedence_of_cell(left) < crate::identities::meta::prec::HOLE;
+                if cell.is_fresh() || waiting {
                     None
                 } else {
                     // A box the pass has already filled declares with the
@@ -2131,7 +2143,7 @@ impl<'a> Parser<'a> {
             None => None,
         };
         let node = match base {
-            None => self.rt.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut()),
+            None => self.stand_as_value(tape, id),
             Some(t) => {
                 // The width comes from the same reading rule a read of the
                 // place consults, so allocation and read cannot disagree; a
@@ -2467,8 +2479,8 @@ impl<'a> Parser<'a> {
                     unsafe { (*value).ty }
                 } else {
                     // SAFETY: `value` is a reduced dyad just parsed.
-                    if unsafe { (*value).ty }.is_null() {
-                        std::ptr::null_mut() // `name := ?`, the bare hole
+                    if unsafe { self.types.through(value) } == self.types.unknown {
+                        std::ptr::null_mut() // `name := ?`: no type yet
                     } else {
                         self.pos = start;
                         return Err(ParseError::BadDeclaredType);
@@ -4812,6 +4824,50 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// `?`'s entry on a binding refuses every read of the value until it is
+    /// written: the target of `x = …` passes, and so does `x:…`, which reads
+    /// the binding (DESIGN ›Declarations are immutable by default‹).
+    fn check_unwritten(&mut self, cell: &Cell) -> Result<(), ParseError> {
+        let binding = cell.binding(self.types);
+        // SAFETY: a non-null cell binding is a binding dyad from the store.
+        if binding.is_null() || !unsafe { Binding::has_gate(binding, self.types.unknown) } {
+            return Ok(());
+        }
+        if matches!(self.peek_token(), Some((t, _)) if t == self.types.assign || t == self.types.colon_)
+        {
+            return Ok(());
+        }
+        self.pos = cell.start;
+        // SAFETY: as above.
+        Err(ParseError::Unwritten(Box::new(unsafe { Binding::spelling(binding) })))
+    }
+
+    pub(crate) fn note_write(&mut self, node: DyadPtr) {
+        self.last_write = (node, self.scopes.current().unwrap_or(std::ptr::null_mut()));
+    }
+
+    /// A statement `x = …` built in the block that declared `x := T ?` lifts
+    /// `?`'s read veto from that line on; a write nested in a group, an `if`,
+    /// a loop or a `fn` body is no statement of that block, so it does not.
+    ///
+    /// # Safety
+    /// `item` must be a reduced dyad from the store.
+    pub unsafe fn fill_if_sibling_write(&mut self, item: DyadPtr) {
+        let (node, scope) = self.last_write;
+        if item.is_null() || item != node {
+            return;
+        }
+        let target = *((*item).value as *const DyadPtr);
+        if target.is_null()
+            || (*target).ty != self.types.binding_
+            || !Binding::has_gate(target, self.types.unknown)
+            || Binding::read(target).scope != scope
+        {
+            return;
+        }
+        Binding::remove_gate(self.rt.store, self.types.array_, target, self.types.unknown);
+    }
+
     /// The one sequencing step, shared by `parse_sequence`, the drivers and a
     /// type body: a comment node or one expression, an optional `,` after it
     /// consumed. `None` at the sequence's end. Where parse order is run order the item is left pending.
@@ -4848,6 +4904,10 @@ impl<'a> Parser<'a> {
             if items.len() > 1 {
                 self.pos = items[1].1;
                 return Some(Err(ParseError::Trailing));
+            }
+            if let Some(&(item, _)) = items.first() {
+                // SAFETY: `item` is a reduced dyad just constructed.
+                unsafe { self.fill_if_sibling_write(item) };
             }
             let mut ordered = std::mem::take(&mut self.lifted);
             if let Some((item, start)) = items.pop() {
@@ -4983,8 +5043,10 @@ impl<'a> Parser<'a> {
         let declared = unsafe {
             if self.holes.remove(&value) {
                 // `x := i32 ?`: the place `?` built is what the name binds to;
-                // nothing initializes it.
+                // nothing initializes it, and `?`'s entry refuses a read until
+                // a sibling write fills it.
                 self.scopes.rebind(binding, value);
+                Binding::add_gate(self.rt.store, self.types.array_, binding, self.types.unknown);
                 value
             } else if (*read).ty == self.types.construct_ {
                 let ops = (*read).value as *mut DyadPtr;
@@ -6162,6 +6224,7 @@ impl<'a> Parser<'a> {
         };
         let id = self.cell_identity(&cell);
         if !cell.constructed {
+            self.check_unwritten(&cell)?;
             if id == self.types.sep_ {
                 self.pos = start;
                 return Ok(Some(Boundary::Comma));

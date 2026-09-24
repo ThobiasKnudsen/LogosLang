@@ -36,7 +36,7 @@ pub enum Read {
     /// Prose, or a `fn` literal standing as a statement: yields 0.
     Unit,
     Executable(Dispatch),
-    /// A bare hole, a slot marker, a fresh spelling's dyad.
+    /// A slot marker, a fresh spelling's dyad.
     Undefined,
 }
 
@@ -312,7 +312,7 @@ mod tests {
                 other => panic!("a `+` application reads as its leaf, got {other:?}"),
             }
             assert_eq!(read_kind(types, exprs[13]), Read::Executable(Dispatch::Call(f)));
-            assert_eq!(read_kind(types, exprs[14]), Read::Undefined);
+            assert_eq!(read_kind(types, exprs[14]), Read::Identity);
         }
     }
 

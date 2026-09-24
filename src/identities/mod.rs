@@ -138,6 +138,8 @@ pub struct Core {
     pub binding_: DyadPtr,
     /// `:`, the binding read.
     pub colon_: DyadPtr,
+    /// `?`, the one unknown; also the read-veto entry its declarations put on a binding.
+    pub unknown: DyadPtr,
     pub tape: tape::TapeIds,
     pub this: this::ThisIds,
     pub lex: lex::LexIds,
@@ -277,7 +279,7 @@ impl Core {
         op_leaves.import_ = import_leaf;
         let dyad_ = dyad::register(&mut cx);
         let colon_ = colon::register(&mut cx);
-        hole::register(&mut cx);
+        let unknown = hole::register(&mut cx);
         let (sep_, left_, right_) = logos_mod::register_syntax(&mut cx);
         fresh::register(&mut cx);
         let (construct_, construct_leaf, dot_, square_brackets, open_sq_, close_sq_) =
@@ -380,6 +382,7 @@ impl Core {
             dyad_,
             binding_,
             colon_,
+            unknown,
             tape,
             this,
             lex,
