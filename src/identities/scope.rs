@@ -67,7 +67,7 @@ pub(crate) unsafe fn fill(node: DyadPtr, op: DyadPtr) {
 /// with no value (the root, a type's member scope), which holds none.
 ///
 /// # Safety
-/// `node` must be a scope node from the store.
+/// `node` must be a scope or `square_brackets` node from the store.
 pub(crate) unsafe fn dyads(store: &mut Store, array_ty: DyadPtr, node: DyadPtr) -> DyadPtr {
     if (*node).value.is_null() {
         return std::ptr::null_mut();
@@ -95,7 +95,7 @@ pub(crate) unsafe fn push_item(store: &mut Store, array_ty: DyadPtr, node: DyadP
 /// minted with no value.
 ///
 /// # Safety
-/// `node` must be a scope node from the store.
+/// `node` must be a scope or `square_brackets` node from the store.
 pub(crate) unsafe fn exprs_array(node: DyadPtr) -> DyadPtr {
     if (*node).value.is_null() {
         return std::ptr::null_mut();
@@ -104,8 +104,8 @@ pub(crate) unsafe fn exprs_array(node: DyadPtr) -> DyadPtr {
 }
 
 /// # Safety
-/// `node` must be a scope node from the store; the store must outlive the
-/// returned slice.
+/// `node` must be a scope or `square_brackets` node from the store; the store must
+/// outlive the returned slice.
 pub(crate) unsafe fn exprs_of<'a>(node: DyadPtr) -> Option<&'a [DyadPtr]> {
     let arr = exprs_array(node);
     if arr.is_null() {

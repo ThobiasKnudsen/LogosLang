@@ -3,7 +3,7 @@
 
 //! `parsing_tape` and the tape's affordances as identities: `t[k]` read and write,
 //! `t.is_constructed[k]`, `t.spelling[k]`, `t.insert`, `t.remove`, `t.recenter`, and
-//! the cell reads `t[k]:name` and `t[k]:type`, and a scope cell's `t[k].dyads`,
+//! the cell reads `t[k]:name` and `t[k]:type`, and a scope or `[…]` cell's `t[k].dyads`,
 //! `t[k].dyads.size` and `t[k].dyads[i]`. The type's one field,
 //! `cells`, is the seed's `ParsingTape` handle. The natives run interpreted; nothing lowers.
 
@@ -494,12 +494,13 @@ fn run_cell_type(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// The scope the cell holds.
+/// The scope or `square_brackets` the cell holds; both keep their `dyads` first.
 unsafe fn scope_cell(rt: &mut Runtime, ops: *const DyadPtr) -> Result<DyadPtr, RunError> {
     let Some((_, _, cell)) = slot_cell(rt, ops)? else {
         return Err(RunError::OffTape);
     };
-    if (*cell).ty != rt.types().scope {
+    let types = rt.types();
+    if (*cell).ty != types.scope && (*cell).ty != types.square_brackets {
         return Err(RunError::NotAScope(cell));
     }
     Ok(cell)

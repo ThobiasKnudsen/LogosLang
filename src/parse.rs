@@ -4368,20 +4368,26 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The interior a `[…]` cell carries: any expression, for the reads whose
-    /// natives run it.
+    /// The one value a `[…]` cell's `dyads` hold, prose aside: any expression, for the
+    /// reads whose natives run it.
     fn index_node_at(&self, tape: &ParsingTape, offset: isize) -> Option<DyadPtr> {
         let c = tape.at(offset)?;
         if !c.constructed {
             return None;
         }
         let d = c.dyad;
-        // SAFETY: a dyad cell is a node from the store; an index node's value is its interior first.
+        // SAFETY: a dyad cell is a node from the store; a `square_brackets` node's value
+        // holds its `dyads` first, as a scope's does.
         unsafe {
             if (*d).ty != self.types.square_brackets {
                 return None;
             }
-            Some(*((*d).value as *const DyadPtr))
+            let defer_ = self.types.defer_;
+            let mut values = crate::identities::scope::exprs_of(d)?.iter().copied().filter(|&e| {
+                !crate::identities::numtype::is_comment_type((*e).ty) && (*e).ty != defer_
+            });
+            let key = values.next()?;
+            values.next().is_none().then_some(key)
         }
     }
 
@@ -4393,7 +4399,7 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        let key = self.parse_sequence()?;
+        let (scope, key) = self.parse_block()?;
         self.expect_close_sq()?;
         // An index right after a tape value is the element read, a slot node
         // the identity to its left owns; after a `.` it stays a passive cell.
@@ -4413,7 +4419,10 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        let value = self.rt.store.alloc_operands(&[key, std::ptr::null_mut()]);
+        // SAFETY: `scope` is the block `parse_block` minted, closed.
+        let dyads =
+            unsafe { crate::identities::scope::dyads(self.rt.store, self.types.array_, scope) };
+        let value = self.rt.store.alloc_operands(&[dyads, std::ptr::null_mut()]);
         let node = self.rt.store.alloc_raw(self.types.square_brackets, value);
         tape.place(node);
         Ok(Constructed::Placed)
@@ -4869,6 +4878,12 @@ impl<'a> Parser<'a> {
     /// `[expr0 … exprN, null]` yielding the trailing one, itself the scope
     /// its declarations live in (DESIGN ›A scope's value is what it evaluates to‹).
     pub fn parse_sequence(&mut self) -> Result<DyadPtr, ParseError> {
+        self.parse_block().map(|(_, value)| value)
+    }
+
+    /// [`Parser::parse_sequence`], with the scope the block opened, whose `dyads` hold
+    /// every line whatever the value collapsed to.
+    fn parse_block(&mut self) -> Result<(DyadPtr, DyadPtr), ParseError> {
         // `open` has one entry per open scope, so its length is the nesting
         // depth; past the limit the parse is the checked error, not a Rust stack overflow.
         if self.open.len() >= MAX_BRACKET_DEPTH {
@@ -4925,9 +4940,9 @@ impl<'a> Parser<'a> {
                 unsafe {
                     crate::identities::scope::fill(scope, self.types.ops.scope_);
                 }
-                Ok(scope)
+                Ok((scope, scope))
             }
-            (_, 1) => Ok(exprs[0]),
+            (_, 1) => Ok((scope, exprs[0])),
             _ => {
                 // Outside a function a `return` before the tail has nothing to leave.
                 let types = self.types;
@@ -4959,7 +4974,7 @@ impl<'a> Parser<'a> {
                 unsafe {
                     crate::identities::scope::fill(scope, self.types.ops.scope_);
                 }
-                Ok(scope)
+                Ok((scope, scope))
             }
         }
     }
