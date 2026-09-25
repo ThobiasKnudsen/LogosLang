@@ -29,6 +29,11 @@ get_mint := fn (t := type ?) -> type (
                 if index >= this.size error «index out of range: the index is at or past the array's size»,
                 (this.ptr + index)@
             ),
+            shared at_signed := fn (index := i64 ?) -> element_type (
+                if index < 0 or u64(index) >= this.size
+                    error «index out of range: the index is negative or at or past the array's size»,
+                (this.ptr + u64(index))@
+            ),
 
             shared fill := fn (elements) -> this:type (
                 this.size = elements.dyads.size,
@@ -43,10 +48,18 @@ get_mint := fn (t := type ?) -> type (
             ),
 
             shared parse = (
+                # A signed index goes to `at_signed`, whose bounds check refuses a negative value.
                 if tape[1]:type == square_brackets (
-                    if not tape[1].dyads[0]:type ⊆ this.size:type
-                        error «the index type is not within the size type, so the index could lie outside the array»,
-                    tape[0] = this.at(tape[1].dyads[0]),
+                    if tape[1].dyads[0]:type ⊆ this.size:type (
+                        tape[0] = this.at(tape[1].dyads[0])
+                    ) else (
+                        # A literal's value is known now, so one outside the size type is refused now.
+                        if tape[1].dyads[0]:type == rational_number
+                            error «the index type is not within the size type, so the index could lie outside the array»,
+                        if not tape[1].dyads[0]:type ⊆ i64
+                            error «the index is not an integer»,
+                        tape[0] = this.at_signed(tape[1].dyads[0])
+                    ),
                     tape.remove(1)
                 ),
                 tape.is_constructed[0] = true

@@ -493,9 +493,46 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
         ("f := fn (i := u64 ?) -> i32 ( a[i] ), f(3)", "index out of range"),
         ("f := fn (i := u64 ?) -> i32 ( a[i] ), f.compile(), f(5)", "index out of range"),
         ("a[-1]", "the index type is not within the size type"),
-        ("i := i32 1, a[i]", "the index type is not within the size type"),
-        ("k := u8 1, a[k]", "these types do not match"),
+        ("a[1.5]", "the index type is not within the size type"),
         ("b := array u8 (1, 300)", "an element does not fit the element type"),
+    ] {
+        let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && stderr.contains(expect), "{tail}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn an_index_of_any_integer_type_reads_inside_the_array() {
+    let array = "import ./identities/array.logos, a := array i32 (1, 2, 3)";
+    for (tail, printed) in [
+        ("mut s := i32 0, for i in (i32 0)..(i32 3) ( s = s + a[i] ), s", "6"),
+        ("mut s := i32 0, for i in 0..3 ( s = s + a[i] ), s", "6"),
+        ("for i in (i32 0)..(i32 3) ( a[i] = a[i] * 10 ), a[0] + a[1] + a[2]", "60"),
+        ("i := i32 1, a[i]", "2"),
+        ("k := u8 1, a[k]", "2"),
+        ("k := u8 2, a[k] = 8, a[2]", "8"),
+        ("f := fn (i := i32 ?) -> i32 ( a[i] ), f.compile(), f(2)", "3"),
+        (
+            "f := fn (n := i32 ?) -> i32 ( mut s := i32 0, for i in (i32 0)..n ( s = s + a[i] ), s ), \
+             f.compile(), f(3)",
+            "6",
+        ),
+        ("f := fn (i := i8 ?) -> void ( a[i] = 9 ), f.compile(), f(1), a[1]", "9"),
+    ] {
+        let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
+        assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), printed, "{tail}");
+    }
+    // A negative value is out of range when the read or the write runs; a literal one at parse.
+    for (tail, expect) in [
+        ("i := i32 0 - 1, a[i]", "index out of range"),
+        ("i := i32 0 - 1, a[i] = 4", "index out of range"),
+        ("i := i32 3, a[i]", "index out of range"),
+        ("f := fn (i := i32 ?) -> i32 ( a[i] ), f(0 - 1)", "index out of range"),
+        ("f := fn (i := i32 ?) -> i32 ( a[i] ), f.compile(), f(0 - 1)", "index out of range"),
+        ("f := fn (i := i64 ?) -> void ( a[i] = 1 ), f.compile(), f(0 - 2)", "index out of range"),
+        ("a[-1]", "the index type is not within the size type"),
     ] {
         let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
