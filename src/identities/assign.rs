@@ -115,8 +115,9 @@ pub(super) fn build(
     let (lhs_d, rhs_d) = unsafe { (types.through(lhs), types.through(rhs)) };
     // SAFETY: `through` hands back its argument or the dyad a binding names.
     let (lhs_ty, rhs_ty) = unsafe { ((*lhs_d).ty, (*rhs_d).ty) };
-    if lhs_ty == types.tape.slot {
-        // SAFETY: `lhs_d` is a tape slot node, `rhs` a reduced dyad.
+    // SAFETY: `lhs_d` is a reduced dyad from the store.
+    if unsafe { super::tape::is_cell_read(types, lhs_d) } {
+        // SAFETY: `lhs_d` is a tape cell read, `rhs` a reduced dyad.
         return Ok(unsafe { super::tape::build_write(store, types, lhs_d, rhs) });
     }
     if lhs_ty == types.hashmap.get {

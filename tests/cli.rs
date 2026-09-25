@@ -1084,6 +1084,47 @@ fn a_type_returning_function_hands_back_a_type_box() {
 }
 
 #[test]
+fn a_tape_cell_checked_to_hold_a_type_passes_as_a_type() {
+    let g = "g := fn (t := type ?) -> type ( t )";
+    let tail = "tape.remove(1), tape.is_constructed[0] = true ) )";
+    // After a raising `!=` check, for the rest of the scope; inside an `==` branch.
+    for (check, arg) in [
+        ("if tape[1]:type != type error «no», t := tape[1], print «{g(t) == i64}»,", "i64"),
+        ("if tape[1]:type == type ( print «{g(tape[1]) == i64}» ),", "i64"),
+        ("if tape[1]:type != type ( print «no» ) else print «{g(tape[1]) == u8}»,", "u8"),
+    ] {
+        let src = format!(
+            "{g}, r := type ( parse_rank = fn.parse_rank, parse = ( {check} {tail}, r {arg}"
+        );
+        let out = logos().args([&src]).output().unwrap();
+        assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).lines().next(), Some("true"), "{src}");
+    }
+    // Unchecked, or checked and then the tape edited, the cell is still refused as a type.
+    for body in [
+        "t := tape[1], u := g(t),",
+        "if tape[1]:type != type error «no», tape.remove(1), u := g(tape[1]),",
+        "if tape[1]:type == type print «x», u := g(tape[1]),",
+    ] {
+        let src =
+            format!("{g}, r := type ( parse_rank = fn.parse_rank, parse = ( {body} {tail}, r i32");
+        let out = logos().args([&src]).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("these types do not match"), "{src}: stderr: {stderr}");
+    }
+    // A loop edits the tape after the read was checked: the read checks again when it runs.
+    let src = format!(
+        "{g}, r := type ( parse_rank = fn.parse_rank, parse = ( \
+         if tape[1]:type != type error «no», mut i := i32 0, \
+         while i < 2 ( u := g(tape[1]), tape.remove(1), i = i + 1 ), \
+         tape.is_constructed[0] = true ) ), r i32 [1]"
+    );
+    let out = logos().args([&src]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("it holds something else"), "{src}: stderr: {stderr}");
+}
+
+#[test]
 fn a_type_body_in_a_function_is_built_per_call() {
     let (echoes, stderr) = repl(
         b"mk := fn (t := type ?) -> type ( type ( fields = ( shared e := t ) ) )\n\

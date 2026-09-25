@@ -330,6 +330,10 @@ pub fn run_message(e: &RunError) -> String {
             "the map holds no value at this key, and a number cannot be the unknown `?`".into()
         }
         RunError::NoName => "this cell holds no name".into(),
+        RunError::CellNotAType => {
+            "this cell was checked to hold a type, but the tape changed since and it holds something else"
+                .into()
+        }
         RunError::NoFragment => "insert takes a tape fragment".into(),
         RunError::NoThis => "`this` holds no node here".into(),
         RunError::UnfilledField(i) => format!(
