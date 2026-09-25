@@ -186,6 +186,11 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::TypeKnownOnlyAtRun => {
             "which type this is is known only when the program runs, and this needs it now".into()
         }
+        ParseError::LineNotMoved => {
+            "what this list holds becomes the new value's, and a name keeps what it holds: \
+             write `own x` to move it in, or make the value in the list"
+                .into()
+        }
         ParseError::NonOwningIntoOwning => {
             "this place owns what it holds, so what is assigned must own too (`alloc …`, or `own x`)"
                 .into()
@@ -364,6 +369,10 @@ pub fn run_message(e: &RunError) -> String {
             // SAFETY: the type operand of a checked read is a number type node.
             unsafe { crate::identities::numtype::of_type_node(*ty) }.spelling()
         ),
+        RunError::CellNotANode => {
+            "this cell was checked against a type, but the tape changed since and it holds no value of it"
+                .into()
+        }
         RunError::NoFragment => "insert takes a tape fragment".into(),
         RunError::NoThis => "`this` holds no node here".into(),
         RunError::UnfilledField(i) => format!(

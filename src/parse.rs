@@ -1347,6 +1347,9 @@ pub enum ParseError {
     OwnershipAcrossReturn,
     /// `own b` where `b` borrows the node it names: only the owner can move it.
     MoveOfBorrow,
+    /// A name as a line of a list a type's `parse` builds from, where the value's type fills
+    /// a `shared drop`: the built value owns its lines, so the name must be moved in.
+    LineNotMoved,
     /// `own` in a type position over something other than a pointer hole, `own @T ?`.
     OwnNeedsPointer,
     /// A fields block with an `own` field and no `shared drop = (…)` to free it.
@@ -1448,7 +1451,8 @@ unsafe fn type_check_of(types: &Core, cond: DyadPtr) -> Option<(CellKey, DyadPtr
     } else {
         return None;
     };
-    let number = crate::identities::is_numtype_node(types, ty);
+    let number = crate::identities::is_numtype_node(types, ty)
+        || crate::identities::meta::is_node_valued(ty, types.fn_type);
     if !number && (subset || ty != types.type_) {
         return None;
     }
@@ -5869,6 +5873,8 @@ impl<'a> Parser<'a> {
         };
         if ty == types.type_ {
             tape::build_cell_value(self.rt.store, types, read)
+        } else if crate::identities::meta::is_node_valued(ty, types.fn_type) {
+            tape::build_cell_node(self.rt.store, types, read, ty)
         } else {
             tape::build_cell_number(self.rt.store, types, read, ty)
         }

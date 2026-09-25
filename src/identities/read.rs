@@ -199,6 +199,22 @@ pub unsafe fn place_layout(types: &Core, t: DyadPtr) -> Option<(Read, usize)> {
     }
 }
 
+/// The machine type a cell of `t` is loaded and stored at through a pointer: a scalar's own,
+/// and eight bytes of address for a pointer or a value of a type built by a Logos `parse`
+/// (DESIGN ›A value of a type built by a Logos `parse` travels as a pointer‹). `None` when a
+/// cell of `t` has no whole-value load.
+///
+/// # Safety
+/// `t` must be null or a valid dyad from the store.
+pub unsafe fn cell_numtype(types: &Core, t: DyadPtr) -> Option<NumType> {
+    match place_layout(types, t)? {
+        (Read::Scalar(nt), _) => Some(nt),
+        (Read::Pointer(_), _) => Some(NumType::U64),
+        (Read::Container(c), _) if meta::is_node_valued(c, types.fn_type) => Some(NumType::U64),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

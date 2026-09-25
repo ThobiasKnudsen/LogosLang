@@ -50,6 +50,8 @@ pub enum RunError {
     CellNotAType,
     /// A cell or line checked against a number type holds no constant of it.
     CellNotANumber(DyadPtr),
+    /// A cell or line checked against a type a Logos `parse` builds holds no value of it.
+    CellNotANode,
     /// `insert` of a null fragment.
     NoFragment,
     /// `this` holds no node, or the node has no slots.

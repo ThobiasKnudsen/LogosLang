@@ -2589,6 +2589,62 @@ fn the_owner_s_scope_end_runs_the_instances_drop_once() {
 }
 
 #[test]
+fn an_array_holds_arrays_as_their_addresses() {
+    let array = "import ./identities/array.logos, x := array i32 [1, 2], y := array i32 [3, 4], \
+                 t := array i32, b := array t [own x, own y]";
+    for (tail, printed) in [
+        ("b[1][0]", "3"),
+        ("b[0][1] + b[1][1]", "6"),
+        ("b.size", "2"),
+        ("b[1].size", "2"),
+        ("b[0][1] = i32 9, b[0][1]", "9"),
+        ("f := fn () -> i32 ( b[1][0] ), f.compile(), f()", "3"),
+        ("f := fn (p := array t ?) -> i32 ( p[1][1] ), f(b)", "4"),
+        ("f := fn (p := array t ?) -> i32 ( p[1][1] ), f.compile(), f(b)", "4"),
+        ("u := array t, u == array t", "true"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{array}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout.trim(), printed, "{tail}");
+    }
+    // The outer array owns its elements, so a name is moved in; a borrow cannot be.
+    for (tail, expect) in [
+        ("x[0]", "`x` is dead here"),
+        ("z := array i32 [5], c := array t [z]", "write `own x` to move it in"),
+        ("z := array i32 [5], w := z, c := array t [own w]", "only its owner can"),
+    ] {
+        let (code, _, stderr) = run_line(&format!("{array}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn the_outer_array_s_drop_drops_each_element_once() {
+    let array = "import ./identities/array.logos";
+    for (tail, printed) in [
+        ("a := array box [box (1, 2), box (3, 4)], print «made»", "made\ndrop\ndrop\n"),
+        (
+            "f := fn () -> i32 ( a := array box [box (1, 2), box (3, 4)], 7 ), \
+             print «before», f(), print «after»",
+            "before\ndrop\ndrop\nafter\n",
+        ),
+        (
+            "f := fn () -> i32 ( a := array box [box (1, 2)], 7 ), f.compile(), \
+             print «before», f(), print «after»",
+            "before\ndrop\nafter\n",
+        ),
+        ("x := box (1, 2), a := array box [own x], print «made»", "made\ndrop\n"),
+        ("a := array box [box (5, 6)], drop a, print «after»", "drop\nafter\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{array}, {BOX}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert!(stdout.starts_with(printed), "{tail}: stdout: {stdout}");
+        assert_eq!(stdout.matches("drop").count(), printed.matches("drop").count(), "{tail}");
+    }
+}
+
+#[test]
 fn an_array_is_freed_by_its_owner_and_a_borrow_outliving_it_reads_nothing() {
     let array = "import ./identities/array.logos, a := array i32 [1, 2, 3]";
     for (tail, printed) in

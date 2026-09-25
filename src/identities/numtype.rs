@@ -244,9 +244,15 @@ pub(crate) unsafe fn is_scalar_type(type_node: DyadPtr) -> bool {
 /// # Safety
 /// `type_node` is a valid type node; `slot` points at a value of that type's width.
 pub(crate) unsafe fn read_scalar(type_node: DyadPtr, slot: *const u8) -> i64 {
+    read_scalar_nt(of_type_node(type_node), slot)
+}
+
+/// # Safety
+/// `slot` points at storage of `nt`'s width.
+pub(crate) unsafe fn read_scalar_nt(nt: NumType, slot: *const u8) -> i64 {
     use std::ptr::read_unaligned as rd;
     use NumType::*;
-    match of_type_node(type_node) {
+    match nt {
         I8 => i64::from(rd(slot as *const i8)),
         I16 => i64::from(rd(slot as *const i16)),
         I32 => i64::from(rd(slot as *const i32)),

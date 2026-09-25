@@ -131,6 +131,9 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
                 // SAFETY: an owner's place holds a node of a type whose fields block fills `drop`.
                 let drop = unsafe { meta::instances_drop_of((*place).ty) };
                 build_instance_drop(p.store(), types, place, drop)
+            // SAFETY: `place` is a reduced dyad from the store.
+            } else if let Some(drop) = unsafe { cell_drop(types, place) } {
+                build_instance_drop(p.store(), types, place, drop)
             } else {
                 build_inert_drop(p.store(), types, place)
             };
@@ -239,14 +242,9 @@ unsafe fn heap_free(ptr: *mut u8) {
     std::alloc::dealloc(base, layout);
 }
 
-/// # Safety
-/// `pointee` must be a scalar or pointer type node.
-unsafe fn pointee_width(pointee: DyadPtr) -> usize {
-    numtype::of_type_node(pointee).bytes()
-}
-
 /// The pointee is the value's own type (`alloc 2 of i32 5` allocates two `i32`), `u8` with
-/// no value; the count must be an integer, and a non-scalar value is rejected.
+/// no value; the count must be an integer. A value of a type built by a Logos `parse` takes
+/// a cell of its address; any other non-scalar value is rejected.
 pub(super) fn build_alloc(
     store: &mut Store,
     types: &Core,
@@ -270,7 +268,9 @@ pub(super) fn build_alloc(
                 // SAFETY: as above; the operand is scalar or pointer, what `scalar_binding_type` takes.
                 unsafe { crate::identities::scalar_binding_type(store, types, init).0 }
             }
-            _ => return Err(ParseError::UnsupportedOperands),
+            // SAFETY: as above.
+            _ => unsafe { crate::identities::node_type_of(types, init) }
+                .ok_or(ParseError::UnsupportedOperands)?,
         },
     };
     let init = init.unwrap_or(std::ptr::null_mut());
@@ -363,6 +363,24 @@ pub(crate) fn build_instance_drop(
 ) -> DyadPtr {
     let value = store.alloc_operands(&[place, drop, types.ops.instance_drop_]);
     store.alloc_raw(types.drop_, value)
+}
+
+/// The instances' `drop` of the node a dereference `p@` reads, when its type fills one: the
+/// cell holds that node's address, and dropping the cell drops the node. DESIGN ›Explicit
+/// heap, and no implicit destruction‹.
+///
+/// # Safety
+/// `place` must be a reduced dyad from the store.
+unsafe fn cell_drop(types: &Core, place: DyadPtr) -> Option<DyadPtr> {
+    if (*place).ty != types.deref_ {
+        return None;
+    }
+    let (_, pointee, _) = super::pointer::deref_parts(place);
+    if !meta::is_node_valued(pointee, types.fn_type) {
+        return None;
+    }
+    let drop = meta::instances_drop_of(pointee);
+    (!drop.is_null()).then_some(drop)
 }
 
 /// The pointee of `this.f` where the field `f` is declared `own @T ?`; `None` for any
@@ -571,7 +589,8 @@ fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         }
         let init = *slots.add(ALLOC_INIT);
         let bits = if init.is_null() { None } else { Some(rt.run(init)?) };
-        let width = pointee_width(pointee);
+        let nt = super::read::cell_numtype(rt.types(), pointee).ok_or(RunError::NotDerefable)?;
+        let width = nt.bytes();
         let count = count as usize;
         let Some(total) = count.checked_mul(width) else {
             return Err(RunError::OutOfMemory);
@@ -582,7 +601,7 @@ fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         }
         if let Some(bits) = bits {
             for k in 0..count {
-                numtype::write_scalar(pointee, mem.add(k * width), bits);
+                numtype::write_scalar_nt(nt, mem.add(k * width), bits);
             }
         }
         rt.note_alloc();
@@ -643,7 +662,12 @@ fn run_instance_drop(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // holds a node's address or the null an earlier teardown or move left.
     unsafe {
         let slots = (*node).value as *const DyadPtr;
-        let slot = rt.place_addr(*slots.add(TEARDOWN_PLACE)).ok_or(RunError::NoActivation)?;
+        let place = *slots.add(TEARDOWN_PLACE);
+        let slot = if (*place).ty == rt.types().deref_ {
+            super::pointer::deref_addr(rt, place)?
+        } else {
+            rt.place_addr(place).ok_or(RunError::NoActivation)?
+        };
         if slot.is_null() {
             return Err(RunError::Uninitialized);
         }

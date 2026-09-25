@@ -848,6 +848,12 @@ pub(crate) unsafe fn node_type_of(types: &Core, node: DyadPtr) -> Option<DyadPtr
         let ty = *((*node).value as *const DyadPtr).add(1);
         return meta::is_node_valued(ty, types.fn_type).then_some(ty);
     }
+    // A dereference of a cell of such a type, or a line checked against it, yields its address.
+    if (*node).ty == types.deref_ || (*node).ty == types.tape.cell_node {
+        let at = if (*node).ty == types.deref_ { 1 } else { 3 };
+        let ty = *((*node).value as *const DyadPtr).add(at);
+        return meta::is_node_valued(ty, types.fn_type).then_some(ty);
+    }
     let ty = match read::read_kind(types, node) {
         read::Read::Node => (*node).ty,
         read::Read::Container(t) => t,
@@ -940,6 +946,9 @@ pub(crate) unsafe fn check_store_type(
         }
         Some((read::Read::Scalar(nt), _)) => {
             matches!(numtype_of(types, rhs), Operand::Concrete(c) if c == nt)
+        }
+        Some((read::Read::Container(t), _)) if meta::is_node_valued(t, types.fn_type) => {
+            node_type_of(types, rhs) == Some(t)
         }
         _ => false,
     };
