@@ -32,7 +32,8 @@
 #     the instances' parse places the call `this.at(k)`, the index line its operand, run where it stands;
 #   a tape read checked against a number type reads as that number (ruled 25 September 2026): after the
 #     `⊆` check, the fill loop reads `tape[1].dyads[i]` as the line's number; a line that is no literal is
-#     refused for now, since filling the elements when the program runs is still open.
+#     refused for now: stand-in for #137, the elements filled when the program runs (DESIGN ›A name of
+#     a type with an instances' `parse` wakes it, as the instance does‹) not built yet.
 # The seed's array is array-of-@dyad with no spelling and no element access (src/identities/array.rs).
 # The fields block comes first in every type body (ruled 20 September 2026): a body's this.f names a field declared above it.
 
