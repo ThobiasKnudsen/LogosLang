@@ -6518,7 +6518,7 @@ impl<'a> Parser<'a> {
             Some(feed) => feed.in_run_order,
             None => true,
         };
-        let cell = if self.feed.is_some() {
+        let mut cell = if self.feed.is_some() {
             let Some(cell) = self.feed_take() else { return Ok(None) };
             cell
         } else {
@@ -6547,8 +6547,25 @@ impl<'a> Parser<'a> {
             if is_box {
                 self.drain()?;
             }
+            // The running call's slot is that call's value (DESIGN ›A type is a
+            // comptime value‹): a use of it in the held body is the type it holds.
+            let id = cell.identity(self.types);
+            if self.is_live_call_slot(id) {
+                let held = self.settled_type(id);
+                if held != id {
+                    cell.dyad = held;
+                }
+            }
         }
         Ok(Some((cell, cell.start)))
+    }
+
+    /// A slot of the call a held `type (…)` is being built in, which is live.
+    fn is_live_call_slot(&self, id: DyadPtr) -> bool {
+        // SAFETY: `id` is null or a resolved dyad from the store.
+        !id.is_null()
+            && matches!(crate::dyad::frame_ref(unsafe { (*id).value }),
+                Some((depth, _)) if depth > 0 && depth == self.held_depth && self.frames.len() == depth)
     }
 
     /// A place holding a type denotes the type it holds, since lexing a box's
@@ -6570,11 +6587,9 @@ impl<'a> Parser<'a> {
                 crate::identities::read::Read::Container(t) if !t.is_null() => t,
                 _ => return id,
             };
-            let live_frame = matches!(crate::dyad::frame_ref((*id).value),
-                Some((depth, _)) if depth > 0 && depth == self.held_depth && self.frames.len() == depth);
             let addr = match crate::dyad::global_ref((*id).value) {
                 Some(addr) => addr,
-                None if live_frame => match self.rt.place_addr(id) {
+                None if self.is_live_call_slot(id) => match self.rt.place_addr(id) {
                     Some(addr) => addr,
                     None => return id,
                 },

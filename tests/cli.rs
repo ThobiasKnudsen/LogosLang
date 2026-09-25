@@ -1169,6 +1169,13 @@ fn a_type_body_in_a_function_declares_fields_from_the_call_s_types() {
     );
     assert_eq!(echoes, ["true", "true"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
+    // A member declared from the call's type is that type, so a function body may apply it.
+    let (echoes, stderr) = repl(
+        b"mk := fn (t := type ?) -> type ( type ( fields = ( shared e := t, \
+          shared f := fn () -> i32 ( e 5 ) ) ) )\nmk(i32).fields.e == i32\n",
+    );
+    assert_eq!(echoes, ["true"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
 }
 
 #[test]
