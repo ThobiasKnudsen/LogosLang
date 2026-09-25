@@ -75,7 +75,7 @@ get_mint := fn (t := type ?) -> type (
             if tape[1]:type == scope (
                 this.size = tape[1].dyads.size,
                 this.capacity = next_power_of_two(this.size),
-                this.ptr = alloc this.capacity of this.element_type,
+                this.ptr = alloc this.capacity of this.element_type ?,
                 for i in 0..this.size ( (this.ptr + i)@ = tape[1].dyads[i] ),
                 tape[0] = this,
                 tape.remove(1)
