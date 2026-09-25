@@ -2189,6 +2189,7 @@ const POW_TYPE: &str = "pw := type (\n\
      parse_rank = *.parse_rank + 1,\n\
      associativity = right,\n\
      parse = (\n\
+         if tape[-1]:type == void error «pw takes a left operand»,\n\
          this.a = tape[-1],\n\
          this.b = tape[1],\n\
          this.output = tape[-1]:type,\n\

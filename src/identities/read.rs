@@ -136,7 +136,7 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
                 Read::Literal
             }
         }
-        COMMENT_TAG => {
+        COMMENT_TAG | VOID_TAG => {
             if place {
                 Read::Container(op)
             } else {
@@ -147,8 +147,7 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
         _ => {
             debug_assert!(matches!(
                 kind,
-                VOID_TAG
-                    | STRING_TAG
+                STRING_TAG
                     | meta::ARRAY_TAG
                     | meta::CALLABLE_TAG
                     | meta::CONVENTION_TAG

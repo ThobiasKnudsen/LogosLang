@@ -338,6 +338,10 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
         ("j := u64 1, a[j + 1]", "3"),
         ("f := fn (j := u64 ?) -> i32 ( a[j + 1] ), f.compile(), f(0)", "2"),
         ("mut i := u64 0, g := fn () -> i32 ( a[i] ), i = 2, g()", "3"),
+        ("t := array i32", ""),
+        ("b := a", ""),
+        ("b := a, b[1]", "2"),
+        ("t := array i32, x := t (4, 5), x[1]", "5"),
     ] {
         let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
         assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -589,15 +593,13 @@ fn a_constructor_written_in_logos_runs_during_the_parse() {
           t := noop\nt:type == type\nnoop.parse_rank\n",
     );
     assert_eq!(echoes, ["true", "91.0"], "stderr: {stderr}");
-    let (_echoes, stderr) = repl(b"bad := type (parse = ( tape[5] ))\nx := bad\n");
+    let (_echoes, stderr) = repl(b"bad := type (parse = ( tape[5] = i32 1 ))\nx := bad\n");
     assert!(stderr.contains("constructor failed"), "stderr: {stderr}");
     let (echoes, stderr) = repl(
         b"named := type (parse = ( tape[0] = tape.spelling[0], tape.is_constructed[0] = true ))\n\
           f := fn () -> void ( named )\n5\n",
     );
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
-    let (_echoes, stderr) = repl(b"bad2 := type (parse = ( tape.spelling[5] ))\nx := bad2\n");
-    assert!(stderr.contains("constructor failed"), "stderr: {stderr}");
 }
 
 #[test]
@@ -818,16 +820,48 @@ fn a_logos_constructor_at_discovery_lexes_the_tape_on_demand() {
         assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
         assert_eq!(String::from_utf8_lossy(&out.stdout), printed, "{src}");
     }
-    // Past the end of the source, or past a boundary, the read is still the checked error.
-    for tail in ["r", "r i32 5, 1", "(r i32 5), 1"] {
+    // Past the end of the source, or past a boundary, the read is the constructed `void`.
+    for (tail, printed) in
+        [("r", "true\n"), ("r i32 5, 1", "true\n1\n"), ("(r i32 5), 1", "true\n1\n")]
+    {
         let src = format!(
-            "r := type ( parse_rank = fn.parse_rank, parse = ( print «{{tape[3]:type == i32}}», \
-             tape.remove(0) ) ), {tail}"
+            "r := type ( parse_rank = fn.parse_rank, parse = ( print «{{tape[3]:type == void}}», \
+             tape.remove(2), tape.remove(1), tape.remove(0) ) ), {tail}"
         );
         let out = logos().args([&src]).output().unwrap();
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(stderr.contains("this index is off the tape"), "{src}: stderr: {stderr}");
+        assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), printed, "{src}");
     }
+}
+
+#[test]
+fn a_read_where_the_tape_reaches_no_cell_is_a_constructed_void() {
+    let r = "r := type ( parse_rank = fn.parse_rank, parse = ( \
+             print «{tape[1]:type == void} {tape.is_constructed[1]} {tape[-1]:type == void}», \
+             tape.remove(0) ) )";
+    for (tail, printed) in [
+        ("r", "true true true\n"),
+        ("r, 1", "true true true\n1\n"),
+        ("(r), 1", "true true true\n1\n"),
+        ("x := i32 (r 2)", "false true true\n"),
+    ] {
+        let out = logos().arg(format!("{r}, {tail}")).output().unwrap();
+        assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), printed, "{tail}");
+    }
+    // Written into a cell, it is a finished expression that yields nothing.
+    let w = "w := type ( parse_rank = fn.parse_rank, parse = ( tape[0] = tape[1], \
+             tape.is_constructed[0] = true ) )";
+    let out = logos().arg(format!("{w}, x := (w), 4")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "4\n");
+    // A write is still the checked error.
+    let out = logos()
+        .arg("v := type ( parse_rank = fn.parse_rank, parse = ( tape[1] = i32 3 ) ), v")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("this index is off the tape"), "stderr: {stderr}");
 }
 
 #[test]

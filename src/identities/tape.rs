@@ -12,7 +12,7 @@
 use super::callable::{self, Callables};
 use super::{meta, numtype_of, Cx, Operand};
 use crate::dyad::DyadPtr;
-use crate::parse::{ParseError, ParsingTape};
+use crate::parse::{Cell, ParseError, ParsingTape};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 use crate::Core;
@@ -65,6 +65,8 @@ pub struct TapeIds {
     /// are the tape lines they read, as operands, and the values of the others.
     pub placed_call: DyadPtr,
     pub placed_call_leaf: DyadPtr,
+    /// What a read gets where the tape reaches no cell: a `void` node, already constructed.
+    pub nothing: DyadPtr,
 }
 
 /// The members are declared in the type's own scope, where `.` resolves them; the
@@ -123,6 +125,7 @@ pub(super) fn register(
     let (cell_dyads_size, cell_dyads_size_leaf) = op(cx, &["tape", "k", "op"], run_cell_dyads_size);
     let (cell_dyad_at, cell_dyad_at_leaf) = op(cx, &["tape", "k", "i", "op"], run_cell_dyad_at);
     let (placed_call, placed_call_leaf) = op(cx, &["call", "op"], run_placed_call);
+    let nothing = cx.store.alloc_raw(void_ty, std::ptr::null_mut());
     for (name, id) in [
         ("is_constructed", is_constructed),
         ("spelling", spelling),
@@ -166,6 +169,7 @@ pub(super) fn register(
         cell_dyad_at_leaf,
         placed_call,
         placed_call_leaf,
+        nothing,
     }
 }
 
@@ -468,16 +472,17 @@ unsafe fn tape_of(rt: &mut Runtime, recv: DyadPtr) -> Result<*mut ParsingTape, R
     Ok(tape)
 }
 
+/// The cell a read names; past the end of the source, a boundary or the left edge, the
+/// constructed `void` node. DESIGN ›The scope's constructor is the driver‹.
+unsafe fn read_cell(rt: &mut Runtime, ops: *const DyadPtr) -> Result<Cell, RunError> {
+    let (tape, k) = tape_at(rt, ops)?;
+    let nothing = rt.types().tape.nothing;
+    Ok((*tape).at(k).copied().unwrap_or_else(|| Cell::built(nothing)))
+}
+
 fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
-    unsafe {
-        let ops = (*node).value as *const DyadPtr;
-        let (tape, k) = tape_at(rt, ops)?;
-        match (*tape).at(k) {
-            Some(c) => Ok(c.dyad as i64),
-            None => Err(RunError::OffTape),
-        }
-    }
+    unsafe { Ok(read_cell(rt, (*node).value as *const DyadPtr)?.dyad as i64) }
 }
 
 /// The pointer replaced and nothing more; the flag is the constructor's line.
@@ -509,14 +514,7 @@ fn run_flag_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 
 fn run_is_constructed(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
-    unsafe {
-        let ops = (*node).value as *const DyadPtr;
-        let (tape, k) = tape_at(rt, ops)?;
-        match (*tape).is_constructed(k) {
-            Some(flag) => Ok(i64::from(flag)),
-            None => Err(RunError::OffTape),
-        }
-    }
+    unsafe { Ok(i64::from(read_cell(rt, (*node).value as *const DyadPtr)?.constructed)) }
 }
 
 /// A cell nothing lexed answers the empty text. The string node is built into the
@@ -524,11 +522,8 @@ fn run_is_constructed(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> 
 fn run_spelling(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
     unsafe {
-        let ops = (*node).value as *const DyadPtr;
-        let (tape, k) = tape_at(rt, ops)?;
-        let Some(text) = (*tape).spelling(k) else {
-            return Err(RunError::OffTape);
-        };
+        let cell = read_cell(rt, (*node).value as *const DyadPtr)?;
+        let text = cell.spelling();
         let string_ty = rt.types().string_;
         let store = rt.store();
         Ok(super::string::build_text(store, string_ty, text.as_bytes()) as i64)
@@ -575,13 +570,10 @@ fn run_recenter(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// The cell, read through a binding to the dyad it names; `None` past the frontier.
-unsafe fn slot_cell(
-    rt: &mut Runtime,
-    ops: *const DyadPtr,
-) -> Result<Option<(*mut ParsingTape, isize, DyadPtr)>, RunError> {
-    let (tape, k) = tape_at(rt, ops)?;
-    Ok((*tape).at(k).map(|c| (tape, k, rt.through(c.dyad))))
+/// The cell, read through a binding to the dyad it names.
+unsafe fn slot_cell(rt: &mut Runtime, ops: *const DyadPtr) -> Result<DyadPtr, RunError> {
+    let cell = read_cell(rt, ops)?;
+    Ok(rt.through(cell.dyad))
 }
 
 /// The identity's name, never the appearance's text (that is `t.spelling[k]`); a cell
@@ -589,11 +581,7 @@ unsafe fn slot_cell(
 fn run_slot_name(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
     unsafe {
-        let ops = (*node).value as *const DyadPtr;
-        let (tape, k) = tape_at(rt, ops)?;
-        let Some(c) = (*tape).at(k).copied() else {
-            return Err(RunError::OffTape);
-        };
+        let c = read_cell(rt, (*node).value as *const DyadPtr)?;
         let binding = c.binding(rt.types());
         if binding.is_null() {
             return Err(RunError::NoName);
@@ -615,10 +603,7 @@ pub(crate) unsafe fn read_target(
     ops: *const DyadPtr,
 ) -> Result<DyadPtr, RunError> {
     if (*ops.add(2)).is_null() {
-        return match slot_cell(rt, ops)? {
-            Some((_, _, cell)) => Ok(cell),
-            None => Err(RunError::OffTape),
-        };
+        return slot_cell(rt, ops);
     }
     let lines = cell_lines(rt, ops)?;
     let i = rt.run(*ops.add(2))?;
@@ -692,9 +677,7 @@ fn run_cell_number(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 
 /// The scope or `square_brackets` the cell holds; both keep their `dyads` first.
 unsafe fn scope_cell(rt: &mut Runtime, ops: *const DyadPtr) -> Result<DyadPtr, RunError> {
-    let Some((_, _, cell)) = slot_cell(rt, ops)? else {
-        return Err(RunError::OffTape);
-    };
+    let cell = slot_cell(rt, ops)?;
     let types = rt.types();
     if (*cell).ty != types.scope && (*cell).ty != types.square_brackets {
         return Err(RunError::NotAScope(cell));
