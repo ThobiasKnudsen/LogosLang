@@ -1851,3 +1851,21 @@ fn a_parse_body_writes_a_field_as_a_node_and_the_run_reads_it() {
     );
     assert_eq!((code, stdout.as_str()), (Some(0), "3\n"), "stderr: {stderr}");
 }
+
+#[test]
+fn a_field_the_constructor_never_wrote_is_a_checked_error() {
+    for src in [
+        // The node is used as a value with its field `b` unwritten.
+        "t := type (fields = (a := i32 ?, b := i32 ?, output := type ?, shared run = ( this.a )), \
+         parse_rank = *.parse_rank + 1, \
+         parse = ( this.a = tape[-1], this.output = i32, tape[0] = this, \
+         tape.is_constructed[0] = true, tape.remove(-1) )), x := i32 4, x t",
+        // The unwritten field itself is read in the parse body.
+        "q := type ( fields = ( size := u64 ? ), parse_rank = 60, \
+         parse = ( tape[0] = this.size, tape.is_constructed[0] = true ) ), q",
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("was never written by its constructor"), "{src}: stderr: {stderr}");
+    }
+}

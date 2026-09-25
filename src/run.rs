@@ -50,6 +50,8 @@ pub enum RunError {
     NoFragment,
     /// `this` holds no node, or the node has no slots.
     NoThis,
+    /// A field of a node its constructor never wrote, by its index among the fields.
+    UnfilledField(usize),
     /// A negative index.
     BadIndex(i64),
     /// An index at or past the end of what it reads.
@@ -593,7 +595,10 @@ impl<'a> Runtime<'a> {
                 );
                 entry(self, node)
             }
-            Read::Executable(Dispatch::None) => Err(RunError::NoLeaf),
+            Read::Executable(Dispatch::None) => {
+                Err(crate::identities::run_body::unfilled_field(node)
+                    .map_or(RunError::NoLeaf, RunError::UnfilledField))
+            }
             Read::Unit => Ok(0),
             // An identity's value is its own address.
             Read::Identity => Ok(node as i64),

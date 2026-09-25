@@ -139,12 +139,9 @@ pub(crate) unsafe fn remove(store: &mut Store, types: &Core, node: DyadPtr, key:
 /// `node` must be a node minted for a type whose record carries a run body:
 /// `[field…, null, spec]`.
 unsafe fn spec_slot(node: DyadPtr) -> *mut DyadPtr {
-    let slots = (*node).value as *mut DyadPtr;
-    let mut i = 0;
-    while !(*slots.add(i)).is_null() {
-        i += 1;
-    }
-    slots.add(i + 1)
+    // Counted by the type, not scanned to the first null: an unwritten field is null too.
+    let n_fields = array::items(meta::record_fields_of((*node).ty)).len();
+    ((*node).value as *mut DyadPtr).add(n_fields + 1)
 }
 
 /// Null while no set has been resolved for the node.
@@ -156,6 +153,25 @@ pub(crate) unsafe fn spec_of(node: DyadPtr) -> DyadPtr {
         return std::ptr::null_mut();
     }
     *spec_slot(node)
+}
+
+/// The first field of `node` its constructor left null, when `node` is a node of a type
+/// with a run body; such a node has no function to run.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store with a non-null type.
+pub(crate) unsafe fn unfilled_field(node: DyadPtr) -> Option<usize> {
+    let ty = (*node).ty;
+    let slots = (*node).value as *const DyadPtr;
+    if meta::kind_of(ty) != Some(meta::RECORD_TAG)
+        || meta::run_body_of(ty).is_null()
+        || slots.is_null()
+        || crate::dyad::is_place((*node).value)
+    {
+        return None;
+    }
+    let n_fields = array::items(meta::record_fields_of(ty)).len();
+    (0..n_fields).find(|&i| (*slots.add(i)).is_null())
 }
 
 /// # Safety
