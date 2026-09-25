@@ -5978,6 +5978,16 @@ impl<'a> Parser<'a> {
             }
             return Ok(self.rt.store.alloc_raw((*field).ty, addr));
         }
+        // `this.f:type` is the field's declared type, not the type of the read that reaches it;
+        // an untyped field's type is the written value's, unknown until the constructor runs.
+        if (*lhs).ty == types.this.slot && name == "type" {
+            let declared =
+                self.fills.get(&lhs).map_or(std::ptr::null_mut(), |&b| (*Binding::read(b).dyad).ty);
+            if declared.is_null() {
+                return Err(ParseError::BadReflectRead);
+            }
+            return Ok(declared);
+        }
         let value = match name {
             "type" => return Ok((*lhs).ty),
             "scope" => self.scopes.current().unwrap_or(std::ptr::null_mut()),

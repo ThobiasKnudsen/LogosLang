@@ -1869,3 +1869,19 @@ fn a_field_the_constructor_never_wrote_is_a_checked_error() {
         assert!(stderr.contains("was never written by its constructor"), "{src}: stderr: {stderr}");
     }
 }
+
+#[test]
+fn this_f_type_reads_the_fields_declared_type() {
+    let (code, stdout, stderr) = run_line(
+        "q := type ( fields = ( size := u64 ? ), parse_rank = 60, \
+         parse = ( this.size = 3, tape[0] = this.size:type, tape.is_constructed[0] = true ) ), q",
+    );
+    assert_eq!((code, stdout.as_str()), (Some(0), "u64\n"), "stderr: {stderr}");
+    // An untyped field has no type until the constructor runs and writes it.
+    let (code, _, stderr) = run_line(
+        "q := type ( fields = ( size := ? ), parse_rank = 60, \
+         parse = ( this.size = 3, tape[0] = this.size:type, tape.is_constructed[0] = true ) ), q",
+    );
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("does not fit the node's type"), "stderr: {stderr}");
+}
