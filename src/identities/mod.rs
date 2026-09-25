@@ -41,6 +41,7 @@ mod for_mod;
 pub(crate) mod fresh;
 mod gate;
 pub(crate) mod hashmap;
+pub(crate) mod held_type;
 pub mod here;
 mod hole;
 #[path = "if.rs"]
@@ -145,6 +146,7 @@ pub struct Core {
     pub unknown: DyadPtr,
     pub tape: tape::TapeIds,
     pub hashmap: hashmap::HashmapIds,
+    pub held_type: held_type::HeldTypeIds,
     pub this: this::ThisIds,
     pub lex: lex::LexIds,
     pub print: print::PrintIds,
@@ -307,6 +309,7 @@ impl Core {
             (dm.alloc_, dm.own_, dm.drop_, dm.free_, dm.defer_, dm.of_);
         let tape = tape::register(&mut cx, &callables, scope_, array_, void);
         let hashmap = hashmap::register(&mut cx, &callables, array_);
+        let held_type = held_type::register(&mut cx, &callables);
         let this = this::register(&mut cx, &callables);
         let lex = lex::register(&mut cx, &callables);
         let print = print::register(&mut cx, &callables);
@@ -393,6 +396,7 @@ impl Core {
             unknown,
             tape,
             hashmap,
+            held_type,
             this,
             lex,
             print,
@@ -780,11 +784,14 @@ pub(crate) unsafe fn type_identity_of(types: &Core, node: DyadPtr) -> Option<Dya
 }
 
 /// What a node's run yields is a type's address: a type, a `type` box, a call
-/// of a `-> type` function.
+/// of a `-> type` function, a `type (…)` built when it runs.
 ///
 /// # Safety
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn yields_type(types: &Core, node: DyadPtr) -> bool {
+    if (*types.through(node)).ty == types.held_type.held_type {
+        return true;
+    }
     match read::read_kind(types, node) {
         read::Read::Identity => true,
         read::Read::Container(c) => c == types.type_,

@@ -578,10 +578,6 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"t := type (fields = (shared run = 5))\n", "`shared run = (…)`"),
         (b"t := type (fields = (shared run = ( 5 )))\nt(1)\n", "the call form of a type"),
         (b"t := type (fields = (shared run = ( 5 )),\n", "never closed"),
-        (
-            b"g := fn (n := i32 ?) -> type ( type (parse_rank = n) )\n",
-            "known when the type is defined",
-        ),
     ] {
         let (_echoes, stderr) = repl(src);
         assert!(stderr.contains(expect), "{}: stderr: {stderr}", String::from_utf8_lossy(src));
@@ -1023,6 +1019,32 @@ fn a_type_returning_function_hands_back_a_type_box() {
     );
     assert_eq!(echoes, ["true", "5.0", "true", "false", "true"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
+fn a_type_body_in_a_function_is_built_per_call() {
+    let (echoes, stderr) = repl(
+        b"mk := fn (t := type ?) -> type ( type ( fields = ( shared e := t ) ) )\n\
+          a := mk(i32)\nb := mk(f64)\nc := mk(i32)\n\
+          a.fields.e == i32\nb.fields.e == f64\na == b\na == c\n\
+          mints := hashmap type -> type\n\
+          get := fn (t := type ?) -> type ( mut m := mints[t], if m != ? return m, \
+          m = type ( fields = ( shared e := t ) ), mints[t] = m, m )\n\
+          get(i32) == get(i32)\nget(i32) == get(f64)\nget(u8).fields.e == u8\n\
+          g := fn (n := i32 ?) -> type ( type (parse_rank = n) )\nt := g(3)\nt.parse_rank\n",
+    );
+    assert_eq!(
+        echoes,
+        ["true", "true", "false", "false", "true", "false", "true", "3.0"],
+        "stderr: {stderr}"
+    );
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+
+    // The body is read when it runs, so its mistakes are reported at the call.
+    let (_echoes, stderr) =
+        repl(b"mk := fn () -> type ( type ( fields = ( shared e := nosuch ) ) )\nmk()\n");
+    assert!(stderr.contains("building this `type (…)` failed"), "stderr: {stderr}");
+    assert!(stderr.contains("nosuch"), "stderr: {stderr}");
 }
 
 #[test]
