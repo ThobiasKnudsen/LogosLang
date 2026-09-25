@@ -188,6 +188,10 @@ impl Lowerer<'_, '_> {
         self.builder.ins().iconst(types::I32, i64::from(v))
     }
 
+    pub(crate) fn const_i64(&mut self, v: i64) -> Value {
+        self.builder.ins().iconst(types::I64, v)
+    }
+
     /// The reading rule over an operand: a binding operand yields the dyad it names.
     ///
     /// # Safety
@@ -349,6 +353,41 @@ impl Lowerer<'_, '_> {
             "store-through's value must lower to the pointee's type"
         );
         self.builder.ins().store(self.flags, v, addr, offset as i32);
+    }
+
+    /// `v` in its `i64` container, as an argument travels.
+    pub(crate) fn widen(&mut self, v: Value, nt: NumType) -> Value {
+        widen_to_i64(self.builder, v, nt)
+    }
+
+    /// The containers in a block on this frame, its address; null for none.
+    pub(crate) fn spill(&mut self, containers: &[Value]) -> Value {
+        if containers.is_empty() {
+            return self.builder.ins().iconst(self.ptr_ty, 0);
+        }
+        let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            (containers.len() * 8) as u32,
+            3,
+        ));
+        for (i, &v) in containers.iter().enumerate() {
+            self.builder.ins().stack_store(v, slot, (i * 8) as i32);
+        }
+        self.builder.ins().stack_addr(self.ptr_ty, slot, 0)
+    }
+
+    /// A call to the seed's `extern "C"` function at `entry`, every argument and the
+    /// result an `i64`: a step whose work is the store's, which machine code cannot allocate in.
+    pub(crate) fn call_seed(&mut self, entry: usize, args: &[Value]) -> Value {
+        let mut sig = self.module.make_signature();
+        for _ in args {
+            sig.params.push(AbiParam::new(types::I64));
+        }
+        sig.returns.push(AbiParam::new(types::I64));
+        let sigref = self.builder.import_signature(sig);
+        let addr = self.builder.ins().iconst(self.ptr_ty, entry as i64);
+        let inst = self.builder.ins().call_indirect(sigref, addr, args);
+        self.builder.inst_results(inst)[0]
     }
 
     /// Kept for `not`, which lowers `not x` as `x == 0`.
@@ -841,20 +880,7 @@ impl Lowerer<'_, '_> {
             return Err(CompileError::ArityMismatch);
         }
 
-        // The containers in a block on this frame; a nullary call passes no block.
-        let argv = if args64.is_empty() {
-            self.builder.ins().iconst(self.ptr_ty, 0)
-        } else {
-            let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                (args64.len() * 8) as u32,
-                3,
-            ));
-            for (i, &v) in args64.iter().enumerate() {
-                self.builder.ins().stack_store(v, slot, (i * 8) as i32);
-            }
-            self.builder.ins().stack_addr(self.ptr_ty, slot, 0)
-        };
+        let argv = self.spill(&args64);
         let argc = self.builder.ins().iconst(types::I64, args64.len() as i64);
         let inst = if callee == self.self_fn {
             let fref = self.module.declare_func_in_func(self.func_id, &mut *self.builder.func);
@@ -960,15 +986,15 @@ unsafe fn compile_fn_body(
 }
 
 /// How the declared output travels in the container: not at all for `void`,
-/// as an address for a type value, at its width for a scalar; anything else
-/// (a record) is not compilable yet.
+/// as an address for a type value or a node a Logos `parse` builds, at its
+/// width for a scalar; anything else (a record) is not compilable yet.
 ///
 /// # Safety
 /// `out` must be a type node from the store.
 unsafe fn return_kind(types: &Core, out: DyadPtr) -> Result<Option<NumType>, CompileError> {
     if is_void_type(out) {
         Ok(None)
-    } else if out == types.type_ {
+    } else if out == types.type_ || crate::identities::meta::is_node_valued(out, types.fn_type) {
         Ok(Some(NumType::I64))
     } else if crate::identities::numtype::is_scalar_type(out) {
         Ok(Some(of_type_node(out)))

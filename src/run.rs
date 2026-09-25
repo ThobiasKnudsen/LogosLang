@@ -146,13 +146,7 @@ pub type MachineFn = extern "C" fn(*const i64, usize) -> i64;
 /// Called only by compiled code the seed emitted: `fn_node` a `fn` node from
 /// the store, `argv` holding `argc` containers.
 pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *const i64) -> i64 {
-    let rt = CURRENT.get();
-    if rt.is_null() {
-        // Only machine code called with no runtime at all (the test-only
-        // `Compiled::call`) can get here; there is nowhere to report to.
-        eprintln!("logos: compiled code reached an uncompiled function with no runtime to run it");
-        std::process::abort();
-    }
+    let rt = standing_by();
     // SAFETY: `rt` was set by the runtime around this very jump and is live for its duration.
     let saved = unsafe { ((*rt).activations.len(), (*rt).stack.mark(), (*rt).constructing) };
     let depth = CALL_DEPTH.with(|d| d.get());
@@ -192,6 +186,18 @@ pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *
             0
         }
     }
+}
+
+/// The runtime in [`CURRENT`], for a step compiled code hands back to the seed; never null.
+pub(crate) fn standing_by() -> *mut Runtime<'static> {
+    let rt = CURRENT.get();
+    if rt.is_null() {
+        // Only machine code called with no runtime at all (the test-only
+        // `Compiled::call`) can get here; there is nowhere to report to.
+        eprintln!("logos: compiled code reached the seed with no runtime to run it");
+        std::process::abort();
+    }
+    rt
 }
 
 /// The fault a compiled read or write through a null pointer raises: parked
