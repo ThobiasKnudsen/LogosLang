@@ -237,6 +237,50 @@ fn a_chooser_hands_its_cell_to_a_type_minted_at_run() {
 }
 
 #[test]
+fn a_tape_read_checked_against_a_number_type_reads_as_that_number() {
+    let q = |ty: &str, body: &str| {
+        format!(
+            "q := type ( fields = ( v := {ty} ? ), parse_rank = 61, parse = ( {body}, \
+             tape[0] = this, tape.remove(1), tape.is_constructed[0] = true ) )"
+        )
+    };
+    for (src, expect) in [
+        (q("u64", "if not tape[1].dyads[0]:type ⊆ u64 error «no», this.v = tape[1].dyads[0] + 1") + ", x := q [5], x.v", "6"),
+        (q("i32", "if tape[1].dyads[1]:type == i32 ( this.v = tape[1].dyads[1] * 2 ) else ( this.v = i32 0 )") + ", x := q [5, i32 7], x.v", "14"),
+        (q("u8", "if tape[1].dyads[0]:type ⊆ u8 ( this.v = tape[1].dyads[0] ) else ( this.v = u8 1 )") + ", x := q [300], x.v", "1"),
+        (q("i32", "mut s := i32 0, for i in 0..tape[1].dyads.size ( if not tape[1].dyads[i]:type ⊆ i32 error «no», s = s + tape[1].dyads[i] ), this.v = s") + ", x := q [4, 5, 6], x.v", "15"),
+        (q("u64", "if not tape[1]:type ⊆ u64 error «no», this.v = tape[1] * 3") + ", x := q 5, x.v", "15"),
+    ] {
+        let out = logos().arg(&src).output().unwrap();
+        assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), expect, "{src}");
+    }
+    // A literal that does not fit fails the check; a line that is no constant is refused.
+    for (src, expect) in [
+        (
+            q(
+                "u64",
+                "if not tape[1].dyads[0]:type ⊆ u64 error «not a u64», this.v = tape[1].dyads[0]",
+            ) + ", x := q [-5]",
+            "not a u64",
+        ),
+        (
+            "y := i32 3, ".to_owned()
+                + &q(
+                    "i32",
+                    "if not tape[1].dyads[0]:type ⊆ i32 error «no», this.v = tape[1].dyads[0]",
+                )
+                + ", x := q [y]",
+            "holds no literal or constant",
+        ),
+    ] {
+        let out = logos().arg(&src).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
 #[ignore = "stand-in for #137: the seed cannot run array.logos yet"]
 fn the_array_written_in_logos_reads_an_element_and_its_size() {
     let out = logos().args(["import", "./identities/array.logos"]).output().unwrap();

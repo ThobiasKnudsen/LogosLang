@@ -334,6 +334,12 @@ pub fn run_message(e: &RunError) -> String {
             "this cell was checked to hold a type, but the tape changed since and it holds something else"
                 .into()
         }
+        RunError::CellNotANumber(ty) => format!(
+            "this cell was checked against `{}`, but it holds no literal or constant of it: \
+             only a constant is read as its number",
+            // SAFETY: the type operand of a checked read is a number type node.
+            unsafe { crate::identities::numtype::of_type_node(*ty) }.spelling()
+        ),
         RunError::NoFragment => "insert takes a tape fragment".into(),
         RunError::NoThis => "`this` holds no node here".into(),
         RunError::UnfilledField(i) => format!(

@@ -48,6 +48,8 @@ pub enum RunError {
     NoName,
     /// A tape cell checked to hold a type holds something else by the time it is read.
     CellNotAType,
+    /// A cell or line checked against a number type holds no constant of it.
+    CellNotANumber(DyadPtr),
     /// `insert` of a null fragment.
     NoFragment,
     /// `this` holds no node, or the node has no slots.

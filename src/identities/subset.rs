@@ -91,12 +91,23 @@ unsafe fn includes(types: &Core, a: DyadPtr, b: DyadPtr) -> Option<bool> {
     })
 }
 
+/// A tape cell or line holding a literal answers by whether the literal molds into the
+/// number type, a literal taking the type beside it.
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `⊆` node `[lhs, rhs, op]`; each operand runs to a type's address.
     unsafe {
         let ops = (*node).value as *const DyadPtr;
-        let a = rt.run(*ops)? as DyadPtr;
+        let read = rt.through(*ops);
         let b = rt.run(*ops.add(1))? as DyadPtr;
+        let types = rt.types();
+        if (*read).ty == types.tape.cell_type && super::is_numtype_node(types, b) {
+            let cell = super::tape::read_target(rt, (*read).value as *const DyadPtr)?;
+            if (*cell).ty == rt.types().rational {
+                let nt = super::numtype::of_type_node(b);
+                return Ok(i64::from(super::rational::mold_to(cell, nt).is_some()));
+            }
+        }
+        let a = rt.run(*ops)? as DyadPtr;
         includes(rt.types(), a, b).map(i64::from).ok_or(RunError::UnsettledInclusion)
     }
 }

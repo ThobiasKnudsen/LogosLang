@@ -4,8 +4,9 @@
 //! `parsing_tape` and the tape's affordances as identities: `t[k]` read and write,
 //! `t.is_constructed[k]`, `t.spelling[k]`, `t.insert`, `t.remove`, `t.recenter`, and
 //! the cell reads `t[k]:name`, `t[k]:type`, a `t[k]` checked to hold a type as that
-//! type, and a scope or `[…]` cell's `t[k].dyads`,
-//! `t[k].dyads.size` and `t[k].dyads[i]`. The type's one field,
+//! type or checked against a number type as that number, and a scope or `[…]` cell's
+//! `t[k].dyads`, `t[k].dyads.size` and `t[k].dyads[i]`, whose line reads as a cell does.
+//! The type's one field,
 //! `cells`, is the seed's `ParsingTape` handle. The natives run interpreted; nothing lowers.
 
 use super::callable::{self, Callables};
@@ -41,12 +42,16 @@ pub struct TapeIds {
     /// `t[k]:name`: the spelling of the binding the cell holds, a string node.
     pub slot_name: DyadPtr,
     pub slot_name_leaf: DyadPtr,
-    /// `t[k]:type`: the type of the dyad the cell names, read.
+    /// `t[k]:type`: the type of the dyad the cell names, read; `[tape, k, i]`, `i` null
+    /// for the cell itself or the line `t[k].dyads[i]`, as in the two reads below.
     pub cell_type: DyadPtr,
     pub cell_type_leaf: DyadPtr,
     /// `t[k]` after a check that the cell holds a type: the type it holds.
     pub cell_value: DyadPtr,
     pub cell_value_leaf: DyadPtr,
+    /// `t[k]` after a check against a number type: `[tape, k, i, type]`, the number it holds.
+    pub cell_number: DyadPtr,
+    pub cell_number_leaf: DyadPtr,
     /// `t[k].dyads`: the scope cell's `dyads` array, as its address.
     pub cell_dyads: DyadPtr,
     pub cell_dyads_leaf: DyadPtr,
@@ -106,8 +111,10 @@ pub(super) fn register(
     let (remove, remove_leaf) = op(cx, &["tape", "k", "op"], run_remove);
     let (recenter, recenter_leaf) = op(cx, &["tape", "k", "op"], run_recenter);
     let (slot_name, slot_name_leaf) = op(cx, &["tape", "k", "op"], run_slot_name);
-    let (cell_type, cell_type_leaf) = op(cx, &["tape", "k", "op"], run_cell_type);
-    let (cell_value, cell_value_leaf) = op(cx, &["tape", "k", "op"], run_cell_value);
+    let (cell_type, cell_type_leaf) = op(cx, &["tape", "k", "i", "op"], run_cell_type);
+    let (cell_value, cell_value_leaf) = op(cx, &["tape", "k", "i", "op"], run_cell_value);
+    let (cell_number, cell_number_leaf) =
+        op(cx, &["tape", "k", "i", "type", "op"], run_cell_number);
     let (cell_dyads, cell_dyads_leaf) = op(cx, &["tape", "k", "op"], run_cell_dyads);
     let (cell_dyads_size, cell_dyads_size_leaf) = op(cx, &["tape", "k", "op"], run_cell_dyads_size);
     let (cell_dyad_at, cell_dyad_at_leaf) = op(cx, &["tape", "k", "i", "op"], run_cell_dyad_at);
@@ -144,6 +151,8 @@ pub(super) fn register(
         cell_type_leaf,
         cell_value,
         cell_value_leaf,
+        cell_number,
+        cell_number_leaf,
         cell_dyads,
         cell_dyads_leaf,
         cell_dyads_size,
@@ -254,20 +263,52 @@ pub(crate) unsafe fn build_slot_name(store: &mut Store, types: &Core, slot: Dyad
     node(store, types.tape.slot_name, types.tape.slot_name_leaf, &[recv, k])
 }
 
+/// The tape, the cell index, and the line index of a line read, null for the cell itself.
+///
 /// # Safety
-/// `slot` must be a slot node from `build_slot`.
-pub(crate) unsafe fn build_cell_type(store: &mut Store, types: &Core, slot: DyadPtr) -> DyadPtr {
-    let (recv, k) = slot_parts(slot);
-    node(store, types.tape.cell_type, types.tape.cell_type_leaf, &[recv, k])
+/// `read` must be a slot node, a line node from `build_cell_dyad_at`, or a node built
+/// from either by the builders below.
+unsafe fn read_parts(types: &Core, read: DyadPtr) -> (DyadPtr, DyadPtr, DyadPtr) {
+    let (recv, k) = slot_parts(read);
+    let ty = (*read).ty;
+    let has_line = ty == types.tape.cell_dyad_at
+        || ty == types.tape.cell_type
+        || ty == types.tape.cell_value
+        || ty == types.tape.cell_number;
+    let i = if has_line { *((*read).value as *const DyadPtr).add(2) } else { std::ptr::null_mut() };
+    (recv, k, i)
+}
+
+/// `t[k]:type` or `t[k].dyads[i]:type`.
+///
+/// # Safety
+/// As `read_parts`.
+pub(crate) unsafe fn build_cell_type(store: &mut Store, types: &Core, read: DyadPtr) -> DyadPtr {
+    let (recv, k, i) = read_parts(types, read);
+    node(store, types.tape.cell_type, types.tape.cell_type_leaf, &[recv, k, i])
 }
 
 /// DESIGN ›A type is a comptime value, resolved in the pass‹, a checked tape cell.
 ///
 /// # Safety
-/// `slot` must be a slot node from `build_slot`.
-pub(crate) unsafe fn build_cell_value(store: &mut Store, types: &Core, slot: DyadPtr) -> DyadPtr {
-    let (recv, k) = slot_parts(slot);
-    node(store, types.tape.cell_value, types.tape.cell_value_leaf, &[recv, k])
+/// As `read_parts`.
+pub(crate) unsafe fn build_cell_value(store: &mut Store, types: &Core, read: DyadPtr) -> DyadPtr {
+    let (recv, k, i) = read_parts(types, read);
+    node(store, types.tape.cell_value, types.tape.cell_value_leaf, &[recv, k, i])
+}
+
+/// The same paragraph, a cell or line checked against the number type `ty`.
+///
+/// # Safety
+/// As `read_parts`; `ty` a number type node.
+pub(crate) unsafe fn build_cell_number(
+    store: &mut Store,
+    types: &Core,
+    read: DyadPtr,
+    ty: DyadPtr,
+) -> DyadPtr {
+    let (recv, k, i) = read_parts(types, read);
+    node(store, types.tape.cell_number, types.tape.cell_number_leaf, &[recv, k, i, ty])
 }
 
 /// A read of the cell itself, plain or checked: what `=`, `:` and `.dyads` take.
@@ -278,13 +319,22 @@ pub(crate) unsafe fn is_cell_read(types: &Core, node: DyadPtr) -> bool {
     (*node).ty == types.tape.slot || (*node).ty == types.tape.cell_value
 }
 
-/// Which cell a read built by this file names, as the tape's place and a literal index;
-/// `None` for an index known only at run.
+/// Which line of a cell a read names: none, a literal index, or the place an index is
+/// read from, one name in the check and the read naming one line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Line {
+    Cell,
+    At(i32),
+    Named(DyadPtr),
+}
+
+/// Which cell a read built by this file names, as the tape's place, a literal index, and
+/// the line; `None` for a cell index known only at run.
 ///
 /// # Safety
-/// `over` must be a slot node or a node built from one here.
-pub(crate) unsafe fn cell_key(types: &Core, over: DyadPtr) -> Option<(DyadPtr, i32)> {
-    let (recv, k) = slot_parts(over);
+/// As `read_parts`.
+pub(crate) unsafe fn cell_key(types: &Core, over: DyadPtr) -> Option<(DyadPtr, i32, Line)> {
+    let (recv, k, i) = read_parts(types, over);
     let recv = if (*recv).ty == types.addr_ {
         types.through(*((*recv).value as *const DyadPtr))
     } else {
@@ -294,7 +344,17 @@ pub(crate) unsafe fn cell_key(types: &Core, over: DyadPtr) -> Option<(DyadPtr, i
     if (*k).ty != types.rational {
         return None;
     }
-    super::rational::mold(k).map(|k| (recv, k))
+    let line = if i.is_null() {
+        Line::Cell
+    } else {
+        let i = types.through(i);
+        if (*i).ty == types.rational {
+            Line::At(super::rational::mold(i)?)
+        } else {
+            Line::Named(i)
+        }
+    };
+    super::rational::mold(k).map(|k| (recv, k, line))
 }
 
 /// # Safety
@@ -535,27 +595,72 @@ fn run_slot_name(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
+/// The dyad a `[tape, k, i, …]` read names: the cell, or its line `i` when `i` is not null.
+///
+/// # Safety
+/// `ops` must be the operands of a read built by `build_cell_type` or its siblings.
+pub(crate) unsafe fn read_target(
+    rt: &mut Runtime,
+    ops: *const DyadPtr,
+) -> Result<DyadPtr, RunError> {
+    if (*ops.add(2)).is_null() {
+        return match slot_cell(rt, ops)? {
+            Some((_, _, cell)) => Ok(cell),
+            None => Err(RunError::OffTape),
+        };
+    }
+    let lines = cell_lines(rt, ops)?;
+    let i = rt.run(*ops.add(2))?;
+    if i < 0 {
+        return Err(RunError::BadIndex(i));
+    }
+    match lines.get(i as usize) {
+        Some(&line) => Ok(rt.through(line)),
+        None => Err(RunError::PastEnd { index: i, size: lines.len() }),
+    }
+}
+
 fn run_cell_type(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
-    unsafe {
-        let ops = (*node).value as *const DyadPtr;
-        match slot_cell(rt, ops)? {
-            Some((_, _, cell)) => Ok((*cell).ty as i64),
-            None => Err(RunError::OffTape),
-        }
-    }
+    unsafe { Ok((*read_target(rt, (*node).value as *const DyadPtr)?).ty as i64) }
 }
 
 /// Checked again here: a tape edited between the check and this read may hold another cell.
 fn run_cell_value(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
     unsafe {
-        let ops = (*node).value as *const DyadPtr;
-        match slot_cell(rt, ops)? {
-            Some((_, _, cell)) if (*cell).ty == rt.types().type_ => rt.run(cell),
-            Some(_) => Err(RunError::CellNotAType),
-            None => Err(RunError::OffTape),
+        let cell = read_target(rt, (*node).value as *const DyadPtr)?;
+        if (*cell).ty == rt.types().type_ {
+            rt.run(cell)
+        } else {
+            Err(RunError::CellNotAType)
         }
+    }
+}
+
+/// The number a literal or a constant of the type holds; any other dyad, an expression
+/// whose value is known only when it runs, is refused.
+///
+/// # Safety
+/// `cell` must be a dyad from the store; `ty` a number type node.
+pub(crate) unsafe fn constant_number(types: &Core, cell: DyadPtr, ty: DyadPtr) -> Option<i64> {
+    let nt = super::numtype::of_type_node(ty);
+    if (*cell).ty == types.rational {
+        return super::rational::mold_to(cell, nt);
+    }
+    let v = (*cell).value;
+    ((*cell).ty == ty && !v.is_null() && !crate::dyad::is_place(v))
+        .then(|| super::numtype::read_scalar(ty, v as *const u8))
+}
+
+/// Checked again here, as `run_cell_value` is.
+fn run_cell_number(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
+    unsafe {
+        let ops = (*node).value as *const DyadPtr;
+        let cell = read_target(rt, ops)?;
+        let ty = *ops.add(3);
+        constant_number(rt.types(), cell, ty).ok_or(RunError::CellNotANumber(ty))
     }
 }
 
