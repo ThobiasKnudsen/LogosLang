@@ -2619,6 +2619,48 @@ fn an_array_holds_arrays_as_their_addresses() {
     }
 }
 
+/// A type whose field holds an array: its parse places `fill`, which makes the array.
+const HOLDER: &str = "import ./identities/array.logos, t := array i32, \
+    holder := type ( fields = ( \
+        mut items := t ?, \
+        shared count := fn () -> u64 ( this.items.size ), \
+        shared second := fn () -> i32 ( this.items[1] ), \
+        shared fill := fn (elements) -> this:type ( this.items = array i32 [4, 5, 6], this ) \
+    ), \
+    parse_rank = dyad.parse_rank, \
+    associativity = left, \
+    parse = ( \
+        if tape[1]:type == scope ( tape[0] = this.fill(tape[1]), tape.remove(1) ), \
+        tape.is_constructed[0] = true \
+    ) )";
+
+#[test]
+fn a_field_holding_an_array_reads_as_that_array() {
+    for (tail, printed) in [
+        ("h := holder (), h.count()", "3"),
+        ("h := holder (), h.second()", "5"),
+        ("h := holder (), h.items[1]", "5"),
+        ("h := holder (), h.items.size", "3"),
+        ("h := holder (), h.items.at(2)", "6"),
+        ("h := holder (), h.items[0] = i32 9, h.items[0] + h.items[1]", "14"),
+        ("h := holder (), c := h.items, c[0] = i32 7, h.items[0]", "7"),
+        ("f := fn (p := t ?) -> i32 ( p[2] ), h := holder (), f(h.items)", "6"),
+        ("f := fn (p := t ?) -> i32 ( p[2] ), f.compile(), h := holder (), f(h.items)", "6"),
+        ("f := fn (h := holder ?) -> i32 ( h.items[0] = i32 9, h.items[0] ), f(holder ())", "9"),
+        ("f := fn () -> u64 ( h := holder (), h.items.size ), f()", "3"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{HOLDER}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout.trim(), printed, "{tail}");
+    }
+    let (code, _, stderr) = run_line(&format!(
+        "{HOLDER}, u := array u8, g := type ( fields = ( mut items := t ?, \
+         shared put := fn () -> u64 ( this.items = array u8 [1], 0 ) ) )"
+    ));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("these types do not match"), "stderr: {stderr}");
+}
+
 #[test]
 fn a_chooser_takes_the_type_the_chooser_right_of_it_leaves() {
     let array = "import ./identities/array.logos";

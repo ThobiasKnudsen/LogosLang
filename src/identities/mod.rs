@@ -851,6 +851,11 @@ pub(crate) unsafe fn node_type_of(types: &Core, node: DyadPtr) -> Option<DyadPtr
         let ty = *((*node).value as *const DyadPtr).add(1);
         return meta::is_node_valued(ty, types.fn_type).then_some(ty);
     }
+    // A field read carries the field's declared type.
+    if (*node).ty == types.this.load {
+        let ty = *((*node).value as *const DyadPtr).add(2);
+        return meta::is_node_valued(ty, types.fn_type).then_some(ty);
+    }
     // A dereference of a cell of such a type, or a line checked against it, yields its address.
     if (*node).ty == types.deref_ || (*node).ty == types.tape.cell_node {
         let at = if (*node).ty == types.deref_ { 1 } else { 3 };

@@ -3684,23 +3684,15 @@ impl<'a> Parser<'a> {
             return Err(ParseError::ThisFieldUnknown(Box::new(name.to_string())));
         };
         let k = self.scalar_value(crate::identities::numtype::NumType::U64, index as i64);
-        let types = self.types;
         // SAFETY: the field is a declaration dyad, its type null or a type node.
-        let declared = unsafe { (*items[index]).ty };
-        // SAFETY: as above.
-        let data = !declared.is_null()
-            && matches!(
-                unsafe { crate::identities::read::place_layout(types, declared) },
-                Some((
-                    crate::identities::read::Read::Scalar(_)
-                        | crate::identities::read::Read::Pointer(_),
-                    _
-                ))
-            );
-        let node = if data {
-            crate::identities::this::build_load(self.rt.store, types, this, k, declared)
-        } else {
-            crate::identities::this::build_slot(self.rt.store, types, this, k)
+        let node = unsafe {
+            crate::identities::this::build_field_read(
+                self.rt.store,
+                self.types,
+                this,
+                k,
+                (*items[index]).ty,
+            )
         };
         if let Some(r) = resolved {
             self.fills.insert(node, r.binding);
@@ -4696,6 +4688,20 @@ impl<'a> Parser<'a> {
         Ok(Some(self.path_operand(field)))
     }
 
+    /// Whether `t`'s field `name` is declared of a type a Logos `parse` builds.
+    ///
+    /// # Safety
+    /// `t` must be a record type from the store.
+    unsafe fn holds_node(&self, t: DyadPtr, name: &str) -> bool {
+        use crate::identities::{array, meta};
+        let mut fields = ScopeStack::new();
+        fields.push(meta::record_scope_of(t));
+        fields.resolve(self.trie, name).ok().is_some_and(|r| {
+            array::items(meta::record_fields_of(t)).contains(&r.identity)
+                && meta::is_node_valued((*r.identity).ty, self.types.fn_type)
+        })
+    }
+
     /// `lhs.f` where `lhs` yields a node of `t` only when the program runs, a place of the
     /// type or a call returning it: the field read through the node's address when it runs,
     /// or a `shared` member, a fields-block `fn` called with `lhs` as its `this`.
@@ -4709,7 +4715,7 @@ impl<'a> Parser<'a> {
         name: &str,
         call: Option<Vec<DyadPtr>>,
     ) -> Result<Option<(DyadPtr, usize)>, ParseError> {
-        use crate::identities::{array, meta, read, this};
+        use crate::identities::{array, meta, this};
         let types = self.types;
         let mut fields = ScopeStack::new();
         fields.push(meta::record_scope_of(t));
@@ -4720,17 +4726,7 @@ impl<'a> Parser<'a> {
             .and_then(|r| items.iter().position(|&f| f == r.identity));
         if let Some(i) = index {
             let k = self.scalar_value(crate::identities::numtype::NumType::U64, i as i64);
-            let declared = (*items[i]).ty;
-            let data = !declared.is_null()
-                && matches!(
-                    read::place_layout(types, declared),
-                    Some((read::Read::Scalar(_) | read::Read::Pointer(_), _))
-                );
-            let node = if data {
-                this::build_load(self.rt.store, types, lhs, k, declared)
-            } else {
-                this::build_slot(self.rt.store, types, lhs, k)
-            };
+            let node = this::build_field_read(self.rt.store, types, lhs, k, (*items[i]).ty);
             return Ok(Some((node, 0)));
         }
         let Some(member) = self.shared_member_read(t, name) else {
@@ -4852,6 +4848,15 @@ impl<'a> Parser<'a> {
                     };
                     let line = tape::build_bracket_line(store, types, lhs, i);
                     return Ok((self.narrowed_read(line), 1));
+                }
+            }
+            // A field holding a node a Logos `parse` built is read when the code runs, even
+            // through a node the parse knows: the node it holds may be replaced before then.
+            if let Some(t) = crate::identities::node_type_of(self.types, lhs) {
+                if self.holds_node(t, name) {
+                    if let Some(read) = self.run_node_member(lhs, t, name, None)? {
+                        return Ok(read);
+                    }
                 }
             }
             if let Some(node) = self.known_node(lhs, self.member_root) {

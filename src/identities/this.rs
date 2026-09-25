@@ -5,7 +5,8 @@
 //! parameter, a `dyad ?` place holding the node's address. `this.f` reaches the slot at
 //! `f`'s index among the instance fields: read, the node it holds, or for a field of a
 //! number or pointer type the value that node yields; as `=`'s target, the write of the
-//! right side's node, or of a node holding the value it yields. Only the per-run copy lowers.
+//! right side's node, or of a node holding the value it yields. A field of a type a Logos
+//! `parse` builds holds that node, whose address is the value. Only the per-run copy lowers.
 
 use super::callable::{self, Callables};
 use super::{meta, Cx};
@@ -25,7 +26,7 @@ pub struct ThisIds {
     /// `this.f = v`: `[this, k, value, op]`, storing `v`'s node into slot `k`.
     pub write: DyadPtr,
     pub write_leaf: DyadPtr,
-    /// `this.f` of a number or pointer field: `[this, k, type, op]`, the value it holds.
+    /// `this.f` of a field typed by `build_field_read`: `[this, k, type, op]`, the value it holds.
     pub load: DyadPtr,
     pub load_leaf: DyadPtr,
     /// `this.f = v` there: `[this, k, value, type, op]`, a node of `type` holding v's value.
@@ -89,7 +90,34 @@ pub(crate) fn build_copy(store: &mut Store, types: &Core, template: DyadPtr) -> 
     node(store, types.this.copy, types.this.copy_leaf, &[template])
 }
 
-/// `ty` is the field's declared type, a number or pointer type.
+/// `this.f`: a `load` when the field's declared type says what it holds, a number, a
+/// pointer, or a node a Logos `parse` built (DESIGN ›A value of a type built by a Logos
+/// `parse` travels as a pointer‹), so the read carries that type; else the slot's node.
+///
+/// # Safety
+/// `declared` must be null or a type node from the store.
+pub(crate) unsafe fn build_field_read(
+    store: &mut Store,
+    types: &Core,
+    this: DyadPtr,
+    k: DyadPtr,
+    declared: DyadPtr,
+) -> DyadPtr {
+    use super::read::{place_layout, Read};
+    let typed = !declared.is_null()
+        && match place_layout(types, declared) {
+            Some((Read::Scalar(_) | Read::Pointer(_), _)) => true,
+            Some((Read::Container(t), _)) => meta::is_node_valued(t, types.fn_type),
+            _ => false,
+        };
+    if typed {
+        build_load(store, types, this, k, declared)
+    } else {
+        build_slot(store, types, this, k)
+    }
+}
+
+/// `ty` is the field's declared type.
 pub(crate) fn build_load(
     store: &mut Store,
     types: &Core,
@@ -131,6 +159,13 @@ pub(crate) unsafe fn build_write(
     let ops = (*read).value as *const DyadPtr;
     let (this, k) = (*ops, *ops.add(1));
     if let Some(ty) = load_type(types, read) {
+        // The slot holds the node the right side yields, its address, never the expression.
+        if meta::is_node_valued(ty, types.fn_type) {
+            if super::node_type_of(types, value) != Some(ty) {
+                return Err(crate::parse::ParseError::TypeMismatch);
+            }
+            return Ok(node(store, types.this.write, types.this.write_leaf, &[this, k, value]));
+        }
         let yields_value = match super::numtype_of(types, value) {
             super::Operand::Concrete(_) | super::Operand::Literal => true,
             super::Operand::Pointer(p) => p != types.dyad_,
