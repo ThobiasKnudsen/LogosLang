@@ -2620,6 +2620,26 @@ fn an_array_holds_arrays_as_their_addresses() {
 }
 
 #[test]
+fn a_chooser_takes_the_type_the_chooser_right_of_it_leaves() {
+    let array = "import ./identities/array.logos";
+    for (tail, printed) in [
+        ("t := array array i32, u := array (array i32), t == u", "true"),
+        ("t := array array i32, u := array i32, v := array u, t == v", "true"),
+        ("t := array array i32, u := array i32, t == u", "false"),
+        (
+            "x := array i32 [1, 2], y := array i32 [3, 4], b := array array i32 [own x, own y], \
+             b[1][0]",
+            "3",
+        ),
+        ("x := array i32 [1, 2], b := array (array i32) [own x], b[0][1]", "2"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{array}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout.trim(), printed, "{tail}");
+    }
+}
+
+#[test]
 fn the_outer_array_s_drop_drops_each_element_once() {
     let array = "import ./identities/array.logos";
     for (tail, printed) in [

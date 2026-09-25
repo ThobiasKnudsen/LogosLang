@@ -1607,6 +1607,8 @@ pub struct Parser<'a> {
     /// While `.` lexes the member right of a parse body's `this`: the member is
     /// read by its spelling, so a raw-text word it happens to spell is not woken.
     member_asleep: bool,
+    /// The identity whose constructor is running, whose lazy reads lex its right side.
+    reader: DyadPtr,
     /// The stop mode of the segment being lexed, so a lazy read inside a
     /// constructor stops at the same boundaries the loop would.
     lex_mode: Option<RightSide>,
@@ -1775,6 +1777,7 @@ impl<'a> Parser<'a> {
             queued: std::collections::VecDeque::new(),
             discovering: false,
             member_asleep: false,
+            reader: std::ptr::null_mut(),
             lex_mode: None,
             else_ends: None,
             holes: HashSet::new(),
@@ -7343,7 +7346,9 @@ impl<'a> Parser<'a> {
             self.note_outer_read(binding);
         }
         let was = std::mem::replace(&mut self.discovering, discovery);
+        let reader = std::mem::replace(&mut self.reader, id);
         let outcome = construct(self, id, tape);
+        self.reader = reader;
         self.discovering = was;
         let outcome = outcome?;
         // Removed itself: the splice is the outcome.
@@ -7557,7 +7562,9 @@ impl<'a> Parser<'a> {
                     || self.tight_read_takes(id);
                 if prec >= crate::identities::meta::prec::OPEN
                     && !asleep
-                    && !(lazy && !crate::identities::meta::prec::built_as_lexed(prec))
+                    && (!lazy
+                        || crate::identities::meta::prec::built_as_lexed(prec)
+                        || self.goes_before_reader(id, prec))
                 {
                     self.run_ctor(construct, id, tape, true)?;
                 }
@@ -7567,6 +7574,17 @@ impl<'a> Parser<'a> {
             self.discover_pending(tape)?;
         }
         Ok(None)
+    }
+
+    /// A cell a reader's lazy read lexes that would construct before the reader at the
+    /// boundary: the same rank, both associating right, so the right one goes first
+    /// (DESIGN ›A reader's read builds an equal right-associative cell first‹).
+    fn goes_before_reader(&self, id: DyadPtr, prec: f64) -> bool {
+        let reader = self.reader;
+        !reader.is_null()
+            && self.precedence_of_cell(reader) == prec
+            && self.assoc_of_cell(reader) == Assoc::Right
+            && self.assoc_of_cell(id) == Assoc::Right
     }
 
     /// Construct at discovery what a lazy read lexed and its reader left on the
