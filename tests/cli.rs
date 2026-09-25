@@ -281,7 +281,36 @@ fn a_tape_read_checked_against_a_number_type_reads_as_that_number() {
 }
 
 #[test]
-#[ignore = "stand-in for #137: the seed cannot run array.logos yet"]
+fn an_instance_takes_its_bracket_as_a_call_built_in_its_parse() {
+    // `x[k]` places the call `x.get(k)`, its arguments fixed when placed, run where it stands.
+    let q =
+        "q := type ( fields = ( n := u64 ?, shared get := fn (i := u64 ?) -> u64 ( this.n + i ), \
+             shared parse = ( if tape[1]:type == square_brackets ( \
+               if not tape[1].dyads[0]:type ⊆ u64 error «no», \
+               tape[0] = this.get(tape[1].dyads[0]), tape.remove(1) ), \
+             tape.is_constructed[0] = true ) ), \
+             parse_rank = 61, parse = ( this.n = tape[1], tape[0] = this, tape.remove(1), \
+             tape.is_constructed[0] = true ) ), x := q u64 10, y := q u64 20";
+    for (tail, expect) in [
+        ("x[5]", "15"),
+        ("x.get(3)", "13"),
+        ("x[5] + y[1]", "36"),
+        ("f := fn () -> u64 ( x[2] ), f()", "12"),
+        ("f := fn () -> u64 ( x[2] + y[0] ), f.compile(), f()", "32"),
+    ] {
+        let src = format!("{q}, {tail}");
+        let out = logos().arg(&src).output().unwrap();
+        assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), expect, "{tail}");
+    }
+    // An index known only at run is no constant, so the checked read refuses it.
+    let out =
+        logos().arg(format!("{q}, f := fn (i := u64 ?) -> u64 ( x[i] ), f(3)")).output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("holds no literal or constant"), "stderr: {stderr}");
+}
+
+#[test]
 fn the_array_written_in_logos_reads_an_element_and_its_size() {
     let out = logos().args(["import", "./identities/array.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -290,6 +319,25 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
         let out = logos().arg(&src).output().unwrap();
         assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
         assert_eq!(String::from_utf8_lossy(&out.stdout), printed, "{src}");
+    }
+    let array = "import ./identities/array.logos, a := array i32 (1, 2, 3)";
+    for (tail, printed) in [
+        ("a[0] + a[2]", "4"),
+        ("f := fn () -> i32 ( a[0] + a[2] ), f.compile(), f()", "4"),
+        ("b := array u8 (7, 8), b[1]", "8"),
+    ] {
+        let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
+        assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), printed, "{tail}");
+    }
+    for (tail, expect) in [
+        ("a[3]", "index out of range"),
+        ("a[-1]", "the index type is not within the size type"),
+        ("b := array u8 (1, 300)", "an element does not fit the element type"),
+    ] {
+        let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && stderr.contains(expect), "{tail}: stderr: {stderr}");
     }
 }
 

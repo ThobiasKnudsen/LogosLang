@@ -5,8 +5,8 @@
 //! `t.is_constructed[k]`, `t.spelling[k]`, `t.insert`, `t.remove`, `t.recenter`, and
 //! the cell reads `t[k]:name`, `t[k]:type`, a `t[k]` checked to hold a type as that
 //! type or checked against a number type as that number, and a scope or `[…]` cell's
-//! `t[k].dyads`, `t[k].dyads.size` and `t[k].dyads[i]`, whose line reads as a cell does.
-//! The type's one field,
+//! `t[k].dyads`, `t[k].dyads.size` and `t[k].dyads[i]`, whose line reads as a cell does,
+//! and a call written into a cell, placed with its arguments' values. The type's one field,
 //! `cells`, is the seed's `ParsingTape` handle. The natives run interpreted; nothing lowers.
 
 use super::callable::{self, Callables};
@@ -61,6 +61,10 @@ pub struct TapeIds {
     /// `t[k].dyads[i]`: the scope cell's line i, as its address.
     pub cell_dyad_at: DyadPtr,
     pub cell_dyad_at_leaf: DyadPtr,
+    /// A call a constructor places, `[call, op]`: yields a copy of the call whose
+    /// arguments are the values they had when it was placed.
+    pub placed_call: DyadPtr,
+    pub placed_call_leaf: DyadPtr,
 }
 
 /// The members are declared in the type's own scope, where `.` resolves them; the
@@ -118,6 +122,7 @@ pub(super) fn register(
     let (cell_dyads, cell_dyads_leaf) = op(cx, &["tape", "k", "op"], run_cell_dyads);
     let (cell_dyads_size, cell_dyads_size_leaf) = op(cx, &["tape", "k", "op"], run_cell_dyads_size);
     let (cell_dyad_at, cell_dyad_at_leaf) = op(cx, &["tape", "k", "i", "op"], run_cell_dyad_at);
+    let (placed_call, placed_call_leaf) = op(cx, &["call", "op"], run_placed_call);
     for (name, id) in [
         ("is_constructed", is_constructed),
         ("spelling", spelling),
@@ -159,6 +164,8 @@ pub(super) fn register(
         cell_dyads_size_leaf,
         cell_dyad_at,
         cell_dyad_at_leaf,
+        placed_call,
+        placed_call_leaf,
     }
 }
 
@@ -229,10 +236,14 @@ pub(crate) fn cell_arg(store: &mut Store, types: &Core, cell: DyadPtr) -> DyadPt
             || super::yields_type(types, cell)
     };
     if yields_node {
-        cell
-    } else {
-        super::pointer::address_value(store, types, types.dyad_, cell)
+        return cell;
     }
+    // SAFETY: as above.
+    let read = unsafe { super::read::read_kind(types, types.through(cell)) };
+    if let super::read::Read::Executable(super::read::Dispatch::Call(_)) = read {
+        return node(store, types.tape.placed_call, types.tape.placed_call_leaf, &[cell]);
+    }
+    super::pointer::address_value(store, types, types.dyad_, cell)
 }
 
 /// # Safety
@@ -693,6 +704,44 @@ fn run_cell_dyads(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 fn run_cell_dyads_size(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
     unsafe { Ok(cell_lines(rt, (*node).value as *const DyadPtr)?.len() as i64) }
+}
+
+/// The arguments run now, while what they read (the constructor's `this`, its locals, the
+/// tape) still stands, so the placed call keeps nothing of the constructor's run. DESIGN
+/// ›`a[k]` is an application, exactly as `a(k)`‹.
+fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a `[call, op]` node `cell_arg` built over a call node.
+    unsafe {
+        let call = rt.through(*((*node).value as *const DyadPtr));
+        let super::read::Read::Executable(super::read::Dispatch::Call(f)) =
+            super::read::read_kind(rt.types(), call)
+        else {
+            return Err(RunError::NoLeaf);
+        };
+        let values = rt.eval_args(f, call)?;
+        let input = *((*f).value as *const DyadPtr).add(crate::parse::FN_INPUT);
+        let params = super::array::items(meta::record_fields_of(input));
+        let dyad_ty = rt.types().dyad_;
+        let store = rt.store();
+        let mut args = Vec::with_capacity(values.len() + 1);
+        for (&param, &bits) in params.iter().zip(&values) {
+            let ty = (*param).ty;
+            args.push(if super::numtype::is_scalar_type(ty) {
+                let width = super::numtype::of_type_node(ty).bytes();
+                let storage = store.alloc_bytes(&bits.to_ne_bytes()[..width]);
+                store.alloc_raw(ty, storage)
+            } else {
+                store.alloc_raw(dyad_ty, bits as usize as *mut u8)
+            });
+        }
+        let value = if args.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            args.push(std::ptr::null_mut());
+            store.alloc_operands(&args)
+        };
+        Ok(store.alloc_raw(f, value) as i64)
+    }
 }
 
 fn run_cell_dyad_at(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {

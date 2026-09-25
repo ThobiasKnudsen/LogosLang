@@ -4612,7 +4612,16 @@ impl<'a> Parser<'a> {
             // before the dyad view below, since `this` is a `dyad ?` place.
             if let Some(def) = self.definitions.last() {
                 if !def.this_param.is_null() && lhs == def.this_param {
-                    return self.this_field(name, nstart).map(|n| (n, 0));
+                    let member = self.this_field(name, nstart)?;
+                    // `this.f(…)`, a `fn` of the fields block: called on the node `this` holds.
+                    if let Some(args) = call {
+                        if self.takes_this(member) {
+                            let mut with_this = vec![lhs];
+                            with_this.extend(args);
+                            return self.build_call(member, &with_this).map(|n| (n, 1));
+                        }
+                    }
+                    return Ok((member, 0));
                 }
             }
             // `this.f` inside a held run body being constructed: the field's

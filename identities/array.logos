@@ -27,7 +27,11 @@
 #   one `drop` word (ruled 19 September 2026): its parse looks right; `=` there means the slot
 #     fill, anything else is the statement dropping what follows, so `drop x` works in every scope and the
 #     predeclared slot names are the core words themselves, never a second declaration;
-#   `⊆` between types is a seed native (ruled 25 September 2026).
+#   `⊆` between types is a seed native (ruled 25 September 2026);
+#   `a[k]` is an application exactly as `a(k)` (ruled 25 September 2026, DESIGN ›`a[k]` is an application, exactly as `a(k)`‹):
+#     the instances' parse places the call `this.at(k)`, its arguments fixed as it is placed, run where it stands;
+#   a tape read checked against a number type reads as that number (ruled 25 September 2026): after the
+#     `⊆` check, `tape[1].dyads[i]` is the line's number; a line that is no literal is refused for now.
 # The seed's array is array-of-@dyad with no spelling and no element access (src/identities/array.rs).
 # The fields block comes first in every type body (ruled 20 September 2026): a body's this.f names a field declared above it.
 
@@ -54,15 +58,16 @@ get_mint := fn (t := type ?) -> type (
 
             shared parse_rank = dyad.parse_rank,
             shared associativity = left,
+            shared at := fn (index := u64 ?) -> element_type (
+                if index >= this.size error «index out of range: the index is at or past the array's size»,
+                (this.ptr + index)@
+            ),
+
             shared parse = (
                 if tape[1]:type == square_brackets (
-                    index := tape[1].dyads[0],
-                    if not index:type ⊆ this.size:type
+                    if not tape[1].dyads[0]:type ⊆ this.size:type
                         error «the index type is not within the size type, so the index could lie outside the array»,
-                    tape[0] = scope (
-                        if index >= this.size error «index out of range: the index is at or past the array's size»,
-                        (this.ptr + index)@
-                    ),
+                    tape[0] = this.at(tape[1].dyads[0]),
                     tape.remove(1)
                 ),
                 tape.is_constructed[0] = true
