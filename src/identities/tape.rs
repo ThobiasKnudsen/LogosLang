@@ -6,7 +6,7 @@
 //! the cell reads `t[k]:name`, `t[k]:type`, a `t[k]` checked to hold a type as that
 //! type or checked against a number type as that number, and a scope or `[…]` cell's
 //! `t[k].dyads`, `t[k].dyads.size` and `t[k].dyads[i]`, whose line reads as a cell does,
-//! and a call written into a cell, placed with its arguments' values. The type's one field,
+//! and a call written into a cell, placed with its tape lines as operands. The type's one field,
 //! `cells`, is the seed's `ParsingTape` handle. The natives run interpreted; nothing lowers.
 
 use super::callable::{self, Callables};
@@ -61,8 +61,8 @@ pub struct TapeIds {
     /// `t[k].dyads[i]`: the scope cell's line i, as its address.
     pub cell_dyad_at: DyadPtr,
     pub cell_dyad_at_leaf: DyadPtr,
-    /// A call a constructor places, `[call, op]`: yields a copy of the call whose
-    /// arguments are the values they had when it was placed.
+    /// A call a constructor places, `[call, op]`: yields a copy of the call whose arguments
+    /// are the tape lines they read, as operands, and the values of the others.
     pub placed_call: DyadPtr,
     pub placed_call_leaf: DyadPtr,
 }
@@ -631,9 +631,24 @@ pub(crate) unsafe fn read_target(
     }
 }
 
+/// An expression's type is the type of what it yields, a name's its declared type; a bracket
+/// is a `scope` or `square_brackets`, whose lines the constructor reads.
 fn run_cell_type(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
-    unsafe { Ok((*read_target(rt, (*node).value as *const DyadPtr)?).ty as i64) }
+    unsafe {
+        let target = read_target(rt, (*node).value as *const DyadPtr)?;
+        let types = rt.types();
+        if (*target).ty == types.scope || (*target).ty == types.square_brackets {
+            return Ok((*target).ty as i64);
+        }
+        if crate::parse::is_bool_result(types, target) {
+            return Ok(types.bool_ as i64);
+        }
+        Ok(match numtype_of(types, target) {
+            Operand::Concrete(nt) => types.numtypes[nt as usize],
+            _ => (*target).ty,
+        } as i64)
+    }
 }
 
 /// Checked again here: a tape edited between the check and this read may hold another cell.
@@ -706,9 +721,45 @@ fn run_cell_dyads_size(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError>
     unsafe { Ok(cell_lines(rt, (*node).value as *const DyadPtr)?.len() as i64) }
 }
 
-/// The arguments run now, while what they read (the constructor's `this`, its locals, the
-/// tape) still stands, so the placed call keeps nothing of the constructor's run. DESIGN
-/// ›`a[k]` is an application, exactly as `a(k)`‹.
+/// The dyad a tape read names, a cell or a line of one; `None` for any other node.
+///
+/// # Safety
+/// `read` must be a reduced dyad from the store.
+unsafe fn named_dyad(rt: &mut Runtime, read: DyadPtr) -> Option<Result<DyadPtr, RunError>> {
+    let ids = rt.types().tape;
+    let ty = (*read).ty;
+    if ty == ids.slot || ty == ids.cell_dyad_at {
+        return Some(rt.run(read).map(|d| rt.through(d as DyadPtr)));
+    }
+    if ty == ids.cell_value || ty == ids.cell_number {
+        return Some(read_target(rt, (*read).value as *const DyadPtr));
+    }
+    None
+}
+
+/// A literal molds to the parameter's type; any other operand must already be of it.
+///
+/// # Safety
+/// `operand` must be a dyad from the store; `ty` a number type node.
+unsafe fn typed_operand(
+    rt: &mut Runtime,
+    operand: DyadPtr,
+    ty: DyadPtr,
+) -> Result<DyadPtr, RunError> {
+    let types = rt.types();
+    let typed = if let Operand::Literal = numtype_of(types, operand) {
+        let types: *const crate::Core = types;
+        // SAFETY: the `Core` outlives the runtime that borrowed it.
+        super::commit_literal_to(rt.store(), &*types, operand, ty)
+    } else {
+        super::check_store_type(types, ty, operand).map(|()| operand)
+    };
+    typed.map_err(|e| RunError::Parse(Box::new(e)))
+}
+
+/// An argument read from the tape is the operand it names, typed now and run when the placed
+/// call runs; any other argument reads the constructor's `this` or locals, gone by then, so it
+/// runs now. DESIGN ›`a[k]` is an application, exactly as `a(k)`‹.
 fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `[call, op]` node `cell_arg` built over a call node.
     unsafe {
@@ -718,15 +769,27 @@ fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         else {
             return Err(RunError::NoLeaf);
         };
-        let values = rt.eval_args(f, call)?;
         let input = *((*f).value as *const DyadPtr).add(crate::parse::FN_INPUT);
         let params = super::array::items(meta::record_fields_of(input));
-        let dyad_ty = rt.types().dyad_;
-        let store = rt.store();
-        let mut args = Vec::with_capacity(values.len() + 1);
-        for (&param, &bits) in params.iter().zip(&values) {
+        let written = (*call).value as *const DyadPtr;
+        let arg_at =
+            |i: usize| if written.is_null() { std::ptr::null_mut() } else { *written.add(i) };
+        if params.len() != (0..).take_while(|&i| !arg_at(i).is_null()).count() {
+            return Err(RunError::ArityMismatch);
+        }
+        let mut args = Vec::with_capacity(params.len() + 1);
+        for (i, &param) in params.iter().enumerate() {
             let ty = (*param).ty;
-            args.push(if super::numtype::is_scalar_type(ty) {
+            let scalar = super::numtype::is_scalar_type(ty);
+            if let Some(operand) = named_dyad(rt, arg_at(i)) {
+                let operand = operand?;
+                args.push(if scalar { typed_operand(rt, operand, ty)? } else { operand });
+                continue;
+            }
+            let bits = rt.run(arg_at(i))?;
+            let dyad_ty = rt.types().dyad_;
+            let store = rt.store();
+            args.push(if scalar {
                 let width = super::numtype::of_type_node(ty).bytes();
                 let storage = store.alloc_bytes(&bits.to_ne_bytes()[..width]);
                 store.alloc_raw(ty, storage)
@@ -734,6 +797,7 @@ fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
                 store.alloc_raw(dyad_ty, bits as usize as *mut u8)
             });
         }
+        let store = rt.store();
         let value = if args.is_empty() {
             std::ptr::null_mut()
         } else {

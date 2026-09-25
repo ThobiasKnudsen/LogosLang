@@ -712,7 +712,7 @@ impl<'a> Runtime<'a> {
     /// # Safety
     /// `fn_node` must be a valid function node and `call_node` a valid
     /// application of it, both from the store.
-    pub(crate) unsafe fn eval_args(
+    unsafe fn eval_args(
         &mut self,
         fn_node: DyadPtr,
         call_node: DyadPtr,

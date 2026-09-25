@@ -282,7 +282,7 @@ fn a_tape_read_checked_against_a_number_type_reads_as_that_number() {
 
 #[test]
 fn an_instance_takes_its_bracket_as_a_call_built_in_its_parse() {
-    // `x[k]` places the call `x.get(k)`, its arguments fixed when placed, run where it stands.
+    // `x[k]` places the call `x.get(k)`, the line `k` its operand, run where it stands.
     let q =
         "q := type ( fields = ( n := u64 ?, shared get := fn (i := u64 ?) -> u64 ( this.n + i ), \
              shared parse = ( if tape[1]:type == square_brackets ( \
@@ -297,17 +297,24 @@ fn an_instance_takes_its_bracket_as_a_call_built_in_its_parse() {
         ("x[5] + y[1]", "36"),
         ("f := fn () -> u64 ( x[2] ), f()", "12"),
         ("f := fn () -> u64 ( x[2] + y[0] ), f.compile(), f()", "32"),
+        ("f := fn (i := u64 ?) -> u64 ( x[i] ), f(3)", "13"),
+        ("f := fn (i := u64 ?) -> u64 ( x[i] + y[i] ), f.compile(), f(4)", "38"),
     ] {
         let src = format!("{q}, {tail}");
         let out = logos().arg(&src).output().unwrap();
         assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), expect, "{tail}");
     }
-    // An index known only at run is no constant, so the checked read refuses it.
-    let out =
-        logos().arg(format!("{q}, f := fn (i := u64 ?) -> u64 ( x[i] ), f(3)")).output().unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("holds no literal or constant"), "stderr: {stderr}");
+}
+
+#[test]
+#[ignore = "stand-in for #137: the mint still reads its elements at parse"]
+fn the_array_fills_its_elements_when_the_program_runs() {
+    let src = "import ./identities/array.logos, x := i32 5, y := i32 6, \
+               b := array i32 (x, y, 3), b[0] + b[1] + b[2]";
+    let out = logos().arg(src).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "14");
 }
 
 #[test]
@@ -325,6 +332,12 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
         ("a[0] + a[2]", "4"),
         ("f := fn () -> i32 ( a[0] + a[2] ), f.compile(), f()", "4"),
         ("b := array u8 (7, 8), b[1]", "8"),
+        ("i := u64 1, a[i]", "2"),
+        ("f := fn (i := u64 ?) -> i32 ( a[i] ), f(1)", "2"),
+        ("f := fn (i := u64 ?) -> i32 ( a[i] ), f.compile(), f(1)", "2"),
+        ("j := u64 1, a[j + 1]", "3"),
+        ("f := fn (j := u64 ?) -> i32 ( a[j + 1] ), f.compile(), f(0)", "2"),
+        ("mut i := u64 0, g := fn () -> i32 ( a[i] ), i = 2, g()", "3"),
     ] {
         let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
         assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -332,7 +345,12 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
     }
     for (tail, expect) in [
         ("a[3]", "index out of range"),
+        ("i := u64 3, a[i]", "index out of range"),
+        ("f := fn (i := u64 ?) -> i32 ( a[i] ), f(3)", "index out of range"),
+        ("f := fn (i := u64 ?) -> i32 ( a[i] ), f.compile(), f(5)", "index out of range"),
         ("a[-1]", "the index type is not within the size type"),
+        ("i := i32 1, a[i]", "the index type is not within the size type"),
+        ("k := u8 1, a[k]", "these types do not match"),
         ("b := array u8 (1, 300)", "an element does not fit the element type"),
     ] {
         let out = logos().arg(format!("{array}, {tail}")).output().unwrap();

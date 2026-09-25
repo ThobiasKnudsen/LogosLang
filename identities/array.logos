@@ -29,9 +29,10 @@
 #     predeclared slot names are the core words themselves, never a second declaration;
 #   `⊆` between types is a seed native (ruled 25 September 2026);
 #   `a[k]` is an application exactly as `a(k)` (ruled 25 September 2026, DESIGN ›`a[k]` is an application, exactly as `a(k)`‹):
-#     the instances' parse places the call `this.at(k)`, its arguments fixed as it is placed, run where it stands;
+#     the instances' parse places the call `this.at(k)`, the index line its operand, run where it stands;
 #   a tape read checked against a number type reads as that number (ruled 25 September 2026): after the
-#     `⊆` check, `tape[1].dyads[i]` is the line's number; a line that is no literal is refused for now.
+#     `⊆` check, the fill loop reads `tape[1].dyads[i]` as the line's number; a line that is no literal is
+#     refused for now, since filling the elements when the program runs is still open.
 # The seed's array is array-of-@dyad with no spelling and no element access (src/identities/array.rs).
 # The fields block comes first in every type body (ruled 20 September 2026): a body's this.f names a field declared above it.
 
