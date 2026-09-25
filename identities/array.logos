@@ -1,46 +1,7 @@
-# The language defines itself: the array collection written in ordinary Logos, in the shape ruled 18 and
-# 19 September 2026. array is a chooser: its parse consumes the element type, fetches or mints the concrete
-# type `array i32` (one per element type, interned in array_mints) and places it in its own cell with the
-# flag left false, so the driver runs the mint's own parse in turn (ruled 19 September 2026).
-#
-# The mint is a type like any other, read in two halves. Its BARE lines say how its own spelling parses:
-# a group to its right, `(…)` or `[…]`, has each line checked against the element type and is handed whole to
-# one placed call, `this.fill(tape[1])`, which makes a new array each time it runs and evaluates the lines then;
-# nothing to its right and it sets its flag and stands as itself,
-# the type (`t := array i32`, `a := array i32 ?`; ruled 19 September 2026: "it should rather just be itself in
-# constructed state"). Its FIELDS block says what its INSTANCES hold and do, every line marked shared (one
-# place for every instance) or left per instance (ruled 19 September 2026): the fields it declares, and the
-# predeclared slots it fills, the drop that frees the elements and the instances' own parse trio, which runs
-# when an array instance appears on the tape and consumes a [k] to its right, or sets its flag and stands when
-# nothing follows (`a = b`). A body in the fields block reached through an instance — a.size_bytes(), the
-# instances' parse woken by a's appearance, drop — binds `this` to that instance and reads its fields as
-# this.size (ruled 19 September 2026); the fields this. reaches are declared above the body. In the type's own
-# parse `this` is the fresh instance being built (18 September 2026), and a call placed on it takes a copy of it
-# per run. A name or parameter of the mint wakes the instances' parse as an instance does, `this` there being the
-# name, read when the placed call runs; an array value is the node's address, so `b := a` shares (DESIGN ›A name
-# of a type with an instances' `parse` wakes it, as the instance does‹, ›A value of a type built by a Logos
-# `parse` travels as a pointer‹). No run: a field read such as (a ^ b).lhs never runs anything.
-#
-# Stand-ins, and the rulings this file leans on:
-#   the parse_rank lines (ruled 25 September 2026, DESIGN ›A parse is ranked by what it takes from its right‹):
-#     the mint and its instances take a bracket, at application's rank, `dyad.parse_rank`;
-#     the chooser takes a type, at `fn.parse_rank`, above application;
-#   the slots of a fields block are PREDECLARED (ruled 19 September 2026, DESIGN ›The constructor is a field‹):
-#     every fields block starts with the same slots type's own declares (parse_rank, associativity, parse, run,
-#     drop, fields), unfilled; a type fills them with `=`, `shared` for one place across its instances, unmarked
-#     for a per-instance default; so no line here declares a slot and no right side names a slot type;
-#   one `drop` word (ruled 19 September 2026): its parse looks right; `=` there means the slot
-#     fill, anything else is the statement dropping what follows, so `drop x` works in every scope and the
-#     predeclared slot names are the core words themselves, never a second declaration;
-#   `⊆` between types is a seed native (ruled 25 September 2026);
-#   `a[k]` is an application exactly as `a(k)` (ruled 25 September 2026, DESIGN ›`a[k]` is an application, exactly as `a(k)`‹):
-#     the instances' parse places the call `this.at(k)`, the index line its operand, run where it stands;
-#   a tape read checked against a number type reads as that number (ruled 25 September 2026): after the
-#     `⊆` check, the index line `tape[1].dyads[0]` passes as a `u64`, and in `fill` a line of the handed
-#     bracket, `elements.dyads[i]`, reads as the element's value;
-#   `-> this:type` names the mint in its own fields block (DESIGN ›A bracket goes to the call whole‹).
-# The seed's array is array-of-@dyad with no spelling and no element access (src/identities/array.rs).
-# The fields block comes first in every type body (ruled 20 September 2026): a body's this.f names a field declared above it.
+# The array collection, written in ordinary Logos. `array` is a chooser: it takes the element type and
+# leaves on the tape the concrete type for it, `array i32`, minted once per element type, whose own parse
+# then runs. A mint's bare lines say how its spelling parses; its fields block says what its instances
+# hold and do (DESIGN ›The constructor is a field‹).
 
 import ./next_power_of_two.logos,
 
@@ -92,6 +53,7 @@ get_mint := fn (t := type ?) -> type (
             )
         ),
 
+        # The mint takes a bracket at application's rank (DESIGN ›A parse is ranked by what it takes from its right‹).
         parse_rank = dyad.parse_rank,
         associativity = left,
         parse = (
@@ -111,6 +73,7 @@ get_mint := fn (t := type ?) -> type (
 ),
 
 pub array := type (
+    # Above application, so the chooser takes its type before the mint takes the bracket.
     parse_rank = fn.parse_rank,
     associativity = right,
     parse = (
