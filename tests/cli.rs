@@ -1885,3 +1885,24 @@ fn this_f_type_reads_the_fields_declared_type() {
     assert_eq!(code, Some(1), "stderr: {stderr}");
     assert!(stderr.contains("does not fit the node's type"), "stderr: {stderr}");
 }
+
+#[test]
+fn a_field_default_fills_each_new_node() {
+    let q = "q := type ( fields = ( mut size := u64 5, output := type ?, \
+             shared run = ( this.size + 1 ) ), parse_rank = 60, parse = ( ";
+    let end = "this.output = u64, tape[0] = this, tape.is_constructed[0] = true ) )";
+    for (src, want) in [
+        (format!("{q}{end}, q"), "6\n"),
+        (format!("{q}this.size = 9, {end}, q"), "10\n"),
+        (format!("{q}{end}, f := fn () -> u64 ( q ), f.compile(), f()"), "6\n"),
+        (
+            "q := type ( fields = ( size := u64 0 ), parse_rank = 60, \
+             parse = ( tape[0] = this.size, tape.is_constructed[0] = true ) ), q"
+                .to_string(),
+            "0\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "{src}: stderr: {stderr}");
+    }
+}

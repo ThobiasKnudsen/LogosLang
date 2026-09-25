@@ -2057,14 +2057,17 @@ impl<'a> Parser<'a> {
         owner: DyadPtr,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        // `this`: a fresh node of `owner` per run, one null slot per field,
-        // filled by name; then the run's terminator and the slot for the
-        // node's field-type set.
-        // SAFETY: `owner` is the record type whose slot holds `f`.
-        let n_fields = unsafe {
-            crate::identities::array::items(crate::identities::meta::record_fields_of(owner)).len()
+        // `this`: a fresh node of `owner` per run, one slot per field, null or
+        // the field's default, filled by name; then the run's terminator and
+        // the slot for the node's field-type set.
+        // SAFETY: `owner` is the record type whose slot holds `f`; its fields are dyads.
+        let mut slots: Vec<DyadPtr> = unsafe {
+            crate::identities::array::items(crate::identities::meta::record_fields_of(owner))
+                .iter()
+                .map(|&field| if (*field).value.is_null() { std::ptr::null_mut() } else { field })
+                .collect()
         };
-        let slots = vec![std::ptr::null_mut(); n_fields + 2];
+        slots.extend([std::ptr::null_mut(); 2]);
         let run = self.rt.store.alloc_operands(&slots);
         let this = self.rt.store.alloc_raw(owner, run);
         // SAFETY: as this function's own contract; `this` was just built.
@@ -2679,7 +2682,10 @@ impl<'a> Parser<'a> {
                 }
             }
             // `name := T ?` declares the field's type through the hole `?`
-            // built; a bare name leaves the type slot undefined.
+            // built; a bare name leaves the type slot undefined. A default,
+            // `size := u64 0`, is a constant: the field's dyad is that value,
+            // and each new node starts with it in the field's slot.
+            let mut default = std::ptr::null_mut();
             let logos = if self.consume_token(self.types.declare_tok) {
                 let value = self.parse_expression()?;
                 if self.holes.remove(&value) {
@@ -2687,8 +2693,22 @@ impl<'a> Parser<'a> {
                     unsafe { (*value).ty }
                 } else {
                     // SAFETY: `value` is a reduced dyad just parsed.
-                    if unsafe { self.types.through(value) } == self.types.unknown {
+                    let held = unsafe { self.types.through(value) };
+                    if held == self.types.unknown {
                         std::ptr::null_mut() // `name := ?`: no type yet
+                    } else if relaxed
+                        // SAFETY: as above.
+                        && unsafe {
+                            matches!(
+                                crate::identities::read::read_kind(self.types, held),
+                                crate::identities::read::Read::Scalar(_)
+                            ) && !crate::dyad::is_place((*held).value)
+                        }
+                    {
+                        // SAFETY: as above.
+                        let (ty, value) = unsafe { ((*held).ty, (*held).value) };
+                        default = value;
+                        ty
                     } else {
                         self.pos = start;
                         return Err(ParseError::BadDeclaredType);
@@ -2697,7 +2717,7 @@ impl<'a> Parser<'a> {
             } else {
                 std::ptr::null_mut()
             };
-            let field = self.rt.store.alloc_raw(logos, std::ptr::null_mut());
+            let field = self.rt.store.alloc_raw(logos, default);
             // The field's name is not stored on the record: declaring it puts
             // a binding in the one name index (DESIGN ›Name resolution is scope-filtered‹).
             let binding = if relaxed {
