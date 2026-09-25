@@ -330,6 +330,58 @@ fn the_array_fills_its_elements_when_the_program_runs() {
 }
 
 #[test]
+fn a_function_that_makes_an_array_compiles_and_agrees_with_the_interpreter() {
+    let array = "import ./identities/array.logos";
+    for (def, name, call, printed) in [
+        ("f := fn (x := i32 ?) -> i32 ( c := array i32 (x, x), c[1] )", "f", "f(7)", "7"),
+        (
+            "f := fn (x := i32 ?) -> i32 ( c := array i32 [x, x + 1, 3], c[0] + c[1] + c[2] )",
+            "f",
+            "f(7)",
+            "18",
+        ),
+        // A new array each pass, its elements the loop's values.
+        (
+            "f := fn (n := i32 ?) -> i32 ( mut s := i32 0, \
+             for i in 0..n ( c := array i32 (i, i * 2), s = s + c[0] + c[1] ), s )",
+            "f",
+            "f(4)",
+            "18",
+        ),
+        (
+            "f := fn (x := i32 ?) -> i32 ( c := array i32 (x, x * 2, x * 3), mut s := i32 0, \
+             for i in (u64 0)..(u64 3) ( s = s + c[i] ), s )",
+            "f",
+            "f(2)",
+            "12",
+        ),
+        // Each call returns its own array: the second does not overwrite the first.
+        (
+            "t := array i32, g := fn (x := i32 ?) -> t ( array i32 (x, x + 1) )",
+            "g",
+            "a := g(5), b := g(9), a[0] + a[1] + b[1]",
+            "21",
+        ),
+    ] {
+        for compile in ["", &format!("{name}.compile(), ")] {
+            let src = format!("{array}, {def}, {compile}{call}");
+            let out = logos().arg(&src).output().unwrap();
+            assert!(
+                out.status.success(),
+                "{src}: stderr: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), printed, "{src}");
+        }
+    }
+    let src =
+        format!("{array}, f := fn () -> i32 ( c := array i32 (1, 2), c[5] ), f.compile(), f()");
+    let out = logos().arg(&src).output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success() && stderr.contains("index out of range"), "stderr: {stderr}");
+}
+
+#[test]
 fn an_array_travels_as_its_address() {
     let array = "import ./identities/array.logos, a := array i32 (1, 2, 3)";
     for (tail, printed) in [
