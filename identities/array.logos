@@ -39,9 +39,8 @@ get_mint := fn (t := type ?) -> type (
                 this.size = elements.dyads.size,
                 this.capacity = next_power_of_two(this.size),
                 this.ptr = mut alloc this.capacity of this.element_type ?,
+                # `=` builds a bracket line by the element type's parse (DESIGN ›A type body describes one level‹).
                 for i in 0..this.size (
-                    if not (elements.dyads[i]:type ⊆ this.element_type)
-                        error «an element does not fit the element type»,
                     (this.ptr + i)@ = elements.dyads[i]
                 ),
                 this
@@ -73,12 +72,12 @@ get_mint := fn (t := type ?) -> type (
             if tape[1]:type == scope
                 error «the list is written in square brackets, `array i32 [1, 2]`, not `array i32 (1, 2)`»,
             if tape[1]:type == square_brackets (
+                # A bracket line is checked when `fill`'s `=` builds it.
                 for i in 0..tape[1].dyads.size (
-                    # A bracket line is built by the element type (DESIGN ›Each element is built by the element type‹).
-                    if tape[1].dyads[i]:type == square_brackets or tape[1].dyads[i]:type == scope
-                        tape[1].dyads[i] = tape.construct(this.element_type, tape[1].dyads[i]),
-                    if not (tape[1].dyads[i]:type ⊆ this.element_type)
-                        error «an element does not fit the element type»
+                    if tape[1].dyads[i]:type != square_brackets and tape[1].dyads[i]:type != scope (
+                        if not (tape[1].dyads[i]:type ⊆ this.element_type)
+                            error «an element does not fit the element type»
+                    )
                 ),
                 tape[0] = this.fill(tape[1]),
                 tape.remove(1)

@@ -2795,6 +2795,11 @@ fn a_nested_list_builds_each_element_with_the_element_type() {
     for (tail, expect) in [
         ("a := array array i32 [[1, 2], 3]", "an element does not fit the element type"),
         ("a := array array i32 [(1, 2)]", "the list is written in square brackets"),
+        ("x := i64 5, a := array array i32 [[1], [x]]", "an element does not fit the element type"),
+        (
+            "p := type ( parse = ( tape.construct(i32, tape[1]), tape.is_constructed[0] = true ) )",
+            "unknown name `construct`",
+        ),
     ] {
         let (code, _, stderr) = run_line(&format!("{array}, {tail}"));
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");

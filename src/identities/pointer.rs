@@ -221,6 +221,9 @@ pub(crate) unsafe fn build_storeptr(
         }
         let nt = numtype::of_type_node(pointee);
         commit_if_literal(store, types, rhs, &Operand::Literal, pointee, nt)?
+    } else if (*types.through(rhs)).ty == types.tape.cell_dyad_at {
+        // A line no check narrowed: what it holds is known only when the store runs.
+        super::tape::build_cell_into(store, types, types.through(rhs), pointee)
     } else {
         super::check_store_type(types, pointee, rhs)?;
         rhs

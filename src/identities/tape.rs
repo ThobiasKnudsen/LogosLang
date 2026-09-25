@@ -77,12 +77,10 @@ pub struct TapeIds {
     pub bracket_arg_leaf: DyadPtr,
     /// What a read gets where the tape reaches no cell: a `void` node, already constructed.
     pub nothing: DyadPtr,
-    /// `t.construct(T, v)`: `[tape, type, value, op]`, the node `T v` constructs to.
-    pub construct: DyadPtr,
-    pub construct_leaf: DyadPtr,
-    /// `t[k].dyads[i] = v`: `[tape, k, i, line, op]`, the bracket cell's line replaced.
-    pub line_write: DyadPtr,
-    pub line_write_leaf: DyadPtr,
+    /// `[tape, k, i, type, op]`: a line stored into a place of `type`, built by that type's
+    /// parse when it is a bracket (DESIGN ›A type body describes one level‹).
+    pub cell_into: DyadPtr,
+    pub cell_into_leaf: DyadPtr,
 }
 
 /// The members are declared in the type's own scope, where `.` resolves them; the
@@ -143,8 +141,7 @@ pub(super) fn register(
     let (cell_dyad_at, cell_dyad_at_leaf) = op(cx, &["tape", "k", "i", "op"], run_cell_dyad_at);
     let (placed_call, placed_call_leaf) = op(cx, &["call", "op"], run_placed_call);
     let (bracket_arg, bracket_arg_leaf) = op(cx, &["bracket", "op"], run_bracket_arg);
-    let (construct, construct_leaf) = op(cx, &["tape", "type", "value", "op"], run_construct);
-    let (line_write, line_write_leaf) = op(cx, &["tape", "k", "i", "line", "op"], run_line_write);
+    let (cell_into, cell_into_leaf) = op(cx, &["tape", "k", "i", "type", "op"], run_cell_into);
     cx.lower.insert(bracket_arg, lower_bracket_arg);
     let nothing = cx.store.alloc_raw(void_ty, std::ptr::null_mut());
     for (name, id) in [
@@ -153,7 +150,6 @@ pub(super) fn register(
         ("insert", insert),
         ("remove", remove),
         ("recenter", recenter),
-        ("construct", construct),
     ] {
         cx.declare_in(scope, name, id);
     }
@@ -196,10 +192,8 @@ pub(super) fn register(
         bracket_arg,
         bracket_arg_leaf,
         nothing,
-        construct,
-        construct_leaf,
-        line_write,
-        line_write_leaf,
+        cell_into,
+        cell_into_leaf,
     }
 }
 
@@ -210,7 +204,6 @@ pub(crate) fn member(ids: &TapeIds, name: &str) -> Option<(DyadPtr, DyadPtr)> {
         "insert" => Some((ids.insert, ids.insert_leaf)),
         "remove" => Some((ids.remove, ids.remove_leaf)),
         "recenter" => Some((ids.recenter, ids.recenter_leaf)),
-        "construct" => Some((ids.construct, ids.construct_leaf)),
         _ => None,
     }
 }
@@ -366,15 +359,6 @@ pub(crate) unsafe fn is_cell_read(types: &Core, node: DyadPtr) -> bool {
     (*node).ty == types.tape.slot || (*node).ty == types.tape.cell_value
 }
 
-/// `t[k].dyads[i]` over the running constructor's tape, the target of a line write; a held
-/// bracket's line read carries no cell index.
-///
-/// # Safety
-/// `node` must be a valid dyad from the store.
-pub(crate) unsafe fn is_line_read(types: &Core, node: DyadPtr) -> bool {
-    (*node).ty == types.tape.cell_dyad_at && !slot_parts(node).1.is_null()
-}
-
 /// Which line of a cell a read names: none, a literal index, or the place an index is
 /// read from, one name in the check and the read naming one line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -471,22 +455,6 @@ pub(crate) unsafe fn build_cell_dyad_at(
     node(store, types.tape.cell_dyad_at, types.tape.cell_dyad_at_leaf, &[recv, k, i])
 }
 
-/// `t[k].dyads[i] = v`: the line replaced by the node `v` yields.
-///
-/// # Safety
-/// `line` must be a line node from `build_cell_dyad_at`; `value` a reduced dyad.
-pub(crate) unsafe fn build_line_write(
-    store: &mut Store,
-    types: &Core,
-    line: DyadPtr,
-    value: DyadPtr,
-) -> DyadPtr {
-    let ops = (*line).value as *const DyadPtr;
-    let (recv, k, i) = (*ops, *ops.add(1), *ops.add(2));
-    let value = cell_arg(store, types, value);
-    node(store, types.tape.line_write, types.tape.line_write_leaf, &[recv, k, i, value])
-}
-
 /// `flag` is a bool, checked by `=`.
 ///
 /// # Safety
@@ -515,12 +483,6 @@ pub(crate) unsafe fn build_member(
     args: &[DyadPtr],
 ) -> Result<DyadPtr, ParseError> {
     let ids = &types.tape;
-    if op == ids.construct {
-        let [ty, value] = args[..] else {
-            return Err(ParseError::CtorArity);
-        };
-        return Ok(node(store, op, leaf, &[recv, ty, value]));
-    }
     if op == ids.insert {
         let [k, cells] = args[..] else {
             return Err(ParseError::CtorArity);
@@ -638,39 +600,6 @@ fn run_insert(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         }
         let cells = (*frag).cells();
         (*tape).splice(k, cells);
-        Ok(0)
-    }
-}
-
-/// The type and the value are both nodes, each running to its address.
-fn run_construct(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
-    unsafe {
-        let ops = (*node).value as *const DyadPtr;
-        tape_of(rt, *ops)?;
-        let ty = rt.run(*ops.add(1))? as DyadPtr;
-        let ty = rt.through(ty);
-        let value = rt.run(*ops.add(2))? as DyadPtr;
-        let value = rt.through(value);
-        if !super::is_type_value(rt.types(), ty) {
-            return Err(RunError::CellNotAType);
-        }
-        rt.construct_on_pass(ty, value)
-    }
-}
-
-fn run_line_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
-    unsafe {
-        let ops = (*node).value as *const DyadPtr;
-        let cell = scope_cell(rt, ops)?;
-        let i = rt.run(*ops.add(2))?;
-        let line = rt.run(*ops.add(3))? as DyadPtr;
-        let lines = super::scope::exprs_of(cell).unwrap_or(&[]);
-        let Some(at) = usize::try_from(i).ok().filter(|&at| at < lines.len()) else {
-            return Err(RunError::PastEnd { index: i, size: lines.len() });
-        };
-        (lines.as_ptr() as *mut DyadPtr).add(at).write(line);
         Ok(0)
     }
 }
@@ -836,6 +765,45 @@ fn run_cell_node(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         }
         rt.run(cell)
     }
+}
+
+/// A line no check narrowed, stored into a place of `ty`: `=` decides it when it runs.
+///
+/// # Safety
+/// `read` must be a line node from `build_cell_dyad_at`; `ty` a type node.
+pub(crate) unsafe fn build_cell_into(
+    store: &mut Store,
+    types: &Core,
+    read: DyadPtr,
+    ty: DyadPtr,
+) -> DyadPtr {
+    let (recv, k, i) = read_parts(types, read);
+    node(store, types.tape.cell_into, types.tape.cell_into_leaf, &[recv, k, i, ty])
+}
+
+/// A bracket is built by `ty`'s parse, then the line must be a value of `ty`.
+fn run_cell_into(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
+    unsafe {
+        let ops = (*node).value as *const DyadPtr;
+        let mut line = read_target(rt, ops)?;
+        let ty = *ops.add(3);
+        if !super::meta::is_node_valued(ty, rt.types().fn_type) {
+            return constant_number(rt.types(), line, ty).ok_or(RunError::CellNotANumber(ty));
+        }
+        if is_bracket(rt.types(), line) {
+            let built = rt.construct_on_pass(ty, line)? as DyadPtr;
+            line = rt.through(built);
+        }
+        if super::node_type_of(rt.types(), line) != Some(ty) {
+            return Err(RunError::CellNotANode);
+        }
+        rt.run(line)
+    }
+}
+
+unsafe fn is_bracket(types: &Core, d: DyadPtr) -> bool {
+    (*d).ty == types.scope || (*d).ty == types.square_brackets
 }
 
 /// The scope or `square_brackets` the cell holds; both keep their `dyads` first.
@@ -1044,20 +1012,33 @@ unsafe fn has_value(types: &Core, line: DyadPtr) -> bool {
 }
 
 /// A bracket handed to a placed call: each line is evaluated where the call runs, in its
-/// frame, and the callee reads a new bracket of the same kind holding the values; a line
-/// with no value to evaluate is handed as it stands.
+/// frame, and the callee reads a new bracket of the same kind holding the values; a nested
+/// bracket is evaluated here too, since the callee builds it where these names are not.
 fn run_bracket_arg(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `[bracket, op]` node `run_placed_call` built over a bracket node.
     unsafe {
         let bracket = rt.through(*((*node).value as *const DyadPtr));
-        let lines = super::scope::exprs_of(bracket).unwrap_or(&[]);
-        let mut bits = Vec::with_capacity(lines.len());
-        for &line in lines {
-            bits.push(if has_value(rt.types(), line) { rt.run(line)? } else { 0 });
-        }
-        let types: *const Core = rt.types();
-        Ok(bracket_holding(rt.store(), &*types, bracket, &bits) as i64)
+        Ok(evaluate_bracket(rt, bracket)? as i64)
     }
+}
+
+/// # Safety
+/// `bracket` must be a scope or `square_brackets` node from the store.
+unsafe fn evaluate_bracket(rt: &mut Runtime, bracket: DyadPtr) -> Result<DyadPtr, RunError> {
+    let lines = super::scope::exprs_of(bracket).unwrap_or(&[]);
+    let mut bits = Vec::with_capacity(lines.len());
+    for &line in lines {
+        let line = rt.through(line);
+        bits.push(if is_bracket(rt.types(), line) {
+            evaluate_bracket(rt, line)? as i64
+        } else if has_value(rt.types(), line) {
+            rt.run(line)?
+        } else {
+            0
+        });
+    }
+    let types: *const Core = rt.types();
+    Ok(bracket_holding(rt.store(), &*types, bracket, &bits))
 }
 
 /// The number lines run in the compiled frame, their values in a block; only the new
@@ -1066,23 +1047,31 @@ fn lower_bracket_arg(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileEr
     // SAFETY: `node` is a `[bracket, op]` node `run_placed_call` built over a bracket node.
     unsafe {
         let bracket = lw.through(*((*node).value as *const DyadPtr));
-        let lines = super::scope::exprs_of(bracket).unwrap_or(&[]);
-        let mut bits = Vec::with_capacity(lines.len());
-        for &line in lines {
-            bits.push(match numtype_of(lw.types(), line) {
-                Operand::Concrete(nt) => {
-                    let v = lw.lower(line)?;
-                    lw.widen(v, nt)
-                }
-                _ if super::node_type_of(lw.types(), line).is_some() => lw.lower(line)?,
-                _ => lw.const_i64(0),
-            });
-        }
-        let values = lw.spill(&bits);
-        let bracket = lw.const_i64(bracket as i64);
-        let entry = compiled_bracket as *const () as usize;
-        Ok(lw.call_seed(entry, &[bracket, values]))
+        lower_bracket(lw, bracket)
     }
+}
+
+/// # Safety
+/// `bracket` must be a scope or `square_brackets` node from the store.
+unsafe fn lower_bracket(lw: &mut Lowerer, bracket: DyadPtr) -> Result<Value, CompileError> {
+    let lines = super::scope::exprs_of(bracket).unwrap_or(&[]);
+    let mut bits = Vec::with_capacity(lines.len());
+    for &line in lines {
+        let line = lw.through(line);
+        bits.push(match numtype_of(lw.types(), line) {
+            _ if is_bracket(lw.types(), line) => lower_bracket(lw, line)?,
+            Operand::Concrete(nt) => {
+                let v = lw.lower(line)?;
+                lw.widen(v, nt)
+            }
+            _ if super::node_type_of(lw.types(), line).is_some() => lw.lower(line)?,
+            _ => lw.const_i64(0),
+        });
+    }
+    let values = lw.spill(&bits);
+    let bracket = lw.const_i64(bracket as i64);
+    let entry = compiled_bracket as *const () as usize;
+    Ok(lw.call_seed(entry, &[bracket, values]))
 }
 
 /// # Safety
@@ -1097,8 +1086,8 @@ unsafe extern "C" fn compiled_bracket(bracket: DyadPtr, values: *const i64) -> i
 }
 
 /// A new bracket of `bracket`'s kind whose lines are the values `bits` holds for its number
-/// lines, the nodes it holds the addresses of for its lines of a type a Logos `parse` builds,
-/// and its other lines as they stand.
+/// lines, the nodes or brackets it holds the addresses of for its lines of a type a Logos
+/// `parse` builds and its nested brackets, and its other lines as they stand.
 ///
 /// # Safety
 /// `bracket` must be a scope or `square_brackets` node from the store, `bits` one container
@@ -1113,6 +1102,7 @@ unsafe fn bracket_holding(
     let mut values = Vec::with_capacity(lines.len());
     for (&line, &b) in lines.iter().zip(bits) {
         values.push(match numtype_of(types, line) {
+            _ if is_bracket(types, types.through(line)) => b as usize as DyadPtr,
             Operand::Concrete(nt) => {
                 let storage = store.alloc_bytes(&b.to_ne_bytes()[..nt.bytes()]);
                 store.alloc_raw(types.numtypes[nt as usize], storage)

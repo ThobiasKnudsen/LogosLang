@@ -598,8 +598,12 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     if logos == types.tape.cell_value {
         return Operand::NonNumeric;
     }
-    if logos == types.tape.construct {
-        return Operand::Pointer(types.dyad_);
+    if logos == types.tape.cell_into {
+        // SAFETY: the fourth operand is the type of the place the line is stored into.
+        let ty = unsafe { *((*node).value as *const DyadPtr).add(3) };
+        if !meta::is_node_valued(ty, types.fn_type) {
+            return Operand::Concrete(numtype::of_type_node(ty));
+        }
     }
     if logos == types.tape.cell_number {
         // SAFETY: a checked number read's fourth operand is the number type it was checked against.
@@ -857,7 +861,10 @@ pub(crate) unsafe fn node_type_of(types: &Core, node: DyadPtr) -> Option<DyadPtr
         return meta::is_node_valued(ty, types.fn_type).then_some(ty);
     }
     // A dereference of a cell of such a type, or a line checked against it, yields its address.
-    if (*node).ty == types.deref_ || (*node).ty == types.tape.cell_node {
+    if (*node).ty == types.deref_
+        || (*node).ty == types.tape.cell_node
+        || (*node).ty == types.tape.cell_into
+    {
         let at = if (*node).ty == types.deref_ { 1 } else { 3 };
         let ty = *((*node).value as *const DyadPtr).add(at);
         return meta::is_node_valued(ty, types.fn_type).then_some(ty);
