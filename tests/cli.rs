@@ -345,6 +345,9 @@ fn an_array_travels_as_its_address() {
             "7",
         ),
         ("a", "dyad"),
+        // One mint per element type, kept by the chooser across its calls.
+        ("t := array i32, u := array i32, t == u", "true"),
+        ("t := array i32, u := array u8, t == u", "false"),
     ] {
         let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
         assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));

@@ -44,9 +44,8 @@
 
 import ./next_power_of_two.logos,
 
-array_mints := hashmap type -> type,
-
 get_mint := fn (t := type ?) -> type (
+    shared array_mints := hashmap type -> type,
     mut mint := array_mints[t],
     if mint != ? return mint,
     mint = type (
