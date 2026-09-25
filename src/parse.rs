@@ -1531,7 +1531,7 @@ pub struct Parser<'a> {
     /// an identity that reads its own bracket reads source only at discovery.
     discovering: bool,
     /// While `.` lexes the member right of a parse body's `this`: the member is
-    /// read by its spelling, so a name it happens to spell is not woken.
+    /// read by its spelling, so a raw-text word it happens to spell is not woken.
     member_asleep: bool,
     /// The stop mode of the segment being lexed, so a lazy read inside a
     /// constructor stops at the same boundaries the loop would.
@@ -4674,8 +4674,8 @@ impl<'a> Parser<'a> {
             Some(cell) => (self.operand_dyad(cell)?, cell.binding(self.types)),
             None => return Err(ParseError::MissingOperand),
         };
-        // The member is read by its spelling at the offset it was lexed at: a
-        // keyword there (`.type`) was constructed at discovery and stands as a dyad.
+        // The member is read by its spelling at the offset it was lexed at, so a
+        // keyword there (`.type`) reads as a name.
         let this_read =
             self.definitions.last().is_some_and(|d| !d.this_param.is_null() && d.this_param == lhs);
         self.member_asleep = this_read;
@@ -6819,8 +6819,8 @@ impl<'a> Parser<'a> {
 
     /// One step of the scope's loop (DESIGN ›The scope's constructor is the
     /// driver‹): a boundary token is left unconsumed and returned. A cell lexed
-    /// `lazy`, inside a constructor, is constructed at discovery only if it
-    /// reads nothing to its left, or it would find the constructor's own unfinished cell.
+    /// `lazy`, for a constructor's read, arrives unbuilt for that reader to decide,
+    /// unless building it is lexing it: a bracket, a literal, raw text.
     fn lex_next(
         &mut self,
         tape: &mut ParsingTape,
@@ -6874,9 +6874,10 @@ impl<'a> Parser<'a> {
                 let asleep = (self.lex_mode == Some(RightSide::ReturnType) && reader)
                     || self.member_asleep
                     || self.tight_read_takes(id);
-                let reads_left = prec == crate::identities::meta::prec::TIGHT
-                    || prec == crate::identities::meta::prec::DECLARE;
-                if prec >= crate::identities::meta::prec::OPEN && !asleep && !(lazy && reads_left) {
+                if prec >= crate::identities::meta::prec::OPEN
+                    && !asleep
+                    && !(lazy && !crate::identities::meta::prec::built_as_lexed(prec))
+                {
                     self.run_ctor(construct, id, tape, true)?;
                 }
             }
@@ -6887,9 +6888,9 @@ impl<'a> Parser<'a> {
         Ok(None)
     }
 
-    /// Construct at discovery the left-readers a lazy read lexed but had to
-    /// leave, in tape order, before the loop lexes further; each runs with
-    /// the center on its own cell.
+    /// Construct at discovery what a lazy read lexed and its reader left on the
+    /// tape, in tape order, before the loop lexes further; each runs with the
+    /// center on its own cell.
     fn discover_pending(&mut self, tape: &mut ParsingTape) -> Result<(), ParseError> {
         let mark = tape.mark();
         loop {

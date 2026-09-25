@@ -111,6 +111,12 @@ pub(crate) mod prec {
     pub const RETURN: f64 = 10.0;
     /// No constructor: a delimiter, a data type, a node record; never constructed by the driver.
     pub const INERT: f64 = 0.0;
+
+    /// A cell whose construction is its lexing: `(`, `[`, a literal, a raw-text word. Only
+    /// these are built when a constructor's read lexes them.
+    pub fn built_as_lexed(rank: f64) -> bool {
+        rank == OPEN || rank >= IMPORT
+    }
 }
 
 /// A record with no payload.

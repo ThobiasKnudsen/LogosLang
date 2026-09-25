@@ -655,14 +655,17 @@ fn a_constructor_reads_a_square_bracket_cell_by_its_dyads() {
 
 #[test]
 fn a_logos_constructor_at_discovery_lexes_the_tape_on_demand() {
-    for rank in ["90", "92", "99", "*.parse_rank + 1"] {
+    // At discovery the read lexes `i32` and it arrives unbuilt; at the boundary the loop built it first.
+    for (rank, read) in
+        [("90", "type"), ("92", "type"), ("99", "type"), ("*.parse_rank + 1", "i32")]
+    {
         let src = format!(
-            "r := type ( parse_rank = {rank}, parse = ( print «{{tape[1]:type == i32}}», \
-             tape.remove(1), tape.remove(0) ) ), r i32 5"
+            "r := type ( parse_rank = {rank}, parse = ( print «{{tape[1]:type == {read}}}», \
+             tape.remove(0) ) ), r i32 5"
         );
         let out = logos().args([&src]).output().unwrap();
         assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
-        assert_eq!(String::from_utf8_lossy(&out.stdout), "true\n", "{src}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "true\n5\n", "{src}");
     }
     // A name arrives as lexed, a bracket as its scope cell, and what follows is left unlexed.
     let src = "x := i32 4, r := type ( parse_rank = fn.parse_rank, parse = ( \
@@ -671,14 +674,19 @@ fn a_logos_constructor_at_discovery_lexes_the_tape_on_demand() {
     let out = logos().args([src]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "false true 2\n7\n");
-    // A constructor woken by the read runs in turn, and `lex` still works after it.
-    let src = "s := type ( parse_rank = fn.parse_rank, parse = ( tape[0] = i32 3, \
-               tape.is_constructed[0] = true ) ), \
-               r := type ( parse_rank = fn.parse_rank, parse = ( print «{tape[1]:type == i32}», \
-               tape.remove(1), tape.remove(0), tape.insert(0, lex «6») ) ), r s";
-    let out = logos().args([src]).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "true\n6\n");
+    // A constructor the read lexed is not woken by it: it runs in its turn if the reader
+    // leaves it, and `lex` still works after it.
+    let s = "s := type ( parse_rank = fn.parse_rank, parse = ( tape[0] = i32 3, \
+             tape.is_constructed[0] = true ) )";
+    for (r, printed) in [
+        ("print «{tape[1]:type == type}», tape.remove(0)", "true\n3\n"),
+        ("tape.remove(1), tape.remove(0), tape.insert(0, lex «6»)", "6\n"),
+    ] {
+        let src = format!("{s}, r := type ( parse_rank = fn.parse_rank, parse = ( {r} ) ), r s");
+        let out = logos().args([&src]).output().unwrap();
+        assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), printed, "{src}");
+    }
     // Past the end of the source, or past a boundary, the read is still the checked error.
     for tail in ["r", "r i32 5, 1", "(r i32 5), 1"] {
         let src = format!(
@@ -689,6 +697,22 @@ fn a_logos_constructor_at_discovery_lexes_the_tape_on_demand() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(stderr.contains("this index is off the tape"), "{src}: stderr: {stderr}");
     }
+}
+
+#[test]
+fn a_cell_a_constructor_reads_from_the_tape_arrives_unbuilt() {
+    // `i32` is the type itself, not a conversion of the bracket, which stays for the reader.
+    let src = "c := type ( parse_rank = fn.parse_rank, parse = ( \
+               print «{tape[1]:type == type} {tape[2]:type == scope} {tape[2].dyads.size}», \
+               tape.remove(2), tape.remove(1), tape.remove(0) ) ), c i32 (1, 2, 3), 7";
+    let out = logos().args([src]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "true true 3\n7\n");
+    // Left on the tape, `i32` takes its bracket in its own turn.
+    let src = "c := type ( parse_rank = fn.parse_rank, parse = ( tape.remove(0) ) ), c i32 (5)";
+    let out = logos().args([src]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "5\n");
 }
 
 #[test]
