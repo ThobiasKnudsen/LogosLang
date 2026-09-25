@@ -897,7 +897,7 @@ pub unsafe fn display_value(types: &Core, node: DyadPtr, bits: i64) -> String {
             let ty = (*node).ty;
             if ty.is_null() {
                 bits.to_string()
-            } else if held.is_null() {
+            } else if held.is_null() || held == types.unknown {
                 if ty == types.type_ { "type ?" } else { "dyad ?" }.to_string()
             } else if type_identity_of(types, held).is_some() {
                 type_name(types, held)
@@ -1184,7 +1184,10 @@ unsafe fn commit_tail(
 /// `node` is a valid dyad from the store.
 unsafe fn check_type_tail(types: &Core, node: DyadPtr) -> Result<(), ParseError> {
     walk_tail(types, node, &mut |leaf| {
-        if is_type_value(types, leaf) {
+        // A `type` box holds a node address too, filled when the call runs.
+        if is_type_value(types, leaf)
+            || read::read_kind(types, leaf) == read::Read::Container(types.type_)
+        {
             Ok(leaf)
         } else {
             Err(ParseError::TypeMismatch)
