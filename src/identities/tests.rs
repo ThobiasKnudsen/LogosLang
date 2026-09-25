@@ -2776,6 +2776,50 @@ fn shared_stands_first_on_the_members_binding() {
 }
 
 #[test]
+fn a_shared_name_in_a_function_is_one_place_across_its_calls() {
+    let counter = "f := fn () -> i32 ( shared mut n := i32 0, n = n + 1, n ),\n";
+    assert_eq!(run_script(&format!("{counter}f(), f(), f()")), 3);
+    assert_eq!(run_script(&format!("{counter}f.compile(), f(), f(), f()")), 3);
+    // Each function owns its own place, whatever the name.
+    assert_eq!(
+        run_script(
+            "f := fn () -> i32 ( shared mut n := i32 0, n = n + 1, n ),\n\
+             g := fn () -> i32 ( shared mut n := i32 100, n = n + 1, n ),\n\
+             f(), g(), f(), g() + f()"
+        ),
+        105
+    );
+    // A loop body inside the function names the function's place too.
+    assert_eq!(
+        run_script(
+            "f := fn () -> i32 ( mut t := i32 0, for i in 0..3 ( shared mut n := i32 0, n = n + 1, t = n ), t ),\n\
+             f(), f()"
+        ),
+        6
+    );
+    // Without `mut` the name is not written, but a map behind it is.
+    assert_eq!(
+        run_script(
+            "f := fn (k := i32 ?, put := i32 ?) -> i32 ( shared m := hashmap i32 -> i32, if put == 1 ( m[k] = k * k ), m[k] ),\n\
+             f(3, 1), f(4, 1), f(3, 0)"
+        ),
+        9
+    );
+    assert!(matches!(
+        script_parse_err("f := fn () -> i32 ( shared n := i32 0, n = 1, n )"),
+        ParseError::NotMutable(_)
+    ));
+    assert_eq!(
+        script_parse_err("f := fn (k := i32 ?) -> i32 ( shared n := k, n )"),
+        ParseError::SharedInitReadsCall
+    );
+    assert_eq!(
+        script_parse_err("f := fn () -> i32 ( x := i32 1, shared n := x, n )"),
+        ParseError::SharedInitReadsCall
+    );
+}
+
+#[test]
 fn a_name_is_written_only_if_declared_mut() {
     assert_eq!(run_script("mut x := i32 5,\nx = 6,\nx"), 6);
     assert_eq!(run_script("pub mut x := i32 5,\nx = 6,\nx"), 6);

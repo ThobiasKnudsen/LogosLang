@@ -174,7 +174,10 @@ pub fn parse_message(e: &ParseError) -> String {
             "a type body's own lines only fill slots with `=`; a member, shared or per instance, is declared inside `fields = (…)`".into()
         }
         ParseError::SharedOutsideFieldsBlock => {
-            "`shared` marks a member inside `fields = (…)` and stands nowhere else".into()
+            "`shared` marks a member inside `fields = (…)` or a name in a function body, and stands nowhere else".into()
+        }
+        ParseError::SharedInitReadsCall => {
+            "a `shared` name's value is made once, when the function is defined, so it cannot use the function's parameters or locals".into()
         }
         ParseError::SharedNeedsDeclaration => {
             "`shared` must be followed by a declaration, `shared name := value`".into()

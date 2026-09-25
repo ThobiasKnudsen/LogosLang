@@ -364,6 +364,27 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
 }
 
 #[test]
+fn a_shared_name_in_a_function_is_made_once_at_the_definition() {
+    let src = "f := fn () -> i32 ( shared n := (print «made», i32 5), n ), \
+               print «defined», f(), f(), f()";
+    let out = logos().arg(src).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "made\ndefined\n5\n");
+    // A type built per call reads the name, and the second call finds the first's.
+    let src = "get := fn (t := type ?) -> type ( shared m := hashmap type -> type, mut r := m[t], \
+               if r != ? return r, print «miss», r = type ( fields = ( x := t ?, shared seen := m ) ), \
+               m[t] = r, r ), get(i32) == get(i32)";
+    let out = logos().arg(src).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "miss\ntrue\n");
+    // An owning value is freed when the program ends, not at each call's end.
+    let src = "f := fn () -> i32 ( shared p := alloc 1 of i32 7, p@ ), f() + f()";
+    let out = logos().arg(src).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "14\n");
+}
+
+#[test]
 fn next_power_of_two_is_written_in_logos() {
     for (n, want) in [(0, 1), (1, 1), (5, 8), (8, 8), (9, 16)] {
         let out = logos()

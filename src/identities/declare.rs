@@ -73,6 +73,12 @@ pub(crate) unsafe fn declared_of(node: DyadPtr) -> DyadPtr {
     *((*node).value as *const DyadPtr).add(DECL_DECLARED)
 }
 
+/// # Safety
+/// `node` must be a declare node as [`build`] lays it out.
+pub(crate) unsafe fn set_declared(node: DyadPtr, declared: DyadPtr) {
+    *((*node).value as *mut DyadPtr).add(DECL_DECLARED) = declared;
+}
+
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid declare node; its declared slot is a valid dyad.
     unsafe {

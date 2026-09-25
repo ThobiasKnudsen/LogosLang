@@ -1120,8 +1120,11 @@ pub enum ParseError {
     /// A bare `:=` line in a type body: members are declared inside
     /// `fields = (…)`.
     MemberOutsideFieldsBlock,
-    /// `shared` outside a `fields = (…)` block.
+    /// `shared` outside a `fields = (…)` block and outside a function body.
     SharedOutsideFieldsBlock,
+    /// A `shared` name's initializer in a function body read a parameter or
+    /// local: it runs once, at the definition, where no call is running.
+    SharedInitReadsCall,
     /// `shared` not followed by a `name := value` declaration.
     SharedNeedsDeclaration,
     /// A slot word left of `=` where no type is being defined.
@@ -1602,6 +1605,10 @@ pub struct Parser<'a> {
     /// While a `shared` line of a fields block is read, the frame depth a
     /// `fn` written as the member's value opens at: that `fn` takes `this`.
     member_fn_depth: Option<usize>,
+    /// While the initializer of a `shared` name in a function body parses: the
+    /// frame depth it stands at. It runs once, at the definition, so its places
+    /// are global and no call's slot is in reach (DESIGN ›Two muts, and the storage partition‹).
+    shared_init: Option<usize>,
 }
 
 /// The cells of a held run body being constructed, served by the cursor's
@@ -1751,6 +1758,7 @@ impl<'a> Parser<'a> {
             held_depth: 0,
             narrow_next: None,
             member_fn_depth: None,
+            shared_init: None,
         }
     }
 
@@ -1836,7 +1844,9 @@ impl<'a> Parser<'a> {
     /// the parameters, its storage per call; at top level an absolute global
     /// blob. The value is a `FRAME_TAG` offset or a real address respectively.
     pub(crate) fn alloc_local(&mut self, ty_node: DyadPtr, width: usize) -> DyadPtr {
-        let place = if self.frames.len() <= self.held_depth {
+        let place = if self.frames.len() <= self.held_depth
+            || self.shared_init == Some(self.frames.len())
+        {
             // Tagged as storage, so a place and a definition's record are
             // told apart everywhere, not only where a frame exists.
             crate::dyad::global_place(self.rt.store.alloc_bytes(&vec![0u8; width]))
@@ -1859,6 +1869,9 @@ impl<'a> Parser<'a> {
     unsafe fn check_capture(&self, node: DyadPtr) -> Result<(), ParseError> {
         let node = self.types.through(node);
         if let Some((depth, _)) = crate::dyad::frame_ref((*node).value) {
+            if self.shared_init.is_some_and(|at| depth <= at) {
+                return Err(ParseError::SharedInitReadsCall);
+            }
             if depth != self.frames.len() {
                 return Err(ParseError::CapturedLocal);
             }
@@ -5726,13 +5739,64 @@ impl<'a> Parser<'a> {
         Ok(self.rt.store.alloc_raw(self.types.comment_, text_node.cast()))
     }
 
-    /// `name := value`: the name is declared before the value parses, so the
-    /// value can refer to it, and the fixpoint then makes the placeholder BE
-    /// the value. Legal only opening its expression; anywhere else it declines.
+    /// `name := value`, or in a function body `shared name := value`: one place
+    /// owned by the function, the same for every call, its value made once
+    /// here at the definition; the body's own line then only names it.
     pub(crate) fn construct_decl(
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
+        if !self.in_fn_body() || !self.marked_shared(tape) {
+            return self.declare_here(tape);
+        }
+        let saved_init = self.shared_init.replace(self.frames.len());
+        let saved_runtime_depth = std::mem::replace(&mut self.runtime_depth, 0);
+        let built = self.declare_here(tape);
+        self.shared_init = saved_init;
+        self.runtime_depth = saved_runtime_depth;
+        if !matches!(built?, Constructed::Placed) {
+            return Ok(Constructed::Decline);
+        }
+        let node = tape.at(0).expect("the declaration was just placed").dyad;
+        self.drain()?;
+        // SAFETY: `node` is the declare node just built; its binding is a binding dyad from the store.
+        unsafe {
+            self.run_on_pass(node).map_err(ParseError::Run)?;
+            let named = self.types.through(crate::identities::declare::binding_of(node));
+            crate::identities::declare::set_declared(node, named);
+        }
+        Ok(Constructed::Placed)
+    }
+
+    /// A function body's own lines, not a type's built inside it at run.
+    pub(crate) fn in_fn_body(&self) -> bool {
+        self.frames.len() > self.held_depth
+    }
+
+    /// The gate words left of the name being declared include `shared`.
+    fn marked_shared(&self, tape: &ParsingTape) -> bool {
+        let t = self.types;
+        let mut k = -2;
+        while let Some(cell) = tape.at(k) {
+            if cell.constructed {
+                return false;
+            }
+            let id = cell.identity(t);
+            if id == t.shared_ {
+                return true;
+            }
+            if id != t.mut_ && id != t.pub_ && id != t.immut_ {
+                return false;
+            }
+            k -= 1;
+        }
+        false
+    }
+
+    /// `name := value`: the name is declared before the value parses, so the
+    /// value can refer to it, and the fixpoint then makes the placeholder BE
+    /// the value. Legal only opening its expression; anywhere else it declines.
+    fn declare_here(&mut self, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
         // The name is the cell to the left: a spelling, or the node `regex «…»`
         // placed, whose text is a pattern; anything else declines.
         let Some(tok) = tape.at(-1).copied() else {
@@ -5877,7 +5941,13 @@ impl<'a> Parser<'a> {
                     self.types,
                     free_node,
                 );
-                self.open.last_mut().expect("a scope's defer list is open").defers.push(defer_node);
+                // A shared place lives as long as the program, so the root frees it.
+                let scope = if self.shared_init == Some(self.frames.len()) {
+                    0
+                } else {
+                    self.open.len() - 1
+                };
+                self.open[scope].defers.push(defer_node);
                 init
             } else if (*read).ty != self.types.rational
                 && matches!(
