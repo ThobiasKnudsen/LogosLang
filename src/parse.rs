@@ -1730,7 +1730,11 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `node` must be a valid dyad this parser built into its store.
     unsafe fn run_on_pass(&mut self, node: DyadPtr) -> Result<i64, crate::run::RunError> {
-        let host = crate::run::Host { parser: (self as *mut Self).cast(), mint: Self::mint_host };
+        let host = crate::run::Host {
+            parser: (self as *mut Self).cast(),
+            lex_on: Self::lex_on,
+            mint: Self::mint_host,
+        };
         // SAFETY: `node` is a valid dyad in the store (the caller's contract).
         self.rt.hosting(&self.scopes, self.trie, Some(host), |rt| unsafe { rt.run(node) })
     }
@@ -2118,17 +2122,10 @@ impl<'a> Parser<'a> {
             self.scalar_value(crate::identities::numtype::NumType::U64, this as usize as i64);
         let call = build_call(self.rt.store, f, &[handle, this_arg]);
         // Inside the call, `caller.scope` reads the pass's position.
-        self.rt.enter_constructor();
-        let reach = crate::run::Reach {
-            tape: tape as *mut ParsingTape,
-            parser: self as *mut Self as *mut (),
-            lex_on: Self::lex_on,
-        };
-        let outer = self.rt.set_reach(Some(reach));
+        let outer = self.rt.enter_constructor(tape);
         // SAFETY: `call` was just built into the store; the tape and the store are reached only through the natives until `run` returns.
         let out = unsafe { self.run_on_pass(call) };
-        self.rt.set_reach(outer);
-        self.rt.leave_constructor();
+        self.rt.leave_constructor(outer);
         match out {
             Ok(_) => Ok(Constructed::Placed),
             // A cell lexed on demand failed to parse: its own error, where it stands.
@@ -2141,8 +2138,8 @@ impl<'a> Parser<'a> {
     /// built-in reader (DESIGN ›The scope's constructor is the driver‹).
     ///
     /// # Safety
-    /// `parser` must be the parser that set this reach, and `tape` the tape it handed the
-    /// constructor; both outlive the constructor's run, which is the only caller.
+    /// `parser` must be the parser hosting the run, and `tape` the tape it handed the
+    /// running constructor; both outlive the constructor's run, which is the only caller.
     unsafe fn lex_on(parser: *mut (), tape: *mut ParsingTape, k: isize) -> Result<(), ParseError> {
         // SAFETY: as this function's own contract.
         let (parser, tape) = unsafe { (&mut *(parser as *mut Self), &mut *tape) };

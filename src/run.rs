@@ -318,26 +318,10 @@ pub struct Runtime<'a> {
     /// How many Logos constructors the parser is running through this runtime;
     /// `caller.scope` answers only inside one.
     constructing: u32,
-    /// Set only while a Logos constructor runs during the parse.
-    reach: Option<Reach>,
+    /// The driver's tape the innermost running Logos constructor was handed: a read
+    /// past its frontier lexes on demand (DESIGN ›The scope's constructor is the driver‹).
+    ctor_tape: Option<*mut crate::parse::ParsingTape>,
 }
-
-/// The driver's tape a Logos constructor was handed, and how to lex it on: a read
-/// past its frontier lexes on demand (DESIGN ›The scope's constructor is the driver‹).
-#[derive(Clone, Copy)]
-pub(crate) struct Reach {
-    pub(crate) tape: *mut crate::parse::ParsingTape,
-    /// The parser running the constructor, erased so the runtime needs no lifetime of it.
-    pub(crate) parser: *mut (),
-    pub(crate) lex_on: LexOn,
-}
-
-/// Lexes `tape` on until it holds the cell `k` right of its center, or a boundary comes first.
-pub(crate) type LexOn = unsafe fn(
-    *mut (),
-    *mut crate::parse::ParsingTape,
-    isize,
-) -> Result<(), crate::parse::ParseError>;
 
 /// What `lex «…»` lexes against. Raw, because the parser owns both and the
 /// runtime inside it; set only by [`Runtime::hosting`], which restores the one
@@ -349,12 +333,19 @@ struct Lexer {
     host: Option<Host>,
 }
 
-/// The parser running the pass, which builds a held `type (…)` when its node
-/// runs: `mint(parser, node)` yields the new type's address. DESIGN ›A type is
-/// a comptime value, resolved in the pass‹.
+/// The parser running the pass, erased so the runtime needs no lifetime of it, and
+/// its two ways back in.
 #[derive(Clone, Copy)]
 pub(crate) struct Host {
     pub(crate) parser: *mut (),
+    /// Lexes a tape on until it holds the cell `k` right of its center, or a boundary comes first.
+    pub(crate) lex_on: unsafe fn(
+        *mut (),
+        *mut crate::parse::ParsingTape,
+        isize,
+    ) -> Result<(), crate::parse::ParseError>,
+    /// Builds a held `type (…)` when its node runs, yielding the new type's address.
+    /// DESIGN ›A type is a comptime value, resolved in the pass‹.
     pub(crate) mint: unsafe fn(*mut (), DyadPtr) -> Result<i64, RunError>,
 }
 
@@ -380,12 +371,12 @@ impl<'a> Runtime<'a> {
             lexer: None,
             fragments: Vec::new(),
             constructing: 0,
-            reach: None,
+            ctor_tape: None,
         }
     }
 
     /// Run `f` with the parser's scopes and index attached for exactly this call.
-    /// With `host`, the parser that builds a held `type (…)` when one runs.
+    /// With `host`, the parser that lexes a constructor's tape on and builds a held `type (…)`.
     pub(crate) fn hosting<R>(
         &mut self,
         scopes: &crate::parse::ScopeStack,
@@ -402,11 +393,6 @@ impl<'a> Runtime<'a> {
         f(guard.0)
     }
 
-    /// Hands back the reach it replaces, for the caller to put back when its constructor returns.
-    pub(crate) fn set_reach(&mut self, reach: Option<Reach>) -> Option<Reach> {
-        std::mem::replace(&mut self.reach, reach)
-    }
-
     /// Lexes `tape` on to the cell `k` when it is the tape a running constructor was
     /// handed; any other tape, and a read the tape already holds, is left as it stands.
     ///
@@ -417,13 +403,14 @@ impl<'a> Runtime<'a> {
         tape: *mut crate::parse::ParsingTape,
         k: isize,
     ) -> Result<(), RunError> {
-        let Some(reach) = self.reach else { return Ok(()) };
-        if k <= 0 || reach.tape != tape || (*tape).at(k).is_some() {
+        if k <= 0 || self.ctor_tape != Some(tape) || (*tape).at(k).is_some() {
             return Ok(());
         }
-        // SAFETY: `set_reach` is called only by the parser around a constructor's run,
-        // with itself and the tape it handed, both alive until the run returns.
-        (reach.lex_on)(reach.parser, tape, k).map_err(|e| RunError::Parse(Box::new(e)))
+        let Some(host) = self.lexer.and_then(|l| l.host) else { return Ok(()) };
+        // SAFETY: the host is the parser that owns this runtime and is running it, set by
+        // `hosting` for exactly this call; `ctor_tape` is the tape it handed the running
+        // constructor, alive until that constructor's run returns.
+        (host.lex_on)(host.parser, tape, k).map_err(|e| RunError::Parse(Box::new(e)))
     }
 
     /// Build the held `type (…)` `node` through the parser running the pass.
@@ -440,13 +427,20 @@ impl<'a> Runtime<'a> {
         (host.mint)(host.parser, node)
     }
 
-    /// Until the matching [`Runtime::leave_constructor`], `caller.scope` answers.
-    pub(crate) fn enter_constructor(&mut self) {
+    /// Until the matching [`Runtime::leave_constructor`], `caller.scope` answers and a
+    /// read of `tape` past its frontier lexes on. Hands back the tape it replaces.
+    pub(crate) fn enter_constructor(
+        &mut self,
+        tape: *mut crate::parse::ParsingTape,
+    ) -> Option<*mut crate::parse::ParsingTape> {
         self.constructing += 1;
+        self.ctor_tape.replace(tape)
     }
 
-    pub(crate) fn leave_constructor(&mut self) {
+    /// Takes the tape [`Runtime::enter_constructor`] handed back.
+    pub(crate) fn leave_constructor(&mut self, outer: Option<*mut crate::parse::ParsingTape>) {
         self.constructing -= 1;
+        self.ctor_tape = outer;
     }
 
     /// The scope open at the pass's position, for `caller.scope` inside a
