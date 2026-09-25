@@ -1126,11 +1126,12 @@ pub enum ParseError {
     /// A bare `:=` line in a type body: members are declared inside
     /// `fields = (…)`.
     MemberOutsideFieldsBlock,
-    /// `shared` outside a `fields = (…)` block and outside a function body.
-    SharedOutsideFieldsBlock,
-    /// A `shared` name's initializer in a function body read a parameter or
-    /// local: it runs once, at the definition, where no call is running.
-    SharedInitReadsCall,
+    /// `shared` on a parameter or on a type body's own line.
+    SharedMisplaced,
+    /// A `shared` name's initializer read a name that holds no value where it
+    /// runs, once at the definition: a parameter or local of the function
+    /// around it, or a name declared in the loop or branch around it.
+    SharedInitReadsUnmade,
     /// `shared` not followed by a `name := value` declaration.
     SharedNeedsDeclaration,
     /// A slot word left of `=` where no type is being defined.
@@ -1615,10 +1616,13 @@ pub struct Parser<'a> {
     /// While a `shared` line of a fields block is read, the frame depth a
     /// `fn` written as the member's value opens at: that `fn` takes `this`.
     member_fn_depth: Option<usize>,
-    /// While the initializer of a `shared` name in a function body parses: the
-    /// frame depth it stands at. It runs once, at the definition, so its places
-    /// are global and no call's slot is in reach (DESIGN ›Two muts, and the storage partition‹).
+    /// While the initializer of a `shared` name parses: the frame depth it
+    /// stands at. It runs once, at the definition, so its places are global
+    /// and no call's slot is in reach (DESIGN ›Two muts, and the storage partition‹).
     shared_init: Option<usize>,
+    /// Names declared outside any function in a body the pass does not run
+    /// in parse order, a loop or a branch: at parse they hold no value yet.
+    unmade: HashSet<DyadPtr>,
 }
 
 /// The cells of a held run body being constructed, served by the cursor's
@@ -1770,6 +1774,7 @@ impl<'a> Parser<'a> {
             narrow_next: None,
             member_fn_depth: None,
             shared_init: None,
+            unmade: HashSet::new(),
         }
     }
 
@@ -1881,11 +1886,20 @@ impl<'a> Parser<'a> {
         let node = self.types.through(node);
         if let Some((depth, _)) = crate::dyad::frame_ref((*node).value) {
             if self.shared_init.is_some_and(|at| depth <= at) {
-                return Err(ParseError::SharedInitReadsCall);
+                return Err(ParseError::SharedInitReadsUnmade);
             }
             if depth != self.frames.len() {
                 return Err(ParseError::CapturedLocal);
             }
+        }
+        Ok(())
+    }
+
+    /// A `shared` initializer runs at parse, where a name of the loop or
+    /// branch around it has no value yet.
+    fn check_made(&self, binding: DyadPtr) -> Result<(), ParseError> {
+        if self.shared_init.is_some() && self.unmade.contains(&binding) {
+            return Err(ParseError::SharedInitReadsUnmade);
         }
         Ok(())
     }
@@ -2546,6 +2560,7 @@ impl<'a> Parser<'a> {
                 };
                 // SAFETY: `id` is a resolved dyad from the store.
                 unsafe { self.check_capture(id)? };
+                self.check_made(binding)?;
                 self.note_outer_read(binding);
                 Ok(if binding.is_null() { id } else { binding })
             }
@@ -2785,12 +2800,12 @@ impl<'a> Parser<'a> {
             let source = self.source;
             let name = &source[start..start + len];
             let word = self.scopes.resolve(self.trie, name).ok().map(|r| r.identity);
-            // One place stored with the type, not a field of the layout; legal
-            // in a `fields = (…)` block alone (DESIGN ›Two muts, and the storage partition‹).
+            // One place stored with the type, not a field of the layout; never a
+            // parameter, which each call fills (DESIGN ›Two muts, and the storage partition‹).
             if word == Some(self.types.shared_) {
                 if !relaxed {
                     self.pos = start;
-                    return Err(ParseError::SharedOutsideFieldsBlock);
+                    return Err(ParseError::SharedMisplaced);
                 }
                 if let Some(def) = self.definitions.last_mut() {
                     def.block = Some((scope, fields.clone()));
@@ -2896,7 +2911,7 @@ impl<'a> Parser<'a> {
             Some(def) => def.scope,
             None => {
                 self.pos = at;
-                return Err(ParseError::SharedOutsideFieldsBlock);
+                return Err(ParseError::SharedMisplaced);
             }
         };
         if self.consume_token(self.types.declare_tok) {
@@ -4492,12 +4507,12 @@ impl<'a> Parser<'a> {
         // inside; the loop variable, declared in the scope pushed next, is inside.
         self.scopes.push_barrier();
         self.scopes.push(scope);
+        // Parse-time rebinding is off inside a repeated body, the counter's name included.
+        self.runtime_depth += 1;
         if let Some((nstart, nlen)) = name {
             let source = self.source;
             self.declare_name(&source[nstart..nstart + nlen], var, nstart)?;
         }
-        // Parse-time rebinding is off inside a repeated body.
-        self.runtime_depth += 1;
         self.expect_open()?;
         let body = self.parse_sequence()?;
         self.expect_close()?;
@@ -5274,6 +5289,7 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
+            self.check_made(r.binding)?;
             self.note_outer_read(r.binding);
             (r.identity, ended)
         };
@@ -5355,7 +5371,12 @@ impl<'a> Parser<'a> {
     fn mint_binding(&mut self, identity: DyadPtr, scope: DyadPtr, spelling: &[u8]) -> DyadPtr {
         let name =
             crate::identities::string::build_text(self.rt.store, self.types.string_, spelling);
-        Binding::alloc(self.rt.store, self.types.binding_, Binding::new(identity, scope, name))
+        let binding =
+            Binding::alloc(self.rt.store, self.types.binding_, Binding::new(identity, scope, name));
+        if self.runtime_depth > 0 && !self.in_fn_body() {
+            self.unmade.insert(binding);
+        }
+        binding
     }
 
     /// One binding per declared name, a dyad of type `binding` (DESIGN ›`mut` is
@@ -5846,14 +5867,15 @@ impl<'a> Parser<'a> {
         Ok(self.rt.store.alloc_raw(self.types.comment_, text_node.cast()))
     }
 
-    /// `name := value`, or in a function body `shared name := value`: one place
-    /// owned by the function, the same for every call, its value made once
-    /// here at the definition; the body's own line then only names it.
+    /// `name := value`, or `shared name := value`: one place for every context
+    /// that reaches the line, every call of the function around it and every
+    /// pass of the loop around it, its value made once here at the definition;
+    /// the line itself then only names it.
     pub(crate) fn construct_decl(
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        if !self.in_fn_body() || !self.marked_shared(tape) {
+        if !self.marked_shared(tape) {
             return self.declare_here(tape);
         }
         let saved_init = self.shared_init.replace(self.frames.len());
@@ -5876,8 +5898,13 @@ impl<'a> Parser<'a> {
     }
 
     /// A function body's own lines, not a type's built inside it at run.
-    pub(crate) fn in_fn_body(&self) -> bool {
+    fn in_fn_body(&self) -> bool {
         self.frames.len() > self.held_depth
+    }
+
+    /// A type body's own lines, where a line fills a slot.
+    pub(crate) fn in_type_body_lines(&self) -> bool {
+        self.definitions.last().is_some_and(|def| self.scopes.current() == Some(def.scope))
     }
 
     /// The gate words left of the name being declared include `shared`.

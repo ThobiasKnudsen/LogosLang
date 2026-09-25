@@ -765,7 +765,7 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"t := type (fields = (a := i32 ?), fields = (b := i32 ?))\n", "one `fields"),
         (b"g := type (y := 3)\n", "inside `fields"),
         (b"g := type (fields = (shared))\n", "followed by a declaration"),
-        (b"f := fn (shared a := i32 ?) -> void ( a )\n", "nowhere else"),
+        (b"f := fn (shared a := i32 ?) -> void ( a )\n", "not stand on a parameter"),
         (b"parse_rank = 3\n", "unknown name"),
         (b"d := i32 5\ndrop = 3\n", "a line of the type body itself"),
         (b"t := type (parse = ( parse_rank = 3 ))\n", "a line of the type body itself"),
@@ -1849,6 +1849,30 @@ fn an_import_tail_runs_once() {
     let (echoes, stderr) =
         repl(b"import ./tests/fixtures/counter.logos\nimport ./tests/fixtures/counter.logos\nc@\n");
     assert_eq!(echoes, ["1", "1", "1"], "stderr: {stderr}");
+}
+
+#[test]
+fn a_shared_name_in_a_file_imported_twice_is_one_place() {
+    let out = logos()
+        .arg(
+            "import tests/fixtures/shared_importer_a.logos, \
+             import tests/fixtures/shared_importer_b.logos, \
+             import tests/fixtures/shared_counter.logos, print «{a} {b} {count}», 0",
+        )
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "loaded\n1 2 2\n0\n");
+}
+
+#[test]
+fn a_shared_name_in_a_top_level_loop_is_made_once() {
+    let src = "print «a», mut t := i32 0, \
+               for i in 0..3 ( shared p := (print «made», alloc 1 of i32 7), t = t + p@ ), \
+               print «end», t";
+    let out = logos().arg(src).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "a\nmade\nend\n21\n");
 }
 
 #[test]

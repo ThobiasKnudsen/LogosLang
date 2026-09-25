@@ -2772,7 +2772,55 @@ fn shared_stands_first_on_the_members_binding() {
             &[core.shared_, core.mut_]
         );
     }
-    assert_eq!(parse_err("shared x := 5"), ParseError::SharedOutsideFieldsBlock);
+    assert_eq!(parse_err("t := type ( shared x := 5 )"), ParseError::SharedMisplaced);
+    assert_eq!(parse_err("f := fn (shared x := i32 ?) -> i32 ( x )"), ParseError::SharedMisplaced);
+}
+
+#[test]
+fn a_shared_name_at_top_level_is_one_place_for_the_run() {
+    assert_eq!(run_script("shared mut n := i32 0,\nn = n + 1,\nn = n + 1,\nn"), 2);
+    assert_eq!(run_script("shared m := hashmap i32 -> i32,\nm[2] = 4,\nm[2]"), 4);
+    // In a loop the line names one place across the passes, made once.
+    assert_eq!(
+        run_script(
+            "mut t := i32 0,\nfor i in 0..5 ( shared mut k := i32 0, k = k + 1, t = k ),\nt"
+        ),
+        5
+    );
+    assert_eq!(
+        run_script(
+            "mut j := i32 0, mut t := i32 0,\n\
+             while j < 4 ( shared mut k := i32 0, k = k + 1, t = k, j = j + 1 ),\nt"
+        ),
+        4
+    );
+    // An unmarked name in the same loop is made again on every pass.
+    assert_eq!(
+        run_script(
+            "mut t := i32 0,\n\
+             for i in 0..3 ( shared mut k := i32 0, mut x := i32 0, k = k + 1, x = x + 1, t = t + k * 10 + x ),\nt"
+        ),
+        63
+    );
+    // Its value is made at the definition, so it reads names made before it.
+    assert_eq!(
+        run_script(
+            "a := i32 7,\nmut t := i32 0,\nfor i in 0..3 ( shared k := a + 1, t = t + k ),\nt"
+        ),
+        24
+    );
+    assert_eq!(
+        script_parse_err("for i in 0..3 ( shared k := i, k )"),
+        ParseError::SharedInitReadsUnmade
+    );
+    assert_eq!(
+        script_parse_err("for i in 0..3 ( x := i32 1, shared k := x, k )"),
+        ParseError::SharedInitReadsUnmade
+    );
+    assert_eq!(
+        script_parse_err("mut c := i32 1,\nif c == 1 ( x := i32 5, shared k := x, k )"),
+        ParseError::SharedInitReadsUnmade
+    );
 }
 
 #[test]
@@ -2811,11 +2859,11 @@ fn a_shared_name_in_a_function_is_one_place_across_its_calls() {
     ));
     assert_eq!(
         script_parse_err("f := fn (k := i32 ?) -> i32 ( shared n := k, n )"),
-        ParseError::SharedInitReadsCall
+        ParseError::SharedInitReadsUnmade
     );
     assert_eq!(
         script_parse_err("f := fn () -> i32 ( x := i32 1, shared n := x, n )"),
-        ParseError::SharedInitReadsCall
+        ParseError::SharedInitReadsUnmade
     );
 }
 

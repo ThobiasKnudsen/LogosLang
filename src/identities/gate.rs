@@ -7,7 +7,7 @@
 //! text order. Unmarked stays private and unwritable, so there is no
 //! `private` word to write; `immut` vetoes the one write a field gets by
 //! default, its constructor's fill. `shared` is read by the fields block's own reader,
-//! and in a function body the declaration's own constructor reads it.
+//! and anywhere else by the declaration's own constructor.
 //! DESIGN ›Read and write are one mechanism across the system‹
 
 use super::{meta, Cx};
@@ -39,15 +39,15 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     (pub_, mut_, immut_, shared_)
 }
 
-/// A fields block's reader takes the word itself; in a function body it
-/// gates a name as the other words do; anywhere else it stands for nothing.
+/// A fields block's reader takes the word itself; a type body's own lines
+/// fill slots, so there it stands for nothing.
 fn outside_block(
     p: &mut crate::parse::Parser,
     id: DyadPtr,
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<Constructed, ParseError> {
-    if !p.in_fn_body() {
-        return Err(ParseError::SharedOutsideFieldsBlock);
+    if p.in_type_body_lines() {
+        return Err(ParseError::SharedMisplaced);
     }
     construct(p, id, tape)
 }
