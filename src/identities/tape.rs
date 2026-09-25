@@ -766,6 +766,29 @@ unsafe fn named_dyad(rt: &mut Runtime, read: DyadPtr) -> Option<Result<DyadPtr, 
     None
 }
 
+/// A line a check narrowed to a number type reads as that type: a line of a type within it
+/// is converted when the call runs, which keeps its value. DESIGN ›A tape read checked
+/// against a number type reads as that number‹.
+///
+/// # Safety
+/// `read` must be the placed call's argument, `operand` the line it names.
+unsafe fn narrowed_operand(rt: &mut Runtime, read: DyadPtr, operand: DyadPtr) -> DyadPtr {
+    let types: *const Core = rt.types();
+    let types = &*types;
+    if (*read).ty != types.tape.cell_number {
+        return operand;
+    }
+    // SAFETY: a checked number read's fourth operand is the number type it was checked against.
+    let to = *((*read).value as *const DyadPtr).add(3);
+    match numtype_of(types, operand) {
+        Operand::Concrete(from) if types.numtypes[from as usize] != to => {
+            let from = types.numtypes[from as usize];
+            super::convert::build_convert(rt.store(), types, operand, from, to)
+        }
+        _ => operand,
+    }
+}
+
 /// A literal molds to the parameter's type; any other operand must already be of it.
 ///
 /// # Safety
@@ -816,6 +839,7 @@ fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
                 let bracket =
                     (*operand).ty == types.scope || (*operand).ty == types.square_brackets;
                 args.push(if scalar {
+                    let operand = narrowed_operand(rt, arg_at(i), operand);
                     typed_operand(rt, operand, ty)?
                 } else if bracket {
                     let (op, leaf) = (types.tape.bracket_arg, types.tape.bracket_arg_leaf);
@@ -847,9 +871,10 @@ fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 }
 
 /// The argument a node's address gives a placed call: for a type's own fresh node, a copy
-/// made each time the call runs; for a name of a type a Logos `parse` builds, that name,
-/// read when the call runs; any other node by a `dyad` view. DESIGN ›A name of a type with
-/// an instances' `parse` wakes it, as the instance does‹.
+/// made each time the call runs; for a name or a call yielding a node of a type a Logos
+/// `parse` builds, that expression, run when the call runs; any other node by a `dyad`
+/// view. DESIGN ›A name of a type with an instances' `parse` wakes it, as the
+/// instance does‹.
 ///
 /// # Safety
 /// `d` must be what a `dyad`-valued argument yielded: null or a node's address.
@@ -861,7 +886,7 @@ unsafe fn node_operand(rt: &mut Runtime, d: DyadPtr) -> DyadPtr {
     let store = rt.store();
     if !d.is_null()
         && store.contains(d)
-        && crate::dyad::is_place((*d).value)
+        && super::read::read_kind(&*types, d) != super::read::Read::Node
         && super::node_type_of(&*types, d).is_some()
     {
         return d;

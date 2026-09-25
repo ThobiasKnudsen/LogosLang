@@ -1130,7 +1130,7 @@ pub(crate) unsafe fn commit_call_args(
                 let ok = match read::read_kind(types, *arg) {
                     read::Read::Identity | read::Read::Address => true,
                     read::Read::Container(c) => !c.is_null(),
-                    _ => false,
+                    _ => node_type_of(types, *arg).is_some(),
                 };
                 if !ok {
                     return Err(ParseError::TypeMismatch);
