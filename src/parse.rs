@@ -1011,6 +1011,8 @@ struct OpenType {
     scope: DyadPtr,
     /// The six slot words as this definition's own markers, declared into the body's scope.
     slots: [DyadPtr; 6],
+    /// The marker a `shared drop = (…)` line declares; `drop` itself is the core word.
+    drop_marker: DyadPtr,
     parse_rank: f64,
     /// From a `lex_rank = …` line; written onto the declaration's binding at
     /// the close.
@@ -2933,7 +2935,9 @@ impl<'a> Parser<'a> {
     fn is_slot_fill(&self, item: DyadPtr) -> bool {
         // SAFETY: `item` is a declare node from the store.
         let declared = unsafe { crate::identities::declare::declared_of(item) };
-        self.definitions.last().is_some_and(|def| def.slots.contains(&declared))
+        self.definitions
+            .last()
+            .is_some_and(|def| def.slots.contains(&declared) || def.drop_marker == declared)
     }
 
     /// An ordinary scope whose bare lines fill the type's own slots and whose
@@ -2964,10 +2968,17 @@ impl<'a> Parser<'a> {
             unsafe { self.scopes.declare_field(self.trie, name, binding) }
                 .map_err(ParseError::Resolve)?;
         }
+        let head = crate::identities::meta::record(
+            self.rt.store,
+            crate::identities::meta::TYPEREC_TAG,
+            crate::identities::meta::prec::INERT,
+        );
+        let drop_marker = self.rt.store.alloc_raw(self.types.type_, head);
         let scope = self.open_scope();
         self.definitions.push(OpenType {
             scope,
             slots,
+            drop_marker,
             parse_rank: crate::identities::meta::prec::APPLY,
             lex_rank: None,
             assoc: Assoc::Left,
@@ -3368,7 +3379,7 @@ impl<'a> Parser<'a> {
         let types = self.types;
         let def = self.definitions.last().expect("a slot is filled inside a definition");
         let marker = match kind {
-            SlotKind::Drop => unreachable!("the drop slot is refused before it is filled"),
+            SlotKind::Drop => def.drop_marker,
             kind => def.slots[kind as usize],
         };
         crate::identities::declare::build(
@@ -3438,7 +3449,20 @@ impl<'a> Parser<'a> {
                 self.definitions.last_mut().expect("checked above").run_body = body;
                 Ok(self.slot_declare(SlotKind::Run, target, body))
             }
-            _ => unreachable!("`=` reads a bare body for `parse` and `run` only"),
+            SlotKind::Drop if in_block => {
+                // Held as its text and never built or run: the instances' drop is
+                // not in the seed yet (stand-in for #133).
+                let (start, len) = self.body_text_extent()?;
+                let source = self.source;
+                let text = crate::identities::string::build_text(
+                    self.rt.store,
+                    types.string_,
+                    &source.as_bytes()[start - 1..start + len + 1],
+                );
+                Ok(self.slot_declare(SlotKind::Drop, target, text))
+            }
+            SlotKind::Drop => Err(ParseError::DropSlotNotInSeed),
+            _ => unreachable!("`=` reads a bare body for `parse`, `run` and `drop` only"),
         }
     }
 

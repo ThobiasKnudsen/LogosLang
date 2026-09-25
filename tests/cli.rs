@@ -2065,6 +2065,19 @@ fn a_function_in_a_fields_block_reads_this() {
 }
 
 #[test]
+fn the_instances_drop_body_is_accepted_and_held() {
+    // stand-in for #133: the body is kept unbuilt and nothing runs it yet.
+    let (code, stdout, stderr) =
+        run_line("x := type ( fields = ( n := u64 ?, shared drop = ( free this.n ) ) ), 1");
+    assert_eq!((code, stdout.as_str()), (Some(0), "1\n"), "stderr: {stderr}");
+    for src in ["x := type ( drop = ( 1 ) ), 1", "x := type ( fields = ( shared drop = 5 ) ), 1"] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("not in the seed yet"), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn a_field_the_constructor_never_wrote_is_a_checked_error() {
     for src in [
         // The node is used as a value with its field `b` unwritten.

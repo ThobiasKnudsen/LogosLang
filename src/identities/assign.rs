@@ -64,8 +64,14 @@ fn construct(
         return Ok(crate::parse::Constructed::Placed);
     }
     // A `fn …` right of `parse`/`run` is still read as an expression: stand-in for #133.
-    if matches!(slot, Some(crate::parse::SlotKind::Parse | crate::parse::SlotKind::Run))
-        && p.at_open()
+    if matches!(
+        slot,
+        Some(
+            crate::parse::SlotKind::Parse
+                | crate::parse::SlotKind::Run
+                | crate::parse::SlotKind::Drop
+        )
+    ) && p.at_open()
     {
         let node = p.slot_body_fill(slot.expect("matched above"), target)?;
         tape.place(node);
