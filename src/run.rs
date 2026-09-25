@@ -554,7 +554,7 @@ impl<'a> Runtime<'a> {
     ///
     /// # Safety
     /// `node` must be a valid place node.
-    pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> Option<*mut u8> {
+    pub(crate) unsafe fn place_addr(&self, node: DyadPtr) -> Option<*mut u8> {
         let node = self.through(node);
         match frame_ref((*node).value) {
             // The depth is a parse-time capture guard; only the offset matters here.

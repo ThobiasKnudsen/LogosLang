@@ -1162,6 +1162,16 @@ fn a_type_body_in_a_function_is_built_per_call() {
 }
 
 #[test]
+fn a_type_body_in_a_function_declares_fields_from_the_call_s_types() {
+    let (echoes, stderr) = repl(
+        b"mk := fn (t := type ?) -> type ( type ( fields = ( shared e := t, p := @e ?, v := t ? ) ) )\n\
+          mk(u8).fields.e == u8\nk := fn (t := type ?) -> type ( mk(t) )\nk(i32).fields.e == i32\n",
+    );
+    assert_eq!(echoes, ["true", "true"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
 fn the_type_returning_fn_example_runs() {
     let out = logos().args(["import", "examples/type_returning_fn.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));

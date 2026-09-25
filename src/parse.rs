@@ -1595,6 +1595,8 @@ struct Feed {
     cells: Vec<Cell>,
     next: usize,
     base_depth: usize,
+    /// A held `type (…)` builds now, so its parse order is its run order.
+    in_run_order: bool,
 }
 
 /// What `this.f` means inside a held run body under construction: the field's
@@ -3120,7 +3122,7 @@ impl<'a> Parser<'a> {
         let saved_queued = std::mem::take(&mut self.queued);
         let saved_discovering = std::mem::replace(&mut self.discovering, false);
         let saved_run_body = self.run_body.take();
-        let saved_feed = self.feed.replace(Feed { cells, next: 0, base_depth });
+        let saved_feed = self.feed.replace(Feed { cells, next: 0, base_depth, in_run_order: true });
 
         let built = self.parse_type_body(self.types.type_);
         let built_pos = self.pos;
@@ -3725,7 +3727,8 @@ impl<'a> Parser<'a> {
         let saved_queued = std::mem::take(&mut self.queued);
         let saved_discovering = std::mem::replace(&mut self.discovering, false);
         let saved_run_body = self.run_body.take();
-        let saved_feed = self.feed.replace(Feed { cells, next: 0, base_depth });
+        let saved_feed =
+            self.feed.replace(Feed { cells, next: 0, base_depth, in_run_order: false });
 
         let inner = self.construct_run_body_in(ty, key);
         let inner_pos = self.pos;
@@ -6511,22 +6514,29 @@ impl<'a> Parser<'a> {
     /// at the end; a spelling the trie does not know becomes a fresh-name
     /// cell, declared by a following `:=` or reported at the boundary.
     fn lex_cell(&mut self) -> Result<Option<(Cell, usize)>, ParseError> {
-        if self.feed.is_some() {
-            return Ok(self.feed_take().map(|c| (c, c.start)));
-        }
-        self.skip_whitespace();
-        let source = self.source;
-        let Some((cell, next)) =
-            lex_token(&self.scopes, self.trie, self.rt.store, source, self.pos)
-                .map_err(ParseError::Resolve)?
-        else {
-            return Ok(None);
+        let in_run_order = match &self.feed {
+            Some(feed) => feed.in_run_order,
+            None => true,
         };
-        self.pos = next;
+        let cell = if self.feed.is_some() {
+            let Some(cell) = self.feed_take() else { return Ok(None) };
+            cell
+        } else {
+            self.skip_whitespace();
+            let source = self.source;
+            let Some((cell, next)) =
+                lex_token(&self.scopes, self.trie, self.rt.store, source, self.pos)
+                    .map_err(ParseError::Resolve)?
+            else {
+                return Ok(None);
+            };
+            self.pos = next;
+            cell
+        };
         // A box is read by the pass wherever it stands as an operand, and the
         // read is honest only if everything parsed before it has run; so where
         // parse order is run order, its cell is the point the pass runs to.
-        if self.runtime_depth == 0 && !cell.is_fresh() {
+        if in_run_order && self.runtime_depth == 0 && !cell.is_fresh() {
             // SAFETY: the binding the trie resolved is a dyad from the store.
             let is_box = unsafe {
                 matches!(
@@ -6543,7 +6553,8 @@ impl<'a> Parser<'a> {
 
     /// A place holding a type denotes the type it holds, since lexing a box's
     /// cell first ran everything before it (DESIGN ›A type is a comptime
-    /// value‹); in a deferred body, or a frame slot, the place denotes itself.
+    /// value‹); in a deferred body, or a frame slot, the place denotes itself,
+    /// except a slot of the call a held `type (…)` is being built in, which is live.
     fn settled_type(&self, id: DyadPtr) -> DyadPtr {
         if self.runtime_depth > 0 {
             return id;
@@ -6559,8 +6570,15 @@ impl<'a> Parser<'a> {
                 crate::identities::read::Read::Container(t) if !t.is_null() => t,
                 _ => return id,
             };
-            let Some(addr) = crate::dyad::global_ref((*id).value) else {
-                return id;
+            let live_frame = matches!(crate::dyad::frame_ref((*id).value),
+                Some((depth, _)) if depth > 0 && depth == self.held_depth && self.frames.len() == depth);
+            let addr = match crate::dyad::global_ref((*id).value) {
+                Some(addr) => addr,
+                None if live_frame => match self.rt.place_addr(id) {
+                    Some(addr) => addr,
+                    None => return id,
+                },
+                None => return id,
             };
             let held = std::ptr::read_unaligned(addr as *const DyadPtr);
             if held.is_null() || !self.rt.store.contains(held) {
