@@ -1044,12 +1044,15 @@ fn file_mode_runs_each_expression_as_it_parses() {
 }
 
 #[test]
-fn a_type_call_with_a_runtime_argument_is_rejected() {
-    let (_echoes, stderr) = repl(
+fn a_type_call_with_a_runtime_argument_yields_a_type_at_run() {
+    let (echoes, stderr) = repl(
         b"pick := fn (i := i32 ?) -> logos (if (i==0)(i32) else (f64))\n\
-          g := fn (n := i32 ?) -> i32 ( a := pick(n), 1 )\n",
+          g := fn (n := i32 ?) -> i32 ( a := pick(n), if (a == f64) (7) else (3) )\n\
+          g(1)\ng(0)\n\
+          h := fn (n := i32 ?) -> i32 ( x := pick(n) 5, 1 )\n",
     );
-    assert!(stderr.contains("must be evaluable at parse time"), "stderr: {stderr}");
+    assert_eq!(echoes, ["7", "3"], "stderr: {stderr}");
+    assert!(stderr.contains("known only when the program runs"), "stderr: {stderr}");
 }
 
 #[test]

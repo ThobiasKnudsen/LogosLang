@@ -671,8 +671,8 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
             if !out.is_null() && numtype::is_pointer_type(out) {
                 return Operand::Pointer(numtype::pointee_of(out));
             }
-            // A rational result has no machine form.
-            if !out.is_null() && out == types.rational {
+            // A rational result has no machine form; a type result is a node address.
+            if !out.is_null() && (out == types.rational || out == types.type_) {
                 return Operand::NonNumeric;
             }
         }
@@ -777,6 +777,33 @@ pub(crate) unsafe fn type_identity_of(types: &Core, node: DyadPtr) -> Option<Dya
     } else {
         None
     }
+}
+
+/// What a node's run yields is a type's address: a type, a `type` box, a call
+/// of a `-> type` function.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn yields_type(types: &Core, node: DyadPtr) -> bool {
+    match read::read_kind(types, node) {
+        read::Read::Identity => true,
+        read::Read::Container(c) => c == types.type_,
+        read::Read::Executable(read::Dispatch::Call(f)) => {
+            let fields = (*f).value as *const DyadPtr;
+            (*f).ty == types.fn_type
+                && !fields.is_null()
+                && *fields.add(crate::parse::FN_OUTPUT) == types.type_
+        }
+        _ => false,
+    }
+}
+
+/// A `-> type` call's argument the pass can run now: a type, or a literal.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn is_comptime_arg(types: &Core, node: DyadPtr) -> bool {
+    is_type_value(types, node) || matches!(numtype_of(types, node), Operand::Literal)
 }
 
 /// The display spelling of a type value; a type with no spelling of its own shows as `type`.
@@ -1184,10 +1211,7 @@ unsafe fn commit_tail(
 /// `node` is a valid dyad from the store.
 unsafe fn check_type_tail(types: &Core, node: DyadPtr) -> Result<(), ParseError> {
     walk_tail(types, node, &mut |leaf| {
-        // A `type` box holds a node address too, filled when the call runs.
-        if is_type_value(types, leaf)
-            || read::read_kind(types, leaf) == read::Read::Container(types.type_)
-        {
+        if yields_type(types, leaf) {
             Ok(leaf)
         } else {
             Err(ParseError::TypeMismatch)

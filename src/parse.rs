@@ -2200,6 +2200,9 @@ impl<'a> Parser<'a> {
                             {
                                 return Err(ParseError::TypeKnownOnlyAtRun);
                             }
+                            _ if crate::identities::yields_type(types, d) => {
+                                return Err(ParseError::TypeKnownOnlyAtRun);
+                            }
                             _ => None,
                         }
                     }
@@ -4344,7 +4347,8 @@ impl<'a> Parser<'a> {
             if matches!(
                 crate::identities::read::read_kind(self.types, lhs),
                 crate::identities::read::Read::Container(t) if t == self.types.type_ || t == self.types.dyad_
-            ) {
+            ) || crate::identities::yields_type(self.types, lhs)
+            {
                 return Err(ParseError::TypeKnownOnlyAtRun);
             }
             if name == "type" {
@@ -5053,6 +5057,15 @@ impl<'a> Parser<'a> {
             // SAFETY: `callee` is a reduced dyad.
             if unsafe { self.returns_type(callee) } {
                 self.check_call_reads(callee)?;
+                // Inside a body an argument known only at run leaves the call
+                // to run with it, its result a type value at run.
+                let comptime = args.iter().all(|&a| {
+                    // SAFETY: `args` are reduced dyads from the store.
+                    unsafe { crate::identities::is_comptime_arg(types, a) }
+                });
+                if self.runtime_depth > 0 && !comptime {
+                    return Ok(call);
+                }
                 // SAFETY: `call` was just built over reduced dyads.
                 unsafe { self.eval_type_call(call) }
             } else {
@@ -6835,8 +6848,10 @@ impl<'a> Parser<'a> {
         let node_box = unsafe {
             let d = self.types.through(first);
             !d.is_null()
-                && ((*d).ty == self.types.type_ || (*d).ty == self.types.dyad_)
-                && crate::dyad::is_place((*d).value)
+                && (((*d).ty == self.types.type_ || (*d).ty == self.types.dyad_)
+                    && crate::dyad::is_place((*d).value)
+                    || !crate::identities::is_type_value(self.types, d)
+                        && crate::identities::yields_type(self.types, d))
         };
         if node_box {
             ParseError::TypeKnownOnlyAtRun
