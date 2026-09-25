@@ -332,6 +332,10 @@ pub fn run_message(e: &RunError) -> String {
         RunError::NoName => "this cell holds no name".into(),
         RunError::NoFragment => "insert takes a tape fragment".into(),
         RunError::NoThis => "`this` holds no node here".into(),
+        RunError::UnfilledField(i) => format!(
+            "field {} of this node's `fields = (…)` block was never written by its constructor",
+            i + 1
+        ),
         RunError::BadIndex(k) => format!("an index cannot be negative ({k})"),
         RunError::PastEnd { index, size } => {
             format!("index {index} is past the end ({size} items)")

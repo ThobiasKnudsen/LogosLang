@@ -194,7 +194,7 @@ pub(crate) fn build_slot(store: &mut Store, types: &Core, recv: DyadPtr, k: Dyad
 
 /// A value that already yields a cell's address passes as it stands; any other node is
 /// handed by identity, its own address as an `@dyad` value.
-fn cell_arg(store: &mut Store, types: &Core, cell: DyadPtr) -> DyadPtr {
+pub(crate) fn cell_arg(store: &mut Store, types: &Core, cell: DyadPtr) -> DyadPtr {
     // SAFETY: `cell` is a reduced dyad from the store.
     let yields_node = unsafe {
         matches!(numtype_of(types, cell), Operand::Pointer(p) if p == types.dyad_)

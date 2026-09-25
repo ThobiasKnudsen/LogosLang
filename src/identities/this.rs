@@ -66,10 +66,14 @@ pub(crate) unsafe fn build_write(
 ) -> DyadPtr {
     let ops = (*slot).value as *const DyadPtr;
     let (this, k) = (*ops, *ops.add(1));
+    let value = super::tape::cell_arg(store, types, value);
     node(store, types.this.write, types.this.write_leaf, &[this, k, value])
 }
 
-unsafe fn slot_of(rt: &mut Runtime, ops: *const DyadPtr) -> Result<*mut DyadPtr, RunError> {
+unsafe fn slot_of(
+    rt: &mut Runtime,
+    ops: *const DyadPtr,
+) -> Result<(*mut DyadPtr, usize), RunError> {
     let this = rt.run(*ops)? as DyadPtr;
     if this.is_null() {
         return Err(RunError::NoThis);
@@ -82,14 +86,17 @@ unsafe fn slot_of(rt: &mut Runtime, ops: *const DyadPtr) -> Result<*mut DyadPtr,
     if k < 0 {
         return Err(RunError::BadIndex(k));
     }
-    Ok(slots.add(k as usize))
+    Ok((slots.add(k as usize), k as usize))
 }
 
 fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a slot node from the store; `this` holds a node with a slot per field.
     unsafe {
         let ops = (*node).value as *const DyadPtr;
-        let slot = slot_of(rt, ops)?;
+        let (slot, k) = slot_of(rt, ops)?;
+        if (*slot).is_null() {
+            return Err(RunError::UnfilledField(k));
+        }
         Ok(*slot as i64)
     }
 }
@@ -99,7 +106,7 @@ fn run_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: as `run_slot`; the value operand is a reduced dyad.
     unsafe {
         let ops = (*node).value as *const DyadPtr;
-        let slot = slot_of(rt, ops)?;
+        let (slot, _) = slot_of(rt, ops)?;
         let value = rt.run(*ops.add(2))? as DyadPtr;
         *slot = value;
         Ok(0)

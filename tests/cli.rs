@@ -1870,3 +1870,89 @@ fn a_constructors_outcome_is_read_off_its_own_cell() {
         "stderr: {stderr}"
     );
 }
+
+/// One command line run: its exit code (`None` for a signal), stdout and stderr.
+fn run_line(src: &str) -> (Option<i32>, String, String) {
+    let out = logos().arg(src).output().unwrap();
+    let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+    (out.status.code(), text(&out.stdout), text(&out.stderr))
+}
+
+#[test]
+fn a_parse_body_writes_a_field_as_a_node_and_the_run_reads_it() {
+    let (code, _, stderr) = run_line(
+        "probe := type ( fields = ( v := i32 ?, shared run = ( this.v ) ), \
+         parse_rank = *.parse_rank + 1, \
+         parse = ( this.v = 7, tape[0] = this, tape.is_constructed[0] = true ) ), probe",
+    );
+    assert_eq!(code, Some(0), "stderr: {stderr}");
+    for (tail, want) in [("probe", "7\n"), ("probe + 1", "8\n")] {
+        let (code, stdout, stderr) = run_line(&format!(
+            "probe := type ( fields = ( v := i32 ?, output := type ?, shared run = ( this.v ) ), \
+             parse_rank = *.parse_rank + 1, \
+             parse = ( this.v = 7, this.output = i32, tape[0] = this, \
+             tape.is_constructed[0] = true ) ), {tail}"
+        ));
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "stderr: {stderr}");
+    }
+    let (code, stdout, stderr) = run_line(
+        "q := type ( fields = ( size := u64 ? ), parse_rank = 60, \
+         parse = ( this.size = 3, tape[0] = this.size, tape.is_constructed[0] = true ) ), q",
+    );
+    assert_eq!((code, stdout.as_str()), (Some(0), "3\n"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_field_the_constructor_never_wrote_is_a_checked_error() {
+    for src in [
+        // The node is used as a value with its field `b` unwritten.
+        "t := type (fields = (a := i32 ?, b := i32 ?, output := type ?, shared run = ( this.a )), \
+         parse_rank = *.parse_rank + 1, \
+         parse = ( this.a = tape[-1], this.output = i32, tape[0] = this, \
+         tape.is_constructed[0] = true, tape.remove(-1) )), x := i32 4, x t",
+        // The unwritten field itself is read in the parse body.
+        "q := type ( fields = ( size := u64 ? ), parse_rank = 60, \
+         parse = ( tape[0] = this.size, tape.is_constructed[0] = true ) ), q",
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("was never written by its constructor"), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn this_f_type_reads_the_fields_declared_type() {
+    let (code, stdout, stderr) = run_line(
+        "q := type ( fields = ( size := u64 ? ), parse_rank = 60, \
+         parse = ( this.size = 3, tape[0] = this.size:type, tape.is_constructed[0] = true ) ), q",
+    );
+    assert_eq!((code, stdout.as_str()), (Some(0), "u64\n"), "stderr: {stderr}");
+    // An untyped field has no type until the constructor runs and writes it.
+    let (code, _, stderr) = run_line(
+        "q := type ( fields = ( size := ? ), parse_rank = 60, \
+         parse = ( this.size = 3, tape[0] = this.size:type, tape.is_constructed[0] = true ) ), q",
+    );
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("does not fit the node's type"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_field_default_fills_each_new_node() {
+    let q = "q := type ( fields = ( mut size := u64 5, output := type ?, \
+             shared run = ( this.size + 1 ) ), parse_rank = 60, parse = ( ";
+    let end = "this.output = u64, tape[0] = this, tape.is_constructed[0] = true ) )";
+    for (src, want) in [
+        (format!("{q}{end}, q"), "6\n"),
+        (format!("{q}this.size = 9, {end}, q"), "10\n"),
+        (format!("{q}{end}, f := fn () -> u64 ( q ), f.compile(), f()"), "6\n"),
+        (
+            "q := type ( fields = ( size := u64 0 ), parse_rank = 60, \
+             parse = ( tape[0] = this.size, tape.is_constructed[0] = true ) ), q"
+                .to_string(),
+            "0\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "{src}: stderr: {stderr}");
+    }
+}
