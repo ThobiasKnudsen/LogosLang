@@ -4781,7 +4781,19 @@ impl<'a> Parser<'a> {
             Ok(found) => found,
             Err(e) => {
                 let name = &self.source[nstart..nstart + nlen];
-                return self.shared_member_read(record_logos, name).map(|n| (n, 0)).ok_or(e);
+                let Some(member) = self.shared_member_read(record_logos, name) else {
+                    return Err(e);
+                };
+                if let Some(args) = call {
+                    if self.takes_this(member) {
+                        // The instance by a `dyad` view, as a `dyad ?` parameter takes a node.
+                        let view = self.rt.store.alloc_raw(self.types.dyad_, lhs.cast());
+                        let mut with_this = vec![view];
+                        with_this.extend(args);
+                        return self.build_call(member, &with_this).map(|n| (n, 1));
+                    }
+                }
+                return Ok((member, 0));
             }
         };
         let addr = (*lhs).value.wrapping_add(offset);
@@ -6964,6 +6976,27 @@ impl<'a> Parser<'a> {
         let value = self.stand_as_value(tape, id);
         tape.place(value);
         Ok(())
+    }
+
+    /// A `fn` declared in a fields block, whose first parameter is the hidden `this`.
+    ///
+    /// # Safety
+    /// `f` must be a resolved dyad from the store.
+    unsafe fn takes_this(&self, f: DyadPtr) -> bool {
+        use crate::identities::{array, meta};
+        if f.is_null() || (*f).ty != self.types.fn_type || (*f).value.is_null() {
+            return false;
+        }
+        let input = *((*f).value as *const DyadPtr);
+        if input.is_null() || !meta::is_record_type(input) {
+            return false;
+        }
+        let Some(&first) = array::items(meta::record_fields_of(input)).first() else {
+            return false;
+        };
+        let mut scope = ScopeStack::new();
+        scope.push(meta::record_scope_of(input));
+        scope.resolve(self.trie, "this").is_ok_and(|r| r.identity == first)
     }
 
     /// A `fn` node in the constructor slot: judged by the flag alone.

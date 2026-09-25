@@ -2094,6 +2094,18 @@ fn a_node_a_parse_built_is_declared_and_its_fields_read() {
 }
 
 #[test]
+fn a_member_function_called_through_a_node_reads_that_node_as_this() {
+    for (tail, want) in [
+        ("a := q (1, 2, 3), a.twice()", "6\n"),
+        ("a := q (1, 2, 3), b := q (1, 2), a.twice() + b.twice()", "10\n"),
+        ("f := fn () -> u64 ( a := q (1, 2, 3, 4), a.twice() ), f()", "8\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{COUNTED}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn a_field_the_constructor_never_wrote_is_a_checked_error() {
     for src in [
         // The node is used as a value with its field `b` unwritten.
