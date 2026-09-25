@@ -2077,6 +2077,22 @@ fn the_instances_drop_body_is_accepted_and_held() {
     }
 }
 
+/// A type with no `run` whose own `parse` builds its nodes.
+const COUNTED: &str = "q := type ( fields = ( n := u64 ?, k := u64 7, \
+    shared twice := fn () -> u64 ( this.n * 2 ) ), parse_rank = 60, parse = ( \
+    this.n = tape[1].dyads.size, tape[0] = this, tape.remove(1), tape.is_constructed[0] = true ) )";
+
+#[test]
+fn a_node_a_parse_built_is_declared_and_its_fields_read() {
+    for (tail, want) in [
+        ("a := q (1, 2, 3), a.n + a.k", "10\n"),
+        ("f := fn () -> u64 ( a := q (1, 2), a.n ), f()", "2\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{COUNTED}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
+    }
+}
+
 #[test]
 fn a_field_the_constructor_never_wrote_is_a_checked_error() {
     for src in [

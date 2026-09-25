@@ -79,7 +79,11 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let declared = declared_of(node);
         // A bare hole, `x := ?`, has nothing to run; declaring it is silent. Nor
         // has the place `x := T ?` made, which a record place cannot be read as.
-        if !(*declared).ty.is_null() && !crate::dyad::is_place((*declared).value) {
+        // Nor has a node with no run, which is data and was built whole at parse.
+        if !(*declared).ty.is_null()
+            && !crate::dyad::is_place((*declared).value)
+            && super::read::read_kind(rt.types(), declared) != super::read::Read::Aggregate
+        {
             rt.run(declared)?;
         }
     }

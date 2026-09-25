@@ -4512,8 +4512,11 @@ impl<'a> Parser<'a> {
         let slot = match meta::kind_of(ty) {
             Some(meta::TUPLE_TAG | meta::LIST_TAG) => (0..meta::arity_of(ty))
                 .find(|&i| crate::reflect::text_of(meta::role_of(ty, i)) == name.as_bytes()),
-            // `[field…, null, spec]`: the fields are the nodes the constructor filled.
-            Some(meta::RECORD_TAG) if !meta::run_body_of(ty).is_null() => {
+            // `[field…, null, spec]`: the fields are the nodes the constructor filled,
+            // for every node a Logos-written `parse` built.
+            Some(meta::RECORD_TAG)
+                if !meta::run_body_of(ty).is_null() || self.is_logos_ctor(ty) =>
+            {
                 let mut fields = ScopeStack::new();
                 fields.push(meta::record_scope_of(ty));
                 fields.resolve(self.trie, name).ok().and_then(|r| {
