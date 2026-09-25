@@ -2049,6 +2049,22 @@ fn a_number_field_is_read_and_written_by_value_in_a_parse_body() {
 }
 
 #[test]
+fn a_function_in_a_fields_block_reads_this() {
+    let (code, _, stderr) = run_line(
+        "x := type ( fields = ( n := u64 ?, shared twice := fn () -> u64 ( this.n * 2 ) ) ), 1",
+    );
+    assert_eq!(code, Some(0), "stderr: {stderr}");
+    // Only the member's own `fn` takes `this`: not one outside a type, nor one on a bare line.
+    for src in [
+        "f := fn () -> u64 ( this.n ), 1",
+        "x := type ( fields = ( n := u64 ? ), parse = ( g := fn () -> u64 ( this.n ) ) ), 1",
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn a_field_the_constructor_never_wrote_is_a_checked_error() {
     for src in [
         // The node is used as a value with its field `b` unwritten.

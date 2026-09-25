@@ -1586,6 +1586,9 @@ pub struct Parser<'a> {
     held_depth: usize,
     /// A cell the branch about to open is checked to hold a type.
     narrow_next: Option<(DyadPtr, i32)>,
+    /// While a `shared` line of a fields block is read, the frame depth a
+    /// `fn` written as the member's value opens at: that `fn` takes `this`.
+    member_fn_depth: Option<usize>,
 }
 
 /// The cells of a held run body being constructed, served by the cursor's
@@ -1734,6 +1737,7 @@ impl<'a> Parser<'a> {
             run_body: None,
             held_depth: 0,
             narrow_next: None,
+            member_fn_depth: None,
         }
     }
 
@@ -2690,8 +2694,16 @@ impl<'a> Parser<'a> {
     /// holding the scope, the `fields` array and the packed `size_bytes`. Fresh
     /// field names are read raw, which is why the list has its own sub-parse.
     pub fn parse_record(&mut self) -> Result<DyadPtr, ParseError> {
+        self.parse_record_taking(None)
+    }
+
+    /// `parse_record` with a field no text spells declared first.
+    fn parse_record_taking(
+        &mut self,
+        leading: Option<(&str, DyadPtr)>,
+    ) -> Result<DyadPtr, ParseError> {
         let record_logos = self.types.type_;
-        let (scope, fields_arr, size_bytes) = self.parse_field_list(false)?;
+        let (scope, fields_arr, size_bytes) = self.parse_field_list(false, leading)?;
         let record = crate::identities::meta::record_layout(
             self.rt.store,
             scope,
@@ -2707,12 +2719,22 @@ impl<'a> Parser<'a> {
     /// A `fn`'s parameter list checks each name against every open scope, since
     /// the body reopens the list's scope; a `fields = (…)` block's fields
     /// against their siblings alone (`relaxed`; DESIGN ›The constructor is a field‹).
-    fn parse_field_list(&mut self, relaxed: bool) -> Result<(DyadPtr, DyadPtr, u64), ParseError> {
+    fn parse_field_list(
+        &mut self,
+        relaxed: bool,
+        leading: Option<(&str, DyadPtr)>,
+    ) -> Result<(DyadPtr, DyadPtr, u64), ParseError> {
+        let at = self.pos;
         self.expect_open()?;
         // Field names are declared into the record's own scope.
         let scope = self.open_scope();
 
         let mut fields = Vec::new();
+        if let Some((name, ty)) = leading {
+            let field = self.rt.store.alloc_raw(ty, std::ptr::null_mut());
+            self.declare_name(name, field, at)?;
+            fields.push(field);
+        }
         loop {
             if self.at_close() {
                 break;
@@ -2844,7 +2866,9 @@ impl<'a> Parser<'a> {
         let field_scope = self.scopes.pop().expect("the field list's scope is open");
         self.definitions.last_mut().expect("checked above").in_block = true;
         self.last_declared = std::ptr::null_mut();
+        let outer_member = self.member_fn_depth.replace(self.frames.len());
         let items = self.shared_line();
+        self.member_fn_depth = outer_member;
         self.definitions.last_mut().expect("checked above").in_block = false;
         self.scopes.push(field_scope);
         // The line's one declaration, a member or a slot fill, with its prose
@@ -3201,7 +3225,7 @@ impl<'a> Parser<'a> {
         if def.instance.is_some() {
             return Err(ParseError::DoubleFields);
         }
-        let instance = self.parse_field_list(true)?;
+        let instance = self.parse_field_list(true, None)?;
         self.definitions.last_mut().expect("checked above").instance = Some(instance);
         Ok(self.slot_declare(SlotKind::Fields, target, instance.1))
     }
@@ -3885,7 +3909,12 @@ impl<'a> Parser<'a> {
         fn_type: DyadPtr,
         declared: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
-        let input = self.parse_record()?;
+        // A body in the fields block reached through an instance binds `this`
+        // to it (DESIGN ›The constructor is a field‹): the member's `fn` takes it first.
+        let member = !declared.is_null()
+            && self.member_fn_depth == Some(self.frames.len())
+            && self.definitions.last().is_some_and(|d| d.this_param.is_null());
+        let input = self.parse_record_taking(member.then_some(("this", self.types.dyad_)))?;
         self.expect_arrow()?;
         let output = {
             let items = self.drive_until_open(RightSide::ReturnType)?;
@@ -3898,8 +3927,21 @@ impl<'a> Parser<'a> {
             // SAFETY: `out` is a reduced dyad from the store.
             unsafe { self.types.through(out) }
         };
-        // SAFETY: `input` was just built by `parse_record`; `declared` is the caller's placeholder.
-        unsafe { self.fn_over_body(fn_type, input, output, declared) }
+        if !member {
+            // SAFETY: `input` was just built by `parse_record`; `declared` is the caller's placeholder.
+            return unsafe { self.fn_over_body(fn_type, input, output, declared) };
+        }
+        // SAFETY: `input` is the record just built, `this` its first field.
+        let this = unsafe {
+            crate::identities::array::items(crate::identities::meta::record_fields_of(input))[0]
+        };
+        self.definitions.last_mut().expect("checked above").this_param = this;
+        // SAFETY: as above.
+        let f = unsafe { self.fn_over_body(fn_type, input, output, declared) };
+        if let Some(def) = self.definitions.last_mut() {
+            def.this_param = std::ptr::null_mut();
+        }
+        f
     }
 
     /// The half of `parse_fn` after the signature, shared with a slot body
