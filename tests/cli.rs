@@ -216,6 +216,17 @@ fn the_power_demo_prints_nine() {
 }
 
 #[test]
+fn a_chooser_hands_its_cell_to_a_type_minted_at_run() {
+    let src = "mk := fn (t := type ?) -> type ( type ( parse = ( tape.is_constructed[0] = true ) ) ), \
+               c := type ( parse_rank = fn.parse_rank, associativity = right, parse = ( \
+                 if tape[1]:type != type error «no», t := tape[1], tape[0] = mk(t), tape.remove(1) ) ), \
+               x := c i32, x";
+    let out = logos().arg(src).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "type\n");
+}
+
+#[test]
 #[ignore = "stand-in for #137: the seed cannot run array.logos yet"]
 fn the_array_written_in_logos_reads_an_element_and_its_size() {
     let out = logos().args(["import", "./identities/array.logos"]).output().unwrap();
