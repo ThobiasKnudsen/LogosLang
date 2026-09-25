@@ -66,6 +66,7 @@ pub(crate) unsafe fn build_write(
 ) -> DyadPtr {
     let ops = (*slot).value as *const DyadPtr;
     let (this, k) = (*ops, *ops.add(1));
+    let value = super::tape::cell_arg(store, types, value);
     node(store, types.this.write, types.this.write_leaf, &[this, k, value])
 }
 

@@ -1820,3 +1820,34 @@ fn a_constructors_outcome_is_read_off_its_own_cell() {
         "stderr: {stderr}"
     );
 }
+
+/// One command line run: its exit code (`None` for a signal), stdout and stderr.
+fn run_line(src: &str) -> (Option<i32>, String, String) {
+    let out = logos().arg(src).output().unwrap();
+    let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+    (out.status.code(), text(&out.stdout), text(&out.stderr))
+}
+
+#[test]
+fn a_parse_body_writes_a_field_as_a_node_and_the_run_reads_it() {
+    let (code, _, stderr) = run_line(
+        "probe := type ( fields = ( v := i32 ?, shared run = ( this.v ) ), \
+         parse_rank = *.parse_rank + 1, \
+         parse = ( this.v = 7, tape[0] = this, tape.is_constructed[0] = true ) ), probe",
+    );
+    assert_eq!(code, Some(0), "stderr: {stderr}");
+    for (tail, want) in [("probe", "7\n"), ("probe + 1", "8\n")] {
+        let (code, stdout, stderr) = run_line(&format!(
+            "probe := type ( fields = ( v := i32 ?, output := type ?, shared run = ( this.v ) ), \
+             parse_rank = *.parse_rank + 1, \
+             parse = ( this.v = 7, this.output = i32, tape[0] = this, \
+             tape.is_constructed[0] = true ) ), {tail}"
+        ));
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "stderr: {stderr}");
+    }
+    let (code, stdout, stderr) = run_line(
+        "q := type ( fields = ( size := u64 ? ), parse_rank = 60, \
+         parse = ( this.size = 3, tape[0] = this.size, tape.is_constructed[0] = true ) ), q",
+    );
+    assert_eq!((code, stdout.as_str()), (Some(0), "3\n"), "stderr: {stderr}");
+}
