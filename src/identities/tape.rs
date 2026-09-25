@@ -65,6 +65,9 @@ pub struct TapeIds {
     /// are the tape lines they read, as operands, and the values of the others.
     pub placed_call: DyadPtr,
     pub placed_call_leaf: DyadPtr,
+    /// `[bracket, op]`: a bracket handed to a placed call, its lines evaluated when it runs.
+    pub bracket_arg: DyadPtr,
+    pub bracket_arg_leaf: DyadPtr,
     /// What a read gets where the tape reaches no cell: a `void` node, already constructed.
     pub nothing: DyadPtr,
 }
@@ -125,6 +128,7 @@ pub(super) fn register(
     let (cell_dyads_size, cell_dyads_size_leaf) = op(cx, &["tape", "k", "op"], run_cell_dyads_size);
     let (cell_dyad_at, cell_dyad_at_leaf) = op(cx, &["tape", "k", "i", "op"], run_cell_dyad_at);
     let (placed_call, placed_call_leaf) = op(cx, &["call", "op"], run_placed_call);
+    let (bracket_arg, bracket_arg_leaf) = op(cx, &["bracket", "op"], run_bracket_arg);
     let nothing = cx.store.alloc_raw(void_ty, std::ptr::null_mut());
     for (name, id) in [
         ("is_constructed", is_constructed),
@@ -169,6 +173,8 @@ pub(super) fn register(
         cell_dyad_at_leaf,
         placed_call,
         placed_call_leaf,
+        bracket_arg,
+        bracket_arg_leaf,
         nothing,
     }
 }
@@ -355,21 +361,49 @@ pub(crate) unsafe fn cell_key(types: &Core, over: DyadPtr) -> Option<(DyadPtr, i
     } else {
         types.through(recv)
     };
+    if k.is_null() {
+        return Some((recv, -1, line_of(types, i)?));
+    }
     let k = types.through(k);
     if (*k).ty != types.rational {
         return None;
     }
-    let line = if i.is_null() {
-        Line::Cell
-    } else {
-        let i = types.through(i);
-        if (*i).ty == types.rational {
-            Line::At(super::rational::mold(i)?)
-        } else {
-            Line::Named(i)
-        }
-    };
+    let line = line_of(types, i)?;
     super::rational::mold(k).map(|k| (recv, k, line))
+}
+
+/// # Safety
+/// `i` must be null or a reduced dyad from the store.
+unsafe fn line_of(types: &Core, i: DyadPtr) -> Option<Line> {
+    if i.is_null() {
+        return Some(Line::Cell);
+    }
+    let i = types.through(i);
+    Some(if (*i).ty == types.rational {
+        Line::At(super::rational::mold(i)?)
+    } else {
+        Line::Named(i)
+    })
+}
+
+/// `b.dyads` of a bracket `b` a call was handed: a cell read with no cell index.
+pub(crate) fn build_bracket_dyads(store: &mut Store, types: &Core, held: DyadPtr) -> DyadPtr {
+    node(store, types.tape.cell_dyads, types.tape.cell_dyads_leaf, &[held, std::ptr::null_mut()])
+}
+
+/// `b.dyads[i]` of a bracket `b` a call was handed.
+pub(crate) fn build_bracket_line(
+    store: &mut Store,
+    types: &Core,
+    held: DyadPtr,
+    i: DyadPtr,
+) -> DyadPtr {
+    node(
+        store,
+        types.tape.cell_dyad_at,
+        types.tape.cell_dyad_at_leaf,
+        &[held, std::ptr::null_mut(), i],
+    )
 }
 
 /// # Safety
@@ -570,8 +604,16 @@ fn run_recenter(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// The cell, read through a binding to the dyad it names.
+/// The cell, read through a binding to the dyad it names; with no cell index, the bracket
+/// the receiver holds, a bracket handed to a call.
 unsafe fn slot_cell(rt: &mut Runtime, ops: *const DyadPtr) -> Result<DyadPtr, RunError> {
+    if (*ops.add(1)).is_null() {
+        let held = rt.run(*ops)? as DyadPtr;
+        if held.is_null() {
+            return Err(RunError::NotAScope(held));
+        }
+        return Ok(rt.through(held));
+    }
     let cell = read_cell(rt, ops)?;
     Ok(rt.through(cell.dyad))
 }
@@ -766,18 +808,27 @@ fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             let scalar = super::numtype::is_scalar_type(ty);
             if let Some(operand) = named_dyad(rt, arg_at(i)) {
                 let operand = operand?;
-                args.push(if scalar { typed_operand(rt, operand, ty)? } else { operand });
+                let types = rt.types();
+                let bracket =
+                    (*operand).ty == types.scope || (*operand).ty == types.square_brackets;
+                args.push(if scalar {
+                    typed_operand(rt, operand, ty)?
+                } else if bracket {
+                    let (op, leaf) = (types.tape.bracket_arg, types.tape.bracket_arg_leaf);
+                    self::node(rt.store(), op, leaf, &[operand])
+                } else {
+                    operand
+                });
                 continue;
             }
             let bits = rt.run(arg_at(i))?;
-            let dyad_ty = rt.types().dyad_;
-            let store = rt.store();
             args.push(if scalar {
                 let width = super::numtype::of_type_node(ty).bytes();
+                let store = rt.store();
                 let storage = store.alloc_bytes(&bits.to_ne_bytes()[..width]);
                 store.alloc_raw(ty, storage)
             } else {
-                store.alloc_raw(dyad_ty, bits as usize as *mut u8)
+                node_operand(rt, bits as usize as DyadPtr)
             });
         }
         let store = rt.store();
@@ -788,6 +839,59 @@ fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             store.alloc_operands(&args)
         };
         Ok(store.alloc_raw(f, value) as i64)
+    }
+}
+
+/// The argument a node's address gives a placed call: for a type's own fresh node, a copy
+/// made each time the call runs; for a name of a type a Logos `parse` builds, that name,
+/// read when the call runs; any other node by a `dyad` view. DESIGN ›A name of a type with
+/// an instances' `parse` wakes it, as the instance does‹.
+///
+/// # Safety
+/// `d` must be what a `dyad`-valued argument yielded: null or a node's address.
+unsafe fn node_operand(rt: &mut Runtime, d: DyadPtr) -> DyadPtr {
+    let types: *const Core = rt.types();
+    if rt.fresh_this() == Some(d) {
+        return super::this::build_copy(rt.store(), &*types, d);
+    }
+    let store = rt.store();
+    if !d.is_null()
+        && store.contains(d)
+        && crate::dyad::is_place((*d).value)
+        && super::node_type_of(&*types, d).is_some()
+    {
+        return d;
+    }
+    store.alloc_raw((*types).dyad_, d.cast())
+}
+
+/// A bracket handed to a placed call: each line is evaluated where the call runs, in its
+/// frame, and the callee reads a new bracket of the same kind holding the values; a line
+/// with no number type is handed as it stands.
+fn run_bracket_arg(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a `[bracket, op]` node `run_placed_call` built over a bracket node.
+    unsafe {
+        let bracket = rt.through(*((*node).value as *const DyadPtr));
+        let lines = super::scope::exprs_of(bracket).unwrap_or(&[]);
+        let mut values = Vec::with_capacity(lines.len());
+        for &line in lines {
+            let value = match numtype_of(rt.types(), line) {
+                Operand::Concrete(nt) => {
+                    let ty = rt.types().numtypes[nt as usize];
+                    let bits = rt.run(line)?;
+                    let store = rt.store();
+                    let storage = store.alloc_bytes(&bits.to_ne_bytes()[..nt.bytes()]);
+                    store.alloc_raw(ty, storage)
+                }
+                _ => line,
+            };
+            values.push(value);
+        }
+        let (array_ty, bracket_ty) = (rt.types().array_, (*bracket).ty);
+        let store = rt.store();
+        let dyads = super::array::build(store, array_ty, &values);
+        let value = store.alloc_operands(&[dyads, std::ptr::null_mut(), std::ptr::null_mut()]);
+        Ok(store.alloc_raw(bracket_ty, value) as i64)
     }
 }
 

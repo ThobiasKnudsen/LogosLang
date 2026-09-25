@@ -29,6 +29,9 @@ pub struct ThisIds {
     /// `this.f = v` there: `[this, k, value, type, op]`, a node of `type` holding v's value.
     pub store: DyadPtr,
     pub store_leaf: DyadPtr,
+    /// `[template, op]`: a new node of the template's type holding its slots, made per run.
+    pub copy: DyadPtr,
+    pub copy_leaf: DyadPtr,
 }
 
 /// Neither has a spelling: `.` builds the read when its left side is a parse body's
@@ -50,7 +53,19 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     let (write, write_leaf) = op(cx, &["this", "k", "value", "op"], run_write);
     let (load, load_leaf) = op(cx, &["this", "k", "type", "op"], run_load);
     let (store, store_leaf) = op(cx, &["this", "k", "value", "type", "op"], run_store);
-    ThisIds { slot, slot_leaf, write, write_leaf, load, load_leaf, store, store_leaf }
+    let (copy, copy_leaf) = op(cx, &["this", "op"], run_copy);
+    ThisIds {
+        slot,
+        slot_leaf,
+        write,
+        write_leaf,
+        load,
+        load_leaf,
+        store,
+        store_leaf,
+        copy,
+        copy_leaf,
+    }
 }
 
 fn node(store: &mut Store, op: DyadPtr, leaf: DyadPtr, operands: &[DyadPtr]) -> DyadPtr {
@@ -63,6 +78,12 @@ fn node(store: &mut Store, op: DyadPtr, leaf: DyadPtr, operands: &[DyadPtr]) -> 
 /// `k` is the field's index among the instance fields, as a `u64` literal.
 pub(crate) fn build_slot(store: &mut Store, types: &Core, this: DyadPtr, k: DyadPtr) -> DyadPtr {
     node(store, types.this.slot, types.this.slot_leaf, &[this, k])
+}
+
+/// A type's own `parse` placing a call on its fresh node: each run of the call takes its own
+/// instance, begun as the parse left the node.
+pub(crate) fn build_copy(store: &mut Store, types: &Core, template: DyadPtr) -> DyadPtr {
+    node(store, types.this.copy, types.this.copy_leaf, &[template])
 }
 
 /// `ty` is the field's declared type, a number or pointer type.
@@ -199,5 +220,19 @@ fn run_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let value = rt.run(*ops.add(2))? as DyadPtr;
         *slot = value;
         Ok(0)
+    }
+}
+
+/// The slots are copied, never the nodes they hold: a field write replaces its slot.
+fn run_copy(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a copy node; its template is a node `run_logos_ctor` minted, `[field…, null, spec]`.
+    unsafe {
+        let template = *((*node).value as *const DyadPtr);
+        let ty = (*template).ty;
+        let n = super::array::items(meta::record_fields_of(ty)).len() + 2;
+        let slots = std::slice::from_raw_parts((*template).value as *const DyadPtr, n).to_vec();
+        let store = rt.store();
+        let value = store.alloc_operands(&slots);
+        Ok(store.alloc_raw(ty, value) as i64)
     }
 }

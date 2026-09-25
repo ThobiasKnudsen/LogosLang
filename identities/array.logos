@@ -4,7 +4,9 @@
 # flag left false, so the driver runs the mint's own parse in turn (ruled 19 September 2026).
 #
 # The mint is a type like any other, read in two halves. Its BARE lines say how its own spelling parses:
-# a group to its right becomes an array instance; nothing to its right and it sets its flag and stands as itself,
+# a group to its right, `(…)` or `[…]`, has each line checked against the element type and is handed whole to
+# one placed call, `this.fill(tape[1])`, which makes a new array each time it runs and evaluates the lines then;
+# nothing to its right and it sets its flag and stands as itself,
 # the type (`t := array i32`, `a := array i32 ?`; ruled 19 September 2026: "it should rather just be itself in
 # constructed state"). Its FIELDS block says what its INSTANCES hold and do, every line marked shared (one
 # place for every instance) or left per instance (ruled 19 September 2026): the fields it declares, and the
@@ -13,8 +15,11 @@
 # nothing follows (`a = b`). A body in the fields block reached through an instance — a.size_bytes(), the
 # instances' parse woken by a's appearance, drop — binds `this` to that instance and reads its fields as
 # this.size (ruled 19 September 2026); the fields this. reaches are declared above the body. In the type's own
-# parse `this` is the fresh instance being built (18 September 2026). No run: an array used plainly is its own
-# value, and a field read such as (a ^ b).lhs never runs anything.
+# parse `this` is the fresh instance being built (18 September 2026), and a call placed on it takes a copy of it
+# per run. A name or parameter of the mint wakes the instances' parse as an instance does, `this` there being the
+# name, read when the placed call runs; an array value is the node's address, so `b := a` shares (DESIGN ›A name
+# of a type with an instances' `parse` wakes it, as the instance does‹, ›A value of a type built by a Logos
+# `parse` travels as a pointer‹). No run: a field read such as (a ^ b).lhs never runs anything.
 #
 # Stand-ins, and the rulings this file leans on:
 #   the parse_rank lines (ruled 25 September 2026, DESIGN ›A parse is ranked by what it takes from its right‹):
@@ -31,9 +36,9 @@
 #   `a[k]` is an application exactly as `a(k)` (ruled 25 September 2026, DESIGN ›`a[k]` is an application, exactly as `a(k)`‹):
 #     the instances' parse places the call `this.at(k)`, the index line its operand, run where it stands;
 #   a tape read checked against a number type reads as that number (ruled 25 September 2026): after the
-#     `⊆` check, the fill loop reads `tape[1].dyads[i]` as the line's number; a line that is no literal is
-#     refused for now: stand-in for #137, the elements filled when the program runs (DESIGN ›A name of
-#     a type with an instances' `parse` wakes it, as the instance does‹) not built yet.
+#     `⊆` check, the index line `tape[1].dyads[0]` passes as a `u64`, and in `fill` a line of the handed
+#     bracket, `elements.dyads[i]`, reads as the element's value;
+#   `-> this:type` names the mint in its own fields block (DESIGN ›A bracket goes to the call whole‹).
 # The seed's array is array-of-@dyad with no spelling and no element access (src/identities/array.rs).
 # The fields block comes first in every type body (ruled 20 September 2026): a body's this.f names a field declared above it.
 
@@ -65,6 +70,18 @@ get_mint := fn (t := type ?) -> type (
                 (this.ptr + index)@
             ),
 
+            shared fill := fn (elements) -> this:type (
+                this.size = elements.dyads.size,
+                this.capacity = next_power_of_two(this.size),
+                this.ptr = alloc this.capacity of this.element_type ?,
+                for i in 0..this.size (
+                    if not (elements.dyads[i]:type ⊆ this.element_type)
+                        error «an element does not fit the element type»,
+                    (this.ptr + i)@ = elements.dyads[i]
+                ),
+                this
+            ),
+
             shared parse = (
                 if tape[1]:type == square_brackets (
                     if not tape[1].dyads[0]:type ⊆ this.size:type
@@ -79,16 +96,12 @@ get_mint := fn (t := type ?) -> type (
         parse_rank = dyad.parse_rank,
         associativity = left,
         parse = (
-            if tape[1]:type == scope (
-                this.size = tape[1].dyads.size,
-                this.capacity = next_power_of_two(this.size),
-                this.ptr = alloc this.capacity of this.element_type ?,
-                for i in 0..this.size (
+            if tape[1]:type == scope or tape[1]:type == square_brackets (
+                for i in 0..tape[1].dyads.size (
                     if not (tape[1].dyads[i]:type ⊆ this.element_type)
-                        error «an element does not fit the element type»,
-                    (this.ptr + i)@ = tape[1].dyads[i]
+                        error «an element does not fit the element type»
                 ),
-                tape[0] = this,
+                tape[0] = this.fill(tape[1]),
                 tape.remove(1)
             ),
             tape.is_constructed[0] = true

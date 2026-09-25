@@ -694,8 +694,14 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
             if !out.is_null() && numtype::is_pointer_type(out) {
                 return Operand::Pointer(numtype::pointee_of(out));
             }
-            // A rational result has no machine form; a type result is a node address.
-            if !out.is_null() && (out == types.rational || out == types.type_) {
+            // A rational result has no machine form; a type or node result is a node address.
+            // A type still being defined, named by `this:type` in its own body, has no record yet.
+            if !out.is_null()
+                && (out == types.rational
+                    || out == types.type_
+                    || meta::kind_of(out).is_none()
+                    || meta::is_node_valued(out, types.fn_type))
+            {
                 return Operand::NonNumeric;
             }
         }
@@ -823,6 +829,31 @@ pub(crate) unsafe fn yields_type(types: &Core, node: DyadPtr) -> bool {
         }
         _ => false,
     }
+}
+
+/// The type a Logos `parse` builds whose node `node` yields when it runs: the node itself,
+/// a place of the type, or a call returning it.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn node_type_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
+    let node = types.through(node);
+    if (*node).ty == types.ran_ {
+        return node_type_of(types, ran::expr_of(types, node));
+    }
+    let ty = match read::read_kind(types, node) {
+        read::Read::Node => (*node).ty,
+        read::Read::Container(t) => t,
+        read::Read::Executable(read::Dispatch::Call(f)) if (*f).ty == types.fn_type => {
+            let fields = (*f).value as *const DyadPtr;
+            if fields.is_null() {
+                return None;
+            }
+            *fields.add(crate::parse::FN_OUTPUT)
+        }
+        _ => return None,
+    };
+    meta::is_node_valued(ty, types.fn_type).then_some(ty)
 }
 
 /// A `-> type` call's argument the pass can run now: a type, or a literal.
@@ -961,7 +992,8 @@ pub unsafe fn display_value(types: &Core, node: DyadPtr, bits: i64) -> String {
                 "dyad".to_string()
             }
         }
-        read::Read::Address => "dyad".to_string(),
+        read::Read::Address | read::Read::Node => "dyad".to_string(),
+        _ if node_type_of(types, node).is_some() => "dyad".to_string(),
         read::Read::Scalar(nt) => format_scalar(nt, bits),
         read::Read::Pointer(_) => format_scalar(NumType::U64, bits),
         _ => match numtype_of(types, node) {
@@ -1094,6 +1126,11 @@ pub(crate) unsafe fn commit_call_args(
                     _ => false,
                 };
                 if !ok {
+                    return Err(ParseError::TypeMismatch);
+                }
+            }
+            Some((read::Read::Container(t), _)) if meta::is_node_valued(t, types.fn_type) => {
+                if node_type_of(types, *arg) != Some(t) {
                     return Err(ParseError::TypeMismatch);
                 }
             }

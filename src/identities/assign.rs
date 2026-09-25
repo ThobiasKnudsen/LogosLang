@@ -181,6 +181,15 @@ pub(super) fn build(
             let value = store.alloc_operands(&[lhs, rhs, types.ops.store_leaf(NumType::I64)]);
             return Ok(store.alloc_raw(op, value));
         }
+        // SAFETY: as above.
+        Read::Container(t) if unsafe { meta::is_node_valued(t, types.fn_type) } => {
+            // SAFETY: as above.
+            if unsafe { super::node_type_of(types, rhs) } != Some(t) {
+                return Err(ParseError::TypeMismatch);
+            }
+            let value = store.alloc_operands(&[lhs, rhs, types.ops.store_leaf(NumType::I64)]);
+            return Ok(store.alloc_raw(op, value));
+        }
         Read::Container(t) if t == types.rational => {
             // SAFETY: `rhs` is a reduced dyad from the store.
             let value = unsafe { super::rational::rational_operand(store, types, rhs) }
