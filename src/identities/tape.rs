@@ -202,6 +202,14 @@ pub(crate) fn build_slot(store: &mut Store, types: &Core, recv: DyadPtr, k: Dyad
 /// A value that already yields a node's address, a dyad or a type, passes as it stands;
 /// any other node is handed by identity, its own address as an `@dyad` value.
 pub(crate) fn cell_arg(store: &mut Store, types: &Core, cell: DyadPtr) -> DyadPtr {
+    // A field read by value is handed as the node the field holds, which yields that value.
+    // SAFETY: `cell` is a reduced dyad from the store; a load node's operands are `[this, k, type]`.
+    unsafe {
+        if (*cell).ty == types.this.load {
+            let ops = (*cell).value as *const DyadPtr;
+            return super::this::build_slot(store, types, *ops, *ops.add(1));
+        }
+    }
     // SAFETY: `cell` is a reduced dyad from the store.
     let yields_node = unsafe {
         matches!(numtype_of(types, cell), Operand::Pointer(p) if p == types.dyad_)

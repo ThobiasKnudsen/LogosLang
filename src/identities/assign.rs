@@ -132,9 +132,10 @@ pub(super) fn build(
         // SAFETY: `lhs_d` is a flag slot node, `rhs` a reduced bool dyad.
         return Ok(unsafe { super::tape::build_flag_write(store, types, lhs_d, rhs) });
     }
-    if lhs_ty == types.this.slot {
-        // SAFETY: `lhs_d` is a `this` field slot node, `rhs` a reduced dyad.
-        return Ok(unsafe { super::this::build_write(store, types, lhs_d, rhs) });
+    // SAFETY: `lhs_d` is a reduced dyad from the store.
+    if unsafe { super::this::is_field_read(types, lhs_d) } {
+        // SAFETY: `lhs_d` is a `this` field read, `rhs` a reduced dyad.
+        return unsafe { super::this::build_write(store, types, lhs_d, rhs) };
     }
     if lhs_ty == types.deref_ {
         // SAFETY: `lhs_d` is a deref node, `rhs` a reduced dyad.

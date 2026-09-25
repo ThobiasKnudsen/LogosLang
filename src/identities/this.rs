@@ -1,10 +1,11 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `this` inside a `parse` body: the fresh node a constructor builds and places, bound
-//! as the body's second hidden parameter, a `dyad ?` place holding the node's address.
-//! `this.f` reaches the slot at `f`'s index among the instance fields: read, the node
-//! it holds; as `=`'s target, the write of the right side's node. Nothing here lowers.
+//! `this` inside a `parse` body or a fields-block `fn`: the node, bound as a hidden
+//! parameter, a `dyad ?` place holding the node's address. `this.f` reaches the slot at
+//! `f`'s index among the instance fields: read, the node it holds, or for a field of a
+//! number or pointer type the value that node yields; as `=`'s target, the write of the
+//! right side's node, or of a node holding the value it yields. Nothing here lowers.
 
 use super::callable::{self, Callables};
 use super::{meta, Cx};
@@ -22,6 +23,12 @@ pub struct ThisIds {
     /// `this.f = v`: `[this, k, value, op]`, storing `v`'s node into slot `k`.
     pub write: DyadPtr,
     pub write_leaf: DyadPtr,
+    /// `this.f` of a number or pointer field: `[this, k, type, op]`, the value it holds.
+    pub load: DyadPtr,
+    pub load_leaf: DyadPtr,
+    /// `this.f = v` there: `[this, k, value, type, op]`, a node of `type` holding v's value.
+    pub store: DyadPtr,
+    pub store_leaf: DyadPtr,
 }
 
 /// Neither has a spelling: `.` builds the read when its left side is a parse body's
@@ -41,7 +48,9 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     };
     let (slot, slot_leaf) = op(cx, &["this", "k", "op"], run_slot);
     let (write, write_leaf) = op(cx, &["this", "k", "value", "op"], run_write);
-    ThisIds { slot, slot_leaf, write, write_leaf }
+    let (load, load_leaf) = op(cx, &["this", "k", "type", "op"], run_load);
+    let (store, store_leaf) = op(cx, &["this", "k", "value", "type", "op"], run_store);
+    ThisIds { slot, slot_leaf, write, write_leaf, load, load_leaf, store, store_leaf }
 }
 
 fn node(store: &mut Store, op: DyadPtr, leaf: DyadPtr, operands: &[DyadPtr]) -> DyadPtr {
@@ -56,18 +65,69 @@ pub(crate) fn build_slot(store: &mut Store, types: &Core, this: DyadPtr, k: Dyad
     node(store, types.this.slot, types.this.slot_leaf, &[this, k])
 }
 
+/// `ty` is the field's declared type, a number or pointer type.
+pub(crate) fn build_load(
+    store: &mut Store,
+    types: &Core,
+    this: DyadPtr,
+    k: DyadPtr,
+    ty: DyadPtr,
+) -> DyadPtr {
+    node(store, types.this.load, types.this.load_leaf, &[this, k, ty])
+}
+
+/// Either read `this.f` builds.
+///
 /// # Safety
-/// `slot` must be a node from `build_slot`.
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn is_field_read(types: &Core, node: DyadPtr) -> bool {
+    (*node).ty == types.this.slot || (*node).ty == types.this.load
+}
+
+/// The field's declared type, for a read of a number or pointer field.
+///
+/// # Safety
+/// `read` must be a node `is_field_read` accepts.
+pub(crate) unsafe fn load_type(types: &Core, read: DyadPtr) -> Option<DyadPtr> {
+    ((*read).ty == types.this.load).then(|| *((*read).value as *const DyadPtr).add(2))
+}
+
+/// A number or pointer field takes the value the right side yields, molded to the
+/// field's type; a right side that yields a node, the operand as graph, is stored as
+/// that node (DESIGN ›Execution is function application‹, item 4).
+///
+/// # Safety
+/// `read` must be a node `is_field_read` accepts; `value` a reduced dyad.
 pub(crate) unsafe fn build_write(
     store: &mut Store,
     types: &Core,
-    slot: DyadPtr,
+    read: DyadPtr,
     value: DyadPtr,
-) -> DyadPtr {
-    let ops = (*slot).value as *const DyadPtr;
+) -> Result<DyadPtr, crate::parse::ParseError> {
+    let ops = (*read).value as *const DyadPtr;
     let (this, k) = (*ops, *ops.add(1));
+    if let Some(ty) = load_type(types, read) {
+        let yields_value = match super::numtype_of(types, value) {
+            super::Operand::Concrete(_) | super::Operand::Literal => true,
+            super::Operand::Pointer(p) => p != types.dyad_,
+            super::Operand::NonNumeric => false,
+        };
+        if yields_value {
+            let value = super::commit_fn_body(store, types, value, ty)?;
+            let fits = match (super::read::place_layout(types, ty), super::numtype_of(types, value))
+            {
+                (Some((super::read::Read::Scalar(nt), _)), super::Operand::Concrete(v)) => nt == v,
+                (Some((super::read::Read::Pointer(p), _)), super::Operand::Pointer(v)) => p == v,
+                _ => false,
+            };
+            if !fits {
+                return Err(crate::parse::ParseError::TypeMismatch);
+            }
+            return Ok(node(store, types.this.store, types.this.store_leaf, &[this, k, value, ty]));
+        }
+    }
     let value = super::tape::cell_arg(store, types, value);
-    node(store, types.this.write, types.this.write_leaf, &[this, k, value])
+    Ok(node(store, types.this.write, types.this.write_leaf, &[this, k, value]))
 }
 
 unsafe fn slot_of(
@@ -98,6 +158,35 @@ fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             return Err(RunError::UnfilledField(k));
         }
         Ok(*slot as i64)
+    }
+}
+
+/// The node the slot holds yields the value; an unfilled slot is the checked error.
+fn run_load(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: as `run_slot`; the node a slot holds is one this file or a constructor stored.
+    unsafe {
+        let ops = (*node).value as *const DyadPtr;
+        let (slot, k) = slot_of(rt, ops)?;
+        if (*slot).is_null() {
+            return Err(RunError::UnfilledField(k));
+        }
+        rt.run(*slot)
+    }
+}
+
+/// A fresh node of the field's type, holding the value, the way a literal holds its own.
+fn run_store(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: as `run_slot`; the type operand is a number or pointer type node.
+    unsafe {
+        let ops = (*node).value as *const DyadPtr;
+        let (slot, _) = slot_of(rt, ops)?;
+        let bits = rt.run(*ops.add(2))?;
+        let ty = *ops.add(3);
+        let width = super::read::place_layout(rt.types(), ty).map_or(8, |(_, w)| w);
+        let store = rt.store();
+        let storage = store.alloc_bytes(&bits.to_ne_bytes()[..width]);
+        *slot = store.alloc_raw(ty, storage);
+        Ok(0)
     }
 }
 

@@ -2031,6 +2031,24 @@ fn a_parse_body_writes_a_field_as_a_node_and_the_run_reads_it() {
 }
 
 #[test]
+fn a_number_field_is_read_and_written_by_value_in_a_parse_body() {
+    // `this.n` is the u64 it holds, so it takes part in arithmetic; the value a
+    // run-time right side yields is what the field keeps after the parse returns.
+    let (code, stdout, stderr) = run_line(
+        "q := type ( fields = ( n := u64 ?, m := u64 ? ), parse_rank = 60, parse = ( \
+         this.n = tape[1].dyads.size, this.m = this.n * 2, tape[0] = this.m, tape.remove(1), \
+         tape.is_constructed[0] = true ) ), q (1, 2, 3)",
+    );
+    assert_eq!((code, stdout.as_str()), (Some(0), "6\n"), "stderr: {stderr}");
+    let (code, _, stderr) = run_line(
+        "q := type ( fields = ( n := u64 ? ), parse_rank = 60, \
+         parse = ( this.n = i32 3, tape[0] = this, tape.is_constructed[0] = true ) ), q",
+    );
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("these types do not match"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_field_the_constructor_never_wrote_is_a_checked_error() {
     for src in [
         // The node is used as a value with its field `b` unwritten.

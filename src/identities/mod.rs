@@ -583,6 +583,16 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     if logos == types.tape.cell_dyads_size {
         return Operand::Concrete(NumType::U64);
     }
+    if logos == types.this.load {
+        // SAFETY: a load node's third operand is the field's declared type.
+        let ty = unsafe { *((*node).value as *const DyadPtr).add(2) };
+        // SAFETY: `ty` is a type node from the store.
+        return match unsafe { read::place_layout(types, ty) } {
+            Some((read::Read::Scalar(nt), _)) => Operand::Concrete(nt),
+            Some((read::Read::Pointer(p), _)) => Operand::Pointer(p),
+            _ => Operand::NonNumeric,
+        };
+    }
     if logos == types.tape.cell_value {
         return Operand::NonNumeric;
     }

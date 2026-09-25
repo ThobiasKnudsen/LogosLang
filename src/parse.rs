@@ -3490,7 +3490,23 @@ impl<'a> Parser<'a> {
         };
         let k = self.scalar_value(crate::identities::numtype::NumType::U64, index as i64);
         let types = self.types;
-        let node = crate::identities::this::build_slot(self.rt.store, types, this, k);
+        // SAFETY: the field is a declaration dyad, its type null or a type node.
+        let declared = unsafe { (*items[index]).ty };
+        // SAFETY: as above.
+        let data = !declared.is_null()
+            && matches!(
+                unsafe { crate::identities::read::place_layout(types, declared) },
+                Some((
+                    crate::identities::read::Read::Scalar(_)
+                        | crate::identities::read::Read::Pointer(_),
+                    _
+                ))
+            );
+        let node = if data {
+            crate::identities::this::build_load(self.rt.store, types, this, k, declared)
+        } else {
+            crate::identities::this::build_slot(self.rt.store, types, this, k)
+        };
         if let Some(r) = resolved {
             self.fills.insert(node, r.binding);
         }
@@ -6259,7 +6275,7 @@ impl<'a> Parser<'a> {
         }
         // `this.f:type` is the field's declared type, not the type of the read that reaches it;
         // an untyped field's type is the written value's, unknown until the constructor runs.
-        if (*lhs).ty == types.this.slot && name == "type" {
+        if crate::identities::this::is_field_read(types, lhs) && name == "type" {
             let declared =
                 self.fills.get(&lhs).map_or(std::ptr::null_mut(), |&b| (*Binding::read(b).dyad).ty);
             if declared.is_null() {
