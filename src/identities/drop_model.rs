@@ -132,7 +132,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
                 || p.is_owning_read(place)
             {
                 // SAFETY: an owner's place holds, and an owning field reads, a node of a type
-                // whose fields block fills `drop`.
+                // whose body fills `drop`.
                 let drop = unsafe {
                     meta::instances_drop_of(
                         super::node_type_of(types, place).unwrap_or((*place).ty),
@@ -330,7 +330,7 @@ pub(crate) fn is_owning_place(place: DyadPtr) -> bool {
 
 /// `own @T ?`: the hole `?` built for a pointer type becomes a place of an owning pointer
 /// type, what a field or name declared with it holds (DESIGN ›Memory and concurrency‹).
-/// `own t ?`, `t` a type whose fields block fills `shared drop`: the hole is marked, and
+/// `own t ?`, `t` a type whose body fills `drop`: the hole is marked, and
 /// the field or name declared with it owns the node written into it.
 fn own_hole(p: &mut crate::parse::Parser, hole: DyadPtr) -> Result<(), ParseError> {
     let types = p.types();
@@ -1008,11 +1008,10 @@ mod tests {
 
     /// A type whose owning field holds an array its parse's `fill` makes.
     const BAG: &str = "import ./identities/array.logos, t := array i32, \
-        bag := type ( fields = ( \
+        bag := type ( \
             mut items := own t ?, \
             shared fill := fn (elements) -> this:type ( this.items = array i32 [4, 5, 6], this ), \
-            shared drop = ( drop this.items ) \
-        ), \
+            drop = ( drop this.items ), \
         parse_rank = dyad.parse_rank, \
         associativity = left, \
         parse = ( \
@@ -1034,7 +1033,7 @@ mod tests {
             assert_eq!(run(&format!("{BAG}{tail}")), (want, 0), "{tail}");
         }
         // The count sees the array: a drop that leaves the field alone leaks its one block.
-        let forgetful = BAG.replace("shared drop = ( drop this.items )", "shared drop = ( 0 )");
+        let forgetful = BAG.replace("drop = ( drop this.items )", "drop = ( 0 )");
         assert_eq!(run(&format!("{forgetful}b := bag (), 1")), (1, 1));
     }
 
@@ -1214,7 +1213,7 @@ mod tests {
     fn a_node_of_a_run_type_is_a_use_of_every_name_its_body_reads() {
         const POW: &str = "n := i32 2,\n\
             ^ := type (\n\
-                fields = ( a := i32 ?, b := i32 ?, output := type ?, shared run = ( this.a * this.b * n ) ),\n\
+                a := i32 ?, b := i32 ?, output := type ?, run = ( this.a * this.b * n ),\n\
                 parse_rank = *.parse_rank + 1,\n\
                 associativity = right,\n\
                 parse = (\n\

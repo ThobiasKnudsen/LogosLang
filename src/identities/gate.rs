@@ -6,7 +6,7 @@
 //! adds itself to the name's binding, first in the set, so the set reads in
 //! text order. Unmarked stays private and unwritable, so there is no
 //! `private` word to write; `immut` vetoes the one write a field gets by
-//! default, its constructor's fill. `shared` is read by the fields block's own reader,
+//! default, its constructor's fill. `shared` is read by the type body's own reader,
 //! and anywhere else by the declaration's own constructor. `mut alloc …` is the
 //! allocation that may be written through.
 //! DESIGN ›Read and write are one mechanism across the system‹
@@ -40,8 +40,8 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     (pub_, mut_, immut_, shared_)
 }
 
-/// A fields block's reader takes the word itself; a type body's own lines
-/// fill slots, so there it stands for nothing.
+/// A type body's reader takes the word at a line's start; anywhere else on
+/// a body line it stands for nothing.
 fn outside_block(
     p: &mut crate::parse::Parser,
     id: DyadPtr,

@@ -1,24 +1,19 @@
 # The ground, written in ordinary Logos: `type` is an instance of itself (`type : type`, the self-loop every
-# classification chain ends in) and the definition keyword, `x := type ( … )`. Like every type it is read in
-# two halves (ruled 19 September 2026, DESIGN ›The constructor is a field‹). Its BARE lines say how its own
-# spelling parses: `type` reads its own bracket and turns it into a new type. Its FIELDS block says what
-# every instance, that is every type, holds and does: the predeclared slots, written out here once and left
-# unfilled. Every other fields block starts with these same slots and fills them with `=`, on its bare lines
-# for itself and inside its fields block for its instances; type.logos alone declares them, which is why
-# `parse := parse ?` names the slot after its type here and nowhere else: the ground is hand-built by the seed,
-# and nothing predeclares the slots for it. lex_rank is not here: it lives on the binding (14 September 2026).
-# run is not here either: a type has no run of its own, and every fields block holds its instances' run,
-# filled `shared run = (…)` and read through the type as `t.fields.run`.
-# The fields block comes first in every type body (ruled 20 September 2026): a body's this.f names a field declared above it.
+# classification chain ends in) and the definition keyword, `x := type ( … )`. A type body describes one
+# level (DESIGN ›A type body describes one level‹): its lines declare what every value of the type holds and
+# fill the type's own slots. For `type` the two are one place, since its values are the types and it is one
+# of them: the slots it declares here, once and unfilled, are the slots every type fills with `=`, and it
+# fills its own below. type.logos alone declares them, which is why `parse := parse ?` names the slot after
+# its type here and nowhere else: the ground is hand-built by the seed, and nothing predeclares the slots for
+# it. lex_rank is not here: it lives on the binding (14 September 2026).
+# A body's this.f names a field declared above it, so the fields come first.
 
 type := type (
-    fields = (
-        parse_rank := f64 ?
-        associativity := ?
-        parse := parse ?
-        drop := drop ?
-        fields := fields ?
-    )
+    parse_rank := f64 ?
+    associativity := ?
+    parse := parse ?
+    run := run ?
+    drop := drop ?
 
     parse_rank = f64 2.0
     associativity = left

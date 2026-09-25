@@ -376,13 +376,8 @@ fn parses_a_record_with_typed_fields() {
     scopes.push(core.root_scope);
 
     let node = {
-        let mut p = Parser::new(
-            "logos (fields = (x := i32 ?, y := i32 ?))",
-            &mut store,
-            &mut trie,
-            &core,
-            scopes,
-        );
+        let mut p =
+            Parser::new("logos (x := i32 ?, y := i32 ?)", &mut store, &mut trie, &core, scopes);
         p.parse_expression().unwrap()
     };
 
@@ -413,7 +408,7 @@ fn parses_a_bare_name_field() {
     scopes.push(core.root_scope);
 
     let node = {
-        let mut p = Parser::new("logos (fields = (t))", &mut store, &mut trie, &core, scopes);
+        let mut p = Parser::new("logos (t)", &mut store, &mut trie, &core, scopes);
         p.parse_expression().unwrap()
     };
 
@@ -457,8 +452,7 @@ fn scopes_are_typed_scope() {
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
     let node = {
-        let mut p =
-            Parser::new("logos (fields = (x := i32 ?))", &mut store, &mut trie, &core, scopes);
+        let mut p = Parser::new("logos (x := i32 ?)", &mut store, &mut trie, &core, scopes);
         p.parse_expression().unwrap()
     };
     unsafe {
@@ -690,7 +684,7 @@ fn a_whole_file_runs_top_to_bottom_like_a_script() {
     scopes.push(core.root_scope);
     let root = {
         let mut p = Parser::new(
-            "double := fn (x := i32 ?) -> i32 ( x + x ),\npoint := logos (fields = (a := i32 ?)),\ndouble(21)",
+            "double := fn (x := i32 ?) -> i32 ( x + x ),\npoint := logos (a := i32 ?),\ndouble(21)",
             &mut store,
             &mut trie,
             &core,
@@ -930,21 +924,21 @@ fn a_call_in_a_bare_condition_matches_between_tiers() {
 fn logos_comparison(field: &str, rank: &str) -> String {
     format!(
         "≈ := type (\n\
-            fields = (\n\
-                lhs := {field} ?,\n\
-                rhs := {field} ?,\n\
-                output := type ?,\n\
-                shared run = ( this.lhs == this.rhs )\n\
-            ),\n\
+            lhs := {field} ?,\n\
+            rhs := {field} ?,\n\
+            output := type ?,\n\
+            run = ( this.lhs == this.rhs ),\n\
             parse_rank = {rank},\n\
             parse = (\n\
-                this.lhs = tape[-1],\n\
-                this.rhs = tape[1],\n\
-                this.output = bool,\n\
-                tape[0] = this,\n\
-                tape.is_constructed[0] = true,\n\
-                tape.remove(1),\n\
-                tape.remove(-1)\n\
+                if tape[0]:type == type (\n\
+                    this.lhs = tape[-1],\n\
+                    this.rhs = tape[1],\n\
+                    this.output = bool,\n\
+                    tape[0] = this,\n\
+                    tape.remove(1),\n\
+                    tape.remove(-1)\n\
+                ),\n\
+                tape.is_constructed[0] = true\n\
             )\n\
         ),\n"
     )
@@ -1837,13 +1831,7 @@ fn record_pointer_fields_hold_addresses_both_tiers() {
     {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        let mut p = Parser::new(
-            "holder := logos (fields = (r := @i32 ?))",
-            &mut store,
-            &mut trie,
-            &core,
-            s,
-        );
+        let mut p = Parser::new("holder := logos (r := @i32 ?)", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap();
     }
     let func = {
@@ -2091,7 +2079,7 @@ fn a_pointer_steps_by_whole_cells_both_tiers() {
         48
     );
     assert_eq!(
-        run_script("holder := logos (fields = (r := @i32 ?)), a := alloc 3 of i32 4, h := holder(a), (h.r + 2)@ = 8, (h.r + 2)@ + a@"),
+        run_script("holder := logos (r := @i32 ?), a := alloc 3 of i32 4, h := holder(a), (h.r + 2)@ = 8, (h.r + 2)@ + a@"),
         12
     );
     let walk = "f := fn (p := @i32 ?, n := i32 ?) -> i32 ( for i in 0..n ( (p + i)@ = i * 10 ), mut s := i32 0, for i in 0..n ( s = s + (p + n - 1 - i)@ ), s )";
@@ -2185,18 +2173,20 @@ fn compile_member_before_and_after_agree() {
 
 /// A power operator defined in Logos, spelled with a word so the script needs no fresh symbol.
 const POW_TYPE: &str = "pw := type (\n\
-     fields = ( a := ?, b := i32 ?, output := type ?, shared run = ( mut r := this.output 1, for 0..this.b ( r = r * this.a ), r ) ),\n\
+     a := ?, b := i32 ?, output := type ?, run = ( mut r := this.output 1, for 0..this.b ( r = r * this.a ), r ),\n\
      parse_rank = *.parse_rank + 1,\n\
      associativity = right,\n\
      parse = (\n\
-         if tape[-1]:type == void error «pw takes a left operand»,\n\
-         this.a = tape[-1],\n\
-         this.b = tape[1],\n\
-         this.output = tape[-1]:type,\n\
-         tape[0] = this,\n\
-         tape.is_constructed[0] = true,\n\
-         tape.remove(1),\n\
-         tape.remove(-1)\n\
+         if tape[0]:type == type (\n\
+             if tape[-1]:type == void error «pw takes a left operand»,\n\
+             this.a = tape[-1],\n\
+             this.b = tape[1],\n\
+             this.output = tape[-1]:type,\n\
+             tape[0] = this,\n\
+             tape.remove(1),\n\
+             tape.remove(-1)\n\
+         ),\n\
+         tape.is_constructed[0] = true\n\
      )\n\
     ),\n";
 
@@ -2206,10 +2196,7 @@ fn a_node_of_a_run_type_runs_the_function_built_for_its_fields() {
     assert_eq!(run_script(&format!("{POW_TYPE}2 pw 3 pw 2")), 512);
     // A type with a run and no parse of its own has no call form.
     assert_eq!(
-        parse_err_after(
-            &["sq2 := type ( fields = ( a := i32 ?, shared run = ( this.a * this.a ) ) )"],
-            "sq2(5)"
-        ),
+        parse_err_after(&["sq2 := type ( a := i32 ?, run = ( this.a * this.a ) )"], "sq2(5)"),
         ParseError::RunTypeApplied
     );
 }
@@ -2218,8 +2205,7 @@ fn a_node_of_a_run_type_runs_the_function_built_for_its_fields() {
 fn a_parse_is_ranked_by_what_it_takes_from_its_right() {
     let (mut store, mut trie, core) = new_core();
     for def in [
-        "q := type ( fields = ( shared parse = ( tape.is_constructed[0] = true ) ), \
-         parse_rank = dyad.parse_rank, parse = ( tape.is_constructed[0] = true ) )",
+        "q := type ( parse_rank = dyad.parse_rank, parse = ( tape.is_constructed[0] = true ) )",
         "chooser := type ( parse_rank = fn.parse_rank, parse = ( tape.is_constructed[0] = true ) )",
     ] {
         let mut s = ScopeStack::new();
@@ -2232,8 +2218,6 @@ fn a_parse_is_ranked_by_what_it_takes_from_its_right() {
         let [q, chooser] = [q, chooser].map(|b| Binding::read(b).dyad);
         let apply = meta::parse_rank_of(core.dyad_);
         assert_eq!(meta::parse_rank_of(q), apply);
-        // An unfilled `shared parse_rank` is application's.
-        assert_eq!(meta::instances_parse_rank_of(q), apply);
         assert_eq!(meta::parse_rank_of(chooser), meta::parse_rank_of(core.fn_type));
         assert!(meta::parse_rank_of(chooser) > apply);
     }
@@ -2258,10 +2242,7 @@ fn a_node_of_a_run_type_compiles_as_a_call_of_its_function() {
 
 #[test]
 fn a_body_slot_takes_a_bracket_and_a_run_type_has_no_place() {
-    assert_eq!(
-        parse_err("t := type (fields = (shared run = 5))"),
-        ParseError::SlotNeedsBody(SlotKind::Run)
-    );
+    assert_eq!(parse_err("t := type (run = 5)"), ParseError::SlotNeedsBody(SlotKind::Run));
     assert_eq!(parse_err("t := type (parse = 5)"), ParseError::SlotNeedsBody(SlotKind::Parse));
     assert_eq!(
         parse_err("t := type (parse = fn (tape := parsing_tape ?) -> void ( tape.recenter(0) ))"),
@@ -2348,10 +2329,7 @@ fn a_promoted_loop_matches_the_interpreter() {
 
 #[test]
 fn compile_is_reserved_only_on_fn_typed_values() {
-    assert_eq!(
-        run_script("point := logos (fields = (compile := i32 ?)),\np := point(7),\np.compile"),
-        7
-    );
+    assert_eq!(run_script("point := logos (compile := i32 ?),\np := point(7),\np.compile"), 7);
 }
 
 #[test]
@@ -2390,12 +2368,11 @@ fn a_literal_into_a_pointer_parameter_is_rejected() {
     assert_eq!(p.parse_expression(), Err(ParseError::TypeMismatch));
 }
 
-/// Declare `point := logos (fields = (x := i32 ?, y := i32 ?))` in the root scope.
+/// Declare `point := logos (x := i32 ?, y := i32 ?)` in the root scope.
 fn declare_point(store: &mut Store, trie: &mut RegexTrie, core: &Core) {
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
-    let mut p =
-        Parser::new("point := logos (fields = (mut x := i32 ?, y := i32 ?))", store, trie, core, s);
+    let mut p = Parser::new("point := logos (mut x := i32 ?, y := i32 ?)", store, trie, core, s);
     p.parse_expression().unwrap();
 }
 
@@ -2436,7 +2413,7 @@ fn record_fields_lay_out_mixed_widths() {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let mut p = Parser::new(
-            "cell := logos (fields = (a := u8 ?, b := i64 ?, c := i32 ?))",
+            "cell := logos (a := u8 ?, b := i64 ?, c := i32 ?)",
             &mut store,
             &mut trie,
             &core,
@@ -2752,7 +2729,7 @@ fn shared_stands_first_on_the_members_binding() {
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
     let mut p = Parser::new(
-        "t := type (fields = (shared y := i32 3, shared mut z := i32 4, v := i32 ?))",
+        "t := type (shared y := i32 3, shared mut z := i32 4, v := i32 ?)",
         &mut store,
         &mut trie,
         &core,
@@ -2772,7 +2749,6 @@ fn shared_stands_first_on_the_members_binding() {
             &[core.shared_, core.mut_]
         );
     }
-    assert_eq!(parse_err("t := type ( shared x := 5 )"), ParseError::SharedMisplaced);
     assert_eq!(parse_err("f := fn (shared x := i32 ?) -> i32 ( x )"), ParseError::SharedMisplaced);
 }
 
@@ -2893,15 +2869,13 @@ fn a_name_is_written_only_if_declared_mut() {
         ParseError::Immutable(Box::new("a".into()))
     );
     assert_eq!(
-        parse_err(
-            "t := type (fields = (immut a := i32 ?), parse = ( this.a = tape[-1], tape[0] = this ))"
-        ),
+        parse_err("t := type (immut a := i32 ?, parse = ( this.a = tape[-1], tape[0] = this ))"),
         ParseError::Immutable(Box::new("a".into()))
     );
     // An `immut` sibling never written blocks nothing: the other fill parses.
     assert_eq!(
         run_script(
-            "t := type (fields = (a := i32 ?, immut b := i32 ?), parse = ( this.a = tape[-1], tape[0] = this, tape.is_constructed[0] = true, tape.remove(-1) )),\n1"
+            "t := type (a := i32 ?, immut b := i32 ?, parse = ( this.a = tape[-1], tape[0] = this, tape.is_constructed[0] = true, tape.remove(-1) )),\n1"
         ),
         1
     );
@@ -3108,7 +3082,7 @@ fn recursion_with_a_record_local_is_per_activation_both_tiers() {
     unsafe {
         assert_recursion_both_tiers(
             &[
-                "point := logos ( fields = ( x := i32 ?, y := i32 ? ) )",
+                "point := logos ( x := i32 ?, y := i32 ? )",
                 "h := fn (n := i32 ?) -> i32 ( pt := point(n, 0), if (n < 1) (0) else (h(n - 1), pt.x) )",
             ],
             "h",

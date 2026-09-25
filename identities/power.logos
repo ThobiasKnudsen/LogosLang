@@ -1,41 +1,39 @@
 # The language defines itself: a power operator `^` written in ordinary Logos,
 # used in the same file, and compiled with f.compile().
 #
-# An operator is a type read in two halves. Its FIELDS block says what its
-# instances hold and do: the operands as named fields, the output the parse
-# writes per instance, and the run every instance shares, a bare body over the
-# fields. Its BARE lines say how its own spelling parses: where it binds
-# (parse_rank), which way it associates, and what happens when `^` stands on
-# the tape (parse, a body over the parsing tape `tape`, building the instance
-# as `this`, a fresh ^ it fills by name and places with tape[0] = this, then
-# marks constructed itself). The run is lexed once here and constructed once
-# per set of field types a ^ node is built with, so `^` over i32 and over f64
-# is this one definition. A field read such as (a ^ b).lhs walks into the
-# instance and runs nothing. The fields block comes first: a body's this.f
-# names a field declared above it.
+# An operator is a type, and its body describes one level: the operands as named
+# fields, the output the parse writes per node, the run every node shares (a bare
+# body over the fields), where `^` binds (parse_rank), which way it associates,
+# and its one parse, a body over the parsing tape `tape`. When `^` itself stands
+# on the tape the parse builds the node as `this`, a fresh ^ it fills by name and
+# places with tape[0] = this; when a ^ node stands there it has nothing to take
+# and stands as itself. The run is lexed once here and constructed once per set of
+# field types a ^ node is built with, so `^` over i32 and over f64 is this one
+# definition. A field read such as (a ^ b).lhs walks into the node and runs
+# nothing. The fields come first: a body's this.f names a field declared above it.
 
 ^ := type (
-    fields = (
-        lhs := ?,
-        rhs := i32 ?,
-        output := type ?,
-        shared run = (
-            mut r := this.output 1,
-            for 0..this.rhs ( r = r * this.lhs ),
-            r
-        )
+    lhs := ?,
+    rhs := i32 ?,
+    output := type ?,
+    run = (
+        mut r := this.output 1,
+        for 0..this.rhs ( r = r * this.lhs ),
+        r
     ),
 
     parse_rank = *.parse_rank + 1,
     associativity = right,
     parse = (
-        this.lhs = tape[-1],
-        this.rhs = tape[1],
-        this.output = tape[-1]:type,
-        tape[0] = this,
-        tape.is_constructed[0] = true,
-        tape.remove(1),
-        tape.remove(-1)
+        if tape[0]:type == type (
+            this.lhs = tape[-1],
+            this.rhs = tape[1],
+            this.output = tape[-1]:type,
+            tape[0] = this,
+            tape.remove(1),
+            tape.remove(-1)
+        ),
+        tape.is_constructed[0] = true
     )
 ),
 f := fn (x := i32 ?) -> i32 ( x ^ 3 + 1 ),

@@ -58,11 +58,6 @@ fn construct(
     if slot.is_some() && !p.filling_definition() {
         return Err(ParseError::SlotOutsideDefinition);
     }
-    if slot == Some(crate::parse::SlotKind::Fields) {
-        let node = p.fields_block_fill(target)?;
-        tape.place(node);
-        return Ok(crate::parse::Constructed::Placed);
-    }
     // Anything but a bracket right of a body slot is `slot_fill`'s checked error.
     if matches!(
         slot,

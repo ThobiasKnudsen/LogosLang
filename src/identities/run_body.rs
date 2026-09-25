@@ -1,7 +1,7 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! A type's held `run` body: `shared run = (…)` is lexed once at the definition into a
+//! A type's held `run` body: `run = (…)` is lexed once at the definition into a
 //! tape fragment and constructed once per field-type set when a node supplies the types.
 //! Node shape `{type: run_body, value: [text, cells, specs, op]}`; `specs` is an array
 //! of `[key, fn]` pairs, `key` one type per instance field. DESIGN ›Deferral is authored‹.

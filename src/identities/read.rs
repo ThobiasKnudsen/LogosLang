@@ -285,14 +285,14 @@ mod tests {
              p := &x,\n\
              a := type ?,\n\
              d := dyad ?,\n\
-             w := type ( fields = (y := i64 ?) ),\n\
+             w := type ( y := i64 ? ),\n\
              q := w(7),\n\
              f := fn (n := i32 ?, b) -> i32 ( n ),\n\
              true,\n\
              5,\n\
              «hi»,\n\
              # prose\n\
-             w.fields,\n\
+             w.scope,\n\
              i32 1 + i32 2,\n\
              f(1, 2),\n\
              ?",
@@ -343,7 +343,7 @@ mod tests {
     fn a_node_of_a_run_type_is_a_call_of_its_function_and_a_leafless_record_is_named() {
         let (mut store, core, exprs) = parse_seq(
             "pw := type (\n\
-                 fields = ( a := ?, b := i32 ?, output := type ?, shared run = ( this.a ) ),\n\
+                 a := ?, b := i32 ?, output := type ?, run = ( this.a ),\n\
                  parse_rank = *.parse_rank + 1,\n\
                  associativity = right,\n\
                  parse = (\n\
@@ -395,8 +395,8 @@ mod tests {
             assert_eq!(place_layout(types, std::ptr::null_mut()), None);
         }
         let (_store, core, exprs) = parse_seq(
-            "w := type ( fields = (x := i64 ?, y := i64 ?) ),\n\
-             c := type ( fields = ( a := i32 ?, shared run = ( this.a ) ) )",
+            "w := type ( x := i64 ?, y := i64 ? ),\n\
+             c := type ( a := i32 ?, run = ( this.a ) )",
         );
         let types = &core;
         // SAFETY: the declared identities were just parsed.

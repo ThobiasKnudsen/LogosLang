@@ -1,15 +1,15 @@
 
 fn := type (
-    fields = (
-        shared parse_rank = …
-        shared associativity = left
-        shared parse = ( ? )
-        shared compile := fn () -> void ( ? )
-        input := type ?
-        output := ?
-        bcode := callable ?
-        frame := u64 ?
-    )
+    input := type ?
+    output := ?
+    bcode := callable ?
+    frame := u64 ?
+    shared compile := fn () -> void ( ? )
 
-    parse = ( ? )
+    parse_rank = …
+    associativity = left
+    parse = (
+        # `fn` itself builds a function from `(params) -> T (body)`; a function takes its arguments.
+        if tape[0]:type == type ( ? ) else ( ? )
+    )
 )

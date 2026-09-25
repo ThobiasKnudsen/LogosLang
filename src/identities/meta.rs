@@ -14,7 +14,7 @@
 //! [10..18]   u64  constructor: a `seed-parse` callable leaf, or 0
 //! [18..26]   u64  destructor: the owning pointer's teardown, else 0
 //! [26..34]   u64  code: the `fn` node a node of the type runs as, or 0
-//! [34..42]   u64  run body: the lexed body a `shared run = (…)` line held, or 0
+//! [34..42]   u64  run body: the lexed body a `run = (…)` line held, or 0
 //! [42..50]   u64  pointer type: the interned `@T` of this type, or 0
 //! [50..]     payload, per kind:
 //!              ADDR              pointee type node (`dyad@`)
@@ -49,10 +49,8 @@ pub(crate) const CONVENTION_TAG: u8 = 21;
 /// Values are `[len: u64][data: @dyad]`, 16 bytes; a list never lives inline in a node.
 pub(crate) const ARRAY_TAG: u8 = 22;
 /// A record type node's record: payload `[scope: @dyad][fields: @dyad][size_bytes: u64]
-/// [body: @dyad]`, locked at definition; `body` is null where the type has none. Then the
-/// instances' parse trio: `[parse: @dyad][parse_rank: f64][associativity: u8]`, and the
-/// instances' `[drop: @dyad]`, 57 bytes in all; `parse` and `drop` are null where the fields
-/// block fills none.
+/// [body: @dyad][drop: @dyad]`, 40 bytes, locked at definition; `body` is null where the type
+/// has none, `drop` where its body fills none.
 pub(crate) const RECORD_TAG: u8 = 23;
 /// Values are dyad views: the value IS the viewed node's address.
 pub(crate) const DYAD_TAG: u8 = 24;
@@ -171,9 +169,6 @@ pub(crate) fn record_layout(
     blob.extend_from_slice(&size_bytes.to_ne_bytes());
     blob.extend_from_slice(&(body as usize).to_ne_bytes());
     blob.extend_from_slice(&0usize.to_ne_bytes());
-    blob.extend_from_slice(&prec::APPLY.to_ne_bytes());
-    blob.push(0);
-    blob.extend_from_slice(&0usize.to_ne_bytes());
     store.alloc_bytes(&blob)
 }
 
@@ -205,53 +200,10 @@ pub(crate) unsafe fn record_body_of(id: DyadPtr) -> DyadPtr {
     std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF + 24) as *const DyadPtr)
 }
 
-const INSTANCES_PARSE_OFF: usize = PAYLOAD_OFF + 32;
-const INSTANCES_RANK_OFF: usize = PAYLOAD_OFF + 40;
-const INSTANCES_ASSOC_OFF: usize = PAYLOAD_OFF + 48;
-const INSTANCES_DROP_OFF: usize = PAYLOAD_OFF + 49;
+const INSTANCES_DROP_OFF: usize = PAYLOAD_OFF + 32;
 
-/// The `fn` a `shared parse = (…)` line filled, woken when an instance stands on the tape;
-/// null where the fields block fills none.
-///
-/// # Safety
-/// As `record_scope_of`.
-pub(crate) unsafe fn instances_parse_of(id: DyadPtr) -> DyadPtr {
-    std::ptr::read_unaligned((*id).value.add(INSTANCES_PARSE_OFF) as *const DyadPtr)
-}
-
-/// # Safety
-/// As `record_scope_of`.
-pub(crate) unsafe fn instances_parse_rank_of(id: DyadPtr) -> f64 {
-    std::ptr::read_unaligned((*id).value.add(INSTANCES_RANK_OFF) as *const f64)
-}
-
-/// # Safety
-/// As `record_scope_of`.
-pub(crate) unsafe fn instances_assoc_of(id: DyadPtr) -> Assoc {
-    if *(*id).value.add(INSTANCES_ASSOC_OFF) == 0 {
-        Assoc::Left
-    } else {
-        Assoc::Right
-    }
-}
-
-/// # Safety
-/// `id` must carry a `RECORD_TAG` record nothing has read the trio of; `parse` must be
-/// null or a `fn` node from the store.
-pub(crate) unsafe fn install_instances_parse(
-    id: DyadPtr,
-    parse: DyadPtr,
-    parse_rank: f64,
-    assoc: Assoc,
-) {
-    let v = (*id).value;
-    std::ptr::write_unaligned(v.add(INSTANCES_PARSE_OFF) as *mut DyadPtr, parse);
-    std::ptr::write_unaligned(v.add(INSTANCES_RANK_OFF) as *mut f64, parse_rank);
-    *v.add(INSTANCES_ASSOC_OFF) = u8::from(assoc == Assoc::Right);
-}
-
-/// The `fn` a `shared drop = (…)` line filled, over the one parameter `this`; null where
-/// the fields block fills none.
+/// The `fn` a `drop = (…)` line filled, over the one parameter `this`; null where the type
+/// body fills none.
 ///
 /// # Safety
 /// As `record_scope_of`.
@@ -306,7 +258,7 @@ pub(crate) unsafe fn install_destructor(id: DyadPtr, leaf: DyadPtr) {
     std::ptr::write_unaligned((*id).value.add(DTOR_OFF) as *mut DyadPtr, leaf);
 }
 
-/// The lexed body a `shared run = (…)` line held, constructed per field-type set;
+/// The lexed body a `run = (…)` line held, constructed per field-type set;
 /// null for a type with no run.
 ///
 /// # Safety

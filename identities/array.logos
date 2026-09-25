@@ -1,7 +1,7 @@
 # The array collection, written in ordinary Logos. `array` is a chooser: it takes the element type and
-# leaves on the tape the concrete type for it, `array i32`, minted once per element type, whose own parse
-# then runs. A mint's bare lines say how its spelling parses; its fields block says what its instances
-# hold and do (DESIGN ›The constructor is a field‹).
+# leaves on the tape the type of its values, `array i32`, minted once per element type. That type's one
+# parse builds a value when the type stands before a `[…]` and reads an index when a value does
+# (DESIGN ›A type body describes one level‹).
 
 import ./next_power_of_two.logos,
 
@@ -10,45 +10,57 @@ get_mint := fn (t := type ?) -> type (
     mut mint := array_mints[t],
     if mint != ? return mint,
     mint = type (
-        fields = (
-            shared element_type := t,
-            mut ptr := own @element_type ?,
-            mut size := u64 0,
-            mut capacity := u64 0,
-            shared size_bytes := fn () -> u64 (this.size * this.element_type.size_bytes),
-            shared capacity_bytes := fn () -> u64 (this.capacity * this.element_type.size_bytes),
+        shared element_type := t,
+        mut ptr := own @element_type ?,
+        mut size := u64 0,
+        mut capacity := u64 0,
+        shared size_bytes := fn () -> u64 (this.size * this.element_type.size_bytes),
+        shared capacity_bytes := fn () -> u64 (this.capacity * this.element_type.size_bytes),
 
-            shared drop = (
-                for i in 0..this.size ( drop (this.ptr + i)@ ),
-                free this.ptr
-            ),
+        drop = (
+            for i in 0..this.size ( drop (this.ptr + i)@ ),
+            free this.ptr
+        ),
 
-            shared parse_rank = dyad.parse_rank,
-            shared associativity = left,
-            shared at := fn (index := u64 ?) -> element_type (
-                if index >= this.size error «index out of range: the index is at or past the array's size»,
-                (this.ptr + index)@
-            ),
-            shared at_signed := fn (index := i64 ?) -> element_type (
-                if index < 0 or u64(index) >= this.size
-                    error «index out of range: the index is negative or at or past the array's size»,
-                (this.ptr + u64(index))@
-            ),
+        shared at := fn (index := u64 ?) -> element_type (
+            if index >= this.size error «index out of range: the index is at or past the array's size»,
+            (this.ptr + index)@
+        ),
+        shared at_signed := fn (index := i64 ?) -> element_type (
+            if index < 0 or u64(index) >= this.size
+                error «index out of range: the index is negative or at or past the array's size»,
+            (this.ptr + u64(index))@
+        ),
 
-            shared fill := fn (elements) -> this:type (
-                this.size = elements.dyads.size,
-                this.capacity = next_power_of_two(this.size),
-                this.ptr = mut alloc this.capacity of this.element_type ?,
-                # `=` builds a bracket line by the element type's parse (DESIGN ›A type body describes one level‹).
-                for i in 0..this.size (
-                    (this.ptr + i)@ = elements.dyads[i]
-                ),
-                this
+        # `=` builds a bracket line by the element type's parse.
+        shared fill := fn (elements) -> this:type (
+            this.size = elements.dyads.size,
+            this.capacity = next_power_of_two(this.size),
+            this.ptr = mut alloc this.capacity of this.element_type ?,
+            for i in 0..this.size (
+                (this.ptr + i)@ = elements.dyads[i]
             ),
+            this
+        ),
 
-            shared parse = (
-                # A signed index goes to `at_signed`, whose bounds check refuses a negative value.
-                if tape[1]:type == square_brackets (
+        # Takes a bracket at application's rank (DESIGN ›A parse is ranked by what it takes from its right‹).
+        parse_rank = dyad.parse_rank,
+        associativity = left,
+        parse = (
+            if tape[1]:type == scope
+                error «the list is written in square brackets, `array i32 [1, 2]`, not `array i32 (1, 2)`»,
+            if tape[1]:type == square_brackets (
+                if tape[0]:type == type (
+                    # A bracket line is checked when `fill`'s `=` builds it.
+                    for i in 0..tape[1].dyads.size (
+                        if tape[1].dyads[i]:type != square_brackets and tape[1].dyads[i]:type != scope (
+                            if not (tape[1].dyads[i]:type ⊆ this.element_type)
+                                error «an element does not fit the element type»
+                        )
+                    ),
+                    tape[0] = this.fill(tape[1])
+                ) else (
+                    # A signed index goes to `at_signed`, whose bounds check refuses a negative value.
                     if tape[1].dyads[0]:type ⊆ this.size:type (
                         tape[0] = this.at(tape[1].dyads[0])
                     ) else (
@@ -58,28 +70,8 @@ get_mint := fn (t := type ?) -> type (
                         if not tape[1].dyads[0]:type ⊆ i64
                             error «the index is not an integer»,
                         tape[0] = this.at_signed(tape[1].dyads[0])
-                    ),
-                    tape.remove(1)
-                ),
-                tape.is_constructed[0] = true
-            )
-        ),
-
-        # The mint takes a bracket at application's rank (DESIGN ›A parse is ranked by what it takes from its right‹).
-        parse_rank = dyad.parse_rank,
-        associativity = left,
-        parse = (
-            if tape[1]:type == scope
-                error «the list is written in square brackets, `array i32 [1, 2]`, not `array i32 (1, 2)`»,
-            if tape[1]:type == square_brackets (
-                # A bracket line is checked when `fill`'s `=` builds it.
-                for i in 0..tape[1].dyads.size (
-                    if tape[1].dyads[i]:type != square_brackets and tape[1].dyads[i]:type != scope (
-                        if not (tape[1].dyads[i]:type ⊆ this.element_type)
-                            error «an element does not fit the element type»
                     )
                 ),
-                tape[0] = this.fill(tape[1]),
                 tape.remove(1)
             ),
             tape.is_constructed[0] = true

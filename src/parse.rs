@@ -874,9 +874,8 @@ impl ScopeStack {
         Ok(())
     }
 
-    /// The sibling check, run too across the two halves of a `fields = (…)`
-    /// block, whose `shared` members live in the type's own scope and whose
-    /// fields live in the list's (DESIGN ›The constructor is a field‹).
+    /// The sibling check, run too across a type body's two scopes: its
+    /// `shared` members live in the body's, its fields in the list's.
     pub fn declared_in(
         &self,
         trie: &RegexTrie,
@@ -962,25 +961,14 @@ pub unsafe fn fn_outer<'a>(fn_node: DyadPtr) -> &'a [DyadPtr] {
 }
 
 /// The slot words a type body declares into its own scope, in `SlotKind`
-/// order (DESIGN ›The constructor is a field‹). `drop` is not here: it is the
-/// statement keyword, which `=` takes as the slot's name.
-pub const SLOT_NAMES: [&str; 6] =
-    ["parse_rank", "lex_rank", "associativity", "parse", "run", "fields"];
+/// order (DESIGN ›A type body describes one level‹). `drop` is not here: it is
+/// the statement keyword, which `=` takes as the slot's name.
+pub const SLOT_NAMES: [&str; 5] = ["parse_rank", "lex_rank", "associativity", "parse", "run"];
 
 /// Each open bracket recurses through `parse_sequence` and `(`'s constructor,
 /// so a wall of `(` costs Rust stack like a runaway recursion: sized well
 /// under `crate::WORK_STACK_BYTES` and far past anything a person writes.
 pub const MAX_BRACKET_DEPTH: usize = 2_000;
-
-/// What a line of a `type (…)` body is (DESIGN ›The constructor is a field‹).
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum BodyLine {
-    /// A comment.
-    Prose,
-    /// A member of the type's own, or a slot fill.
-    Declare,
-    Other,
-}
 
 /// One of the slots, by `SLOT_NAMES` position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -990,10 +978,9 @@ pub enum SlotKind {
     Associativity = 2,
     Parse = 3,
     Run = 4,
-    Fields = 5,
     /// The `drop` keyword left of `=`: no spelling in `SLOT_NAMES`, since the
     /// word is the statement's.
-    Drop = 6,
+    Drop = 5,
 }
 
 impl SlotKind {
@@ -1003,19 +990,18 @@ impl SlotKind {
             1 => SlotKind::LexRank,
             2 => SlotKind::Associativity,
             3 => SlotKind::Parse,
-            4 => SlotKind::Run,
-            _ => SlotKind::Fields,
+            _ => SlotKind::Run,
         }
     }
 }
 
 /// What a `type (…)` body's lines have filled so far: the head the type node
-/// takes at the close, the constructor, and the fields block's layout.
+/// takes at the close, its one set of slots, and its values' fields.
 struct OpenType {
     scope: DyadPtr,
-    /// The six slot words as this definition's own markers, declared into the body's scope.
-    slots: [DyadPtr; 6],
-    /// The marker a `shared drop = (…)` line declares; `drop` itself is the core word.
+    /// The five slot words as this definition's own markers, declared into the body's scope.
+    slots: [DyadPtr; 5],
+    /// The marker a `drop = (…)` line declares; `drop` itself is the core word.
     drop_marker: DyadPtr,
     parse_rank: f64,
     /// From a `lex_rank = …` line; written onto the declaration's binding at
@@ -1023,25 +1009,16 @@ struct OpenType {
     lex_rank: Option<f64>,
     assoc: Assoc,
     ctor: DyadPtr,
-    /// From a `shared run = (…)` line: the body lexed once into its cells; a
-    /// node of the type constructs it per field-type set.
+    /// From a `run = (…)` line: the body lexed once into its cells; a node of
+    /// the type constructs it per field-type set.
     run_body: DyadPtr,
-    instance: Option<(DyadPtr, DyadPtr, u64)>,
     /// The hidden `this` parameter of the `parse` body being read; null
     /// otherwise.
     this_param: DyadPtr,
-    /// True while a `shared` line of the fields block is being parsed: a
-    /// slot fill there is the instances' slot, on a bare line the type's own.
-    in_block: bool,
-    /// The fields block's scope and the fields declared so far, while it is
-    /// open: what `this.f` reaches in a body written inside it.
-    block: Option<(DyadPtr, Vec<DyadPtr>)>,
-    /// The instances' parse trio, from `shared parse`, `shared parse_rank`
-    /// and `shared associativity` lines.
-    instances_ctor: DyadPtr,
-    instances_rank: f64,
-    instances_assoc: Assoc,
-    /// From a `shared drop = (…)` line: the `fn` over `this` an owner's teardown runs.
+    /// The fields' scope and the fields declared so far: what `this.f`
+    /// reaches in a body written below them.
+    block: (DyadPtr, Vec<DyadPtr>),
+    /// From a `drop = (…)` line: the `fn` over `this` an owner's teardown runs.
     instances_drop: DyadPtr,
     /// A field declared `own` over a node's type, whose teardown the type's drop must write.
     owns_node_field: bool,
@@ -1069,8 +1046,8 @@ fn logos_constructor(
     unsafe { p.run_logos_ctor(f, id, tape) }
 }
 
-/// The instances' `parse` of the node standing in the cell, run with `this`
-/// bound to that node (DESIGN ›The constructor is a field‹).
+/// The `parse` of the type of the value standing in the cell, run with
+/// `this` bound to that value (DESIGN ›A type body describes one level‹).
 fn instances_constructor(
     p: &mut Parser,
     id: DyadPtr,
@@ -1080,10 +1057,10 @@ fn instances_constructor(
         return Ok(Constructed::Decline);
     };
     // SAFETY: `awake_type` found the slot filled on this record type.
-    let f = unsafe { crate::identities::meta::instances_parse_of(t) };
+    let f = unsafe { crate::identities::meta::constructor_of(t) };
     // An instance's parse runs over the instance, never over a type's fresh node.
     let outer = p.rt.set_fresh_this(None);
-    // SAFETY: `f` is the fn the fields block's slot holds, `id` a node its type's parse built or a place of that type.
+    // SAFETY: `f` is the fn the type's parse slot holds, `id` a node its parse built or a place of that type.
     let out = unsafe { p.run_logos_body(f, id, tape) };
     p.rt.set_fresh_this(outer);
     out
@@ -1129,16 +1106,13 @@ pub enum ParseError {
     /// An item the pass ran failed (DESIGN ›Build and run are one
     /// self-directing pass‹).
     Run(crate::run::RunError),
-    /// A line of a `type (…)` body that neither fills a slot, lays out its
-    /// instances, nor is prose.
+    /// A line of a `type (…)` body that neither fills a slot, declares a
+    /// field or member, nor is prose.
     TypeBodyLine,
-    /// A second `fields = (…)` block in one type body.
-    DoubleFields,
-    /// A bare `:=` line in a type body: members are declared inside
-    /// `fields = (…)`.
-    MemberOutsideFieldsBlock,
-    /// `shared` on a parameter or on a type body's own line.
+    /// `shared` on a parameter, or anywhere but at the start of a type body's line.
     SharedMisplaced,
+    /// `shared parse = (…)`: a slot is the type's, one place already.
+    SharedSlotFill,
     /// A `shared` name's initializer read a name that holds no value where it
     /// runs, once at the definition: a parameter or local of the function
     /// around it, or a name declared in the loop or branch around it.
@@ -1147,22 +1121,9 @@ pub enum ParseError {
     SharedNeedsDeclaration,
     /// A slot word left of `=` where no type is being defined.
     SlotOutsideDefinition,
-    /// A bare `run = …` line, or `t.run`: `run` is a slot of the instances alone.
-    NoOwnRun,
-    /// `t.x` where `x` is a member of `t`'s fields block, read `t.fields.x`.
-    MemberThroughFields(String),
-    /// `t.fields.x` where `x` is a place per node, not stored with the type.
+    /// `t.x` where `x` is a place per node, not stored with the type.
     PerNodeThroughType(String),
-    /// `shared lex_rank` or a nested `fields` in the block.
-    FieldsSlotNotInSeed,
-    /// A bare `drop = …` line: the type's own drop, not its instances'.
-    DropSlotNotInSeed,
-    /// A slot word inside the fields block without `shared`.
-    FieldsSlotNeedsShared,
-    /// `shared parse = (…)` in a type with no `parse` of its own, whose
-    /// instances the seed builds by application, without the slots `this.f` reads.
-    InstancesParseNeedsOwnParse,
-    /// A fields-block `fn` called on a record built by applying its type, whose fields are bytes.
+    /// A type body's `fn` called on a record built by applying its type, whose fields are bytes.
     MemberNeedsNode,
     /// A binding in a type body inserted a teardown, which no scope exit runs.
     DeferInTypeBody,
@@ -1187,7 +1148,7 @@ pub enum ParseError {
     /// `lex_rank = …` in a type body that is not a declaration's value: the
     /// rank is the name's, and here there is no name.
     LexRankNeedsName,
-    /// `parse = …` or `shared run = …` with anything but a bracket on its right.
+    /// `parse = …` or `run = …` with anything but a bracket on its right.
     SlotNeedsBody(SlotKind),
     /// A type with a `run` applied to arguments, `sq(3)`: only its `parse`
     /// fills a node's fields and output, so the call form builds no node.
@@ -1196,9 +1157,7 @@ pub enum ParseError {
     /// the type's spelling at the use and the failure rendered against the
     /// body's text.
     RunBodyFailed { name: String, rendered: String },
-    /// `this.f` in a parse body of a type with no `fields = (…)` block.
-    ThisNeedsFieldsBlock,
-    /// `this.f` naming no field of the fields block; carries `f`.
+    /// `this.f` naming no field declared above; carries `f`.
     ThisFieldUnknown(Box<String>),
     /// `tape.is_constructed[k] = v` with a `v` that is no bool.
     FlagTakesBool,
@@ -1350,11 +1309,11 @@ pub enum ParseError {
     /// `own b` where `b` borrows the node it names: only the owner can move it.
     MoveOfBorrow,
     /// A name as a line of a list a type's `parse` builds from, where the value's type fills
-    /// a `shared drop`: the built value owns its lines, so the name must be moved in.
+    /// a `drop`: the built value owns its lines, so the name must be moved in.
     LineNotMoved,
     /// `own` in a type position over something other than a pointer hole, `own @T ?`.
     OwnNeedsPointer,
-    /// A fields block with an `own` field and no `shared drop = (…)` to free it.
+    /// A type body with an `own` field and no `drop = (…)` to free it.
     OwningFieldNeedsDrop,
     /// `own @T ?` on a parameter, which would consume the caller's argument.
     OwnParameterNotInSeed,
@@ -1559,9 +1518,6 @@ pub struct Parser<'a> {
     /// The bindings along the path a field place was reached by, root first:
     /// what a write into it must be granted by.
     paths: HashMap<DyadPtr, Vec<DyadPtr>>,
-    /// Each view a `t.fields` read built, to its type: the step a following
-    /// `.x` reads the block through.
-    fields_views: HashMap<DyadPtr, DyadPtr>,
     /// Each value a run type's node folded to at parse, and that node, whose
     /// fields a `.` on the value still reads.
     unfolded: HashMap<DyadPtr, DyadPtr>,
@@ -1581,7 +1537,7 @@ pub struct Parser<'a> {
     /// at parse are rejected while non-zero. Comptime-taken `if` branches do not count.
     runtime_depth: u32,
     /// The type definitions open around the position, innermost last; slot
-    /// fills and the `fields = (…)` block write into the top.
+    /// fills and fields write into the top.
     definitions: Vec<OpenType>,
     /// The open scopes, innermost last, the base entry the top level; its
     /// length is the bracket depth.
@@ -1603,7 +1559,7 @@ pub struct Parser<'a> {
     /// The scope stacks a body built at run set aside, innermost last: still open, since the
     /// code that asked for the build is running inside them.
     suspended: Vec<ScopeStack>,
-    /// The holes `own` marked over a type whose fields block fills `shared drop`: the
+    /// The holes `own` marked over a type whose body fills `drop`: the
     /// name or field declared with one owns the node written into it.
     owning_holes: HashSet<DyadPtr>,
     /// The field reads whose field carries `own`.
@@ -1643,7 +1599,7 @@ pub struct Parser<'a> {
     held_depth: usize,
     /// A cell the branch about to open is checked against a type, with that type.
     narrow_next: Option<(CellKey, DyadPtr)>,
-    /// While a `shared` line of a fields block is read, the frame depth a
+    /// While a `shared` line of a type body is read, the frame depth a
     /// `fn` written as the member's value opens at: that `fn` takes `this`.
     member_fn_depth: Option<usize>,
     /// While the initializer of a `shared` name parses: the frame depth it
@@ -1778,7 +1734,6 @@ impl<'a> Parser<'a> {
             filling: Vec::new(),
             last_declared: std::ptr::null_mut(),
             paths: HashMap::new(),
-            fields_views: HashMap::new(),
             unfolded: HashMap::new(),
             member_root: std::ptr::null_mut(),
             fills: HashMap::new(),
@@ -2840,15 +2795,19 @@ impl<'a> Parser<'a> {
     }
 
     /// A `fn`'s parameter list checks each name against every open scope, since
-    /// the body reopens the list's scope; a `fields = (…)` block's fields
-    /// against their siblings alone (`relaxed`; DESIGN ›The constructor is a field‹).
+    /// the body reopens the list's scope; a type body's fields against their
+    /// siblings alone (`relaxed`), where the list is the body itself, its
+    /// slot fills, `shared` members and prose among the fields (DESIGN ›A type
+    /// body describes one level‹).
     fn parse_field_list(
         &mut self,
         relaxed: bool,
         leading: Option<(&str, DyadPtr)>,
     ) -> Result<(DyadPtr, DyadPtr, u64), ParseError> {
         let at = self.pos;
-        self.expect_open()?;
+        if !relaxed {
+            self.expect_open()?;
+        }
         // Field names are declared into the record's own scope.
         let scope = self.open_scope();
 
@@ -2861,6 +2820,24 @@ impl<'a> Parser<'a> {
         loop {
             if self.at_close() {
                 break;
+            }
+            if relaxed {
+                if self.at_end() {
+                    return Err(ParseError::UnclosedBracket);
+                }
+                if let Some(def) = self.definitions.last_mut() {
+                    def.block = (scope, fields.clone());
+                }
+                // Prose before a slot fill is lifted beside it, as on any line;
+                // before a field or member it is read past.
+                if self.at_prose() {
+                    let at = self.pos;
+                    self.skip_prose();
+                    if self.at_slot_word() {
+                        self.slot_line(at)?;
+                    }
+                    continue;
+                }
             }
             let (start, len) = self.lex_spelling().ok_or(ParseError::ExpectedField)?;
             // `self.source` is `&'a str` (Copy), so the slice is independent
@@ -2875,9 +2852,6 @@ impl<'a> Parser<'a> {
                     self.pos = start;
                     return Err(ParseError::SharedMisplaced);
                 }
-                if let Some(def) = self.definitions.last_mut() {
-                    def.block = Some((scope, fields.clone()));
-                }
                 self.shared_member(start)?;
                 continue;
             }
@@ -2889,14 +2863,21 @@ impl<'a> Parser<'a> {
             } else {
                 (start, name)
             };
-            // A slot fill inside the block is written `shared run = (…)`: an
-            // unmarked one would be a per-instance default, not in the seed.
+            // A literal, `5`, matches a pattern identity and names nothing.
             if relaxed {
-                let def = self.definitions.last().expect("a relaxed field list is a fields block");
-                let id = self.scopes.resolve(self.trie, name).ok().map(|r| r.identity);
-                if id.is_some_and(|id| id == self.types.drop_ || def.slots.contains(&id)) {
-                    self.pos = start;
-                    return Err(ParseError::FieldsSlotNeedsShared);
+                if let Ok(r) = self.scopes.resolve(self.trie, name) {
+                    // SAFETY: a resolved binding is a binding dyad from the store.
+                    if unsafe { Binding::spelling(r.binding) } != name {
+                        self.pos = start;
+                        return Err(ParseError::TypeBodyLine);
+                    }
+                }
+            }
+            if relaxed && gate.is_none() {
+                let def = self.definitions.last().expect("a relaxed field list is a type body");
+                if word.is_some_and(|id| id == self.types.drop_ || def.slots.contains(&id)) {
+                    self.slot_line(start)?;
+                    continue;
                 }
             }
             // `name := T ?` declares the field's type through the hole `?`
@@ -2935,6 +2916,20 @@ impl<'a> Parser<'a> {
                     }
                 }
             } else {
+                // A bare field name stands alone on its line: `x = 5` in a type
+                // body writes no slot `type` declares.
+                let alone = self.at_close()
+                    || matches!(
+                        self.peek_token(),
+                        Some((id, _)) if id == self.types.sep_
+                    );
+                if relaxed && !alone {
+                    self.pos = start;
+                    return Err(match word {
+                        None => ParseError::Resolve(ResolveError::Unknown(name.to_string())),
+                        Some(_) => ParseError::TypeBodyLine,
+                    });
+                }
                 std::ptr::null_mut()
             };
             // An `own` parameter consumes its argument, which no call does yet.
@@ -2955,7 +2950,7 @@ impl<'a> Parser<'a> {
                 // One block, one no-shadowing rule: a field is checked against
                 // the `shared` members too, which live in the type's own scope.
                 let body =
-                    self.definitions.last().expect("a relaxed field list is a fields block").scope;
+                    self.definitions.last().expect("a relaxed field list is a type body").scope;
                 if self.scopes.declared_in(self.trie, name, body).map_err(ParseError::Resolve)? {
                     self.pos = start;
                     return Err(ParseError::Resolve(ResolveError::Shadowed(name.to_string())));
@@ -2980,7 +2975,9 @@ impl<'a> Parser<'a> {
         }
 
         self.scopes.pop();
-        self.expect_close()?;
+        if !relaxed {
+            self.expect_close()?;
+        }
 
         // Fields pack in declaration order at the width rule parameters claim
         // frame offsets by.
@@ -2990,9 +2987,9 @@ impl<'a> Parser<'a> {
         Ok((scope, fields_arr, size_bytes))
     }
 
-    /// `shared name := value` in a `fields = (…)` block: one place stored
-    /// with the type, declared in the body scope (DESIGN ›Two muts, and the
-    /// storage partition‹). The block stays one scope for no-shadowing.
+    /// `shared name := value` in a type body: one place stored with the type,
+    /// declared in the body scope (DESIGN ›Two muts, and the storage
+    /// partition‹). The fields and the members stay one scope for no-shadowing.
     fn shared_member(&mut self, at: usize) -> Result<(), ParseError> {
         let body = match self.definitions.last() {
             Some(def) => def.scope,
@@ -3006,12 +3003,10 @@ impl<'a> Parser<'a> {
             return Err(ParseError::SharedNeedsDeclaration);
         }
         let field_scope = self.scopes.pop().expect("the field list's scope is open");
-        self.definitions.last_mut().expect("checked above").in_block = true;
         self.last_declared = std::ptr::null_mut();
         let outer_member = self.member_fn_depth.replace(self.frames.len());
         let items = self.shared_line();
         self.member_fn_depth = outer_member;
-        self.definitions.last_mut().expect("checked above").in_block = false;
         self.scopes.push(field_scope);
         // The line's one declaration, a member or a slot fill, with its prose
         // lifted out beside it; anything else is not what `shared` marks.
@@ -3033,7 +3028,12 @@ impl<'a> Parser<'a> {
             self.pos = at;
             return Err(ParseError::SharedNeedsDeclaration);
         };
-        if !self.is_slot_fill(item) {
+        // A slot is the type's, one place already; `shared` marks a member.
+        if self.is_slot_fill(item) {
+            self.pos = at;
+            return Err(ParseError::SharedSlotFill);
+        }
+        {
             // SAFETY: a declaration that fills no slot is `:=`'s, its lhs the binding.
             let name = unsafe { Binding::spelling(crate::identities::declare::binding_of(item)) };
             if self
@@ -3071,6 +3071,78 @@ impl<'a> Parser<'a> {
         Ok(items)
     }
 
+    /// A slot fill in a type body, `parse = (…)` or `drop = (…)`, parsed over
+    /// the body's scope from the slot word at `start`.
+    fn slot_line(&mut self, start: usize) -> Result<(), ParseError> {
+        let body = self.definitions.last().expect("a slot line is in a type body").scope;
+        self.pos = start;
+        let field_scope = self.scopes.pop().expect("the field list's scope is open");
+        let items = self.shared_line();
+        self.scopes.push(field_scope);
+        let mut filled = false;
+        for item in items? {
+            // SAFETY: `item` is a reduced dyad just parsed.
+            let ty = unsafe { (*item).ty };
+            let fill = ty == self.types.declare_ && self.is_slot_fill(item);
+            if !(fill && !filled || ty == self.types.comment_) {
+                self.pos = start;
+                return Err(ParseError::TypeBodyLine);
+            }
+            filled |= fill;
+            // SAFETY: the pending bindings were minted by this parser's declares.
+            unsafe { self.scopes.settle_item(body, item) };
+        }
+        Ok(())
+    }
+
+    fn at_end(&mut self) -> bool {
+        self.skip_whitespace();
+        if self.feed.is_some() {
+            return self.feed_index().is_none();
+        }
+        self.pos >= self.source.len()
+    }
+
+    fn at_prose(&mut self) -> bool {
+        self.skip_whitespace();
+        self.source.as_bytes().get(self.pos) == Some(&b'#')
+    }
+
+    /// Past each comment at the cursor, the line form to its newline and the
+    /// string form, `# «…»`, past its quote.
+    fn skip_prose(&mut self) {
+        let source = self.source;
+        let bytes = source.as_bytes();
+        while self.at_prose() {
+            self.pos += 1;
+            while matches!(bytes.get(self.pos), Some(b' ' | b'\t')) {
+                self.pos += 1;
+            }
+            if source[self.pos..].starts_with('«') {
+                match self.scopes.lex(self.trie, &source[self.pos..]) {
+                    Ok(r) => self.pos += r.matched,
+                    Err(_) => return,
+                }
+            } else {
+                while bytes.get(self.pos).is_some_and(|&b| b != b'\n') {
+                    self.pos += 1;
+                }
+            }
+        }
+    }
+
+    /// The next word is a slot word or `drop`; nothing is consumed.
+    fn at_slot_word(&mut self) -> bool {
+        let at = self.pos;
+        let word = self.lex_spelling().and_then(|(start, len)| {
+            let source = self.source;
+            self.scopes.resolve(self.trie, &source[start..start + len]).ok().map(|r| r.identity)
+        });
+        self.pos = at;
+        let def = self.definitions.last().expect("read inside a type body");
+        word.is_some_and(|id| id == self.types.drop_ || def.slots.contains(&id))
+    }
+
     /// A slot fill's item declares the definition's own marker.
     fn is_slot_fill(&self, item: DyadPtr) -> bool {
         // SAFETY: `item` is a declare node from the store.
@@ -3080,14 +3152,15 @@ impl<'a> Parser<'a> {
             .is_some_and(|def| def.slots.contains(&declared) || def.drop_marker == declared)
     }
 
-    /// An ordinary scope whose bare lines fill the type's own slots and whose
-    /// `fields = (…)` block holds what lives on instances (DESIGN ›The
-    /// constructor is a field‹); every other line must be prose, since nothing runs a type body later.
+    /// One body for one level (DESIGN ›A type body describes one level‹): its
+    /// lines fill the type's slots, declare its values' fields, and declare
+    /// its `shared` members; every other line must be prose, since nothing runs a type body later.
     pub fn parse_type_body(&mut self, id: DyadPtr) -> Result<DyadPtr, ParseError> {
         if self.runtime_depth > 0 {
             return self.hold_type_body();
         }
         self.expect_open()?;
+        let depth = self.scopes.depth();
         // The slot words are the fields `type` declares (identities/type.logos):
         // names on the body's lines and nowhere outside them, in a scope of
         // their own so that a member read through the type never finds them.
@@ -3125,13 +3198,8 @@ impl<'a> Parser<'a> {
             assoc: Assoc::Left,
             ctor: std::ptr::null_mut(),
             run_body: std::ptr::null_mut(),
-            instance: None,
             this_param: std::ptr::null_mut(),
-            in_block: false,
-            block: None,
-            instances_ctor: std::ptr::null_mut(),
-            instances_rank: crate::identities::meta::prec::APPLY,
-            instances_assoc: Assoc::Left,
+            block: (scope, Vec::new()),
             instances_drop: std::ptr::null_mut(),
             owns_node_field: false,
             self_type,
@@ -3145,8 +3213,8 @@ impl<'a> Parser<'a> {
         let outer = self.drain();
         self.open.push(OpenScope::default());
         let saved_depth = std::mem::replace(&mut self.runtime_depth, 0);
-        let lines = outer.and_then(|()| self.type_body_lines(scope)).and_then(|()| {
-            self.drain().map_err(|e| match e {
+        let lines = outer.and_then(|()| self.parse_field_list(true, None)).and_then(|layout| {
+            self.drain().map(|()| layout).map_err(|e| match e {
                 ParseError::Run(r) => {
                     ParseError::TypeBodyFailed(Box::new(crate::report::run_message(&r)))
                 }
@@ -3157,21 +3225,14 @@ impl<'a> Parser<'a> {
         let defers = self.open.pop().expect("pushed above").defers;
         self.restore_pending_fn(suppressed);
         let def = self.definitions.pop().expect("pushed above");
-        self.scopes.pop();
-        self.scopes.pop();
-        lines?;
+        while self.scopes.depth() > depth {
+            self.scopes.pop();
+        }
+        let (field_scope, fields, size_bytes) = lines?;
         if !defers.is_empty() {
             return Err(ParseError::DeferInTypeBody);
         }
         self.expect_close()?;
-        let (field_scope, fields, size_bytes) = match def.instance {
-            Some(instance) => instance,
-            None => {
-                let field_scope = self.rt.store.alloc_raw(self.types.scope, std::ptr::null_mut());
-                let fields = crate::identities::array::build(self.rt.store, self.types.array_, &[]);
-                (field_scope, fields, 0)
-            }
-        };
         let layout = crate::identities::meta::record_layout(
             self.rt.store,
             field_scope,
@@ -3201,9 +3262,6 @@ impl<'a> Parser<'a> {
             // SAFETY: `node` was just built; `def.run_body` is the `lex` node the fill built.
             unsafe { crate::identities::meta::install_run_body(node, def.run_body) };
         }
-        if !def.instances_ctor.is_null() && def.ctor.is_null() {
-            return Err(ParseError::InstancesParseNeedsOwnParse);
-        }
         // A type whose fields own what they point to writes the teardown that frees it
         // (DESIGN ›Explicit heap, and no implicit destruction‹).
         // SAFETY: `fields` is the block's array node, its items field dyads typed null or by a type node.
@@ -3222,15 +3280,6 @@ impl<'a> Parser<'a> {
             // SAFETY: `node` was just built with a record layout; the drop is the fill's fn.
             unsafe { crate::identities::meta::install_instances_drop(node, def.instances_drop) };
         }
-        // SAFETY: `node` was just built with a record layout; the ctor is null or the fill's fn.
-        unsafe {
-            crate::identities::meta::install_instances_parse(
-                node,
-                def.instances_ctor,
-                def.instances_rank,
-                def.instances_assoc,
-            )
-        };
         Ok(node)
     }
 
@@ -3354,57 +3403,6 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Each line settled as the body item of the names it declared and
-    /// checked to be a kind a body holds.
-    fn type_body_lines(&mut self, scope: DyadPtr) -> Result<(), ParseError> {
-        // The lines are pending as they parse and run at the body's close;
-        // this loop only checks what each line is.
-        while let Some(item) = self.parse_next() {
-            let item = item?;
-            // SAFETY: the pending bindings were minted by this parser's declares.
-            unsafe { self.scopes.settle_item(scope, item) };
-            // SAFETY: `item` is a reduced dyad just parsed.
-            let kind = unsafe {
-                let ty = (*item).ty;
-                if crate::identities::numtype::is_comment_type(ty) {
-                    BodyLine::Prose
-                } else if ty == self.types.declare_ {
-                    BodyLine::Declare
-                } else {
-                    BodyLine::Other
-                }
-            };
-            match kind {
-                // A bare `fields` line stands as the marker and declares nothing.
-                BodyLine::Other => return Err(ParseError::TypeBodyLine),
-                BodyLine::Declare if !self.is_slot_fill(item) => {
-                    return Err(ParseError::MemberOutsideFieldsBlock);
-                }
-                BodyLine::Prose | BodyLine::Declare => {}
-            }
-        }
-        Ok(())
-    }
-
-    /// The block of per-instance fields, parsed as a field list checked
-    /// against its siblings alone; `=` calls this before reading its right
-    /// side, since the bracket is a field list, not an expression.
-    pub(crate) fn fields_block_fill(&mut self, target: DyadPtr) -> Result<DyadPtr, ParseError> {
-        let def = self.definitions.last().expect("slot_of found an open definition");
-        // `shared fields = (…)` inside the block is the instances' own slot,
-        // not in the seed; the enclosing block is stored only when its list
-        // closes, so the double-block check below would not see it.
-        if def.in_block {
-            return Err(ParseError::FieldsSlotNotInSeed);
-        }
-        if def.instance.is_some() {
-            return Err(ParseError::DoubleFields);
-        }
-        let instance = self.parse_field_list(true, None)?;
-        self.definitions.last_mut().expect("checked above").instance = Some(instance);
-        Ok(self.slot_declare(SlotKind::Fields, target, instance.1))
-    }
-
     /// A use of one of the slot words, or of `drop`; whether the fill reaches
     /// a type being defined is `filling_definition`'s question.
     ///
@@ -3478,16 +3476,8 @@ impl<'a> Parser<'a> {
         value: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
-        // Inside the fields block the slots are the instances', and a type has
-        // no run of its own; a type's own drop on a bare line is not in the seed yet.
-        let in_block = self.definitions.last().expect("slot_of found an open definition").in_block;
-        match kind {
-            SlotKind::Drop if !in_block => return Err(ParseError::DropSlotNotInSeed),
-            SlotKind::Drop => return Err(ParseError::SlotNeedsBody(kind)),
-            SlotKind::Run if !in_block => return Err(ParseError::NoOwnRun),
-            SlotKind::Parse | SlotKind::Run => return Err(ParseError::SlotNeedsBody(kind)),
-            SlotKind::LexRank if in_block => return Err(ParseError::FieldsSlotNotInSeed),
-            _ => {}
+        if matches!(kind, SlotKind::Parse | SlotKind::Run | SlotKind::Drop) {
+            return Err(ParseError::SlotNeedsBody(kind));
         }
         // SAFETY: `value` is a reduced dyad from the store.
         let read = unsafe { types.through(value) };
@@ -3501,11 +3491,7 @@ impl<'a> Parser<'a> {
         match kind {
             SlotKind::ParseRank => {
                 if let Some(rank) = rank {
-                    if in_block {
-                        def.instances_rank = rank;
-                    } else {
-                        def.parse_rank = rank;
-                    }
+                    def.parse_rank = rank;
                 }
             }
             SlotKind::LexRank => {
@@ -3521,16 +3507,10 @@ impl<'a> Parser<'a> {
                 } else {
                     return Err(ParseError::BadAssociativity);
                 };
-                if in_block {
-                    def.instances_assoc = assoc;
-                } else {
-                    def.assoc = assoc;
-                }
+                def.assoc = assoc;
             }
-            SlotKind::Parse | SlotKind::Run | SlotKind::Fields | SlotKind::Drop => {
-                unreachable!(
-                    "body slots and `drop` returned above; `fields` is routed to fields_block_fill by `=`"
-                )
+            SlotKind::Parse | SlotKind::Run | SlotKind::Drop => {
+                unreachable!("body slots and `drop` returned above")
             }
         }
         Ok(self.slot_declare(kind, target, value))
@@ -3565,13 +3545,12 @@ impl<'a> Parser<'a> {
         target: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
-        let in_block = self.definitions.last().expect("slot_of found an open definition").in_block;
         match kind {
             SlotKind::Parse => {
                 let at = self.pos;
                 // The two names `parse` declares into its body: `tape`, centred
-                // on the appearance, and `this`, the fresh node on a bare line,
-                // the instance that appeared inside the fields block.
+                // on the appearance, and `this`, the fresh node when the type
+                // itself appeared, the value when a value of the type did.
                 let (input, params) = self.hidden_param_record(
                     &[(Some("tape"), types.tape.parsing_tape), (Some("this"), types.dyad_)],
                     at,
@@ -3585,15 +3564,10 @@ impl<'a> Parser<'a> {
                 };
                 let def = self.definitions.last_mut().expect("checked above");
                 def.this_param = std::ptr::null_mut();
-                let f = f?;
-                if in_block {
-                    def.instances_ctor = f;
-                } else {
-                    def.ctor = f;
-                }
+                def.ctor = f?;
+                let f = def.ctor;
                 Ok(self.slot_declare(SlotKind::Parse, target, f))
             }
-            SlotKind::Run if !in_block => Err(ParseError::NoOwnRun),
             SlotKind::Run => {
                 // The body with its brackets is copied into the store (a
                 // source may not outlive the type, the store does) and lexed
@@ -3614,7 +3588,7 @@ impl<'a> Parser<'a> {
                 self.definitions.last_mut().expect("checked above").run_body = body;
                 Ok(self.slot_declare(SlotKind::Run, target, body))
             }
-            SlotKind::Drop if in_block => {
+            SlotKind::Drop => {
                 // One name, `this`, the instance an owner's teardown hands in.
                 let at = self.pos;
                 let (input, params) =
@@ -3632,7 +3606,6 @@ impl<'a> Parser<'a> {
                 let f = def.instances_drop;
                 Ok(self.slot_declare(SlotKind::Drop, target, f))
             }
-            SlotKind::Drop => Err(ParseError::DropSlotNotInSeed),
             _ => unreachable!("`=` reads a bare body for `parse`, `run` and `drop` only"),
         }
     }
@@ -3674,23 +3647,13 @@ impl<'a> Parser<'a> {
         Ok((self.rt.store.alloc_raw(self.types.type_, record.cast()), fields))
     }
 
-    /// The slot of the node being built that the instance field `f` names:
-    /// `f` resolves in the block's own scope alone, and its index among the
-    /// fields is the slot.
+    /// The slot of the node being built that the field `f` names: `f`
+    /// resolves in the fields' own scope alone, and its index among the fields
+    /// declared above is the slot.
     fn this_field(&mut self, name: &str, at: usize) -> Result<DyadPtr, ParseError> {
         let def = self.definitions.last().expect("this_param is set inside a definition");
         let (this, body) = (def.this_param, def.scope);
-        let (scope, items) = match (def.instance, &def.block) {
-            (Some((scope, fields, _)), _) => {
-                // SAFETY: `fields` is the block's array node, its items the field dyads.
-                (scope, unsafe { crate::identities::array::items(fields) }.to_vec())
-            }
-            (None, Some((scope, fields))) => (*scope, fields.clone()),
-            (None, None) => {
-                self.pos = at;
-                return Err(ParseError::ThisNeedsFieldsBlock);
-            }
-        };
+        let (scope, items) = (def.block.0, def.block.1.clone());
         let mut field_scope = ScopeStack::new();
         field_scope.push(scope);
         let resolved = field_scope.resolve(self.trie, name).ok();
@@ -3743,7 +3706,7 @@ impl<'a> Parser<'a> {
             self.pos = at;
             return Err(ParseError::ThisFieldUnknown(Box::new(name.to_string())));
         };
-        // SAFETY: the fields are the fields block's declaration dyads.
+        // SAFETY: the fields are the type body's field dyads.
         let is_type = unsafe { (*fields[i]).ty } == self.types.type_;
         Ok(if is_type { key[i] } else { places[i] })
     }
@@ -4097,8 +4060,8 @@ impl<'a> Parser<'a> {
         fn_type: DyadPtr,
         declared: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
-        // A body in the fields block reached through an instance binds `this`
-        // to it (DESIGN ›The constructor is a field‹): the member's `fn` takes it first.
+        // A `shared` member's `fn` reached through a value binds `this` to it
+        // (DESIGN ›The constructor is a field‹): the `fn` takes it first.
         let member = !declared.is_null()
             && self.member_fn_depth == Some(self.frames.len())
             && self.definitions.last().is_some_and(|d| d.this_param.is_null());
@@ -4833,7 +4796,7 @@ impl<'a> Parser<'a> {
             if let Some(def) = self.definitions.last() {
                 if !def.this_param.is_null() && lhs == def.this_param {
                     let member = self.this_field(name, nstart)?;
-                    // `this.f(…)`, a `fn` of the fields block: called on the node `this` holds.
+                    // `this.f(…)`, a `shared` member `fn`: called on the node `this` holds.
                     if let Some(args) = call {
                         if self.takes_this(member) {
                             let mut with_this = vec![lhs];
@@ -4848,9 +4811,6 @@ impl<'a> Parser<'a> {
             // place in the function being built.
             if self.run_body.as_ref().is_some_and(|rb| lhs == rb.this_param) {
                 return self.run_body_field(name, nstart).map(|n| (n, 0));
-            }
-            if let Some(&logos) = self.fields_views.get(&lhs) {
-                return self.fields_member(lhs, logos, name).map(|n| (n, 0));
             }
             // A scope cell's lines, read when the constructor runs.
             {
@@ -6951,7 +6911,7 @@ impl<'a> Parser<'a> {
     }
 
     /// The shared metadata stored once per type: `.arity`, `.roles[i]`,
-    /// `.parse_rank`, `.associativity`, `.parse`, `.fields`,
+    /// `.parse_rank`, `.associativity`, `.parse`, `.run`, a `shared` member,
     /// `.size_bytes`, `.scope`; a null slot is the honest undefined and errors until `?` exists.
     ///
     /// # Safety
@@ -6999,14 +6959,14 @@ impl<'a> Parser<'a> {
                 }
                 Ok(self.rt.store.alloc_raw(self.types.dyad_, c as *mut u8))
             }
-            "run" => Err(ParseError::NoOwnRun),
-            "fields" if meta::is_record_type(logos) => {
-                let view = self
-                    .rt
-                    .store
-                    .alloc_raw(self.types.dyad_, meta::record_fields_of(logos) as *mut u8);
-                self.fields_views.insert(view, logos);
-                Ok(view)
+            // The held body is no function until a node's field types construct
+            // it, so it is read through a view, as `.parse` reads a native leaf.
+            "run" => {
+                let held = meta::run_body_of(logos);
+                if held.is_null() {
+                    return Err(ParseError::BadReflectRead);
+                }
+                Ok(self.rt.store.alloc_raw(self.types.dyad_, held as *mut u8))
             }
             "size_bytes" if meta::is_record_type(logos) => {
                 Ok(self.scalar_value(NumType::U64, meta::record_size_of(logos) as i64))
@@ -7024,45 +6984,14 @@ impl<'a> Parser<'a> {
                 .store
                 .alloc_raw(self.types.dyad_, meta::record_scope_of(logos) as *mut u8)),
             "type" => Err(ParseError::TypeIsColonRead),
-            // A type's `.` answers only for the slots `type` declares; what its
-            // instances hold is reached through `.fields` (DESIGN ›Resolution is one rule‹).
             _ if self.shared_member_of(logos, name).is_some() => {
-                Err(ParseError::MemberThroughFields(name.to_string()))
+                Ok(self.shared_member_read(logos, name).expect("found just above"))
             }
             _ if self.per_node_field_of(logos, name) => {
                 Err(ParseError::PerNodeThroughType(name.to_string()))
             }
             _ => Err(ParseError::BadReflectRead),
         }
-    }
-
-    /// `t.fields.x`: a `shared` member of `t`, the instances' `run`, or else
-    /// the view's own `.type` and `.value`.
-    ///
-    /// # Safety
-    /// `view` must be the `dyad` view `.fields` built over `logos`, a record type.
-    unsafe fn fields_member(
-        &mut self,
-        view: DyadPtr,
-        logos: DyadPtr,
-        name: &str,
-    ) -> Result<DyadPtr, ParseError> {
-        // The held body is no function until a node's field types construct
-        // it, so it is read through a view, as `.parse` reads a native leaf.
-        if name == "run" {
-            let held = crate::identities::meta::run_body_of(logos);
-            if held.is_null() {
-                return Err(ParseError::BadReflectRead);
-            }
-            return Ok(self.rt.store.alloc_raw(self.types.dyad_, held as *mut u8));
-        }
-        if let Some(identity) = self.shared_member_read(logos, name) {
-            return Ok(identity);
-        }
-        if self.per_node_field_of(logos, name) {
-            return Err(ParseError::PerNodeThroughType(name.to_string()));
-        }
-        self.view_member(view, name)
     }
 
     /// A `shared` member of `logos`, one place stored with the type, read
@@ -7348,15 +7277,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// A node its type's own `parse` built, standing on the tape, or any expression known at
-    /// parse to yield one (a name, a parameter, a call's result), whose type's fields block
-    /// fills the instances' `parse`. DESIGN ›A name of a type with an instances'
-    /// `parse` wakes it, as the instance does‹.
+    /// A node its type's `parse` built, standing on the tape, or any expression known at
+    /// parse to yield one (a name, a parameter, a call's result), whose type fills `parse`.
+    /// DESIGN ›A type body describes one level‹.
     fn is_awake_instance(&self, id: DyadPtr) -> bool {
         self.awake_type(id).is_some()
     }
 
-    /// The type whose instances' `parse` the cell's dyad wakes.
+    /// The type whose `parse` the value in the cell wakes.
     fn awake_type(&self, id: DyadPtr) -> Option<DyadPtr> {
         use crate::identities::meta;
         // SAFETY: `id` is null or a resolved dyad from the store; the trio is read only on a record type.
@@ -7366,8 +7294,7 @@ impl<'a> Parser<'a> {
             }
             let ty = (*id).ty;
             let value = (*id).value;
-            let wakes =
-                |t: DyadPtr| meta::is_record_type(t) && !meta::instances_parse_of(t).is_null();
+            let wakes = |t: DyadPtr| meta::is_record_type(t) && !meta::constructor_of(t).is_null();
             if wakes(ty)
                 && !value.is_null()
                 && (!crate::dyad::is_place(value) || meta::is_node_valued(ty, self.types.fn_type))
@@ -7385,8 +7312,8 @@ impl<'a> Parser<'a> {
     /// `prec::APPLY` for a cell that carries no record.
     fn precedence_of_cell(&self, id: DyadPtr) -> f64 {
         if let Some(t) = self.awake_type(id) {
-            // SAFETY: `awake_type` read the trio of this record type.
-            return unsafe { crate::identities::meta::instances_parse_rank_of(t) };
+            // SAFETY: `awake_type` found `t` a record type.
+            return unsafe { crate::identities::meta::parse_rank_of(t) };
         }
         // SAFETY: `id` is null or a resolved dyad from the store.
         unsafe {
@@ -7397,12 +7324,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Its record's, or left for an instance running its type's shared
-    /// constructor, which carries no record of its own.
+    /// Its record's, or its type's for a value running its type's parse.
     fn assoc_of_cell(&self, id: DyadPtr) -> Assoc {
         if let Some(t) = self.awake_type(id) {
-            // SAFETY: `awake_type` read the trio of this record type.
-            return unsafe { crate::identities::meta::instances_assoc_of(t) };
+            // SAFETY: `awake_type` found `t` a record type.
+            return unsafe { crate::identities::meta::assoc_of(t) };
         }
         // SAFETY: `id` is null or a resolved dyad from the store.
         unsafe {
@@ -7483,8 +7409,8 @@ impl<'a> Parser<'a> {
                     return Err(e);
                 }
             }
-            // A call that yields a node whose type has an instances' `parse` wakes it as a
-            // name does, in the driver's next turn.
+            // A call that yields a node whose type has a `parse` wakes it as a name does,
+            // in the driver's next turn.
             if !same && !cell.bracket && self.is_awake_instance(cell.dyad) {
                 tape.set_constructed(0, false);
             }
@@ -7511,7 +7437,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// A `fn` declared in a fields block, whose first parameter is the hidden `this`.
+    /// A `shared` member `fn` of a type body, whose first parameter is the hidden `this`.
     ///
     /// # Safety
     /// `f` must be a resolved dyad from the store.
@@ -7779,7 +7705,7 @@ impl<'a> Parser<'a> {
             }
             let Some((n, _, construct, id)) = best else {
                 // A bracket no identity claimed, standing before another cell, is an
-                // expression like any other: its value wakes its type's instances' `parse`.
+                // expression like any other: its value wakes its type's `parse`.
                 let last = tape.iter().last().map(|(n, _)| n);
                 let woken = tape.iter().find(|&(n, c)| {
                     Some(n) != last && c.bracket && self.is_awake_instance(self.cell_identity(c))
@@ -8194,10 +8120,10 @@ mod tests {
             go("sq := fn (a := i32 ?) -> i32 ( a * a )", &mut store, &mut trie, types, scopes);
         let (_, s) = go(
             "squared := type ( \
-                fields = ( a := i32 ?, output := type ?, shared run = ( sq(this.a) ) ), \
+                a := i32 ?, output := type ?, run = ( sq(this.a) ), \
                 parse_rank = *.parse_rank + 1, \
-                parse = ( this.a = tape[-1], this.output = i32, tape[0] = this, \
-                          tape.is_constructed[0] = true, tape.remove(-1) ) )",
+                parse = ( if tape[0]:type == type ( this.a = tape[-1], this.output = i32, \
+                          tape[0] = this, tape.remove(-1) ), tape.is_constructed[0] = true ) )",
             &mut store,
             &mut trie,
             types,

@@ -1,13 +1,11 @@
 proof := type (
+    holes := array dyad []
+    premises := array dyad []
+    pattern := dyad ?
+    replacement := dyad ?
+    derivation := ?
+    world := array @proof ()
     parse = (
         ?
-    )
-    fields = (
-        holes := array dyad []
-        premises := array dyad []
-        pattern := dyad ?
-        replacement := dyad ?
-        derivation := ?
-        world := array @proof ()
     )
 )

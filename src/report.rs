@@ -167,14 +167,13 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::TypeBodyLine => {
-            "a type body line fills a slot (`parse_rank = …`, `fields = (…)`) or is prose".into()
-        }
-        ParseError::DoubleFields => "a type body has one `fields = (…)` block".into(),
-        ParseError::MemberOutsideFieldsBlock => {
-            "a type body's own lines only fill slots with `=`; a member, shared or per instance, is declared inside `fields = (…)`".into()
+            "a type body line fills a slot (`parse_rank = …`, `parse = (…)`), declares a field (`x := i32 ?`) or a member (`shared y := 3`), or is prose".into()
         }
         ParseError::SharedMisplaced => {
-            "`shared` does not stand on a parameter, which each call fills, nor on a type body's own line; a type's shared member is declared inside `fields = (…)`".into()
+            "`shared` stands at the start of a type body's line, `shared y := 3`, never on a parameter, which each call fills".into()
+        }
+        ParseError::SharedSlotFill => {
+            "a slot is the type's, one place already: fill it bare, `parse = (…)`; `shared` marks a member".into()
         }
         ParseError::SharedInitReadsUnmade => {
             "a `shared` name's value is made once, where it is defined, so it cannot use a name that has no value there yet: a parameter or local of the function around it, or a name of the loop or branch around it".into()
@@ -212,16 +211,13 @@ pub fn parse_message(e: &ParseError) -> String {
             "`parse` is a bare body over the tape, `parse = (…)`".into()
         }
         ParseError::SlotNeedsBody(SlotKind::Drop) => {
-            "`drop` is a bare body over the instance, `shared drop = (…)`".into()
+            "`drop` is a bare body over the value, `drop = (…)`".into()
         }
         ParseError::SlotNeedsBody(_) => {
-            "`run` is a bare body over the instance's fields, `shared run = (…)`".into()
-        }
-        ParseError::ThisNeedsFieldsBlock => {
-            "`this.f` reads a field of the node being built, and this type declares none: write the `fields = (…)` block above the body".into()
+            "`run` is a bare body over the value's fields, `run = (…)`".into()
         }
         ParseError::ThisFieldUnknown(name) => {
-            format!("`this.{name}`: no field `{name}` is declared in the `fields = (…)` block above")
+            format!("`this.{name}`: no field `{name}` is declared above in the type body")
         }
         ParseError::FlagTakesBool => {
             "`tape.is_constructed[k] = …` takes a bool, `true` or `false`".into()
@@ -233,31 +229,13 @@ pub fn parse_message(e: &ParseError) -> String {
             format!("the run body of `{name}` could not be constructed for these field types:\n{rendered}")
         }
         ParseError::SlotOutsideDefinition => {
-            "a slot is filled on a line of the type body itself: `parse_rank = …` on a bare line, `shared run = (…)` inside `fields = (…)`".into()
+            "a slot is filled on a line of the type body itself: `parse_rank = …`, `run = (…)`".into()
         }
-        ParseError::NoOwnRun => {
-            "a type has no `run` of its own: its instances' run is filled with `shared run = (…)` inside `fields = (…)` and read through the type as `t.fields.run`".into()
-        }
-        ParseError::MemberThroughFields(name) => format!(
-            "`{name}` is a member of the type's fields block: read it through the type as `.fields.{name}`, or through a node bare"
-        ),
         ParseError::PerNodeThroughType(name) => format!(
             "`{name}` is a place in each node, not stored with the type: read it through a node"
         ),
-        ParseError::FieldsSlotNotInSeed => {
-            "inside `fields = (…)` a `shared` line fills `run`, `parse`, `parse_rank` or `associativity`; a nested `fields` is not in the seed yet, and `lex_rank` is a name's, not the instances'".into()
-        }
-        ParseError::InstancesParseNeedsOwnParse => {
-            "the instances' `parse` reads an instance its type's own `parse` built: fill `parse = (…)` on a bare line of the body too; an instance built by applying the type is not in the seed here".into()
-        }
         ParseError::MemberNeedsNode => {
-            "a `fn` of the fields block is called on a node its type's own `parse` built; a record built by applying the type is not in the seed here (#149)".into()
-        }
-        ParseError::DropSlotNotInSeed => {
-            "a type's own `drop` is not in the seed yet; its instances' is `shared drop = (…)` inside `fields = (…)`".into()
-        }
-        ParseError::FieldsSlotNeedsShared => {
-            "a slot fill inside `fields = (…)` is written `shared run = (…)`; an unmarked fill would be a per-instance default, not in the seed".into()
+            "a `fn` of the type body is called on a node its type's own `parse` built; a record built by applying the type is not in the seed here (#149)".into()
         }
         ParseError::LexRankNeedsName => {
             "lex_rank is the name's: write it in a declaration, `x := type (lex_rank = …)`, \
@@ -298,12 +276,12 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::OwnNeedsPointer => {
             "`own` in a type is written over a pointer hole, `own @T ?`, or a hole of a type \
-             whose fields block fills `shared drop`, `own t ?`"
+             whose body fills `drop`, `own t ?`"
                 .into()
         }
         ParseError::OwningFieldNeedsDrop => {
-            "a field declared `own` must be freed by the type's `shared drop = (…)`, which this \
-             fields block does not fill"
+            "a field declared `own` must be freed by the type's `drop = (…)`, which this \
+             type body does not fill"
                 .into()
         }
         ParseError::OwnParameterNotInSeed => {
@@ -378,7 +356,7 @@ pub fn run_message(e: &RunError) -> String {
         RunError::NoFragment => "insert takes a tape fragment".into(),
         RunError::NoThis => "`this` holds no node here".into(),
         RunError::UnfilledField(i) => format!(
-            "field {} of this node's `fields = (…)` block was never written by its constructor",
+            "field {} of this node's type body was never written by its constructor",
             i + 1
         ),
         RunError::BadIndex(k) => format!("an index cannot be negative ({k})"),

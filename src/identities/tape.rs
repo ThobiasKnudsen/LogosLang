@@ -960,7 +960,7 @@ fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 
 /// A bracket a type's `parse` hands to the call it places is the list the new value is built
 /// from, so the value owns what its lines hold: a line naming a value whose type fills a
-/// `shared drop` must move it in, `own x`, or two names would own one value.
+/// `drop` must move it in, `own x`, or two names would own one value.
 ///
 /// # Safety
 /// `bracket` must be a scope or `square_brackets` node from the store.
