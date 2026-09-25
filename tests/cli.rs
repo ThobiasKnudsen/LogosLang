@@ -578,10 +578,6 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"t := type (fields = (shared run = 5))\n", "`shared run = (…)`"),
         (b"t := type (fields = (shared run = ( 5 )))\nt(1)\n", "the call form of a type"),
         (b"t := type (fields = (shared run = ( 5 )),\n", "never closed"),
-        (
-            b"g := fn (n := i32 ?) -> type ( type (parse_rank = n) )\n",
-            "known when the type is defined",
-        ),
     ] {
         let (_echoes, stderr) = repl(src);
         assert!(stderr.contains(expect), "{}: stderr: {stderr}", String::from_utf8_lossy(src));
@@ -1064,6 +1060,32 @@ fn a_type_returning_function_hands_back_a_type_box() {
 }
 
 #[test]
+fn a_type_body_in_a_function_is_built_per_call() {
+    let (echoes, stderr) = repl(
+        b"mk := fn (t := type ?) -> type ( type ( fields = ( shared e := t ) ) )\n\
+          a := mk(i32)\nb := mk(f64)\nc := mk(i32)\n\
+          a.fields.e == i32\nb.fields.e == f64\na == b\na == c\n\
+          mints := hashmap type -> type\n\
+          get := fn (t := type ?) -> type ( mut m := mints[t], if m != ? return m, \
+          m = type ( fields = ( shared e := t ) ), mints[t] = m, m )\n\
+          get(i32) == get(i32)\nget(i32) == get(f64)\nget(u8).fields.e == u8\n\
+          g := fn (n := i32 ?) -> type ( type (parse_rank = n) )\nt := g(3)\nt.parse_rank\n",
+    );
+    assert_eq!(
+        echoes,
+        ["true", "true", "false", "false", "true", "false", "true", "3.0"],
+        "stderr: {stderr}"
+    );
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+
+    // The body is read when it runs, so its mistakes are reported at the call.
+    let (_echoes, stderr) =
+        repl(b"mk := fn () -> type ( type ( fields = ( shared e := nosuch ) ) )\nmk()\n");
+    assert!(stderr.contains("building this `type (…)` failed"), "stderr: {stderr}");
+    assert!(stderr.contains("nosuch"), "stderr: {stderr}");
+}
+
+#[test]
 fn the_type_returning_fn_example_runs() {
     let out = logos().args(["import", "examples/type_returning_fn.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -1082,12 +1104,15 @@ fn file_mode_runs_each_expression_as_it_parses() {
 }
 
 #[test]
-fn a_type_call_with_a_runtime_argument_is_rejected() {
-    let (_echoes, stderr) = repl(
+fn a_type_call_with_a_runtime_argument_yields_a_type_at_run() {
+    let (echoes, stderr) = repl(
         b"pick := fn (i := i32 ?) -> logos (if (i==0)(i32) else (f64))\n\
-          g := fn (n := i32 ?) -> i32 ( a := pick(n), 1 )\n",
+          g := fn (n := i32 ?) -> i32 ( a := pick(n), if (a == f64) (7) else (3) )\n\
+          g(1)\ng(0)\n\
+          h := fn (n := i32 ?) -> i32 ( x := pick(n) 5, 1 )\n",
     );
-    assert!(stderr.contains("must be evaluable at parse time"), "stderr: {stderr}");
+    assert_eq!(echoes, ["7", "3"], "stderr: {stderr}");
+    assert!(stderr.contains("known only when the program runs"), "stderr: {stderr}");
 }
 
 #[test]

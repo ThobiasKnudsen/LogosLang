@@ -158,7 +158,13 @@ pub(super) fn build(
                 }
                 Read::Address => t == types.dyad_,
                 // SAFETY: as above.
-                Read::Executable(_) => (unsafe { super::hashmap::box_of(types, rhs) }) == Some(t),
+                Read::Executable(_) => {
+                    // SAFETY: as above.
+                    unsafe {
+                        super::hashmap::box_of(types, rhs) == Some(t)
+                            || (t == types.type_ && super::yields_type(types, rhs))
+                    }
+                }
                 _ => false,
             };
             if !ok {

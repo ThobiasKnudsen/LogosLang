@@ -1552,6 +1552,9 @@ pub struct Parser<'a> {
     /// The construction of a held run body in progress: what `this.f` means
     /// there.
     run_body: Option<RunBodyCx>,
+    /// While a held `type (…)` is built at its run, the function frames open
+    /// where it was written: a place declared at that depth is the type's, global.
+    held_depth: usize,
 }
 
 /// The cells of a held run body being constructed, served by the cursor's
@@ -1696,6 +1699,7 @@ impl<'a> Parser<'a> {
             lower: None,
             feed: None,
             run_body: None,
+            held_depth: 0,
         }
     }
 
@@ -1726,8 +1730,20 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `node` must be a valid dyad this parser built into its store.
     unsafe fn run_on_pass(&mut self, node: DyadPtr) -> Result<i64, crate::run::RunError> {
+        let host = crate::run::Host { parser: (self as *mut Self).cast(), mint: Self::mint_host };
         // SAFETY: `node` is a valid dyad in the store (the caller's contract).
-        self.rt.lexing(&self.scopes, self.trie, |rt| unsafe { rt.run(node) })
+        self.rt.hosting(&self.scopes, self.trie, Some(host), |rt| unsafe { rt.run(node) })
+    }
+
+    /// The runtime's way back into the parser running it: build a held `type (…)`.
+    ///
+    /// # Safety
+    /// `parser` is the `Parser` whose `run_on_pass` is on the stack, its runtime
+    /// inside the run that reached `node`, a held type node; the runtime is not
+    /// read through the run's own reference until this returns.
+    unsafe fn mint_host(parser: *mut (), node: DyadPtr) -> Result<i64, crate::run::RunError> {
+        let p = &mut *parser.cast::<Self>();
+        p.construct_held_type(node).map(|ty| ty as i64)
     }
 
     /// The root scope's exit: the top level's teardowns, LIFO. The file
@@ -1765,7 +1781,7 @@ impl<'a> Parser<'a> {
     /// the parameters, its storage per call; at top level an absolute global
     /// blob. The value is a `FRAME_TAG` offset or a real address respectively.
     pub(crate) fn alloc_local(&mut self, ty_node: DyadPtr, width: usize) -> DyadPtr {
-        let place = if self.frames.is_empty() {
+        let place = if self.frames.len() <= self.held_depth {
             // Tagged as storage, so a place and a definition's record are
             // told apart everywhere, not only where a frame exists.
             crate::dyad::global_place(self.rt.store.alloc_bytes(&vec![0u8; width]))
@@ -2224,6 +2240,9 @@ impl<'a> Parser<'a> {
                             crate::identities::read::Read::Container(t)
                                 if t == types.type_ || t == types.dyad_ =>
                             {
+                                return Err(ParseError::TypeKnownOnlyAtRun);
+                            }
+                            _ if crate::identities::yields_type(types, d) => {
                                 return Err(ParseError::TypeKnownOnlyAtRun);
                             }
                             _ => None,
@@ -2866,6 +2885,9 @@ impl<'a> Parser<'a> {
     /// `fields = (…)` block holds what lives on instances (DESIGN ›The
     /// constructor is a field‹); every other line must be prose, since nothing runs a type body later.
     pub fn parse_type_body(&mut self, id: DyadPtr) -> Result<DyadPtr, ParseError> {
+        if self.runtime_depth > 0 {
+            return self.hold_type_body();
+        }
         self.expect_open()?;
         // The slot words are the fields `type` declares (identities/type.logos):
         // names on the body's lines and nowhere outside them, in a scope of
@@ -2980,6 +3002,126 @@ impl<'a> Parser<'a> {
             )
         };
         Ok(node)
+    }
+
+    /// A `type (…)` in a body that runs later reads that run's values, so it is
+    /// lexed now and built each time it runs (DESIGN ›Deferral is authored‹).
+    fn hold_type_body(&mut self) -> Result<DyadPtr, ParseError> {
+        let types = self.types;
+        let (start, len) = self.body_text_extent()?;
+        let source = self.source;
+        let text = crate::identities::string::build_text(
+            self.rt.store,
+            types.string_,
+            &source.as_bytes()[start - 1..start + len + 1],
+        );
+        // SAFETY: `text` is the string node just built; its bytes live for the store.
+        let held = unsafe { crate::identities::string::text(text) };
+        let held = std::str::from_utf8(held).expect("copied from the source text");
+        let fragment = self.lex_body_fragment(held)?;
+        let cells = Box::into_raw(Box::new(fragment));
+        let scope = self.scopes.current().unwrap_or(std::ptr::null_mut());
+        Ok(crate::identities::held_type::build(
+            self.rt.store,
+            types,
+            text,
+            cells,
+            scope,
+            self.frames.len(),
+        ))
+    }
+
+    /// Build the held `type (…)` `node` now, inside the run that reached it: its
+    /// cells constructed over the scopes open where it was written, its reads
+    /// of that function's names reading this call's frame. Everything the
+    /// pass had open is set aside and restored.
+    ///
+    /// # Safety
+    /// `node` must be a held type node from the store; the call it was written
+    /// in must be the innermost activation.
+    unsafe fn construct_held_type(
+        &mut self,
+        node: DyadPtr,
+    ) -> Result<DyadPtr, crate::run::RunError> {
+        let (text, cells, scope, depth) = crate::identities::held_type::parts(node);
+        let bytes = crate::identities::string::text(text);
+        let text: &'a str = std::str::from_utf8(bytes).expect("copied from the source text");
+        let mut cells = (*cells).cells();
+        for cell in &mut cells {
+            if cell.is_fresh() {
+                cell.dyad = self.rt.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut());
+            }
+        }
+        let mut chain = Vec::new();
+        let mut at = scope;
+        while !at.is_null() {
+            chain.push(at);
+            at = crate::identities::scope::parent_of(at);
+        }
+        let mut nested = ScopeStack::new();
+        for &scope in chain.iter().rev() {
+            nested.push(scope);
+        }
+        let base_depth = nested.depth();
+        // One frame per function open where the body was written, so a read of
+        // that function's names is no capture; nothing is claimed in them.
+        let frames = (0..depth)
+            .map(|_| OpenFn {
+                size: 0,
+                below: 0,
+                outer: Vec::new(),
+                open_below: 0,
+                returns: Vec::new(),
+            })
+            .collect();
+
+        let saved_source = std::mem::replace(&mut self.source, text);
+        let saved_pos = std::mem::replace(&mut self.pos, 0);
+        let saved_scopes = std::mem::replace(&mut self.scopes, nested);
+        let saved_frames = std::mem::replace(&mut self.frames, frames);
+        let saved_held_depth = std::mem::replace(&mut self.held_depth, depth);
+        let saved_definitions = std::mem::take(&mut self.definitions);
+        let saved_open = std::mem::replace(&mut self.open, vec![OpenScope::default()]);
+        let saved_filling = std::mem::take(&mut self.filling);
+        let saved_pending_fn = std::mem::replace(&mut self.pending_fn, std::ptr::null_mut());
+        let saved_runtime_depth = std::mem::replace(&mut self.runtime_depth, 0);
+        let saved_lex_mode = self.lex_mode.take();
+        let saved_else_ends = self.else_ends.take();
+        let saved_lifted = std::mem::take(&mut self.lifted);
+        let saved_queued = std::mem::take(&mut self.queued);
+        let saved_discovering = std::mem::replace(&mut self.discovering, false);
+        let saved_run_body = self.run_body.take();
+        let saved_feed = self.feed.replace(Feed { cells, next: 0, base_depth });
+
+        let built = self.parse_type_body(self.types.type_);
+        let built_pos = self.pos;
+
+        self.source = saved_source;
+        self.pos = saved_pos;
+        self.scopes = saved_scopes;
+        self.frames = saved_frames;
+        self.held_depth = saved_held_depth;
+        self.definitions = saved_definitions;
+        self.open = saved_open;
+        self.filling = saved_filling;
+        self.pending_fn = saved_pending_fn;
+        self.runtime_depth = saved_runtime_depth;
+        self.lex_mode = saved_lex_mode;
+        self.else_ends = saved_else_ends;
+        self.lifted = saved_lifted;
+        self.queued = saved_queued;
+        self.discovering = saved_discovering;
+        self.run_body = saved_run_body;
+        self.feed = saved_feed;
+
+        built.map_err(|e| {
+            crate::run::RunError::MintFailed(Box::new(crate::report::render(
+                "type body",
+                text,
+                built_pos,
+                &crate::report::parse_message(&e),
+            )))
+        })
     }
 
     /// Each line settled as the body item of the names it declared and
@@ -4387,7 +4529,8 @@ impl<'a> Parser<'a> {
             if matches!(
                 crate::identities::read::read_kind(self.types, lhs),
                 crate::identities::read::Read::Container(t) if t == self.types.type_ || t == self.types.dyad_
-            ) {
+            ) || crate::identities::yields_type(self.types, lhs)
+            {
                 return Err(ParseError::TypeKnownOnlyAtRun);
             }
             if name == "type" {
@@ -4716,7 +4859,10 @@ impl<'a> Parser<'a> {
     unsafe fn eval_type_call(&mut self, call: DyadPtr) -> Result<DyadPtr, ParseError> {
         // What stands before the call runs first, so the call reads committed state.
         self.drain()?;
-        let bits = self.run_on_pass(call).map_err(|_| ParseError::NonComptimeTypeCall)?;
+        let bits = self.run_on_pass(call).map_err(|e| match e {
+            crate::run::RunError::MintFailed(_) => ParseError::Run(e),
+            _ => ParseError::NonComptimeTypeCall,
+        })?;
         let node = bits as usize as DyadPtr;
         // The bits are read as a node address, so they must be one: bits that
         // were never a node are the checked error, never a dereference.
@@ -5096,6 +5242,15 @@ impl<'a> Parser<'a> {
             // SAFETY: `callee` is a reduced dyad.
             if unsafe { self.returns_type(callee) } {
                 self.check_call_reads(callee)?;
+                // Inside a body an argument known only at run leaves the call
+                // to run with it, its result a type value at run.
+                let comptime = args.iter().all(|&a| {
+                    // SAFETY: `args` are reduced dyads from the store.
+                    unsafe { crate::identities::is_comptime_arg(types, a) }
+                });
+                if self.runtime_depth > 0 && !comptime {
+                    return Ok(call);
+                }
                 // SAFETY: `call` was just built over reduced dyads.
                 unsafe { self.eval_type_call(call) }
             } else {
@@ -6888,8 +7043,10 @@ impl<'a> Parser<'a> {
         let node_box = unsafe {
             let d = self.types.through(first);
             !d.is_null()
-                && ((*d).ty == self.types.type_ || (*d).ty == self.types.dyad_)
-                && crate::dyad::is_place((*d).value)
+                && (((*d).ty == self.types.type_ || (*d).ty == self.types.dyad_)
+                    && crate::dyad::is_place((*d).value)
+                    || !crate::identities::is_type_value(self.types, d)
+                        && crate::identities::yields_type(self.types, d))
         };
         if node_box {
             ParseError::TypeKnownOnlyAtRun
@@ -7062,7 +7219,7 @@ mod tests {
         let scopes = p.into_scopes();
         let mut rt = crate::run::Runtime::new(types, store);
         // SAFETY: `node` was just parsed into the store.
-        let v = rt.lexing(&scopes, trie, |rt| unsafe { rt.run(node) });
+        let v = rt.hosting(&scopes, trie, None, |rt| unsafe { rt.run(node) });
         (v.unwrap_or_else(|e| panic!("{src}: {e:?}")), scopes)
     }
 
@@ -7106,7 +7263,7 @@ mod tests {
         let scopes = p.into_scopes();
         let mut rt = crate::run::Runtime::new(types, &mut store);
         // SAFETY: `node` was just parsed into the store.
-        let err = rt.lexing(&scopes, &trie, |rt| unsafe { rt.run(node) }).unwrap_err();
+        let err = rt.hosting(&scopes, &trie, None, |rt| unsafe { rt.run(node) }).unwrap_err();
         assert_eq!(err, crate::run::RunError::NullPointer);
         // `caller.scope` outside a constructor is the checked error.
         let mut p = Parser::new("caller.scope", &mut store, &mut trie, types, scopes);
@@ -7114,7 +7271,7 @@ mod tests {
         let scopes = p.into_scopes();
         let mut rt = crate::run::Runtime::new(types, &mut store);
         // SAFETY: `node` was just parsed into the store.
-        let err = rt.lexing(&scopes, &trie, |rt| unsafe { rt.run(node) }).unwrap_err();
+        let err = rt.hosting(&scopes, &trie, None, |rt| unsafe { rt.run(node) }).unwrap_err();
         assert_eq!(err, crate::run::RunError::NoCaller);
     }
 

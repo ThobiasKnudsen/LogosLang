@@ -269,6 +269,8 @@ fn build_identity_compare(
         matches!(k, Read::Identity | Read::Container(_) | Read::Address)
             // SAFETY: as above.
             || unsafe { (*types.through(n)).ty == types.tape.cell_type }
+            // SAFETY: as above.
+            || unsafe { super::yields_type(types, n) }
     };
     // SAFETY: as above.
     let pointer =

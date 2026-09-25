@@ -359,6 +359,10 @@ pub fn run_message(e: &RunError) -> String {
         RunError::CompileFailed(msg) => format!("compile() failed: {msg}"),
         RunError::Faulted(msg) => format!("the interpreter stopped inside compiled code: {msg}"),
         RunError::NoLexer => "`lex` can run only where the parser runs it".into(),
+        RunError::NoParser => {
+            "a `type (…)` in a body is built when it runs, which needs the parser running".into()
+        }
+        RunError::MintFailed(rendered) => format!("building this `type (…)` failed:\n{rendered}"),
         RunError::Lex(why) => format!("this text will not lex: {why}"),
         RunError::NoCaller => {
             "`caller` can be read only inside a constructor the parser runs".into()

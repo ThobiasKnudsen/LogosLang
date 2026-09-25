@@ -103,6 +103,10 @@ pub enum RunError {
     UnsettledInclusion,
     /// The parse a `tape[k]` read ran to lex on to its cell failed.
     Parse(Box<crate::parse::ParseError>),
+    /// A `type (…)` held in a body ran where no parser is running the pass.
+    NoParser,
+    /// A held `type (…)` failed to build at its call; the rendered parse error.
+    MintFailed(Box<String>),
 }
 
 thread_local! {
@@ -304,7 +308,7 @@ pub struct Runtime<'a> {
     /// The parser owns its runtime and reaches the store through it, so the one
     /// `&mut Store` is visible to the borrow checker.
     pub(crate) store: &'a mut crate::store::Store,
-    /// Set only inside [`Runtime::lexing`]; absent elsewhere, so `lex` fails
+    /// Set only inside [`Runtime::hosting`]; absent elsewhere, so `lex` fails
     /// with [`RunError::NoLexer`].
     lexer: Option<Lexer>,
     /// The fragments `lex «…»` built, owned for the runtime's life; boxed because
@@ -336,16 +340,25 @@ pub(crate) type LexOn = unsafe fn(
 ) -> Result<(), crate::parse::ParseError>;
 
 /// What `lex «…»` lexes against. Raw, because the parser owns both and the
-/// runtime inside it; set only by [`Runtime::lexing`], which puts back the one
-/// before when its call returns or unwinds, and every read is inside such a call.
+/// runtime inside it; set only by [`Runtime::hosting`], which restores the one
+/// before it when its call returns or unwinds, and every read is inside such a call.
 #[derive(Clone, Copy)]
 struct Lexer {
     scopes: std::ptr::NonNull<crate::parse::ScopeStack>,
     trie: std::ptr::NonNull<crate::regex_trie::RegexTrie>,
+    host: Option<Host>,
 }
 
-/// Puts back the lexer a [`Runtime::lexing`] call found when it ends, by return or by
-/// unwinding: a constructor run inside another's lazy read leaves the outer one's attached.
+/// The parser running the pass, which builds a held `type (…)` when its node
+/// runs: `mint(parser, node)` yields the new type's address. DESIGN ›A type is
+/// a comptime value, resolved in the pass‹.
+#[derive(Clone, Copy)]
+pub(crate) struct Host {
+    pub(crate) parser: *mut (),
+    pub(crate) mint: unsafe fn(*mut (), DyadPtr) -> Result<i64, RunError>,
+}
+
+/// Puts back the lexer a [`Runtime::hosting`] call found, by return or by unwinding.
 struct Detach<'r, 'a>(&'r mut Runtime<'a>, Option<Lexer>);
 
 impl Drop for Detach<'_, '_> {
@@ -372,17 +385,20 @@ impl<'a> Runtime<'a> {
     }
 
     /// Run `f` with the parser's scopes and index attached for exactly this call.
-    pub(crate) fn lexing<R>(
+    /// With `host`, the parser that builds a held `type (…)` when one runs.
+    pub(crate) fn hosting<R>(
         &mut self,
         scopes: &crate::parse::ScopeStack,
         trie: &crate::regex_trie::RegexTrie,
+        host: Option<Host>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        let was = self.lexer.replace(Lexer {
+        let before = self.lexer.replace(Lexer {
             scopes: std::ptr::NonNull::from(scopes),
             trie: std::ptr::NonNull::from(trie),
+            host,
         });
-        let guard = Detach(self, was);
+        let guard = Detach(self, before);
         f(guard.0)
     }
 
@@ -410,6 +426,20 @@ impl<'a> Runtime<'a> {
         (reach.lex_on)(reach.parser, tape, k).map_err(|e| RunError::Parse(Box::new(e)))
     }
 
+    /// Build the held `type (…)` `node` through the parser running the pass.
+    ///
+    /// # Safety
+    /// `node` must be a held type node from the store.
+    pub(crate) unsafe fn mint_held(&mut self, node: DyadPtr) -> Result<i64, RunError> {
+        let Some(host) = self.lexer.and_then(|l| l.host) else {
+            return Err(RunError::NoParser);
+        };
+        // SAFETY: the host is the parser that owns this runtime and is running it,
+        // set by `hosting` for exactly this call; nothing reads the runtime through
+        // `self` until the parser hands it back.
+        (host.mint)(host.parser, node)
+    }
+
     /// Until the matching [`Runtime::leave_constructor`], `caller.scope` answers.
     pub(crate) fn enter_constructor(&mut self) {
         self.constructing += 1;
@@ -428,7 +458,7 @@ impl<'a> Runtime<'a> {
         if self.constructing == 0 {
             return Err(RunError::NoCaller);
         }
-        // SAFETY: `lexer` is set only inside `lexing`, whose borrows outlive this call.
+        // SAFETY: `lexer` is set only inside `hosting`, whose borrows outlive this call.
         let scopes = unsafe { lexer.scopes.as_ref() };
         Ok(scopes.current().unwrap_or(std::ptr::null_mut()))
     }
@@ -439,7 +469,7 @@ impl<'a> Runtime<'a> {
         let Some(lexer) = self.lexer else {
             return Err(RunError::NoLexer);
         };
-        // SAFETY: `lexer` is set only inside `lexing`, whose borrows outlive this call.
+        // SAFETY: `lexer` is set only inside `hosting`, whose borrows outlive this call.
         let (scopes, trie) = unsafe { (lexer.scopes.as_ref(), lexer.trie.as_ref()) };
         let tape = crate::parse::lex_fragment(scopes, trie, self.store, text)
             .map_err(|e| RunError::Lex(Box::new(crate::report::resolve_message(&e))))?;
