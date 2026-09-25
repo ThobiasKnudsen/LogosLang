@@ -242,6 +242,9 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::InstancesParseNeedsOwnParse => {
             "the instances' `parse` reads an instance its type's own `parse` built: fill `parse = (…)` on a bare line of the body too; an instance built by applying the type is not in the seed here".into()
         }
+        ParseError::MemberNeedsNode => {
+            "a `fn` of the fields block is called on a node its type's own `parse` built; a record built by applying the type is not in the seed here (#149)".into()
+        }
         ParseError::DropSlotNotInSeed => "the `drop` slot is not in the seed yet (#133)".into(),
         ParseError::FieldsSlotNeedsShared => {
             "a slot fill inside `fields = (…)` is written `shared run = (…)`; an unmarked fill would be a per-instance default, not in the seed".into()

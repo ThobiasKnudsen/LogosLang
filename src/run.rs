@@ -325,6 +325,9 @@ pub struct Runtime<'a> {
     /// The driver's tape the innermost running Logos constructor was handed: a read
     /// past its frontier lexes on demand (DESIGN ›The scope's constructor is the driver‹).
     ctor_tape: Option<*mut crate::parse::ParsingTape>,
+    /// The fresh node a type's own `parse` is running over, whose placed calls take a copy
+    /// of it made each time they run.
+    fresh_this: Option<DyadPtr>,
 }
 
 /// What `lex «…»` lexes against. Raw, because the parser owns both and the
@@ -376,6 +379,7 @@ impl<'a> Runtime<'a> {
             fragments: Vec::new(),
             constructing: 0,
             ctor_tape: None,
+            fresh_this: None,
         }
     }
 
@@ -439,6 +443,15 @@ impl<'a> Runtime<'a> {
     ) -> Option<*mut crate::parse::ParsingTape> {
         self.constructing += 1;
         self.ctor_tape.replace(tape)
+    }
+
+    /// Hands back the node it replaces.
+    pub(crate) fn set_fresh_this(&mut self, this: Option<DyadPtr>) -> Option<DyadPtr> {
+        std::mem::replace(&mut self.fresh_this, this)
+    }
+
+    pub(crate) fn fresh_this(&self) -> Option<DyadPtr> {
+        self.fresh_this
     }
 
     /// Takes the tape [`Runtime::enter_constructor`] handed back.
@@ -676,7 +689,7 @@ impl<'a> Runtime<'a> {
             }
             Read::Unit => Ok(0),
             // An identity's value is its own address.
-            Read::Identity => Ok(node as i64),
+            Read::Identity | Read::Node => Ok(node as i64),
             // A view's value is the viewed node's address.
             Read::Address => Ok((*node).value as i64),
             Read::Container(_) => self.read_container(node),

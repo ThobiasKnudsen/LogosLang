@@ -24,6 +24,8 @@ pub enum Read {
     Container(DyadPtr),
     /// A type standing as a value: its own address is the value.
     Identity,
+    /// A node a Logos `parse` built: its own address is the value.
+    Node,
     /// A dyad view: the stored address is the value.
     Address,
     /// A comptime rational, molded on read.
@@ -98,6 +100,9 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
             }
         }
         meta::RECORD_TAG => {
+            if meta::is_node_valued(op, types.fn_type) {
+                return if place { Read::Container(op) } else { Read::Node };
+            }
             if !place && !meta::run_body_of(op).is_null() {
                 // The node runs as the function built for its field-type set,
                 // and not at all until one exists.
@@ -181,6 +186,9 @@ pub unsafe fn place_layout(types: &Core, t: DyadPtr) -> Option<(Read, usize)> {
         ADDR_TAG => Some((Read::Pointer(numtype::pointee_of(t)), 8)),
         meta::TYPEREC_TAG | meta::DYAD_TAG => Some((Read::Container(t), 8)),
         meta::RECORD_TAG => {
+            if meta::is_node_valued(t, types.fn_type) {
+                return Some((Read::Container(t), 8));
+            }
             // A node of a type with a run is a call, so the type has no place.
             if !meta::run_body_of(t).is_null() {
                 return None;

@@ -159,7 +159,7 @@ impl Lowerer<'_, '_> {
             Read::Unit => Ok(self.const_i32(0)),
             // An identity's address is baked: identities and the code baking
             // them are both per-run.
-            Read::Identity => Ok(self.builder.ins().iconst(types::I64, node as i64)),
+            Read::Identity | Read::Node => Ok(self.builder.ins().iconst(types::I64, node as i64)),
             Read::Address => Ok(self.builder.ins().iconst(types::I64, (*node).value as i64)),
             Read::Container(t) if t == self.types.rational => Err(CompileError::NotLowerable(node)),
             Read::Container(_) => self.read_place(node, types::I64),

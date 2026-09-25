@@ -308,13 +308,71 @@ fn an_instance_takes_its_bracket_as_a_call_built_in_its_parse() {
 }
 
 #[test]
-#[ignore = "stand-in for #137: the mint still reads its elements at parse"]
 fn the_array_fills_its_elements_when_the_program_runs() {
-    let src = "import ./identities/array.logos, x := i32 5, y := i32 6, \
-               b := array i32 (x, y, 3), b[0] + b[1] + b[2]";
-    let out = logos().arg(src).output().unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "14");
+    let array = "import ./identities/array.logos";
+    for (tail, printed) in [
+        ("x := i32 4, y := i32 5, a := array i32 (x, y, 3), a[0] + a[1]", "9"),
+        ("x := i32 4, y := i32 5, a := array i32 [x, y, 3], a[0] + a[1]", "9"),
+        ("x := i32 5, y := i32 6, b := array i32 (x, y, 3), b[0] + b[1] + b[2]", "14"),
+        ("g := fn (x := i32 ?) -> i32 ( c := array i32 (x, x + 1), c[1] ), g(7)", "8"),
+        // Each run makes its own array: the second does not overwrite the first.
+        (
+            "mut first := array i32 (0, 0), mut second := array i32 (0, 0), \
+             for i in 0..2 ( c := array i32 (i, 10), if i == 0 ( first = c ) else ( second = c ) ), \
+             first[0] + second[0] * 10",
+            "10",
+        ),
+    ] {
+        let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
+        assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), printed, "{tail}");
+    }
+}
+
+#[test]
+fn an_array_travels_as_its_address() {
+    let array = "import ./identities/array.logos, a := array i32 (1, 2, 3)";
+    for (tail, printed) in [
+        ("b := a, b[1]", "2"),
+        ("f := fn (p := array i32 ?) -> i32 ( p[1] ), f(a)", "2"),
+        ("f := fn (p := array i32 ?) -> i32 ( p[1] + p[2] ), f.compile(), f(a)", "5"),
+        ("f := fn (p := array i32 ?) -> u64 ( p.size_bytes() + p.size ), f(a)", "15"),
+        // `b := a` shares the array: a write through `b` is seen through `a`.
+        ("b := a, b.ptr@ = i32 9, a[0]", "9"),
+        (
+            "t := array i32, mk := fn (v := i32 ?) -> t ( c := array i32 (v, 1), c ), \
+             m := mk(3), n := mk(4), m[0] + n[0]",
+            "7",
+        ),
+        ("a", "dyad"),
+    ] {
+        let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
+        assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), printed, "{tail}");
+    }
+    for tail in [
+        "f := fn (p := array i32 ?) -> i32 ( p[1] ), f(5)",
+        "f := fn (p := array i32 ?) -> i32 ( p[1] ), f(array u8 (1, 2))",
+    ] {
+        let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !out.status.success() && stderr.contains("these types do not match"),
+            "{tail}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn a_fields_fn_on_a_record_built_by_application_is_a_checked_error() {
+    let out = logos()
+        .arg("p := type ( fields = ( x := i32 ?, y := i32 ?, shared s := fn () -> i32 ( this.x + this.y ) ) ), \
+              q := p (1, 2), q.s()")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("a record built by applying the type"), "stderr: {stderr}");
 }
 
 #[test]

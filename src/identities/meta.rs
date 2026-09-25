@@ -343,6 +343,20 @@ pub(crate) unsafe fn is_record_type(id: DyadPtr) -> bool {
         && kind_of(id) == Some(RECORD_TAG)
 }
 
+/// A record type whose values a Logos-written `parse` builds and no `run` executes: a value
+/// of it is the node's address, eight bytes in a place. DESIGN ›A value of a type built by a
+/// Logos `parse` travels as a pointer‹.
+///
+/// # Safety
+/// `id` must be null or a valid dyad from the store; `fn_type` the `fn` identity.
+pub(crate) unsafe fn is_node_valued(id: DyadPtr, fn_type: DyadPtr) -> bool {
+    if !is_record_type(id) || !run_body_of(id).is_null() {
+        return false;
+    }
+    let ctor = constructor_of(id);
+    !ctor.is_null() && (*ctor).ty == fn_type
+}
+
 /// The last fixed slot of the type's operand record, where a resolved node stores its
 /// callable leaf; `None` for kinds without fixed slots.
 ///
