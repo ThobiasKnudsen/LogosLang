@@ -297,7 +297,9 @@ pub fn parse_message(e: &ParseError) -> String {
             "this name borrows what it holds, so it cannot move it; only its owner can".into()
         }
         ParseError::OwnNeedsPointer => {
-            "`own` in a type is written over a pointer hole, `own @T ?`".into()
+            "`own` in a type is written over a pointer hole, `own @T ?`, or a hole of a type \
+             whose fields block fills `shared drop`, `own t ?`"
+                .into()
         }
         ParseError::OwningFieldNeedsDrop => {
             "a field declared `own` must be freed by the type's `shared drop = (…)`, which this \

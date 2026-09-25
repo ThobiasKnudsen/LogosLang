@@ -87,8 +87,7 @@ fn construct(
         // torn down by two owners.
         // SAFETY: `target` and `value` are reduced dyads from the store.
         if unsafe {
-            (*target).ty == types.binding_
-                && p.owns_node(target)
+            ((*target).ty == types.binding_ && p.owns_node(target) || p.is_owning_read(target))
                 && !super::drop_model::moves_out(types, value)
         } {
             return Err(ParseError::NonOwningIntoOwning);

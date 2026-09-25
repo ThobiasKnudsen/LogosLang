@@ -220,6 +220,14 @@ pub(crate) unsafe fn field_node(
     Ok((!(*slot).is_null()).then_some(*slot))
 }
 
+/// The slot `read` reaches, as the address of the node pointer it holds.
+///
+/// # Safety
+/// As `field_node`.
+pub(crate) unsafe fn slot_addr(rt: &mut Runtime, read: DyadPtr) -> Result<*mut u8, RunError> {
+    Ok(slot_of(rt, (*read).value as *const DyadPtr)?.0 as *mut u8)
+}
+
 fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a slot node from the store; `this` holds a node with a slot per field.
     unsafe {

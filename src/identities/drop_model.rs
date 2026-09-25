@@ -96,9 +96,10 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
             // `ended` holds the binding the resolver returned for it.
             let (owner, node_valued, ty) = unsafe {
                 (
-                    ended.as_ref().is_some_and(|e| p.owns_node(e.binding)),
+                    ended.as_ref().is_some_and(|e| p.owns_node(e.binding))
+                        || p.is_owning_read(place),
                     meta::is_node_valued((*place).ty, types.fn_type),
-                    (*place).ty,
+                    super::node_type_of(types, place).unwrap_or((*place).ty),
                 )
             };
             let node = if owner {
@@ -127,9 +128,16 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
             let node = if is_owning_place(place) {
                 build_teardown(p.store(), types, types.drop_, place, true)?
             // SAFETY: `ended` holds the binding the resolver returned.
-            } else if ended.as_ref().is_some_and(|e| unsafe { p.owns_node(e.binding) }) {
-                // SAFETY: an owner's place holds a node of a type whose fields block fills `drop`.
-                let drop = unsafe { meta::instances_drop_of((*place).ty) };
+            } else if ended.as_ref().is_some_and(|e| unsafe { p.owns_node(e.binding) })
+                || p.is_owning_read(place)
+            {
+                // SAFETY: an owner's place holds, and an owning field reads, a node of a type
+                // whose fields block fills `drop`.
+                let drop = unsafe {
+                    meta::instances_drop_of(
+                        super::node_type_of(types, place).unwrap_or((*place).ty),
+                    )
+                };
                 build_instance_drop(p.store(), types, place, drop)
             // SAFETY: `place` is a reduced dyad from the store.
             } else if let Some(drop) = unsafe { cell_drop(types, place) } {
@@ -322,11 +330,17 @@ pub(crate) fn is_owning_place(place: DyadPtr) -> bool {
 
 /// `own @T ?`: the hole `?` built for a pointer type becomes a place of an owning pointer
 /// type, what a field or name declared with it holds (DESIGN ›Memory and concurrency‹).
+/// `own t ?`, `t` a type whose fields block fills `shared drop`: the hole is marked, and
+/// the field or name declared with it owns the node written into it.
 fn own_hole(p: &mut crate::parse::Parser, hole: DyadPtr) -> Result<(), ParseError> {
     let types = p.types();
     // SAFETY: `hole` is the place `?` just built; its type is a type node.
     unsafe {
         let ty = (*hole).ty;
+        if meta::is_node_valued(ty, types.fn_type) && !meta::instances_drop_of(ty).is_null() {
+            p.mark_owning_hole(hole);
+            return Ok(());
+        }
         if !numtype::is_pointer_type(ty) || !meta::destructor_of(ty).is_null() {
             return Err(ParseError::OwnNeedsPointer);
         }
@@ -663,11 +677,7 @@ fn run_instance_drop(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     unsafe {
         let slots = (*node).value as *const DyadPtr;
         let place = *slots.add(TEARDOWN_PLACE);
-        let slot = if (*place).ty == rt.types().deref_ {
-            super::pointer::deref_addr(rt, place)?
-        } else {
-            rt.place_addr(place).ok_or(RunError::NoActivation)?
-        };
+        let slot = owned_slot(rt, place)?;
         if slot.is_null() {
             return Err(RunError::Uninitialized);
         }
@@ -702,12 +712,27 @@ fn run_field_free(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
+/// Where an owned value's address lies: a name's place, the cell a dereference reaches, or
+/// the slot of an owning field, which holds the node itself.
+///
+/// # Safety
+/// `place` must be the place operand of an `own` or `drop` node.
+unsafe fn owned_slot(rt: &mut Runtime, place: DyadPtr) -> Result<*mut u8, RunError> {
+    if (*place).ty == rt.types().deref_ {
+        return super::pointer::deref_addr(rt, place);
+    }
+    if super::this::is_field_read(rt.types(), place) {
+        return super::this::slot_addr(rt, place);
+    }
+    rt.place_addr(place).ok_or(RunError::NoActivation)
+}
+
 /// A move: the moved-from place's pending `defer free` then no-ops.
 fn run_own(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an `own` node `[place, pointee, op]` from the store.
     unsafe {
         let place = *((*node).value as *const DyadPtr).add(TEARDOWN_PLACE);
-        let slot = rt.place_addr(place).ok_or(RunError::NoActivation)?;
+        let slot = owned_slot(rt, place)?;
         if slot.is_null() {
             return Err(RunError::Uninitialized);
         }
@@ -979,6 +1004,38 @@ mod tests {
             parse_err("a := alloc 1 of i32 7,\nf := fn () -> i32 ( b := own a, b@ )"),
             ParseError::OwnOfOuterName
         );
+    }
+
+    /// A type whose owning field holds an array its parse's `fill` makes.
+    const BAG: &str = "import ./identities/array.logos, t := array i32, \
+        bag := type ( fields = ( \
+            mut items := own t ?, \
+            shared fill := fn (elements) -> this:type ( this.items = array i32 [4, 5, 6], this ), \
+            shared drop = ( drop this.items ) \
+        ), \
+        parse_rank = dyad.parse_rank, \
+        associativity = left, \
+        parse = ( \
+            if tape[1]:type == scope ( tape[0] = this.fill(tape[1]), tape.remove(1) ), \
+            tape.is_constructed[0] = true \
+        ) ),\n";
+
+    #[test]
+    fn an_owning_field_frees_its_array_once_through_the_owner_s_drop() {
+        for (tail, want) in [
+            ("b := bag (), b.items[1]", 5),
+            ("b := bag (), drop b, 2", 2),
+            ("f := fn () -> i32 ( b := bag (), b.items[2] ), f() + f()", 12),
+            ("l := array bag [bag (), bag ()], l[1].items[0]", 4),
+            ("b := bag (), l := array bag [own b], l[0].items.size", 3),
+            ("b := bag (), x := array i32 [1], b.items = own x, b.items[0]", 1),
+            ("mut a := own t ?, a = array i32 [7], a[0]", 7),
+        ] {
+            assert_eq!(run(&format!("{BAG}{tail}")), (want, 0), "{tail}");
+        }
+        // The count sees the array: a drop that leaves the field alone leaks its one block.
+        let forgetful = BAG.replace("shared drop = ( drop this.items )", "shared drop = ( 0 )");
+        assert_eq!(run(&format!("{forgetful}b := bag (), 1")), (1, 1));
     }
 
     #[test]

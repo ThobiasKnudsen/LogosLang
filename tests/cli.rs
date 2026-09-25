@@ -2661,6 +2661,73 @@ fn a_field_holding_an_array_reads_as_that_array() {
     assert!(stderr.contains("these types do not match"), "stderr: {stderr}");
 }
 
+/// `BOX` and a `bag` whose owning fields hold an array and a box, its drop printing «bag».
+fn bag_line(tail: &str) -> String {
+    format!(
+        "import ./identities/array.logos, {BOX}, t := array i32, \
+         bag := type ( fields = ( \
+             mut items := own t ?, \
+             mut b := own box ?, \
+             shared fill := fn (elements) -> this:type ( \
+                 this.items = array i32 [4, 5, 6], this.b = box (7, 1), this ), \
+             shared drop = ( print «bag», drop this.items, drop this.b ) \
+         ), \
+         parse_rank = dyad.parse_rank, \
+         associativity = left, \
+         parse = ( \
+             if tape[1]:type == scope ( tape[0] = this.fill(tape[1]), tape.remove(1) ), \
+             tape.is_constructed[0] = true \
+         ) ), {tail}"
+    )
+}
+
+#[test]
+fn an_owning_field_is_dropped_once_by_the_owner_s_drop() {
+    for (tail, printed) in [
+        ("g := bag (), print «made»", "made\nbag\ndrop\n"),
+        ("g := bag (), drop g, print «after»", "bag\ndrop\nafter\n"),
+        ("f := fn () -> i32 ( g := bag (), g.items[2] ), f(), print «after»", "bag\ndrop\nafter\n"),
+        ("g := bag (), h := g, print «borrowed»", "borrowed\nbag\ndrop\n"),
+        // A move out of the field leaves the bag's drop nothing to drop there.
+        ("g := bag (), y := own g.b, print «moved»", "moved\ndrop\nbag\n"),
+        ("g := bag (), x := box (8, 1), g.b = own x, print «set»", "set\nbag\ndrop\n"),
+        ("l := array bag [bag (), bag ()], print «made»", "made\nbag\ndrop\nbag\ndrop\n"),
+        ("g := bag (), l := array bag [own g], print «made»", "made\nbag\ndrop\n"),
+        ("mut a := own box ?, a = box (3, 1), print «set»", "set\ndrop\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&bag_line(tail));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert!(stdout.starts_with(printed), "{tail}: stdout: {stdout}");
+        assert_eq!(stdout.matches("drop").count(), printed.matches("drop").count(), "{tail}");
+        assert_eq!(stdout.matches("bag").count(), printed.matches("bag").count(), "{tail}");
+    }
+    for (tail, printed) in [
+        ("g := bag (), g.items[1] + g.items.at(2)", "11"),
+        ("g := bag (), g.items[0] = i32 9, g.items[0]", "9"),
+        ("f := fn (p := t ?) -> u64 ( p.size ), g := bag (), f(g.items)", "3"),
+        ("g := bag (), x := array i32 [1, 2], g.items = own x, g.items[1]", "2"),
+        ("l := array bag [bag (), bag ()], l[1].items[0] = i32 8, l[1].items[0]", "8"),
+    ] {
+        let (code, stdout, stderr) = run_line(&bag_line(tail));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout.lines().last(), Some(printed), "{tail}: {stdout}");
+    }
+    for (tail, expect) in [
+        ("g := bag (), x := array i32 [1], g.items = x", "what is assigned must own too"),
+        ("g := bag (), x := array i32 [1], y := x, g.items = own y", "only its owner can"),
+        (
+            "nd := type ( fields = ( mut items := own t ? ) )",
+            "must be freed by the type's `shared drop",
+        ),
+        ("nd := type ( fields = ( mut n := own i32 ? ) )", "or a hole of a type"),
+        ("f := fn (p := own t ?) -> i32 ( 1 )", "an `own` parameter"),
+    ] {
+        let (code, _, stderr) = run_line(&bag_line(tail));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
+    }
+}
+
 #[test]
 fn a_chooser_takes_the_type_the_chooser_right_of_it_leaves() {
     let array = "import ./identities/array.logos";

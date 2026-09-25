@@ -1043,6 +1043,8 @@ struct OpenType {
     instances_assoc: Assoc,
     /// From a `shared drop = (…)` line: the `fn` over `this` an owner's teardown runs.
     instances_drop: DyadPtr,
+    /// A field declared `own` over a node's type, whose teardown the type's drop must write.
+    owns_node_field: bool,
     /// The type node being defined, its record written at the close: what `this:type` names.
     self_type: DyadPtr,
 }
@@ -1598,6 +1600,14 @@ pub struct Parser<'a> {
     /// The valueless places `?` built: a `:=` binds its name straight to such
     /// a place, no snapshot and no initializer.
     holes: HashSet<DyadPtr>,
+    /// The scope stacks a body built at run set aside, innermost last: still open, since the
+    /// code that asked for the build is running inside them.
+    suspended: Vec<ScopeStack>,
+    /// The holes `own` marked over a type whose fields block fills `shared drop`: the
+    /// name or field declared with one owns the node written into it.
+    owning_holes: HashSet<DyadPtr>,
+    /// The field reads whose field carries `own`.
+    owning_reads: HashSet<DyadPtr>,
     /// The last `=` node built and the scope it was built in.
     last_write: (DyadPtr, DyadPtr),
     /// Whether the constructor now running was woken at discovery, its token
@@ -1781,6 +1791,9 @@ impl<'a> Parser<'a> {
             lex_mode: None,
             else_ends: None,
             holes: HashSet::new(),
+            suspended: Vec::new(),
+            owning_holes: HashSet::new(),
+            owning_reads: HashSet::new(),
             last_write: (std::ptr::null_mut(), std::ptr::null_mut()),
             frames: Vec::new(),
             runtime_depth: 0,
@@ -1997,7 +2010,9 @@ impl<'a> Parser<'a> {
                         .into_owned()
                 }
             };
-            if !self.scopes.is_open(fields.scope) && !self.imports.sections.contains(&fields.scope)
+            if !self.scopes.is_open(fields.scope)
+                && !self.suspended.iter().any(|s| s.is_open(fields.scope))
+                && !self.imports.sections.contains(&fields.scope)
             {
                 return Err(ParseError::Resolve(ResolveError::OutOfScope(name())));
             }
@@ -2889,8 +2904,10 @@ impl<'a> Parser<'a> {
             // `size := u64 0`, is a constant: the field's dyad is that value,
             // and each new node starts with it in the field's slot.
             let mut default = std::ptr::null_mut();
+            let mut owns_node = false;
             let logos = if self.consume_token(self.types.declare_tok) {
                 let value = self.parse_expression()?;
+                owns_node = self.owning_holes.remove(&value);
                 if self.holes.remove(&value) {
                     // SAFETY: `value` is the place `?` just built.
                     unsafe { (*value).ty }
@@ -2927,7 +2944,7 @@ impl<'a> Parser<'a> {
                     crate::identities::numtype::is_pointer_type(logos)
                         && !crate::identities::meta::destructor_of(logos).is_null()
                 };
-            if !relaxed && owning {
+            if !relaxed && (owning || owns_node) {
                 self.pos = start;
                 return Err(ParseError::OwnParameterNotInSeed);
             }
@@ -2949,6 +2966,12 @@ impl<'a> Parser<'a> {
             };
             if let Some(gate) = gate {
                 self.add_gate(binding, gate)?;
+            }
+            if owns_node {
+                self.add_gate(binding, self.types.own_)?;
+                if let Some(def) = self.definitions.last_mut() {
+                    def.owns_node_field = true;
+                }
             }
             fields.push(field);
             if !self.consume_separator() {
@@ -3110,6 +3133,7 @@ impl<'a> Parser<'a> {
             instances_rank: crate::identities::meta::prec::APPLY,
             instances_assoc: Assoc::Left,
             instances_drop: std::ptr::null_mut(),
+            owns_node_field: false,
             self_type,
         });
         // A `fn` literal on a slot's right side must not claim the enclosing
@@ -3191,7 +3215,7 @@ impl<'a> Parser<'a> {
                     && !crate::identities::meta::destructor_of(ty).is_null()
             })
         };
-        if owning_field && def.instances_drop.is_null() {
+        if (owning_field || def.owns_node_field) && def.instances_drop.is_null() {
             return Err(ParseError::OwningFieldNeedsDrop);
         }
         if !def.instances_drop.is_null() {
@@ -3283,7 +3307,7 @@ impl<'a> Parser<'a> {
 
         let saved_source = std::mem::replace(&mut self.source, text);
         let saved_pos = std::mem::replace(&mut self.pos, 0);
-        let saved_scopes = std::mem::replace(&mut self.scopes, nested);
+        self.suspended.push(std::mem::replace(&mut self.scopes, nested));
         let saved_frames = std::mem::replace(&mut self.frames, frames);
         let saved_held_depth = std::mem::replace(&mut self.held_depth, depth);
         let saved_definitions = std::mem::take(&mut self.definitions);
@@ -3304,7 +3328,7 @@ impl<'a> Parser<'a> {
 
         self.source = saved_source;
         self.pos = saved_pos;
-        self.scopes = saved_scopes;
+        self.scopes = self.suspended.pop().expect("pushed when the build began");
         self.frames = saved_frames;
         self.held_depth = saved_held_depth;
         self.definitions = saved_definitions;
@@ -3695,6 +3719,7 @@ impl<'a> Parser<'a> {
             )
         };
         if let Some(r) = resolved {
+            self.note_owning_read(node, r.binding);
             self.fills.insert(node, r.binding);
         }
         Ok(node)
@@ -3919,7 +3944,7 @@ impl<'a> Parser<'a> {
 
         let saved_source = std::mem::replace(&mut self.source, text);
         let saved_pos = std::mem::replace(&mut self.pos, 0);
-        let saved_scopes = std::mem::replace(&mut self.scopes, nested);
+        self.suspended.push(std::mem::replace(&mut self.scopes, nested));
         let saved_frames = std::mem::take(&mut self.frames);
         let saved_definitions = std::mem::take(&mut self.definitions);
         let saved_pending_fn = std::mem::replace(&mut self.pending_fn, std::ptr::null_mut());
@@ -3938,7 +3963,7 @@ impl<'a> Parser<'a> {
 
         self.source = saved_source;
         self.pos = saved_pos;
-        self.scopes = saved_scopes;
+        self.scopes = self.suspended.pop().expect("pushed when the build began");
         self.frames = saved_frames;
         self.definitions = saved_definitions;
         self.pending_fn = saved_pending_fn;
@@ -4720,13 +4745,14 @@ impl<'a> Parser<'a> {
         let mut fields = ScopeStack::new();
         fields.push(meta::record_scope_of(t));
         let items = array::items(meta::record_fields_of(t));
-        let index = fields
+        let found = fields
             .resolve(self.trie, name)
             .ok()
-            .and_then(|r| items.iter().position(|&f| f == r.identity));
-        if let Some(i) = index {
+            .and_then(|r| Some((items.iter().position(|&f| f == r.identity)?, r.binding)));
+        if let Some((i, binding)) = found {
             let k = self.scalar_value(crate::identities::numtype::NumType::U64, i as i64);
             let node = this::build_field_read(self.rt.store, types, lhs, k, (*items[i]).ty);
+            self.note_owning_read(node, binding);
             return Ok(Some((node, 0)));
         }
         let Some(member) = self.shared_member_read(t, name) else {
@@ -5541,6 +5567,25 @@ impl<'a> Parser<'a> {
         self.holes.contains(&d)
     }
 
+    /// A read of a field declared `own` over a node's type owns what it reaches, for
+    /// `=`, `own` and `drop` to consult.
+    fn note_owning_read(&mut self, read: DyadPtr, field: DyadPtr) {
+        // SAFETY: `field` is the binding the resolver returned for the field.
+        if unsafe { self.owns_node(field) } {
+            self.owning_reads.insert(read);
+        }
+    }
+
+    /// Whether `d` is a read of a field declared `own` over a node's type.
+    pub(crate) fn is_owning_read(&self, d: DyadPtr) -> bool {
+        self.owning_reads.contains(&d)
+    }
+
+    /// `own t ?`: the hole owns the node written into it.
+    pub(crate) fn mark_owning_hole(&mut self, hole: DyadPtr) {
+        self.owning_holes.insert(hole);
+    }
+
     /// Whether the name owns the node it holds: its binding site inserted the teardown
     /// that runs the node's instances' `drop`, and its binding carries `own`.
     ///
@@ -6193,6 +6238,11 @@ impl<'a> Parser<'a> {
                 // a sibling write fills it. A hashmap's zeroed place is already
                 // its empty map, so nothing is unknown to refuse.
                 self.scopes.rebind(binding, value);
+                // `a := own t ?`: the owner of whatever node is written into it later.
+                if self.owning_holes.remove(&value) {
+                    let drop = crate::identities::meta::instances_drop_of((*value).ty);
+                    self.own_node(binding, value, drop);
+                }
                 // `a := own @T ?`: the owner of whatever block is written into it later.
                 if crate::identities::drop_model::is_owning_place(value) {
                     let free_node = crate::identities::drop_model::build_teardown(
