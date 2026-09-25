@@ -1014,6 +1014,18 @@ fn a_type_returning_function_resolves_at_comptime() {
 }
 
 #[test]
+fn a_type_returning_function_hands_back_a_type_box() {
+    let (echoes, stderr) = repl(
+        b"f := fn (t := type ?) -> type ( mut x := t, x )\nf(i32) == i32\ny := f(f64)\nz := y 5\nz\n\
+          mints := hashmap type -> type\n\
+          get := fn (t := type ?) -> type ( mut m := mints[t], if m != ? return m, m = t, mints[t] = m, m )\n\
+          get(i32) == get(i32)\nget(i32) == get(f64)\nmut u := mints[u8]\nu == ?\n",
+    );
+    assert_eq!(echoes, ["true", "5.0", "true", "false", "true"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
 fn the_type_returning_fn_example_runs() {
     let out = logos().args(["import", "examples/type_returning_fn.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));

@@ -265,8 +265,7 @@ unsafe fn table_slot(rt: &mut Runtime, map: DyadPtr) -> Result<*mut *mut Table, 
 
 /// A missing key hands back the unknown where the value type's places hold it, and
 /// is the checked error where they do not (DESIGN ›Declarations are immutable by
-/// default‹). The unknown is a null node, what an unwritten `type ?` place reads
-/// as, a stand-in for #38.
+/// default‹).
 fn run_get(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a get node `build_get` built; the slot is an instance's eight
     // bytes, null or a table `run_put` allocated in the store.
@@ -278,7 +277,7 @@ fn run_get(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             return Ok(v);
         }
         if box_of(rt.types(), node).is_some() {
-            Ok(0)
+            Ok(rt.types().unknown as i64)
         } else {
             Err(RunError::MissingKey)
         }
