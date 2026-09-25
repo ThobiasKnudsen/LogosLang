@@ -1072,8 +1072,11 @@ fn instances_constructor(
     id: DyadPtr,
     tape: &mut ParsingTape,
 ) -> Result<Constructed, ParseError> {
-    // SAFETY: `ctor_of` chose this for a node whose record type fills the slot.
-    let f = unsafe { crate::identities::meta::instances_parse_of((*id).ty) };
+    let Some(t) = p.awake_type(id) else {
+        return Ok(Constructed::Decline);
+    };
+    // SAFETY: `awake_type` found the slot filled on this record type.
+    let f = unsafe { crate::identities::meta::instances_parse_of(t) };
     // An instance's parse runs over the instance, never over a type's fresh node.
     let outer = p.rt.set_fresh_this(None);
     // SAFETY: `f` is the fn the fields block's slot holds, `id` a node its type's parse built or a place of that type.
@@ -7108,28 +7111,45 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// A node its type's own `parse` built, or a name or parameter of that type, standing
-    /// on the tape, whose type's fields block fills the instances' `parse`. DESIGN ›A name
-    /// of a type with an instances' `parse` wakes it, as the instance does‹.
+    /// A node its type's own `parse` built, standing on the tape, or any expression known at
+    /// parse to yield one (a name, a parameter, a call's result), whose type's fields block
+    /// fills the instances' `parse`. DESIGN ›A name of a type with an instances'
+    /// `parse` wakes it, as the instance does‹.
     fn is_awake_instance(&self, id: DyadPtr) -> bool {
+        self.awake_type(id).is_some()
+    }
+
+    /// The type whose instances' `parse` the cell's dyad wakes.
+    fn awake_type(&self, id: DyadPtr) -> Option<DyadPtr> {
         use crate::identities::meta;
         // SAFETY: `id` is null or a resolved dyad from the store; the trio is read only on a record type.
         unsafe {
-            !id.is_null()
-                && !(*id).value.is_null()
-                && meta::is_record_type((*id).ty)
-                && !meta::instances_parse_of((*id).ty).is_null()
-                && (!crate::dyad::is_place((*id).value)
-                    || meta::is_node_valued((*id).ty, self.types.fn_type))
+            if id.is_null() {
+                return None;
+            }
+            let ty = (*id).ty;
+            let value = (*id).value;
+            let wakes =
+                |t: DyadPtr| meta::is_record_type(t) && !meta::instances_parse_of(t).is_null();
+            if wakes(ty)
+                && !value.is_null()
+                && (!crate::dyad::is_place(value) || meta::is_node_valued(ty, self.types.fn_type))
+            {
+                return Some(ty);
+            }
+            if ty == self.types.fn_type || ty == self.types.type_ {
+                return None;
+            }
+            crate::identities::node_type_of(self.types, id).filter(|&t| wakes(t))
         }
     }
 
     /// The place of `id` on the one axis (its record's parse_rank), or
     /// `prec::APPLY` for a cell that carries no record.
     fn precedence_of_cell(&self, id: DyadPtr) -> f64 {
-        if self.is_awake_instance(id) {
-            // SAFETY: `is_awake_instance` read the trio of this record type.
-            return unsafe { crate::identities::meta::instances_parse_rank_of((*id).ty) };
+        if let Some(t) = self.awake_type(id) {
+            // SAFETY: `awake_type` read the trio of this record type.
+            return unsafe { crate::identities::meta::instances_parse_rank_of(t) };
         }
         // SAFETY: `id` is null or a resolved dyad from the store.
         unsafe {
@@ -7143,9 +7163,9 @@ impl<'a> Parser<'a> {
     /// Its record's, or left for an instance running its type's shared
     /// constructor, which carries no record of its own.
     fn assoc_of_cell(&self, id: DyadPtr) -> Assoc {
-        if self.is_awake_instance(id) {
-            // SAFETY: `is_awake_instance` read the trio of this record type.
-            return unsafe { crate::identities::meta::instances_assoc_of((*id).ty) };
+        if let Some(t) = self.awake_type(id) {
+            // SAFETY: `awake_type` read the trio of this record type.
+            return unsafe { crate::identities::meta::instances_assoc_of(t) };
         }
         // SAFETY: `id` is null or a resolved dyad from the store.
         unsafe {
@@ -7197,8 +7217,11 @@ impl<'a> Parser<'a> {
             }
             // A Logos-written constructor placed its node, or an instance's
             // parse let it stand: the node's run is the function built for its field-type set.
-            // SAFETY: a constructed cell's dyad is a node from the store.
-            if logos && !cell.dyad.is_null() && (instance || unsafe { (*cell.dyad).ty } == id) {
+            // SAFETY: a constructed cell's dyad is null or a node from the store.
+            let record = !cell.dyad.is_null()
+                && unsafe { crate::identities::meta::is_record_type((*cell.dyad).ty) };
+            // SAFETY: `record` saw a node from the store.
+            if logos && record && (instance || unsafe { (*cell.dyad).ty } == id) {
                 let spelling = cell.spelling().to_string();
                 // SAFETY: the node is the one `run_logos_ctor` minted for `id`, `[field…, null, spec]`.
                 let folded =
@@ -7220,6 +7243,11 @@ impl<'a> Parser<'a> {
                     self.pos = cell.start;
                     return Err(e);
                 }
+            }
+            // A call that yields a node whose type has an instances' `parse` wakes it as a
+            // name does, in the driver's next turn.
+            if !same && !cell.bracket && self.is_awake_instance(cell.dyad) {
+                tape.set_constructed(0, false);
             }
             return Ok(());
         }
@@ -7497,7 +7525,20 @@ impl<'a> Parser<'a> {
                     best = Some((n, prec, construct, id));
                 }
             }
-            let Some((n, _, construct, id)) = best else { break };
+            let Some((n, _, construct, id)) = best else {
+                // A bracket no identity claimed, standing before another cell, is an
+                // expression like any other: its value wakes its type's instances' `parse`.
+                let last = tape.iter().last().map(|(n, _)| n);
+                let woken = tape.iter().find(|&(n, c)| {
+                    Some(n) != last && c.bracket && self.is_awake_instance(self.cell_identity(c))
+                });
+                let Some((n, _)) = woken else { break };
+                tape.center_on(n);
+                let Some(cell) = tape.at_mut(0) else { break };
+                cell.bracket = false;
+                cell.constructed = false;
+                continue;
+            };
             tape.center_on(n);
             self.run_ctor(construct, id, tape, false)?;
         }

@@ -847,9 +847,10 @@ fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 }
 
 /// The argument a node's address gives a placed call: for a type's own fresh node, a copy
-/// made each time the call runs; for a name of a type a Logos `parse` builds, that name,
-/// read when the call runs; any other node by a `dyad` view. DESIGN ›A name of a type with
-/// an instances' `parse` wakes it, as the instance does‹.
+/// made each time the call runs; for a name or a call yielding a node of a type a Logos
+/// `parse` builds, that expression, run when the call runs; any other node by a `dyad`
+/// view. DESIGN ›A name of a type with an instances' `parse` wakes it, as the
+/// instance does‹.
 ///
 /// # Safety
 /// `d` must be what a `dyad`-valued argument yielded: null or a node's address.
@@ -861,7 +862,7 @@ unsafe fn node_operand(rt: &mut Runtime, d: DyadPtr) -> DyadPtr {
     let store = rt.store();
     if !d.is_null()
         && store.contains(d)
-        && crate::dyad::is_place((*d).value)
+        && super::read::read_kind(&*types, d) != super::read::Read::Node
         && super::node_type_of(&*types, d).is_some()
     {
         return d;

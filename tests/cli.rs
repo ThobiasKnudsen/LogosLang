@@ -422,6 +422,30 @@ fn an_array_travels_as_its_address() {
 }
 
 #[test]
+fn a_call_result_takes_its_index_as_a_name_does() {
+    let array = "import ./identities/array.logos, a := array i32 (1, 2, 3), \
+                 mk := fn () -> array i32 ( array i32 (1, 2) )";
+    for (tail, printed) in [
+        ("mk()[1]", "2"),
+        ("mk().at(1)", "2"),
+        ("mk()[0] + mk()[1]", "3"),
+        ("f := fn () -> i32 ( mk()[1] + mk().at(0) ), f()", "3"),
+        ("f := fn () -> i32 ( mk()[1] + mk().at(0) ), f.compile(), f()", "3"),
+        ("(a)[2]", "3"),
+        ("array i32 (4, 5)[1]", "5"),
+        // A bracket an identity to its left claims stays that identity's argument.
+        ("f := fn (p := array i32 ?) -> i32 ( p[1] ), f(a)", "2"),
+    ] {
+        let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
+        assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), printed, "{tail}");
+    }
+    let out = logos().arg(format!("{array}, mk()[2]")).output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success() && stderr.contains("index out of range"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_fields_fn_on_a_record_built_by_application_is_a_checked_error() {
     let out = logos()
         .arg("p := type ( fields = ( x := i32 ?, y := i32 ?, shared s := fn () -> i32 ( this.x + this.y ) ) ), \
