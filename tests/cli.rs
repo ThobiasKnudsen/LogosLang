@@ -789,6 +789,23 @@ fn a_constructor_writes_its_ifs_without_brackets() {
 }
 
 #[test]
+fn an_inclusion_ends_a_bare_if_condition_as_a_comparison_does() {
+    let src = "x := u8 3, if x:type ⊆ u16 print «inside», \
+               if not x:type ⊆ i8\n    print «outside» else print «inside», 7";
+    let out = logos().args([src]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "inside\noutside\n7\n");
+    let src =
+        "y := i8 3, if not y:type ⊆ u64\n    error «the index type is not within the size type»";
+    let out = logos().args([src]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && stderr.contains("not within the size type"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
 fn dot_type_is_a_guided_error() {
     let (_echoes, stderr) = repl(b"x := i32 5\nx.type\n");
     assert!(stderr.contains("x:type"), "stderr: {stderr}");

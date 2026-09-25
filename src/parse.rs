@@ -2292,7 +2292,8 @@ impl<'a> Parser<'a> {
             return false;
         };
         let t = self.types;
-        let compared = [t.eq, t.ne, t.lt, t.gt, t.le, t.ge].contains(&self.cell_identity(&before));
+        let compared =
+            [t.eq, t.ne, t.lt, t.gt, t.le, t.ge, t.subset].contains(&self.cell_identity(&before));
         readers > 0
             && !before.constructed
             && compared
