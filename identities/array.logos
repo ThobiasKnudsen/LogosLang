@@ -70,7 +70,9 @@ get_mint := fn (t := type ?) -> type (
         parse_rank = dyad.parse_rank,
         associativity = left,
         parse = (
-            if tape[1]:type == scope or tape[1]:type == square_brackets (
+            if tape[1]:type == scope
+                error «the list is written in square brackets, `array i32 [1, 2]`, not `array i32 (1, 2)`»,
+            if tape[1]:type == square_brackets (
                 for i in 0..tape[1].dyads.size (
                     if not (tape[1].dyads[i]:type ⊆ this.element_type)
                         error «an element does not fit the element type»

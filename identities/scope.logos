@@ -4,7 +4,7 @@ scope := type (
 
     )
     fields = (
-        dyads := array dyad ()
+        dyads := array dyad []
         back := @scope ?       # the one it stands in, null at the arche
     )
 )

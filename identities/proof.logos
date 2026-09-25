@@ -3,8 +3,8 @@ proof := type (
         ?
     )
     fields = (
-        holes := array dyad ()
-        premises := array dyad ()
+        holes := array dyad []
+        premises := array dyad []
         pattern := dyad ?
         replacement := dyad ?
         derivation := ?

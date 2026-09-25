@@ -311,15 +311,14 @@ fn an_instance_takes_its_bracket_as_a_call_built_in_its_parse() {
 fn the_array_fills_its_elements_when_the_program_runs() {
     let array = "import ./identities/array.logos";
     for (tail, printed) in [
-        ("x := i32 4, y := i32 5, a := array i32 (x, y, 3), a[0] + a[1]", "9"),
         ("x := i32 4, y := i32 5, a := array i32 [x, y, 3], a[0] + a[1]", "9"),
-        ("x := i32 5, y := i32 6, b := array i32 (x, y, 3), b[0] + b[1] + b[2]", "14"),
-        ("g := fn (x := i32 ?) -> i32 ( c := array i32 (x, x + 1), c[1] ), g(7)", "8"),
+        ("x := i32 5, y := i32 6, b := array i32 [x, y, 3], b[0] + b[1] + b[2]", "14"),
+        ("g := fn (x := i32 ?) -> i32 ( c := array i32 [x, x + 1], c[1] ), g(7)", "8"),
         // Each run makes its own array: the second does not overwrite the first. An owner
         // takes a new array or a moved one, never a borrow of one the loop's end frees.
         (
-            "mut first := array i32 (0, 0), mut second := array i32 (0, 0), \
-             for i in 0..2 ( if i == 0 ( first = array i32 (i, 10) ) else ( second = array i32 (i, 10) ) ), \
+            "mut first := array i32 [0, 0], mut second := array i32 [0, 0], \
+             for i in 0..2 ( if i == 0 ( first = array i32 [i, 10] ) else ( second = array i32 [i, 10] ) ), \
              first[0] + second[0] * 10",
             "10",
         ),
@@ -334,7 +333,7 @@ fn the_array_fills_its_elements_when_the_program_runs() {
 fn a_function_that_makes_an_array_compiles_and_agrees_with_the_interpreter() {
     let array = "import ./identities/array.logos";
     for (def, name, call, printed) in [
-        ("f := fn (x := i32 ?) -> i32 ( c := array i32 (x, x), c[1] )", "f", "f(7)", "7"),
+        ("f := fn (x := i32 ?) -> i32 ( c := array i32 [x, x], c[1] )", "f", "f(7)", "7"),
         (
             "f := fn (x := i32 ?) -> i32 ( c := array i32 [x, x + 1, 3], c[0] + c[1] + c[2] )",
             "f",
@@ -344,13 +343,13 @@ fn a_function_that_makes_an_array_compiles_and_agrees_with_the_interpreter() {
         // A new array each pass, its elements the loop's values.
         (
             "f := fn (n := i32 ?) -> i32 ( mut s := i32 0, \
-             for i in 0..n ( c := array i32 (i, i * 2), s = s + c[0] + c[1] ), s )",
+             for i in 0..n ( c := array i32 [i, i * 2], s = s + c[0] + c[1] ), s )",
             "f",
             "f(4)",
             "18",
         ),
         (
-            "f := fn (x := i32 ?) -> i32 ( c := array i32 (x, x * 2, x * 3), mut s := i32 0, \
+            "f := fn (x := i32 ?) -> i32 ( c := array i32 [x, x * 2, x * 3], mut s := i32 0, \
              for i in (u64 0)..(u64 3) ( s = s + c[i] ), s )",
             "f",
             "f(2)",
@@ -358,7 +357,7 @@ fn a_function_that_makes_an_array_compiles_and_agrees_with_the_interpreter() {
         ),
         // Each call returns its own array: the second does not overwrite the first.
         (
-            "t := array i32, g := fn (x := i32 ?) -> t ( array i32 (x, x + 1) )",
+            "t := array i32, g := fn (x := i32 ?) -> t ( array i32 [x, x + 1] )",
             "g",
             "a := g(5), b := g(9), a[0] + a[1] + b[1]",
             "21",
@@ -376,7 +375,7 @@ fn a_function_that_makes_an_array_compiles_and_agrees_with_the_interpreter() {
         }
     }
     let src =
-        format!("{array}, f := fn () -> i32 ( c := array i32 (1, 2), c[5] ), f.compile(), f()");
+        format!("{array}, f := fn () -> i32 ( c := array i32 [1, 2], c[5] ), f.compile(), f()");
     let out = logos().arg(&src).output().unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success() && stderr.contains("index out of range"), "stderr: {stderr}");
@@ -384,7 +383,7 @@ fn a_function_that_makes_an_array_compiles_and_agrees_with_the_interpreter() {
 
 #[test]
 fn an_array_travels_as_its_address() {
-    let array = "import ./identities/array.logos, a := array i32 (1, 2, 3)";
+    let array = "import ./identities/array.logos, a := array i32 [1, 2, 3]";
     for (tail, printed) in [
         ("b := a, b[1]", "2"),
         ("f := fn (p := array i32 ?) -> i32 ( p[1] ), f(a)", "2"),
@@ -393,13 +392,13 @@ fn an_array_travels_as_its_address() {
         // `b := a` shares the array: a write through `b` is seen through `a`.
         ("b := a, b.ptr@ = i32 9, a[0]", "9"),
         (
-            "t := array i32, mk := fn (v := i32 ?) -> t ( c := array i32 (v, 1), c ), \
+            "t := array i32, mk := fn (v := i32 ?) -> t ( c := array i32 [v, 1], c ), \
              m := mk(3), n := mk(4), m[0] + n[0]",
             "7",
         ),
         // The return type stops before the body's bracket, so the mint takes no elements there.
-        ("mk := fn () -> array i32 ( array i32 (1, 2) ), m := mk(), m[1]", "2"),
-        ("mk := fn (v := i32 ?) -> array i32 ( array i32 (v, v + 1) ), m := mk(4), m[1]", "5"),
+        ("mk := fn () -> array i32 ( array i32 [1, 2] ), m := mk(), m[1]", "2"),
+        ("mk := fn (v := i32 ?) -> array i32 ( array i32 [v, v + 1] ), m := mk(4), m[1]", "5"),
         ("a", "dyad"),
         // One mint per element type, kept by the chooser across its calls.
         ("t := array i32, u := array i32, t == u", "true"),
@@ -411,7 +410,7 @@ fn an_array_travels_as_its_address() {
     }
     for tail in [
         "f := fn (p := array i32 ?) -> i32 ( p[1] ), f(5)",
-        "f := fn (p := array i32 ?) -> i32 ( p[1] ), f(array u8 (1, 2))",
+        "f := fn (p := array i32 ?) -> i32 ( p[1] ), f(array u8 [1, 2])",
     ] {
         let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -424,8 +423,8 @@ fn an_array_travels_as_its_address() {
 
 #[test]
 fn a_call_result_takes_its_index_as_a_name_does() {
-    let array = "import ./identities/array.logos, a := array i32 (1, 2, 3), \
-                 mk := fn () -> array i32 ( array i32 (1, 2) )";
+    let array = "import ./identities/array.logos, a := array i32 [1, 2, 3], \
+                 mk := fn () -> array i32 ( array i32 [1, 2] )";
     for (tail, printed) in [
         ("mk()[1]", "2"),
         ("mk().at(1)", "2"),
@@ -433,7 +432,7 @@ fn a_call_result_takes_its_index_as_a_name_does() {
         ("f := fn () -> i32 ( mk()[1] + mk().at(0) ), f()", "3"),
         ("f := fn () -> i32 ( mk()[1] + mk().at(0) ), f.compile(), f()", "3"),
         ("(a)[2]", "3"),
-        ("array i32 (4, 5)[1]", "5"),
+        ("array i32 [4, 5][1]", "5"),
         // A bracket an identity to its left claims stays that identity's argument.
         ("f := fn (p := array i32 ?) -> i32 ( p[1] ), f(a)", "2"),
     ] {
@@ -463,16 +462,16 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
     let out = logos().args(["import", "./identities/array.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     for (tail, printed) in [("a[1]", "2\n"), ("a.size_bytes()", "12\n")] {
-        let src = format!("import ./identities/array.logos, a := array i32 (1, 2, 3), {tail}");
+        let src = format!("import ./identities/array.logos, a := array i32 [1, 2, 3], {tail}");
         let out = logos().arg(&src).output().unwrap();
         assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
         assert_eq!(String::from_utf8_lossy(&out.stdout), printed, "{src}");
     }
-    let array = "import ./identities/array.logos, a := array i32 (1, 2, 3)";
+    let array = "import ./identities/array.logos, a := array i32 [1, 2, 3]";
     for (tail, printed) in [
         ("a[0] + a[2]", "4"),
         ("f := fn () -> i32 ( a[0] + a[2] ), f.compile(), f()", "4"),
-        ("b := array u8 (7, 8), b[1]", "8"),
+        ("b := array u8 [7, 8], b[1]", "8"),
         ("i := u64 1, a[i]", "2"),
         ("f := fn (i := u64 ?) -> i32 ( a[i] ), f(1)", "2"),
         ("f := fn (i := u64 ?) -> i32 ( a[i] ), f.compile(), f(1)", "2"),
@@ -482,7 +481,7 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
         ("t := array i32", ""),
         ("b := a", ""),
         ("b := a, b[1]", "2"),
-        ("t := array i32, x := t (4, 5), x[1]", "5"),
+        ("t := array i32, x := t [4, 5], x[1]", "5"),
     ] {
         let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
         assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -495,7 +494,10 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
         ("f := fn (i := u64 ?) -> i32 ( a[i] ), f.compile(), f(5)", "index out of range"),
         ("a[-1]", "the index type is not within the size type"),
         ("a[1.5]", "the index type is not within the size type"),
-        ("b := array u8 (1, 300)", "an element does not fit the element type"),
+        ("b := array u8 [1, 300]", "an element does not fit the element type"),
+        // The list is written in square brackets; a parenthesis is a scope argument.
+        ("b := array i32 (1, 2)", "the list is written in square brackets, `array i32 [1, 2]`"),
+        ("t := array i32, x := t (4, 5)", "the list is written in square brackets"),
     ] {
         let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -505,7 +507,7 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
 
 #[test]
 fn an_index_of_any_integer_type_reads_inside_the_array() {
-    let array = "import ./identities/array.logos, a := array i32 (1, 2, 3)";
+    let array = "import ./identities/array.logos, a := array i32 [1, 2, 3]";
     for (tail, printed) in [
         ("mut s := i32 0, for i in (i32 0)..(i32 3) ( s = s + a[i] ), s", "6"),
         ("mut s := i32 0, for i in 0..3 ( s = s + a[i] ), s", "6"),
@@ -543,7 +545,7 @@ fn an_index_of_any_integer_type_reads_inside_the_array() {
 
 #[test]
 fn an_array_element_is_written_where_the_read_finds_it() {
-    let array = "import ./identities/array.logos, a := array i32 (1, 2, 3)";
+    let array = "import ./identities/array.logos, a := array i32 [1, 2, 3]";
     for (tail, printed) in [
         ("a[0] = i32 9, a[0]", "9"),
         ("a[0] = 9, a[0] + a[1]", "11"),
@@ -552,7 +554,7 @@ fn an_array_element_is_written_where_the_read_finds_it() {
         ("a[0] = a[2], a[0]", "3"),
         ("a.at(1) = 4, a[1]", "4"),
         ("b := a, b[0] = i32 7, a[0]", "7"),
-        ("b := array u8 (1, 2), b[1] = 200, b[1]", "200"),
+        ("b := array u8 [1, 2], b[1] = 200, b[1]", "200"),
         ("f := fn (p := array i32 ?) -> void ( p[1] = 8 ), f(a), a[1]", "8"),
         ("f := fn (p := array i32 ?) -> void ( p[1] = 8 ), f.compile(), f(a), a[1]", "8"),
         ("f := fn (i := u64 ?) -> void ( a[i] = 6 ), f(2), a[2]", "6"),
@@ -563,7 +565,7 @@ fn an_array_element_is_written_where_the_read_finds_it() {
             "8",
         ),
         (
-            "f := fn (x := i32 ?) -> i32 ( c := array i32 (x, 2), c[0] = x + 10, c[0] ), \
+            "f := fn (x := i32 ?) -> i32 ( c := array i32 [x, 2], c[0] = x + 10, c[0] ), \
              f.compile(), f(5)",
             "15",
         ),
@@ -584,14 +586,14 @@ fn an_array_element_is_written_where_the_read_finds_it() {
         ("f := fn (i := u64 ?) -> void ( a[i] = 6 ), f(3)", "index out of range"),
         ("f := fn (i := u64 ?) -> void ( a[i] = 6 ), f.compile(), f(5)", "index out of range"),
         (
-            "f := fn (i := u64 ?) -> i32 ( c := array i32 (1, 2), c[i] = 9, c[i] ), \
+            "f := fn (i := u64 ?) -> i32 ( c := array i32 [1, 2], c[i] = 9, c[i] ), \
              f.compile(), f(2)",
             "index out of range",
         ),
         ("a[0] = i64 4", "these types do not match"),
         ("x := u8 3, a[0] = x", "these types do not match"),
         ("a[0] = 1.5", "this literal has no exact value"),
-        ("b := array u8 (1, 2), b[1] = 300", "this literal has no exact value"),
+        ("b := array u8 [1, 2], b[1] = 300", "this literal has no exact value"),
         ("a[-1] = 1", "the index type is not within the size type"),
         ("g := fn () -> i32 ( 5 ), g() = 3", "this is not an assignable place"),
         // A teardown would free the place before the write lands.
@@ -2588,7 +2590,7 @@ fn the_owner_s_scope_end_runs_the_instances_drop_once() {
 
 #[test]
 fn an_array_is_freed_by_its_owner_and_a_borrow_outliving_it_reads_nothing() {
-    let array = "import ./identities/array.logos, a := array i32 (1, 2, 3)";
+    let array = "import ./identities/array.logos, a := array i32 [1, 2, 3]";
     for (tail, printed) in
         [("drop a, 5", "5"), ("b := a, f := fn (p := array i32 ?) -> i32 ( p[1] ), f(b)", "2")]
     {
