@@ -99,6 +99,8 @@ pub enum RunError {
     CallerSpot,
     /// `⊆` over two different types that are not both integer types.
     UnsettledInclusion,
+    /// The parse a `tape[k]` read ran to lex on to its cell failed.
+    Parse(Box<crate::parse::ParseError>),
 }
 
 thread_local! {
@@ -310,23 +312,43 @@ pub struct Runtime<'a> {
     /// How many Logos constructors the parser is running through this runtime;
     /// `caller.scope` answers only inside one.
     constructing: u32,
+    /// Set only while a Logos constructor runs during the parse.
+    reach: Option<Reach>,
 }
 
+/// The driver's tape a Logos constructor was handed, and how to lex it on: a read
+/// past its frontier lexes on demand (DESIGN ›The scope's constructor is the driver‹).
+#[derive(Clone, Copy)]
+pub(crate) struct Reach {
+    pub(crate) tape: *mut crate::parse::ParsingTape,
+    /// The parser running the constructor, erased so the runtime needs no lifetime of it.
+    pub(crate) parser: *mut (),
+    pub(crate) lex_on: LexOn,
+}
+
+/// Lexes `tape` on until it holds the cell `k` right of its center, or a boundary comes first.
+pub(crate) type LexOn = unsafe fn(
+    *mut (),
+    *mut crate::parse::ParsingTape,
+    isize,
+) -> Result<(), crate::parse::ParseError>;
+
 /// What `lex «…»` lexes against. Raw, because the parser owns both and the
-/// runtime inside it; set only by [`Runtime::lexing`], which clears them when
-/// its call returns or unwinds, and every read is inside such a call.
+/// runtime inside it; set only by [`Runtime::lexing`], which puts back the one
+/// before when its call returns or unwinds, and every read is inside such a call.
 #[derive(Clone, Copy)]
 struct Lexer {
     scopes: std::ptr::NonNull<crate::parse::ScopeStack>,
     trie: std::ptr::NonNull<crate::regex_trie::RegexTrie>,
 }
 
-/// Clears the lexer when a [`Runtime::lexing`] call ends, by return or by unwinding.
-struct Detach<'r, 'a>(&'r mut Runtime<'a>);
+/// Puts back the lexer a [`Runtime::lexing`] call found when it ends, by return or by
+/// unwinding: a constructor run inside another's lazy read leaves the outer one's attached.
+struct Detach<'r, 'a>(&'r mut Runtime<'a>, Option<Lexer>);
 
 impl Drop for Detach<'_, '_> {
     fn drop(&mut self) {
-        self.0.lexer = None;
+        self.0.lexer = self.1;
     }
 }
 
@@ -343,6 +365,7 @@ impl<'a> Runtime<'a> {
             lexer: None,
             fragments: Vec::new(),
             constructing: 0,
+            reach: None,
         }
     }
 
@@ -353,12 +376,36 @@ impl<'a> Runtime<'a> {
         trie: &crate::regex_trie::RegexTrie,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        self.lexer = Some(Lexer {
+        let was = self.lexer.replace(Lexer {
             scopes: std::ptr::NonNull::from(scopes),
             trie: std::ptr::NonNull::from(trie),
         });
-        let guard = Detach(self);
+        let guard = Detach(self, was);
         f(guard.0)
+    }
+
+    /// Hands back the reach it replaces, for the caller to put back when its constructor returns.
+    pub(crate) fn set_reach(&mut self, reach: Option<Reach>) -> Option<Reach> {
+        std::mem::replace(&mut self.reach, reach)
+    }
+
+    /// Lexes `tape` on to the cell `k` when it is the tape a running constructor was
+    /// handed; any other tape, and a read the tape already holds, is left as it stands.
+    ///
+    /// # Safety
+    /// `tape` must be a live `ParsingTape`.
+    pub(crate) unsafe fn reach(
+        &mut self,
+        tape: *mut crate::parse::ParsingTape,
+        k: isize,
+    ) -> Result<(), RunError> {
+        let Some(reach) = self.reach else { return Ok(()) };
+        if k <= 0 || reach.tape != tape || (*tape).at(k).is_some() {
+            return Ok(());
+        }
+        // SAFETY: `set_reach` is called only by the parser around a constructor's run,
+        // with itself and the tape it handed, both alive until the run returns.
+        (reach.lex_on)(reach.parser, tape, k).map_err(|e| RunError::Parse(Box::new(e)))
     }
 
     /// Until the matching [`Runtime::leave_constructor`], `caller.scope` answers.

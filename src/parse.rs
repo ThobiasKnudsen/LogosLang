@@ -2100,11 +2100,34 @@ impl<'a> Parser<'a> {
         let call = build_call(self.rt.store, f, &[handle, this_arg]);
         // Inside the call, `caller.scope` reads the pass's position.
         self.rt.enter_constructor();
+        let reach = crate::run::Reach {
+            tape: tape as *mut ParsingTape,
+            parser: self as *mut Self as *mut (),
+            lex_on: Self::lex_on,
+        };
+        let outer = self.rt.set_reach(Some(reach));
         // SAFETY: `call` was just built into the store; the tape and the store are reached only through the natives until `run` returns.
         let out = unsafe { self.run_on_pass(call) };
+        self.rt.set_reach(outer);
         self.rt.leave_constructor();
-        out.map_err(|e| ParseError::ConstructorFailed(Box::new(crate::report::run_message(&e))))?;
-        Ok(Constructed::Placed)
+        match out {
+            Ok(_) => Ok(Constructed::Placed),
+            // A cell lexed on demand failed to parse: its own error, where it stands.
+            Err(crate::run::RunError::Parse(e)) => Err(*e),
+            Err(e) => Err(ParseError::ConstructorFailed(Box::new(crate::report::run_message(&e)))),
+        }
+    }
+
+    /// A Logos constructor's read past the frontier: the driver lexes on, as for a
+    /// built-in reader (DESIGN ›The scope's constructor is the driver‹).
+    ///
+    /// # Safety
+    /// `parser` must be the parser that set this reach, and `tape` the tape it handed the
+    /// constructor; both outlive the constructor's run, which is the only caller.
+    unsafe fn lex_on(parser: *mut (), tape: *mut ParsingTape, k: isize) -> Result<(), ParseError> {
+        // SAFETY: as this function's own contract.
+        let (parser, tape) = unsafe { (&mut *(parser as *mut Self), &mut *tape) };
+        parser.cell_at(tape, k).map(|_| ())
     }
 
     /// `dyad (T, v)` builds a store-owned cell of type `T` (DESIGN ›Feasibility‹):

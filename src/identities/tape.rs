@@ -321,6 +321,17 @@ pub(crate) unsafe fn build_member(
     Ok(node(store, op, leaf, &[recv, k]))
 }
 
+/// The tape and the index a native reads at, the tape lexed on to that cell first.
+unsafe fn tape_at(
+    rt: &mut Runtime,
+    ops: *const DyadPtr,
+) -> Result<(*mut ParsingTape, isize), RunError> {
+    let tape = tape_of(rt, *ops)?;
+    let k = rt.run(*ops.add(1))? as isize;
+    rt.reach(tape, k)?;
+    Ok((tape, k))
+}
+
 /// The instance's address, read for its `cells` handle.
 unsafe fn tape_of(rt: &mut Runtime, recv: DyadPtr) -> Result<*mut ParsingTape, RunError> {
     let addr = rt.run(recv)? as *const u8;
@@ -338,9 +349,7 @@ fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
     unsafe {
         let ops = (*node).value as *const DyadPtr;
-        let tape = tape_of(rt, *ops)?;
-        let k = rt.run(*ops.add(1))? as isize;
-        // Past the frontier a parse-time read lexes lazily; at run time it is the checked error.
+        let (tape, k) = tape_at(rt, ops)?;
         match (*tape).at(k) {
             Some(c) => Ok(c.dyad as i64),
             None => Err(RunError::OffTape),
@@ -353,8 +362,7 @@ fn run_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
     unsafe {
         let ops = (*node).value as *const DyadPtr;
-        let tape = tape_of(rt, *ops)?;
-        let k = rt.run(*ops.add(1))? as isize;
+        let (tape, k) = tape_at(rt, ops)?;
         let dyad = rt.run(*ops.add(2))? as DyadPtr;
         if !(*tape).set_dyad(k, dyad) {
             return Err(RunError::OffTape);
@@ -367,8 +375,7 @@ fn run_flag_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
     unsafe {
         let ops = (*node).value as *const DyadPtr;
-        let tape = tape_of(rt, *ops)?;
-        let k = rt.run(*ops.add(1))? as isize;
+        let (tape, k) = tape_at(rt, ops)?;
         let flag = rt.run(*ops.add(2))? != 0;
         if !(*tape).set_constructed(k, flag) {
             return Err(RunError::OffTape);
@@ -381,8 +388,7 @@ fn run_is_constructed(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> 
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
     unsafe {
         let ops = (*node).value as *const DyadPtr;
-        let tape = tape_of(rt, *ops)?;
-        let k = rt.run(*ops.add(1))? as isize;
+        let (tape, k) = tape_at(rt, ops)?;
         match (*tape).is_constructed(k) {
             Some(flag) => Ok(i64::from(flag)),
             None => Err(RunError::OffTape),
@@ -396,8 +402,7 @@ fn run_spelling(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
     unsafe {
         let ops = (*node).value as *const DyadPtr;
-        let tape = tape_of(rt, *ops)?;
-        let k = rt.run(*ops.add(1))? as isize;
+        let (tape, k) = tape_at(rt, ops)?;
         let Some(text) = (*tape).spelling(k) else {
             return Err(RunError::OffTape);
         };
@@ -412,8 +417,7 @@ fn run_insert(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
     unsafe {
         let ops = (*node).value as *const DyadPtr;
-        let tape = tape_of(rt, *ops)?;
-        let k = rt.run(*ops.add(1))? as isize;
+        let (tape, k) = tape_at(rt, ops)?;
         let arg = *ops.add(2);
         let frag = if super::lex::is_fragment(rt.types(), arg) {
             rt.run(arg)? as *mut ParsingTape
@@ -433,8 +437,7 @@ fn run_remove(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
     unsafe {
         let ops = (*node).value as *const DyadPtr;
-        let tape = tape_of(rt, *ops)?;
-        let k = rt.run(*ops.add(1))? as isize;
+        let (tape, k) = tape_at(rt, ops)?;
         Ok((*tape).remove(k).map(|c| c.dyad as i64).unwrap_or(0))
     }
 }
@@ -443,8 +446,7 @@ fn run_recenter(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
     unsafe {
         let ops = (*node).value as *const DyadPtr;
-        let tape = tape_of(rt, *ops)?;
-        let k = rt.run(*ops.add(1))? as isize;
+        let (tape, k) = tape_at(rt, ops)?;
         (*tape).recenter(k);
         Ok(0)
     }
@@ -455,8 +457,7 @@ unsafe fn slot_cell(
     rt: &mut Runtime,
     ops: *const DyadPtr,
 ) -> Result<Option<(*mut ParsingTape, isize, DyadPtr)>, RunError> {
-    let tape = tape_of(rt, *ops)?;
-    let k = rt.run(*ops.add(1))? as isize;
+    let (tape, k) = tape_at(rt, ops)?;
     Ok((*tape).at(k).map(|c| (tape, k, rt.through(c.dyad))))
 }
 
@@ -466,8 +467,7 @@ fn run_slot_name(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
     unsafe {
         let ops = (*node).value as *const DyadPtr;
-        let tape = tape_of(rt, *ops)?;
-        let k = rt.run(*ops.add(1))? as isize;
+        let (tape, k) = tape_at(rt, ops)?;
         let Some(c) = (*tape).at(k).copied() else {
             return Err(RunError::OffTape);
         };

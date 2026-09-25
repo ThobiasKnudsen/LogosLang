@@ -368,6 +368,7 @@ pub fn run_message(e: &RunError) -> String {
                 .into()
         }
         RunError::NullPointer => "this pointer holds nothing yet".into(),
+        RunError::Parse(e) => parse_message(e),
         RunError::Return(_) => "`return` found no function to leave".into(),
         RunError::CallDepth => {
             format!(
