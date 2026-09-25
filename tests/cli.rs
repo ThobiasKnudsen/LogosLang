@@ -209,6 +209,16 @@ fn any_spelling_the_index_can_hold_is_nameable() {
 }
 
 #[test]
+fn a_type_s_size_bytes_is_a_u64_for_records_numbers_and_pointers() {
+    let (echoes, stderr) = repl(
+        b"i32.size_bytes\nu8.size_bytes\n(@u8).size_bytes\nn := u64 3\nn * i32.size_bytes\n\
+          p := type (fields = (a := i32 ?, b := i64 ?))\nn * p.size_bytes\n",
+    );
+    assert_eq!(echoes, ["4", "1", "8", "12", "36"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
 fn the_power_demo_prints_nine() {
     let out = logos().args(["import", "identities/power.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));

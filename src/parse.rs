@@ -6408,8 +6408,16 @@ impl<'a> Parser<'a> {
                 Ok(view)
             }
             "size_bytes" if meta::is_record_type(logos) => {
-                Ok(self.scalar_value(NumType::I64, meta::record_size_of(logos) as i64))
+                Ok(self.scalar_value(NumType::U64, meta::record_size_of(logos) as i64))
             }
+            "size_bytes" => match crate::identities::read::place_layout(self.types, logos) {
+                Some((
+                    crate::identities::read::Read::Scalar(_)
+                    | crate::identities::read::Read::Pointer(_),
+                    width,
+                )) => Ok(self.scalar_value(NumType::U64, width as i64)),
+                _ => Err(ParseError::BadReflectRead),
+            },
             "scope" if meta::is_record_type(logos) => Ok(self
                 .rt
                 .store
