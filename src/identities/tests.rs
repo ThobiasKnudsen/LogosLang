@@ -891,18 +891,115 @@ fn an_if_condition_is_its_first_complete_expression() {
     assert_eq!(run_script("x := i32 1, if x == i32 1 (10) else (20)"), 10);
     assert_eq!(run_script("f := fn (a := i32 ?) -> i32 (a), if f(1) == 1 (10) else (20)"), 10);
     assert_eq!(run_script("x := i32 1, if not (x == 2) (10) else (20)"), 10);
-    // A call right of a comparison: `1 == f` is complete, so `(1)` is the body.
+    // The identity left of a `(` decides: a fn value takes it as its call, a type right of
+    // `+` as its conversion.
+    let f = "f := fn (a := i32 ?) -> i32 (a), ";
+    assert_eq!(run_script(&format!("{f}if 1 == f(1) (10) else (20)")), 10);
+    assert_eq!(run_script(&format!("{f}if 1 == f(2) (10) else (20)")), 20);
+    assert_eq!(run_script(&format!("{f}if 1 == (f(1)) (10) else (20)")), 10);
+    assert_eq!(run_script(&format!("{f}if 1 == f(2) 10 else if 2 == f(2) 30 else 20")), 30);
+    assert_eq!(run_script("x := i32 1, if x + i32 (1) == 2 (10) else (20)"), 10);
+    // Anything yielding a bool is a condition; a complete one that does not is refused.
+    let b = "b := fn (a := i32 ?) -> bool (a == 1), ";
+    assert_eq!(run_script(&format!("{b}if b(1) (10) else (20)")), 10);
+    assert_eq!(run_script(&format!("{b}if not b(2) 10 else 20")), 10);
     assert_eq!(
-        script_parse_err("f := fn (a := i32 ?) -> i32 (a), if 1 == f(1) (10) else (20)"),
-        ParseError::UnsupportedOperands
+        script_parse_err(&format!("{f}if f(1) (10) else (20)")),
+        ParseError::NonBoolCondition
     );
-    assert_eq!(run_script("f := fn (a := i32 ?) -> i32 (a), if 1 == (f(1)) (10) else (20)"), 10);
     // Bare bodies on their own lines, as identities/array.logos writes them.
     assert_eq!(run_script("x := i32 1,\nif not x:type == i32\n    error «not i32»,\n5"), 5);
     assert!(run_script_result("x := i32 1,\nif x:type == i32\n    error «is i32»,\n5").is_err());
     // A bare branch is a scope, as a bracket is.
     assert!(matches!(script_parse_err("x := i32 1, if x == 1 y := 2, y"), ParseError::Resolve(_)));
     assert_eq!(script_parse_err("if 1 == 1 else 2"), ParseError::Empty);
+}
+
+#[test]
+fn a_call_in_a_bare_condition_matches_between_tiers() {
+    let src = "f := fn (a := i32 ?) -> i32 (a),\n\
+        g := fn (x := i32 ?) -> i32 ( if 1 == f(x) (10) else if f(x) == 2 30 else (20) ),\n\
+        before := g(1) * 100 + g(2),\n\
+        g.compile(),\n\
+        before * 10000 + g(1) * 100 + g(2)";
+    assert_eq!(run_script(src), 10_30_10_30);
+}
+
+/// `≈` written in Logos, ranked with `==`: its record says it reads a left operand, and
+/// its node's function yields a bool.
+fn logos_comparison(field: &str, rank: &str) -> String {
+    format!(
+        "≈ := type (\n\
+            fields = (\n\
+                lhs := {field} ?,\n\
+                rhs := {field} ?,\n\
+                output := type ?,\n\
+                shared run = ( this.lhs == this.rhs )\n\
+            ),\n\
+            parse_rank = {rank},\n\
+            parse = (\n\
+                this.lhs = tape[-1],\n\
+                this.rhs = tape[1],\n\
+                this.output = bool,\n\
+                tape[0] = this,\n\
+                tape.is_constructed[0] = true,\n\
+                tape.remove(1),\n\
+                tape.remove(-1)\n\
+            )\n\
+        ),\n"
+    )
+}
+
+#[test]
+fn a_comparison_written_in_logos_ends_a_bare_condition() {
+    let eq = logos_comparison("i32", "==.parse_rank");
+    assert_eq!(run_script(&format!("{eq}x := i32 3, if x ≈ 3 (10) else (20)")), 10);
+    assert_eq!(run_script(&format!("{eq}x := i32 3, if x ≈ 4 10 else 20")), 20);
+    let g = "g := fn (y := i32 ?) -> i32 ( mut n := i32 0, while not n ≈ y n = n + 1, n ),\n";
+    assert_eq!(run_script(&format!("{eq}{g}before := g(4), g.compile(), before * 10 + g(4)")), 44);
+    let types = logos_comparison("type", "==.parse_rank");
+    assert_eq!(run_script(&format!("{types}x := i32 1, if x:type ≈ i32 (10) else (20)")), 10);
+    assert_eq!(run_script(&format!("{types}x := i32 1, if x:type ≈ scope (10) else (20)")), 20);
+}
+
+/// Where a condition's bool cannot be known before its operator is built: a type standing
+/// right of an infix ranked outside the comparisons takes the `(` after it, as right of `+`.
+#[test]
+fn a_type_right_of_an_infix_outside_the_comparisons_takes_its_bracket() {
+    let plus_ranked = logos_comparison("type", "+.parse_rank");
+    assert_eq!(
+        script_parse_err(&format!("{plus_ranked}x := i32 1, if x:type ≈ i32 (10) else (20)")),
+        ParseError::NonBoolCondition
+    );
+    assert_eq!(
+        run_script(&format!("{plus_ranked}x := i32 1, if (x:type ≈ i32) (10) else (20)")),
+        10
+    );
+}
+
+#[test]
+fn a_while_body_needs_no_brackets() {
+    assert_eq!(run_script("mut i := i32 0, while i < 5 i = i + 1, i"), 5);
+    assert_eq!(run_script("mut i := i32 0, while i < 5 (i = i + 1), i"), 5);
+    assert_eq!(run_script("mut i := i32 0, while (i < 5) (i = i + 1), i"), 5);
+    let f = "f := fn (a := i32 ?) -> i32 (a), ";
+    assert_eq!(run_script(&format!("{f}mut i := i32 0, while f(i) < 5 i = i + 1, i")), 5);
+    assert_eq!(run_script(&format!("{f}mut i := i32 0, while 5 > f(i) (i = i + 2), i")), 6);
+    // Nested, and a bare `while` as a bare `if` branch ending at the `else`.
+    assert_eq!(
+        run_script(
+            "mut i := i32 0, mut n := i32 0,\n\
+             while i < 3 (i = i + 1, mut j := i32 0, while j < 2 j = j + 1, n = n + j), n"
+        ),
+        6
+    );
+    assert_eq!(run_script("mut i := i32 0, if i == 0 while i < 3 i = i + 1 else i = 9, i"), 3);
+    assert_eq!(script_parse_err("while 1 2"), ParseError::NonBoolCondition);
+    diff_nullary_fn("fn () -> i32 ( mut i := i32 0, while i < 5 i = i + 1, i )", 5);
+    diff_nullary_fn(
+        "fn () -> i32 ( mut a := i32 0, mut i := i32 0, while i < 5 ( a = a + i, i = i + 1 ), a )",
+        10,
+    );
 }
 
 #[test]

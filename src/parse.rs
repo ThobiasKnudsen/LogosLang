@@ -1196,7 +1196,7 @@ pub enum ParseError {
     /// An abstract operator could not resolve a concrete machine op for its
     /// operand types.
     UnsupportedOperands,
-    /// An `if` condition was not a `bool`.
+    /// An `if` or `while` condition was not a `bool`.
     NonBoolCondition,
     /// An `if` without an `else` where a value is required: with no false
     /// branch it yields unit.
@@ -1350,6 +1350,17 @@ pub(crate) unsafe fn is_bool_result(types: &Core, node: DyadPtr) -> bool {
     if logos == types.and_ || logos == types.or_ {
         let (lhs, rhs) = crate::identities::operands(node);
         return is_bool_result(types, lhs) && is_bool_result(types, rhs);
+    }
+    // A call, or a node of a type with a run, is what its function declares it returns.
+    let f = if crate::identities::meta::is_record_type(logos)
+        && !crate::identities::meta::run_body_of(logos).is_null()
+    {
+        crate::identities::run_body::spec_of(node)
+    } else {
+        logos
+    };
+    if !f.is_null() && (*f).ty == types.fn_type && !(*f).value.is_null() {
+        return *((*f).value as *const DyadPtr).add(FN_OUTPUT) == types.bool_;
     }
     logos == types.bool_
         || logos == types.lt
@@ -2260,14 +2271,17 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Whether an `if` condition ends before `next` (DESIGN ›Expressions are
-    /// self-delimiting‹): it is the first complete expression, so it ends once
-    /// complete at a token that does not read to its left. It is complete when
-    /// it ends in a value, or in identities that could still read a right side
-    /// but stand right of a comparison, where they are the compared value; those
-    /// still take a value word (`x == i32 1`), and a `(` there is the body.
+    /// Whether an `if` or `while` condition ends before `next` (DESIGN
+    /// ›Expressions are self-delimiting‹): it is the first complete expression,
+    /// so it ends once complete at a token that does not read to its left. It is
+    /// complete when it ends in a value, or in identities that could still read
+    /// a right side but stand right of a comparison, where they are the compared
+    /// value; those still take a value word (`x == i32 1`), and a `(` there is
+    /// the body. The identity left of a `(` decides whose it is (DESIGN ›`X (…)`
+    /// is one spelling‹): a value with a constructor is applied to it, so
+    /// `1 == f(x)` is complete only after the call, while a type is the compared value.
     /// `next` is `None` for a `(` a bracket reader peeks at unlexed.
-    fn if_condition_ends(&self, tape: &ParsingTape, next: Option<&Cell>) -> bool {
+    fn condition_ends(&self, tape: &ParsingTape, next: Option<&Cell>) -> bool {
         let id = next.map_or(self.types.open_, |c| self.cell_identity(c));
         let open = id == self.types.open_;
         if !open && next.is_some_and(|c| !c.constructed) && self.reads_left(id) {
@@ -2277,6 +2291,9 @@ impl<'a> Parser<'a> {
         let Some(last) = cells.last() else { return false };
         if self.ends_value(last) {
             return true;
+        }
+        if open && self.applied_to_bracket(last) {
+            return false;
         }
         let readers = cells
             .iter()
@@ -2291,23 +2308,40 @@ impl<'a> Parser<'a> {
         let Some(before) = cells.len().checked_sub(readers + 1).map(|k| cells[k]) else {
             return false;
         };
-        let t = self.types;
-        let compared =
-            [t.eq, t.ne, t.lt, t.gt, t.le, t.ge, t.subset].contains(&self.cell_identity(&before));
         readers > 0
             && !before.constructed
-            && compared
+            && self.compares(self.cell_identity(&before))
             && (open || next.is_some_and(|c| !self.is_value_word(c, id)))
+    }
+
+    /// A value, not a type, that has a constructor: a fn value or an instance,
+    /// which takes a `(` after it as its call.
+    fn applied_to_bracket(&self, cell: &Cell) -> bool {
+        let id = self.cell_identity(cell);
+        // SAFETY: `id` is null or a resolved identity from the store.
+        !cell.constructed
+            && !id.is_null()
+            && unsafe { (*id).ty } != self.types.type_
+            && self.ctor_of(id).is_some()
+    }
+
+    /// An infix ranked among the comparisons, below the range and above `not`:
+    /// its operands may be any value, types included, and a type standing
+    /// right of it is a whole operand, where right of `+` it must still read its bracket.
+    /// The rank is a stand-in for #137: whether the result is `bool` is known only once built.
+    fn compares(&self, id: DyadPtr) -> bool {
+        use crate::identities::meta::prec;
+        let rank = self.precedence_of_cell(id);
+        self.ctor_of(id).is_some() && self.reads_left(id) && prec::NOT < rank && rank < prec::RANGE
     }
 
     /// Whether a bracket reader takes the `(` at the cursor: only when woken
     /// at discovery, the one moment it may read source, and not where the `(`
-    /// ends a complete `if` condition, being the body.
+    /// ends a complete `if` or `while` condition, being the body.
     pub(crate) fn reads_own_bracket(&mut self, tape: &ParsingTape) -> bool {
         self.discovering
             && self.at_open()
-            && !(self.lex_mode == Some(RightSide::IfCondition)
-                && self.if_condition_ends(tape, None))
+            && !(self.lex_mode == Some(RightSide::Condition) && self.condition_ends(tape, None))
     }
 
     /// An operand, or `?`, which reads only to its left.
@@ -2317,22 +2351,36 @@ impl<'a> Parser<'a> {
     }
 
     /// An infix operator, a tight read, an index, or a token a construct
-    /// spells between its parts; `else` ends a branch instead.
+    /// spells between its parts; `else` ends a branch instead. An infix is
+    /// what its record says: its first operand, or a type's first field, is `lhs`.
     fn reads_left(&self, id: DyadPtr) -> bool {
+        use crate::identities::meta;
         if id == self.types.else_ {
             return false;
         }
-        // SAFETY: `id` is null or a resolved identity; roles are read only off an operand record.
+        // SAFETY: `id` is null or a resolved identity; roles are read only off an operand
+        // record, fields only off a record type.
         self.is_delimiter(id)
             || unsafe {
-                self.identity_head(id).is_some_and(|h| {
-                    matches!(
-                        crate::identities::meta::kind_of(h),
-                        Some(
-                            crate::identities::meta::TUPLE_TAG | crate::identities::meta::LIST_TAG
-                        )
-                    ) && crate::identities::meta::arity_of(h) > 0
-                        && crate::reflect::text_of(crate::identities::meta::role_of(h, 0)) == b"lhs"
+                self.identity_head(id).is_some_and(|h| match meta::kind_of(h) {
+                    Some(meta::TUPLE_TAG | meta::LIST_TAG) => {
+                        meta::arity_of(h) > 0
+                            && crate::reflect::text_of(meta::role_of(h, 0)) == b"lhs"
+                    }
+                    Some(meta::RECORD_TAG) => {
+                        let fields = meta::record_fields_of(h);
+                        let first = if fields.is_null() {
+                            None
+                        } else {
+                            crate::identities::array::items(fields).first().copied()
+                        };
+                        let mut scope = ScopeStack::new();
+                        scope.push(meta::record_scope_of(h));
+                        first.is_some_and(|f| {
+                            scope.resolve(self.trie, "lhs").is_ok_and(|r| r.identity == f)
+                        })
+                    }
+                    _ => false,
                 })
             }
     }
@@ -3766,7 +3814,7 @@ impl<'a> Parser<'a> {
     /// statement. Each branch is a bracket or the next expression, and a bare
     /// `else` binds to the nearest `if`; `if` opens no scope.
     pub fn parse_if(&mut self, if_type: DyadPtr) -> Result<DyadPtr, ParseError> {
-        let items = self.drive_until_open(RightSide::IfCondition)?;
+        let items = self.drive_until_open(RightSide::Condition)?;
         let cond = self.one_of(items)?;
         let types = self.types;
         // SAFETY: `cond` is the reduced dyad just parsed.
@@ -3804,8 +3852,8 @@ impl<'a> Parser<'a> {
         Ok(self.rt.store.alloc_raw(if_type, value))
     }
 
-    /// A branch of `if`: a bracket, or the next expression, which ends before
-    /// an `else` (DESIGN ›Expressions are self-delimiting‹).
+    /// A branch of `if`, or a `while` body: a bracket, or the next expression,
+    /// which ends before an `else` (DESIGN ›Expressions are self-delimiting‹).
     fn parse_branch(&mut self) -> Result<DyadPtr, ParseError> {
         if self.at_open() {
             self.expect_open()?;
@@ -3976,9 +4024,10 @@ impl<'a> Parser<'a> {
         Ok(self.rt.store.alloc_raw(not_id, value))
     }
 
-    /// `while ( cond ) ( body )`: the node is `[cond, body]`, a statement
-    /// yielding unit; the body's value is thrown away (DESIGN ›a loop body's
-    /// is thrown away‹); a `return` in it leaves the enclosing function.
+    /// `while cond body`: the node is `[cond, body]`, a statement yielding
+    /// unit; the condition and body are read as `if`'s are; the body's value is
+    /// thrown away (DESIGN ›a loop body's is thrown away‹); a `return` in it
+    /// leaves the enclosing function.
     pub fn parse_while(&mut self, while_id: DyadPtr) -> Result<DyadPtr, ParseError> {
         let items = self.drive_until_open(RightSide::Condition)?;
         let cond = self.one_of(items)?;
@@ -3991,11 +4040,10 @@ impl<'a> Parser<'a> {
         // declared outside may not be moved or dropped inside.
         self.runtime_depth += 1;
         self.scopes.push_barrier();
-        self.expect_open()?;
-        let body = self.parse_sequence()?;
-        self.expect_close()?;
+        let body = self.parse_branch();
         self.scopes.pop_barrier();
         self.runtime_depth -= 1;
+        let body = body?;
         // SAFETY: `body` is the reduced dyad just parsed.
         if self.frames.is_empty() && unsafe { contains_return(types, body) } {
             return Err(ParseError::EarlyReturn);
@@ -4011,7 +4059,7 @@ impl<'a> Parser<'a> {
         let name = self.loop_name()?;
         // The range, constructed by parse_rank, the `..` cells inert
         // delimiters read by position.
-        let parts = self.drive_until_open(RightSide::Condition)?;
+        let parts = self.drive_until_open(RightSide::Range)?;
         let dotdot = self.types.dotdot_;
         let types = self.types;
         // The `..` cells are uses of that identity: its binding, read through.
@@ -6589,11 +6637,11 @@ impl<'a> Parser<'a> {
                 return Ok(Some(Boundary::Else));
             }
             if let Some(mode) = self.lex_mode {
-                if mode != RightSide::IfCondition && id == self.types.open_ && !tape.is_empty() {
-                    // In a condition a `(` after an unconstructed identity with
+                if mode != RightSide::Condition && id == self.types.open_ && !tape.is_empty() {
+                    // In a range a `(` after an unconstructed identity with
                     // a constructor is that identity's (DESIGN ›`X (…)` is one
                     // spelling, and X's constructor decides‹); a return type takes no bracket, so there the first `(` is the body.
-                    let owner_pending = mode == RightSide::Condition
+                    let owner_pending = mode == RightSide::Range
                         && matches!(tape.last(), Some(l) if !self.is_operand_cell(l));
                     if !owner_pending {
                         self.pos = start;
@@ -6602,9 +6650,7 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        if self.lex_mode == Some(RightSide::IfCondition)
-            && self.if_condition_ends(tape, Some(&cell))
-        {
+        if self.lex_mode == Some(RightSide::Condition) && self.condition_ends(tape, Some(&cell)) {
             self.pos = start;
             return Ok(Some(Boundary::Open));
         }
@@ -6815,13 +6861,13 @@ enum Boundary {
 /// What a right-side read is for, which decides whose a `(` inside it is.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RightSide {
-    /// A bracket after a pending identity is that identity's.
-    Condition,
+    /// `for`'s range: a bracket after a pending identity is that identity's.
+    Range,
     /// The first bracket is the body, and an identity that reads its own
     /// bracket is not woken.
     ReturnType,
-    /// Ends at the first complete expression; see `if_condition_ends`.
-    IfCondition,
+    /// `if`'s and `while`'s: ends at the first complete expression; see `condition_ends`.
+    Condition,
 }
 
 #[cfg(test)]
