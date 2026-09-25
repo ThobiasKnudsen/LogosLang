@@ -930,15 +930,13 @@ fn logos_comparison(field: &str, rank: &str) -> String {
             run = ( this.lhs == this.rhs ),\n\
             parse_rank = {rank},\n\
             parse = (\n\
-                if tape[0]:type == type (\n\
-                    this.lhs = tape[-1],\n\
-                    this.rhs = tape[1],\n\
-                    this.output = bool,\n\
-                    tape[0] = this,\n\
-                    tape.remove(1),\n\
-                    tape.remove(-1)\n\
-                ),\n\
-                tape.is_constructed[0] = true\n\
+                this.lhs = tape[-1],\n\
+                this.rhs = tape[1],\n\
+                this.output = bool,\n\
+                tape[0] = this,\n\
+                tape.is_constructed[0] = true,\n\
+                tape.remove(1),\n\
+                tape.remove(-1)\n\
             )\n\
         ),\n"
     )
@@ -2177,16 +2175,14 @@ const POW_TYPE: &str = "pw := type (\n\
      parse_rank = *.parse_rank + 1,\n\
      associativity = right,\n\
      parse = (\n\
-         if tape[0]:type == type (\n\
-             if tape[-1]:type == void error «pw takes a left operand»,\n\
-             this.a = tape[-1],\n\
-             this.b = tape[1],\n\
-             this.output = tape[-1]:type,\n\
-             tape[0] = this,\n\
-             tape.remove(1),\n\
-             tape.remove(-1)\n\
-         ),\n\
-         tape.is_constructed[0] = true\n\
+         if tape[-1]:type == void error «pw takes a left operand»,\n\
+         this.a = tape[-1],\n\
+         this.b = tape[1],\n\
+         this.output = tape[-1]:type,\n\
+         tape[0] = this,\n\
+         tape.is_constructed[0] = true,\n\
+         tape.remove(1),\n\
+         tape.remove(-1)\n\
      )\n\
     ),\n";
 

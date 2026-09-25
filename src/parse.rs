@@ -7410,8 +7410,11 @@ impl<'a> Parser<'a> {
                 }
             }
             // A call that yields a node whose type has a `parse` wakes it as a name does,
-            // in the driver's next turn.
-            if !same && !cell.bracket && self.is_awake_instance(cell.dyad) {
+            // in the driver's next turn; a node the parse built of its own type runs, and
+            // is never parsed again.
+            // SAFETY: a constructed cell's dyad is null or a node from the store.
+            let built = logos && record && unsafe { (*cell.dyad).ty } == id;
+            if !same && !built && !cell.bracket && self.is_awake_instance(cell.dyad) {
                 tape.set_constructed(0, false);
             }
             return Ok(());
@@ -8122,8 +8125,8 @@ mod tests {
             "squared := type ( \
                 a := i32 ?, output := type ?, run = ( sq(this.a) ), \
                 parse_rank = *.parse_rank + 1, \
-                parse = ( if tape[0]:type == type ( this.a = tape[-1], this.output = i32, \
-                          tape[0] = this, tape.remove(-1) ), tape.is_constructed[0] = true ) )",
+                parse = ( this.a = tape[-1], this.output = i32, tape[0] = this, \
+                          tape.is_constructed[0] = true, tape.remove(-1) ) )",
             &mut store,
             &mut trie,
             types,

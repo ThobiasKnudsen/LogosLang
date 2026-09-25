@@ -8,8 +8,6 @@ fn := type (
 
     parse_rank = …
     associativity = left
-    parse = (
-        # `fn` itself builds a function from `(params) -> T (body)`; a function takes its arguments.
-        if tape[0]:type == type ( ? ) else ( ? )
-    )
+    # Takes `(params)`, `->` and the body; the function it builds runs, and is never parsed again.
+    parse = ( ? )
 )

@@ -25,15 +25,13 @@
     parse_rank = *.parse_rank + 1,
     associativity = right,
     parse = (
-        if tape[0]:type == type (
-            this.lhs = tape[-1],
-            this.rhs = tape[1],
-            this.output = tape[-1]:type,
-            tape[0] = this,
-            tape.remove(1),
-            tape.remove(-1)
-        ),
-        tape.is_constructed[0] = true
+        this.lhs = tape[-1],
+        this.rhs = tape[1],
+        this.output = tape[-1]:type,
+        tape[0] = this,
+        tape.is_constructed[0] = true,
+        tape.remove(1),
+        tape.remove(-1)
     )
 ),
 f := fn (x := i32 ?) -> i32 ( x ^ 3 + 1 ),
