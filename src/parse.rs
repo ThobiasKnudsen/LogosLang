@@ -127,11 +127,15 @@ pub struct ParsingTape {
     /// How many times the frontier was edited: what tells a decline from a
     /// constructor that edited the tape and left its own cell unconstructed.
     edits: u64,
+    /// Lexed to its boundary: a read past the last cell finds nothing there
+    /// (DESIGN ›The scope's constructor is the driver‹), so a return type's
+    /// constructor does not reach the body bracket.
+    sealed: bool,
 }
 
 impl ParsingTape {
     pub fn new() -> Self {
-        ParsingTape { nodes: Vec::new(), head: None, tail: None, center: None, len: 0, edits: 0 }
+        Self::default()
     }
 
     pub fn edits(&self) -> u64 {
@@ -7308,7 +7312,10 @@ impl<'a> Parser<'a> {
         let result = loop {
             match self.lex_next(tape, false) {
                 Ok(None) => {}
-                Ok(Some(boundary)) => break Ok(boundary),
+                Ok(Some(boundary)) => {
+                    tape.sealed = true;
+                    break Ok(boundary);
+                }
                 Err(e) => break Err(e),
             }
         };
@@ -7433,7 +7440,7 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
         offset: isize,
     ) -> Result<Option<Cell>, ParseError> {
-        if offset <= 0 {
+        if offset <= 0 || tape.sealed {
             return Ok(tape.at(offset).copied());
         }
         let mark = tape.mark();

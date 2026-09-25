@@ -7,15 +7,18 @@
 //! type or checked against a number type as that number, and a scope or `[…]` cell's
 //! `t[k].dyads`, `t[k].dyads.size` and `t[k].dyads[i]`, whose line reads as a cell does,
 //! and a call written into a cell, placed with its tape lines as operands. The type's one field,
-//! `cells`, is the seed's `ParsingTape` handle. The natives run interpreted; nothing lowers.
+//! `cells`, is the seed's `ParsingTape` handle. The natives run interpreted; only the bracket a
+//! placed call is handed lowers.
 
 use super::callable::{self, Callables};
 use super::{meta, numtype_of, Cx, Operand};
+use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::parse::{Cell, ParseError, ParsingTape};
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 use crate::Core;
+use cranelift_codegen::ir::Value;
 
 /// The handles: the type, and each native's identity with its run leaf.
 #[derive(Debug, Clone, Copy)]
@@ -129,6 +132,7 @@ pub(super) fn register(
     let (cell_dyad_at, cell_dyad_at_leaf) = op(cx, &["tape", "k", "i", "op"], run_cell_dyad_at);
     let (placed_call, placed_call_leaf) = op(cx, &["call", "op"], run_placed_call);
     let (bracket_arg, bracket_arg_leaf) = op(cx, &["bracket", "op"], run_bracket_arg);
+    cx.lower.insert(bracket_arg, lower_bracket_arg);
     let nothing = cx.store.alloc_raw(void_ty, std::ptr::null_mut());
     for (name, id) in [
         ("is_constructed", is_constructed),
@@ -873,26 +877,77 @@ fn run_bracket_arg(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     unsafe {
         let bracket = rt.through(*((*node).value as *const DyadPtr));
         let lines = super::scope::exprs_of(bracket).unwrap_or(&[]);
-        let mut values = Vec::with_capacity(lines.len());
+        let mut bits = Vec::with_capacity(lines.len());
         for &line in lines {
-            let value = match numtype_of(rt.types(), line) {
-                Operand::Concrete(nt) => {
-                    let ty = rt.types().numtypes[nt as usize];
-                    let bits = rt.run(line)?;
-                    let store = rt.store();
-                    let storage = store.alloc_bytes(&bits.to_ne_bytes()[..nt.bytes()]);
-                    store.alloc_raw(ty, storage)
-                }
-                _ => line,
-            };
-            values.push(value);
+            let numbered = matches!(numtype_of(rt.types(), line), Operand::Concrete(_));
+            bits.push(if numbered { rt.run(line)? } else { 0 });
         }
-        let (array_ty, bracket_ty) = (rt.types().array_, (*bracket).ty);
-        let store = rt.store();
-        let dyads = super::array::build(store, array_ty, &values);
-        let value = store.alloc_operands(&[dyads, std::ptr::null_mut(), std::ptr::null_mut()]);
-        Ok(store.alloc_raw(bracket_ty, value) as i64)
+        let types: *const Core = rt.types();
+        Ok(bracket_holding(rt.store(), &*types, bracket, &bits) as i64)
     }
+}
+
+/// The number lines run in the compiled frame, their values in a block; only the new
+/// bracket, the store's, is made by calling back into the seed.
+fn lower_bracket_arg(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: `node` is a `[bracket, op]` node `run_placed_call` built over a bracket node.
+    unsafe {
+        let bracket = lw.through(*((*node).value as *const DyadPtr));
+        let lines = super::scope::exprs_of(bracket).unwrap_or(&[]);
+        let mut bits = Vec::with_capacity(lines.len());
+        for &line in lines {
+            bits.push(match numtype_of(lw.types(), line) {
+                Operand::Concrete(nt) => {
+                    let v = lw.lower(line)?;
+                    lw.widen(v, nt)
+                }
+                _ => lw.const_i64(0),
+            });
+        }
+        let values = lw.spill(&bits);
+        let bracket = lw.const_i64(bracket as i64);
+        let entry = compiled_bracket as *const () as usize;
+        Ok(lw.call_seed(entry, &[bracket, values]))
+    }
+}
+
+/// # Safety
+/// Called only by compiled code, with a bracket node from the store and a block holding one
+/// container per line.
+unsafe extern "C" fn compiled_bracket(bracket: DyadPtr, values: *const i64) -> i64 {
+    let rt = &mut *crate::run::standing_by();
+    let n = super::scope::exprs_of(bracket).map_or(0, <[DyadPtr]>::len);
+    let bits = if n == 0 { &[][..] } else { std::slice::from_raw_parts(values, n) };
+    let types: *const Core = rt.types();
+    bracket_holding(rt.store(), &*types, bracket, bits) as i64
+}
+
+/// A new bracket of `bracket`'s kind whose lines are the values `bits` holds for its number
+/// lines, and its other lines as they stand.
+///
+/// # Safety
+/// `bracket` must be a scope or `square_brackets` node from the store, `bits` one container
+/// per line.
+unsafe fn bracket_holding(
+    store: &mut Store,
+    types: &Core,
+    bracket: DyadPtr,
+    bits: &[i64],
+) -> DyadPtr {
+    let lines = super::scope::exprs_of(bracket).unwrap_or(&[]);
+    let mut values = Vec::with_capacity(lines.len());
+    for (&line, &b) in lines.iter().zip(bits) {
+        values.push(match numtype_of(types, line) {
+            Operand::Concrete(nt) => {
+                let storage = store.alloc_bytes(&b.to_ne_bytes()[..nt.bytes()]);
+                store.alloc_raw(types.numtypes[nt as usize], storage)
+            }
+            _ => line,
+        });
+    }
+    let dyads = super::array::build(store, types.array_, &values);
+    let value = store.alloc_operands(&[dyads, std::ptr::null_mut(), std::ptr::null_mut()]);
+    store.alloc_raw((*bracket).ty, value)
 }
 
 fn run_cell_dyad_at(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {

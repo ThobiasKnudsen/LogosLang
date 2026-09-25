@@ -5,14 +5,16 @@
 //! parameter, a `dyad ?` place holding the node's address. `this.f` reaches the slot at
 //! `f`'s index among the instance fields: read, the node it holds, or for a field of a
 //! number or pointer type the value that node yields; as `=`'s target, the write of the
-//! right side's node, or of a node holding the value it yields. Nothing here lowers.
+//! right side's node, or of a node holding the value it yields. Only the per-run copy lowers.
 
 use super::callable::{self, Callables};
 use super::{meta, Cx};
+use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 use crate::Core;
+use cranelift_codegen::ir::Value;
 
 /// The handles: the slot read and the slot write, each with its run leaf.
 #[derive(Debug, Clone, Copy)]
@@ -54,6 +56,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     let (load, load_leaf) = op(cx, &["this", "k", "type", "op"], run_load);
     let (store, store_leaf) = op(cx, &["this", "k", "value", "type", "op"], run_store);
     let (copy, copy_leaf) = op(cx, &["this", "op"], run_copy);
+    cx.lower.insert(copy, lower_copy);
     ThisIds {
         slot,
         slot_leaf,
@@ -223,16 +226,33 @@ fn run_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// The slots are copied, never the nodes they hold: a field write replaces its slot.
 fn run_copy(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a copy node; its template is a node `run_logos_ctor` minted, `[field…, null, spec]`.
-    unsafe {
-        let template = *((*node).value as *const DyadPtr);
-        let ty = (*template).ty;
-        let n = super::array::items(meta::record_fields_of(ty)).len() + 2;
-        let slots = std::slice::from_raw_parts((*template).value as *const DyadPtr, n).to_vec();
-        let store = rt.store();
-        let value = store.alloc_operands(&slots);
-        Ok(store.alloc_raw(ty, value) as i64)
-    }
+    // SAFETY: `node` is a copy node from `build_copy`.
+    unsafe { Ok(copy_of(rt.store(), *((*node).value as *const DyadPtr)) as i64) }
+}
+
+/// The template is baked; the new node is the store's, so the step calls back into the seed.
+fn lower_copy(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: `node` is a copy node from `build_copy`.
+    let template = unsafe { *((*node).value as *const DyadPtr) };
+    let template = lw.const_i64(template as i64);
+    Ok(lw.call_seed(compiled_copy as *const () as usize, &[template]))
+}
+
+/// # Safety
+/// Called only by compiled code, with a template `build_copy` was handed.
+unsafe extern "C" fn compiled_copy(template: DyadPtr) -> i64 {
+    copy_of((*crate::run::standing_by()).store(), template) as i64
+}
+
+/// The slots are copied, never the nodes they hold: a field write replaces its slot.
+///
+/// # Safety
+/// `template` must be a node `run_logos_ctor` minted, `[field…, null, spec]`.
+unsafe fn copy_of(store: &mut Store, template: DyadPtr) -> DyadPtr {
+    let ty = (*template).ty;
+    let n = super::array::items(meta::record_fields_of(ty)).len() + 2;
+    let slots = std::slice::from_raw_parts((*template).value as *const DyadPtr, n).to_vec();
+    let value = store.alloc_operands(&slots);
+    store.alloc_raw(ty, value)
 }
