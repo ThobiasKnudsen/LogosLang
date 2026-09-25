@@ -1095,6 +1095,9 @@ struct OpenScope {
     /// Items parsed at depth 0 and not yet run: `drain` runs them when the
     /// pass needs a value, the scope's own run otherwise.
     unrun: Vec<DyadPtr>,
+    /// The tape cells, by the tape's place and a literal index, a check in this
+    /// scope has shown to hold a type.
+    narrowed: Vec<(DyadPtr, i32)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1387,6 +1390,32 @@ pub(crate) unsafe fn bool_literal_value(types: &Core, node: DyadPtr) -> Option<b
     Some(std::ptr::read_unaligned((*node).value as *const i32) != 0)
 }
 
+/// `tape[k]:type == type` or `!=`, either side first: the cell checked, and whether
+/// the test is `==`.
+///
+/// # Safety
+/// `cond` must be a reduced dyad from the store.
+unsafe fn type_check_of(types: &Core, cond: DyadPtr) -> Option<((DyadPtr, i32), bool)> {
+    let cond = types.through(cond);
+    let eq = (*cond).ty == types.eq;
+    if !eq && (*cond).ty != types.ne {
+        return None;
+    }
+    let ops = (*cond).value as *const DyadPtr;
+    let (l, r) = (types.through(*ops), types.through(*ops.add(1)));
+    let read = if r == types.type_ {
+        l
+    } else if l == types.type_ {
+        r
+    } else {
+        return None;
+    };
+    if (*read).ty != types.tape.cell_type {
+        return None;
+    }
+    crate::identities::tape::cell_key(types, read).map(|key| (key, eq))
+}
+
 /// Trailing comment nodes are prose, not the tail; `None` for a scope with
 /// no expression array.
 ///
@@ -1555,6 +1584,8 @@ pub struct Parser<'a> {
     /// While a held `type (…)` is built at its run, the function frames open
     /// where it was written: a place declared at that depth is the type's, global.
     held_depth: usize,
+    /// A cell the branch about to open is checked to hold a type.
+    narrow_next: Option<(DyadPtr, i32)>,
 }
 
 /// The cells of a held run body being constructed, served by the cursor's
@@ -1700,6 +1731,7 @@ impl<'a> Parser<'a> {
             feed: None,
             run_body: None,
             held_depth: 0,
+            narrow_next: None,
         }
     }
 
@@ -4015,10 +4047,17 @@ impl<'a> Parser<'a> {
             return self.parse_comptime_if(if_type, cond, truth);
         }
 
+        // DESIGN ›A type is a comptime value, resolved in the pass‹, a checked tape cell.
+        // SAFETY: `cond` is the reduced dyad just parsed.
+        let check = unsafe { type_check_of(types, cond) };
+
         // A runtime branch may or may not run, so parse-time rebinding is off
         // inside it.
         self.runtime_depth += 1;
-        let then = self.parse_branch()?;
+        self.narrow_next = check.filter(|&(_, eq)| eq).map(|(key, _)| key);
+        let then = self.parse_branch();
+        self.narrow_next = None;
+        let then = then?;
 
         // `else if …` is sugar: the `if` right after `else` becomes the
         // else-branch directly, so a chain nests right-associatively.
@@ -4026,12 +4065,22 @@ impl<'a> Parser<'a> {
             if self.consume_token(self.types.if_) {
                 self.parse_if(if_type)?
             } else {
+                self.narrow_next = check.filter(|&(_, eq)| !eq).map(|(key, _)| key);
                 self.parse_branch()?
             }
         } else {
             std::ptr::null_mut()
         };
+        self.narrow_next = None;
         self.runtime_depth -= 1;
+
+        // A `!=` check whose branch raises leaves the cell checked for the rest of the scope.
+        if let Some((key, false)) = check {
+            // SAFETY: `then` is the reduced dyad just parsed.
+            if els.is_null() && unsafe { (*types.through(then)).ty } == types.error.error {
+                self.open.last_mut().expect("the `if` stands in an open scope").narrowed.push(key);
+            }
+        }
 
         let value = self.rt.store.alloc_operands(&[cond, then, els, self.types.ops.if_]);
         Ok(self.rt.store.alloc_raw(if_type, value))
@@ -4595,6 +4644,9 @@ impl<'a> Parser<'a> {
                     return Ok((node, 1));
                 }
                 let args = call.ok_or(ParseError::ExpectedOpen)?;
+                if op == types.tape.insert || op == types.tape.remove || op == types.tape.recenter {
+                    self.forget_narrowed();
+                }
                 let node = crate::identities::tape::build_member(
                     self.rt.store,
                     types,
@@ -4786,7 +4838,17 @@ impl<'a> Parser<'a> {
                 let recv =
                     unsafe { crate::identities::tape::receiver_addr(self.rt.store, types, lhs) };
                 if let Some(recv) = recv {
-                    let node = crate::identities::tape::build_slot(self.rt.store, types, recv, key);
+                    let mut node =
+                        crate::identities::tape::build_slot(self.rt.store, types, recv, key);
+                    // SAFETY: `node` is the slot node just built.
+                    if unsafe { crate::identities::tape::cell_key(types, node) }
+                        .is_some_and(|k| self.is_narrowed(k))
+                    {
+                        // SAFETY: as above.
+                        node = unsafe {
+                            crate::identities::tape::build_cell_value(self.rt.store, types, node)
+                        };
+                    }
                     tape.remove(-1);
                     tape.place(node);
                     return Ok(Constructed::Placed);
@@ -5285,7 +5347,8 @@ impl<'a> Parser<'a> {
             return Err(ParseError::TooDeep);
         }
         let scope = self.open_scope();
-        self.open.push(OpenScope::default());
+        let narrowed = self.narrow_next.take().into_iter().collect();
+        self.open.push(OpenScope { narrowed, ..OpenScope::default() });
         let array_ = self.types.array_;
         while let Some(item) = self.parse_next() {
             let item = item?;
@@ -5393,7 +5456,23 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn note_write(&mut self, node: DyadPtr) {
+        // SAFETY: `node` is the `=` node just built.
+        if unsafe { (*node).ty } == self.types.tape.write {
+            self.forget_narrowed();
+        }
         self.last_write = (node, self.scopes.current().unwrap_or(std::ptr::null_mut()));
+    }
+
+    fn is_narrowed(&self, key: (DyadPtr, i32)) -> bool {
+        self.open.iter().any(|s| s.narrowed.contains(&key))
+    }
+
+    /// After a tape edit a checked index may name another cell.
+    fn forget_narrowed(&mut self) {
+        for s in &mut self.open {
+            s.narrowed.clear();
+        }
+        self.narrow_next = None;
     }
 
     /// A statement `x = …` built in the block that declared `x := T ?` lifts
@@ -5591,6 +5670,8 @@ impl<'a> Parser<'a> {
             {
                 Some(t)
             }
+            // SAFETY: as above.
+            _ if unsafe { (*read).ty } == self.types.tape.cell_value => Some(self.types.type_),
             // SAFETY: as above.
             _ => unsafe { crate::identities::hashmap::box_of(self.types, read) },
         };
@@ -6135,7 +6216,7 @@ impl<'a> Parser<'a> {
             self.known_node(lhs, std::ptr::null_mut()).unwrap_or(lhs)
         };
         // Read when the constructor runs.
-        if (*lhs).ty == types.tape.slot {
+        if crate::identities::tape::is_cell_read(types, lhs) {
             if name == "type" {
                 return Ok(crate::identities::tape::build_cell_type(self.rt.store, types, lhs));
             }

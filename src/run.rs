@@ -46,6 +46,8 @@ pub enum RunError {
     MissingKey,
     /// `t[k]:name` on a cell holding no named binding.
     NoName,
+    /// A tape cell checked to hold a type holds something else by the time it is read.
+    CellNotAType,
     /// `insert` of a null fragment.
     NoFragment,
     /// `this` holds no node, or the node has no slots.

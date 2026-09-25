@@ -583,6 +583,9 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     if logos == types.tape.cell_dyads_size {
         return Operand::Concrete(NumType::U64);
     }
+    if logos == types.tape.cell_value {
+        return Operand::NonNumeric;
+    }
     if logos == types.hashmap.get {
         return hashmap::operand_of(types, node);
     }
@@ -784,12 +787,13 @@ pub(crate) unsafe fn type_identity_of(types: &Core, node: DyadPtr) -> Option<Dya
 }
 
 /// What a node's run yields is a type's address: a type, a `type` box, a call
-/// of a `-> type` function, a `type (…)` built when it runs.
+/// of a `-> type` function, a `type (…)` built when it runs, a tape cell checked to hold a type.
 ///
 /// # Safety
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn yields_type(types: &Core, node: DyadPtr) -> bool {
-    if (*types.through(node)).ty == types.held_type.held_type {
+    let ty = (*types.through(node)).ty;
+    if ty == types.held_type.held_type || ty == types.tape.cell_value {
         return true;
     }
     match read::read_kind(types, node) {
@@ -1079,12 +1083,7 @@ pub(crate) unsafe fn commit_call_args(
             }
             // A number into a `type` parameter would travel as an address.
             Some((read::Read::Container(t), _)) if t == types.type_ => {
-                let ok = match read::read_kind(types, *arg) {
-                    read::Read::Identity => true,
-                    read::Read::Container(c) => c == types.type_,
-                    _ => false,
-                };
-                if !ok {
+                if !yields_type(types, *arg) {
                     return Err(ParseError::TypeMismatch);
                 }
             }
