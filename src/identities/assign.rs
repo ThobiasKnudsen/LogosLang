@@ -10,11 +10,11 @@ use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::numtype::{is_pointer_type, of_type_node, NumType};
-use super::read::{read_kind, Read};
+use super::read::{read_kind, Dispatch, Read};
 use super::{commit_if_literal, meta, operands, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc, ParseError};
+use crate::parse::{Assoc, ParseError, FN_BCODE, FN_BODY, FN_OUTER, FN_OUTPUT};
 use crate::store::Store;
 
 /// The run natives are the per-width store leaves ([`crate::identities::ops`]).
@@ -147,6 +147,13 @@ pub(super) fn build(
         // SAFETY: `lhs_d` is a deref node, `rhs` a reduced dyad.
         return unsafe { super::pointer::build_storeptr(store, types, lhs_d, rhs) };
     }
+    // SAFETY: `lhs_d` is a reduced dyad from the store.
+    if let Read::Executable(Dispatch::Call(f)) = unsafe { read_kind(types, lhs_d) } {
+        // SAFETY: `lhs_d` is a call of `f`, `rhs` a reduced dyad.
+        if let Some(node) = unsafe { build_call_write(store, types, lhs_d, f, rhs) }? {
+            return Ok(node);
+        }
+    }
     // A number into a node box would be followed as an address by every later reader.
     // SAFETY: `lhs_d`/`rhs` are reduced dyads from the store.
     let (target, marked) =
@@ -236,6 +243,75 @@ pub(super) fn build(
     let nt = unsafe { of_type_node((*lhs_d).ty) };
     let value = store.alloc_operands(&[lhs, rhs, types.ops.store_leaf(nt)]);
     Ok(store.alloc_raw(op, value))
+}
+
+/// `f(…) = v` where `f`'s body ends in `p@`: a copy of `f` ending in `p` instead finds
+/// the address when the write runs, and `v` is stored through it; `None` for any other
+/// call. A `return` could hand back a value where the copy owes an address, so a body
+/// holding one is no place. DESIGN ›A call that ends in a dereference is a place‹
+///
+/// # Safety
+/// `call` must be a call node of `f`, `rhs` a reduced dyad, both from the store.
+unsafe fn build_call_write(
+    store: &mut Store,
+    types: &Core,
+    call: DyadPtr,
+    f: DyadPtr,
+    rhs: DyadPtr,
+) -> Result<Option<DyadPtr>, ParseError> {
+    let fields = (*f).value as *const DyadPtr;
+    if (*f).ty != types.fn_type || fields.is_null() {
+        return Ok(None);
+    }
+    let body = *fields.add(FN_BODY);
+    if body.is_null() || crate::parse::contains_return(types, body) {
+        return Ok(None);
+    }
+    let Some((tail, body)) = address_tail(store, types, body) else {
+        return Ok(None);
+    };
+    let (_, pointee, offset) = super::pointer::deref_parts(tail);
+    let mut record: Vec<DyadPtr> = (0..=FN_OUTER).map(|k| *fields.add(k)).collect();
+    record[FN_OUTPUT] = super::pointer::make_pointer_type(store, types.type_, pointee);
+    record[FN_BODY] = body;
+    record[FN_BCODE] = std::ptr::null_mut();
+    let record = store.alloc_operands(&record);
+    let finder = store.alloc_raw((*f).ty, record);
+    let found = store.alloc_raw(finder, (*call).value);
+    let place = super::pointer::build_deref(store, types, found, pointee, offset as usize);
+    super::pointer::build_storeptr(store, types, place, rhs).map(Some)
+}
+
+/// The body's trailing dereference and a copy of the body yielding its address instead;
+/// `None` when the body does not end in one. A one-line body is that line itself.
+///
+/// # Safety
+/// `body` must be a function body from the store.
+unsafe fn address_tail(
+    store: &mut Store,
+    types: &Core,
+    body: DyadPtr,
+) -> Option<(DyadPtr, DyadPtr)> {
+    let body = types.through(body);
+    if (*body).ty == types.deref_ {
+        return Some((body, super::pointer::deref_parts(body).0));
+    }
+    if (*body).ty != types.scope {
+        return None;
+    }
+    let lines = super::scope::exprs_of(body)?;
+    // A teardown runs as the body leaves, so the address would outlive what it frees.
+    if lines.iter().any(|&e| (*e).ty == types.defer_) {
+        return None;
+    }
+    let i = lines.iter().rposition(|&e| !super::numtype::is_comment_type((*e).ty))?;
+    let tail = types.through(lines[i]);
+    if (*tail).ty != types.deref_ {
+        return None;
+    }
+    let mut lines = lines.to_vec();
+    lines[i] = super::pointer::deref_parts(tail).0;
+    Some((tail, super::scope::with_exprs(store, types.array_, body, &lines)))
 }
 
 /// Guards a null storage address like the interpreter's `Uninitialized`; the

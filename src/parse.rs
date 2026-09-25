@@ -1461,7 +1461,7 @@ pub(crate) unsafe fn last_sequence_expr(node: DyadPtr) -> Option<DyadPtr> {
 /// # Safety
 /// `node` must be a valid dyad from the store, with the value shapes its
 /// type implies.
-unsafe fn contains_return(types: &Core, node: DyadPtr) -> bool {
+pub(crate) unsafe fn contains_return(types: &Core, node: DyadPtr) -> bool {
     let logos = (*node).ty;
     if logos == types.return_ {
         return true;

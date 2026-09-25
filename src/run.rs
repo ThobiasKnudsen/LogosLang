@@ -178,7 +178,7 @@ pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *
         Ok(Ok(v)) => v,
         Ok(Err(e)) => {
             restore();
-            PENDING.set(Some(e));
+            park(e);
             0
         }
         Err(panic) => {
@@ -188,7 +188,7 @@ pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *
                 .cloned()
                 .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
                 .unwrap_or_else(|| "unknown panic".to_string());
-            PENDING.set(Some(RunError::Faulted(Box::new(msg))));
+            park(RunError::Faulted(Box::new(msg)));
             0
         }
     }
@@ -201,8 +201,15 @@ pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *
 /// # Safety
 /// Called only by compiled code, on the null arm of a pointer guard.
 pub unsafe extern "C" fn park_null_pointer() -> i64 {
-    PENDING.set(Some(RunError::NullPointer));
+    park(RunError::NullPointer);
     0
+}
+
+/// The first fault parked is the cause: machine code runs on with the zero it left, so a
+/// later fault, a null guard over that zero, is its consequence and never replaces it.
+fn park(e: RunError) {
+    let first = PENDING.take();
+    PENDING.set(Some(first.unwrap_or(e)));
 }
 
 /// The fault a compiled prologue raises past [`MAX_CALL_DEPTH`], parked as
@@ -211,7 +218,7 @@ pub unsafe extern "C" fn park_null_pointer() -> i64 {
 /// # Safety
 /// Called only by compiled code, on the over-limit arm of its prologue.
 pub unsafe extern "C" fn park_call_depth() -> i64 {
-    PENDING.set(Some(RunError::CallDepth));
+    park(RunError::CallDepth);
     0
 }
 

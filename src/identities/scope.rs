@@ -115,6 +115,22 @@ pub(crate) unsafe fn exprs_of<'a>(node: DyadPtr) -> Option<&'a [DyadPtr]> {
     }
 }
 
+/// A closed sequence with `node`'s op and parent running `exprs` instead.
+///
+/// # Safety
+/// `node` must be a closed sequence node from the store; `exprs` reduced dyads.
+pub(crate) unsafe fn with_exprs(
+    store: &mut Store,
+    array_ty: DyadPtr,
+    node: DyadPtr,
+    exprs: &[DyadPtr],
+) -> DyadPtr {
+    let slots = (*node).value as *const DyadPtr;
+    let lines = array::build(store, array_ty, exprs);
+    let value = store.alloc_operands(&[lines, *slots.add(OP), *slots.add(PARENT)]);
+    store.alloc_raw((*node).ty, value)
+}
+
 /// Null at the arche, and on a scope minted with no value (the root, a type's
 /// member scope).
 ///

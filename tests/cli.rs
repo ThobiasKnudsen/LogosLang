@@ -425,6 +425,61 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
 }
 
 #[test]
+fn an_array_element_is_written_where_the_read_finds_it() {
+    let array = "import ./identities/array.logos, a := array i32 (1, 2, 3)";
+    for (tail, printed) in [
+        ("a[0] = i32 9, a[0]", "9"),
+        ("a[0] = 9, a[0] + a[1]", "11"),
+        ("i := u64 2, a[i] = 7, a[2]", "7"),
+        ("j := u64 0, a[j + 1] = 5, a[1]", "5"),
+        ("a[0] = a[2], a[0]", "3"),
+        ("a.at(1) = 4, a[1]", "4"),
+        ("b := a, b[0] = i32 7, a[0]", "7"),
+        ("b := array u8 (1, 2), b[1] = 200, b[1]", "200"),
+        ("f := fn (p := array i32 ?) -> void ( p[1] = 8 ), f(a), a[1]", "8"),
+        ("f := fn (p := array i32 ?) -> void ( p[1] = 8 ), f.compile(), f(a), a[1]", "8"),
+        ("f := fn (i := u64 ?) -> void ( a[i] = 6 ), f(2), a[2]", "6"),
+        ("f := fn (i := u64 ?) -> void ( a[i] = 6 ), f.compile(), f(0), a[0]", "6"),
+        (
+            "f := fn (p := array i32 ?, i := u64 ?) -> void ( p[i + 1] = 8 ), f.compile(), \
+             f(a, 1), a[2]",
+            "8",
+        ),
+        // Any call whose body ends in a dereference is a place, not only an array's.
+        (
+            "p := alloc 2 of i32 4, g := fn (q := @i32 ?, i := u64 ?) -> i32 ( (q + i)@ ), \
+             g(p, 1) = 3, (p + 1)@",
+            "3",
+        ),
+    ] {
+        let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
+        assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), printed, "{tail}");
+    }
+    for (tail, expect) in [
+        ("a[3] = 1", "index out of range"),
+        ("i := u64 3, a[i] = 1", "index out of range"),
+        ("f := fn (i := u64 ?) -> void ( a[i] = 6 ), f(3)", "index out of range"),
+        ("f := fn (i := u64 ?) -> void ( a[i] = 6 ), f.compile(), f(5)", "index out of range"),
+        ("a[0] = i64 4", "these types do not match"),
+        ("x := u8 3, a[0] = x", "these types do not match"),
+        ("a[0] = 1.5", "this literal has no exact value"),
+        ("b := array u8 (1, 2), b[1] = 300", "this literal has no exact value"),
+        ("a[-1] = 1", "the index type is not within the size type"),
+        ("g := fn () -> i32 ( 5 ), g() = 3", "this is not an assignable place"),
+        // A teardown would free the place before the write lands.
+        (
+            "g := fn () -> i32 ( q := alloc 1 of i32 3, q@ ), g() = 5",
+            "this is not an assignable place",
+        ),
+    ] {
+        let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && stderr.contains(expect), "{tail}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn a_shared_name_in_a_function_is_made_once_at_the_definition() {
     let src = "f := fn () -> i32 ( shared n := (print «made», i32 5), n ), \
                print «defined», f(), f(), f()";
