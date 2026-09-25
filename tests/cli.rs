@@ -344,6 +344,9 @@ fn an_array_travels_as_its_address() {
              m := mk(3), n := mk(4), m[0] + n[0]",
             "7",
         ),
+        // The return type stops before the body's bracket, so the mint takes no elements there.
+        ("mk := fn () -> array i32 ( array i32 (1, 2) ), m := mk(), m[1]", "2"),
+        ("mk := fn (v := i32 ?) -> array i32 ( array i32 (v, v + 1) ), m := mk(4), m[1]", "5"),
         ("a", "dyad"),
         // One mint per element type, kept by the chooser across its calls.
         ("t := array i32, u := array i32, t == u", "true"),
