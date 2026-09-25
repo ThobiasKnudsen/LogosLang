@@ -17,7 +17,9 @@
 # value, and a field read such as (a ^ b).lhs never runs anything.
 #
 # Stand-ins, and the rulings this file leans on:
-#   the parse_rank lines take power.logos's `*.parse_rank + 1` (Thobias, 23 September 2026);
+#   the parse_rank lines (ruled 25 September 2026, DESIGN ›A parse is ranked by what it takes from its right‹):
+#     the mint and its instances take a bracket, at application's rank, `dyad.parse_rank`;
+#     the chooser takes a type, at `fn.parse_rank`, above application;
 #   the slots of a fields block are PREDECLARED (ruled 19 September 2026, DESIGN ›The constructor is a field‹):
 #     every fields block starts with the same slots type's own declares (parse_rank, associativity, parse, run,
 #     drop, fields), unfilled; a type fills them with `=`, `shared` for one place across its instances, unmarked
@@ -25,15 +27,22 @@
 #   one `drop` word (ruled 19 September 2026): its parse looks right; `=` there means the slot
 #     fill, anything else is the statement dropping what follows, so `drop x` works in every scope and the
 #     predeclared slot names are the core words themselves, never a second declaration;
-#   `⊆` on types is not in the seed.
+#   `⊆` between types is a seed native (ruled 25 September 2026);
+#   `a[k]` is an application exactly as `a(k)` (ruled 25 September 2026, DESIGN ›`a[k]` is an application, exactly as `a(k)`‹):
+#     the instances' parse places the call `this.at(k)`, the index line its operand, run where it stands;
+#   a tape read checked against a number type reads as that number (ruled 25 September 2026): after the
+#     `⊆` check, the fill loop reads `tape[1].dyads[i]` as the line's number; a line that is no literal is
+#     refused for now, since filling the elements when the program runs is still open.
 # The seed's array is array-of-@dyad with no spelling and no element access (src/identities/array.rs).
 # The fields block comes first in every type body (ruled 20 September 2026): a body's this.f names a field declared above it.
 
-array_mints := hashmap type -> type
+import ./next_power_of_two.logos,
+
+array_mints := hashmap type -> type,
 
 get_mint := fn (t := type ?) -> type (
-    mut mint := array_mints[t]
-    if mint != ? return mint
+    mut mint := array_mints[t],
+    if mint != ? return mint,
     mint = type (
         fields = (
             shared element_type := t,
@@ -48,43 +57,48 @@ get_mint := fn (t := type ?) -> type (
                 free this.ptr
             ),
 
-            shared parse_rank = *.parse_rank + 1,
+            shared parse_rank = dyad.parse_rank,
             shared associativity = left,
+            shared at := fn (index := u64 ?) -> element_type (
+                if index >= this.size error «index out of range: the index is at or past the array's size»,
+                (this.ptr + index)@
+            ),
+
             shared parse = (
                 if tape[1]:type == square_brackets (
-                    index := tape[1].index,
-                    if not index:type ⊆ this.size:type
+                    if not tape[1].dyads[0]:type ⊆ this.size:type
                         error «the index type is not within the size type, so the index could lie outside the array»,
-                    tape[0] = scope (
-                        if index >= this.size error «index out of range: the index is at or past the array's size»,
-                        (this.ptr + index)@
-                    ),
+                    tape[0] = this.at(tape[1].dyads[0]),
                     tape.remove(1)
                 ),
                 tape.is_constructed[0] = true
             )
         ),
 
-        parse_rank = *.parse_rank + 1,
+        parse_rank = dyad.parse_rank,
         associativity = left,
         parse = (
             if tape[1]:type == scope (
-                this.size = tape[1].size,
+                this.size = tape[1].dyads.size,
                 this.capacity = next_power_of_two(this.size),
-                this.ptr = alloc this.capacity of this.element_type,
-                for i in 0..this.size ( (this.ptr + i)@ = tape[1][i] ),
+                this.ptr = alloc this.capacity of this.element_type ?,
+                for i in 0..this.size (
+                    if not (tape[1].dyads[i]:type ⊆ this.element_type)
+                        error «an element does not fit the element type»,
+                    (this.ptr + i)@ = tape[1].dyads[i]
+                ),
                 tape[0] = this,
                 tape.remove(1)
             ),
             tape.is_constructed[0] = true
         )
-    )
-    array_mints[t] = mint
+    ),
+    array_mints[t] = mint,
     mint
-)
+),
 
 pub array := type (
-    parse_rank = *.parse_rank + 1,
+    parse_rank = fn.parse_rank,
     associativity = right,
     parse = (
         if tape[1]:type != type

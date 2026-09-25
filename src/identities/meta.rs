@@ -49,7 +49,9 @@ pub(crate) const CONVENTION_TAG: u8 = 21;
 /// Values are `[len: u64][data: @dyad]`, 16 bytes; a list never lives inline in a node.
 pub(crate) const ARRAY_TAG: u8 = 22;
 /// A record type node's record: payload `[scope: @dyad][fields: @dyad][size_bytes: u64]
-/// [body: @dyad]`, 32 bytes, locked at definition; `body` is null where the type has none.
+/// [body: @dyad]`, locked at definition; `body` is null where the type has none. Then the
+/// instances' parse trio: `[parse: @dyad][parse_rank: f64][associativity: u8]`, 49 bytes in
+/// all; `parse` is null where the fields block fills none.
 pub(crate) const RECORD_TAG: u8 = 23;
 /// Values are dyad views: the value IS the viewed node's address.
 pub(crate) const DYAD_TAG: u8 = 24;
@@ -79,7 +81,7 @@ pub(crate) mod prec {
     /// `:=` and `=`: each reads its left and drives its right side to the boundary.
     pub const DECLARE: f64 = 93.0;
     /// The identities that read their own bracket or right side: `fn`, `for`, `while`, `defer`,
-    /// `type`, `if`.
+    /// `type`, `if`, `scope`.
     pub const READER: f64 = 92.0;
     /// `(`: the discovery threshold.
     pub const OPEN: f64 = 90.0;
@@ -109,6 +111,12 @@ pub(crate) mod prec {
     pub const RETURN: f64 = 10.0;
     /// No constructor: a delimiter, a data type, a node record; never constructed by the driver.
     pub const INERT: f64 = 0.0;
+
+    /// A cell whose construction is its lexing: `(`, `[`, a literal, a raw-text word. Only
+    /// these are built when a constructor's read lexes them.
+    pub fn built_as_lexed(rank: f64) -> bool {
+        rank == OPEN || rank >= IMPORT
+    }
 }
 
 /// A record with no payload.
@@ -161,6 +169,9 @@ pub(crate) fn record_layout(
     blob.extend_from_slice(&(fields as usize).to_ne_bytes());
     blob.extend_from_slice(&size_bytes.to_ne_bytes());
     blob.extend_from_slice(&(body as usize).to_ne_bytes());
+    blob.extend_from_slice(&0usize.to_ne_bytes());
+    blob.extend_from_slice(&prec::APPLY.to_ne_bytes());
+    blob.push(0);
     store.alloc_bytes(&blob)
 }
 
@@ -190,6 +201,50 @@ pub(crate) unsafe fn record_size_of(id: DyadPtr) -> u64 {
 /// As `record_scope_of`.
 pub(crate) unsafe fn record_body_of(id: DyadPtr) -> DyadPtr {
     std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF + 24) as *const DyadPtr)
+}
+
+const INSTANCES_PARSE_OFF: usize = PAYLOAD_OFF + 32;
+const INSTANCES_RANK_OFF: usize = PAYLOAD_OFF + 40;
+const INSTANCES_ASSOC_OFF: usize = PAYLOAD_OFF + 48;
+
+/// The `fn` a `shared parse = (…)` line filled, woken when an instance stands on the tape;
+/// null where the fields block fills none.
+///
+/// # Safety
+/// As `record_scope_of`.
+pub(crate) unsafe fn instances_parse_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned((*id).value.add(INSTANCES_PARSE_OFF) as *const DyadPtr)
+}
+
+/// # Safety
+/// As `record_scope_of`.
+pub(crate) unsafe fn instances_parse_rank_of(id: DyadPtr) -> f64 {
+    std::ptr::read_unaligned((*id).value.add(INSTANCES_RANK_OFF) as *const f64)
+}
+
+/// # Safety
+/// As `record_scope_of`.
+pub(crate) unsafe fn instances_assoc_of(id: DyadPtr) -> Assoc {
+    if *(*id).value.add(INSTANCES_ASSOC_OFF) == 0 {
+        Assoc::Left
+    } else {
+        Assoc::Right
+    }
+}
+
+/// # Safety
+/// `id` must carry a `RECORD_TAG` record nothing has read the trio of; `parse` must be
+/// null or a `fn` node from the store.
+pub(crate) unsafe fn install_instances_parse(
+    id: DyadPtr,
+    parse: DyadPtr,
+    parse_rank: f64,
+    assoc: Assoc,
+) {
+    let v = (*id).value;
+    std::ptr::write_unaligned(v.add(INSTANCES_PARSE_OFF) as *mut DyadPtr, parse);
+    std::ptr::write_unaligned(v.add(INSTANCES_RANK_OFF) as *mut f64, parse_rank);
+    *v.add(INSTANCES_ASSOC_OFF) = u8::from(assoc == Assoc::Right);
 }
 
 fn header(kind: u8, assoc: Assoc, parse_rank: f64) -> [u8; PAYLOAD_OFF] {

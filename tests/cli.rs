@@ -172,7 +172,7 @@ fn a_type_body_fills_its_slots_and_declares_its_members() {
     );
     assert_eq!(echoes, ["3", "4", "4"], "stderr: {stderr}");
     let (echoes, stderr) =
-        repl(b"h := fn () -> i32 ( p := @i32 ?, p@ )\ng := type (fields = (shared y := h()))\n");
+        repl(b"h := fn () -> i32 ( n := i64 0 - 1, p := alloc n of i32 0, 1 )\ng := type (fields = (shared y := h()))\n");
     assert!(
         echoes.is_empty() && stderr.contains("a type body's own declaration failed"),
         "stderr: {stderr}"
@@ -209,10 +209,172 @@ fn any_spelling_the_index_can_hold_is_nameable() {
 }
 
 #[test]
+fn a_type_s_size_bytes_is_a_u64_for_records_numbers_and_pointers() {
+    let (echoes, stderr) = repl(
+        b"i32.size_bytes\nu8.size_bytes\n(@u8).size_bytes\nn := u64 3\nn * i32.size_bytes\n\
+          p := type (fields = (a := i32 ?, b := i64 ?))\nn * p.size_bytes\n",
+    );
+    assert_eq!(echoes, ["4", "1", "8", "12", "36"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
 fn the_power_demo_prints_nine() {
     let out = logos().args(["import", "identities/power.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "9\n");
+}
+
+#[test]
+fn a_chooser_hands_its_cell_to_a_type_minted_at_run() {
+    let src = "mk := fn (t := type ?) -> type ( type ( parse = ( tape.is_constructed[0] = true ) ) ), \
+               c := type ( parse_rank = fn.parse_rank, associativity = right, parse = ( \
+                 if tape[1]:type != type error «no», t := tape[1], tape[0] = mk(t), tape.remove(1) ) ), \
+               x := c i32, x";
+    let out = logos().arg(src).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "type\n");
+}
+
+#[test]
+fn a_tape_read_checked_against_a_number_type_reads_as_that_number() {
+    let q = |ty: &str, body: &str| {
+        format!(
+            "q := type ( fields = ( v := {ty} ? ), parse_rank = 61, parse = ( {body}, \
+             tape[0] = this, tape.remove(1), tape.is_constructed[0] = true ) )"
+        )
+    };
+    for (src, expect) in [
+        (q("u64", "if not tape[1].dyads[0]:type ⊆ u64 error «no», this.v = tape[1].dyads[0] + 1") + ", x := q [5], x.v", "6"),
+        (q("i32", "if tape[1].dyads[1]:type == i32 ( this.v = tape[1].dyads[1] * 2 ) else ( this.v = i32 0 )") + ", x := q [5, i32 7], x.v", "14"),
+        (q("u8", "if tape[1].dyads[0]:type ⊆ u8 ( this.v = tape[1].dyads[0] ) else ( this.v = u8 1 )") + ", x := q [300], x.v", "1"),
+        (q("i32", "mut s := i32 0, for i in 0..tape[1].dyads.size ( if not tape[1].dyads[i]:type ⊆ i32 error «no», s = s + tape[1].dyads[i] ), this.v = s") + ", x := q [4, 5, 6], x.v", "15"),
+        (q("u64", "if not tape[1]:type ⊆ u64 error «no», this.v = tape[1] * 3") + ", x := q 5, x.v", "15"),
+    ] {
+        let out = logos().arg(&src).output().unwrap();
+        assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), expect, "{src}");
+    }
+    // A literal that does not fit fails the check; a line that is no constant is refused.
+    for (src, expect) in [
+        (
+            q(
+                "u64",
+                "if not tape[1].dyads[0]:type ⊆ u64 error «not a u64», this.v = tape[1].dyads[0]",
+            ) + ", x := q [-5]",
+            "not a u64",
+        ),
+        (
+            "y := i32 3, ".to_owned()
+                + &q(
+                    "i32",
+                    "if not tape[1].dyads[0]:type ⊆ i32 error «no», this.v = tape[1].dyads[0]",
+                )
+                + ", x := q [y]",
+            "holds no literal or constant",
+        ),
+    ] {
+        let out = logos().arg(&src).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn an_instance_takes_its_bracket_as_a_call_built_in_its_parse() {
+    // `x[k]` places the call `x.get(k)`, the line `k` its operand, run where it stands.
+    let q =
+        "q := type ( fields = ( n := u64 ?, shared get := fn (i := u64 ?) -> u64 ( this.n + i ), \
+             shared parse = ( if tape[1]:type == square_brackets ( \
+               if not tape[1].dyads[0]:type ⊆ u64 error «no», \
+               tape[0] = this.get(tape[1].dyads[0]), tape.remove(1) ), \
+             tape.is_constructed[0] = true ) ), \
+             parse_rank = 61, parse = ( this.n = tape[1], tape[0] = this, tape.remove(1), \
+             tape.is_constructed[0] = true ) ), x := q u64 10, y := q u64 20";
+    for (tail, expect) in [
+        ("x[5]", "15"),
+        ("x.get(3)", "13"),
+        ("x[5] + y[1]", "36"),
+        ("f := fn () -> u64 ( x[2] ), f()", "12"),
+        ("f := fn () -> u64 ( x[2] + y[0] ), f.compile(), f()", "32"),
+        ("f := fn (i := u64 ?) -> u64 ( x[i] ), f(3)", "13"),
+        ("f := fn (i := u64 ?) -> u64 ( x[i] + y[i] ), f.compile(), f(4)", "38"),
+    ] {
+        let src = format!("{q}, {tail}");
+        let out = logos().arg(&src).output().unwrap();
+        assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), expect, "{tail}");
+    }
+}
+
+#[test]
+#[ignore = "stand-in for #137: the mint still reads its elements at parse"]
+fn the_array_fills_its_elements_when_the_program_runs() {
+    let src = "import ./identities/array.logos, x := i32 5, y := i32 6, \
+               b := array i32 (x, y, 3), b[0] + b[1] + b[2]";
+    let out = logos().arg(src).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "14");
+}
+
+#[test]
+fn the_array_written_in_logos_reads_an_element_and_its_size() {
+    let out = logos().args(["import", "./identities/array.logos"]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    for (tail, printed) in [("a[1]", "2\n"), ("a.size_bytes()", "12\n")] {
+        let src = format!("import ./identities/array.logos, a := array i32 (1, 2, 3), {tail}");
+        let out = logos().arg(&src).output().unwrap();
+        assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), printed, "{src}");
+    }
+    let array = "import ./identities/array.logos, a := array i32 (1, 2, 3)";
+    for (tail, printed) in [
+        ("a[0] + a[2]", "4"),
+        ("f := fn () -> i32 ( a[0] + a[2] ), f.compile(), f()", "4"),
+        ("b := array u8 (7, 8), b[1]", "8"),
+        ("i := u64 1, a[i]", "2"),
+        ("f := fn (i := u64 ?) -> i32 ( a[i] ), f(1)", "2"),
+        ("f := fn (i := u64 ?) -> i32 ( a[i] ), f.compile(), f(1)", "2"),
+        ("j := u64 1, a[j + 1]", "3"),
+        ("f := fn (j := u64 ?) -> i32 ( a[j + 1] ), f.compile(), f(0)", "2"),
+        ("mut i := u64 0, g := fn () -> i32 ( a[i] ), i = 2, g()", "3"),
+    ] {
+        let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
+        assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), printed, "{tail}");
+    }
+    for (tail, expect) in [
+        ("a[3]", "index out of range"),
+        ("i := u64 3, a[i]", "index out of range"),
+        ("f := fn (i := u64 ?) -> i32 ( a[i] ), f(3)", "index out of range"),
+        ("f := fn (i := u64 ?) -> i32 ( a[i] ), f.compile(), f(5)", "index out of range"),
+        ("a[-1]", "the index type is not within the size type"),
+        ("i := i32 1, a[i]", "the index type is not within the size type"),
+        ("k := u8 1, a[k]", "these types do not match"),
+        ("b := array u8 (1, 300)", "an element does not fit the element type"),
+    ] {
+        let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && stderr.contains(expect), "{tail}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn next_power_of_two_is_written_in_logos() {
+    for (n, want) in [(0, 1), (1, 1), (5, 8), (8, 8), (9, 16)] {
+        let out = logos()
+            .arg(format!("import identities/next_power_of_two.logos, next_power_of_two({n})"))
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "n = {n}");
+    }
+    let out = logos()
+        .arg("import identities/next_power_of_two.logos, next_power_of_two.compile(), next_power_of_two(1000)")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "1024\n");
 }
 
 /// The power operator with the bare run body, on one line for the REPL.
@@ -267,6 +429,49 @@ fn a_shared_member_is_read_through_a_node_bare_and_through_the_type_by_fields() 
     let out = logos().args([&format!("{POWER}, ^.run")]).output().unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("no `run` of its own"), "stderr: {stderr}");
+}
+
+#[test]
+fn the_instances_parse_wakes_on_an_instance_with_this_bound_to_it() {
+    // The type's own parse builds the instance and hands the cell on; the
+    // instances' parse then reads it as `this` and consumes the cell to its right.
+    let q = "q := type ( fields = ( size := ?, shared parse_rank = 60, shared associativity = left, \
+             shared parse = ( tape[0] = this.size, tape.remove(1), tape.is_constructed[0] = true ) ), \
+             parse_rank = 61, parse = ( this.size = tape[1], tape[0] = this, tape.remove(1) ) )";
+    for (src, expect) in [
+        (format!("{q}, q i32 5 i32 7"), "5"),
+        (format!("{q}, f := fn () -> i32 ( q i32 8 i32 0 ), f()"), "8"),
+    ] {
+        let out = logos().args([&src]).output().unwrap();
+        assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), expect, "{src}");
+    }
+    // Without the instances' parse the handed-on instance is left unconstructed.
+    let out = logos()
+        .args(["q := type ( fields = ( size := ? ), parse_rank = 61, \
+                parse = ( this.size = tape[1], tape[0] = this, tape.remove(1) ) ), q i32 5"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("left its own cell unconstructed"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_shared_member_read_through_this_is_the_member_itself() {
+    // `this.element_type` folds to the identity, so `alloc … of` has a static pointee.
+    let q =
+        "q := type ( fields = ( shared element_type := i32, v := ? ), parse_rank = 60, parse = ( \
+             tape[0] = alloc 1 of this.element_type 9, tape.is_constructed[0] = true ) )";
+    let out = logos().args([&format!("{q}, a := q, a@ + 1")]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "10");
+    let out = logos()
+        .args(["q := type ( fields = ( shared element_type := i32, v := ? ), parse_rank = 60, \
+                parse = ( this.element_type = i64, tape[0] = this, tape.is_constructed[0] = true ) ), q"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("not an assignable place"), "stderr: {stderr}");
 }
 
 #[test]
@@ -482,9 +687,10 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"t := type (parse = ( parse_rank = 3 ))\n", "a line of the type body itself"),
         (b"t := type (run = ( 1 ))\n", "no `run` of its own"),
         (b"t := type (fields = (run = 5))\n", "marked"),
-        (b"t := type (fields = (shared parse_rank = 5))\n", "other slots"),
-        (b"t := type (fields = (shared parse = ( tape.recenter(0) )))\n", "other slots"),
-        (b"t := type (fields = (shared fields = (a := i32 ?)))\n", "other slots"),
+        (b"t := type (fields = (shared lex_rank = 5))\n", "a name's"),
+        (b"t := type (fields = (shared associativity = 5))\n", "`left` or `right`"),
+        (b"t := type (fields = (shared parse = ( tape.recenter(0) )))\n", "type's own `parse`"),
+        (b"t := type (fields = (shared fields = (a := i32 ?)))\n", "nested `fields`"),
         (b"t := type (fields = (shared drop = 5))\n", "`drop` slot"),
         (b"t := type (parse = ( this.a = tape[-1] ))\n", "declares none"),
         (b"t := type (fields = (a := ?), parse = ( this.b = tape[-1] ))\n", "no field `b`"),
@@ -503,10 +709,6 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"t := type (fields = (shared run = 5))\n", "`shared run = (…)`"),
         (b"t := type (fields = (shared run = ( 5 )))\nt(1)\n", "the call form of a type"),
         (b"t := type (fields = (shared run = ( 5 )),\n", "never closed"),
-        (
-            b"g := fn (n := i32 ?) -> type ( type (parse_rank = n) )\n",
-            "known when the type is defined",
-        ),
     ] {
         let (_echoes, stderr) = repl(src);
         assert!(stderr.contains(expect), "{}: stderr: {stderr}", String::from_utf8_lossy(src));
@@ -550,6 +752,246 @@ fn a_square_bracket_is_a_paren_that_closes_only_itself() {
     assert!(stderr.contains("never closed"), "stderr: {stderr}");
     let (_echoes, stderr) = repl(b"x := i32 5\n(x + x).operands[0)\n");
     assert!(stderr.contains("never closed"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_constructor_tells_a_square_bracket_cell_from_a_scope_by_its_type() {
+    let probe = "probe := type ( parse_rank = *.parse_rank + 1, parse = ( \
+                 if (tape[1]:type == square_brackets) (print «brackets») else (print «other»), \
+                 if (tape[1]:type != square_brackets) (print «not brackets»), \
+                 tape.remove(1), tape.remove(0) ) )";
+    let src = format!(
+        "{probe}, probe [1, 2], probe (3), x := i32 4, probe x, square_brackets:type == type"
+    );
+    let out = logos().args([&src]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "brackets\nother\nnot brackets\nother\nnot brackets\ntrue\n"
+    );
+}
+
+#[test]
+fn a_constructor_reads_a_square_bracket_cell_by_its_dyads() {
+    let first = "first := type ( parse_rank = *.parse_rank + 1, associativity = left, parse = ( \
+                 tape[0] = tape[1].dyads[0], tape.is_constructed[0] = true, tape.remove(1) ) )";
+    let count = "count := type ( parse_rank = *.parse_rank + 1, parse = ( \
+                 if (tape[1].dyads.size == 2) (print «two») else (print «not two»), \
+                 tape.remove(1), tape.remove(0) ) )";
+    let src = format!("{first}, {count}, count [1, 2], count [3], first [3]");
+    let out = logos().args([&src]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "two\nnot two\n3\n");
+}
+
+#[test]
+fn a_logos_constructor_at_discovery_lexes_the_tape_on_demand() {
+    // At discovery the read lexes `i32` and it arrives unbuilt; at the boundary the loop built it first.
+    for (rank, read) in
+        [("90", "type"), ("92", "type"), ("99", "type"), ("*.parse_rank + 1", "i32")]
+    {
+        let src = format!(
+            "r := type ( parse_rank = {rank}, parse = ( print «{{tape[1]:type == {read}}}», \
+             tape.remove(0) ) ), r i32 5"
+        );
+        let out = logos().args([&src]).output().unwrap();
+        assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "true\n5\n", "{src}");
+    }
+    // A name arrives as lexed, a bracket as its scope cell, and what follows is left unlexed.
+    let src = "x := i32 4, r := type ( parse_rank = fn.parse_rank, parse = ( \
+               print «{tape.is_constructed[1]} {tape[2]:type == scope} {tape[2].dyads.size}», \
+               tape.remove(2), tape.remove(1), tape.remove(0) ) ), r x (1, 2), 7";
+    let out = logos().args([src]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "false true 2\n7\n");
+    // A constructor the read lexed is not woken by it: it runs in its turn if the reader
+    // leaves it, and `lex` still works after it.
+    let s = "s := type ( parse_rank = fn.parse_rank, parse = ( tape[0] = i32 3, \
+             tape.is_constructed[0] = true ) )";
+    for (r, printed) in [
+        ("print «{tape[1]:type == type}», tape.remove(0)", "true\n3\n"),
+        ("tape.remove(1), tape.remove(0), tape.insert(0, lex «6»)", "6\n"),
+    ] {
+        let src = format!("{s}, r := type ( parse_rank = fn.parse_rank, parse = ( {r} ) ), r s");
+        let out = logos().args([&src]).output().unwrap();
+        assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), printed, "{src}");
+    }
+    // Past the end of the source, or past a boundary, the read is still the checked error.
+    for tail in ["r", "r i32 5, 1", "(r i32 5), 1"] {
+        let src = format!(
+            "r := type ( parse_rank = fn.parse_rank, parse = ( print «{{tape[3]:type == i32}}», \
+             tape.remove(0) ) ), {tail}"
+        );
+        let out = logos().args([&src]).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("this index is off the tape"), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_cell_a_constructor_reads_from_the_tape_arrives_unbuilt() {
+    // `i32` is the type itself, not a conversion of the bracket, which stays for the reader.
+    let src = "c := type ( parse_rank = fn.parse_rank, parse = ( \
+               print «{tape[1]:type == type} {tape[2]:type == scope} {tape[2].dyads.size}», \
+               tape.remove(2), tape.remove(1), tape.remove(0) ) ), c i32 (1, 2, 3), 7";
+    let out = logos().args([src]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "true true 3\n7\n");
+    // Left on the tape, `i32` takes its bracket in its own turn.
+    let src = "c := type ( parse_rank = fn.parse_rank, parse = ( tape.remove(0) ) ), c i32 (5)";
+    let out = logos().args([src]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "5\n");
+}
+
+#[test]
+fn inclusion_between_integer_types_follows_their_value_ranges() {
+    let (echoes, stderr) = repl(
+        "u8 ⊆ u16\nu8 ⊆ i16\ni8 ⊆ u64\nu16 ⊆ i16\nu64 ⊆ i64\ni8 ⊆ i64\ni32 ⊆ i32\n\
+         bool ⊆ bool\nnot u8 ⊆ i8\nx := u8 3\nnot x:type ⊆ u16\n"
+            .as_bytes(),
+    );
+    assert_eq!(
+        echoes,
+        ["true", "true", "false", "false", "false", "true", "true", "true", "true", "false"],
+        "stderr: {stderr}"
+    );
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
+fn inclusion_the_design_leaves_open_is_a_checked_error() {
+    for src in ["f32 ⊆ f64\n", "i32 ⊆ f64\n", "bool ⊆ i32\n", "i32 ⊆ type\n", "u8 ⊆ dyad\n"]
+    {
+        let (echoes, stderr) = repl(src.as_bytes());
+        assert!(echoes.is_empty() && stderr.contains("not settled"), "{src}: stderr: {stderr}");
+    }
+    let (echoes, stderr) = repl("1 ⊆ 2\n".as_bytes());
+    assert!(echoes.is_empty() && stderr.contains("cannot compute"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_parse_body_checks_that_an_index_type_fits_the_size_type() {
+    let q = "q := type ( fields = ( shared size := u64 ? ), parse_rank = 60, parse = ( \
+             if (not tape[1]:type ⊆ this.size:type) \
+             (error «the index type is not within the size type»), \
+             tape.remove(1), tape[0] = i32 1, tape.is_constructed[0] = true ) )";
+    let out = logos().args([&format!("{q}, q (u32 3)")]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1");
+    for (arg, expect) in [("i8 3", "not within the size type"), ("f64 3.0", "not settled")] {
+        let out = logos().args([&format!("{q}, q ({arg})")]).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && stderr.contains(expect), "{arg}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_hashmap_is_read_and_written_by_key() {
+    let (echoes, stderr) = repl(
+        b"m := hashmap i32 -> i64\n\
+          m[3] = 40\n\
+          m[-1] = 3000000000\n\
+          m[3] + 2\n\
+          m[-1]\n\
+          x := i32 3\n\
+          m[x] = m[x] * 2\n\
+          m[3]\n\
+          f := fn (n := i64 ?) -> i64 ( w := hashmap u8 -> i64, w[1] = n, w[1] + w[1] )\n\
+          f(5)\n\
+          f(7)\n\
+          (hashmap i32 -> i64):type == m:type\n\
+          (hashmap i32 -> i64):type == (hashmap i64 -> i32):type\n",
+    );
+    assert_eq!(echoes, ["42", "3000000000", "80", "10", "14", "true", "false"], "stderr: {stderr}");
+
+    // A number cannot be the unknown, so a missing key of a number-valued map is the checked error.
+    let (echoes, stderr) = repl(b"m := hashmap i32 -> i64\nm[1] = 1\nm[2]\nm[1]\n");
+    assert_eq!(echoes, ["1"], "stderr: {stderr}");
+    assert!(stderr.contains("the map holds no value at this key"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_hashmap_of_types_hands_back_the_unknown_for_a_missing_key() {
+    let (echoes, stderr) = repl(
+        b"mints := hashmap type -> type\n\
+          mints[i32] = f64\n\
+          mut t := mints[i32]\n\
+          t == f64\n\
+          t = mints[u8]\n\
+          t\n\
+          mints[mints[i32]] = i8\n\
+          mut u := mints[f64]\n\
+          u == i8\n",
+    );
+    assert_eq!(echoes, ["true", "type ?", "true"], "stderr: {stderr}");
+}
+
+#[test]
+fn a_declared_hashmap_is_empty_and_readable_at_once() {
+    // Before any write, with or without `?`: no read veto, as `t := i32 ?` has.
+    let (echoes, stderr) = repl(
+        b"m := hashmap type -> type\n\
+          mut u := m[i32]\n\
+          u\n\
+          n := hashmap i32 -> i64 ?\n\
+          n[1]\n\
+          n[1] = 2\n\
+          n[1]\n\
+          f := fn (w := hashmap i32 -> i64 ?) -> i64 ( 1 )\n",
+    );
+    assert_eq!(echoes, ["type ?", "2"], "stderr: {stderr}");
+    assert!(stderr.contains("the map holds no value at this key"), "stderr: {stderr}");
+    assert!(!stderr.contains("<repl>"), "no line is refused at parse: {stderr}");
+}
+
+#[test]
+fn a_hashmap_checks_its_shape_and_its_key_and_value_types() {
+    for line in ["hashmap i32 i32", "hashmap f64 -> i32", "hashmap i32 -> bool", "hashmap i32"] {
+        let (_echoes, stderr) = repl(format!("{line}\n").as_bytes());
+        assert!(stderr.contains("`hashmap` is followed by `K -> V`"), "{line}: {stderr}");
+    }
+    for line in ["m[i32] = 1", "m[1] = i32", "n[1] = 2", "n[i32] = 2"] {
+        let (_echoes, stderr) = repl(
+            format!("m := hashmap i32 -> i32\nn := hashmap type -> type\n{line}\n").as_bytes(),
+        );
+        assert!(stderr.contains("these types do not match"), "{line}: {stderr}");
+    }
+}
+
+#[test]
+fn a_constructor_writes_its_ifs_without_brackets() {
+    let probe = "probe := type ( parse_rank = *.parse_rank + 1, parse = (\n\
+                 if tape[1]:type == square_brackets print «brackets» else print «other»,\n\
+                 if tape[1]:type == scope (\n    print «scope»\n),\n\
+                 if not tape[1]:type == square_brackets\n    print «not brackets»,\n\
+                 tape.remove(1), tape.remove(0) ) )";
+    let src = format!("{probe}, probe [1, 2], probe (3, 4), x := i32 4, probe x");
+    let out = logos().args([&src]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "brackets\nother\nscope\nnot brackets\nother\nnot brackets\n"
+    );
+}
+
+#[test]
+fn an_inclusion_ends_a_bare_if_condition_as_a_comparison_does() {
+    let src = "x := u8 3, if x:type ⊆ u16 print «inside», \
+               if not x:type ⊆ i8\n    print «outside» else print «inside», 7";
+    let out = logos().args([src]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "inside\noutside\n7\n");
+    let src =
+        "y := i8 3, if not y:type ⊆ u64\n    error «the index type is not within the size type»";
+    let out = logos().args([src]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && stderr.contains("not within the size type"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -761,6 +1203,102 @@ fn a_type_returning_function_resolves_at_comptime() {
 }
 
 #[test]
+fn a_type_returning_function_hands_back_a_type_box() {
+    let (echoes, stderr) = repl(
+        b"f := fn (t := type ?) -> type ( mut x := t, x )\nf(i32) == i32\ny := f(f64)\nz := y 5\nz\n\
+          mints := hashmap type -> type\n\
+          get := fn (t := type ?) -> type ( mut m := mints[t], if m != ? return m, m = t, mints[t] = m, m )\n\
+          get(i32) == get(i32)\nget(i32) == get(f64)\nmut u := mints[u8]\nu == ?\n",
+    );
+    assert_eq!(echoes, ["true", "5.0", "true", "false", "true"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
+fn a_tape_cell_checked_to_hold_a_type_passes_as_a_type() {
+    let g = "g := fn (t := type ?) -> type ( t )";
+    let tail = "tape.remove(1), tape.is_constructed[0] = true ) )";
+    // After a raising `!=` check, for the rest of the scope; inside an `==` branch.
+    for (check, arg) in [
+        ("if tape[1]:type != type error «no», t := tape[1], print «{g(t) == i64}»,", "i64"),
+        ("if tape[1]:type == type ( print «{g(tape[1]) == i64}» ),", "i64"),
+        ("if tape[1]:type != type ( print «no» ) else print «{g(tape[1]) == u8}»,", "u8"),
+    ] {
+        let src = format!(
+            "{g}, r := type ( parse_rank = fn.parse_rank, parse = ( {check} {tail}, r {arg}"
+        );
+        let out = logos().args([&src]).output().unwrap();
+        assert!(out.status.success(), "{src}: stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).lines().next(), Some("true"), "{src}");
+    }
+    // Unchecked, or checked and then the tape edited, the cell is still refused as a type.
+    for body in [
+        "t := tape[1], u := g(t),",
+        "if tape[1]:type != type error «no», tape.remove(1), u := g(tape[1]),",
+        "if tape[1]:type == type print «x», u := g(tape[1]),",
+    ] {
+        let src =
+            format!("{g}, r := type ( parse_rank = fn.parse_rank, parse = ( {body} {tail}, r i32");
+        let out = logos().args([&src]).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("these types do not match"), "{src}: stderr: {stderr}");
+    }
+    // A loop edits the tape after the read was checked: the read checks again when it runs.
+    let src = format!(
+        "{g}, r := type ( parse_rank = fn.parse_rank, parse = ( \
+         if tape[1]:type != type error «no», mut i := i32 0, \
+         while i < 2 ( u := g(tape[1]), tape.remove(1), i = i + 1 ), \
+         tape.is_constructed[0] = true ) ), r i32 [1]"
+    );
+    let out = logos().args([&src]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("it holds something else"), "{src}: stderr: {stderr}");
+}
+
+#[test]
+fn a_type_body_in_a_function_is_built_per_call() {
+    let (echoes, stderr) = repl(
+        b"mk := fn (t := type ?) -> type ( type ( fields = ( shared e := t ) ) )\n\
+          a := mk(i32)\nb := mk(f64)\nc := mk(i32)\n\
+          a.fields.e == i32\nb.fields.e == f64\na == b\na == c\n\
+          mints := hashmap type -> type\n\
+          get := fn (t := type ?) -> type ( mut m := mints[t], if m != ? return m, \
+          m = type ( fields = ( shared e := t ) ), mints[t] = m, m )\n\
+          get(i32) == get(i32)\nget(i32) == get(f64)\nget(u8).fields.e == u8\n\
+          g := fn (n := i32 ?) -> type ( type (parse_rank = n) )\nt := g(3)\nt.parse_rank\n",
+    );
+    assert_eq!(
+        echoes,
+        ["true", "true", "false", "false", "true", "false", "true", "3.0"],
+        "stderr: {stderr}"
+    );
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+
+    // The body is read when it runs, so its mistakes are reported at the call.
+    let (_echoes, stderr) =
+        repl(b"mk := fn () -> type ( type ( fields = ( shared e := nosuch ) ) )\nmk()\n");
+    assert!(stderr.contains("building this `type (…)` failed"), "stderr: {stderr}");
+    assert!(stderr.contains("nosuch"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_type_body_in_a_function_declares_fields_from_the_call_s_types() {
+    let (echoes, stderr) = repl(
+        b"mk := fn (t := type ?) -> type ( type ( fields = ( shared e := t, p := @e ?, v := t ? ) ) )\n\
+          mk(u8).fields.e == u8\nk := fn (t := type ?) -> type ( mk(t) )\nk(i32).fields.e == i32\n",
+    );
+    assert_eq!(echoes, ["true", "true"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+    // A member declared from the call's type is that type, so a function body may apply it.
+    let (echoes, stderr) = repl(
+        b"mk := fn (t := type ?) -> type ( type ( fields = ( shared e := t, \
+          shared f := fn () -> i32 ( e 5 ) ) ) )\nmk(i32).fields.e == i32\n",
+    );
+    assert_eq!(echoes, ["true"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
 fn the_type_returning_fn_example_runs() {
     let out = logos().args(["import", "examples/type_returning_fn.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -779,12 +1317,15 @@ fn file_mode_runs_each_expression_as_it_parses() {
 }
 
 #[test]
-fn a_type_call_with_a_runtime_argument_is_rejected() {
-    let (_echoes, stderr) = repl(
+fn a_type_call_with_a_runtime_argument_yields_a_type_at_run() {
+    let (echoes, stderr) = repl(
         b"pick := fn (i := i32 ?) -> logos (if (i==0)(i32) else (f64))\n\
-          g := fn (n := i32 ?) -> i32 ( a := pick(n), 1 )\n",
+          g := fn (n := i32 ?) -> i32 ( a := pick(n), if (a == f64) (7) else (3) )\n\
+          g(1)\ng(0)\n\
+          h := fn (n := i32 ?) -> i32 ( x := pick(n) 5, 1 )\n",
     );
-    assert!(stderr.contains("must be evaluable at parse time"), "stderr: {stderr}");
+    assert_eq!(echoes, ["7", "3"], "stderr: {stderr}");
+    assert!(stderr.contains("known only when the program runs"), "stderr: {stderr}");
 }
 
 #[test]
@@ -829,9 +1370,14 @@ fn a_logos_declaration_names_the_non_numeric_gap() {
 #[test]
 fn a_logos_variable_declares_fills_once_and_becomes_the_type() {
     let (echoes, stderr) =
-        repl(b"mut a := logos ?\na:type == logos\na == i32\na = i32\na == i32\ny := a 5\ny\n");
-    assert_eq!(echoes, ["true", "false", "true", "5"], "stderr: {stderr}");
+        repl(b"mut a := logos ?\na:type == logos\na = i32\na == i32\ny := a 5\ny\n");
+    assert_eq!(echoes, ["true", "true", "5"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
+    let (echoes, stderr) = repl(b"mut a := logos ?\na == i32\n");
+    assert!(
+        echoes.is_empty() && stderr.contains("`a` is read before it is written"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -839,7 +1385,8 @@ fn a_logos_box_is_written_as_often_as_you_like() {
     let (echoes, stderr) = repl(b"mut a := logos ?\na = i32\na = f64\na\n");
     assert_eq!(echoes, ["f64"], "stderr: {stderr}");
 
-    let (echoes, stderr) = repl(b"mut a := logos ?\ng := fn () -> i32 ( a = i32, 1 )\ng()\na\n");
+    let (echoes, stderr) =
+        repl(b"mut a := logos ?\na = f64\ng := fn () -> i32 ( a = i32, 1 )\ng()\na\n");
     assert_eq!(echoes, ["1", "i32"], "stderr: {stderr}");
 
     let (_e, stderr) = repl(b"mut a := logos ?\na = 5\n");
@@ -850,7 +1397,7 @@ fn a_logos_box_is_written_as_often_as_you_like() {
 fn logical_operators_fold_over_bool_literals() {
     let (echoes, stderr) = repl(
         b"true or false\ntrue and true\nnot (true)\n\
-          mut a := logos ?\nif (a:type == f32 or a:type == logos) (a = f64) else (a = i32)\na == f64\n",
+          mut a := logos ?\na = i32\nif (a:type == f32 or a:type == logos) (a = f64) else (a = i32)\na == f64\n",
     );
     assert_eq!(echoes, ["true", "true", "false", "true"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -860,8 +1407,8 @@ fn logical_operators_fold_over_bool_literals() {
 fn a_comptime_if_drops_the_untaken_branch_unparsed() {
     // `a = 9.9` under `a := i32 ?` would be a parse error if it were ever parsed; that this runs proves the branch was skipped.
     let (echoes, stderr) = repl(
-        b"mut a := i32 ?\nif (a:type == i32) (a = 9) else (a = 9.9)\na\n\
-          mut b := f64 ?\nif (b:type == i32) (b = 1) else if (b:type == f64) (b = 2.5) else (b = 3)\nb\n",
+        b"mut a := i32 ?\na = 0\nif (a:type == i32) (a = 9) else (a = 9.9)\na\n\
+          mut b := f64 ?\nb = 0\nif (b:type == i32) (b = 1) else if (b:type == f64) (b = 2.5) else (b = 3)\nb\n",
     );
     assert_eq!(echoes, ["9", "2.5"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -1071,15 +1618,15 @@ fn a_type_box_is_an_ordinary_variable() {
 
     let (echoes, stderr) = repl(b"b := type ?\nz := b ?\n");
     assert!(
-        echoes.is_empty() && stderr.contains("known only when the program runs"),
+        echoes.is_empty() && stderr.contains("`b` is read before it is written"),
         "stderr: {stderr}"
     );
 }
 
 #[test]
 fn the_dyad_box_says_what_it_holds() {
-    let (echoes, stderr) = repl(b"mut a := dyad ?\na\na = i32\na:type == type\na == i32\na\n");
-    assert_eq!(echoes, ["dyad ?", "true", "true", "i32"], "stderr: {stderr}");
+    let (echoes, stderr) = repl(b"mut a := dyad ?\na = i32\na:type == type\na == i32\na\n");
+    assert_eq!(echoes, ["true", "true", "i32"], "stderr: {stderr}");
 
     let (echoes, stderr) = repl(b"mut a := dyad ?\na = i32\ny := a 5\ny\n");
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
@@ -1203,7 +1750,7 @@ fn the_pass_runs_only_as_far_as_it_must_in_order_and_never_twice() {
         b"( mut a := type ?, a = i32, mut x := a 5, x )\nq := ( p := @i32 ?, p@ )\nq := i32 4\nq\n",
     );
     assert_eq!(echoes, ["5", "4"], "stderr: {stderr}");
-    assert!(stderr.contains("holds nothing yet"), "stderr: {stderr}");
+    assert!(stderr.contains("`p` is read before it is written"), "stderr: {stderr}");
 }
 
 #[test]
@@ -1290,6 +1837,59 @@ fn print_interpolates_braces_as_echo_shows_them_and_escapes_them_with_a_backslas
 }
 
 #[test]
+fn error_aborts_the_run_with_its_message() {
+    let out = logos()
+        .arg(
+            "f := fn (x := i32 ?) -> i32 ( if (x > 2) (error «too big: {x}») else (x) ), \
+             print «{f(1)}», f(5), print «never»",
+        )
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "a plain failure exit, not a signal");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "1\n");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("run error: too big: 5"), "stderr: {stderr}");
+
+    let out = logos().arg("t := type (parse = (error «not here»)), t").output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("not here"), "stderr: {stderr}");
+
+    let (echoes, stderr) = repl("error «boom»\nerror 5\n1 + 1\n".as_bytes());
+    assert_eq!(echoes, ["2"], "stderr: {stderr}");
+    assert!(stderr.contains("run error: boom"), "stderr: {stderr}");
+    assert!(stderr.contains("`error` must be followed by a «…» quote"), "stderr: {stderr}");
+}
+
+#[test]
+fn error_interpolates_braces_exactly_as_print_does() {
+    let out = logos()
+        .arg(
+            "n := 3, f := fn (i := i32 ?) -> i32 ( if (i >= n) (error «index {i} is past {n - 1}») else (i) ), \
+             f(1), f(4)",
+        )
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("run error: index 4 is past 2"), "stderr: {stderr}");
+
+    let out = logos().arg("error «{1 < 2} {f64 5.5} \\{x\\}»").output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("run error: true 5.5 {x}"), "stderr: {stderr}");
+
+    for (src, message) in [
+        ("error «{x»", "this `{` has no `}`"),
+        ("error «x}»", "this `}` closes no `{`"),
+        ("error «{nope}»", "unknown name `nope`"),
+    ] {
+        let out = logos().arg(src).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(message), "{src}: {stderr}");
+    }
+}
+
+#[test]
 fn caller_scope_is_the_use_site_and_here_scope_the_body() {
     let (echoes, stderr) = repl(
         "mut seen := here.scope\n\
@@ -1347,6 +1947,46 @@ fn a_scope_is_read_by_path_and_reading_runs_nothing() {
     );
     assert_eq!(stderr.matches("this read does not fit the node's type").count(), 2, "{stderr}");
     assert!(stderr.contains("this operator cannot compute over these operands"), "{stderr}");
+}
+
+#[test]
+fn a_constructor_reads_the_scope_cell_to_its_right_line_by_line() {
+    let lib = "import tests/fixtures/scope_cell_lines.logos";
+    for (line, want) in
+        [("first (7, 8, 9) + last (7, 8, 9)", "16"), ("first (scope (1, 2), 3)", "2")]
+    {
+        let out = logos().arg(format!("{lib}, {line}")).output().unwrap();
+        assert!(out.status.success(), "{line}: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{line}");
+    }
+    for (line, want) in [
+        ("first 5", "this node is not a scope"),
+        ("first ()", "index 0 is past the end (0 items)"),
+        ("last ()", "an index cannot be negative"),
+    ] {
+        let out = logos().arg(format!("{lib}, {line}")).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{line}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(want), "{line}: {stderr}");
+    }
+}
+
+#[test]
+fn scope_by_name_is_the_bracket_and_alone_is_the_type() {
+    for (line, want) in [
+        ("scope (1, 2, 3)", "3"),
+        ("g := scope ( a := i32 1, a ), g:start.rhs.dyads.size", "2"),
+        ("g := scope ( a := i32 1, a ), g:start.rhs.dyads[0].lhs:name", "a"),
+        ("f := fn () -> i32 ( scope ( 4 ) ), f.compile(), f()", "4"),
+        ("scope == scope", "true"),
+        ("t := scope, t == scope", "true"),
+        ("here.scope:type == scope", "true"),
+        ("x := i32 1, x:scope == here.scope", "true"),
+    ] {
+        let out = logos().arg(line).output().unwrap();
+        assert!(out.status.success(), "{line}: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{line}");
+    }
 }
 
 #[test]
@@ -1467,4 +2107,165 @@ fn a_constructors_outcome_is_read_off_its_own_cell() {
         ),
         "stderr: {stderr}"
     );
+}
+
+/// One command line run: its exit code (`None` for a signal), stdout and stderr.
+fn run_line(src: &str) -> (Option<i32>, String, String) {
+    let out = logos().arg(src).output().unwrap();
+    let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+    (out.status.code(), text(&out.stdout), text(&out.stderr))
+}
+
+#[test]
+fn a_parse_body_writes_a_field_as_a_node_and_the_run_reads_it() {
+    let (code, _, stderr) = run_line(
+        "probe := type ( fields = ( v := i32 ?, shared run = ( this.v ) ), \
+         parse_rank = *.parse_rank + 1, \
+         parse = ( this.v = 7, tape[0] = this, tape.is_constructed[0] = true ) ), probe",
+    );
+    assert_eq!(code, Some(0), "stderr: {stderr}");
+    for (tail, want) in [("probe", "7\n"), ("probe + 1", "8\n")] {
+        let (code, stdout, stderr) = run_line(&format!(
+            "probe := type ( fields = ( v := i32 ?, output := type ?, shared run = ( this.v ) ), \
+             parse_rank = *.parse_rank + 1, \
+             parse = ( this.v = 7, this.output = i32, tape[0] = this, \
+             tape.is_constructed[0] = true ) ), {tail}"
+        ));
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "stderr: {stderr}");
+    }
+    let (code, stdout, stderr) = run_line(
+        "q := type ( fields = ( size := u64 ? ), parse_rank = 60, \
+         parse = ( this.size = 3, tape[0] = this.size, tape.is_constructed[0] = true ) ), q",
+    );
+    assert_eq!((code, stdout.as_str()), (Some(0), "3\n"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_number_field_is_read_and_written_by_value_in_a_parse_body() {
+    // `this.n` is the u64 it holds, so it takes part in arithmetic; the value a
+    // run-time right side yields is what the field keeps after the parse returns.
+    let (code, stdout, stderr) = run_line(
+        "q := type ( fields = ( n := u64 ?, m := u64 ? ), parse_rank = 60, parse = ( \
+         this.n = tape[1].dyads.size, this.m = this.n * 2, tape[0] = this.m, tape.remove(1), \
+         tape.is_constructed[0] = true ) ), q (1, 2, 3)",
+    );
+    assert_eq!((code, stdout.as_str()), (Some(0), "6\n"), "stderr: {stderr}");
+    let (code, _, stderr) = run_line(
+        "q := type ( fields = ( n := u64 ? ), parse_rank = 60, \
+         parse = ( this.n = i32 3, tape[0] = this, tape.is_constructed[0] = true ) ), q",
+    );
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("these types do not match"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_function_in_a_fields_block_reads_this() {
+    let (code, _, stderr) = run_line(
+        "x := type ( fields = ( n := u64 ?, shared twice := fn () -> u64 ( this.n * 2 ) ) ), 1",
+    );
+    assert_eq!(code, Some(0), "stderr: {stderr}");
+    // Only the member's own `fn` takes `this`: not one outside a type, nor one on a bare line.
+    for src in [
+        "f := fn () -> u64 ( this.n ), 1",
+        "x := type ( fields = ( n := u64 ? ), parse = ( g := fn () -> u64 ( this.n ) ) ), 1",
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn the_instances_drop_body_is_accepted_and_held() {
+    // stand-in for #133: the body is kept unbuilt and nothing runs it yet.
+    let (code, stdout, stderr) =
+        run_line("x := type ( fields = ( n := u64 ?, shared drop = ( free this.n ) ) ), 1");
+    assert_eq!((code, stdout.as_str()), (Some(0), "1\n"), "stderr: {stderr}");
+    for src in ["x := type ( drop = ( 1 ) ), 1", "x := type ( fields = ( shared drop = 5 ) ), 1"] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("not in the seed yet"), "{src}: stderr: {stderr}");
+    }
+}
+
+/// A type with no `run` whose own `parse` builds its nodes.
+const COUNTED: &str = "q := type ( fields = ( n := u64 ?, k := u64 7, \
+    shared twice := fn () -> u64 ( this.n * 2 ) ), parse_rank = 60, parse = ( \
+    this.n = tape[1].dyads.size, tape[0] = this, tape.remove(1), tape.is_constructed[0] = true ) )";
+
+#[test]
+fn a_node_a_parse_built_is_declared_and_its_fields_read() {
+    for (tail, want) in [
+        ("a := q (1, 2, 3), a.n + a.k", "10\n"),
+        ("f := fn () -> u64 ( a := q (1, 2), a.n ), f()", "2\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{COUNTED}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_member_function_called_through_a_node_reads_that_node_as_this() {
+    for (tail, want) in [
+        ("a := q (1, 2, 3), a.twice()", "6\n"),
+        ("a := q (1, 2, 3), b := q (1, 2), a.twice() + b.twice()", "10\n"),
+        ("f := fn () -> u64 ( a := q (1, 2, 3, 4), a.twice() ), f()", "8\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{COUNTED}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_field_the_constructor_never_wrote_is_a_checked_error() {
+    for src in [
+        // The node is used as a value with its field `b` unwritten.
+        "t := type (fields = (a := i32 ?, b := i32 ?, output := type ?, shared run = ( this.a )), \
+         parse_rank = *.parse_rank + 1, \
+         parse = ( this.a = tape[-1], this.output = i32, tape[0] = this, \
+         tape.is_constructed[0] = true, tape.remove(-1) )), x := i32 4, x t",
+        // The unwritten field itself is read in the parse body.
+        "q := type ( fields = ( size := u64 ? ), parse_rank = 60, \
+         parse = ( tape[0] = this.size, tape.is_constructed[0] = true ) ), q",
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains("was never written by its constructor"), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn this_f_type_reads_the_fields_declared_type() {
+    let (code, stdout, stderr) = run_line(
+        "q := type ( fields = ( size := u64 ? ), parse_rank = 60, \
+         parse = ( this.size = 3, tape[0] = this.size:type, tape.is_constructed[0] = true ) ), q",
+    );
+    assert_eq!((code, stdout.as_str()), (Some(0), "u64\n"), "stderr: {stderr}");
+    // An untyped field has no type until the constructor runs and writes it.
+    let (code, _, stderr) = run_line(
+        "q := type ( fields = ( size := ? ), parse_rank = 60, \
+         parse = ( this.size = 3, tape[0] = this.size:type, tape.is_constructed[0] = true ) ), q",
+    );
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("does not fit the node's type"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_field_default_fills_each_new_node() {
+    let q = "q := type ( fields = ( mut size := u64 5, output := type ?, \
+             shared run = ( this.size + 1 ) ), parse_rank = 60, parse = ( ";
+    let end = "this.output = u64, tape[0] = this, tape.is_constructed[0] = true ) )";
+    for (src, want) in [
+        (format!("{q}{end}, q"), "6\n"),
+        (format!("{q}this.size = 9, {end}, q"), "10\n"),
+        (format!("{q}{end}, f := fn () -> u64 ( q ), f.compile(), f()"), "6\n"),
+        (
+            "q := type ( fields = ( size := u64 0 ), parse_rank = 60, \
+             parse = ( tape[0] = this.size, tape.is_constructed[0] = true ) ), q"
+                .to_string(),
+            "0\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "{src}: stderr: {stderr}");
+    }
 }

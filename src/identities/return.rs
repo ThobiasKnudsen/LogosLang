@@ -1,9 +1,11 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `return`: the node `[value, op]`; run and compile evaluate the operand and
-//! yield it. A scope is valued by its trailing expression, so `return X` and
-//! `X` coincide in tail position; early exit arrives with control flow.
+//! `return`: the node `[value, op]`. Inside a call it leaves the function with
+//! the operand's value, from wherever it stands; outside any function it is a
+//! scope's tail and yields the value.
+//! DESIGN ›A scope's value is what it evaluates to, and `return` is an optional
+//! early exit from the enclosing function‹
 
 use cranelift_codegen::ir::Value;
 
@@ -40,6 +42,8 @@ fn construct(
     let types = p.types();
     let value = p.store().alloc_operands(&[operand, types.ops.return_]);
     let node = p.store().alloc_raw(id, value);
+    // SAFETY: `node` is the `return` node just built.
+    unsafe { p.note_return(node) }?;
     tape.place(node);
     Ok(crate::parse::Constructed::Placed)
 }
@@ -52,10 +56,15 @@ unsafe fn operand(node: DyadPtr) -> DyadPtr {
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid return node; its first slot is its operand.
-    unsafe { rt.run(operand(node)) }
+    let value = unsafe { rt.run(operand(node)) }?;
+    if rt.in_call() {
+        Err(RunError::Return(value))
+    } else {
+        Ok(value)
+    }
 }
 
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid return node; its first slot is its operand.
-    unsafe { lw.lower(operand(node)) }
+    unsafe { lw.lower_return(operand(node)) }
 }

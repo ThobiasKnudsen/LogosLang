@@ -71,7 +71,7 @@ pub fn parse_message(e: &ParseError) -> String {
             "this literal has no exact value in the type it lands in".into()
         }
         ParseError::EarlyReturn => {
-            "`return` must be the last expression of its scope".into()
+            "outside a function, `return` must be the last expression of its scope".into()
         }
         ParseError::StatementAsValue => {
             "a statement yields no value and cannot stand here".into()
@@ -89,6 +89,9 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::Immutable(name) => {
             format!("`{name}` is `immut`: it is written nowhere, not even by its constructor")
         }
+        ParseError::Unwritten(name) => format!(
+            "`{name}` is read before it is written: give it a value with `{name} = …` in the same block first"
+        ),
         ParseError::NotMutable(name) => {
             format!("`{name}` is not `mut`: a name is written after its declaration only when declared `mut {name} := …`")
         }
@@ -100,6 +103,11 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::StrayInterpolationClose => {
             "this `}` closes no `{`: write `\\}` to print a brace".into()
+        }
+        ParseError::HashmapShape => {
+            "`hashmap` is followed by `K -> V`: a key type, `->`, a value type, each `type`, \
+             `dyad` or an integer type"
+                .into()
         }
         ParseError::InsertTakesTape => {
             "`insert` splices a tape: give it a `lex «…»` fragment or a parsing_tape value".into()
@@ -135,6 +143,11 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::CellNotReachable => {
             "nothing reaches a value's cell as a whole — read its type with \
              `x:type` and its fields with `x.f`"
+                .into()
+        }
+        ParseError::UnsettledInclusion => {
+            "`⊆` answers only for a type and itself or two integer types; \
+             between other types what each can hold is not settled yet"
                 .into()
         }
         ParseError::CtorArity => {
@@ -221,7 +234,10 @@ pub fn parse_message(e: &ParseError) -> String {
             "`{name}` is a place in each node, not stored with the type: read it through a node"
         ),
         ParseError::FieldsSlotNotInSeed => {
-            "inside `fields = (…)` only `shared run = (…)` fills a slot yet; the instances' other slots are not in the seed (#133)".into()
+            "inside `fields = (…)` a `shared` line fills `run`, `parse`, `parse_rank` or `associativity`; a nested `fields` is not in the seed yet (#133), and `lex_rank` is a name's, not the instances'".into()
+        }
+        ParseError::InstancesParseNeedsOwnParse => {
+            "the instances' `parse` reads an instance its type's own `parse` built: fill `parse = (…)` on a bare line of the body too; an instance built by applying the type is not in the seed here".into()
         }
         ParseError::DropSlotNotInSeed => "the `drop` slot is not in the seed yet (#133)".into(),
         ParseError::FieldsSlotNeedsShared => {
@@ -307,12 +323,33 @@ pub fn run_message(e: &RunError) -> String {
         RunError::MalformedFn(_) => "a parameter of this function has no frame slot".into(),
         RunError::NotText => "`lex` takes a string".into(),
         RunError::Output(why) => format!("print could not write to stdout: {why}"),
+        RunError::Raised(message) => message.to_string(),
         RunError::NoTape => "there is no tape behind this receiver".into(),
         RunError::OffTape => "this index is off the tape".into(),
+        RunError::MissingKey => {
+            "the map holds no value at this key, and a number cannot be the unknown `?`".into()
+        }
         RunError::NoName => "this cell holds no name".into(),
+        RunError::CellNotAType => {
+            "this cell was checked to hold a type, but the tape changed since and it holds something else"
+                .into()
+        }
+        RunError::CellNotANumber(ty) => format!(
+            "this cell was checked against `{}`, but it holds no literal or constant of it: \
+             only a constant is read as its number",
+            // SAFETY: the type operand of a checked read is a number type node.
+            unsafe { crate::identities::numtype::of_type_node(*ty) }.spelling()
+        ),
         RunError::NoFragment => "insert takes a tape fragment".into(),
         RunError::NoThis => "`this` holds no node here".into(),
+        RunError::UnfilledField(i) => format!(
+            "field {} of this node's `fields = (…)` block was never written by its constructor",
+            i + 1
+        ),
         RunError::BadIndex(k) => format!("an index cannot be negative ({k})"),
+        RunError::PastEnd { index, size } => {
+            format!("index {index} is past the end ({size} items)")
+        }
         RunError::BadCount(n) => format!("an alloc count cannot be negative ({n})"),
         RunError::NotDerefable => "only a scalar or a pointer is read through a pointer".into(),
         RunError::NoLayout(_) => "this type has no field layout to construct".into(),
@@ -332,6 +369,10 @@ pub fn run_message(e: &RunError) -> String {
         RunError::CompileFailed(msg) => format!("compile() failed: {msg}"),
         RunError::Faulted(msg) => format!("the interpreter stopped inside compiled code: {msg}"),
         RunError::NoLexer => "`lex` can run only where the parser runs it".into(),
+        RunError::NoParser => {
+            "a `type (…)` in a body is built when it runs, which needs the parser running".into()
+        }
+        RunError::MintFailed(rendered) => format!("building this `type (…)` failed:\n{rendered}"),
         RunError::Lex(why) => format!("this text will not lex: {why}"),
         RunError::NoCaller => {
             "`caller` can be read only inside a constructor the parser runs".into()
@@ -339,7 +380,14 @@ pub fn run_message(e: &RunError) -> String {
         RunError::CallerSpot => {
             "`caller` alone is not a value the seed reads; read `caller.scope`".into()
         }
+        RunError::UnsettledInclusion => {
+            "`⊆` answers only for a type and itself or two integer types; \
+             between other types what each can hold is not settled yet"
+                .into()
+        }
         RunError::NullPointer => "this pointer holds nothing yet".into(),
+        RunError::Parse(e) => parse_message(e),
+        RunError::Return(_) => "`return` found no function to leave".into(),
         RunError::CallDepth => {
             format!(
                 "calls nested deeper than {}: is this recursion ending?",

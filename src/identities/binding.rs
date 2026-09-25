@@ -134,6 +134,22 @@ impl Binding {
     }
 
     /// # Safety
+    /// As `add_gate`.
+    pub unsafe fn remove_gate(store: &mut Store, array_ty: DyadPtr, dyad: DyadPtr, gate: DyadPtr) {
+        let gates = (*Self::fields(dyad)).gate;
+        if gates.is_null() {
+            return;
+        }
+        let items: Vec<DyadPtr> =
+            super::array::items(gates).iter().copied().filter(|&g| g != gate).collect();
+        (*Self::fields(dyad)).gate = if items.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            super::array::build(store, array_ty, &items)
+        };
+    }
+
+    /// # Safety
     /// As `Binding::read`; the binding's `name` must be null or a string node.
     pub unsafe fn spelling(dyad: DyadPtr) -> String {
         let name = (*Self::fields(dyad)).name;

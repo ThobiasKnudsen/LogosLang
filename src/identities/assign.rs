@@ -64,8 +64,14 @@ fn construct(
         return Ok(crate::parse::Constructed::Placed);
     }
     // A `fn …` right of `parse`/`run` is still read as an expression: stand-in for #133.
-    if matches!(slot, Some(crate::parse::SlotKind::Parse | crate::parse::SlotKind::Run))
-        && p.at_open()
+    if matches!(
+        slot,
+        Some(
+            crate::parse::SlotKind::Parse
+                | crate::parse::SlotKind::Run
+                | crate::parse::SlotKind::Drop
+        )
+    ) && p.at_open()
     {
         let node = p.slot_body_fill(slot.expect("matched above"), target)?;
         tape.place(node);
@@ -77,7 +83,9 @@ fn construct(
         unsafe { p.slot_fill(kind, target, value) }?
     } else {
         let types = p.types();
-        build(p.store(), types, id, target, value)?
+        let node = build(p.store(), types, id, target, value)?;
+        p.note_write(node);
+        node
     };
     tape.place(node);
     Ok(crate::parse::Constructed::Placed)
@@ -113,9 +121,14 @@ pub(super) fn build(
     let (lhs_d, rhs_d) = unsafe { (types.through(lhs), types.through(rhs)) };
     // SAFETY: `through` hands back its argument or the dyad a binding names.
     let (lhs_ty, rhs_ty) = unsafe { ((*lhs_d).ty, (*rhs_d).ty) };
-    if lhs_ty == types.tape.slot {
-        // SAFETY: `lhs_d` is a tape slot node, `rhs` a reduced dyad.
+    // SAFETY: `lhs_d` is a reduced dyad from the store.
+    if unsafe { super::tape::is_cell_read(types, lhs_d) } {
+        // SAFETY: `lhs_d` is a tape cell read, `rhs` a reduced dyad.
         return Ok(unsafe { super::tape::build_write(store, types, lhs_d, rhs) });
+    }
+    if lhs_ty == types.hashmap.get {
+        // SAFETY: `lhs_d` is a get node, `rhs` a reduced dyad.
+        return unsafe { super::hashmap::build_put(store, types, lhs_d, rhs) };
     }
     if lhs_ty == types.tape.is_constructed {
         // SAFETY: `rhs` is a reduced dyad from the store.
@@ -125,9 +138,10 @@ pub(super) fn build(
         // SAFETY: `lhs_d` is a flag slot node, `rhs` a reduced bool dyad.
         return Ok(unsafe { super::tape::build_flag_write(store, types, lhs_d, rhs) });
     }
-    if lhs_ty == types.this.slot {
-        // SAFETY: `lhs_d` is a `this` field slot node, `rhs` a reduced dyad.
-        return Ok(unsafe { super::this::build_write(store, types, lhs_d, rhs) });
+    // SAFETY: `lhs_d` is a reduced dyad from the store.
+    if unsafe { super::this::is_field_read(types, lhs_d) } {
+        // SAFETY: `lhs_d` is a `this` field read, `rhs` a reduced dyad.
+        return unsafe { super::this::build_write(store, types, lhs_d, rhs) };
     }
     if lhs_ty == types.deref_ {
         // SAFETY: `lhs_d` is a deref node, `rhs` a reduced dyad.
@@ -151,6 +165,14 @@ pub(super) fn build(
                     }
                 }
                 Read::Address => t == types.dyad_,
+                // SAFETY: as above.
+                Read::Executable(_) => {
+                    // SAFETY: as above.
+                    unsafe {
+                        super::hashmap::box_of(types, rhs) == Some(t)
+                            || (t == types.type_ && super::yields_type(types, rhs))
+                    }
+                }
                 _ => false,
             };
             if !ok {

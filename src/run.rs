@@ -32,22 +32,34 @@ pub enum RunError {
     NoWholeRead,
     /// A parameter with no frame slot.
     MalformedFn(DyadPtr),
-    /// `lex` or `print` handed something other than a string.
+    /// `lex` handed something other than a string.
     NotText,
     /// `print` failed to write stdout; the I/O error's sentence.
     Output(Box<String>),
+    /// `error «…»` ran; its quote's text.
+    Raised(Box<String>),
     /// A tape affordance with no tape behind its receiver.
     NoTape,
     /// A tape index the tape does not hold.
     OffTape,
+    /// A map read at a key it does not hold, where the value type cannot hold `?`.
+    MissingKey,
     /// `t[k]:name` on a cell holding no named binding.
     NoName,
+    /// A tape cell checked to hold a type holds something else by the time it is read.
+    CellNotAType,
+    /// A cell or line checked against a number type holds no constant of it.
+    CellNotANumber(DyadPtr),
     /// `insert` of a null fragment.
     NoFragment,
     /// `this` holds no node, or the node has no slots.
     NoThis,
+    /// A field of a node its constructor never wrote, by its index among the fields.
+    UnfilledField(usize),
     /// A negative index.
     BadIndex(i64),
+    /// An index at or past the end of what it reads.
+    PastEnd { index: i64, size: usize },
     /// A negative cell count in `alloc`.
     BadCount(i64),
     /// A pointer whose pointee is neither scalar nor pointer.
@@ -78,6 +90,9 @@ pub enum RunError {
     Faulted(Box<String>),
     /// Calls nested deeper than [`MAX_CALL_DEPTH`].
     CallDepth,
+    /// Not an error: `return X` on its way out to the call it leaves, which
+    /// takes the value.
+    Return(i64),
     /// A read or write through a pointer holding nothing.
     NullPointer,
     /// `lex «…»` under a runtime with no lexer attached; only the parser attaches one.
@@ -88,6 +103,14 @@ pub enum RunError {
     NoCaller,
     /// `caller` read as a value; the seed reads `caller.scope` only.
     CallerSpot,
+    /// `⊆` over two different types that are not both integer types.
+    UnsettledInclusion,
+    /// The parse a `tape[k]` read ran to lex on to its cell failed.
+    Parse(Box<crate::parse::ParseError>),
+    /// A `type (…)` held in a body ran where no parser is running the pass.
+    NoParser,
+    /// A held `type (…)` failed to build at its call; the rendered parse error.
+    MintFailed(Box<String>),
 }
 
 thread_local! {
@@ -289,7 +312,7 @@ pub struct Runtime<'a> {
     /// The parser owns its runtime and reaches the store through it, so the one
     /// `&mut Store` is visible to the borrow checker.
     pub(crate) store: &'a mut crate::store::Store,
-    /// Set only inside [`Runtime::lexing`]; absent elsewhere, so `lex` fails
+    /// Set only inside [`Runtime::hosting`]; absent elsewhere, so `lex` fails
     /// with [`RunError::NoLexer`].
     lexer: Option<Lexer>,
     /// The fragments `lex «…»` built, owned for the runtime's life; boxed because
@@ -299,23 +322,43 @@ pub struct Runtime<'a> {
     /// How many Logos constructors the parser is running through this runtime;
     /// `caller.scope` answers only inside one.
     constructing: u32,
+    /// The driver's tape the innermost running Logos constructor was handed: a read
+    /// past its frontier lexes on demand (DESIGN ›The scope's constructor is the driver‹).
+    ctor_tape: Option<*mut crate::parse::ParsingTape>,
 }
 
 /// What `lex «…»` lexes against. Raw, because the parser owns both and the
-/// runtime inside it; set only by [`Runtime::lexing`], which clears them when
-/// its call returns or unwinds, and every read is inside such a call.
+/// runtime inside it; set only by [`Runtime::hosting`], which restores the one
+/// before it when its call returns or unwinds, and every read is inside such a call.
 #[derive(Clone, Copy)]
 struct Lexer {
     scopes: std::ptr::NonNull<crate::parse::ScopeStack>,
     trie: std::ptr::NonNull<crate::regex_trie::RegexTrie>,
+    host: Option<Host>,
 }
 
-/// Clears the lexer when a [`Runtime::lexing`] call ends, by return or by unwinding.
-struct Detach<'r, 'a>(&'r mut Runtime<'a>);
+/// The parser running the pass, erased so the runtime needs no lifetime of it, and
+/// its two ways back in.
+#[derive(Clone, Copy)]
+pub(crate) struct Host {
+    pub(crate) parser: *mut (),
+    /// Lexes a tape on until it holds the cell `k` right of its center, or a boundary comes first.
+    pub(crate) lex_on: unsafe fn(
+        *mut (),
+        *mut crate::parse::ParsingTape,
+        isize,
+    ) -> Result<(), crate::parse::ParseError>,
+    /// Builds a held `type (…)` when its node runs, yielding the new type's address.
+    /// DESIGN ›A type is a comptime value, resolved in the pass‹.
+    pub(crate) mint: unsafe fn(*mut (), DyadPtr) -> Result<i64, RunError>,
+}
+
+/// Puts back the lexer a [`Runtime::hosting`] call found, by return or by unwinding.
+struct Detach<'r, 'a>(&'r mut Runtime<'a>, Option<Lexer>);
 
 impl Drop for Detach<'_, '_> {
     fn drop(&mut self) {
-        self.0.lexer = None;
+        self.0.lexer = self.1;
     }
 }
 
@@ -332,31 +375,76 @@ impl<'a> Runtime<'a> {
             lexer: None,
             fragments: Vec::new(),
             constructing: 0,
+            ctor_tape: None,
         }
     }
 
     /// Run `f` with the parser's scopes and index attached for exactly this call.
-    pub(crate) fn lexing<R>(
+    /// With `host`, the parser that lexes a constructor's tape on and builds a held `type (…)`.
+    pub(crate) fn hosting<R>(
         &mut self,
         scopes: &crate::parse::ScopeStack,
         trie: &crate::regex_trie::RegexTrie,
+        host: Option<Host>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        self.lexer = Some(Lexer {
+        let before = self.lexer.replace(Lexer {
             scopes: std::ptr::NonNull::from(scopes),
             trie: std::ptr::NonNull::from(trie),
+            host,
         });
-        let guard = Detach(self);
+        let guard = Detach(self, before);
         f(guard.0)
     }
 
-    /// Until the matching [`Runtime::leave_constructor`], `caller.scope` answers.
-    pub(crate) fn enter_constructor(&mut self) {
-        self.constructing += 1;
+    /// Lexes `tape` on to the cell `k` when it is the tape a running constructor was
+    /// handed; any other tape, and a read the tape already holds, is left as it stands.
+    ///
+    /// # Safety
+    /// `tape` must be a live `ParsingTape`.
+    pub(crate) unsafe fn reach(
+        &mut self,
+        tape: *mut crate::parse::ParsingTape,
+        k: isize,
+    ) -> Result<(), RunError> {
+        if k <= 0 || self.ctor_tape != Some(tape) || (*tape).at(k).is_some() {
+            return Ok(());
+        }
+        let Some(host) = self.lexer.and_then(|l| l.host) else { return Ok(()) };
+        // SAFETY: the host is the parser that owns this runtime and is running it, set by
+        // `hosting` for exactly this call; `ctor_tape` is the tape it handed the running
+        // constructor, alive until that constructor's run returns.
+        (host.lex_on)(host.parser, tape, k).map_err(|e| RunError::Parse(Box::new(e)))
     }
 
-    pub(crate) fn leave_constructor(&mut self) {
+    /// Build the held `type (…)` `node` through the parser running the pass.
+    ///
+    /// # Safety
+    /// `node` must be a held type node from the store.
+    pub(crate) unsafe fn mint_held(&mut self, node: DyadPtr) -> Result<i64, RunError> {
+        let Some(host) = self.lexer.and_then(|l| l.host) else {
+            return Err(RunError::NoParser);
+        };
+        // SAFETY: the host is the parser that owns this runtime and is running it,
+        // set by `hosting` for exactly this call; nothing reads the runtime through
+        // `self` until the parser hands it back.
+        (host.mint)(host.parser, node)
+    }
+
+    /// Until the matching [`Runtime::leave_constructor`], `caller.scope` answers and a
+    /// read of `tape` past its frontier lexes on. Hands back the tape it replaces.
+    pub(crate) fn enter_constructor(
+        &mut self,
+        tape: *mut crate::parse::ParsingTape,
+    ) -> Option<*mut crate::parse::ParsingTape> {
+        self.constructing += 1;
+        self.ctor_tape.replace(tape)
+    }
+
+    /// Takes the tape [`Runtime::enter_constructor`] handed back.
+    pub(crate) fn leave_constructor(&mut self, outer: Option<*mut crate::parse::ParsingTape>) {
         self.constructing -= 1;
+        self.ctor_tape = outer;
     }
 
     /// The scope open at the pass's position, for `caller.scope` inside a
@@ -368,7 +456,7 @@ impl<'a> Runtime<'a> {
         if self.constructing == 0 {
             return Err(RunError::NoCaller);
         }
-        // SAFETY: `lexer` is set only inside `lexing`, whose borrows outlive this call.
+        // SAFETY: `lexer` is set only inside `hosting`, whose borrows outlive this call.
         let scopes = unsafe { lexer.scopes.as_ref() };
         Ok(scopes.current().unwrap_or(std::ptr::null_mut()))
     }
@@ -379,7 +467,7 @@ impl<'a> Runtime<'a> {
         let Some(lexer) = self.lexer else {
             return Err(RunError::NoLexer);
         };
-        // SAFETY: `lexer` is set only inside `lexing`, whose borrows outlive this call.
+        // SAFETY: `lexer` is set only inside `hosting`, whose borrows outlive this call.
         let (scopes, trie) = unsafe { (lexer.scopes.as_ref(), lexer.trie.as_ref()) };
         let tape = crate::parse::lex_fragment(scopes, trie, self.store, text)
             .map_err(|e| RunError::Lex(Box::new(crate::report::resolve_message(&e))))?;
@@ -448,6 +536,11 @@ impl<'a> Runtime<'a> {
         self.types
     }
 
+    /// Whether an interpreted call is in flight: what a `return` leaves.
+    pub(crate) fn in_call(&self) -> bool {
+        !self.activations.is_empty()
+    }
+
     /// A binding operand yields the dyad it names. DESIGN ›The dyad's read surface‹.
     ///
     /// # Safety
@@ -463,7 +556,7 @@ impl<'a> Runtime<'a> {
     ///
     /// # Safety
     /// `node` must be a valid place node.
-    pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> Option<*mut u8> {
+    pub(crate) unsafe fn place_addr(&self, node: DyadPtr) -> Option<*mut u8> {
         let node = self.through(node);
         match frame_ref((*node).value) {
             // The depth is a parse-time capture guard; only the offset matters here.
@@ -521,7 +614,10 @@ impl<'a> Runtime<'a> {
         }
         CALL_DEPTH.with(|d| d.set(d.get() + 1));
         self.activations.push(base);
-        let result = self.run(body);
+        let result = match self.run(body) {
+            Err(RunError::Return(v)) => Ok(v),
+            other => other,
+        };
         self.activations.pop();
         CALL_DEPTH.with(|d| d.set(d.get() - 1));
         self.stack.release(mark);
@@ -574,7 +670,10 @@ impl<'a> Runtime<'a> {
                 );
                 entry(self, node)
             }
-            Read::Executable(Dispatch::None) => Err(RunError::NoLeaf),
+            Read::Executable(Dispatch::None) => {
+                Err(crate::identities::run_body::unfilled_field(node)
+                    .map_or(RunError::NoLeaf, RunError::UnfilledField))
+            }
             Read::Unit => Ok(0),
             // An identity's value is its own address.
             Read::Identity => Ok(node as i64),

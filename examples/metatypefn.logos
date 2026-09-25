@@ -23,7 +23,7 @@ metatype := fn (i := i32 ?) -> type (
 metatype.compile(),
 b := type,
 mut a := metatype(2) ?,
-if (a:type == i32) (a=9)
-else if (a:type == f32 or a:type == f64) (a=9.9)
-else if (a:type == type) (a=i32),
+a = if (a:type == i32) (9)
+    else if (a:type == f32 or a:type == f64) (9.9)
+    else (i32),
 a

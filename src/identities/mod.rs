@@ -33,12 +33,15 @@ mod comment;
 mod convert;
 pub(crate) mod declare;
 pub(crate) mod drop_model;
+pub mod error;
 #[path = "fn.rs"]
 mod fn_mod;
 #[path = "for.rs"]
 mod for_mod;
 pub(crate) mod fresh;
 mod gate;
+pub(crate) mod hashmap;
+pub(crate) mod held_type;
 pub mod here;
 mod hole;
 #[path = "if.rs"]
@@ -64,6 +67,7 @@ mod return_mod;
 pub(crate) mod run_body;
 pub(crate) mod scope;
 pub(crate) mod string;
+mod subset;
 pub mod tape;
 pub mod this;
 #[path = "while.rs"]
@@ -100,6 +104,7 @@ pub struct Core {
     pub and_: DyadPtr,
     pub or_: DyadPtr,
     pub not_: DyadPtr,
+    pub subset: DyadPtr,
     pub if_: DyadPtr,
     pub while_: DyadPtr,
     pub for_: DyadPtr,
@@ -137,14 +142,19 @@ pub struct Core {
     pub binding_: DyadPtr,
     /// `:`, the binding read.
     pub colon_: DyadPtr,
+    /// `?`, the one unknown; also the read-veto entry its declarations put on a binding.
+    pub unknown: DyadPtr,
     pub tape: tape::TapeIds,
+    pub hashmap: hashmap::HashmapIds,
+    pub held_type: held_type::HeldTypeIds,
     pub this: this::ThisIds,
     pub lex: lex::LexIds,
     pub print: print::PrintIds,
+    pub error: error::ErrorIds,
     pub run_body: run_body::RunBodyIds,
     pub here: here::HereIds,
-    /// The passive node a `[i]` cell carries.
-    pub index_: DyadPtr,
+    /// The identity of the cell a `[` lands, as `scope` is a `(`'s.
+    pub square_brackets: DyadPtr,
     /// `array` of `dyad@`; a sequence's expression list lives behind one, never inline.
     pub array_: DyadPtr,
     pub callable_: DyadPtr,
@@ -235,7 +245,7 @@ impl Core {
         let record = meta::operand_record(
             &mut cx,
             meta::TUPLE_TAG,
-            meta::prec::INERT,
+            meta::prec::READER,
             Assoc::Left,
             &["exprs", "op"],
         );
@@ -255,6 +265,8 @@ impl Core {
         op_leaves.or_ = or_leaf;
         let (not_, not_leaf) = not::register(&mut cx, &callables);
         op_leaves.not_ = not_leaf;
+        let (subset, subset_leaf) = subset::register(&mut cx, &callables);
+        op_leaves.subset_ = subset_leaf;
         let (if_, if_leaf, else_) = if_mod::register(&mut cx, &callables);
         op_leaves.if_ = if_leaf;
         let (while_, while_leaf) = while_mod::register(&mut cx, &callables);
@@ -275,10 +287,10 @@ impl Core {
         op_leaves.import_ = import_leaf;
         let dyad_ = dyad::register(&mut cx);
         let colon_ = colon::register(&mut cx);
-        hole::register(&mut cx);
+        let unknown = hole::register(&mut cx);
         let (sep_, left_, right_) = logos_mod::register_syntax(&mut cx);
         fresh::register(&mut cx);
-        let (construct_, construct_leaf, dot_, index_, open_sq_, close_sq_) =
+        let (construct_, construct_leaf, dot_, square_brackets, open_sq_, close_sq_) =
             instance::register(&mut cx, &callables);
         op_leaves.construct_ = construct_leaf;
         let (deref_, storeptr_, addr_, deref_leaf, storeptr_leaf, addr_leaf, at_) =
@@ -296,9 +308,12 @@ impl Core {
         let (alloc_, own_, drop_, free_, defer_, of_) =
             (dm.alloc_, dm.own_, dm.drop_, dm.free_, dm.defer_, dm.of_);
         let tape = tape::register(&mut cx, &callables, scope_, array_, void);
+        let hashmap = hashmap::register(&mut cx, &callables, array_);
+        let held_type = held_type::register(&mut cx, &callables);
         let this = this::register(&mut cx, &callables);
         let lex = lex::register(&mut cx, &callables);
         let print = print::register(&mut cx, &callables);
+        let error = error::register(&mut cx, &callables);
         let run_body = run_body::register(&mut cx);
         let here = here::register(&mut cx, &callables);
         // Last: the `binding` type's fields are `@dyad` places, so it waits for `dyad` and `@`.
@@ -350,6 +365,7 @@ impl Core {
             and_,
             or_,
             not_,
+            subset,
             if_,
             while_,
             for_,
@@ -377,13 +393,17 @@ impl Core {
             dyad_,
             binding_,
             colon_,
+            unknown,
             tape,
+            hashmap,
+            held_type,
             this,
             lex,
             print,
+            error,
             run_body,
             here,
-            index_,
+            square_brackets,
             callable_: callables.callable,
             convention_: callables.convention,
             conv_seed_native: callables.seed_native,
@@ -535,6 +555,7 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
         || logos == types.eq
         || logos == types.ne
         || logos == types.not_
+        || logos == types.subset
         || logos == types.return_
     {
         return Operand::Concrete(NumType::I32);
@@ -553,9 +574,36 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
         || logos == types.tape.cell_type
         || logos == types.tape.spelling
         || logos == types.tape.slot_name
+        || logos == types.tape.cell_dyads
+        || logos == types.tape.cell_dyad_at
         || logos == types.this.slot
     {
         return Operand::Pointer(types.dyad_);
+    }
+    if logos == types.tape.cell_dyads_size {
+        return Operand::Concrete(NumType::U64);
+    }
+    if logos == types.this.load {
+        // SAFETY: a load node's third operand is the field's declared type.
+        let ty = unsafe { *((*node).value as *const DyadPtr).add(2) };
+        // SAFETY: `ty` is a type node from the store.
+        return match unsafe { read::place_layout(types, ty) } {
+            Some((read::Read::Scalar(nt), _)) => Operand::Concrete(nt),
+            Some((read::Read::Pointer(p), _)) => Operand::Pointer(p),
+            _ => Operand::NonNumeric,
+        };
+    }
+    if logos == types.tape.cell_value {
+        return Operand::NonNumeric;
+    }
+    if logos == types.tape.cell_number {
+        // SAFETY: a checked number read's fourth operand is the number type it was checked against.
+        return Operand::Concrete(unsafe {
+            numtype::of_type_node(*((*node).value as *const DyadPtr).add(3))
+        });
+    }
+    if logos == types.hashmap.get {
+        return hashmap::operand_of(types, node);
     }
     // `here`, `caller.scope` and `.back` yield a node's address, as `x:scope` does.
     if logos == types.here.here || logos == types.here.caller_scope || logos == types.here.back {
@@ -646,8 +694,8 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
             if !out.is_null() && numtype::is_pointer_type(out) {
                 return Operand::Pointer(numtype::pointee_of(out));
             }
-            // A rational result has no machine form.
-            if !out.is_null() && out == types.rational {
+            // A rational result has no machine form; a type result is a node address.
+            if !out.is_null() && (out == types.rational || out == types.type_) {
                 return Operand::NonNumeric;
             }
         }
@@ -684,7 +732,7 @@ pub(crate) unsafe fn resolve_binary(
     let a = numtype_of(types, lhs);
     let b = numtype_of(types, rhs);
     let nt = match (&a, &b) {
-        // No pointer arithmetic in the seed.
+        // A pointer step is built before this; any other pointer operand is refused.
         (Operand::Pointer(_), _) | (_, Operand::Pointer(_)) => {
             return Err(ParseError::UnsupportedOperands)
         }
@@ -752,6 +800,37 @@ pub(crate) unsafe fn type_identity_of(types: &Core, node: DyadPtr) -> Option<Dya
     } else {
         None
     }
+}
+
+/// What a node's run yields is a type's address: a type, a `type` box, a call
+/// of a `-> type` function, a `type (…)` built when it runs, a tape cell checked to hold a type.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn yields_type(types: &Core, node: DyadPtr) -> bool {
+    let ty = (*types.through(node)).ty;
+    if ty == types.held_type.held_type || ty == types.tape.cell_value {
+        return true;
+    }
+    match read::read_kind(types, node) {
+        read::Read::Identity => true,
+        read::Read::Container(c) => c == types.type_,
+        read::Read::Executable(read::Dispatch::Call(f)) => {
+            let fields = (*f).value as *const DyadPtr;
+            (*f).ty == types.fn_type
+                && !fields.is_null()
+                && *fields.add(crate::parse::FN_OUTPUT) == types.type_
+        }
+        _ => false,
+    }
+}
+
+/// A `-> type` call's argument the pass can run now: a type, or a literal.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn is_comptime_arg(types: &Core, node: DyadPtr) -> bool {
+    is_type_value(types, node) || matches!(numtype_of(types, node), Operand::Literal)
 }
 
 /// The display spelling of a type value; a type with no spelling of its own shows as `type`.
@@ -872,7 +951,7 @@ pub unsafe fn display_value(types: &Core, node: DyadPtr, bits: i64) -> String {
             let ty = (*node).ty;
             if ty.is_null() {
                 bits.to_string()
-            } else if held.is_null() {
+            } else if held.is_null() || held == types.unknown {
                 if ty == types.type_ { "type ?" } else { "dyad ?" }.to_string()
             } else if type_identity_of(types, held).is_some() {
                 type_name(types, held)
@@ -1020,12 +1099,7 @@ pub(crate) unsafe fn commit_call_args(
             }
             // A number into a `type` parameter would travel as an address.
             Some((read::Read::Container(t), _)) if t == types.type_ => {
-                let ok = match read::read_kind(types, *arg) {
-                    read::Read::Identity => true,
-                    read::Read::Container(c) => c == types.type_,
-                    _ => false,
-                };
-                if !ok {
+                if !yields_type(types, *arg) {
                     return Err(ParseError::TypeMismatch);
                 }
             }
@@ -1159,7 +1233,7 @@ unsafe fn commit_tail(
 /// `node` is a valid dyad from the store.
 unsafe fn check_type_tail(types: &Core, node: DyadPtr) -> Result<(), ParseError> {
     walk_tail(types, node, &mut |leaf| {
-        if is_type_value(types, leaf) {
+        if yields_type(types, leaf) {
             Ok(leaf)
         } else {
             Err(ParseError::TypeMismatch)

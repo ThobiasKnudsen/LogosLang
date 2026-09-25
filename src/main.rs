@@ -68,6 +68,7 @@ fn is_silent_type(core: &Core, logos: seed::dyad::DyadPtr) -> bool {
         || logos == core.compile_
         || logos == core.import_
         || logos == core.print.print
+        || logos == core.hashmap.put
 }
 
 /// Whether an imported file's tail prints nothing. Narrower than the REPL's
@@ -281,6 +282,8 @@ fn repl() -> ExitCode {
             let value = match parsed {
                 Ok(node) if line[end..].trim_start().is_empty() => {
                     // SAFETY: `node` was just parsed into the engine's store.
+                    unsafe { p.fill_if_sibling_write(node) };
+                    // SAFETY: as above.
                     Some(unsafe { p.value_of(node) })
                 }
                 _ => None,

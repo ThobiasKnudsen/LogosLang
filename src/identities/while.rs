@@ -1,7 +1,7 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `while ( cond ) ( body )`: the loop statement, the node `[cond, body]`,
+//! `while cond body`: the loop statement, the node `[cond, body]`,
 //! yielding unit. The surface parse lives in
 //! [`crate::parse::Parser::parse_while`]; here the identity, run, and lowering.
 

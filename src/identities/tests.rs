@@ -862,6 +862,147 @@ fn comparison_siblings_are_bool_conditions_for_if() {
 }
 
 #[test]
+fn an_if_needs_no_brackets_in_both_tiers() {
+    diff_nullary_fn("fn () -> i32 ( if 5 > 3 100 else 200 )", 100);
+    diff_nullary_fn("fn () -> i32 ( if 2 == 3 100 else if 3 == 3 300 else 200 )", 300);
+    diff_nullary_fn("fn () -> i32 ( if 2 == 3 (100) else if 3 > 4 (300) else 200 )", 200);
+    let chain = "fn (n := i32 ?) -> i32 ( if n > 2 7 else if n > 0 (1) else 0 )";
+    diff_typed_call(chain, "f(5)", 7);
+    diff_typed_call(chain, "f(1)", 1);
+    diff_typed_call(chain, "f(0)", 0);
+    diff_typed_call("fn (n := i32 ?) -> i32 ( if n > 2 return 7, n + 1 )", "f(5)", 7);
+    diff_typed_call("fn (n := i32 ?) -> i32 ( if n > 2 return 7, n + 1 )", "f(1)", 2);
+    let assign = "fn (n := i32 ?) -> i32 ( mut k := i32 0, if n > 2 k = 1 else k = 2, k )";
+    diff_typed_call(assign, "f(5)", 1);
+    diff_typed_call(assign, "f(1)", 2);
+    // A bare `else` binds to the nearest `if`.
+    diff_typed_call("fn (n := i32 ?) -> i32 ( if n > 0 if n > 5 1 else 2 else 3 )", "f(3)", 2);
+}
+
+#[test]
+fn an_if_condition_is_its_first_complete_expression() {
+    assert_eq!(run_script("mut m := type ?, m = ?, if m != ? (1) else (2)"), 2);
+    assert_eq!(run_script("mut m := type ?, m = i32, if m != ? 1 else 2"), 1);
+    // Right of a comparison a `(` is the body, though the identity could take it.
+    assert_eq!(run_script("x := i32 1, if x:type == scope (10) else (20)"), 20);
+    assert_eq!(run_script("x := i32 1, if x:type == i32 (10) else (20)"), 10);
+    assert_eq!(run_script("x := i32 1, p := &x, if p:type == @i32 (10) else (20)"), 10);
+    // A value word is still the type's, and a condition not yet complete keeps its `(`.
+    assert_eq!(run_script("x := i32 1, if x == i32 1 (10) else (20)"), 10);
+    assert_eq!(run_script("f := fn (a := i32 ?) -> i32 (a), if f(1) == 1 (10) else (20)"), 10);
+    assert_eq!(run_script("x := i32 1, if not (x == 2) (10) else (20)"), 10);
+    // The identity left of a `(` decides: a fn value takes it as its call, a type right of
+    // `+` as its conversion.
+    let f = "f := fn (a := i32 ?) -> i32 (a), ";
+    assert_eq!(run_script(&format!("{f}if 1 == f(1) (10) else (20)")), 10);
+    assert_eq!(run_script(&format!("{f}if 1 == f(2) (10) else (20)")), 20);
+    assert_eq!(run_script(&format!("{f}if 1 == (f(1)) (10) else (20)")), 10);
+    assert_eq!(run_script(&format!("{f}if 1 == f(2) 10 else if 2 == f(2) 30 else 20")), 30);
+    assert_eq!(run_script("x := i32 1, if x + i32 (1) == 2 (10) else (20)"), 10);
+    // Anything yielding a bool is a condition; a complete one that does not is refused.
+    let b = "b := fn (a := i32 ?) -> bool (a == 1), ";
+    assert_eq!(run_script(&format!("{b}if b(1) (10) else (20)")), 10);
+    assert_eq!(run_script(&format!("{b}if not b(2) 10 else 20")), 10);
+    assert_eq!(
+        script_parse_err(&format!("{f}if f(1) (10) else (20)")),
+        ParseError::NonBoolCondition
+    );
+    // Bare bodies on their own lines, as identities/array.logos writes them.
+    assert_eq!(run_script("x := i32 1,\nif not x:type == i32\n    error «not i32»,\n5"), 5);
+    assert!(run_script_result("x := i32 1,\nif x:type == i32\n    error «is i32»,\n5").is_err());
+    // A bare branch is a scope, as a bracket is.
+    assert!(matches!(script_parse_err("x := i32 1, if x == 1 y := 2, y"), ParseError::Resolve(_)));
+    assert_eq!(script_parse_err("if 1 == 1 else 2"), ParseError::Empty);
+}
+
+#[test]
+fn a_call_in_a_bare_condition_matches_between_tiers() {
+    let src = "f := fn (a := i32 ?) -> i32 (a),\n\
+        g := fn (x := i32 ?) -> i32 ( if 1 == f(x) (10) else if f(x) == 2 30 else (20) ),\n\
+        before := g(1) * 100 + g(2),\n\
+        g.compile(),\n\
+        before * 10000 + g(1) * 100 + g(2)";
+    assert_eq!(run_script(src), 10_30_10_30);
+}
+
+/// `≈` written in Logos, ranked with `==`: its record says it reads a left operand, and
+/// its node's function yields a bool.
+fn logos_comparison(field: &str, rank: &str) -> String {
+    format!(
+        "≈ := type (\n\
+            fields = (\n\
+                lhs := {field} ?,\n\
+                rhs := {field} ?,\n\
+                output := type ?,\n\
+                shared run = ( this.lhs == this.rhs )\n\
+            ),\n\
+            parse_rank = {rank},\n\
+            parse = (\n\
+                this.lhs = tape[-1],\n\
+                this.rhs = tape[1],\n\
+                this.output = bool,\n\
+                tape[0] = this,\n\
+                tape.is_constructed[0] = true,\n\
+                tape.remove(1),\n\
+                tape.remove(-1)\n\
+            )\n\
+        ),\n"
+    )
+}
+
+#[test]
+fn a_comparison_written_in_logos_ends_a_bare_condition() {
+    let eq = logos_comparison("i32", "==.parse_rank");
+    assert_eq!(run_script(&format!("{eq}x := i32 3, if x ≈ 3 (10) else (20)")), 10);
+    assert_eq!(run_script(&format!("{eq}x := i32 3, if x ≈ 4 10 else 20")), 20);
+    let g = "g := fn (y := i32 ?) -> i32 ( mut n := i32 0, while not n ≈ y n = n + 1, n ),\n";
+    assert_eq!(run_script(&format!("{eq}{g}before := g(4), g.compile(), before * 10 + g(4)")), 44);
+    let types = logos_comparison("type", "==.parse_rank");
+    assert_eq!(run_script(&format!("{types}x := i32 1, if x:type ≈ i32 (10) else (20)")), 10);
+    assert_eq!(run_script(&format!("{types}x := i32 1, if x:type ≈ scope (10) else (20)")), 20);
+}
+
+/// Where a condition's bool cannot be known before its operator is built: a type standing
+/// right of an infix ranked outside the comparisons takes the `(` after it, as right of `+`.
+#[test]
+fn a_type_right_of_an_infix_outside_the_comparisons_takes_its_bracket() {
+    let plus_ranked = logos_comparison("type", "+.parse_rank");
+    assert_eq!(
+        script_parse_err(&format!("{plus_ranked}x := i32 1, if x:type ≈ i32 (10) else (20)")),
+        ParseError::NonBoolCondition
+    );
+    assert_eq!(
+        run_script(&format!("{plus_ranked}x := i32 1, if (x:type ≈ i32) (10) else (20)")),
+        10
+    );
+}
+
+#[test]
+fn a_while_body_needs_no_brackets() {
+    assert_eq!(run_script("mut i := i32 0, while i < 5 i = i + 1, i"), 5);
+    assert_eq!(run_script("mut i := i32 0, while i < 5 (i = i + 1), i"), 5);
+    assert_eq!(run_script("mut i := i32 0, while (i < 5) (i = i + 1), i"), 5);
+    let f = "f := fn (a := i32 ?) -> i32 (a), ";
+    assert_eq!(run_script(&format!("{f}mut i := i32 0, while f(i) < 5 i = i + 1, i")), 5);
+    assert_eq!(run_script(&format!("{f}mut i := i32 0, while 5 > f(i) (i = i + 2), i")), 6);
+    // Nested, and a bare `while` as a bare `if` branch ending at the `else`.
+    assert_eq!(
+        run_script(
+            "mut i := i32 0, mut n := i32 0,\n\
+             while i < 3 (i = i + 1, mut j := i32 0, while j < 2 j = j + 1, n = n + j), n"
+        ),
+        6
+    );
+    assert_eq!(run_script("mut i := i32 0, if i == 0 while i < 3 i = i + 1 else i = 9, i"), 3);
+    assert_eq!(script_parse_err("while 1 2"), ParseError::NonBoolCondition);
+    diff_nullary_fn("fn () -> i32 ( mut i := i32 0, while i < 5 i = i + 1, i )", 5);
+    diff_nullary_fn(
+        "fn () -> i32 ( mut a := i32 0, mut i := i32 0, while i < 5 ( a = a + i, i = i + 1 ), a )",
+        10,
+    );
+}
+
+#[test]
 fn comparison_siblings_resolve_to_their_concrete_ops() {
     let (mut store, mut trie, core) = new_core();
 
@@ -1423,7 +1564,7 @@ fn for_loop_shapes_are_checked() {
     assert_eq!(parse_err("for i in 0..10..0 ( 1 )"), ParseError::BadStep);
     assert_eq!(parse_err("for i in 10..0..-1 ( 1 )"), ParseError::BadStep);
     assert_eq!(parse_err("fn () -> i32 ( for i in 0..3 ( 1 ) )"), ParseError::StatementAsValue);
-    assert_eq!(parse_err("fn () -> void ( for i in 0..3 ( return 1 ) )"), ParseError::EarlyReturn);
+    assert_eq!(parse_err("for i in 0..3 ( return 1 )"), ParseError::EarlyReturn);
     assert_eq!(parse_err("for i 0..3 ( 1 )"), ParseError::ExpectedIn);
     assert_eq!(parse_err("for i in 0 ( 1 )"), ParseError::ExpectedRange);
     assert_eq!(parse_err("fn () -> i32 ( for 0..3 ( 1 ) )"), ParseError::StatementAsValue);
@@ -1444,8 +1585,23 @@ fn a_while_loop_is_not_a_value() {
 }
 
 #[test]
-fn a_return_inside_a_while_body_is_rejected() {
-    assert_eq!(parse_err("fn () -> void ( while (1 < 2) (return 1) )"), ParseError::EarlyReturn);
+fn a_return_inside_a_loop_leaves_the_function() {
+    assert_eq!(parse_err("while (1 < 2) (return 1)"), ParseError::EarlyReturn);
+    diff_typed_call(
+        "fn (n := i32 ?) -> i32 ( mut k := i32 0, while (k < 100) ( k = k + 1, if (k == n) (return k * 2) ), 0 )",
+        "f(7)",
+        14,
+    );
+    diff_typed_call(
+        "fn (n := i32 ?) -> i32 ( for i in 0..n ( if (i == 3) (return i * 10) ), 0 - 1 )",
+        "f(9)",
+        30,
+    );
+    diff_typed_call(
+        "fn (n := i32 ?) -> i32 ( for i in 0..n ( if (i == 3) (return i * 10) ), 0 - 1 )",
+        "f(2)",
+        -1,
+    );
 }
 
 #[test]
@@ -1717,7 +1873,7 @@ fn record_pointer_fields_hold_addresses_both_tiers() {
 fn pointer_misuse_is_rejected() {
     assert_eq!(parse_err("( mut x := i32 1, x@ )"), ParseError::UnsupportedOperands);
     assert_eq!(
-        parse_err("( mut x := i32 1, mut p := &x, p + 1 )"),
+        parse_err("( mut x := i32 1, mut p := &x, p * 2 )"),
         ParseError::UnsupportedOperands
     );
     assert_eq!(parse_err("( mut x := i32 1, mut p := &x, p = 5 )"), ParseError::TypeMismatch);
@@ -1731,14 +1887,14 @@ fn a_compiled_store_into_a_node_box_takes_its_width_from_the_leaf() {
     for tail in ["", "f.compile(), "] {
         assert_eq!(
             run_script(&format!(
-                "mut a := type ?, f := fn () -> i32 ( a = i32, 5 ),\n{tail}f(), a == i32"
+                "mut a := type ?, a = f64, f := fn () -> i32 ( a = i32, 5 ),\n{tail}f(), a == i32"
             )),
             1,
             "type box, {tail:?}"
         );
         assert_eq!(
             run_script(&format!(
-                "mut a := dyad ?, f := fn () -> i32 ( a = f64, 5 ),\n{tail}f(), a == f64"
+                "mut a := dyad ?, a = i32, f := fn () -> i32 ( a = f64, 5 ),\n{tail}f(), a == f64"
             )),
             1,
             "dyad box, {tail:?}"
@@ -1864,23 +2020,51 @@ fn runaway_depth_is_a_checked_error_not_an_abort() {
 }
 
 #[test]
-fn a_read_or_write_through_the_hole_is_the_checked_error_both_tiers() {
-    use crate::run::RunError::NullPointer;
-    assert_eq!(run_script_result("p := @i32 ?, p@"), Err(NullPointer));
-    assert_eq!(run_script_result("p := @i32 ?, p@ = 5, 1"), Err(NullPointer));
+fn the_unknown_is_one_value_a_type_or_dyad_place_holds() {
+    assert_eq!(run_script("mut a := type ?, a = ?, a == ?"), 1);
+    assert_eq!(run_script("mut a := type ?, a = ?, a != ?"), 0);
+    assert_eq!(run_script("mut a := type ?, a = i32, a == ?"), 0);
+    assert_eq!(run_script("mut a := type ?, a = i32, a != ?"), 1);
+    assert_eq!(run_script("mut d := dyad ?, d = ?, d == ?"), 1);
+    assert_eq!(run_script("x := ?, x == ?"), 1);
+    assert_eq!(run_script("f := fn (t := type ?) -> bool ( t != ? ),\nf(i32)"), 1);
+    assert_eq!(run_script("f := fn (t := type ?) -> bool ( t != ? ),\nf(?)"), 0);
+    assert_eq!(run_script("mut m := type ?, m = ?, if (m != ?) (1) else (2)"), 2);
+    // A number place refuses it: the plain mismatch.
+    assert_eq!(script_parse_err("mut x := i32 5, x = ?"), ParseError::TypeMismatch);
+    assert_eq!(script_parse_err("x := i32 5, x == ?"), ParseError::UnsupportedOperands);
+}
 
+#[test]
+fn a_valueless_place_is_read_only_after_a_sibling_write() {
+    let unwritten = |name: &str| ParseError::Unwritten(Box::new(name.into()));
+    assert_eq!(script_parse_err("x := i32 ?, x"), unwritten("x"));
+    assert_eq!(script_parse_err("mut x := i32 ?, x = x + 1, x"), unwritten("x"));
+    assert_eq!(run_script("mut x := i32 ?, x = 4, x + 1"), 5);
+    assert_eq!(run_script("mut x := i32 ?, x:type == i32"), 1);
+    // A write nested in a group, an `if`, a loop or a `fn` body does not fill.
+    assert_eq!(script_parse_err("mut x := i32 ?, (x = 4), x"), unwritten("x"));
+    assert_eq!(script_parse_err("mut x := i32 ?, if (true) (x = 4), x"), unwritten("x"));
+    assert_eq!(script_parse_err("mut x := i32 ?, for 0..2 ( x = 1 ), x"), unwritten("x"));
     assert_eq!(
-        run_script_result("f := fn () -> i32 ( p := @i32 ?, p@ ), f.compile(), f()"),
-        Err(NullPointer)
+        script_parse_err("mut x := i32 ?, f := fn () -> i32 ( x = 4, 1 ), f(), x"),
+        unwritten("x")
     );
+    // Text position decides: a body read before the write is refused, one after passes.
     assert_eq!(
-        run_script_result("f := fn () -> i32 ( p := @i32 ?, p@ = 5, 1 ), f.compile(), f()"),
-        Err(NullPointer)
+        script_parse_err("mut x := i32 ?, g := fn () -> i32 ( x ), x = 1, g()"),
+        unwritten("x")
     );
-    assert_eq!(
-        run_script_result("f := fn () -> f64 ( p := @f64 ?, p@ ), f.compile(), f()"),
-        Err(NullPointer)
-    );
+    assert_eq!(run_script("mut x := i32 ?, x = 1, g := fn () -> i32 ( x ), g()"), 1);
+}
+
+#[test]
+fn a_read_or_write_through_an_unwritten_pointer_is_refused_at_parse() {
+    let unwritten = |name: &str| ParseError::Unwritten(Box::new(name.into()));
+    assert_eq!(script_parse_err("p := @i32 ?, p@"), unwritten("p"));
+    assert_eq!(script_parse_err("p := @i32 ?, p@ = 5, 1"), unwritten("p"));
+    assert_eq!(script_parse_err("f := fn () -> i32 ( p := @i32 ?, p@ ), f()"), unwritten("p"));
+    assert_eq!(script_parse_err("f := fn () -> f64 ( p := @f64 ?, p@ ), f()"), unwritten("p"));
 
     assert_eq!(run_script("c := i32 7, q := &c, q@"), 7);
     assert_eq!(
@@ -1893,6 +2077,36 @@ fn a_read_or_write_through_the_hole_is_the_checked_error_both_tiers() {
 fn address_of_a_parameter_works_both_tiers() {
     diff_typed_call("fn (a := i32 ?) -> i32 ( q := &a, q@ )", "f(7)", 7);
     diff_typed_call("fn (a := i32 ?) -> i32 ( q := &a, q@ = 5, a )", "f(7)", 5);
+}
+
+#[test]
+fn a_pointer_steps_by_whole_cells_both_tiers() {
+    // Cell k of the span `alloc n of T v` made is `(p + k)@`, for any cell width.
+    assert_eq!(
+        run_script("a := alloc 3 of i32 7, b := a + 1, b@ = 9, (a + 2)@ = 11, a@ + (a + 1)@ * 10 + (b + 1)@ * 100 + (b - 1)@ * 1000"),
+        8197
+    );
+    assert_eq!(
+        run_script("a := alloc 4 of i64 3, k := i32 3, (a + k)@ = 40, i := u8 1, (a + i)@ = 5, (a + 3)@ + (a + 1)@ + (a + 2)@"),
+        48
+    );
+    assert_eq!(
+        run_script("holder := logos (fields = (r := @i32 ?)), a := alloc 3 of i32 4, h := holder(a), (h.r + 2)@ = 8, (h.r + 2)@ + a@"),
+        12
+    );
+    let walk = "f := fn (p := @i32 ?, n := i32 ?) -> i32 ( for i in 0..n ( (p + i)@ = i * 10 ), mut s := i32 0, for i in 0..n ( s = s + (p + n - 1 - i)@ ), s )";
+    assert_eq!(run_script(&format!("{walk}, a := alloc 4 of i32 0, f(a, 4)")), 60);
+    assert_eq!(run_script(&format!("{walk}, f.compile(), a := alloc 4 of i32 0, f(a, 4)")), 60);
+}
+
+#[test]
+fn a_pointer_steps_only_by_an_integer_on_its_right() {
+    let defs = &["p := alloc 1 of i32 0", "q := alloc 1 of i32 0"];
+    assert_eq!(parse_err_after(defs, "p * 2"), ParseError::UnsupportedOperands);
+    assert_eq!(parse_err_after(defs, "p + q"), ParseError::UnsupportedOperands);
+    assert_eq!(parse_err_after(defs, "1 + p"), ParseError::UnsupportedOperands);
+    assert_eq!(parse_err_after(defs, "p + f64 1"), ParseError::UnsupportedOperands);
+    assert_eq!(parse_err_after(defs, "p + 1.5"), ParseError::UncomputableLiteral);
 }
 
 #[test]
@@ -1912,6 +2126,14 @@ fn run_script_result(src: &str) -> Result<i64, crate::run::RunError> {
     let mut rt = Runtime::new(&core, &mut store).with_compiler(&core.lower);
     // SAFETY: `root` is the sequence just parsed; its exprs are valid.
     unsafe { rt.run(root) }
+}
+
+fn script_parse_err(src: &str) -> ParseError {
+    let (mut store, mut trie, core) = new_core();
+    let mut scopes = ScopeStack::new();
+    scopes.push(core.root_scope);
+    let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes);
+    p.parse_sequence().unwrap_err()
 }
 
 fn run_script(src: &str) -> i64 {
@@ -1992,6 +2214,31 @@ fn a_node_of_a_run_type_runs_the_function_built_for_its_fields() {
 }
 
 #[test]
+fn a_parse_is_ranked_by_what_it_takes_from_its_right() {
+    let (mut store, mut trie, core) = new_core();
+    for def in [
+        "q := type ( fields = ( shared parse = ( tape.is_constructed[0] = true ) ), \
+         parse_rank = dyad.parse_rank, parse = ( tape.is_constructed[0] = true ) )",
+        "chooser := type ( parse_rank = fn.parse_rank, parse = ( tape.is_constructed[0] = true ) )",
+    ] {
+        let mut s = ScopeStack::new();
+        s.push(core.root_scope);
+        Parser::new(def, &mut store, &mut trie, &core, s).parse_expression().unwrap();
+    }
+    let [q, chooser] = ["q", "chooser"].map(|name| use_of(&mut store, &mut trie, &core, name));
+    // SAFETY: each is the binding of a type with a record head.
+    unsafe {
+        let [q, chooser] = [q, chooser].map(|b| Binding::read(b).dyad);
+        let apply = meta::parse_rank_of(core.dyad_);
+        assert_eq!(meta::parse_rank_of(q), apply);
+        // An unfilled `shared parse_rank` is application's.
+        assert_eq!(meta::instances_parse_rank_of(q), apply);
+        assert_eq!(meta::parse_rank_of(chooser), meta::parse_rank_of(core.fn_type));
+        assert!(meta::parse_rank_of(chooser) > apply);
+    }
+}
+
+#[test]
 fn a_node_of_a_run_type_compiles_as_a_call_of_its_function() {
     // Only the caller compiles; the node's function stays interpreted behind the boundary.
     assert_eq!(
@@ -2019,7 +2266,8 @@ fn a_body_slot_takes_a_bracket_and_a_run_type_has_no_place() {
         parse_err("t := type (parse = fn (tape := parsing_tape ?) -> void ( tape.recenter(0) ))"),
         ParseError::SlotNeedsBody(SlotKind::Parse)
     );
-    assert_eq!(parse_err_after(&[POW_TYPE], "p := pw ?"), ParseError::NonNumericDeclaredType);
+    // `pw` is an infix still waiting for its operands, not a type applied to `?`.
+    assert!(matches!(parse_err_after(&[POW_TYPE], "p := pw ?"), ParseError::ConstructorFailed(_)));
 }
 
 #[test]
@@ -2295,11 +2543,38 @@ fn block_local_declarations_do_not_leak() {
 }
 
 #[test]
-fn an_early_return_in_a_sequence_is_rejected() {
+fn an_early_return_leaves_the_function_and_outside_one_is_refused() {
     assert_eq!(parse_err("( return 1, 2 )"), ParseError::EarlyReturn);
+    diff_nullary_fn("fn () -> i32 ( if (true) (return 1) else (0), 2 )", 1);
+    diff_typed_call("fn (n := i32 ?) -> i32 ( if (n > 2) (return 7), n + 1 )", "f(5)", 7);
+    diff_typed_call("fn (n := i32 ?) -> i32 ( if (n > 2) (return 7), n + 1 )", "f(1)", 2);
+    // The literal commits to the declared result, as the tail's does.
+    diff_typed_call(
+        "fn (n := i64 ?) -> i64 ( if (n > 2) (return 5000000000), n )",
+        "f(3)",
+        5_000_000_000,
+    );
+    // Through a block bound to a name: the function is left, not the block.
+    diff_typed_call("fn (n := i32 ?) -> i32 ( x := ( return 5 ), x + 1 )", "f(0)", 5);
     assert_eq!(
-        parse_err("fn () -> i32 ( if (true) (return 1) else (0), 2 )"),
-        ParseError::EarlyReturn
+        parse_err("fn (n := i32 ?) -> type ( if (n > 2) (return 5), i32 )"),
+        ParseError::TypeMismatch
+    );
+}
+
+#[test]
+fn an_early_return_hands_out_no_place_a_scope_it_leaves_frees() {
+    assert_eq!(
+        parse_err("fn (n := i32 ?) -> i32 ( p := alloc 1 of i32 7, if (n > 2) (return p), 0 )"),
+        ParseError::OwningEscape
+    );
+    assert_eq!(
+        parse_err("fn (n := i32 ?) -> i32 ( ( p := alloc 1 of i32 7, if (n > 2) (return p) ), 0 )"),
+        ParseError::OwningEscape
+    );
+    assert_eq!(
+        parse_err("fn (n := i32 ?) -> i32 ( if (n > 2) (return alloc 1 of i32 7), 0 )"),
+        ParseError::OwnershipAcrossReturn
     );
 }
 
@@ -2427,7 +2702,7 @@ fn pub_gates_a_typed_declaration() {
     let decl = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        let mut p = Parser::new("pub x := i32 ?", &mut store, &mut trie, &core, s);
+        let mut p = Parser::new("pub x := i32 5", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
     // SAFETY: `decl` is the declare node just parsed.
@@ -2763,11 +3038,10 @@ fn recursion_with_a_local_accumulator_both_tiers() {
 
 #[test]
 fn recursion_with_a_typed_declaration_local_both_tiers() {
-    // An uninitialised local reads zero on entry on both tiers: the JIT zeroes the frame slot as the interpreter zeroes its buffer.
     // SAFETY: a self-contained recursive definition and literal calls.
     unsafe {
         assert_recursion_both_tiers(
-            &["f := fn (n := i32 ?) -> i32 ( mut a := i32 ?, a = a + n, if (n < 1) (a) else (f(n - 1), a) )"],
+            &["f := fn (n := i32 ?) -> i32 ( mut a := i32 ?, a = n, if (n < 1) (a) else (f(n - 1), a) )"],
             "f",
             &[(0, 0), (1, 1), (5, 5)],
         );

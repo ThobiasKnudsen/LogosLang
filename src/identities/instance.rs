@@ -19,7 +19,7 @@ use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
 /// `construct` has no spelling: the parser builds it from a record-typed callee.
-/// Returns the `construct` identity, its leaf, `.`, `index`, `[`, `]`.
+/// Returns the `construct` identity, its leaf, `.`, `square_brackets`, `[`, `]`.
 pub(super) fn register(
     cx: &mut Cx,
     cs: &Callables,
@@ -44,7 +44,7 @@ pub(super) fn register(
     cx.metas.insert(dot, |p, _id, tape| p.construct_field_access(tape));
 
     // `[` is `(` in square brackets: it parses its interior as any bracket's into a
-    // passive index cell the reads after `.` consume, or, after a tape, into the element read.
+    // `square_brackets` cell the reads after `.` consume, or, after a tape, into the element read.
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::OPEN);
     let open_sq = cx.store.alloc_raw(cx.type_, record);
     cx.declare(r"\[", open_sq);
@@ -57,11 +57,12 @@ pub(super) fn register(
         meta::TUPLE_TAG,
         meta::prec::INERT,
         crate::parse::Assoc::Left,
-        &["key", "op"],
+        &["dyads", "op"],
     );
-    let index_ = cx.store.alloc_raw(cx.type_, record);
+    let square_brackets = cx.store.alloc_raw(cx.type_, record);
+    cx.declare("square_brackets", square_brackets);
 
-    (construct, leaf, dot, index_, open_sq, close_sq)
+    (construct, leaf, dot, square_brackets, open_sq, close_sq)
 }
 
 /// `(type node, width tag, byte offset)` per field, and the total size.

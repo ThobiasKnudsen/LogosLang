@@ -5,6 +5,8 @@
 //! since a node's address is its id. Nothing is freed individually.
 //! DESIGN ›The store is keyed by address‹.
 
+use std::collections::HashMap;
+
 use crate::binding::Binding;
 use crate::dyad::{Dyad, DyadPtr};
 
@@ -13,7 +15,7 @@ use crate::dyad::{Dyad, DyadPtr};
 const CHUNK: usize = 4096;
 
 /// Dyads in fixed-capacity chunks, plus boxed side blobs (operand runs, literal
-/// bytes, bindings); every address handed out stays valid for the store's life.
+/// bytes, bindings, map tables); every address handed out stays valid for the store's life.
 #[derive(Default)]
 pub struct Store {
     chunks: Vec<Vec<Dyad>>,
@@ -22,11 +24,21 @@ pub struct Store {
     /// Boxed: a binding's address is handed out and must survive the vector's growth.
     #[allow(clippy::vec_box)]
     bindings: Vec<Box<Binding>>,
+    /// The `hashmap` native's tables, keyed and valued by `i64` bit-containers; boxed
+    /// for the same reason as `bindings`.
+    #[allow(clippy::vec_box)]
+    tables: Vec<Box<HashMap<i64, i64>>>,
 }
 
 impl Store {
     pub fn new() -> Self {
-        Store { chunks: Vec::new(), operands: Vec::new(), blobs: Vec::new(), bindings: Vec::new() }
+        Store {
+            chunks: Vec::new(),
+            operands: Vec::new(),
+            blobs: Vec::new(),
+            bindings: Vec::new(),
+            tables: Vec::new(),
+        }
     }
 
     pub fn alloc(&mut self, dyad: Dyad) -> DyadPtr {
@@ -86,6 +98,13 @@ impl Store {
         let mut boxed: Box<[u8]> = bytes.into();
         let ptr = boxed.as_mut_ptr();
         self.blobs.push(boxed);
+        ptr
+    }
+
+    pub fn alloc_table(&mut self) -> *mut HashMap<i64, i64> {
+        let mut boxed = Box::default();
+        let ptr: *mut HashMap<i64, i64> = &mut *boxed;
+        self.tables.push(boxed);
         ptr
     }
 

@@ -137,6 +137,10 @@ fn build_op(
             if let Some(folded) = rational::fold_arith(store, types, a, lhs, rhs)? {
                 return Ok(folded);
             }
+            // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
+            if let Some(node) = unsafe { pointer_step(store, types, op, a, lhs, rhs) }? {
+                return Ok(node);
+            }
             let leaf = types.ops.rational_arith_leaf(a);
             // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
             if let Some(slots) = unsafe { rational_slots(store, types, lhs, rhs, leaf) }? {
@@ -173,6 +177,51 @@ fn build_op(
     };
     let value = store.alloc_operands(&slots);
     Ok(store.alloc_raw(op, value))
+}
+
+/// `p + k` and `p - k` on an `@T` step k whole cells: the node is `[p, k * width, i64 op]`,
+/// the scaling written into the graph as an `i64` product. `None` when `lhs` is no pointer.
+/// DESIGN ›A pointer steps by whole cells‹.
+///
+/// # Safety
+/// `lhs`/`rhs` are reduced dyads from the store.
+unsafe fn pointer_step(
+    store: &mut Store,
+    types: &Core,
+    op: DyadPtr,
+    a: ArithOp,
+    lhs: DyadPtr,
+    rhs: DyadPtr,
+) -> Result<Option<DyadPtr>, ParseError> {
+    let super::Operand::Pointer(pointee) = super::numtype_of(types, lhs) else {
+        return Ok(None);
+    };
+    if !matches!(a, ArithOp::Add | ArithOp::Sub) {
+        return Err(ParseError::UnsupportedOperands);
+    }
+    let (_, width) =
+        super::read::place_layout(types, pointee).ok_or(ParseError::UnsupportedOperands)?;
+    let i64_ty = types.numtypes[NumType::I64 as usize];
+    let offset = match super::numtype_of(types, rhs) {
+        super::Operand::Literal => {
+            let k = rational::mold_to(types.through(rhs), NumType::I64)
+                .ok_or(ParseError::UncomputableLiteral)?;
+            let bytes = k.checked_mul(width as i64).ok_or(ParseError::UncomputableLiteral)?;
+            let value = store.alloc_bytes(&bytes.to_ne_bytes());
+            store.alloc_raw(i64_ty, value)
+        }
+        super::Operand::Concrete(nt) if !nt.is_float() => {
+            let k = super::build_cast(store, types, i64_ty, &[rhs])?;
+            let value = store.alloc_bytes(&(width as i64).to_ne_bytes());
+            let w = store.alloc_raw(i64_ty, value);
+            let value =
+                store.alloc_operands(&[k, w, types.ops.arith_leaf(ArithOp::Mul, NumType::I64)]);
+            store.alloc_raw(types.times, value)
+        }
+        _ => return Err(ParseError::UnsupportedOperands),
+    };
+    let value = store.alloc_operands(&[lhs, offset, types.ops.arith_leaf(a, NumType::I64)]);
+    Ok(Some(store.alloc_raw(op, value)))
 }
 
 /// When either side is a rational value, the other must be one too or a literal (boxed);
@@ -215,11 +264,18 @@ fn build_identity_compare(
         let truth = if matches!(c, CmpOp::Eq) { same } else { !same };
         return Some(bool_mod::literal_node(store, types.bool_, truth));
     }
-    let addressed = |k: Read| matches!(k, Read::Identity | Read::Container(_) | Read::Address);
+    // A tape cell's `:type` is read at run, and it yields the type's address.
+    let addressed = |n: DyadPtr, k: Read| {
+        matches!(k, Read::Identity | Read::Container(_) | Read::Address)
+            // SAFETY: as above.
+            || unsafe { (*types.through(n)).ty == types.tape.cell_type }
+            // SAFETY: as above.
+            || unsafe { super::yields_type(types, n) }
+    };
     // SAFETY: as above.
     let pointer =
         |n: DyadPtr| unsafe { matches!(super::numtype_of(types, n), super::Operand::Pointer(_)) };
-    if (addressed(l) && addressed(r)) || (pointer(lhs) && pointer(rhs)) {
+    if (addressed(lhs, l) && addressed(rhs, r)) || (pointer(lhs) && pointer(rhs)) {
         let value = store.alloc_operands(&[lhs, rhs, types.ops.cmp_leaf(c, NumType::I64)]);
         return Some(store.alloc_raw(op, value));
     }
