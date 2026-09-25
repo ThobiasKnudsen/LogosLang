@@ -195,12 +195,8 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         let Some(exprs) = exprs_of(node) else {
             return Err(CompileError::EmptyScope);
         };
-        let mut last = None;
-        for &expr in exprs {
-            if !super::numtype::is_comment_type((*expr).ty) {
-                last = Some(lw.lower(expr)?);
-            }
-        }
-        last.ok_or(CompileError::EmptyScope)
+        let lines: Vec<DyadPtr> =
+            exprs.iter().copied().filter(|&e| !super::numtype::is_comment_type((*e).ty)).collect();
+        lw.lower_with_teardowns(&lines)?.ok_or(CompileError::EmptyScope)
     }
 }

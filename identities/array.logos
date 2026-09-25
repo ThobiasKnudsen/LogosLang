@@ -12,7 +12,7 @@ get_mint := fn (t := type ?) -> type (
     mint = type (
         fields = (
             shared element_type := t,
-            mut ptr := @element_type ?,
+            mut ptr := own @element_type ?,
             mut size := u64 0,
             mut capacity := u64 0,
             shared size_bytes := fn () -> u64 (this.size * this.element_type.size_bytes),
@@ -33,7 +33,7 @@ get_mint := fn (t := type ?) -> type (
             shared fill := fn (elements) -> this:type (
                 this.size = elements.dyads.size,
                 this.capacity = next_power_of_two(this.size),
-                this.ptr = alloc this.capacity of this.element_type ?,
+                this.ptr = mut alloc this.capacity of this.element_type ?,
                 for i in 0..this.size (
                     if not (elements.dyads[i]:type ⊆ this.element_type)
                         error «an element does not fit the element type»,

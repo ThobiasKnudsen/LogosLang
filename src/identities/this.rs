@@ -173,6 +173,18 @@ unsafe fn slot_of(
     Ok((slots.add(k as usize), k as usize))
 }
 
+/// The node the slot `read` reaches holds, `None` while the slot is unwritten.
+///
+/// # Safety
+/// `read` must be a node `is_field_read` accepts, over a `this` that holds a node.
+pub(crate) unsafe fn field_node(
+    rt: &mut Runtime,
+    read: DyadPtr,
+) -> Result<Option<DyadPtr>, RunError> {
+    let (slot, _) = slot_of(rt, (*read).value as *const DyadPtr)?;
+    Ok((!(*slot).is_null()).then_some(*slot))
+}
+
 fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a slot node from the store; `this` holds a node with a slot per field.
     unsafe {

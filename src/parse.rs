@@ -1041,6 +1041,8 @@ struct OpenType {
     instances_ctor: DyadPtr,
     instances_rank: f64,
     instances_assoc: Assoc,
+    /// From a `shared drop = (…)` line: the `fn` over `this` an owner's teardown runs.
+    instances_drop: DyadPtr,
     /// The type node being defined, its record written at the close: what `this:type` names.
     self_type: DyadPtr,
 }
@@ -1148,7 +1150,7 @@ pub enum ParseError {
     PerNodeThroughType(String),
     /// `shared lex_rank` or a nested `fields` in the block.
     FieldsSlotNotInSeed,
-    /// A `drop = …` fill, on a bare line or in the block.
+    /// A bare `drop = …` line: the type's own drop, not its instances'.
     DropSlotNotInSeed,
     /// A slot word inside the fields block without `shared`.
     FieldsSlotNeedsShared,
@@ -1335,14 +1337,19 @@ pub enum ParseError {
     /// the binding site (DESIGN ›Explicit heap, and no implicit destruction‹),
     /// so it would leak. Fail-closed until ownership-gated parameters.
     UnboundOwningValue,
-    /// A scope's value is a bare owning place: the inserted `defer free` runs
-    /// at exit, so the value handed out is already freed; `own x` is how
-    /// ownership leaves a scope.
+    /// A `return` hands out a place a scope it leaves owns: the teardowns run on
+    /// the way out, so the value would already be freed. A last value moves out instead.
     OwningEscape,
-    /// A function body hands ownership out through its return: a plain `@T`
-    /// carries no destructor, so the caller could not know it owes a `free`.
-    /// Fail-closed until a return type can declare the transfer.
+    /// A `return` hands out an owning value, which only a last value moves out to the caller.
     OwnershipAcrossReturn,
+    /// `own b` where `b` borrows the node it names: only the owner can move it.
+    MoveOfBorrow,
+    /// `own` in a type position over something other than a pointer hole, `own @T ?`.
+    OwnNeedsPointer,
+    /// A fields block with an `own` field and no `shared drop = (…)` to free it.
+    OwningFieldNeedsDrop,
+    /// `own @T ?` on a parameter, which would consume the caller's argument.
+    OwnParameterNotInSeed,
     /// An `own` or `drop` inside a loop or `fn` body names a place declared
     /// outside it: the loop would read a dead name on its next pass, and a
     /// function may own only what its parameters hand it (DESIGN ›Memory and concurrency‹).
@@ -2871,6 +2878,17 @@ impl<'a> Parser<'a> {
             } else {
                 std::ptr::null_mut()
             };
+            // An `own` parameter consumes its argument, which no call does yet.
+            // SAFETY: `logos` is null or a type node.
+            let owning = !logos.is_null()
+                && unsafe {
+                    crate::identities::numtype::is_pointer_type(logos)
+                        && !crate::identities::meta::destructor_of(logos).is_null()
+                };
+            if !relaxed && owning {
+                self.pos = start;
+                return Err(ParseError::OwnParameterNotInSeed);
+            }
             let field = self.rt.store.alloc_raw(logos, default);
             // The field's name is not stored on the record: declaring it puts
             // a binding in the one name index (DESIGN ›Name resolution is scope-filtered‹).
@@ -3049,6 +3067,7 @@ impl<'a> Parser<'a> {
             instances_ctor: std::ptr::null_mut(),
             instances_rank: crate::identities::meta::prec::APPLY,
             instances_assoc: Assoc::Left,
+            instances_drop: std::ptr::null_mut(),
             self_type,
         });
         // A `fn` literal on a slot's right side must not claim the enclosing
@@ -3118,6 +3137,24 @@ impl<'a> Parser<'a> {
         }
         if !def.instances_ctor.is_null() && def.ctor.is_null() {
             return Err(ParseError::InstancesParseNeedsOwnParse);
+        }
+        // A type whose fields own what they point to writes the teardown that frees it
+        // (DESIGN ›Explicit heap, and no implicit destruction‹).
+        // SAFETY: `fields` is the block's array node, its items field dyads typed null or by a type node.
+        let owning_field = unsafe {
+            crate::identities::array::items(fields).iter().any(|&f| {
+                let ty = (*f).ty;
+                !ty.is_null()
+                    && crate::identities::numtype::is_pointer_type(ty)
+                    && !crate::identities::meta::destructor_of(ty).is_null()
+            })
+        };
+        if owning_field && def.instances_drop.is_null() {
+            return Err(ParseError::OwningFieldNeedsDrop);
+        }
+        if !def.instances_drop.is_null() {
+            // SAFETY: `node` was just built with a record layout; the drop is the fill's fn.
+            unsafe { crate::identities::meta::install_instances_drop(node, def.instances_drop) };
         }
         // SAFETY: `node` was just built with a record layout; the ctor is null or the fill's fn.
         unsafe {
@@ -3376,11 +3413,11 @@ impl<'a> Parser<'a> {
     ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
         // Inside the fields block the slots are the instances', and a type has
-        // no run of its own; the instances' drop, and a type's own drop on a
-        // bare line, are not in the seed yet (stand-in for #133).
+        // no run of its own; a type's own drop on a bare line is not in the seed yet.
         let in_block = self.definitions.last().expect("slot_of found an open definition").in_block;
         match kind {
-            SlotKind::Drop => return Err(ParseError::DropSlotNotInSeed),
+            SlotKind::Drop if !in_block => return Err(ParseError::DropSlotNotInSeed),
+            SlotKind::Drop => return Err(ParseError::SlotNeedsBody(kind)),
             SlotKind::Run if !in_block => return Err(ParseError::NoOwnRun),
             SlotKind::Parse | SlotKind::Run => return Err(ParseError::SlotNeedsBody(kind)),
             SlotKind::LexRank if in_block => return Err(ParseError::FieldsSlotNotInSeed),
@@ -3512,16 +3549,22 @@ impl<'a> Parser<'a> {
                 Ok(self.slot_declare(SlotKind::Run, target, body))
             }
             SlotKind::Drop if in_block => {
-                // Held as its text and never built or run: the instances' drop is
-                // not in the seed yet (stand-in for #133).
-                let (start, len) = self.body_text_extent()?;
-                let source = self.source;
-                let text = crate::identities::string::build_text(
-                    self.rt.store,
-                    types.string_,
-                    &source.as_bytes()[start - 1..start + len + 1],
-                );
-                Ok(self.slot_declare(SlotKind::Drop, target, text))
+                // One name, `this`, the instance an owner's teardown hands in.
+                let at = self.pos;
+                let (input, params) =
+                    self.hidden_param_record(&[(Some("this"), types.dyad_)], at)?;
+                let def = self.definitions.last_mut().expect("checked above");
+                def.this_param = params[0];
+                self.this_types.insert(params[0], def.self_type);
+                // SAFETY: `input` was just built, its parameter unplaced; no declaration's placeholder is being filled.
+                let f = unsafe {
+                    self.fn_over_body(types.fn_type, input, types.void_, std::ptr::null_mut())
+                };
+                let def = self.definitions.last_mut().expect("checked above");
+                def.this_param = std::ptr::null_mut();
+                def.instances_drop = f?;
+                let f = def.instances_drop;
+                Ok(self.slot_declare(SlotKind::Drop, target, f))
             }
             SlotKind::Drop => Err(ParseError::DropSlotNotInSeed),
             _ => unreachable!("`=` reads a bare body for `parse`, `run` and `drop` only"),
@@ -4123,10 +4166,6 @@ impl<'a> Parser<'a> {
         self.runtime_depth -= 1;
         self.scopes.pop();
         self.scopes.pop_barrier();
-        // SAFETY: `body` is the reduced dyad just parsed.
-        if unsafe { crate::identities::drop_model::is_owning_value(self.types, body) } {
-            return Err(ParseError::OwnershipAcrossReturn);
-        }
         let OpenFn { size: frame_size, outer, returns, .. } =
             self.frames.pop().expect("parse_fn pushed a frame");
 
@@ -5271,31 +5310,43 @@ impl<'a> Parser<'a> {
         let Some(&cell) = tape.at(1) else {
             return Err(ParseError::MissingOperand);
         };
-        let (node, ended) = if cell.constructed {
+        // A name whose instances' `parse` woke it stands constructed and still holds its binding.
+        // SAFETY: a cell's dyad is null or a dyad from the store.
+        let woke = cell.constructed
+            && !cell.dyad.is_null()
+            && unsafe { (*cell.dyad).ty } == self.types.binding_;
+        let (node, ended) = if cell.constructed && !woke {
             (cell.dyad, None)
         } else {
-            let r = match self.scopes.resolve(self.trie, cell.spelling()) {
-                Ok(r) => r,
-                Err(e) => {
-                    self.pos = cell.start;
-                    return Err(ParseError::Resolve(e));
+            let (identity, binding, scope) = if woke {
+                // SAFETY: checked above to be a binding dyad.
+                let b = unsafe { Binding::read(cell.dyad) };
+                (b.dyad, cell.dyad, b.scope)
+            } else {
+                let r = match self.scopes.resolve(self.trie, cell.spelling()) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        self.pos = cell.start;
+                        return Err(ParseError::Resolve(e));
+                    }
+                };
+                if self.ctor_of(r.identity).is_some() {
+                    return Err(ParseError::MissingOperand);
                 }
+                (r.identity, r.binding, r.scope)
             };
-            if self.ctor_of(r.identity).is_some() {
-                return Err(ParseError::MissingOperand);
-            }
             let ended = if ends_name {
-                if self.scopes.crosses_barrier(r.scope) {
+                if self.scopes.crosses_barrier(scope) {
                     self.pos = cell.start;
                     return Err(ParseError::OwnOfOuterName);
                 }
-                Some(Ended { binding: r.binding })
+                Some(Ended { binding })
             } else {
                 None
             };
-            self.check_made(r.binding)?;
-            self.note_outer_read(r.binding);
-            (r.identity, ended)
+            self.check_made(binding)?;
+            self.note_outer_read(binding);
+            (identity, ended)
         };
         // SAFETY: `node` is a resolved dyad from the store.
         unsafe {
@@ -5438,6 +5489,51 @@ impl<'a> Parser<'a> {
 
     /// `node` has emptied `ended`'s place: its name is dead from here on
     /// (DESIGN ›Memory and concurrency‹).
+    /// Whether `d` is the place a `?` built and no declaration has taken yet.
+    pub(crate) fn is_hole(&self, d: DyadPtr) -> bool {
+        self.holes.contains(&d)
+    }
+
+    /// Whether the name owns the node it holds: its binding site inserted the teardown
+    /// that runs the node's instances' `drop`, and its binding carries `own`.
+    ///
+    /// # Safety
+    /// `binding` must be a binding dyad from the store.
+    pub(crate) unsafe fn owns_node(&self, binding: DyadPtr) -> bool {
+        Binding::has_gate(binding, self.types.own_)
+    }
+
+    /// The binding site of a node whose type fills the instances' `drop`: the name owns
+    /// it, and `defer drop <place>` goes into the scope where the ownership lands (DESIGN
+    /// ›Explicit heap, and no implicit destruction‹).
+    ///
+    /// # Safety
+    /// `binding` must be the binding dyad being declared, `place` its node place, `drop`
+    /// the instances' `drop` of the place's type.
+    unsafe fn own_node(&mut self, binding: DyadPtr, place: DyadPtr, drop: DyadPtr) {
+        Binding::add_gate(self.rt.store, self.types.array_, binding, self.types.own_);
+        let teardown = crate::identities::drop_model::build_instance_drop(
+            self.rt.store,
+            self.types,
+            place,
+            drop,
+        );
+        let defer_node =
+            crate::identities::drop_model::build_defer(self.rt.store, self.types, teardown);
+        let scope = self.teardown_scope();
+        self.open[scope].defers.push(defer_node);
+    }
+
+    /// Where a binding's teardown goes: its own scope, or the root for a `shared` place,
+    /// which lives as long as the program.
+    fn teardown_scope(&self) -> usize {
+        if self.shared_init == Some(self.frames.len()) {
+            0
+        } else {
+            self.open.len() - 1
+        }
+    }
+
     pub(crate) fn mark_dead(&mut self, ended: Ended, node: DyadPtr) {
         // SAFETY: `ended.binding` is the binding the resolver returned for the operand.
         unsafe { self.scopes.mark_dead(ended.binding, node) };
@@ -5668,22 +5764,50 @@ impl<'a> Parser<'a> {
                         return Err(ParseError::EarlyReturn);
                     }
                 }
-                // Ownership must not escape as this scope's value: the
-                // teardown frees the place on the way out. Only places this
-                // scope frees are checked; an enclosing scope's owning place is an ordinary borrow.
+                // A last value that is a place this scope owns moves out to
+                // whoever takes the value, so the teardown on the way out finds
+                // it empty; a `return` of one would hand out freed memory. Only
+                // places this scope frees count; an enclosing scope's owning place is an ordinary borrow.
                 // SAFETY: `exprs[tail]` is a reduced dyad just parsed.
-                let tail_value = unsafe {
+                let (tail_value, returned) = unsafe {
                     let t = exprs[tail];
                     // `return x` yields `x`, so the escape rides its operand.
                     if (*t).ty == types.return_ && !(*t).value.is_null() {
-                        *((*t).value as *const DyadPtr)
+                        (*((*t).value as *const DyadPtr), true)
                     } else {
-                        t
+                        (t, false)
                     }
                 };
                 // SAFETY: `tail_value` is a reduced dyad from the store.
-                if owned_here.contains(&unsafe { types.through(tail_value) }) {
-                    return Err(ParseError::OwningEscape);
+                let place = unsafe { types.through(tail_value) };
+                if owned_here.contains(&place) {
+                    if returned {
+                        return Err(ParseError::OwningEscape);
+                    }
+                    // SAFETY: `place` is a place this scope's binding site minted, and
+                    // `tail` indexes the scope's own lines, which nothing else reads yet.
+                    unsafe {
+                        let moved = if crate::identities::drop_model::is_owning_place(place) {
+                            crate::identities::drop_model::build_teardown(
+                                self.rt.store,
+                                types,
+                                types.own_,
+                                place,
+                                true,
+                            )?
+                        } else {
+                            crate::identities::drop_model::build_instance_own(
+                                self.rt.store,
+                                types,
+                                place,
+                                (*place).ty,
+                            )
+                        };
+                        let (_, lines) = crate::identities::array::parts(
+                            crate::identities::scope::exprs_array(scope),
+                        );
+                        *(lines as *mut DyadPtr).add(tail) = moved;
+                    }
                 }
                 // SAFETY: `scope` was minted by `open_scope` above and is unaliased.
                 unsafe {
@@ -6020,6 +6144,23 @@ impl<'a> Parser<'a> {
                 // a sibling write fills it. A hashmap's zeroed place is already
                 // its empty map, so nothing is unknown to refuse.
                 self.scopes.rebind(binding, value);
+                // `a := own @T ?`: the owner of whatever block is written into it later.
+                if crate::identities::drop_model::is_owning_place(value) {
+                    let free_node = crate::identities::drop_model::build_teardown(
+                        self.rt.store,
+                        self.types,
+                        self.types.free_,
+                        value,
+                        true,
+                    )?;
+                    let defer_node = crate::identities::drop_model::build_defer(
+                        self.rt.store,
+                        self.types,
+                        free_node,
+                    );
+                    let scope = self.teardown_scope();
+                    self.open[scope].defers.push(defer_node);
+                }
                 if !crate::identities::hashmap::is_hashmap(self.types, (*value).ty) {
                     Binding::add_gate(
                         self.rt.store,
@@ -6055,10 +6196,15 @@ impl<'a> Parser<'a> {
                         != crate::identities::read::Read::Node
                 })
             {
-                // A node a Logos `parse` builds is held by its address: `b := a` shares it.
+                // A node a Logos `parse` builds is held by its address: `b := a` borrows it,
+                // and a value just made or moved makes the name its owner.
                 let place = self.alloc_local(t, 8);
                 let init = crate::identities::build_init(self.rt.store, self.types, place, value)?;
                 self.scopes.rebind(binding, place);
+                let drop = crate::identities::meta::instances_drop_of(t);
+                if !drop.is_null() && crate::identities::drop_model::moves_out(self.types, value) {
+                    self.own_node(binding, place, drop);
+                }
                 init
             } else if crate::identities::drop_model::is_owning_value(self.types, value) {
                 // An owning value lands in a place here, the one site that
@@ -6090,12 +6236,7 @@ impl<'a> Parser<'a> {
                     self.types,
                     free_node,
                 );
-                // A shared place lives as long as the program, so the root frees it.
-                let scope = if self.shared_init == Some(self.frames.len()) {
-                    0
-                } else {
-                    self.open.len() - 1
-                };
+                let scope = self.teardown_scope();
                 self.open[scope].defers.push(defer_node);
                 init
             } else if (*read).ty != self.types.rational

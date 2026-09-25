@@ -63,7 +63,7 @@ fn construct(
         tape.place(node);
         return Ok(crate::parse::Constructed::Placed);
     }
-    // A `fn …` right of `parse`/`run` is still read as an expression: stand-in for #133.
+    // Anything but a bracket right of a body slot is `slot_fill`'s checked error.
     if matches!(
         slot,
         Some(
@@ -83,6 +83,16 @@ fn construct(
         unsafe { p.slot_fill(kind, target, value) }?
     } else {
         let types = p.types();
+        // An owner takes only what hands ownership over: a borrow stored there would be
+        // torn down by two owners.
+        // SAFETY: `target` and `value` are reduced dyads from the store.
+        if unsafe {
+            (*target).ty == types.binding_
+                && p.owns_node(target)
+                && !super::drop_model::moves_out(types, value)
+        } {
+            return Err(ParseError::NonOwningIntoOwning);
+        }
         let node = build(p.store(), types, id, target, value)?;
         p.note_write(node);
         node

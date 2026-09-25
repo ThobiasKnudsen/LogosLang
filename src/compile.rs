@@ -134,6 +134,8 @@ pub struct Lowerer<'a, 'f> {
     ret: Option<NumType>,
     /// The call-depth counter the epilogue counts this call out of.
     depth_addr: Value,
+    /// Scopes being lowered whose exit runs teardowns, which a `return` would jump past.
+    teardowns: usize,
 }
 
 impl Lowerer<'_, '_> {
@@ -297,6 +299,34 @@ impl Lowerer<'_, '_> {
         let addr = self.place_addr_raw(node)?;
         self.store_at(ct, addr, 0, v);
         Ok(())
+    }
+
+    /// Lower `lines`, a scope's body, then its `defer`s' inners in reverse, as the scope's run
+    /// does at exit; the value is the last line's that is no `defer`.
+    ///
+    /// # Safety
+    /// `lines` must be reduced dyads from the store, none of them prose.
+    pub(crate) unsafe fn lower_with_teardowns(
+        &mut self,
+        lines: &[DyadPtr],
+    ) -> Result<Option<Value>, CompileError> {
+        let defer_ = self.types.defer_;
+        let defers: Vec<DyadPtr> = lines.iter().copied().filter(|&e| (*e).ty == defer_).collect();
+        let held = usize::from(!defers.is_empty());
+        self.teardowns += held;
+        let mut last = Ok(None);
+        for &line in lines.iter().filter(|&&e| (*e).ty != defer_) {
+            last = self.lower(line).map(Some);
+            if last.is_err() {
+                break;
+            }
+        }
+        self.teardowns -= held;
+        let last = last?;
+        for &d in defers.iter().rev() {
+            self.lower(crate::identities::drop_model::deferred_inner_of(d))?;
+        }
+        Ok(last)
     }
 
     /// The core handles, for an identity's lowering to reach the op-leaf table.
@@ -789,6 +819,9 @@ impl Lowerer<'_, '_> {
     /// # Safety
     /// `value` must be a valid dyad from the store.
     pub unsafe fn lower_return(&mut self, value: DyadPtr) -> Result<Value, CompileError> {
+        if self.teardowns > 0 {
+            return Err(CompileError::NotLowerable(value));
+        }
         let v = self.lower(value)?;
         let ret64 = match self.ret {
             Some(nt) => widen_to_i64(self.builder, v, nt),
@@ -1213,6 +1246,7 @@ unsafe fn build_pass(
                 promoted: &promoted,
                 ret,
                 depth_addr,
+                teardowns: 0,
             };
             lw.lower(root)?
         };

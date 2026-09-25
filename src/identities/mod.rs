@@ -303,6 +303,8 @@ impl Core {
         op_leaves.alloc_ = dm.alloc_leaf;
         op_leaves.own_ = dm.own_leaf;
         op_leaves.drop_ = dm.drop_leaf;
+        op_leaves.instance_drop_ = dm.instance_drop_leaf;
+        op_leaves.field_free_ = dm.field_free_leaf;
         op_leaves.teardown_ = dm.teardown_leaf;
         op_leaves.defer_ = dm.defer_leaf;
         let (alloc_, own_, drop_, free_, defer_, of_) =
@@ -840,6 +842,11 @@ pub(crate) unsafe fn node_type_of(types: &Core, node: DyadPtr) -> Option<DyadPtr
     let node = types.through(node);
     if (*node).ty == types.ran_ {
         return node_type_of(types, ran::expr_of(types, node));
+    }
+    // A move of a node yields the node; its pointee slot carries the node's type.
+    if (*node).ty == types.own_ {
+        let ty = *((*node).value as *const DyadPtr).add(1);
+        return meta::is_node_valued(ty, types.fn_type).then_some(ty);
     }
     let ty = match read::read_kind(types, node) {
         read::Read::Node => (*node).ty,

@@ -50,8 +50,9 @@ pub(crate) const CONVENTION_TAG: u8 = 21;
 pub(crate) const ARRAY_TAG: u8 = 22;
 /// A record type node's record: payload `[scope: @dyad][fields: @dyad][size_bytes: u64]
 /// [body: @dyad]`, locked at definition; `body` is null where the type has none. Then the
-/// instances' parse trio: `[parse: @dyad][parse_rank: f64][associativity: u8]`, 49 bytes in
-/// all; `parse` is null where the fields block fills none.
+/// instances' parse trio: `[parse: @dyad][parse_rank: f64][associativity: u8]`, and the
+/// instances' `[drop: @dyad]`, 57 bytes in all; `parse` and `drop` are null where the fields
+/// block fills none.
 pub(crate) const RECORD_TAG: u8 = 23;
 /// Values are dyad views: the value IS the viewed node's address.
 pub(crate) const DYAD_TAG: u8 = 24;
@@ -172,6 +173,7 @@ pub(crate) fn record_layout(
     blob.extend_from_slice(&0usize.to_ne_bytes());
     blob.extend_from_slice(&prec::APPLY.to_ne_bytes());
     blob.push(0);
+    blob.extend_from_slice(&0usize.to_ne_bytes());
     store.alloc_bytes(&blob)
 }
 
@@ -206,6 +208,7 @@ pub(crate) unsafe fn record_body_of(id: DyadPtr) -> DyadPtr {
 const INSTANCES_PARSE_OFF: usize = PAYLOAD_OFF + 32;
 const INSTANCES_RANK_OFF: usize = PAYLOAD_OFF + 40;
 const INSTANCES_ASSOC_OFF: usize = PAYLOAD_OFF + 48;
+const INSTANCES_DROP_OFF: usize = PAYLOAD_OFF + 49;
 
 /// The `fn` a `shared parse = (…)` line filled, woken when an instance stands on the tape;
 /// null where the fields block fills none.
@@ -245,6 +248,21 @@ pub(crate) unsafe fn install_instances_parse(
     std::ptr::write_unaligned(v.add(INSTANCES_PARSE_OFF) as *mut DyadPtr, parse);
     std::ptr::write_unaligned(v.add(INSTANCES_RANK_OFF) as *mut f64, parse_rank);
     *v.add(INSTANCES_ASSOC_OFF) = u8::from(assoc == Assoc::Right);
+}
+
+/// The `fn` a `shared drop = (…)` line filled, over the one parameter `this`; null where
+/// the fields block fills none.
+///
+/// # Safety
+/// As `record_scope_of`.
+pub(crate) unsafe fn instances_drop_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned((*id).value.add(INSTANCES_DROP_OFF) as *const DyadPtr)
+}
+
+/// # Safety
+/// `id` must carry a `RECORD_TAG` record; `drop` must be null or a `fn` node from the store.
+pub(crate) unsafe fn install_instances_drop(id: DyadPtr, drop: DyadPtr) {
+    std::ptr::write_unaligned((*id).value.add(INSTANCES_DROP_OFF) as *mut DyadPtr, drop);
 }
 
 fn header(kind: u8, assoc: Assoc, parse_rank: f64) -> [u8; PAYLOAD_OFF] {

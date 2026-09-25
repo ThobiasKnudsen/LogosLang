@@ -206,6 +206,9 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::SlotNeedsBody(SlotKind::Parse) => {
             "`parse` is a bare body over the tape, `parse = (…)`".into()
         }
+        ParseError::SlotNeedsBody(SlotKind::Drop) => {
+            "`drop` is a bare body over the instance, `shared drop = (…)`".into()
+        }
         ParseError::SlotNeedsBody(_) => {
             "`run` is a bare body over the instance's fields, `shared run = (…)`".into()
         }
@@ -237,7 +240,7 @@ pub fn parse_message(e: &ParseError) -> String {
             "`{name}` is a place in each node, not stored with the type: read it through a node"
         ),
         ParseError::FieldsSlotNotInSeed => {
-            "inside `fields = (…)` a `shared` line fills `run`, `parse`, `parse_rank` or `associativity`; a nested `fields` is not in the seed yet (#133), and `lex_rank` is a name's, not the instances'".into()
+            "inside `fields = (…)` a `shared` line fills `run`, `parse`, `parse_rank` or `associativity`; a nested `fields` is not in the seed yet, and `lex_rank` is a name's, not the instances'".into()
         }
         ParseError::InstancesParseNeedsOwnParse => {
             "the instances' `parse` reads an instance its type's own `parse` built: fill `parse = (…)` on a bare line of the body too; an instance built by applying the type is not in the seed here".into()
@@ -245,7 +248,9 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::MemberNeedsNode => {
             "a `fn` of the fields block is called on a node its type's own `parse` built; a record built by applying the type is not in the seed here (#149)".into()
         }
-        ParseError::DropSlotNotInSeed => "the `drop` slot is not in the seed yet (#133)".into(),
+        ParseError::DropSlotNotInSeed => {
+            "a type's own `drop` is not in the seed yet; its instances' is `shared drop = (…)` inside `fields = (…)`".into()
+        }
         ParseError::FieldsSlotNeedsShared => {
             "a slot fill inside `fields = (…)` is written `shared run = (…)`; an unmarked fill would be a per-instance default, not in the seed".into()
         }
@@ -274,15 +279,28 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::OwningEscape => {
-            "this scope's value is a place it owns, so the value would be freed \
-             on the way out; hand ownership over with `own`"
+            "this `return` hands out a place a scope it leaves owns, so the value would be \
+             freed on the way out; make it the function's last value, which moves out"
                 .into()
         }
         ParseError::OwnershipAcrossReturn => {
-            "a function cannot hand ownership out through its return yet: the \
-             return logos cannot say it transfers ownership, so the caller would \
-             not know it owes a `free`; allocate in the caller and pass a pointer in"
+            "a `return` cannot hand ownership out yet; make it the function's last value, \
+             which moves out to the caller"
                 .into()
+        }
+        ParseError::MoveOfBorrow => {
+            "this name borrows what it holds, so it cannot move it; only its owner can".into()
+        }
+        ParseError::OwnNeedsPointer => {
+            "`own` in a type is written over a pointer hole, `own @T ?`".into()
+        }
+        ParseError::OwningFieldNeedsDrop => {
+            "a field declared `own` must be freed by the type's `shared drop = (…)`, which this \
+             fields block does not fill"
+                .into()
+        }
+        ParseError::OwnParameterNotInSeed => {
+            "an `own` parameter, which takes its argument's ownership, is not in the seed yet".into()
         }
         ParseError::OwnOfOuterName => {
             "own or drop of a name declared outside this loop or function body: \

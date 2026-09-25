@@ -315,10 +315,11 @@ fn the_array_fills_its_elements_when_the_program_runs() {
         ("x := i32 4, y := i32 5, a := array i32 [x, y, 3], a[0] + a[1]", "9"),
         ("x := i32 5, y := i32 6, b := array i32 (x, y, 3), b[0] + b[1] + b[2]", "14"),
         ("g := fn (x := i32 ?) -> i32 ( c := array i32 (x, x + 1), c[1] ), g(7)", "8"),
-        // Each run makes its own array: the second does not overwrite the first.
+        // Each run makes its own array: the second does not overwrite the first. An owner
+        // takes a new array or a moved one, never a borrow of one the loop's end frees.
         (
             "mut first := array i32 (0, 0), mut second := array i32 (0, 0), \
-             for i in 0..2 ( c := array i32 (i, 10), if i == 0 ( first = c ) else ( second = c ) ), \
+             for i in 0..2 ( if i == 0 ( first = array i32 (i, 10) ) else ( second = array i32 (i, 10) ) ), \
              first[0] + second[0] * 10",
             "10",
         ),
@@ -895,7 +896,8 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"t := type (fields = (shared associativity = 5))\n", "`left` or `right`"),
         (b"t := type (fields = (shared parse = ( tape.recenter(0) )))\n", "type's own `parse`"),
         (b"t := type (fields = (shared fields = (a := i32 ?)))\n", "nested `fields`"),
-        (b"t := type (fields = (shared drop = 5))\n", "`drop` slot"),
+        (b"t := type (fields = (shared drop = 5))\n", "`shared drop = (…)`"),
+        (b"t := type (drop = ( 1 ))\n", "a type's own `drop`"),
         (b"t := type (parse = ( this.a = tape[-1] ))\n", "declares none"),
         (b"t := type (fields = (a := ?), parse = ( this.b = tape[-1] ))\n", "no field `b`"),
         (
@@ -2435,15 +2437,112 @@ fn a_function_in_a_fields_block_reads_this() {
 }
 
 #[test]
-fn the_instances_drop_body_is_accepted_and_held() {
-    // stand-in for #133: the body is kept unbuilt and nothing runs it yet.
+fn a_drop_body_fills_the_instances_slot_and_a_type_s_own_is_refused() {
     let (code, stdout, stderr) =
-        run_line("x := type ( fields = ( n := u64 ?, shared drop = ( free this.n ) ) ), 1");
+        run_line("x := type ( fields = ( n := u64 ?, shared drop = ( print «gone» ) ) ), 1");
     assert_eq!((code, stdout.as_str()), (Some(0), "1\n"), "stderr: {stderr}");
-    for src in ["x := type ( drop = ( 1 ) ), 1", "x := type ( fields = ( shared drop = 5 ) ), 1"] {
+    for (src, expect) in [
+        ("x := type ( drop = ( 1 ) ), 1", "a type's own `drop` is not in the seed yet"),
+        ("x := type ( fields = ( shared drop = 5 ) ), 1", "`shared drop = (…)`"),
+        ("x := type ( fields = ( mut p := own @i32 ? ) ), 1", "must be freed by the type's"),
+        ("x := type ( fields = ( p := own i32 ? ) ), 1", "over a pointer hole"),
+    ] {
         let (code, _, stderr) = run_line(src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
-        assert!(stderr.contains("not in the seed yet"), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+}
+
+/// A collection like the array whose instances' `drop` prints `drop` before it frees, so a
+/// run shows each teardown.
+const BOX: &str = "make_box := fn () -> type ( type ( \
+    fields = ( \
+        mut p := own @i32 ?, \
+        mut size := u64 0, \
+        shared fill := fn (elements) -> this:type ( \
+            this.size = elements.dyads.size, \
+            this.p = mut alloc this.size of i32 ?, \
+            for i in 0..this.size ( \
+                if not (elements.dyads[i]:type ⊆ i32) error «not an i32», \
+                (this.p + i)@ = elements.dyads[i] \
+            ), \
+            this \
+        ), \
+        shared drop = ( print «drop», free this.p ) \
+    ), \
+    parse_rank = dyad.parse_rank, \
+    associativity = left, \
+    parse = ( \
+        if tape[1]:type == scope ( tape[0] = this.fill(tape[1]), tape.remove(1) ), \
+        tape.is_constructed[0] = true \
+    ) \
+) ), box := make_box()";
+
+#[test]
+fn the_owner_s_scope_end_runs_the_instances_drop_once() {
+    for (tail, printed) in [
+        // Made in a function and not returned: freed as the call ends, each call its own.
+        (
+            "f := fn () -> i32 ( a := box (6, 1), 3 ), print «before», f(), f(), print «after»",
+            "before\ndrop\ndrop\nafter\n",
+        ),
+        (
+            "f := fn () -> i32 ( a := box (6, 1), 3 ), f.compile(), print «before», f(), print «after»",
+            "before\ndrop\nafter\n",
+        ),
+        // The last value moves out: the caller's name is the owner.
+        (
+            "mk := fn () -> box ( a := box (9, 1), a ), \
+             g := fn () -> i32 ( m := mk(), print «got», (m.p + 0)@ ), g(), print «after»",
+            "got\ndrop\nafter\n",
+        ),
+        ("mk := fn () -> box ( box (9, 1) ), m := mk(), print «got»", "got\ndrop\n"),
+        // A borrow frees nothing: one drop, by the owner.
+        ("a := box (5, 1), b := a, print «borrowed»", "borrowed\ndrop\n"),
+        (
+            "a := box (5, 1), f := fn (q := box ?) -> i32 ( (q.p + 0)@ ), f(a), print «after»",
+            "after\ndrop\n",
+        ),
+        ("a := box (7, 1), b := own a, print «moved»", "moved\ndrop\n"),
+        // An early `drop` tears down now, and the scope end finds nothing left.
+        ("a := box (7, 1), drop a, print «after»", "drop\nafter\n"),
+        // A returned borrow is no owner: the callee's own array is freed as it returns.
+        ("mk := fn () -> box ( a := box (9, 1), b := a, b ), m := mk(), print «got»", "drop\ngot\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{BOX}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert!(stdout.starts_with(printed), "{tail}: stdout: {stdout}");
+        assert_eq!(stdout.matches("drop").count(), printed.matches("drop").count(), "{tail}");
+    }
+    for (tail, expect) in [
+        ("a := box (7, 1), drop a, a", "`a` is dead here"),
+        ("a := box (7, 1), b := a, c := own b", "only its owner can"),
+        ("mut a := box (7, 1), b := box (8, 1), a = b", "what is assigned must own too"),
+    ] {
+        let (code, _, stderr) = run_line(&format!("{BOX}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn an_array_is_freed_by_its_owner_and_a_borrow_outliving_it_reads_nothing() {
+    let array = "import ./identities/array.logos, a := array i32 (1, 2, 3)";
+    for (tail, printed) in
+        [("drop a, 5", "5"), ("b := a, f := fn (p := array i32 ?) -> i32 ( p[1] ), f(b)", "2")]
+    {
+        let (code, stdout, stderr) = run_line(&format!("{array}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout.trim(), printed, "{tail}");
+    }
+    // Until the borrow checker, a borrow may outlive its owner; the drop emptied the
+    // array's pointer, so the read is refused rather than reaching freed memory.
+    for (tail, expect) in
+        [("drop a, a[0]", "`a` is dead here"), ("b := a, drop a, b[0]", "holds nothing")]
+    {
+        let (code, _, stderr) = run_line(&format!("{array}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
     }
 }
 

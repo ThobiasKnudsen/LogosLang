@@ -7,7 +7,8 @@
 //! text order. Unmarked stays private and unwritable, so there is no
 //! `private` word to write; `immut` vetoes the one write a field gets by
 //! default, its constructor's fill. `shared` is read by the fields block's own reader,
-//! and anywhere else by the declaration's own constructor.
+//! and anywhere else by the declaration's own constructor. `mut alloc …` is the
+//! allocation that may be written through.
 //! DESIGN ›Read and write are one mechanism across the system‹
 
 use super::{meta, Cx};
@@ -61,6 +62,13 @@ fn construct(
 ) -> Result<Constructed, ParseError> {
     let inner = p.take_right(tape)?;
     let types = p.types();
+    // `mut alloc …` gives a pointer that may be written through; it carries no mark, since
+    // no write through `@` is checked yet: stand-in for #33.
+    // SAFETY: `inner` is a reduced dyad just parsed.
+    if id == types.mut_ && unsafe { (*inner).ty } == types.alloc_ {
+        tape.place(inner);
+        return Ok(Constructed::Placed);
+    }
     // SAFETY: `inner` is a reduced dyad just parsed.
     if unsafe { (*inner).ty } != types.declare_ {
         return Err(ParseError::GateNeedsDeclaration);
