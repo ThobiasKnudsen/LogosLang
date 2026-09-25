@@ -136,6 +136,11 @@ pub(super) fn build(
         // SAFETY: `lhs_d` is a tape cell read, `rhs` a reduced dyad.
         return Ok(unsafe { super::tape::build_write(store, types, lhs_d, rhs) });
     }
+    // SAFETY: `lhs_d` is a reduced dyad from the store.
+    if unsafe { super::tape::is_line_read(types, lhs_d) } {
+        // SAFETY: `lhs_d` is a line read of a tape cell, `rhs` a reduced dyad.
+        return Ok(unsafe { super::tape::build_line_write(store, types, lhs_d, rhs) });
+    }
     if lhs_ty == types.hashmap.get {
         // SAFETY: `lhs_d` is a get node, `rhs` a reduced dyad.
         return unsafe { super::hashmap::build_put(store, types, lhs_d, rhs) };

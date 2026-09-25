@@ -1830,6 +1830,7 @@ impl<'a> Parser<'a> {
             parser: (self as *mut Self).cast(),
             lex_on: Self::lex_on,
             mint: Self::mint_host,
+            construct: Self::construct_host,
         };
         // SAFETY: `node` is a valid dyad in the store (the caller's contract).
         self.rt.hosting(&self.scopes, self.trie, Some(host), |rt| unsafe { rt.run(node) })
@@ -1844,6 +1845,32 @@ impl<'a> Parser<'a> {
     unsafe fn mint_host(parser: *mut (), node: DyadPtr) -> Result<i64, crate::run::RunError> {
         let p = &mut *parser.cast::<Self>();
         p.construct_held_type(node).map(|ty| ty as i64)
+    }
+
+    /// The runtime's way back into the parser running it: construct `ty` applied to `value`
+    /// on a tape of their two cells, as the driver constructs a segment (DESIGN ›The
+    /// scope's constructor is the driver‹).
+    ///
+    /// # Safety
+    /// As `mint_host`; `ty` a type node and `value` a dyad from the store.
+    unsafe fn construct_host(
+        parser: *mut (),
+        ty: DyadPtr,
+        value: DyadPtr,
+    ) -> Result<i64, crate::run::RunError> {
+        let p = &mut *parser.cast::<Self>();
+        let types = p.types;
+        let mut head = Cell::built(ty);
+        head.constructed = false;
+        let mut arg = Cell::built(value);
+        arg.bracket = (*value).ty == types.scope || (*value).ty == types.square_brackets;
+        let mut tape = ParsingTape::new();
+        tape.push(head);
+        tape.push(arg);
+        tape.center = tape.head;
+        tape.sealed = true;
+        let built = p.construct_segment(&mut tape).and_then(|items| p.one_of(items));
+        built.map(|d| d as i64).map_err(|e| crate::run::RunError::Parse(Box::new(e)))
     }
 
     /// The root scope's exit: the top level's teardowns, LIFO. The file
@@ -2026,7 +2053,12 @@ impl<'a> Parser<'a> {
             // SAFETY: every pending item is a dyad this parser built into its store, which outlives the pass.
             unsafe {
                 let ty = (*node).ty;
-                if crate::identities::numtype::is_comment_type(ty) || ty == self.types.defer_ {
+                // A `[…]` line is a list that goes whole to the call that takes it, which
+                // evaluates its lines when it runs (DESIGN ›A bracket goes to the call whole‹).
+                if crate::identities::numtype::is_comment_type(ty)
+                    || ty == self.types.defer_
+                    || ty == self.types.square_brackets
+                {
                     continue;
                 }
                 let bits = self.run_on_pass(node).map_err(ParseError::Run)?;

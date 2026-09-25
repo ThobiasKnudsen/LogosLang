@@ -369,6 +369,9 @@ pub(crate) struct Host {
     /// Builds a held `type (…)` when its node runs, yielding the new type's address.
     /// DESIGN ›A type is a comptime value, resolved in the pass‹.
     pub(crate) mint: unsafe fn(*mut (), DyadPtr) -> Result<i64, RunError>,
+    /// Constructs the two cells `T v`, the type unbuilt and the value built, as the driver
+    /// constructs a segment, yielding the one node they come to.
+    pub(crate) construct: unsafe fn(*mut (), DyadPtr, DyadPtr) -> Result<i64, RunError>,
 }
 
 /// Puts back the lexer a [`Runtime::hosting`] call found, by return or by unwinding.
@@ -434,6 +437,22 @@ impl<'a> Runtime<'a> {
         // `hosting` for exactly this call; `ctor_tape` is the tape it handed the running
         // constructor, alive until that constructor's run returns.
         (host.lex_on)(host.parser, tape, k).map_err(|e| RunError::Parse(Box::new(e)))
+    }
+
+    /// Construct `ty` applied to `value` through the parser running the pass.
+    ///
+    /// # Safety
+    /// `ty` must be a type node and `value` a dyad, both from the store.
+    pub(crate) unsafe fn construct_on_pass(
+        &mut self,
+        ty: DyadPtr,
+        value: DyadPtr,
+    ) -> Result<i64, RunError> {
+        let Some(host) = self.lexer.and_then(|l| l.host) else {
+            return Err(RunError::NoParser);
+        };
+        // SAFETY: as `mint_held`.
+        (host.construct)(host.parser, ty, value)
     }
 
     /// Build the held `type (…)` `node` through the parser running the pass.

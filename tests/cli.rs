@@ -2640,6 +2640,60 @@ fn a_chooser_takes_the_type_the_chooser_right_of_it_leaves() {
 }
 
 #[test]
+fn a_nested_list_builds_each_element_with_the_element_type() {
+    let array = "import ./identities/array.logos";
+    for (tail, printed) in [
+        ("a := array array i32 [[1, 2], [3, 4]], a[1][0]", "3"),
+        ("a := array array i32 [[1, 2], [3, 4]], a[0][1] + a[1][1]", "6"),
+        ("a := array array i32 [[1, 2], [3, 4]], a.size", "2"),
+        ("a := array array i32 [[1, 2], [3, 4, 5]], a[1].size", "3"),
+        ("a := array array i32 [[1, 2], [3, 4]], a[0][1] = i32 9, a[0][1] + a[1][0]", "12"),
+        ("a := array (array i32) [[1, 2], [3, 4]], a[1][1]", "4"),
+        ("a := array array array i32 [[[1]], [[2, 3]]], a[1][0][1]", "3"),
+        ("x := i32 5, a := array array i32 [[x, 2], [3, x]], a[1][1]", "5"),
+        ("x := array i32 [7], a := array array i32 [[1], own x], a[1][0]", "7"),
+        (
+            "mk := fn () -> array array i32 ( array array i32 [[1, 2], [3, 4]] ), \
+             m := mk(), m[1][0]",
+            "3",
+        ),
+        (
+            "mk := fn (v := i32 ?) -> array array i32 ( array array i32 [[v, 2], [3, v + 1]] ), \
+             m := mk(4), n := mk(6), m[1][1] + n[1][1]",
+            "12",
+        ),
+        (
+            "mk := fn (v := i32 ?) -> array array i32 ( array array i32 [[v, 2], [3, v + 1]] ), \
+             mk.compile(), m := mk(4), m[1][1]",
+            "5",
+        ),
+        (
+            "f := fn (v := i32 ?) -> i32 ( a := array array i32 [[v, 2], [3, v + 1]], a[1][1] ), \
+             f.compile(), f(4)",
+            "5",
+        ),
+        (
+            "mut s := i32 0, for i in 0..3 ( a := array array i32 [[i], [i * 2]], \
+             s = s + a[0][0] + a[1][0] ), s",
+            "9",
+        ),
+        ("mk := fn () -> array array i32 ( array array i32 [[1, 2], [3, 4]] ), mk()[1][1]", "4"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{array}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout.trim(), printed, "{tail}");
+    }
+    for (tail, expect) in [
+        ("a := array array i32 [[1, 2], 3]", "an element does not fit the element type"),
+        ("a := array array i32 [(1, 2)]", "the list is written in square brackets"),
+    ] {
+        let (code, _, stderr) = run_line(&format!("{array}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn the_outer_array_s_drop_drops_each_element_once() {
     let array = "import ./identities/array.logos";
     for (tail, printed) in [
@@ -2656,6 +2710,15 @@ fn the_outer_array_s_drop_drops_each_element_once() {
         ),
         ("x := box (1, 2), a := array box [own x], print «made»", "made\ndrop\n"),
         ("a := array box [box (5, 6)], drop a, print «after»", "drop\nafter\n"),
+        (
+            "a := array array box [[box (1, 2)], [box (3, 4), box (5, 6)]], print «made»",
+            "made\ndrop\ndrop\ndrop\n",
+        ),
+        (
+            "f := fn () -> i32 ( a := array array box [[box (1, 2)], [box (3, 4)]], 1 ), \
+             f(), f(), print «after»",
+            "drop\ndrop\ndrop\ndrop\nafter\n",
+        ),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{array}, {BOX}, {tail}"));
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");

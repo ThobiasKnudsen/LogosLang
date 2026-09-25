@@ -598,6 +598,9 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     if logos == types.tape.cell_value {
         return Operand::NonNumeric;
     }
+    if logos == types.tape.construct {
+        return Operand::Pointer(types.dyad_);
+    }
     if logos == types.tape.cell_number {
         // SAFETY: a checked number read's fourth operand is the number type it was checked against.
         return Operand::Concrete(unsafe {

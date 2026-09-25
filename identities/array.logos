@@ -74,6 +74,9 @@ get_mint := fn (t := type ?) -> type (
                 error «the list is written in square brackets, `array i32 [1, 2]`, not `array i32 (1, 2)`»,
             if tape[1]:type == square_brackets (
                 for i in 0..tape[1].dyads.size (
+                    # A bracket line is built by the element type (DESIGN ›Each element is built by the element type‹).
+                    if tape[1].dyads[i]:type == square_brackets or tape[1].dyads[i]:type == scope
+                        tape[1].dyads[i] = tape.construct(this.element_type, tape[1].dyads[i]),
                     if not (tape[1].dyads[i]:type ⊆ this.element_type)
                         error «an element does not fit the element type»
                 ),

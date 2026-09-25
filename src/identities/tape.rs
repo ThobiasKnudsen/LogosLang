@@ -77,6 +77,12 @@ pub struct TapeIds {
     pub bracket_arg_leaf: DyadPtr,
     /// What a read gets where the tape reaches no cell: a `void` node, already constructed.
     pub nothing: DyadPtr,
+    /// `t.construct(T, v)`: `[tape, type, value, op]`, the node `T v` constructs to.
+    pub construct: DyadPtr,
+    pub construct_leaf: DyadPtr,
+    /// `t[k].dyads[i] = v`: `[tape, k, i, line, op]`, the bracket cell's line replaced.
+    pub line_write: DyadPtr,
+    pub line_write_leaf: DyadPtr,
 }
 
 /// The members are declared in the type's own scope, where `.` resolves them; the
@@ -137,6 +143,8 @@ pub(super) fn register(
     let (cell_dyad_at, cell_dyad_at_leaf) = op(cx, &["tape", "k", "i", "op"], run_cell_dyad_at);
     let (placed_call, placed_call_leaf) = op(cx, &["call", "op"], run_placed_call);
     let (bracket_arg, bracket_arg_leaf) = op(cx, &["bracket", "op"], run_bracket_arg);
+    let (construct, construct_leaf) = op(cx, &["tape", "type", "value", "op"], run_construct);
+    let (line_write, line_write_leaf) = op(cx, &["tape", "k", "i", "line", "op"], run_line_write);
     cx.lower.insert(bracket_arg, lower_bracket_arg);
     let nothing = cx.store.alloc_raw(void_ty, std::ptr::null_mut());
     for (name, id) in [
@@ -145,6 +153,7 @@ pub(super) fn register(
         ("insert", insert),
         ("remove", remove),
         ("recenter", recenter),
+        ("construct", construct),
     ] {
         cx.declare_in(scope, name, id);
     }
@@ -187,6 +196,10 @@ pub(super) fn register(
         bracket_arg,
         bracket_arg_leaf,
         nothing,
+        construct,
+        construct_leaf,
+        line_write,
+        line_write_leaf,
     }
 }
 
@@ -197,6 +210,7 @@ pub(crate) fn member(ids: &TapeIds, name: &str) -> Option<(DyadPtr, DyadPtr)> {
         "insert" => Some((ids.insert, ids.insert_leaf)),
         "remove" => Some((ids.remove, ids.remove_leaf)),
         "recenter" => Some((ids.recenter, ids.recenter_leaf)),
+        "construct" => Some((ids.construct, ids.construct_leaf)),
         _ => None,
     }
 }
@@ -352,6 +366,15 @@ pub(crate) unsafe fn is_cell_read(types: &Core, node: DyadPtr) -> bool {
     (*node).ty == types.tape.slot || (*node).ty == types.tape.cell_value
 }
 
+/// `t[k].dyads[i]` over the running constructor's tape, the target of a line write; a held
+/// bracket's line read carries no cell index.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn is_line_read(types: &Core, node: DyadPtr) -> bool {
+    (*node).ty == types.tape.cell_dyad_at && !slot_parts(node).1.is_null()
+}
+
 /// Which line of a cell a read names: none, a literal index, or the place an index is
 /// read from, one name in the check and the read naming one line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -448,6 +471,22 @@ pub(crate) unsafe fn build_cell_dyad_at(
     node(store, types.tape.cell_dyad_at, types.tape.cell_dyad_at_leaf, &[recv, k, i])
 }
 
+/// `t[k].dyads[i] = v`: the line replaced by the node `v` yields.
+///
+/// # Safety
+/// `line` must be a line node from `build_cell_dyad_at`; `value` a reduced dyad.
+pub(crate) unsafe fn build_line_write(
+    store: &mut Store,
+    types: &Core,
+    line: DyadPtr,
+    value: DyadPtr,
+) -> DyadPtr {
+    let ops = (*line).value as *const DyadPtr;
+    let (recv, k, i) = (*ops, *ops.add(1), *ops.add(2));
+    let value = cell_arg(store, types, value);
+    node(store, types.tape.line_write, types.tape.line_write_leaf, &[recv, k, i, value])
+}
+
 /// `flag` is a bool, checked by `=`.
 ///
 /// # Safety
@@ -476,6 +515,12 @@ pub(crate) unsafe fn build_member(
     args: &[DyadPtr],
 ) -> Result<DyadPtr, ParseError> {
     let ids = &types.tape;
+    if op == ids.construct {
+        let [ty, value] = args[..] else {
+            return Err(ParseError::CtorArity);
+        };
+        return Ok(node(store, op, leaf, &[recv, ty, value]));
+    }
     if op == ids.insert {
         let [k, cells] = args[..] else {
             return Err(ParseError::CtorArity);
@@ -593,6 +638,39 @@ fn run_insert(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         }
         let cells = (*frag).cells();
         (*tape).splice(k, cells);
+        Ok(0)
+    }
+}
+
+/// The type and the value are both nodes, each running to its address.
+fn run_construct(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
+    unsafe {
+        let ops = (*node).value as *const DyadPtr;
+        tape_of(rt, *ops)?;
+        let ty = rt.run(*ops.add(1))? as DyadPtr;
+        let ty = rt.through(ty);
+        let value = rt.run(*ops.add(2))? as DyadPtr;
+        let value = rt.through(value);
+        if !super::is_type_value(rt.types(), ty) {
+            return Err(RunError::CellNotAType);
+        }
+        rt.construct_on_pass(ty, value)
+    }
+}
+
+fn run_line_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
+    unsafe {
+        let ops = (*node).value as *const DyadPtr;
+        let cell = scope_cell(rt, ops)?;
+        let i = rt.run(*ops.add(2))?;
+        let line = rt.run(*ops.add(3))? as DyadPtr;
+        let lines = super::scope::exprs_of(cell).unwrap_or(&[]);
+        let Some(at) = usize::try_from(i).ok().filter(|&at| at < lines.len()) else {
+            return Err(RunError::PastEnd { index: i, size: lines.len() });
+        };
+        (lines.as_ptr() as *mut DyadPtr).add(at).write(line);
         Ok(0)
     }
 }

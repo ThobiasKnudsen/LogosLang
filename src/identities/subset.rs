@@ -65,7 +65,8 @@ unsafe fn type_valued(types: &Core, n: DyadPtr, k: Read) -> bool {
         || (*types.through(n)).ty == types.tape.cell_type
 }
 
-/// `None` where DESIGN leaves the answer open: two different types unless both are integers.
+/// `None` where DESIGN leaves the answer open: two different types unless both are integers,
+/// or one is a type a Logos `parse` builds, whose values are its own nodes alone.
 ///
 /// # Safety
 /// `a` and `b` are null or dyads from the store.
@@ -76,6 +77,11 @@ unsafe fn includes(types: &Core, a: DyadPtr, b: DyadPtr) -> Option<bool> {
     }
     if a == b {
         return Some(true);
+    }
+    if super::meta::is_node_valued(a, types.fn_type)
+        || super::meta::is_node_valued(b, types.fn_type)
+    {
+        return Some(false);
     }
     let integer = |t: DyadPtr| {
         let nt = types.numtypes.iter().position(|&n| n == t)? as u8;
