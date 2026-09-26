@@ -10,16 +10,45 @@
 # is lexed once here and constructed once per set of field types a ^ node is built
 # with, so `^` over i32 and over f64 is this one definition. A field read such as
 # (a ^ b).lhs walks into the node and runs nothing.
+#
+# A whole exponent multiplies, a negative one divides; any other exponent goes
+# through exp and ln, written here too. A float on either side, or a fraction as
+# the exponent, makes the result a float.
+
+# ln(m * 2^k) = ln(m) + k ln 2 with m in [1, 2), and ln(m) = 2 atanh((m - 1) / (m + 1)).
+ln := fn (x := f64 ?) -> f64 (
+    mut m := x,
+    mut k := f64 0.0,
+    while m >= 2.0 ( m = m / 2.0, k = k + 1.0 ),
+    while m < 1.0 ( m = m * 2.0, k = k - 1.0 ),
+    t := (m - 1.0) / (m + 1.0),
+    t2 := t * t,
+    mut term := t,
+    mut sum := f64 0.0,
+    mut n := f64 1.0,
+    while n < 60.0 ( sum = sum + term / n, term = term * t2, n = n + 2.0 ),
+    2.0 * sum + k * 0.6931471805599453
+),
+
+# exp(k ln 2 + r) = 2^k exp(r), with |r| < ln 2 so the series is short.
+exp := fn (y := f64 ?) -> f64 (
+    k := i64(y / 0.6931471805599453),
+    r := y - f64(k) * 0.6931471805599453,
+    mut term := f64 1.0,
+    mut sum := f64 1.0,
+    mut n := f64 1.0,
+    while n < 30.0 ( 
+        term = term * r / n, sum = sum + term, n = n + 1.0 ),
+    mut i := i64 0,
+    if k >= 0 ( while i < k ( sum = sum * 2.0, i = i + 1 ) )
+    else ( while i > k ( sum = sum / 2.0, i = i - 1 ) ),
+    sum
+),
 
 ^ := type (
     lhs := ?,
-    rhs := i32 ?,
+    rhs := ?,
     output_type := type ?,
-    share run = (
-        mut r := output_type 1,
-        for 0..rhs ( r = r * lhs ),
-        r
-    ),
 
     share parse_rank = *.parse_rank + 1,
     share associativity = right,
@@ -27,10 +56,39 @@
         tape[0]:type = ^,
         tape[0].lhs = tape[-1],
         tape[0].rhs = tape[1],
-        tape[0].output_type = tape[-1]:type,
+        if tape[-1]:type == f64 or tape[1]:type == f64 ( tape[0].output_type = f64 )
+        else ( if tape[-1]:type == f32 or tape[1]:type == f32 ( tape[0].output_type = f32 )
+        else ( if tape[1]:type == rational_number and not (tape[1]:type ⊆ i64) (
+            tape[0].output_type = f64
+        ) else ( tape[0].output_type = tape[-1]:type ) ) ),
         tape.is_constructed[0] = true,
         tape.remove(1),
         tape.remove(-1)
+    ),
+
+    # The run is built after the program's own names exist, so its locals avoid common ones.
+    share run = (
+        if (f64(rhs) == f64(i64(rhs))) (
+            mut power := output_type 1,
+            mut times := i64(rhs),
+            mut factor := output_type(lhs),
+            if times < 0 (
+                if not (output_type == f64 or output_type == f32 or output_type == rational_number)
+                    error «a negative exponent of a whole number is not whole: write the base as a float»,
+                factor = output_type 1 / factor,
+                times = 0 - times
+            ),
+            for 0..times ( power = power * factor ),
+            power
+        ) else (
+            if (output_type == f64 or output_type == f32) (
+                real_base := f64(lhs),
+                if real_base < 0.0
+                    error «a negative base has no real power for a fractional exponent»,
+                if real_base == 0.0 ( output_type 0 )
+                else ( output_type(exp(f64(rhs) * ln(real_base))) )
+            ) else ( error «a fractional exponent needs a float result» )
+        )
     )
 ),
 f := fn (x := i32 ?) -> i32 ( x ^ 3 + 1 ),

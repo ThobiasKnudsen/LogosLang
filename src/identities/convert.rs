@@ -3,7 +3,8 @@
 
 //! Numeric conversion, `i32(a)`, `f64(x)`: one shared `convert` identity for
 //! every scalar cast, the node `[operand, from, to, op]` with the source and
-//! target as numtype nodes. The only cross-type path; there is no implicit coercion.
+//! target as numtype nodes, or `rational_number` as the source for a rational value, read
+//! at run. The only cross-type path; there is no implicit coercion.
 
 use crate::Core;
 use cranelift_codegen::ir::Value;
@@ -46,25 +47,36 @@ pub(crate) fn build_convert(
 
 /// # Safety
 /// `node` must be a conversion node `[operand, from, to, op]`.
-unsafe fn parts(node: DyadPtr) -> (DyadPtr, NumType, NumType) {
+unsafe fn parts(node: DyadPtr) -> (DyadPtr, DyadPtr, NumType) {
     let p = (*node).value as *const DyadPtr;
-    (*p, of_type_node(*p.add(1)), of_type_node(*p.add(2)))
+    (*p, *p.add(1), of_type_node(*p.add(2)))
 }
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a valid conversion node.
+    // SAFETY: `node` is a valid conversion node; a rational value is a literal node's address.
     unsafe {
         let (operand, from, to) = parts(node);
         let v = rt.run(operand)?;
-        Ok(apply_cast(from, to, v))
+        if from == rt.types().rational {
+            let lit = v as DyadPtr;
+            if lit.is_null() {
+                return Err(RunError::Uninitialized);
+            }
+            return super::rational::cast_to(lit, to).ok_or(RunError::UncomputableLiteral);
+        }
+        Ok(apply_cast(of_type_node(from), to, v))
     }
 }
 
+/// A rational value is interpreted only, as every operator over one is.
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid conversion node.
     unsafe {
         let (operand, from, to) = parts(node);
+        if from == lw.types().rational {
+            return Err(CompileError::NotLowerable(node));
+        }
         let v = lw.lower(operand)?;
-        Ok(lw.emit_cast(from, to, v))
+        Ok(lw.emit_cast(of_type_node(from), to, v))
     }
 }

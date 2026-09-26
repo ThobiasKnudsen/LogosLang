@@ -226,6 +226,47 @@ fn the_power_demo_prints_nine() {
 }
 
 #[test]
+fn the_power_demo_takes_floats_fractions_and_negative_exponents() {
+    // The demo's own `^`, its last line swapped for each case.
+    let demo = std::fs::read_to_string("identities/power.logos").unwrap();
+    let body = demo.trim_end().rsplit_once('\n').unwrap().0;
+    for (tail, want) in [
+        ("x := f64 2.0, x ^ 3", "8.0"),
+        ("x := i32 3, y := f64 2.0, x ^ y", "9.0"),
+        ("x := f64 2.0, x ^ 0.5", "1.4142135623730954"),
+        ("x := f64 10.0, x ^ 2.5", "316.2277660168377"),
+        ("x := f32 2.0, x ^ 0.5", "1.4142135"),
+        ("x := f64 2.0, x ^ -2", "0.25"),
+        ("x := f64 -2.0, x ^ 3", "-8.0"),
+        ("f64(2 ^ -3)", "0.125"),
+        ("2 ^ 0.5", "1.4142135623730954"),
+        ("g := fn (x := f64 ?) -> f64 ( x ^ 1.5 ), g.compile(), g(f64 4.0)", "8.0"),
+        ("f(2) + 2 ^ 3 ^ 2", "521"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{body}\n{tail}"));
+        assert_eq!((code, stdout.trim()), (Some(0), want), "{tail}: stderr: {stderr}");
+    }
+    for (tail, expect) in [
+        ("x := i32 2, x ^ -1", "a negative exponent of a whole number is not whole"),
+        ("x := f64 -8.0, x ^ 0.5", "a negative base has no real power"),
+    ] {
+        let (code, _, stderr) = run_line(&format!("{body}\n{tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_conversion_reads_a_rational_value_when_it_runs() {
+    let (code, stdout, stderr) = run_line(
+        "q := type ( a := ?, output_type := type ?, share run = ( f64(a) * 2.0 ), \
+         share parse_rank = 60, share parse = ( tape[0]:type = q, tape[0].a = tape[1], \
+         tape[0].output_type = f64, tape.remove(1), tape.is_constructed[0] = true ) ), q 0.75",
+    );
+    assert_eq!((code, stdout.as_str()), (Some(0), "1.5\n"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_chooser_hands_its_cell_to_a_type_minted_at_run() {
     let src = "mk := fn (t := type ?) -> type ( type ( share parse = ( tape.is_constructed[0] = true ) ) ), \
                c := type ( share parse_rank = fn.parse_rank, share associativity = right, share parse = ( \

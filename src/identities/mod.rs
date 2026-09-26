@@ -1348,8 +1348,8 @@ unsafe fn check_type_tail(types: &Core, node: DyadPtr) -> Result<(), ParseError>
 }
 
 /// The `T(value)` conversion, the only cross-type path: a literal folds now with `as`
-/// semantics, a runtime operand of another type becomes a `convert` node, the same
-/// type passes through.
+/// semantics, a runtime operand of another type or a rational value becomes a `convert`
+/// node, the same type passes through.
 ///
 /// # Safety
 /// `target` is a numeric type node; `args` are valid dyads from the store.
@@ -1378,6 +1378,9 @@ pub(crate) unsafe fn build_cast(
                 .ok_or(ParseError::UncomputableLiteral)?;
             let value = store.alloc_bytes(&bits.to_ne_bytes()[..to.bytes()]);
             Ok(store.alloc_raw(target, value))
+        }
+        _ if rational::is_rational_value(types, operand) => {
+            Ok(convert::build_convert(store, types, operand, types.rational, target))
         }
         // Pointer-to-integer casts are deferred with the rest of pointer math.
         Operand::Pointer(_) | Operand::NonNumeric => Err(ParseError::BadCast),
