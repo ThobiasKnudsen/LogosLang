@@ -5055,6 +5055,29 @@ impl<'a> Parser<'a> {
         Ok(None)
     }
 
+    /// # Safety
+    /// `lhs` must be a valid dyad from the store.
+    unsafe fn field_access_each(
+        &mut self,
+        lhs: DyadPtr,
+        nstart: usize,
+        nlen: usize,
+        index: Option<usize>,
+        key: Option<DyadPtr>,
+        call: Option<Vec<DyadPtr>>,
+    ) -> Result<(DyadPtr, usize), ParseError> {
+        let Some((connective, a, b)) = crate::identities::group::members(self.types, lhs) else {
+            return self.field_access(lhs, nstart, nlen, index, key, call);
+        };
+        // A member reads as `.`'s left operand does, through its name.
+        let (a, b) =
+            (self.settled_type(self.types.through(a)), self.settled_type(self.types.through(b)));
+        let (a, consumed) = self.field_access_each(a, nstart, nlen, index, key, call.clone())?;
+        let (b, _) = self.field_access_each(b, nstart, nlen, index, key, call)?;
+        let joined = crate::identities::group::join(self.rt.store, self.types, connective, a, b)?;
+        Ok((joined, consumed))
+    }
+
     /// `lhs.name` to a place: a numeric node over the instance's storage at
     /// the field's byte offset (DESIGN ›Resolution is one rule‹). The field
     /// name resolves in the record type's own scope alone.
@@ -5394,7 +5417,7 @@ impl<'a> Parser<'a> {
         }
         self.member_root = root;
         // SAFETY: `lhs` is a reduced dyad off the tape.
-        let access = unsafe { self.field_access(lhs, nstart, nlen, index, key, call) };
+        let access = unsafe { self.field_access_each(lhs, nstart, nlen, index, key, call) };
         self.member_root = std::ptr::null_mut();
         let (node, consumed) = access?;
         if let Ok(Some(fill)) = fills {
@@ -5968,7 +5991,18 @@ impl<'a> Parser<'a> {
         callee: DyadPtr,
         args: &[DyadPtr],
     ) -> Result<DyadPtr, ParseError> {
-        let args = args.to_vec();
+        let mut args = args.to_vec();
+        for i in 0..args.len() {
+            // SAFETY: `args` are reduced dyads from the store.
+            if let Some((connective, a, b)) = crate::identities::group::members(self.types, args[i])
+            {
+                args[i] = a;
+                let a = self.build_call(callee, &args)?;
+                args[i] = b;
+                let b = self.build_call(callee, &args)?;
+                return crate::identities::group::join(self.rt.store, self.types, connective, a, b);
+            }
+        }
         // Fail-closed until ownership-gated parameters let the callee declare
         // that it takes the value.
         for &arg in &args {
@@ -7184,11 +7218,34 @@ impl<'a> Parser<'a> {
             return Err(ParseError::ExpectedField);
         };
         // SAFETY: `lhs` is a dyad off the tape.
-        let node = unsafe { self.binding_read(lhs, nstart, nlen)? };
+        let node = unsafe { self.binding_read_each(lhs, nstart, nlen)? };
         tape.remove(1);
         tape.remove(-1);
         tape.place(node);
         Ok(Constructed::Placed)
+    }
+
+    /// A group's read is each member's; a name reads its own binding, never what it holds.
+    ///
+    /// # Safety
+    /// `lhs` must be a valid dyad from the store.
+    unsafe fn binding_read_each(
+        &mut self,
+        lhs: DyadPtr,
+        nstart: usize,
+        nlen: usize,
+    ) -> Result<DyadPtr, ParseError> {
+        let group = if (*lhs).ty == self.types.binding_ {
+            None
+        } else {
+            crate::identities::group::members(self.types, lhs)
+        };
+        let Some((connective, a, b)) = group else {
+            return self.binding_read(lhs, nstart, nlen);
+        };
+        let a = self.binding_read_each(a, nstart, nlen)?;
+        let b = self.binding_read_each(b, nstart, nlen)?;
+        crate::identities::group::join(self.rt.store, self.types, connective, a, b)
     }
 
     /// On a binding, `type` is the type of the dyad the name stands for,

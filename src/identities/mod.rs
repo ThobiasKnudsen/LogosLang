@@ -41,6 +41,7 @@ mod fn_mod;
 mod for_mod;
 pub(crate) mod fresh;
 mod gate;
+pub(crate) mod group;
 pub(crate) mod hashmap;
 pub(crate) mod held_type;
 pub mod here;
@@ -489,7 +490,7 @@ macro_rules! infix_construct {
                 return Ok(crate::parse::Constructed::Decline);
             };
             let types = p.types();
-            let node = $build(p.store(), &types, id, lhs, rhs)?;
+            let node = crate::identities::group::apply(p.store(), &types, id, lhs, rhs, $build)?;
             tape.reduce_here(node);
             Ok(crate::parse::Constructed::Placed)
         }

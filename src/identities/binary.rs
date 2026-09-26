@@ -10,7 +10,7 @@ use cranelift_codegen::ir::Value;
 
 use super::numtype::{ArithOp, CmpOp, NumType};
 use super::read::Read;
-use super::{bool_mod, meta, rational, resolve_binary, Cx};
+use super::{bool_mod, group, meta, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, LowerFn, Lowerer};
 use crate::dyad::DyadPtr;
 use crate::parse::{Assoc, ConstructFn, ParseError};
@@ -305,14 +305,14 @@ fn construct_minus(
 ) -> Result<crate::parse::Constructed, ParseError> {
     if let Some((lhs, rhs)) = p.binary_operands(tape)? {
         let types = p.types();
-        let node = build::<ARITH, SUB>(p.store(), types, id, lhs, rhs)?;
+        let node = group::apply(p.store(), types, id, lhs, rhs, build::<ARITH, SUB>)?;
         tape.reduce_here(node);
         return Ok(crate::parse::Constructed::Placed);
     }
     let types = p.types();
     let rhs = p.take_right(tape)?;
     let zero = rational::build(p.store(), types.rational, "0")?;
-    let node = build::<ARITH, SUB>(p.store(), types, id, zero, rhs)?;
+    let node = group::apply(p.store(), types, id, zero, rhs, build::<ARITH, SUB>)?;
     tape.place(node);
     Ok(crate::parse::Constructed::Placed)
 }

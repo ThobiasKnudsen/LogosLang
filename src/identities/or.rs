@@ -34,7 +34,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
 }
 
 /// The node is `[lhs, rhs, op]`; a group's op slot is null.
-fn build(
+pub(super) fn build(
     store: &mut Store,
     types: &Core,
     or: DyadPtr,

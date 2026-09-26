@@ -91,7 +91,7 @@ exp := fn (y := f64 ?) -> f64 (
             mut times := i64(rhs),
             mut factor := output_type(lhs),
             if times < 0 (
-                if not (output_type == f64 or output_type == f32 or output_type == rational_number)
+                if not (output_type == (f64 or f32 or rational_number))
                     error «a negative exponent of a whole number is not whole: write the base as a float»,
                 factor = output_type 1 / factor,
                 times = 0 - times
@@ -99,7 +99,7 @@ exp := fn (y := f64 ?) -> f64 (
             for 0..times 
                 ( power = power * factor ),
             power
-        ) else if (output_type == f64 or output_type == f32) (
+        ) else if (output_type == (f64 or f32)) (
             real_base := f64(lhs),
             if real_base < 0.0
                 error «a negative base has no real power for a fractional exponent»,

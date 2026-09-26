@@ -1077,6 +1077,55 @@ fn an_or_group_of_non_booleans_is_data_like_the_and_group() {
 }
 
 #[test]
+fn every_operator_applied_to_a_group_applies_to_each_member() {
+    let sq = "sq := fn (x := i32 ?) -> i32 ( x * x ), ";
+    let rec = "p := type (v := i32 ?), a := p(2), b := p(3), ";
+    for (line, want) in [
+        ("t := f32, t == (f64 or f32)".to_string(), "true"),
+        ("t := f32, t == (f64 and f32)".into(), "false"),
+        ("t := i32, not (t == (f64 or f32 or rational_number))".into(), "true"),
+        ("x := i32 3, x == (i32 3 or i32 4)".into(), "true"),
+        ("x := i32 5, (i32 3 or i32 4) == x".into(), "false"),
+        ("x := i32 2, y := i32 2, (x and y) + 1 == 3".into(), "true"),
+        ("x := i32 1, y := i32 2, (x and y) + 1 == 3".into(), "false"),
+        ("x := i32 1, y := i32 2, (x and y) + 1 == (i32 2 or i32 3)".into(), "true"),
+        ("x := i32 3, -(x or x) == -3".into(), "true"),
+        ("x := i32 1, (x and x and x):type == i32".into(), "true"),
+        ("x := i32 1, t := f32, (x and t):type == i32".into(), "false"),
+        (format!("{sq}sq(i32 2 or i32 3) == 4"), "true"),
+        (format!("{sq}sq(i32 2 and i32 3) == 4"), "false"),
+        ("x := i32 3, i64(x or x) == i64 3".into(), "true"),
+        (format!("{rec}(a or b).v == 3"), "true"),
+        (format!("{rec}(a and b).v == 3"), "false"),
+        (
+            "f := fn (x := i32 ?) -> bool ( x == (i32 3 or i32 4) ), f.compile(), f(4)".into(),
+            "true",
+        ),
+        (
+            "f := fn (x := i32 ?) -> bool ( not ((x and i32 3) + 1 == 4) ), f.compile(), f(3)"
+                .into(),
+            "false",
+        ),
+        (
+            "f := fn (x := i32 ?) -> bool ( (x and i32 3):type == i32 ), f.compile(), f(1)".into(),
+            "true",
+        ),
+        (
+            format!("{sq}f := fn (x := i32 ?) -> bool ( sq(x or i32 3) == 9 ), f.compile(), f(1)"),
+            "true",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&line);
+        assert_eq!((code, stdout.trim()), (Some(0), want), "{line}: stderr: {stderr}");
+    }
+    // A group held as data has nothing to run, compiled or not.
+    let (code, _, stderr) =
+        run_line("n := fn (x := i32 ?) -> i32 ( y := x and x, 1 ), n.compile(), n(3)");
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("cannot be compiled yet"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_collection_member_demands_its_index_brackets() {
     let (_echoes, stderr) = repl(b"x := i32 5\n(x + x).operands(0)\n");
     assert!(stderr.contains("element access is `[…]`"), "stderr: {stderr}");
