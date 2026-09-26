@@ -2953,3 +2953,14 @@ fn a_square_brackets_field_holds_the_bracket_as_written() {
         assert!(stderr.contains("these types do not match"), "{arg}: stderr: {stderr}");
     }
 }
+
+#[test]
+fn a_shared_map_is_indexed_through_this() {
+    let (code, stdout, stderr) = run_line(
+        "h := type ( shared m := hashmap type -> type, \
+         shared g := fn (t := type ?) -> type ( mut x := this.m[t], if x != ? return x, \
+         x = i32, this.m[t] = x, x ), \
+         parse = ( this.g(u8), tape[0] = this.g(u8), tape.is_constructed[0] = true ) ), h",
+    );
+    assert_eq!((code, stdout.as_str()), (Some(0), "i32\n"), "stderr: {stderr}");
+}

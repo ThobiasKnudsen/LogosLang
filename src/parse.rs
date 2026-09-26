@@ -4906,6 +4906,14 @@ impl<'a> Parser<'a> {
                             return self.build_call(member, &with_this).map(|n| (n, 1));
                         }
                     }
+                    if let Some(k) = key {
+                        let (store, types) = (&mut *self.rt.store, self.types);
+                        if let Some(get) =
+                            crate::identities::hashmap::build_get(store, types, member, k)?
+                        {
+                            return Ok((get, 1));
+                        }
+                    }
                     return Ok((member, 0));
                 }
             }
@@ -5263,8 +5271,12 @@ impl<'a> Parser<'a> {
         // An index right after a tape value is the element read, a slot node
         // the identity to its left owns; after a `.` it stays a passive cell.
         if let Some(left) = tape.at(-1).copied() {
-            // A fresh spelling to the left is a member name after `.`, never a tape.
-            if !left.is_fresh() && self.is_operand_cell(&left) {
+            // A spelling right after a waiting `.` is its member name, never a receiver.
+            let member = left.is_fresh()
+                || tape
+                    .at(-2)
+                    .is_some_and(|c| !c.constructed && self.cell_identity(c) == self.types.dot_);
+            if !member && self.is_operand_cell(&left) {
                 let lhs = self.operand_dyad(left)?;
                 let types = self.types;
                 // SAFETY: `lhs` is a reduced dyad from the store.
