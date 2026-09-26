@@ -3898,6 +3898,16 @@ impl<'a> Parser<'a> {
                     return Ok(None);
                 }
                 held
+            } else if let Some(bracket) =
+                self.bracket_type(slot).filter(|&b| declared.is_null() || declared == b)
+            {
+                if (*slot).ty != types.tape.bracket_arg {
+                    *slots.add(i) =
+                        crate::identities::tape::build_bracket_arg(self.rt.store, types, slot)?;
+                }
+                bracket
+            } else if declared == types.square_brackets {
+                return Err(ParseError::TypeMismatch);
             } else if !declared.is_null() {
                 if matches!(numtype_of(types, slot), Operand::Literal) {
                     let lit = types.through(slot);
@@ -3916,12 +3926,6 @@ impl<'a> Parser<'a> {
                 declared
             } else if crate::identities::rational::is_rational_value(types, slot) {
                 types.rational
-            } else if let Some(bracket) = self.bracket_type(slot) {
-                if (*slot).ty != types.tape.bracket_arg {
-                    *slots.add(i) =
-                        crate::identities::tape::build_bracket_arg(self.rt.store, types, slot)?;
-                }
-                bracket
             } else {
                 match numtype_of(types, slot) {
                     Operand::Concrete(nt) => types.numtypes[nt as usize],

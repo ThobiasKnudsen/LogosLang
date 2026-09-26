@@ -2938,3 +2938,18 @@ fn a_field_default_fills_each_new_node() {
         assert_eq!((code, stdout.as_str()), (Some(0), want), "{src}: stderr: {stderr}");
     }
 }
+
+#[test]
+fn a_square_brackets_field_holds_the_bracket_as_written() {
+    let q = "q := type ( e := square_brackets ?, output_type := type ?, \
+             run = ( this.e.dyads.size ), \
+             parse = ( this.e = tape[1], this.output_type = u64, tape[0] = this, \
+             tape.is_constructed[0] = true, tape.remove(1) ) )";
+    let (code, stdout, stderr) = run_line(&format!("{q}, q [1, 2, 3]"));
+    assert_eq!((code, stdout.as_str()), (Some(0), "3\n"), "stderr: {stderr}");
+    for arg in ["5", "(1, 2)"] {
+        let (code, _, stderr) = run_line(&format!("{q}, q {arg}"));
+        assert_eq!(code, Some(1), "{arg}: stderr: {stderr}");
+        assert!(stderr.contains("these types do not match"), "{arg}: stderr: {stderr}");
+    }
+}

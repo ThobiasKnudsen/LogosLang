@@ -175,6 +175,10 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
 /// `t` must be null or a valid dyad from the store.
 pub unsafe fn place_layout(types: &Core, t: DyadPtr) -> Option<(Read, usize)> {
     let t = super::type_identity_of(types, t)?;
+    // A bracket as written, held whole for its lines to run later.
+    if t == types.square_brackets {
+        return Some((Read::Container(t), 8));
+    }
     let kind = meta::kind_of(t)?;
     match kind {
         // A place of `rational_number` holds a rational value's address.

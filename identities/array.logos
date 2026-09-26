@@ -55,7 +55,7 @@ get_mint := fn (t := type ?) -> type (
 
 pub array := type (
     element_type := type ?,
-    elements := ?,
+    elements := square_brackets ?,
     output_type := type ?,
     run = (
         mut v := this.output_type ?,
