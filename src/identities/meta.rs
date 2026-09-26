@@ -32,7 +32,7 @@ use super::numtype::ADDR_TAG;
 use super::{string, Cx};
 
 /// Values are `arity` fixed `dyad@` operand slots, each named by a role string; a
-/// null slot is an absent optional. Also an fn value's `[input, output, body, bcode]`.
+/// null slot is an absent optional. Also an fn value's `[input, output_type, body, bcode]`.
 pub(crate) const TUPLE_TAG: u8 = 14;
 /// Values are `arity` fixed named `dyad@` slots, then a null-terminated variadic tail.
 pub(crate) const LIST_TAG: u8 = 15;

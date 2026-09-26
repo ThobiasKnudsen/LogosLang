@@ -926,13 +926,13 @@ fn logos_comparison(field: &str, rank: &str) -> String {
         "≈ := type (\n\
             lhs := {field} ?,\n\
             rhs := {field} ?,\n\
-            output := type ?,\n\
+            output_type := type ?,\n\
             run = ( this.lhs == this.rhs ),\n\
             parse_rank = {rank},\n\
             parse = (\n\
                 this.lhs = tape[-1],\n\
                 this.rhs = tape[1],\n\
-                this.output = bool,\n\
+                this.output_type = bool,\n\
                 tape[0] = this,\n\
                 tape.is_constructed[0] = true,\n\
                 tape.remove(1),\n\
@@ -2171,14 +2171,14 @@ fn compile_member_before_and_after_agree() {
 
 /// A power operator defined in Logos, spelled with a word so the script needs no fresh symbol.
 const POW_TYPE: &str = "pw := type (\n\
-     a := ?, b := i32 ?, output := type ?, run = ( mut r := this.output 1, for 0..this.b ( r = r * this.a ), r ),\n\
+     a := ?, b := i32 ?, output_type := type ?, run = ( mut r := this.output_type 1, for 0..this.b ( r = r * this.a ), r ),\n\
      parse_rank = *.parse_rank + 1,\n\
      associativity = right,\n\
      parse = (\n\
          if tape[-1]:type == void error «pw takes a left operand»,\n\
          this.a = tape[-1],\n\
          this.b = tape[1],\n\
-         this.output = tape[-1]:type,\n\
+         this.output_type = tape[-1]:type,\n\
          tape[0] = this,\n\
          tape.is_constructed[0] = true,\n\
          tape.remove(1),\n\

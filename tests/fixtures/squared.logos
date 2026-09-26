@@ -8,12 +8,12 @@
 # that is a call, its output the function's.
 sq := fn (a := i32 ?) -> i32 ( a * a ),
 squared := type (
-    a := i32 ?, output := type ?, run = ( sq(this.a) ),
+    a := i32 ?, output_type := type ?, run = ( sq(this.a) ),
     parse_rank = *.parse_rank + 1,
     associativity = left,
     parse = (
         this.a = tape[-1],
-        this.output = i32,
+        this.output_type = i32,
         tape[0] = this,
         tape.is_constructed[0] = true,
         tape.remove(-1)
@@ -22,13 +22,13 @@ squared := type (
 # A binary one: both cells, by name.
 add := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ),
 plus2 := type (
-    a := i32 ?, b := i32 ?, output := type ?, run = ( add(this.a, this.b) ),
+    a := i32 ?, b := i32 ?, output_type := type ?, run = ( add(this.a, this.b) ),
     parse_rank = +.parse_rank,
     associativity = left,
     parse = (
         this.a = tape[-1],
         this.b = tape[1],
-        this.output = i32,
+        this.output_type = i32,
         tape[0] = this,
         tape.is_constructed[0] = true,
         tape.remove(1),

@@ -192,7 +192,7 @@ type {
                 type -> fn
                 value -> {
                   input -> type (tape := parsing_tape ?)
-                  output -> void
+                  output_type -> void
                 }
               }
               value -> ?

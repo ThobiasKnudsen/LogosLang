@@ -662,10 +662,10 @@ fn next_power_of_two_is_written_in_logos() {
 }
 
 /// The power operator with the bare run body, on one line for the REPL.
-const POWER: &str = "^ := type ( lhs := ?, rhs := i32 ?, output := type ?, \
-    run = ( mut r := this.output 1, for 0..this.rhs ( r = r * this.lhs ), r ), \
+const POWER: &str = "^ := type ( lhs := ?, rhs := i32 ?, output_type := type ?, \
+    run = ( mut r := this.output_type 1, for 0..this.rhs ( r = r * this.lhs ), r ), \
     parse_rank = *.parse_rank + 1, associativity = right, \
-    parse = ( this.lhs = tape[-1], this.rhs = tape[1], this.output = tape[-1]:type, \
+    parse = ( this.lhs = tape[-1], this.rhs = tape[1], this.output_type = tape[-1]:type, \
     tape[0] = this, tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
 
 #[test]
@@ -904,9 +904,9 @@ fn the_slot_words_are_names_only_inside_a_type_body() {
     // shadow an outer name and are gone again at the close.
     let (echoes, stderr) = repl(
         b"run := 5\nrun + 1\nparse := i32 2\nparse * 3\n\
-          m := type (a := i32 ?, output := type ?, run = ( this.a + this.a ), \
+          m := type (a := i32 ?, output_type := type ?, run = ( this.a + this.a ), \
           parse_rank = *.parse_rank + 1, \
-          parse = ( this.a = tape[-1], this.output = i32, tape[0] = this, \
+          parse = ( this.a = tape[-1], this.output_type = i32, tape[0] = this, \
           tape.is_constructed[0] = true, tape.remove(-1) ))\n\
           x := i32 3\nx m\nrun\nparse_rank := 4\nparse_rank\n",
     );
@@ -924,9 +924,9 @@ fn a_slot_body_is_read_bare() {
     let (_echoes, stderr) = repl(b"tape := 1\nsp := type (parse = ( tape.recenter(0) ))\n");
     assert!(stderr.contains("shadowed"), "stderr: {stderr}");
     let (echoes, stderr) = repl(
-        b"minus := type (a := i32 ?, b := i32 ?, output := type ?, run = ( this.a - this.b ), \
+        b"minus := type (a := i32 ?, b := i32 ?, output_type := type ?, run = ( this.a - this.b ), \
           parse_rank = +.parse_rank, associativity = left, \
-          parse = ( this.a = tape[-1], this.b = tape[1], this.output = i32, tape[0] = this, \
+          parse = ( this.a = tape[-1], this.b = tape[1], this.output_type = i32, tape[0] = this, \
           tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ))\n\
           7 minus 2\n10 minus 2 minus 3\nf := fn (x := i32 ?) -> i32 ( x minus 1 )\nf.compile()\nf(9)\nthis\n",
     );
@@ -936,9 +936,9 @@ fn a_slot_body_is_read_bare() {
     // run that calls a function whose body reads an operator constructs.
     let (echoes, stderr) = repl(
         b"sq := fn (a := i32 ?) -> i32 ( a * a )\n\
-          squared := type (a := i32 ?, output := type ?, run = ( sq(this.a) ), \
+          squared := type (a := i32 ?, output_type := type ?, run = ( sq(this.a) ), \
           parse_rank = *.parse_rank + 1, \
-          parse = ( this.a = tape[-1], this.output = i32, tape[0] = this, \
+          parse = ( this.a = tape[-1], this.output_type = i32, tape[0] = this, \
           tape.is_constructed[0] = true, tape.remove(-1) ))\n\
           x := i32 4\nx squared\n",
     );
@@ -1980,9 +1980,9 @@ fn the_dyad_box_says_what_it_holds() {
 
 #[test]
 fn only_a_marked_place_is_written_or_addressed() {
-    let pw = "pw := type ( mut a := i32 ?, mut b := i32 ?, output := type ?, run = ( this.a * this.b ), \
+    let pw = "pw := type ( mut a := i32 ?, mut b := i32 ?, output_type := type ?, run = ( this.a * this.b ), \
               parse_rank = *.parse_rank + 1, associativity = right, \
-              parse = ( this.a = tape[-1], this.b = tape[1], this.output = i32, tape[0] = this, \
+              parse = ( this.a = tape[-1], this.b = tape[1], this.output_type = i32, tape[0] = this, \
               tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
     for (src, expect) in [
         ("i32 5 = 3\n", "not an assignable place"),
@@ -2344,10 +2344,10 @@ fn a_declaration_on_the_command_line_is_its_names_start() {
 
 #[test]
 fn a_nodes_fields_are_read_by_name_without_running_it() {
-    let power = "^ := type ( lhs := ?, rhs := i32 ?, output := type ?, \
-                 run = ( mut r := this.output 1, for 0..this.rhs ( r = r * this.lhs ), r ), \
+    let power = "^ := type ( lhs := ?, rhs := i32 ?, output_type := type ?, \
+                 run = ( mut r := this.output_type 1, for 0..this.rhs ( r = r * this.lhs ), r ), \
                  parse_rank = *.parse_rank + 1, associativity = right, \
-                 parse = ( this.lhs = tape[-1], this.rhs = tape[1], this.output = tape[-1]:type, \
+                 parse = ( this.lhs = tape[-1], this.rhs = tape[1], this.output_type = tape[-1]:type, \
                  tape[0] = this, tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
     for (tail, want) in [
         ("(2 ^ 3).lhs", "2"),
@@ -2472,9 +2472,9 @@ fn a_parse_body_writes_a_field_as_a_node_and_the_run_reads_it() {
     assert_eq!(code, Some(0), "stderr: {stderr}");
     for (tail, want) in [("probe", "7\n"), ("probe + 1", "8\n")] {
         let (code, stdout, stderr) = run_line(&format!(
-            "probe := type ( v := i32 ?, output := type ?, run = ( this.v ), \
+            "probe := type ( v := i32 ?, output_type := type ?, run = ( this.v ), \
              parse_rank = *.parse_rank + 1, \
-             parse = ( this.v = 7, this.output = i32, tape[0] = this, \
+             parse = ( this.v = 7, this.output_type = i32, tape[0] = this, \
              tape.is_constructed[0] = true ) ), {tail}"
         ));
         assert_eq!((code, stdout.as_str()), (Some(0), want), "stderr: {stderr}");
@@ -2905,9 +2905,9 @@ fn a_member_function_called_through_a_node_reads_that_node_as_this() {
 fn a_field_the_constructor_never_wrote_is_a_checked_error() {
     for src in [
         // The node is used as a value with its field `b` unwritten.
-        "t := type (a := i32 ?, b := i32 ?, output := type ?, run = ( this.a ), \
+        "t := type (a := i32 ?, b := i32 ?, output_type := type ?, run = ( this.a ), \
          parse_rank = *.parse_rank + 1, \
-         parse = ( this.a = tape[-1], this.output = i32, tape[0] = this, \
+         parse = ( this.a = tape[-1], this.output_type = i32, tape[0] = this, \
          tape.is_constructed[0] = true, tape.remove(-1) )), x := i32 4, x t",
         // The unwritten field itself is read in the parse body.
         "q := type ( size := u64 ?, parse_rank = 60, \
@@ -2937,10 +2937,10 @@ fn this_f_type_reads_the_fields_declared_type() {
 
 #[test]
 fn a_field_default_fills_each_new_node() {
-    let q = "q := type ( mut size := u64 5, output := type ?, \
+    let q = "q := type ( mut size := u64 5, output_type := type ?, \
              run = ( this.size + 1 ), parse_rank = 60, \
              parse = ( ";
-    let end = "this.output = u64, tape[0] = this, tape.is_constructed[0] = true ) )";
+    let end = "this.output_type = u64, tape[0] = this, tape.is_constructed[0] = true ) )";
     for (src, want) in [
         (format!("{q}{end}, q"), "6\n"),
         (format!("{q}this.size = 9, {end}, q"), "10\n"),

@@ -2,7 +2,7 @@
 # used in the same file, and compiled with f.compile().
 #
 # An operator is a type, and its body describes one level: the operands as named
-# fields, the output the parse writes per node, the run every node shares (a bare
+# fields, the output_type the parse writes per node, the run every node shares (a bare
 # body over the fields), where `^` binds (parse_rank), which way it associates,
 # and its one parse, a body over the parsing tape `tape`. When `^` itself stands
 # on the tape the parse builds the node as `this`, a fresh ^ it fills by name and
@@ -15,9 +15,9 @@
 ^ := type (
     lhs := ?,
     rhs := i32 ?,
-    output := type ?,
+    output_type := type ?,
     run = (
-        mut r := this.output 1,
+        mut r := this.output_type 1,
         for 0..this.rhs ( r = r * this.lhs ),
         r
     ),
@@ -27,7 +27,7 @@
     parse = (
         this.lhs = tape[-1],
         this.rhs = tape[1],
-        this.output = tape[-1]:type,
+        this.output_type = tape[-1]:type,
         tape[0] = this,
         tape.is_constructed[0] = true,
         tape.remove(1),

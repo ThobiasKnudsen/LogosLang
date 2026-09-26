@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `fn`: the type whose values are functions, the record
-//! `[input, output, body, bcode, frame, outer]`. The surface parse lives in
+//! `[input, output_type, body, bcode, frame, outer]`. The surface parse lives in
 //! [`crate::parse::Parser::parse_fn`]; here the identity, its construct, the
 //! `->` arrow, and the `compile` member.
 
@@ -49,7 +49,7 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
         meta::TUPLE_TAG,
         meta::prec::READER,
         Assoc::Left,
-        &["input", "output", "body", "bcode", "frame", "outer"],
+        &["input", "output_type", "body", "bcode", "frame", "outer"],
     );
     // SAFETY: `fn_type` was allocated by [`register`] and nothing has read its value slot.
     unsafe {

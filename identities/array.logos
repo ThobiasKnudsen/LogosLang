@@ -60,9 +60,9 @@ get_mint := fn (t := type ?) -> type (
 pub array := type (
     element_type := type ?,
     elements := ?,
-    output := type ?,
+    output_type := type ?,
     run = (
-        mut v := this.output ?,
+        mut v := this.output_type ?,
         v.size = this.elements.dyads.size,
         v.capacity = next_power_of_two(v.size),
         v.ptr = mut alloc v.capacity of this.element_type ?,
@@ -96,7 +96,7 @@ pub array := type (
                 ),
                 this.element_type = t,
                 this.elements = tape[2],
-                this.output = mint,
+                this.output_type = mint,
                 tape[0] = this,
                 tape.is_constructed[0] = true,
                 tape.remove(2),

@@ -1213,13 +1213,13 @@ mod tests {
     fn a_node_of_a_run_type_is_a_use_of_every_name_its_body_reads() {
         const POW: &str = "n := i32 2,\n\
             ^ := type (\n\
-                a := i32 ?, b := i32 ?, output := type ?, run = ( this.a * this.b * n ),\n\
+                a := i32 ?, b := i32 ?, output_type := type ?, run = ( this.a * this.b * n ),\n\
                 parse_rank = *.parse_rank + 1,\n\
                 associativity = right,\n\
                 parse = (\n\
                     this.a = tape[-1],\n\
                     this.b = tape[1],\n\
-                    this.output = i32,\n\
+                    this.output_type = i32,\n\
                     tape[0] = this,\n\
                     tape.is_constructed[0] = true,\n\
                     tape.remove(1),\n\

@@ -3759,7 +3759,7 @@ impl<'a> Parser<'a> {
 
     /// The field's parameter place, the frame place the node's operand is
     /// evaluated into (DESIGN ›Execution is function application‹), or for a
-    /// field of type `type` the type this set holds in it, so `this.output 1` reads `i32 1`.
+    /// field of type `type` the type this set holds in it, so `this.output_type 1` reads `i32 1`.
     fn run_body_field(&mut self, name: &str, at: usize) -> Result<DyadPtr, ParseError> {
         let (field_scope, fields, places, key) = {
             let rb = self.run_body.as_ref().expect("this_param is set while a run body is built");
@@ -4052,7 +4052,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Over the swapped-in state: the hidden parameter record, the return
-    /// type (the type the set holds in the field named `output`, or `void`),
+    /// type (the type the set holds in the field named `output_type`, or `void`),
     /// and the body read as a function's.
     ///
     /// # Safety
@@ -4083,7 +4083,7 @@ impl<'a> Parser<'a> {
         let mut scope = ScopeStack::new();
         scope.push(field_scope);
         let output = scope
-            .resolve(self.trie, "output")
+            .resolve(self.trie, "output_type")
             .ok()
             .and_then(|r| fields.iter().position(|&f| f == r.identity))
             .filter(|&i| (*fields[i]).ty == types.type_)
@@ -8253,9 +8253,9 @@ mod tests {
             go("sq := fn (a := i32 ?) -> i32 ( a * a )", &mut store, &mut trie, types, scopes);
         let (_, s) = go(
             "squared := type ( \
-                a := i32 ?, output := type ?, run = ( sq(this.a) ), \
+                a := i32 ?, output_type := type ?, run = ( sq(this.a) ), \
                 parse_rank = *.parse_rank + 1, \
-                parse = ( this.a = tape[-1], this.output = i32, tape[0] = this, \
+                parse = ( this.a = tape[-1], this.output_type = i32, tape[0] = this, \
                           tape.is_constructed[0] = true, tape.remove(-1) ) )",
             &mut store,
             &mut trie,

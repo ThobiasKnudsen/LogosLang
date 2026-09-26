@@ -151,9 +151,9 @@ This is what the first public preview is built to show. An operator is a type wi
 ^ := type (
     lhs := ?,                                # the operands: one field per cell consumed
     rhs := i32 ?,
-    output := type ?,                        # the result type, written per node by parse
+    output_type := type ?,                   # the result type, written per node by parse
     run = (                                  # what every ^ node computes, over its fields
-        mut r := this.output 1,
+        mut r := this.output_type 1,
         for 0..this.rhs ( r = r * this.lhs ),
         r
     ),
@@ -162,7 +162,7 @@ This is what the first public preview is built to show. An operator is a type wi
     parse = (                                # runs at every appearance of ^
         this.lhs = tape[-1],                 # this: the fresh ^ node, filled by name
         this.rhs = tape[1],
-        this.output = tape[-1]:type,         # the result follows the base's type
+        this.output_type = tape[-1]:type,    # the result follows the base's type
         tape[0] = this,                      # placed in its own cell
         tape.is_constructed[0] = true,       # and marked done, by the constructor itself
         tape.remove(1),
