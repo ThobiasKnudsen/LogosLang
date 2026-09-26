@@ -99,18 +99,16 @@ exp := fn (y := f64 ?) -> f64 (
             for 0..times 
                 ( power = power * factor ),
             power
-        ) else (
-            if (output_type == f64 or output_type == f32) (
-                real_base := f64(lhs),
-                if real_base < 0.0
-                    error «a negative base has no real power for a fractional exponent»,
-                if real_base == 0.0 
-                    output_type 0
-                else 
-                    output_type (exp(f64(rhs) * ln(real_base)))
-            ) else 
-                error «a fractional exponent needs a float result»
-        )
+        ) else if (output_type == f64 or output_type == f32) (
+            real_base := f64(lhs),
+            if real_base < 0.0
+                error «a negative base has no real power for a fractional exponent»,
+            if real_base == 0.0 
+                output_type 0
+            else 
+                output_type (exp(f64(rhs) * ln(real_base)))
+        ) else 
+            error «a fractional exponent needs a float result»
     )
 ),
 
