@@ -1351,6 +1351,20 @@ fn an_inclusion_ends_a_bare_if_condition_as_a_comparison_does() {
 }
 
 #[test]
+fn a_condition_ending_in_a_type_is_bracketed_before_a_name_body() {
+    let out = logos()
+        .args(["mut y := i32 0, t := f64, if t == f64 y = 1 else y = 2, y"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "the type takes `y`: {}", String::from_utf8_lossy(&out.stdout));
+    let src = "mut y := i32 0, t := f32, \
+               if (t == f64) y = 1 else if (t == f32) y = 2 else y = 3, y";
+    let out = logos().args([src]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "2\n");
+}
+
+#[test]
 fn dot_type_is_a_guided_error() {
     let (_echoes, stderr) = repl(b"x := i32 5\nx.type\n");
     assert!(stderr.contains("x:type"), "stderr: {stderr}");
