@@ -1012,17 +1012,25 @@ struct OpenType {
     /// From a `run = (…)` line: the body lexed once into its cells; a node of
     /// the type constructs it per field-type set.
     run_body: DyadPtr,
-    /// The hidden `this` parameter of the `parse` body being read; null
-    /// otherwise.
+    /// The hidden receiver of the body being read, a parse's node or a `drop`'s or
+    /// `share` function's value; null otherwise.
     this_param: DyadPtr,
-    /// The fields' scope and the fields declared so far: what `this.f`
-    /// reaches in a body written below them.
+    /// `this_param` is a parse's node, whose fields are reached through `tape[0]`, never bare.
+    in_parse: bool,
+    /// The parse body's `tape` parameter while `in_parse`.
+    tape_param: DyadPtr,
+    /// The declaration this body is the value of: inside its parse, its name is `self_type`.
+    binding: DyadPtr,
+    /// The `share` function being read has read a field of its value.
+    read_receiver: bool,
+    /// The fields' scope and the fields declared so far: what a body written
+    /// below them reaches by name.
     block: (DyadPtr, Vec<DyadPtr>),
-    /// From a `drop = (…)` line: the `fn` over `this` an owner's teardown runs.
+    /// From a `share drop = (…)` line: the `fn` over the value an owner's teardown runs.
     instances_drop: DyadPtr,
     /// A field declared `own` over a node's type, whose teardown the type's drop must write.
     owns_node_field: bool,
-    /// The type node being defined, its record written at the close: what `this:type` names.
+    /// The type node being defined, its record written at the close: what its name means in its parse.
     self_type: DyadPtr,
 }
 
@@ -1047,7 +1055,7 @@ fn logos_constructor(
 }
 
 /// The `parse` of the type of the value standing in the cell, run with
-/// `this` bound to that value (DESIGN ›A type body describes one level‹).
+/// `tape[0]` that value (DESIGN ›A type body describes one level‹).
 fn instances_constructor(
     p: &mut Parser,
     id: DyadPtr,
@@ -1062,7 +1070,7 @@ fn instances_constructor(
     let outer = p.rt.set_fresh_this(None);
     // SAFETY: `f` is the fn the type's parse slot holds, `id` a node its parse built or a place of that type.
     let out = unsafe { p.run_logos_body(f, id, tape) };
-    p.rt.set_fresh_this(outer);
+    p.rt.restore_fresh_this(outer);
     out
 }
 
@@ -1119,6 +1127,14 @@ pub enum ParseError {
     ShareInitReadsUnmade,
     /// `share` not followed by a `name := value` declaration or a slot fill.
     ShareNeedsDeclaration,
+    /// A field named bare inside a parse, where it goes through `tape[0]`.
+    BareFieldInParse(Box<String>),
+    /// `tape[0]:type = …` anywhere but on a parse's own cell.
+    StampOutsideParse,
+    /// `tape[0]:type = T` for a `T` other than the type being defined.
+    StampOtherType,
+    /// A `share` function that works on a value, called bare where no value is at hand.
+    ShareFnNeedsValue(Box<String>),
     /// A slot word left of `=` where no type is being defined.
     SlotOutsideDefinition,
     /// `t.x` where `x` is a place per node, not stored with the type.
@@ -1157,8 +1173,8 @@ pub enum ParseError {
     /// the type's spelling at the use and the failure rendered against the
     /// body's text.
     RunBodyFailed { name: String, rendered: String },
-    /// `this.f` naming no field declared above; carries `f`.
-    ThisFieldUnknown(Box<String>),
+    /// `tape[0].f` naming no field declared above; carries `f`.
+    NoSuchField(Box<String>),
     /// `tape.is_constructed[k] = v` with a `v` that is no bool.
     FlagTakesBool,
     /// An operator lacked a reduced operand on one side.
@@ -1512,6 +1528,8 @@ pub struct Parser<'a> {
     /// innermost last: what a `lex_rank = …` line writes. A stand-in for a
     /// definition writing a binding field from inside `:=`.
     filling: Vec<DyadPtr>,
+    /// Where each of those right sides starts in the source.
+    filling_at: Vec<usize>,
     /// The binding of the last declaration that reduced: what a gate word to
     /// its left marks.
     last_declared: DyadPtr,
@@ -1523,11 +1541,11 @@ pub struct Parser<'a> {
     unfolded: HashMap<DyadPtr, DyadPtr>,
     /// The binding of the name left of the `.` being constructed, or null.
     member_root: DyadPtr,
-    /// The field binding behind each `this.f` slot a parse body built: the
+    /// The field binding behind each field read a type's body built: the
     /// constructor's fill, granted by default and vetoed by `immut`.
     fills: HashMap<DyadPtr, DyadPtr>,
-    /// Each hidden `this` parameter of a body in a type, with the type it is an instance of.
-    this_types: HashMap<DyadPtr, DyadPtr>,
+    /// The `share` functions that read a field of their value, which a parse may not call bare.
+    reads_receiver: HashSet<DyadPtr>,
     /// Open function frames, innermost last: empty at top level, where
     /// declarations get global storage; inside a function each local claims
     /// the next byte offset in the top frame.
@@ -1570,7 +1588,7 @@ pub struct Parser<'a> {
     /// just lexed and the source after it unread, rather than at the boundary:
     /// an identity that reads its own bracket reads source only at discovery.
     discovering: bool,
-    /// While `.` lexes the member right of a parse body's `this`: the member is
+    /// While `.` lexes the member right of a parse's `tape[0]`: the member is
     /// read by its spelling, so a raw-text word it happens to spell is not woken.
     member_asleep: bool,
     /// The identity whose constructor is running, whose lazy reads lex its right side.
@@ -1594,16 +1612,13 @@ pub struct Parser<'a> {
     lower: Option<&'a crate::compile::LowerTable>,
     /// The held run body whose cells the driver is reading now, if any.
     feed: Option<Feed>,
-    /// The construction of a held run body in progress: what `this.f` means
-    /// there.
-    run_body: Option<RunBodyCx>,
     /// While a held `type (…)` is built at its run, the function frames open
     /// where it was written: a place declared at that depth is the type's, global.
     held_depth: usize,
     /// A cell the branch about to open is checked against a type, with that type.
     narrow_next: Option<(CellKey, DyadPtr)>,
     /// While a `share` line of a type body is read, the frame depth a
-    /// `fn` written as the member's value opens at: that `fn` takes `this`.
+    /// `fn` written as the member's value opens at: that `fn` takes the value first.
     member_fn_depth: Option<usize>,
     /// While the initializer of a `share` name parses: the frame depth it
     /// stands at. It runs once, at the definition, so its places are global
@@ -1626,17 +1641,6 @@ struct Feed {
     base_depth: usize,
     /// A held `type (…)` builds now, so its parse order is its run order.
     in_run_order: bool,
-}
-
-/// What `this.f` means inside a held run body under construction: the field's
-/// parameter place, or for a field of type `type` the type this field-type
-/// set holds in it.
-struct RunBodyCx {
-    this_param: DyadPtr,
-    field_scope: DyadPtr,
-    fields: Vec<DyadPtr>,
-    places: Vec<DyadPtr>,
-    key: Vec<DyadPtr>,
 }
 
 /// The lex step the driver and `lex «…»` share: a fresh spelling mints its
@@ -1738,12 +1742,13 @@ impl<'a> Parser<'a> {
             types,
             pending_fn: std::ptr::null_mut(),
             filling: Vec::new(),
+            filling_at: Vec::new(),
             last_declared: std::ptr::null_mut(),
             paths: HashMap::new(),
             unfolded: HashMap::new(),
             member_root: std::ptr::null_mut(),
             fills: HashMap::new(),
-            this_types: HashMap::new(),
+            reads_receiver: HashSet::new(),
             lifted: Vec::new(),
             queued: std::collections::VecDeque::new(),
             discovering: false,
@@ -1765,7 +1770,6 @@ impl<'a> Parser<'a> {
             imports: Imports::default(),
             lower: None,
             feed: None,
-            run_body: None,
             held_depth: 0,
             narrow_next: None,
             member_fn_depth: None,
@@ -2025,7 +2029,11 @@ impl<'a> Parser<'a> {
                         .into_owned()
                 }
             };
-            if !self.scopes.is_open(fields.scope)
+            // A `share` name is one place for the run, reachable wherever its function is.
+            // SAFETY: as above.
+            let shared = unsafe { Binding::has_gate(binding, self.types.share_) };
+            if !shared
+                && !self.scopes.is_open(fields.scope)
                 && !self.suspended.iter().any(|s| s.is_open(fields.scope))
                 && !self.imports.sections.contains(&fields.scope)
             {
@@ -2156,10 +2164,17 @@ impl<'a> Parser<'a> {
         id: DyadPtr,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
+        // A type named inside its own parse stands as itself: its bracket is not in reach.
+        if let Some(own) = tape.at(0).and_then(|c| self.own_type_in_parse(c.binding(self.types))) {
+            tape.place(own);
+            return Ok(Constructed::Placed);
+        }
         // The bracket, lexed on demand: application runs at discovery.
         if let Some(scope) = self.cell_at(tape, 1)?.filter(|c| c.is_bracket()).map(|c| c.dyad) {
             // SAFETY: `scope` is the bracket's node from the store.
             let args = unsafe { self.args_of(scope) };
+            // SAFETY: `id` is the resolved callee, a reduced dyad.
+            let args = unsafe { self.with_receiver(id, args) }?;
             // SAFETY: `id` is the resolved callee and `args` reduced dyads.
             let node = unsafe { self.build_call(id, &args) }?;
             tape.remove(1);
@@ -2252,16 +2267,16 @@ impl<'a> Parser<'a> {
         // SAFETY: `owner` is the record type whose slot holds `f`.
         let this = unsafe { crate::identities::this::empty_node(self.rt.store, owner) };
         let outer = self.rt.set_fresh_this(Some(this));
-        // SAFETY: as this function's own contract; `this` was just built.
+        // SAFETY: as this function's own contract; the node was just built.
         let out = unsafe { self.run_logos_body(f, this, tape) };
-        self.rt.set_fresh_this(outer);
+        self.rt.restore_fresh_this(outer);
         out
     }
 
-    /// A `parse` body run over the tape with `this` bound to `this`.
+    /// A `parse` body run over the tape with `this` as its node, `tape[0]`.
     ///
     /// # Safety
-    /// `f` must be a `fn` node over the hidden `tape`/`this` record and `this`
+    /// `f` must be a `fn` node over the hidden `tape`/node record and `this`
     /// a node from the store; the tape's cells must hold dyads from the store.
     unsafe fn run_logos_body(
         &mut self,
@@ -2645,6 +2660,9 @@ impl<'a> Parser<'a> {
                 };
                 // SAFETY: `id` is a resolved dyad from the store.
                 unsafe { self.check_capture(id)? };
+                if let Some(own) = self.own_type_in_parse(binding) {
+                    return Ok(own);
+                }
                 self.check_made(binding)?;
                 self.note_outer_read(binding);
                 Ok(if binding.is_null() { id } else { binding })
@@ -2698,9 +2716,20 @@ impl<'a> Parser<'a> {
     /// binding, when the cell was lexed; the bare identity for a minted token.
     pub(crate) fn stand_as_value(&self, tape: &ParsingTape, id: DyadPtr) -> DyadPtr {
         match tape.at(0).map(|c| c.binding(self.types)) {
-            Some(binding) if !binding.is_null() => binding,
+            Some(binding) if !binding.is_null() => {
+                self.own_type_in_parse(binding).unwrap_or(binding)
+            }
             _ => id,
         }
+    }
+
+    /// Inside its own parse a type's name is the type node its body is building, made by
+    /// the time the parse runs, though its declaration is still being filled.
+    fn own_type_in_parse(&self, binding: DyadPtr) -> Option<DyadPtr> {
+        self.definitions
+            .last()
+            .filter(|d| d.in_parse && !binding.is_null() && d.binding == binding)
+            .map(|d| d.self_type)
     }
 
     /// `as_operand` read through the reading rule, for the constructors that
@@ -2837,11 +2866,8 @@ impl<'a> Parser<'a> {
         self.parse_record_taking(None)
     }
 
-    /// `parse_record` with a field no text spells declared first.
-    fn parse_record_taking(
-        &mut self,
-        leading: Option<(&str, DyadPtr)>,
-    ) -> Result<DyadPtr, ParseError> {
+    /// `parse_record` with an unnamed field of type `leading` first.
+    fn parse_record_taking(&mut self, leading: Option<DyadPtr>) -> Result<DyadPtr, ParseError> {
         let record_logos = self.types.type_;
         let (scope, fields_arr, size_bytes) = self.parse_field_list(false, leading)?;
         let record = crate::identities::meta::record_layout(
@@ -2864,9 +2890,8 @@ impl<'a> Parser<'a> {
     fn parse_field_list(
         &mut self,
         relaxed: bool,
-        leading: Option<(&str, DyadPtr)>,
+        leading: Option<DyadPtr>,
     ) -> Result<(DyadPtr, DyadPtr, u64), ParseError> {
-        let at = self.pos;
         if !relaxed {
             self.expect_open()?;
         }
@@ -2874,10 +2899,8 @@ impl<'a> Parser<'a> {
         let scope = self.open_scope();
 
         let mut fields = Vec::new();
-        if let Some((name, ty)) = leading {
-            let field = self.rt.store.alloc_raw(ty, std::ptr::null_mut());
-            self.declare_name(name, field, at)?;
-            fields.push(field);
+        if let Some(ty) = leading {
+            fields.push(self.rt.store.alloc_raw(ty, std::ptr::null_mut()));
         }
         loop {
             if self.at_close() {
@@ -3259,6 +3282,15 @@ impl<'a> Parser<'a> {
         if self.runtime_depth > 0 {
             return self.hold_type_body();
         }
+        // The declaration whose whole right side is this `type (…)` names it.
+        let own_name = match (self.filling.last(), self.filling_at.last()) {
+            (Some(&binding), Some(&at))
+                if self.source.get(at..self.pos).is_some_and(|t| t.trim() == "type") =>
+            {
+                binding
+            }
+            _ => std::ptr::null_mut(),
+        };
         self.expect_open()?;
         let depth = self.scopes.depth();
         // The slot words are the fields `type` declares (identities/type.logos):
@@ -3299,6 +3331,10 @@ impl<'a> Parser<'a> {
             ctor: std::ptr::null_mut(),
             run_body: std::ptr::null_mut(),
             this_param: std::ptr::null_mut(),
+            in_parse: false,
+            tape_param: std::ptr::null_mut(),
+            binding: own_name,
+            read_receiver: false,
             block: (scope, Vec::new()),
             instances_drop: std::ptr::null_mut(),
             owns_node_field: false,
@@ -3397,7 +3433,16 @@ impl<'a> Parser<'a> {
         // SAFETY: `text` is the string node just built; its bytes live for the store.
         let held = unsafe { crate::identities::string::text(text) };
         let held = std::str::from_utf8(held).expect("copied from the source text");
-        let fragment = self.lex_body_fragment(held)?;
+        let mut fragment = self.lex_body_fragment(held)?;
+        // A slot word of a type around this one names that type's slot; the held body's
+        // own are declared when it is built, so its cells wait to be resolved then.
+        for (i, cell) in fragment.cells().iter().enumerate() {
+            let id = cell.identity(types);
+            if !cell.is_fresh() && self.definitions.iter().any(|d| d.slots.contains(&id)) {
+                let fresh = self.rt.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut());
+                fragment.set_dyad(i as isize, fresh);
+            }
+        }
         let cells = Box::into_raw(Box::new(fragment));
         let scope = self.scopes.current().unwrap_or(std::ptr::null_mut());
         Ok(crate::identities::held_type::build(
@@ -3462,6 +3507,7 @@ impl<'a> Parser<'a> {
         let saved_definitions = std::mem::take(&mut self.definitions);
         let saved_open = std::mem::replace(&mut self.open, vec![OpenScope::default()]);
         let saved_filling = std::mem::take(&mut self.filling);
+        let saved_filling_at = std::mem::take(&mut self.filling_at);
         let saved_pending_fn = std::mem::replace(&mut self.pending_fn, std::ptr::null_mut());
         let saved_runtime_depth = std::mem::replace(&mut self.runtime_depth, 0);
         let saved_lex_mode = self.lex_mode.take();
@@ -3469,7 +3515,6 @@ impl<'a> Parser<'a> {
         let saved_lifted = std::mem::take(&mut self.lifted);
         let saved_queued = std::mem::take(&mut self.queued);
         let saved_discovering = std::mem::replace(&mut self.discovering, false);
-        let saved_run_body = self.run_body.take();
         let saved_feed = self.feed.replace(Feed { cells, next: 0, base_depth, in_run_order: true });
 
         let built = self.parse_type_body(self.types.type_);
@@ -3483,6 +3528,7 @@ impl<'a> Parser<'a> {
         self.definitions = saved_definitions;
         self.open = saved_open;
         self.filling = saved_filling;
+        self.filling_at = saved_filling_at;
         self.pending_fn = saved_pending_fn;
         self.runtime_depth = saved_runtime_depth;
         self.lex_mode = saved_lex_mode;
@@ -3490,7 +3536,6 @@ impl<'a> Parser<'a> {
         self.lifted = saved_lifted;
         self.queued = saved_queued;
         self.discovering = saved_discovering;
-        self.run_body = saved_run_body;
         self.feed = saved_feed;
 
         // A type of node values minted while a run type's parse runs is the value that type's
@@ -3648,7 +3693,7 @@ impl<'a> Parser<'a> {
     }
 
     /// A slot body read bare, no parameter list (DESIGN ›Execution is function
-    /// application‹): `parse` over a hidden `tape`/`this` record, `run` held as
+    /// application‹): `parse` over a hidden `tape`/node record, `run` held as
     /// its lexed tape and constructed per field-type set (DESIGN ›Deferral is authored‹).
     pub(crate) fn slot_body_fill(
         &mut self,
@@ -3659,22 +3704,23 @@ impl<'a> Parser<'a> {
         match kind {
             SlotKind::Parse => {
                 let at = self.pos;
-                // The two names `parse` declares into its body: `tape`, centred
-                // on the appearance, and `this`, the fresh node when the type
-                // itself appeared, the value when a value of the type did.
+                // `tape`, centred on the appearance, and unnamed, the node `tape[0]`
+                // reaches: fresh when the type itself appeared, the value when a value did.
                 let (input, params) = self.hidden_param_record(
-                    &[(Some("tape"), types.tape.parsing_tape), (Some("this"), types.dyad_)],
+                    &[(Some("tape"), types.tape.parsing_tape), (None, types.dyad_)],
                     at,
                 )?;
                 let def = self.definitions.last_mut().expect("checked above");
                 def.this_param = params[1];
-                self.this_types.insert(params[1], def.self_type);
+                def.tape_param = params[0];
+                def.in_parse = true;
                 // SAFETY: `input` was just built, its parameters unplaced; no declaration's placeholder is being filled.
                 let f = unsafe {
                     self.fn_over_body(types.fn_type, input, types.void_, std::ptr::null_mut())
                 };
                 let def = self.definitions.last_mut().expect("checked above");
                 def.this_param = std::ptr::null_mut();
+                def.in_parse = false;
                 def.ctor = f?;
                 let f = def.ctor;
                 Ok(self.slot_declare(SlotKind::Parse, target, f))
@@ -3700,13 +3746,11 @@ impl<'a> Parser<'a> {
                 Ok(self.slot_declare(SlotKind::Run, target, body))
             }
             SlotKind::Drop => {
-                // One name, `this`, the instance an owner's teardown hands in.
+                // One parameter, unnamed: the value an owner's teardown hands in.
                 let at = self.pos;
-                let (input, params) =
-                    self.hidden_param_record(&[(Some("this"), types.dyad_)], at)?;
+                let (input, params) = self.hidden_param_record(&[(None, types.dyad_)], at)?;
                 let def = self.definitions.last_mut().expect("checked above");
                 def.this_param = params[0];
-                self.this_types.insert(params[0], def.self_type);
                 // SAFETY: `input` was just built, its parameter unplaced; no declaration's placeholder is being filled.
                 let f = unsafe {
                     self.fn_over_body(types.fn_type, input, types.void_, std::ptr::null_mut())
@@ -3735,7 +3779,7 @@ impl<'a> Parser<'a> {
         for &(name, ty) in params {
             let field = self.rt.store.alloc_raw(ty, std::ptr::null_mut());
             // A parameter with no name is a place the body reaches another
-            // way: a run body's field, through `this.f`.
+            // way: a receiver, or a run body's field of type `type`.
             if let Some(name) = name {
                 declared = declared.and_then(|()| self.declare_name(name, field, at).map(|_| ()));
             }
@@ -3758,6 +3802,108 @@ impl<'a> Parser<'a> {
         Ok((self.rt.store.alloc_raw(self.types.type_, record.cast()), fields))
     }
 
+    /// The cell before is an unbuilt `.` or `:`, whose right side is a member's spelling.
+    fn after_tight_read(&self, tape: &ParsingTape) -> bool {
+        tape.last().is_some_and(|l| {
+            !l.constructed && {
+                let id = self.cell_identity(l);
+                id == self.types.dot_ || id == self.types.colon_
+            }
+        })
+    }
+
+    /// Inside a `drop` or a `share` function a field of the value is named bare (DESIGN
+    /// ›There is no `this`‹); fields come first, so an outer name never stands in for one.
+    /// Inside a parse the same name is the checked error, the field going through `tape[0]`.
+    fn names_own_field(&self, cell: &Cell) -> bool {
+        let Some(def) = self.definitions.last() else {
+            return false;
+        };
+        if def.this_param.is_null() {
+            return false;
+        }
+        let mut fields = ScopeStack::new();
+        fields.push(def.block.0);
+        fields
+            .resolve(self.trie, cell.spelling())
+            .is_ok_and(|r| r.matched == cell.len && def.block.1.contains(&r.identity))
+    }
+
+    /// `tape[0]` inside a parse body: the cell the parse was woken on, holding its node.
+    fn is_node_cell(&self, lhs: DyadPtr) -> bool {
+        let Some(def) = self.definitions.last().filter(|d| d.in_parse) else {
+            return false;
+        };
+        // SAFETY: `lhs` is a reduced dyad from the store; a slot node carries `[tape, k]`.
+        unsafe {
+            crate::identities::tape::is_cell_read(self.types, lhs)
+                && crate::identities::tape::cell_key(self.types, lhs).is_some_and(|(t, k, l)| {
+                    t == def.tape_param && k == 0 && l == crate::identities::tape::Line::Cell
+                })
+        }
+    }
+
+    /// `tape[0]:type = T`: the fresh node placed in the parse's own cell, from where its
+    /// fields are written by name (DESIGN ›There is no `this`‹). The seed stamps only the
+    /// type being defined.
+    ///
+    /// # Safety
+    /// `target` must be a `tape.cell_type` node from the store; `value` a reduced dyad.
+    pub(crate) unsafe fn stamp(
+        &mut self,
+        target: DyadPtr,
+        value: DyadPtr,
+    ) -> Result<DyadPtr, ParseError> {
+        let types = self.types;
+        let ops = (*target).value as *const DyadPtr;
+        let cell = crate::identities::tape::build_slot(self.rt.store, types, *ops, *ops.add(1));
+        if !self.is_node_cell(cell) || !(*ops.add(2)).is_null() {
+            return Err(ParseError::StampOutsideParse);
+        }
+        let def = self.definitions.last().expect("is_node_cell found a parse body");
+        if value != def.self_type {
+            return Err(ParseError::StampOtherType);
+        }
+        let node = def.this_param;
+        Ok(crate::identities::tape::build_write(self.rt.store, types, cell, node))
+    }
+
+    /// A bare call of a `share` function that works on a value takes the value the calling
+    /// body is about (DESIGN ›There is no `this`‹): a `drop`'s or `share` function's own, or
+    /// in a parse none, so only one that reads no field of its value is called bare there.
+    ///
+    /// # Safety
+    /// `callee` must be a reduced dyad from the store.
+    unsafe fn with_receiver(
+        &self,
+        callee: DyadPtr,
+        args: Vec<DyadPtr>,
+    ) -> Result<Vec<DyadPtr>, ParseError> {
+        let f = self.types.through(callee);
+        if !self.takes_this(f) {
+            return Ok(args);
+        }
+        let name = || {
+            let spelled = if (*callee).ty == self.types.binding_ {
+                Binding::spelling(callee)
+            } else {
+                String::new()
+            };
+            Box::new(spelled)
+        };
+        let Some(def) = self.definitions.last().filter(|d| !d.this_param.is_null()) else {
+            return Err(ParseError::ShareFnNeedsValue(name()));
+        };
+        if def.in_parse
+            && (self.reads_receiver.contains(&f) || self.reads_receiver.contains(&callee))
+        {
+            return Err(ParseError::ShareFnNeedsValue(name()));
+        }
+        let mut with = vec![def.this_param];
+        with.extend(args);
+        Ok(with)
+    }
+
     /// The slot of the node being built that the field `f` names: `f`
     /// resolves in the fields' own scope alone, and its index among the fields
     /// declared above is the slot.
@@ -3772,15 +3918,18 @@ impl<'a> Parser<'a> {
         let index = field.and_then(|f| items.iter().position(|&x| x == f));
         let Some(index) = index else {
             // A `share` member is one place read through every node, so
-            // `this.element_type` is the member itself, known here.
+            // `tape[0].element_type` is the member itself, known here.
             let mut members = ScopeStack::new();
             members.push(body);
             if let Ok(r) = members.resolve(self.trie, name) {
                 return Ok(r.identity);
             }
             self.pos = at;
-            return Err(ParseError::ThisFieldUnknown(Box::new(name.to_string())));
+            return Err(ParseError::NoSuchField(Box::new(name.to_string())));
         };
+        if let Some(def) = self.definitions.last_mut() {
+            def.read_receiver |= !def.in_parse;
+        }
         let k = self.scalar_value(crate::identities::numtype::NumType::U64, index as i64);
         // SAFETY: the field is a declaration dyad, its type null or a type node.
         let node = unsafe {
@@ -3797,29 +3946,6 @@ impl<'a> Parser<'a> {
             self.fills.insert(node, r.binding);
         }
         Ok(node)
-    }
-
-    /// The field's parameter place, the frame place the node's operand is
-    /// evaluated into (DESIGN ›Execution is function application‹), or for a
-    /// field of type `type` the type this set holds in it, so `output_type 1` reads `i32 1`.
-    fn run_body_field(&mut self, name: &str, at: usize) -> Result<DyadPtr, ParseError> {
-        let (field_scope, fields, places, key) = {
-            let rb = self.run_body.as_ref().expect("this_param is set while a run body is built");
-            (rb.field_scope, rb.fields.clone(), rb.places.clone(), rb.key.clone())
-        };
-        let mut scope = ScopeStack::new();
-        scope.push(field_scope);
-        let index = scope
-            .resolve(self.trie, name)
-            .ok()
-            .and_then(|r| fields.iter().position(|&f| f == r.identity));
-        let Some(i) = index else {
-            self.pos = at;
-            return Err(ParseError::ThisFieldUnknown(Box::new(name.to_string())));
-        };
-        // SAFETY: the fields are the type body's field dyads.
-        let is_type = unsafe { (*fields[i]).ty } == self.types.type_;
-        Ok(if is_type { key[i] } else { places[i] })
     }
 
     /// The run of a node whose type holds its `run` as a lexed body (DESIGN
@@ -3940,7 +4066,11 @@ impl<'a> Parser<'a> {
                     return Ok(None);
                 }
                 held
-            } else if !declared.is_null() {
+            } else if !declared.is_null()
+                // A field typed as a bracket holds its lines, evaluated as an untyped one's.
+                && declared != types.square_brackets
+                && declared != types.scope
+            {
                 if matches!(numtype_of(types, slot), Operand::Literal) {
                     let lit = types.through(slot);
                     if declared == types.rational {
@@ -4050,7 +4180,6 @@ impl<'a> Parser<'a> {
         let saved_lifted = std::mem::take(&mut self.lifted);
         let saved_queued = std::mem::take(&mut self.queued);
         let saved_discovering = std::mem::replace(&mut self.discovering, false);
-        let saved_run_body = self.run_body.take();
         let saved_feed =
             self.feed.replace(Feed { cells, next: 0, base_depth, in_run_order: false });
 
@@ -4069,7 +4198,6 @@ impl<'a> Parser<'a> {
         self.lifted = saved_lifted;
         self.queued = saved_queued;
         self.discovering = saved_discovering;
-        self.run_body = saved_run_body;
         self.feed = saved_feed;
 
         match inner {
@@ -4108,19 +4236,31 @@ impl<'a> Parser<'a> {
         let field_scope = crate::identities::meta::record_scope_of(ty);
         let fields =
             crate::identities::array::items(crate::identities::meta::record_fields_of(ty)).to_vec();
-        // The parameters are the fields alone, in order, unnamed: a node's
-        // operands are its fields, and its call passes exactly those.
+        // The parameters are the fields alone, in order, each under its field's name: a
+        // node's operands are its fields, and its call passes exactly those.
+        let names: HashMap<DyadPtr, String> = self
+            .trie
+            .bindings_in(field_scope)
+            .into_iter()
+            .map(|b| (Binding::read(b).dyad, Binding::spelling(b)))
+            .collect();
         let mut params: Vec<(Option<&str>, DyadPtr)> = Vec::with_capacity(fields.len());
+        let mut type_fields = Vec::new();
         for (i, &field) in fields.iter().enumerate() {
+            let name = names.get(&field).map(String::as_str);
             let ty = if (*field).ty == types.type_ {
-                types.type_
+                // A field of type `type` names the type this set holds in it, so
+                // `output_type 1` reads `i32 1`; its parameter place goes unnamed.
+                type_fields.extend(name.map(|n| (n, key[i])));
+                params.push((None, types.type_));
+                continue;
             } else if key[i] == types.scope || key[i] == types.square_brackets {
                 // A bare parameter: the bracket the node's field holds, read by its lines.
                 std::ptr::null_mut()
             } else {
                 key[i]
             };
-            params.push((None, ty));
+            params.push((name, ty));
         }
         let mut scope = ScopeStack::new();
         scope.push(field_scope);
@@ -4130,17 +4270,13 @@ impl<'a> Parser<'a> {
             .and_then(|r| fields.iter().position(|&f| f == r.identity))
             .filter(|&i| (*fields[i]).ty == types.type_)
             .map_or(types.void_, |i| key[i]);
-        let (input, places) = self.hidden_param_record(&params, 0)?;
-        // `this` is a name of the body, not a parameter: a marker the `.`
-        // constructor recognizes, declared in the parameter scope the body reopens.
-        let this = self.rt.store.alloc_raw(types.dyad_, std::ptr::null_mut());
+        let (input, _) = self.hidden_param_record(&params, 0)?;
         let param_scope = crate::identities::meta::record_scope_of(input);
         self.scopes.push(param_scope);
-        let declared = self.declare_name("this", this, 0);
+        let declared =
+            type_fields.iter().try_for_each(|&(n, t)| self.declare_name(n, t, 0).map(|_| ()));
         self.scopes.pop();
         declared?;
-        self.run_body =
-            Some(RunBodyCx { this_param: this, field_scope, fields, places, key: key.to_vec() });
         self.fn_over_body(types.fn_type, input, output, std::ptr::null_mut())
     }
 
@@ -4200,31 +4336,15 @@ impl<'a> Parser<'a> {
         fn_type: DyadPtr,
         declared: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
-        // A `share` member's `fn` reached through a value binds `this` to it
+        // A `share` function reached through a value takes that value
         // (DESIGN ›The constructor is a field‹): the `fn` takes it first.
         let member = !declared.is_null()
             && self.member_fn_depth == Some(self.frames.len())
             && self.definitions.last().is_some_and(|d| d.this_param.is_null());
-        let input = self.parse_record_taking(member.then_some(("this", self.types.dyad_)))?;
-        if member {
-            // SAFETY: `input` is the record just built, `this` its first field.
-            let this = unsafe {
-                crate::identities::array::items(crate::identities::meta::record_fields_of(input))[0]
-            };
-            let owner = self.definitions.last().expect("checked above").self_type;
-            self.this_types.insert(this, owner);
-        }
+        let input = self.parse_record_taking(member.then_some(self.types.dyad_))?;
         self.expect_arrow()?;
         let output = {
-            // A fields-block `fn`'s return type sees its `this`, so `-> this:type` names the type.
-            if member {
-                // SAFETY: `input` is the record just built.
-                self.scopes.push(unsafe { crate::identities::meta::record_scope_of(input) });
-            }
             let items = self.drive_until_open(RightSide::ReturnType);
-            if member {
-                self.scopes.pop();
-            }
             let out = self.one_of(items?).map_err(|e| match e {
                 ParseError::Empty => ParseError::ExpectedReturnType,
                 e => e,
@@ -4238,15 +4358,22 @@ impl<'a> Parser<'a> {
             // SAFETY: `input` was just built by `parse_record`; `declared` is the caller's placeholder.
             return unsafe { self.fn_over_body(fn_type, input, output, declared) };
         }
-        // SAFETY: `input` is the record just built, `this` its first field.
+        // SAFETY: `input` is the record just built, the value its first field.
         let this = unsafe {
             crate::identities::array::items(crate::identities::meta::record_fields_of(input))[0]
         };
-        self.definitions.last_mut().expect("checked above").this_param = this;
+        let def = self.definitions.last_mut().expect("checked above");
+        def.this_param = this;
+        def.read_receiver = false;
         // SAFETY: as above.
         let f = unsafe { self.fn_over_body(fn_type, input, output, declared) };
-        if let Some(def) = self.definitions.last_mut() {
-            def.this_param = std::ptr::null_mut();
+        let def = self.definitions.last_mut().expect("still open");
+        def.this_param = std::ptr::null_mut();
+        if def.read_receiver {
+            self.reads_receiver.insert(declared);
+            if let Ok(f) = f {
+                self.reads_receiver.insert(f);
+            }
         }
         f
     }
@@ -4832,7 +4959,7 @@ impl<'a> Parser<'a> {
 
     /// `lhs.f` where `lhs` yields a node of `t` only when the program runs, a place of the
     /// type or a call returning it: the field read through the node's address when it runs,
-    /// or a `share` member, a fields-block `fn` called with `lhs` as its `this`.
+    /// or a `share` member, a type body's `fn` called with `lhs` as its value.
     ///
     /// # Safety
     /// `lhs` must be a reduced dyad from the store and `t` a type `is_node_valued` accepts.
@@ -4931,26 +5058,20 @@ impl<'a> Parser<'a> {
             // member reads then need.
             let source = self.source;
             let name = &source[nstart..nstart + nlen];
-            // `this.f` inside a parse body: a field of the node being built;
-            // before the dyad view below, since `this` is a `dyad ?` place.
-            if let Some(def) = self.definitions.last() {
-                if !def.this_param.is_null() && lhs == def.this_param {
-                    let member = self.this_field(name, nstart)?;
-                    // `this.f(…)`, a `share` member `fn`: called on the node `this` holds.
-                    if let Some(args) = call {
-                        if self.takes_this(member) {
-                            let mut with_this = vec![lhs];
-                            with_this.extend(args);
-                            return self.build_call(member, &with_this).map(|n| (n, 1));
-                        }
+            // `tape[0].f` inside a parse body: a field of the node the parse builds or reads
+            // (DESIGN ›There is no `this`‹); `.dyads` is the cell's own.
+            if name != "dyads" && self.is_node_cell(lhs) {
+                let node = self.definitions.last().expect("a parse body is open").this_param;
+                let member = self.this_field(name, nstart)?;
+                // `tape[0].f(…)`, a `share` function: called on that node.
+                if let Some(args) = call {
+                    if self.takes_this(member) {
+                        let mut with_node = vec![node];
+                        with_node.extend(args);
+                        return self.build_call(member, &with_node).map(|n| (n, 1));
                     }
-                    return Ok((member, 0));
                 }
-            }
-            // `this.f` inside a held run body being constructed: the field's
-            // place in the function being built.
-            if self.run_body.as_ref().is_some_and(|rb| lhs == rb.this_param) {
-                return self.run_body_field(name, nstart).map(|n| (n, 0));
+                return Ok((member, 0));
             }
             // A scope cell's lines, read when the constructor runs.
             {
@@ -5156,7 +5277,7 @@ impl<'a> Parser<'a> {
                 };
                 if let Some(args) = call {
                     if self.takes_this(member) {
-                        // `this.f` reads node slots, which a record laid out in bytes has none of.
+                        // A field read reads node slots, which a record laid out in bytes has none of.
                         if crate::dyad::is_place((*lhs).value) {
                             return Err(ParseError::MemberNeedsNode);
                         }
@@ -5199,8 +5320,7 @@ impl<'a> Parser<'a> {
         };
         // The member is read by its spelling at the offset it was lexed at, so a
         // keyword there (`.type`) reads as a name.
-        let this_read =
-            self.definitions.last().is_some_and(|d| !d.this_param.is_null() && d.this_param == lhs);
+        let this_read = self.is_node_cell(lhs);
         self.member_asleep = this_read;
         let m = self.cell_at(tape, 1);
         self.member_asleep = false;
@@ -5232,10 +5352,10 @@ impl<'a> Parser<'a> {
             tape.remove(1);
         }
         tape.remove(-1);
-        // A type identity a body's `this.f` folded to stands as its own
+        // A type identity a parse's `tape[0].f` folded to stands as its own
         // unconstructed cell, so it reads its right side as anywhere else.
         // SAFETY: `node` is a node from the store.
-        let folded_type = (self.run_body.is_some() || this_read)
+        let folded_type = this_read
             && unsafe {
                 (*node).ty == self.types.type_ && crate::identities::meta::kind_of(node).is_some()
             };
@@ -5488,7 +5608,12 @@ impl<'a> Parser<'a> {
         let woke = cell.constructed
             && !cell.dyad.is_null()
             && unsafe { (*cell.dyad).ty } == self.types.binding_;
-        let (node, ended) = if cell.constructed && !woke {
+        // A field named bare reaches its place as a path does.
+        // SAFETY: as above.
+        let field = !cell.constructed
+            && !cell.dyad.is_null()
+            && unsafe { crate::identities::this::is_field_read(self.types, cell.dyad) };
+        let (node, ended) = if cell.constructed && !woke || field {
             (cell.dyad, None)
         } else {
             let (identity, binding, scope) = if woke {
@@ -6303,8 +6428,10 @@ impl<'a> Parser<'a> {
         // placeholder; the binding is the one a `lex_rank = …` line in the value writes.
         self.pending_fn = placeholder;
         self.filling.push(binding);
+        self.filling_at.push(self.pos);
         let value = self.parse_expression();
         self.filling.pop();
+        self.filling_at.pop();
         self.last_declared = binding;
         self.pending_fn = std::ptr::null_mut();
         let value = value?;
@@ -6337,7 +6464,7 @@ impl<'a> Parser<'a> {
                 && crate::identities::meta::is_node_valued((*value).ty, self.types.fn_type);
             if empty_node {
                 // `v := T ?` of a type whose values are nodes: a new empty node each time the
-                // declaration runs, its fields filled one by one as a parse fills `this`.
+                // declaration runs, its fields filled one by one as a parse fills `tape[0]`.
                 self.holes.remove(&value);
                 let t = (*value).ty;
                 let template = crate::identities::this::empty_node(self.rt.store, t);
@@ -6943,10 +7070,6 @@ impl<'a> Parser<'a> {
         }
         if (*lhs).ty == types.binding_ {
             if name == "type" {
-                // `this:type` is the type being defined, whose instance `this` is.
-                if let Some(&owner) = self.this_types.get(&Binding::read(lhs).dyad) {
-                    return Ok(owner);
-                }
                 // Through a settled box: the type of what the name holds.
                 let cell = self.settled_type(Binding::read(lhs).dyad);
                 if cell.is_null() {
@@ -6976,7 +7099,7 @@ impl<'a> Parser<'a> {
             }
             return Ok(self.rt.store.alloc_raw((*field).ty, addr));
         }
-        // `this.f:type` is the field's declared type, not the type of the read that reaches it;
+        // `tape[0].f:type` is the field's declared type, not the type of the read that reaches it;
         // an untyped field's type is the written value's, unknown until the constructor runs.
         if crate::identities::this::is_field_read(types, lhs) && name == "type" {
             let declared =
@@ -7612,7 +7735,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// A `share` member `fn` of a type body, whose first parameter is the hidden `this`.
+    /// A `share` function of a type body, whose first parameter is the value it works on.
     ///
     /// # Safety
     /// `f` must be a resolved dyad from the store.
@@ -7628,9 +7751,10 @@ impl<'a> Parser<'a> {
         let Some(&first) = array::items(meta::record_fields_of(input)).first() else {
             return false;
         };
-        let mut scope = ScopeStack::new();
-        scope.push(meta::record_scope_of(input));
-        scope.resolve(self.trie, "this").is_ok_and(|r| r.identity == first)
+        // The receiver is the one parameter no name declares.
+        let scope = meta::record_scope_of(input);
+        (*first).ty == self.types.dyad_
+            && !self.trie.bindings_in(scope).iter().any(|&b| Binding::read(b).dyad == first)
     }
 
     /// A `fn` node in the constructor slot: judged by the flag alone.
@@ -7700,9 +7824,17 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
         lazy: bool,
     ) -> Result<Option<Boundary>, ParseError> {
-        let Some((cell, start)) = self.lex_cell()? else {
+        let Some((mut cell, start)) = self.lex_cell()? else {
             return Ok(Some(Boundary::Eof));
         };
+        if !cell.constructed && !self.after_tight_read(tape) && self.names_own_field(&cell) {
+            if self.definitions.last().is_some_and(|d| d.in_parse) {
+                self.pos = start;
+                return Err(ParseError::BareFieldInParse(Box::new(cell.spelling().to_string())));
+            }
+            // Left unbuilt, as a name is, so a value whose type has a parse wakes it: `items[1]`.
+            cell.dyad = self.this_field(cell.spelling(), start)?;
+        }
         let id = self.cell_identity(&cell);
         if !cell.constructed {
             self.check_unwritten(&cell)?;
@@ -8295,9 +8427,9 @@ mod tests {
             go("sq := fn (a := i32 ?) -> i32 ( a * a )", &mut store, &mut trie, types, scopes);
         let (_, s) = go(
             "squared := type ( \
-                a := i32 ?, output_type := type ?, share run = ( sq(this.a) ), \
+                a := i32 ?, output_type := type ?, share run = ( sq(a) ), \
                 share parse_rank = *.parse_rank + 1, \
-                share parse = ( this.a = tape[-1], this.output_type = i32, tape[0] = this, \
+                share parse = ( tape[0]:type = squared, tape[0].a = tape[-1], tape[0].output_type = i32, \
                           tape.is_constructed[0] = true, tape.remove(-1) ) )",
             &mut store,
             &mut trie,

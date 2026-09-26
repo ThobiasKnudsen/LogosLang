@@ -193,6 +193,28 @@ impl RegexTrie {
         Some(current)
     }
 
+    /// Every binding declared in `scope`, wherever its key lies in the index.
+    pub fn bindings_in(&self, scope: DyadPtr) -> Vec<DyadPtr> {
+        let mut out = Vec::new();
+        self.collect_in(scope, &mut out);
+        out
+    }
+
+    fn collect_in(&self, scope: DyadPtr, out: &mut Vec<DyadPtr>) {
+        if let Some(leaf) = &self.leaf_value {
+            // SAFETY: every pointer the trie stores is a binding dyad from the store.
+            out.extend(
+                leaf.bindings.iter().filter(|&&b| unsafe { Binding::read(b).scope } == scope),
+            );
+        }
+        for child in self.children.iter().flatten() {
+            child.collect_in(scope, out);
+        }
+        for entry in &self.regexes {
+            entry.node.collect_in(scope, out);
+        }
+    }
+
     /// The bindings under exactly `key` as inserted: a declaration-time question,
     /// unlike [`get`](Self::get), which asks what a text lexes as.
     pub fn bindings_for_key(&self, key: &str) -> Option<&[DyadPtr]> {

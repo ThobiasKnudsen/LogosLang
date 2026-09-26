@@ -202,7 +202,7 @@ pub(crate) unsafe fn record_body_of(id: DyadPtr) -> DyadPtr {
 
 const INSTANCES_DROP_OFF: usize = PAYLOAD_OFF + 32;
 
-/// The `fn` a `drop = (…)` line filled, over the one parameter `this`; null where the type
+/// The `fn` a `share drop = (…)` line filled, over the one unnamed value parameter; null where the type
 /// body fills none.
 ///
 /// # Safety

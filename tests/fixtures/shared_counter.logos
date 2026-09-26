@@ -1,4 +1,4 @@
-# one `shared` counter every importer reaches: the file loads once per run
+# one `share` counter every importer reaches: the file loads once per run
 print «loaded»,
 share pub mut count := i32 0,
 pub bump := fn () -> i32 ( count = count + 1, count )

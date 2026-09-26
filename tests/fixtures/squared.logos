@@ -1,20 +1,20 @@
 # A postfix operator defined in Logos and used in the same file: an
 # appearance of `squared` runs its parse, written here, during the parse.
-# The parse takes the cell to its left as the operand, `this.a = tape[-1]`,
-# the fresh `squared` node filled by field name, placed with `tape[0] = this`
-# and marked done by the parse itself; its parse_rank sits one above `*`'s,
+# The parse makes its cell a new `squared` node with `tape[0]:type = squared`,
+# fills it by field name, the operand from the cell to its left,
+# `tape[0].a = tape[-1]`, and marks it done itself; its parse_rank sits one above `*`'s,
 # so `2 * x squared` squares first. Its run calls an ordinary function, `sq`,
 # so a node of `squared` is the other shape a parse may build: an operation
 # that is a call, its output the function's.
 sq := fn (a := i32 ?) -> i32 ( a * a ),
 squared := type (
-    a := i32 ?, output_type := type ?, share run = ( sq(this.a) ),
+    a := i32 ?, output_type := type ?, share run = ( sq(a) ),
     share parse_rank = *.parse_rank + 1,
     share associativity = left,
     share parse = (
-        this.a = tape[-1],
-        this.output_type = i32,
-        tape[0] = this,
+        tape[0]:type = squared,
+        tape[0].a = tape[-1],
+        tape[0].output_type = i32,
         tape.is_constructed[0] = true,
         tape.remove(-1)
     )
@@ -22,14 +22,14 @@ squared := type (
 # A binary one: both cells, by name.
 add := fn (a := i32 ?, b := i32 ?) -> i32 ( a + b ),
 plus2 := type (
-    a := i32 ?, b := i32 ?, output_type := type ?, share run = ( add(this.a, this.b) ),
+    a := i32 ?, b := i32 ?, output_type := type ?, share run = ( add(a, b) ),
     share parse_rank = +.parse_rank,
     share associativity = left,
     share parse = (
-        this.a = tape[-1],
-        this.b = tape[1],
-        this.output_type = i32,
-        tape[0] = this,
+        tape[0]:type = plus2,
+        tape[0].a = tape[-1],
+        tape[0].b = tape[1],
+        tape[0].output_type = i32,
         tape.is_constructed[0] = true,
         tape.remove(1),
         tape.remove(-1)

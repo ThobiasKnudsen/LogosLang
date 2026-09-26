@@ -3,79 +3,76 @@
 # it builds an `array` node instead, whose run makes a new value of that type each time it is evaluated
 # (DESIGN ›An array expression is a node of `array`, and its run makes the value‹).
 
-import ./next_power_of_two.logos,
-
-get_mint := fn (t := type ?) -> type (
-    shared array_mints := hashmap type -> type,
-    mut mint := array_mints[t],
-    if mint != ? return mint,
-    mint = type (
-        shared element_type := t,
-        mut ptr := own @element_type ?,
-        mut size := u64 0,
-        mut capacity := u64 0,
-        shared size_bytes := fn () -> u64 (this.size * this.element_type.size_bytes),
-        shared capacity_bytes := fn () -> u64 (this.capacity * this.element_type.size_bytes),
-
-        drop = (
-            for i in 0..this.size ( drop (this.ptr + i)@ ),
-            free this.ptr
-        ),
-
-        shared at := fn (index := u64 ?) -> element_type (
-            if index >= this.size error «index out of range: the index is at or past the array's size»,
-            (this.ptr + index)@
-        ),
-        shared at_signed := fn (index := i64 ?) -> element_type (
-            if index < 0 or u64(index) >= this.size
-                error «index out of range: the index is negative or at or past the array's size»,
-            (this.ptr + u64(index))@
-        ),
-
-        # Takes a bracket at application's rank (DESIGN ›A parse is ranked by what it takes from its right‹).
-        parse_rank = dyad.parse_rank,
-        associativity = left,
-        parse = (
-            if tape[0]:type != type and tape[1]:type == square_brackets (
-                # A signed index goes to `at_signed`, whose bounds check refuses a negative value.
-                if tape[1].dyads[0]:type ⊆ this.size:type (
-                    tape[0] = this.at(tape[1].dyads[0])
-                ) else (
-                    # A literal's value is known now, so one outside the size type is refused now.
-                    if tape[1].dyads[0]:type == rational_number
-                        error «the index type is not within the size type, so the index could lie outside the array»,
-                    if not tape[1].dyads[0]:type ⊆ i64
-                        error «the index is not an integer»,
-                    tape[0] = this.at_signed(tape[1].dyads[0])
-                ),
-                tape.remove(1)
-            ),
-            tape.is_constructed[0] = true
-        )
-    ),
-    array_mints[t] = mint,
-    mint
-),
-
 pub array := type (
+    share array_mints := hashmap type -> type,
+    share get_mint := fn (t := type ?) -> type (
+        mut mint := array_mints[t],
+        if mint != ? return mint,
+        mint = type (
+            share element_type := t,
+            mut ptr := own @element_type ?,
+            mut size := u64 0,
+            share size_bytes := fn () -> u64 (size * element_type.size_bytes),
+
+            share drop = (
+                for i in 0..size ( drop (ptr + i)@ ),
+                free ptr
+            ),
+
+            share at := fn (index := u64 ?) -> element_type (
+                if index >= size error «index out of range: the index is at or past the array's size»,
+                (ptr + index)@
+            ),
+            share at_signed := fn (index := i64 ?) -> element_type (
+                if index < 0 or u64(index) >= size
+                    error «index out of range: the index is negative or at or past the array's size»,
+                (ptr + u64(index))@
+            ),
+
+            # Takes a bracket at application's rank (DESIGN ›A parse is ranked by what it takes from its right‹).
+            share parse_rank = dyad.parse_rank,
+            share associativity = left,
+            share parse = (
+                if tape[0]:type != type and tape[1]:type == square_brackets (
+                    # A signed index goes to `at_signed`, whose bounds check refuses a negative value.
+                    if tape[1].dyads[0]:type ⊆ tape[0].size:type (
+                        tape[0] = tape[0].at(tape[1].dyads[0])
+                    ) else (
+                        # A literal's value is known now, so one outside the size type is refused now.
+                        if tape[1].dyads[0]:type == rational_number
+                            error «the index type is not within the size type, so the index could lie outside the array»,
+                        if not tape[1].dyads[0]:type ⊆ i64
+                            error «the index is not an integer»,
+                        tape[0] = tape[0].at_signed(tape[1].dyads[0])
+                    ),
+                    tape.remove(1)
+                ),
+                tape.is_constructed[0] = true
+            )
+        ),
+        array_mints[t] = mint,
+        mint
+    ),
+
     element_type := type ?,
-    elements := ?,
-    output := type ?,
-    run = (
-        mut v := this.output ?,
-        v.size = this.elements.dyads.size,
-        v.capacity = next_power_of_two(v.size),
-        v.ptr = mut alloc v.capacity of this.element_type ?,
-        for i in 0..v.size (
-            (v.ptr + i)@ = this.elements.dyads[i]
+    elements := square_brackets ?,
+    output_type := type ?,
+
+    share run = (
+        mut v := output_type ?,
+        v.ptr = mut alloc elements.dyads.size of v.element_type ?,
+        # size counts only written elements, so a failed `=` leaves drop nothing unwritten to walk.
+        for i in 0..elements.dyads.size (
+            (v.ptr + i)@ = elements.dyads[i],
+            v.size = i + 1
         ),
         own v
     ),
 
     # Above application, so it takes its element type before anything else reads it.
-    parse_rank = fn.parse_rank,
-    associativity = right,
-    parse = (
+    share parse_rank = fn.parse_rank,
+    share associativity = right,
+    share parse = (
         if tape[1] == ? (
             tape.is_constructed[0] = true
         ) else (
@@ -86,7 +83,7 @@ pub array := type (
             if tape[2]:type == scope
                 error «the list is written in square brackets, `array i32 [1, 2]`, not `array i32 (1, 2)`»,
             # Right of another `array` this one is the element type, and the list is the outer one's.
-            if tape[2]:type == square_brackets and tape[-1] != tape[0] (
+            if tape[2]:type == square_brackets and tape[-1] != array (
                 # A bracket line is checked when the run's `=` builds it.
                 for i in 0..tape[2].dyads.size (
                     if tape[2].dyads[i]:type != square_brackets and tape[2].dyads[i]:type != scope (
@@ -94,10 +91,10 @@ pub array := type (
                             error «an element does not fit the element type»
                     )
                 ),
-                this.element_type = t,
-                this.elements = tape[2],
-                this.output = mint,
-                tape[0] = this,
+                tape[0]:type = array,
+                tape[0].element_type = t,
+                tape[0].elements = tape[2],
+                tape[0].output_type = mint,
                 tape.is_constructed[0] = true,
                 tape.remove(2),
                 tape.remove(1)

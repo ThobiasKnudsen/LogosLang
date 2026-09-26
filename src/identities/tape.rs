@@ -573,6 +573,7 @@ fn run_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         if !(*tape).set_dyad(k, dyad) {
             return Err(RunError::OffTape);
         }
+        rt.stamp(dyad);
         Ok(0)
     }
 }
@@ -920,7 +921,7 @@ unsafe fn typed_operand(
 }
 
 /// An argument read from the tape is the operand it names, typed now and run when the placed
-/// call runs; any other argument reads the constructor's `this` or locals, gone by then, so it
+/// call runs; any other argument reads the constructor's node or locals, gone by then, so it
 /// runs now. DESIGN ›`a[k]` is an application, exactly as `a(k)`‹.
 fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `[call, op]` node `cell_arg` built over a call node.

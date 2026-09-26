@@ -73,6 +73,13 @@ fn construct(
         return Ok(crate::parse::Constructed::Placed);
     }
     let value = p.parse_expression()?;
+    // SAFETY: `target` is the reduced dyad of the cell to the left.
+    if unsafe { (*target).ty } == types.tape.cell_type {
+        // SAFETY: `target` is a cell type read, `value` a reduced dyad.
+        let node = unsafe { p.stamp(target, value) }?;
+        tape.place(node);
+        return Ok(crate::parse::Constructed::Placed);
+    }
     // SAFETY: `target` and `value` are reduced dyads from the store.
     let value = unsafe { p.bracket_into(target, value) }?;
     let node = if let Some(kind) = slot {
@@ -146,7 +153,7 @@ pub(super) fn build(
     }
     // SAFETY: `lhs_d` is a reduced dyad from the store.
     if unsafe { super::this::is_field_read(types, lhs_d) } {
-        // SAFETY: `lhs_d` is a `this` field read, `rhs` a reduced dyad.
+        // SAFETY: `lhs_d` is a field read, `rhs` a reduced dyad.
         return unsafe { super::this::build_write(store, types, lhs_d, rhs) };
     }
     if lhs_ty == types.deref_ {

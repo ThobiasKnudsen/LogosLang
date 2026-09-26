@@ -570,7 +570,7 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
             Operand::NonNumeric
         };
     }
-    // A tape or `this` read yields a cell's address, an `@dyad` value: a write stores
+    // A tape or field read yields a cell's address, an `@dyad` value: a write stores
     // what it yields, never its own address.
     if logos == types.tape.slot
         || logos == types.tape.cell_type
@@ -704,7 +704,7 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
                 return Operand::Pointer(numtype::pointee_of(out));
             }
             // A rational result has no machine form; a type or node result is a node address.
-            // A type still being defined, named by `this:type` in its own body, has no record yet.
+            // A type still being defined, named in its own parse, has no record yet.
             if !out.is_null()
                 && (out == types.rational
                     || out == types.type_

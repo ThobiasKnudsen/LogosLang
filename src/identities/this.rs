@@ -1,8 +1,9 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `this` inside a `parse` body or a fields-block `fn`: the node, bound as a hidden
-//! parameter, a `dyad ?` place holding the node's address. `this.f` reaches the slot at
+//! The value a type's bodies work on: a parse's node, `tape[0]`, or a `drop`'s or `share`
+//! function's value, bound as an unnamed parameter, a `dyad ?` place holding the node's
+//! address. A field read, `tape[0].f` or bare `f`, reaches the slot at
 //! `f`'s index among the instance fields: read, the node it holds, or for a field of a
 //! number or pointer type the value that node yields; as `=`'s target, the write of the
 //! right side's node, or of a node holding the value it yields. A field of a type a Logos
@@ -20,16 +21,16 @@ use cranelift_codegen::ir::Value;
 /// The handles: the slot read and the slot write, each with its run leaf.
 #[derive(Debug, Clone, Copy)]
 pub struct ThisIds {
-    /// `this.f` read: `[this, k, op]`, yielding the node slot `k` holds.
+    /// A field read: `[node, k, op]`, yielding the node slot `k` holds.
     pub slot: DyadPtr,
     pub slot_leaf: DyadPtr,
-    /// `this.f = v`: `[this, k, value, op]`, storing `v`'s node into slot `k`.
+    /// A field write: `[node, k, value, op]`, storing `v`'s node into slot `k`.
     pub write: DyadPtr,
     pub write_leaf: DyadPtr,
-    /// `this.f` of a field typed by `build_field_read`: `[this, k, type, op]`, the value it holds.
+    /// A read of a field typed by `build_field_read`: `[node, k, type, op]`, the value it holds.
     pub load: DyadPtr,
     pub load_leaf: DyadPtr,
-    /// `this.f = v` there: `[this, k, value, type, op]`, a node of `type` holding v's value.
+    /// A write there: `[node, k, value, type, op]`, a node of `type` holding v's value.
     pub store: DyadPtr,
     pub store_leaf: DyadPtr,
     /// `[template, op]`: a new node of the template's type holding its slots, made per run.
@@ -37,8 +38,8 @@ pub struct ThisIds {
     pub copy_leaf: DyadPtr,
 }
 
-/// Neither has a spelling: `.` builds the read when its left side is a parse body's
-/// `this`, and `=` the write over it.
+/// Neither has a spelling: `.` builds the read right of a parse's `tape[0]`, a bare field
+/// name in a `drop` or `share` function builds it too, and `=` the write over it.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     let op = |cx: &mut Cx, roles: &[&str], run: crate::run::RunFn| {
         let record = meta::operand_record(
@@ -105,7 +106,7 @@ pub(crate) unsafe fn empty_node(store: &mut Store, ty: DyadPtr) -> DyadPtr {
     store.alloc_raw(ty, value)
 }
 
-/// `this.f`: a `load` when the field's declared type says what it holds, a number, a
+/// A field read: a `load` when the field's declared type says what it holds, a number, a
 /// pointer, or a node a Logos `parse` built (DESIGN ›A value of a type built by a Logos
 /// `parse` travels as a pointer‹), so the read carries that type; else the slot's node.
 ///
@@ -143,7 +144,7 @@ pub(crate) fn build_load(
     node(store, types.this.load, types.this.load_leaf, &[this, k, ty])
 }
 
-/// Either read `this.f` builds.
+/// Either field read.
 ///
 /// # Safety
 /// `node` must be a valid dyad from the store.
@@ -212,6 +213,9 @@ unsafe fn slot_of(
     if this.is_null() {
         return Err(RunError::NoThis);
     }
+    if rt.unstamped(this) {
+        return Err(RunError::FieldBeforeStamp);
+    }
     let slots = (*this).value as *mut DyadPtr;
     if slots.is_null() {
         return Err(RunError::NoThis);
@@ -226,7 +230,7 @@ unsafe fn slot_of(
 /// The node the slot `read` reaches holds, `None` while the slot is unwritten.
 ///
 /// # Safety
-/// `read` must be a node `is_field_read` accepts, over a `this` that holds a node.
+/// `read` must be a node `is_field_read` accepts, over a value that holds a node.
 pub(crate) unsafe fn field_node(
     rt: &mut Runtime,
     read: DyadPtr,
@@ -244,7 +248,7 @@ pub(crate) unsafe fn slot_addr(rt: &mut Runtime, read: DyadPtr) -> Result<*mut u
 }
 
 fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a slot node from the store; `this` holds a node with a slot per field.
+    // SAFETY: `node` is a slot node from the store; its value holds a node with a slot per field.
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         let (slot, k) = slot_of(rt, ops)?;

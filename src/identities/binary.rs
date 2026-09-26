@@ -277,9 +277,10 @@ fn build_identity_compare(
     let addressed = |n: DyadPtr, k: Read| {
         matches!(k, Read::Identity | Read::Container(_) | Read::Address)
             // SAFETY: as above.
+            // A type whose body is still open, named in its own parse, has no record yet.
             || unsafe {
                 let ty = (*types.through(n)).ty;
-                ty == types.tape.cell_type || ty == types.tape.cell_identity
+                ty == types.tape.cell_type || ty == types.tape.cell_identity || ty == types.type_
             }
             // SAFETY: as above.
             || unsafe { super::yields_type(types, n) }

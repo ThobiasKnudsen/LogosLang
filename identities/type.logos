@@ -6,7 +6,7 @@
 # fills its own below. type.logos alone declares them, which is why `parse := parse ?` names the slot after
 # its type here and nowhere else: the ground is hand-built by the seed, and nothing predeclares the slots for
 # it. lex_rank is not here: it lives on the binding (14 September 2026).
-# A body's this.f names a field declared above it, so the fields come first.
+# A body names a field declared above it, so the fields come first.
 
 type := type (
     parse_rank := f64 ?
@@ -20,8 +20,8 @@ type := type (
     share parse = (
         if tape[1] != lex «(»[0]
             error «type must be followed by (»
+        tape[0]:type = type
         (.parse(tape.recenter(1))
-        tape[0] = this
         tape.is_constructed[0] = true
         tape.remove(1)
     )

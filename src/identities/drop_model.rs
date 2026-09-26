@@ -397,7 +397,7 @@ unsafe fn cell_drop(types: &Core, place: DyadPtr) -> Option<DyadPtr> {
     (!drop.is_null()).then_some(drop)
 }
 
-/// The pointee of `this.f` where the field `f` is declared `own @T ?`; `None` for any
+/// The pointee of a field read where the field is declared `own @T ?`; `None` for any
 /// other operand.
 ///
 /// # Safety
@@ -408,7 +408,7 @@ unsafe fn owning_field_pointee(types: &Core, place: DyadPtr) -> Option<DyadPtr> 
         .then(|| numtype::pointee_of(ty))
 }
 
-/// `free this.f` over an owning field: `[field read, pointee, op]`.
+/// `free` of an owning field: `[field read, pointee, op]`.
 fn build_field_free(store: &mut Store, types: &Core, read: DyadPtr, pointee: DyadPtr) -> DyadPtr {
     let value = store.alloc_operands(&[read, pointee, types.ops.field_free_]);
     store.alloc_raw(types.free_, value)
@@ -1006,18 +1006,25 @@ mod tests {
         );
     }
 
-    /// A type whose owning field holds an array its parse's `fill` makes.
+    /// A value whose owning field holds an array, in the array's shape: `bag ()` is a node
+    /// whose run makes a new `bagged`, and `bag` with no bracket is `bagged`.
     const BAG: &str = "import ./identities/array.logos, t := array i32, \
-        bag := type ( \
+        bagged := type ( \
             mut items := own t ?, \
-            share fill := fn (elements) -> this:type ( this.items = array i32 [4, 5, 6], this ), \
-            share drop = ( drop this.items ), \
-        share parse_rank = dyad.parse_rank, \
-        share associativity = left, \
-        share parse = ( \
-            if tape[1]:type == scope ( tape[0] = this.fill(tape[1]), tape.remove(1) ), \
-            tape.is_constructed[0] = true \
-        ) ),\n";
+            share drop = ( drop items ), \
+            share parse_rank = dyad.parse_rank, \
+            share parse = ( tape.is_constructed[0] = true ) ), \
+        bag := type ( \
+            output_type := type ?, \
+            share run = ( mut v := output_type ?, v.items = array i32 [4, 5, 6], own v ), \
+            share parse_rank = dyad.parse_rank, \
+            share associativity = left, \
+            share parse = ( \
+                if tape[1]:type == scope ( \
+                    tape[0]:type = bag, tape[0].output_type = bagged, tape.remove(1) \
+                ) else ( tape[0] = bagged ), \
+                tape.is_constructed[0] = true \
+            ) ),\n";
 
     #[test]
     fn an_owning_field_frees_its_array_once_through_the_owner_s_drop() {
@@ -1025,15 +1032,15 @@ mod tests {
             ("b := bag (), b.items[1]", 5),
             ("b := bag (), drop b, 2", 2),
             ("f := fn () -> i32 ( b := bag (), b.items[2] ), f() + f()", 12),
-            ("l := array bag [bag (), bag ()], l[1].items[0]", 4),
-            ("b := bag (), l := array bag [own b], l[0].items.size", 3),
+            ("l := array bagged [bag (), bag ()], l[1].items[0]", 4),
+            ("b := bag (), l := array bagged [own b], l[0].items.size", 3),
             ("b := bag (), x := array i32 [1], b.items = own x, b.items[0]", 1),
             ("mut a := own t ?, a = array i32 [7], a[0]", 7),
         ] {
             assert_eq!(run(&format!("{BAG}{tail}")), (want, 0), "{tail}");
         }
         // The count sees the array: a drop that leaves the field alone leaks its one block.
-        let forgetful = BAG.replace("share drop = ( drop this.items )", "share drop = ( 0 )");
+        let forgetful = BAG.replace("share drop = ( drop items )", "share drop = ( 0 )");
         assert_eq!(run(&format!("{forgetful}b := bag (), 1")), (1, 1));
     }
 
@@ -1213,14 +1220,14 @@ mod tests {
     fn a_node_of_a_run_type_is_a_use_of_every_name_its_body_reads() {
         const POW: &str = "n := i32 2,\n\
             ^ := type (\n\
-                a := i32 ?, b := i32 ?, output_type := type ?, share run = ( this.a * this.b * n ),\n\
+                a := i32 ?, b := i32 ?, output_type := type ?, share run = ( a * b * n ),\n\
                 share parse_rank = *.parse_rank + 1,\n\
                 share associativity = right,\n\
                 share parse = (\n\
-                    this.a = tape[-1],\n\
-                    this.b = tape[1],\n\
-                    this.output_type = i32,\n\
-                    tape[0] = this,\n\
+                    tape[0]:type = ^, tape[0].a = tape[-1],\n\
+                    tape[0].b = tape[1],\n\
+                    tape[0].output_type = i32,\n\
+                    ,\n\
                     tape.is_constructed[0] = true,\n\
                     tape.remove(1),\n\
                     tape.remove(-1)\n\

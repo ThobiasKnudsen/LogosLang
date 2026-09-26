@@ -9,17 +9,17 @@
     rhs := i32 ?,
     output_type := type ?,
     share run = (
-        mut r := this.output_type 1,
-        for 0..this.rhs ( r = r * this.lhs ),
+        mut r := output_type 1,
+        for 0..rhs ( r = r * lhs ),
         r
     ),
     share parse_rank = *.parse_rank + 1,
     share associativity = right,
     share parse = (
-        this.lhs = tape[-1],
-        this.rhs = tape[1],
-        this.output_type = tape[-1]:type,
-        tape[0] = this,
+        tape[0]:type = ^,
+        tape[0].lhs = tape[-1],
+        tape[0].rhs = tape[1],
+        tape[0].output_type = tape[-1]:type,
         tape.is_constructed[0] = true,
         tape.remove(1),
         tape.remove(-1)

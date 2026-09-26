@@ -4,31 +4,30 @@
 # An operator is a type, and its body describes one level: the operands as named
 # fields, the output the parse writes per node, the run every node shares (a bare
 # body over the fields), where `^` binds (parse_rank), which way it associates,
-# and its one parse, a body over the parsing tape `tape`. When `^` itself stands
-# on the tape the parse builds the node as `this`, a fresh ^ it fills by name and
-# places with tape[0] = this; when a ^ node stands there it has nothing to take
-# and stands as itself. The run is lexed once here and constructed once per set of
-# field types a ^ node is built with, so `^` over i32 and over f64 is this one
-# definition. A field read such as (a ^ b).lhs walks into the node and runs
-# nothing. The fields come first: a body's this.f names a field declared above it.
+# and its one parse, a body over the parsing tape `tape`. The parse makes its own
+# cell a new ^ node with tape[0]:type = ^ and fills it by name, tape[0].lhs; the
+# node it built runs and is never parsed again. The run names the fields bare. It
+# is lexed once here and constructed once per set of field types a ^ node is built
+# with, so `^` over i32 and over f64 is this one definition. A field read such as
+# (a ^ b).lhs walks into the node and runs nothing.
 
 ^ := type (
     lhs := ?,
     rhs := i32 ?,
     output_type := type ?,
     share run = (
-        mut r := this.output_type 1,
-        for 0..this.rhs ( r = r * this.lhs ),
+        mut r := output_type 1,
+        for 0..rhs ( r = r * lhs ),
         r
     ),
 
     share parse_rank = *.parse_rank + 1,
     share associativity = right,
     share parse = (
-        this.lhs = tape[-1],
-        this.rhs = tape[1],
-        this.output_type = tape[-1]:type,
-        tape[0] = this,
+        tape[0]:type = ^,
+        tape[0].lhs = tape[-1],
+        tape[0].rhs = tape[1],
+        tape[0].output_type = tape[-1]:type,
         tape.is_constructed[0] = true,
         tape.remove(1),
         tape.remove(-1)

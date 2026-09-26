@@ -54,8 +54,10 @@ pub enum RunError {
     CellNotANode,
     /// `insert` of a null fragment.
     NoFragment,
-    /// `this` holds no node, or the node has no slots.
+    /// The receiver holds no node, or the node has no slots.
     NoThis,
+    /// A parse read or wrote a field of `tape[0]` while the cell still held the type.
+    FieldBeforeStamp,
     /// A field of a node its constructor never wrote, by its index among the fields.
     UnfilledField(usize),
     /// A negative index.
@@ -341,8 +343,8 @@ pub struct Runtime<'a> {
     /// past its frontier lexes on demand (DESIGN ›The scope's constructor is the driver‹).
     ctor_tape: Option<*mut crate::parse::ParsingTape>,
     /// The fresh node a type's own `parse` is running over, whose placed calls take a copy
-    /// of it made each time they run.
-    fresh_this: Option<DyadPtr>,
+    /// of it made each time they run, and whether `tape[0]:type = T` has stamped it yet.
+    fresh_this: Option<(DyadPtr, bool)>,
 }
 
 /// What `lex «…»` lexes against. Raw, because the parser owns both and the
@@ -479,13 +481,29 @@ impl<'a> Runtime<'a> {
         self.ctor_tape.replace(tape)
     }
 
-    /// Hands back the node it replaces.
-    pub(crate) fn set_fresh_this(&mut self, this: Option<DyadPtr>) -> Option<DyadPtr> {
-        std::mem::replace(&mut self.fresh_this, this)
+    /// Starts the node unstamped and hands back the one it replaces, with its stamp.
+    pub(crate) fn set_fresh_this(&mut self, this: Option<DyadPtr>) -> Option<(DyadPtr, bool)> {
+        std::mem::replace(&mut self.fresh_this, this.map(|t| (t, false)))
+    }
+
+    pub(crate) fn restore_fresh_this(&mut self, outer: Option<(DyadPtr, bool)>) {
+        self.fresh_this = outer;
     }
 
     pub(crate) fn fresh_this(&self) -> Option<DyadPtr> {
-        self.fresh_this
+        self.fresh_this.map(|(t, _)| t)
+    }
+
+    /// The fresh node placed on the tape: from here its fields are the node's.
+    pub(crate) fn stamp(&mut self, placed: DyadPtr) {
+        if let Some((t, stamped)) = &mut self.fresh_this {
+            *stamped |= *t == placed;
+        }
+    }
+
+    /// `d` is the fresh node, not yet placed: its cell still holds the type.
+    pub(crate) fn unstamped(&self, d: DyadPtr) -> bool {
+        self.fresh_this == Some((d, false))
     }
 
     /// Takes the tape [`Runtime::enter_constructor`] handed back.

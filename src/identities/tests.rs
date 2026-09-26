@@ -927,13 +927,13 @@ fn logos_comparison(field: &str, rank: &str) -> String {
             lhs := {field} ?,\n\
             rhs := {field} ?,\n\
             output_type := type ?,\n\
-            share run = ( this.lhs == this.rhs ),\n\
+            share run = ( lhs == rhs ),\n\
             share parse_rank = {rank},\n\
             share parse = (\n\
-                this.lhs = tape[-1],\n\
-                this.rhs = tape[1],\n\
-                this.output_type = bool,\n\
-                tape[0] = this,\n\
+                tape[0]:type = ≈, tape[0].lhs = tape[-1],\n\
+                tape[0].rhs = tape[1],\n\
+                tape[0].output_type = bool,\n\
+                ,\n\
                 tape.is_constructed[0] = true,\n\
                 tape.remove(1),\n\
                 tape.remove(-1)\n\
@@ -2171,15 +2171,15 @@ fn compile_member_before_and_after_agree() {
 
 /// A power operator defined in Logos, spelled with a word so the script needs no fresh symbol.
 const POW_TYPE: &str = "pw := type (\n\
-     a := ?, b := i32 ?, output_type := type ?, share run = ( mut r := this.output_type 1, for 0..this.b ( r = r * this.a ), r ),\n\
+     a := ?, b := i32 ?, output_type := type ?, share run = ( mut r := output_type 1, for 0..b ( r = r * a ), r ),\n\
      share parse_rank = *.parse_rank + 1,\n\
      share associativity = right,\n\
      share parse = (\n\
          if tape[-1]:type == void error «pw takes a left operand»,\n\
-         this.a = tape[-1],\n\
-         this.b = tape[1],\n\
-         this.output_type = tape[-1]:type,\n\
-         tape[0] = this,\n\
+         tape[0]:type = pw, tape[0].a = tape[-1],\n\
+         tape[0].b = tape[1],\n\
+         tape[0].output_type = tape[-1]:type,\n\
+         ,\n\
          tape.is_constructed[0] = true,\n\
          tape.remove(1),\n\
          tape.remove(-1)\n\
@@ -2192,7 +2192,7 @@ fn a_node_of_a_run_type_runs_the_function_built_for_its_fields() {
     assert_eq!(run_script(&format!("{POW_TYPE}2 pw 3 pw 2")), 512);
     // A type with a run and no parse of its own has no call form.
     assert_eq!(
-        parse_err_after(&["sq2 := type ( a := i32 ?, share run = ( this.a * this.a ) )"], "sq2(5)"),
+        parse_err_after(&["sq2 := type ( a := i32 ?, share run = ( a * a ) )"], "sq2(5)"),
         ParseError::RunTypeApplied
     );
 }
@@ -2869,14 +2869,14 @@ fn a_name_is_written_only_if_declared_mut() {
     );
     assert_eq!(
         parse_err(
-            "t := type (immut a := i32 ?, share parse = ( this.a = tape[-1], tape[0] = this ))"
+            "t := type (immut a := i32 ?, share parse = ( tape[0]:type = t, tape[0].a = tape[-1] ))"
         ),
         ParseError::Immutable(Box::new("a".into()))
     );
     // An `immut` sibling never written blocks nothing: the other fill parses.
     assert_eq!(
         run_script(
-            "t := type (a := i32 ?, immut b := i32 ?, share parse = ( this.a = tape[-1], tape[0] = this, tape.is_constructed[0] = true, tape.remove(-1) )),\n1"
+            "t := type (a := i32 ?, immut b := i32 ?, share parse = ( tape[0]:type = t, tape[0].a = tape[-1], tape.is_constructed[0] = true, tape.remove(-1) )),\n1"
         ),
         1
     );

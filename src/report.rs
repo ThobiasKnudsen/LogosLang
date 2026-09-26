@@ -216,9 +216,22 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::SlotNeedsBody(_) => {
             "`run` is a bare body over the value's fields, `share run = (…)`".into()
         }
-        ParseError::ThisFieldUnknown(name) => {
-            format!("`this.{name}`: no field `{name}` is declared above in the type body")
+        ParseError::NoSuchField(name) => {
+            format!("no field `{name}` is declared above in the type body")
         }
+        ParseError::BareFieldInParse(name) => {
+            format!("a parse writes and reads a field through its cell, `tape[0].{name}`, never bare")
+        }
+        ParseError::StampOutsideParse => {
+            "`tape[0]:type = T` starts a node only in a parse, on its own cell `tape[0]`".into()
+        }
+        ParseError::StampOtherType => {
+            "`tape[0]:type = T` for a type other than the one being defined is not in the seed yet"
+                .into()
+        }
+        ParseError::ShareFnNeedsValue(name) => format!(
+            "`{name}` works on a value of its type: call it through one, `v.{name}(…)`, or bare from that type's `drop` or `share` functions; a parse calls bare only a function that reads no field"
+        ),
         ParseError::FlagTakesBool => {
             "`tape.is_constructed[k] = …` takes a bool, `true` or `false`".into()
         }
@@ -354,7 +367,10 @@ pub fn run_message(e: &RunError) -> String {
                 .into()
         }
         RunError::NoFragment => "insert takes a tape fragment".into(),
-        RunError::NoThis => "`this` holds no node here".into(),
+        RunError::NoThis => "no value holds this field here".into(),
+        RunError::FieldBeforeStamp => {
+            "`tape[0]` still holds the type: `tape[0]:type = T` makes it a new node first".into()
+        }
         RunError::UnfilledField(i) => format!(
             "field {} of this node's type body was never written by its constructor",
             i + 1
