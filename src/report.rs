@@ -247,9 +247,6 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::PerNodeThroughType(name) => format!(
             "`{name}` is a place in each node, not stored with the type: read it through a node"
         ),
-        ParseError::MemberNeedsNode => {
-            "a `fn` of the type body is called on a node its type's own `parse` built; a record built by applying the type is not in the seed here (#149)".into()
-        }
         ParseError::LexRankNeedsName => {
             "lex_rank is the name's: write it in a declaration, `x := type (share lex_rank = …)`, \
              or on the name, `x:lex_rank = …`"

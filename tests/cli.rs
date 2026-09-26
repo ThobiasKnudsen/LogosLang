@@ -487,17 +487,33 @@ fn a_call_result_takes_its_index_as_a_name_does() {
 }
 
 #[test]
-fn a_fields_fn_on_a_record_built_by_application_is_a_checked_error() {
-    let out = logos()
-        .arg(
-            "p := type ( x := i32 ?, y := i32 ?, share s := fn () -> i32 ( x + y ) ), \
-              q := p (1, 2), q.s()",
-        )
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(1), "stderr: {stderr}");
-    assert!(stderr.contains("a record built by applying the type"), "stderr: {stderr}");
+fn a_share_function_called_through_a_record_built_by_application_reads_its_fields() {
+    let p = "p := type ( mut x := i32 ?, y := i32 ?, share s := fn () -> i32 ( x + y ), \
+             share add := fn (k := i32 ?) -> i32 ( x + y + k ), share d := fn () -> i32 ( s() * 2 ), \
+             share bump := fn () -> i32 ( x = x + 10, x ) ), q := p (1, 2)";
+    for (tail, want) in [
+        ("q.s()", "3\n"),
+        ("q.add(10)", "13\n"),
+        ("q.d()", "6\n"),
+        ("f := fn () -> i32 ( q.s() ), f()", "3\n"),
+        ("f := fn () -> i32 ( q.s() ), f.compile(), f()", "3\n"),
+        ("f := fn () -> i32 ( r := p (3, 4), r.s() + r.add(1) ), f()", "15\n"),
+        ("f := fn () -> i32 ( r := p (3, 4), r.s() + r.add(1) ), f.compile(), f()", "15\n"),
+        ("f := fn (k := i32 ?) -> i32 ( q.add(k) ), f.compile(), f(7)", "10\n"),
+        ("f := fn (r := p ?) -> i32 ( r.add(5) ), f.compile(), f(q) + f(p (10, 20))", "43\n"),
+        // The function takes a copy, as any call takes a record.
+        ("mut m := p (1, 2), m.bump() + m.x", "12\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{p}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
+    }
+    // Each field is copied at its own width.
+    let (code, stdout, stderr) = run_line(
+        "p := type ( x := u8 ?, y := i64 ?, z := f64 ?, share s := fn () -> f64 ( z ), \
+         share t := fn () -> i64 ( y * 2 ), share u := fn () -> u8 ( x ) ), q := p (u8 3, -9, 2.5), \
+         f := fn () -> i64 ( q.t() ), f.compile(), print «{q.s()} {f()} {q.u()}»",
+    );
+    assert_eq!((code, stdout.as_str()), (Some(0), "2.5 -18 3\n"), "stderr: {stderr}");
 }
 
 #[test]

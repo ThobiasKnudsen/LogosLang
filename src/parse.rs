@@ -1139,8 +1139,6 @@ pub enum ParseError {
     SlotOutsideDefinition,
     /// `t.x` where `x` is a place per node, not stored with the type.
     PerNodeThroughType(String),
-    /// A type body's `fn` called on a record built by applying its type, whose fields are bytes.
-    MemberNeedsNode,
     /// A binding in a type body inserted a teardown, which no scope exit runs.
     DeferInTypeBody,
     /// A type body's own declaration failed while running at the definition;
@@ -5300,12 +5298,21 @@ impl<'a> Parser<'a> {
                 };
                 if let Some(args) = call {
                     if self.takes_this(member) {
-                        // A field read reads node slots, which a record laid out in bytes has none of.
-                        if crate::dyad::is_place((*lhs).value) {
-                            return Err(ParseError::MemberNeedsNode);
-                        }
-                        // The instance by a `dyad` view, as a `dyad ?` parameter takes a node.
-                        let view = self.rt.store.alloc_raw(self.types.dyad_, lhs.cast());
+                        // A field read reads node slots, so a record laid out in bytes
+                        // hands on a copy of its fields as a node; any other value by a
+                        // `dyad` view, as a `dyad ?` parameter takes a node.
+                        let view = if crate::dyad::is_place((*lhs).value) {
+                            crate::identities::instance::layout(record_logos)?;
+                            let types = self.types;
+                            crate::identities::this::build_unpack(
+                                self.rt.store,
+                                types,
+                                record_logos,
+                                lhs,
+                            )
+                        } else {
+                            self.rt.store.alloc_raw(self.types.dyad_, lhs.cast())
+                        };
                         let mut with_this = vec![view];
                         with_this.extend(args);
                         return self.build_call(member, &with_this).map(|n| (n, 1));

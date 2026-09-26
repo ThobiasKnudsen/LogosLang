@@ -39,6 +39,9 @@ pub struct ThisIds {
     /// `[type, places, op]`: a new value of `type` holding a run's field values, made per run.
     pub pack: DyadPtr,
     pub pack_leaf: DyadPtr,
+    /// `[type, record, op]`: a new value of `type` holding a copy of a plain record's fields.
+    pub unpack: DyadPtr,
+    pub unpack_leaf: DyadPtr,
 }
 
 /// Neither has a spelling: `.` builds the read right of a parse's `tape[0]`, a bare field
@@ -64,6 +67,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     cx.lower.insert(copy, lower_copy);
     let (pack, pack_leaf) = op(cx, &["type", "places", "op"], run_pack);
     cx.lower.insert(pack, lower_pack);
+    let (unpack, unpack_leaf) = op(cx, &["type", "record", "op"], run_unpack);
+    cx.lower.insert(unpack, lower_unpack);
     ThisIds {
         slot,
         slot_leaf,
@@ -77,6 +82,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
         copy_leaf,
         pack,
         pack_leaf,
+        unpack,
+        unpack_leaf,
     }
 }
 
@@ -428,4 +435,64 @@ unsafe extern "C" fn compiled_pack(ty: DyadPtr, places: DyadPtr, argv: *const i6
     let bits = std::slice::from_raw_parts(argv, places.len());
     let types: *const Core = rt.types();
     pack_of(rt.store(), &*types, ty, places, bits) as i64
+}
+
+/// The value a `share` function called through a plain record takes: a new value of `ty`
+/// holding a copy of the record's fields, as a record crosses any call by copy (DESIGN ›There
+/// is no `this`‹). `record` yields the record's bytes.
+///
+/// # Safety
+/// `ty` must be a record type from the store whose `instance::layout` succeeds.
+pub(crate) unsafe fn build_unpack(
+    store: &mut Store,
+    types: &Core,
+    ty: DyadPtr,
+    record: DyadPtr,
+) -> DyadPtr {
+    node(store, types.this.unpack, types.this.unpack_leaf, &[ty, record])
+}
+
+/// Each field is held as a node of its number type, as a field write stores it.
+///
+/// # Safety
+/// `ty` must be a type `build_unpack` was handed; `bytes` its value's bytes.
+unsafe fn unpack_of(store: &mut Store, ty: DyadPtr, bytes: *const u8) -> DyadPtr {
+    let (fields, _) = super::instance::layout(ty).expect("`build_unpack`'s caller checked it");
+    let mut slots: Vec<DyadPtr> = fields
+        .iter()
+        .map(|&(field, nt, offset)| {
+            let storage =
+                store.alloc_bytes(std::slice::from_raw_parts(bytes.add(offset), nt.bytes()));
+            store.alloc_raw((*field).ty, storage)
+        })
+        .collect();
+    slots.extend([std::ptr::null_mut(); 2]);
+    let value = store.alloc_operands(&slots);
+    store.alloc_raw(ty, value)
+}
+
+fn run_unpack(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an unpack node from `build_unpack`, `[type, record, op]`.
+    unsafe {
+        let ops = (*node).value as *const DyadPtr;
+        let bytes = super::by_copy::record_addr(rt, *ops.add(1))?;
+        Ok(unpack_of(rt.store(), *ops, bytes) as i64)
+    }
+}
+
+fn lower_unpack(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: as `run_unpack`.
+    unsafe {
+        let ops = (*node).value as *const DyadPtr;
+        let bytes = super::by_copy::lower_record_addr(lw, *ops.add(1))?;
+        let ty = lw.const_i64(*ops as i64);
+        Ok(lw.call_seed(compiled_unpack as *const () as usize, &[ty, bytes]))
+    }
+}
+
+/// # Safety
+/// Called only by compiled code, with the type `lower_unpack` baked and its record's bytes.
+unsafe extern "C" fn compiled_unpack(ty: DyadPtr, bytes: *const u8) -> i64 {
+    let rt = &mut *crate::run::standing_by();
+    unpack_of(rt.store(), ty, bytes) as i64
 }

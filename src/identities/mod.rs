@@ -1164,8 +1164,10 @@ pub(crate) unsafe fn commit_call_args(
                 _ => return Err(ParseError::TypeMismatch),
             },
             Some((read::Read::Container(t), _)) if t == types.dyad_ => {
-                // A run's own value, made when the call runs, is a node's address too.
+                // A value made when the call runs, a run's own or a record's copy, is a
+                // node's address too.
                 let ok = (**arg).ty == types.this.pack
+                    || (**arg).ty == types.this.unpack
                     || match read::read_kind(types, *arg) {
                         read::Read::Identity | read::Read::Address => true,
                         read::Read::Container(c) => !c.is_null(),
