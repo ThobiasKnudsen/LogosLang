@@ -63,7 +63,10 @@ pub(crate) fn render(rt: &mut Runtime, node: DyadPtr) -> Result<Vec<u8>, RunErro
     unsafe {
         let parts = *((*node).value as *const DyadPtr);
         for &part in super::array::items(parts) {
-            if (*part).ty == rt.types().string_ {
+            // A `{…}` that yields a string, `{a:name}`, is a read, not a text run.
+            if (*part).ty == rt.types().string_
+                && super::read::read_kind(rt.types(), part) == super::read::Read::Opaque
+            {
                 line.extend_from_slice(super::string::text(part));
             } else {
                 let bits = rt.run(part)?;

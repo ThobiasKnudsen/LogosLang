@@ -1365,6 +1365,16 @@ fn a_condition_ending_in_a_type_is_bracketed_before_a_name_body() {
 }
 
 #[test]
+fn a_quote_shows_a_name_read_through_a_path() {
+    let src = "g := ( a := i32 1, b := a + 1, b ), s := g:start.rhs, \
+               print «{s.dyads[0].lhs:name} and {s.dyads[1].rhs.lhs:name}», \
+               error «no {s.dyads[0].lhs:name}»";
+    let out = logos().args([src]).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "a and a\n");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no a"), "{out:?}");
+}
+
+#[test]
 fn dot_type_is_a_guided_error() {
     let (_echoes, stderr) = repl(b"x := i32 5\nx.type\n");
     assert!(stderr.contains("x:type"), "stderr: {stderr}");
