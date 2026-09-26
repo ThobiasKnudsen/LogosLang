@@ -98,6 +98,8 @@ fn construct(
         }
         let node = build(p.store(), types, id, target, value)?;
         p.note_field_write(node, target);
+        // SAFETY: `target` is the reduced dyad of the cell to the left.
+        unsafe { p.note_receiver_write(target) };
         p.note_write(node);
         node
     };

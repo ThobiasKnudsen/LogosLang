@@ -503,19 +503,73 @@ fn a_share_function_called_through_a_record_built_by_application_reads_its_field
         ("f := fn () -> i32 ( r := p (3, 4), r.s() + r.add(1) ), f.compile(), f()", "15\n"),
         ("f := fn (k := i32 ?) -> i32 ( q.add(k) ), f.compile(), f(7)", "10\n"),
         ("f := fn (r := p ?) -> i32 ( r.add(5) ), f.compile(), f(q) + f(p (10, 20))", "43\n"),
-        // The function takes a copy, as any call takes a record.
-        ("mut m := p (1, 2), m.bump() + m.x", "12\n"),
+        // The function writes the record it is called on.
+        ("mut m := p (1, 2), m.bump() + m.x", "22\n"),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{p}, {tail}"));
         assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
     }
-    // Each field is copied at its own width.
+    // Each field is read at its own width.
     let (code, stdout, stderr) = run_line(
         "p := type ( x := u8 ?, y := i64 ?, z := f64 ?, share s := fn () -> f64 ( z ), \
          share t := fn () -> i64 ( y * 2 ), share u := fn () -> u8 ( x ) ), q := p (u8 3, -9, 2.5), \
          f := fn () -> i64 ( q.t() ), f.compile(), print «{q.s()} {f()} {q.u()}»",
     );
     assert_eq!((code, stdout.as_str()), (Some(0), "2.5 -18 3\n"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_share_function_writes_the_value_it_is_called_on() {
+    let p = "p := type ( mut x := i32 ?, y := i32 ?, share get := fn () -> i32 ( x + y ), \
+             share bump := fn () -> i32 ( x = x + 10, x ), share twice := fn () -> i32 ( bump(), bump() ) )";
+    for (tail, want) in [
+        ("mut m := p (1, 2), m.bump(), m.x", "11\n"),
+        ("mut m := p (1, 2), m.twice(), m.x", "21\n"),
+        ("mut m := p (1, 2), f := fn () -> i32 ( m.bump() ), f.compile(), f(), m.x", "11\n"),
+        ("f := fn () -> i32 ( mut r := p (3, 4), r.bump(), r.x ), f()", "13\n"),
+        ("f := fn () -> i32 ( mut r := p (3, 4), r.bump(), r.x ), f.compile(), f()", "13\n"),
+        ("f := fn (mut r := p ?) -> i32 ( r.twice(), r.x ), f(p (1, 2))", "21\n"),
+        ("f := fn (mut r := p ?) -> i32 ( r.twice(), r.x ), f.compile(), f(p (1, 2))", "21\n"),
+        // A function that only reads is called on any value.
+        ("m := p (1, 2), m.get()", "3\n"),
+        ("f := fn (r := p ?) -> i32 ( r.get() ), f.compile(), f(p (1, 2))", "3\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{p}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
+    }
+    // A function that writes, itself or through a bare call, meets the gate `m.x = …` meets.
+    for (tail, name) in [
+        ("m := p (1, 2), m.bump()", "m"),
+        ("m := p (1, 2), m.twice()", "m"),
+        ("f := fn (r := p ?) -> i32 ( r.bump() ), f(p (1, 2))", "r"),
+        ("f := fn () -> i32 ( r := p (3, 4), r.twice() ), f()", "r"),
+    ] {
+        let (code, _, stderr) = run_line(&format!("{p}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains(&format!("`{name}` is not `mut`")), "{tail}: stderr: {stderr}");
+    }
+    // Each field is written at its own width.
+    let (code, stdout, stderr) = run_line(
+        "p := type ( mut x := u8 ?, mut y := i64 ?, mut z := f64 ?, \
+         share s := fn () -> i64 ( x = x + u8 1, y = y * 2, z = z + 1.0, y ) ), \
+         mut q := p (u8 3, -9, 2.5), f := fn () -> i64 ( q.s() ), f.compile(), \
+         print «{f()} {q.x} {q.y} {q.z}»",
+    );
+    assert_eq!((code, stdout.as_str()), (Some(0), "-18 4 -18 3.5\n"), "stderr: {stderr}");
+    // A node a parse built is written through too, and meets the same gate.
+    let q = "q := type ( mut n := u64 ?, share bump := fn () -> u64 ( n = n + 10, n ), \
+             share get := fn () -> u64 ( n ), share parse_rank = 61, share parse = ( \
+             if tape[0]:type == type ( tape[0]:type = q, tape[0].n = tape[1], tape.remove(1) ), \
+             tape.is_constructed[0] = true ) )";
+    for (tail, want) in
+        [("mut m := q u64 1, m.bump(), m.get()", "11\n"), ("m := q u64 1, m.get()", "1\n")]
+    {
+        let (code, stdout, stderr) = run_line(&format!("{q}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
+    }
+    let (code, _, stderr) = run_line(&format!("{q}, m := q u64 1, m.bump()"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("`m` is not `mut`"), "stderr: {stderr}");
 }
 
 #[test]

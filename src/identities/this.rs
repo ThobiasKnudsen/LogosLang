@@ -10,6 +10,7 @@
 //! `parse` builds holds that node, whose address is the value. Only the per-run copy lowers.
 
 use super::callable::{self, Callables};
+use super::numtype::{read_scalar_nt, write_scalar_nt, NumType};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
@@ -39,9 +40,9 @@ pub struct ThisIds {
     /// `[type, places, op]`: a new value of `type` holding a run's field values, made per run.
     pub pack: DyadPtr,
     pub pack_leaf: DyadPtr,
-    /// `[type, record, op]`: a new value of `type` holding a copy of a plain record's fields.
-    pub unpack: DyadPtr,
-    pub unpack_leaf: DyadPtr,
+    /// `[type, record, op]`: the plain record a `share` function is called through, as its value.
+    pub on_record: DyadPtr,
+    pub on_record_leaf: DyadPtr,
 }
 
 /// Neither has a spelling: `.` builds the read right of a parse's `tape[0]`, a bare field
@@ -67,8 +68,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     cx.lower.insert(copy, lower_copy);
     let (pack, pack_leaf) = op(cx, &["type", "places", "op"], run_pack);
     cx.lower.insert(pack, lower_pack);
-    let (unpack, unpack_leaf) = op(cx, &["type", "record", "op"], run_unpack);
-    cx.lower.insert(unpack, lower_unpack);
+    let (on_record, on_record_leaf) = op(cx, &["type", "record", "op"], run_on_record);
+    cx.lower.insert(on_record, lower_on_record);
     ThisIds {
         slot,
         slot_leaf,
@@ -82,8 +83,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
         copy_leaf,
         pack,
         pack_leaf,
-        unpack,
-        unpack_leaf,
+        on_record,
+        on_record_leaf,
     }
 }
 
@@ -219,13 +220,25 @@ pub(crate) unsafe fn build_write(
     Ok(node(store, types.this.write, types.this.write_leaf, &[this, k, value]))
 }
 
-unsafe fn slot_of(
-    rt: &mut Runtime,
-    ops: *const DyadPtr,
-) -> Result<(*mut DyadPtr, usize), RunError> {
+/// Where field `k` of the value lies: a node's slot, or the bytes of a plain record,
+/// the one a `share` function called through it writes (DESIGN ›There is no `this`‹).
+enum Field {
+    Slot(*mut DyadPtr, usize),
+    Bytes(*mut u8, NumType),
+}
+
+unsafe fn field_of(rt: &mut Runtime, ops: *const DyadPtr) -> Result<Field, RunError> {
     let this = rt.run(*ops)? as DyadPtr;
     if this.is_null() {
         return Err(RunError::NoThis);
+    }
+    if crate::dyad::is_place((*this).value) {
+        let bytes = rt.place_addr(this).ok_or(RunError::NoActivation)?;
+        let k = rt.run(*ops.add(1))?;
+        let (fields, _) = super::instance::layout((*this).ty).map_err(|_| RunError::NoThis)?;
+        let &(_, nt, offset) =
+            usize::try_from(k).ok().and_then(|k| fields.get(k)).ok_or(RunError::BadIndex(k))?;
+        return Ok(Field::Bytes(bytes.add(offset), nt));
     }
     if rt.unstamped(this) {
         return Err(RunError::FieldBeforeStamp);
@@ -238,7 +251,18 @@ unsafe fn slot_of(
     if k < 0 {
         return Err(RunError::BadIndex(k));
     }
-    Ok((slots.add(k as usize), k as usize))
+    Ok(Field::Slot(slots.add(k as usize), k as usize))
+}
+
+/// A plain record's fields are numbers, never held as nodes.
+unsafe fn slot_of(
+    rt: &mut Runtime,
+    ops: *const DyadPtr,
+) -> Result<(*mut DyadPtr, usize), RunError> {
+    match field_of(rt, ops)? {
+        Field::Slot(slot, k) => Ok((slot, k)),
+        Field::Bytes(..) => Err(RunError::NoThis),
+    }
 }
 
 /// The node the slot `read` reaches holds, `None` while the slot is unwritten.
@@ -275,29 +299,35 @@ fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 
 /// The node the slot holds yields the value; an unfilled slot is the checked error.
 fn run_load(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: as `run_slot`; the node a slot holds is one this file or a constructor stored.
+    // SAFETY: as `run_slot`; the node a slot holds is one this file or a constructor stored,
+    // a record's bytes are its layout's.
     unsafe {
         let ops = (*node).value as *const DyadPtr;
-        let (slot, k) = slot_of(rt, ops)?;
-        if (*slot).is_null() {
-            return Err(RunError::UnfilledField(k));
+        match field_of(rt, ops)? {
+            Field::Bytes(addr, nt) => Ok(read_scalar_nt(nt, addr)),
+            Field::Slot(slot, k) if (*slot).is_null() => Err(RunError::UnfilledField(k)),
+            Field::Slot(slot, _) => rt.run(*slot),
         }
-        rt.run(*slot)
     }
 }
 
 /// A fresh node of the field's type, holding the value, the way a literal holds its own.
 fn run_store(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: as `run_slot`; the type operand is a number or pointer type node.
+    // SAFETY: as `run_load`; the type operand is a number or pointer type node.
     unsafe {
         let ops = (*node).value as *const DyadPtr;
-        let (slot, _) = slot_of(rt, ops)?;
+        let field = field_of(rt, ops)?;
         let bits = rt.run(*ops.add(2))?;
-        let ty = *ops.add(3);
-        let width = super::read::place_layout(rt.types(), ty).map_or(8, |(_, w)| w);
-        let store = rt.store();
-        let storage = store.alloc_bytes(&bits.to_ne_bytes()[..width]);
-        *slot = store.alloc_raw(ty, storage);
+        match field {
+            Field::Bytes(addr, nt) => write_scalar_nt(nt, addr, bits),
+            Field::Slot(slot, _) => {
+                let ty = *ops.add(3);
+                let width = super::read::place_layout(rt.types(), ty).map_or(8, |(_, w)| w);
+                let store = rt.store();
+                let storage = store.alloc_bytes(&bits.to_ne_bytes()[..width]);
+                *slot = store.alloc_raw(ty, storage);
+            }
+        }
         Ok(0)
     }
 }
@@ -437,62 +467,46 @@ unsafe extern "C" fn compiled_pack(ty: DyadPtr, places: DyadPtr, argv: *const i6
     pack_of(rt.store(), &*types, ty, places, bits) as i64
 }
 
-/// The value a `share` function called through a plain record takes: a new value of `ty`
-/// holding a copy of the record's fields, as a record crosses any call by copy (DESIGN ›There
-/// is no `this`‹). `record` yields the record's bytes.
+/// The value a `share` function called through a plain record takes: the record itself,
+/// its own place, so a field write reaches it (DESIGN ›There is no `this`‹). `record`
+/// yields the record's bytes.
 ///
 /// # Safety
 /// `ty` must be a record type from the store whose `instance::layout` succeeds.
-pub(crate) unsafe fn build_unpack(
+pub(crate) unsafe fn build_on_record(
     store: &mut Store,
     types: &Core,
     ty: DyadPtr,
     record: DyadPtr,
 ) -> DyadPtr {
-    node(store, types.this.unpack, types.this.unpack_leaf, &[ty, record])
+    node(store, types.this.on_record, types.this.on_record_leaf, &[ty, record])
 }
 
-/// Each field is held as a node of its number type, as a field write stores it.
-///
-/// # Safety
-/// `ty` must be a type `build_unpack` was handed; `bytes` its value's bytes.
-unsafe fn unpack_of(store: &mut Store, ty: DyadPtr, bytes: *const u8) -> DyadPtr {
-    let (fields, _) = super::instance::layout(ty).expect("`build_unpack`'s caller checked it");
-    let mut slots: Vec<DyadPtr> = fields
-        .iter()
-        .map(|&(field, nt, offset)| {
-            let storage =
-                store.alloc_bytes(std::slice::from_raw_parts(bytes.add(offset), nt.bytes()));
-            store.alloc_raw((*field).ty, storage)
-        })
-        .collect();
-    slots.extend([std::ptr::null_mut(); 2]);
-    let value = store.alloc_operands(&slots);
-    store.alloc_raw(ty, value)
+fn receiver(store: &mut Store, ty: DyadPtr, bytes: *mut u8) -> DyadPtr {
+    store.alloc_raw(ty, crate::dyad::global_place(bytes))
 }
 
-fn run_unpack(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is an unpack node from `build_unpack`, `[type, record, op]`.
+fn run_on_record(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a node from `build_on_record`, `[type, record, op]`.
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         let bytes = super::by_copy::record_addr(rt, *ops.add(1))?;
-        Ok(unpack_of(rt.store(), *ops, bytes) as i64)
+        Ok(receiver(rt.store(), *ops, bytes) as i64)
     }
 }
 
-fn lower_unpack(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: as `run_unpack`.
+fn lower_on_record(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    // SAFETY: as `run_on_record`.
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         let bytes = super::by_copy::lower_record_addr(lw, *ops.add(1))?;
         let ty = lw.const_i64(*ops as i64);
-        Ok(lw.call_seed(compiled_unpack as *const () as usize, &[ty, bytes]))
+        Ok(lw.call_seed(compiled_on_record as *const () as usize, &[ty, bytes]))
     }
 }
 
 /// # Safety
-/// Called only by compiled code, with the type `lower_unpack` baked and its record's bytes.
-unsafe extern "C" fn compiled_unpack(ty: DyadPtr, bytes: *const u8) -> i64 {
-    let rt = &mut *crate::run::standing_by();
-    unpack_of(rt.store(), ty, bytes) as i64
+/// Called only by compiled code, with the type `lower_on_record` baked and its record's bytes.
+unsafe extern "C" fn compiled_on_record(ty: DyadPtr, bytes: *mut u8) -> i64 {
+    receiver((*crate::run::standing_by()).store(), ty, bytes) as i64
 }

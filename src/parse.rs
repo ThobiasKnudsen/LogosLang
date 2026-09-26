@@ -1023,6 +1023,9 @@ struct OpenType {
     binding: DyadPtr,
     /// The `share` function being read has read a field of its value.
     read_receiver: bool,
+    /// The `share` function being read has written a field of its value, itself or through a
+    /// bare call.
+    wrote_receiver: bool,
     /// The fields' scope and the fields declared so far: what a body written
     /// below them reaches by name.
     block: (DyadPtr, Vec<DyadPtr>),
@@ -1546,6 +1549,8 @@ pub struct Parser<'a> {
     run_fields: Option<(DyadPtr, Vec<DyadPtr>)>,
     /// The `share` functions that read a field of their value, which a parse may not call bare.
     reads_receiver: HashSet<DyadPtr>,
+    /// The `share` functions that write a field of their value, called only through a `mut` name.
+    writes_receiver: HashSet<DyadPtr>,
     /// Open function frames, innermost last: empty at top level, where
     /// declarations get global storage; inside a function each local claims
     /// the next byte offset in the top frame.
@@ -1756,6 +1761,7 @@ impl<'a> Parser<'a> {
             fills: HashMap::new(),
             run_fields: None,
             reads_receiver: HashSet::new(),
+            writes_receiver: HashSet::new(),
             lifted: Vec::new(),
             queued: std::collections::VecDeque::new(),
             discovering: false,
@@ -3345,6 +3351,7 @@ impl<'a> Parser<'a> {
             tape_param: std::ptr::null_mut(),
             binding: own_name,
             read_receiver: false,
+            wrote_receiver: false,
             block: (scope, Vec::new()),
             instances_drop: std::ptr::null_mut(),
             owns_node_field: false,
@@ -3902,13 +3909,15 @@ impl<'a> Parser<'a> {
             };
             Box::new(spelled)
         };
-        let receiver = match self.definitions.last().filter(|d| !d.this_param.is_null()) {
+        let writes = self.writes_receiver.contains(&f) || self.writes_receiver.contains(&callee);
+        let receiver = match self.definitions.last_mut().filter(|d| !d.this_param.is_null()) {
             Some(def) => {
                 if def.in_parse
                     && (self.reads_receiver.contains(&f) || self.reads_receiver.contains(&callee))
                 {
                     return Err(ParseError::ShareFnNeedsValue(name()));
                 }
+                def.wrote_receiver |= writes && !def.in_parse;
                 def.this_param
             }
             None => match &self.run_fields {
@@ -4387,14 +4396,20 @@ impl<'a> Parser<'a> {
         let def = self.definitions.last_mut().expect("checked above");
         def.this_param = this;
         def.read_receiver = false;
+        def.wrote_receiver = false;
         // SAFETY: as above.
         let f = unsafe { self.fn_over_body(fn_type, input, output, declared) };
         let def = self.definitions.last_mut().expect("still open");
         def.this_param = std::ptr::null_mut();
-        if def.read_receiver {
-            self.reads_receiver.insert(declared);
-            if let Ok(f) = f {
-                self.reads_receiver.insert(f);
+        for (did, set) in [
+            (def.read_receiver, &mut self.reads_receiver),
+            (def.wrote_receiver, &mut self.writes_receiver),
+        ] {
+            if did {
+                set.insert(declared);
+                if let Ok(f) = f {
+                    set.insert(f);
+                }
             }
         }
         f
@@ -5011,6 +5026,7 @@ impl<'a> Parser<'a> {
         };
         if let Some(args) = call {
             if self.takes_this(member) {
+                self.check_receiver_write(lhs, member)?;
                 let mut with_this = vec![lhs];
                 with_this.extend(args);
                 return self.build_call(member, &with_this).map(|n| Some((n, 1)));
@@ -5321,13 +5337,13 @@ impl<'a> Parser<'a> {
                 };
                 if let Some(args) = call {
                     if self.takes_this(member) {
-                        // A field read reads node slots, so a record laid out in bytes
-                        // hands on a copy of its fields as a node; any other value by a
-                        // `dyad` view, as a `dyad ?` parameter takes a node.
+                        self.check_receiver_write(lhs, member)?;
+                        // A record laid out in bytes is handed on as its own place, any
+                        // other value by a `dyad` view, as a `dyad ?` parameter takes a node.
                         let view = if crate::dyad::is_place((*lhs).value) {
                             crate::identities::instance::layout(record_logos)?;
                             let types = self.types;
-                            crate::identities::this::build_unpack(
+                            crate::identities::this::build_on_record(
                                 self.rt.store,
                                 types,
                                 record_logos,
@@ -5770,7 +5786,11 @@ impl<'a> Parser<'a> {
             }
             return Ok(());
         }
-        for &binding in self.paths.get(&target).map_or(&[][..], Vec::as_slice) {
+        self.check_gates(self.paths.get(&target).map_or(&[][..], Vec::as_slice))
+    }
+
+    fn check_gates(&self, path: &[DyadPtr]) -> Result<(), ParseError> {
+        for &binding in path {
             // SAFETY: the path holds binding dyads from the store.
             unsafe {
                 if Binding::has_gate(binding, self.types.immut_) {
@@ -5782,6 +5802,42 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(())
+    }
+
+    /// A `share` function that writes a field of its value meets the gates `receiver.f = …`
+    /// would (DESIGN ›There is no `this`‹).
+    ///
+    /// # Safety
+    /// `member` must be a reduced dyad from the store.
+    unsafe fn check_receiver_write(
+        &self,
+        receiver: DyadPtr,
+        member: DyadPtr,
+    ) -> Result<(), ParseError> {
+        let f = self.types.through(member);
+        if !self.writes_receiver.contains(&f) && !self.writes_receiver.contains(&member) {
+            return Ok(());
+        }
+        match self.paths.get(&receiver) {
+            Some(path) => self.check_gates(path),
+            None if !self.member_root.is_null() => self.check_gates(&[self.member_root]),
+            None => Ok(()),
+        }
+    }
+
+    /// `=` over a field of the value a `share` function is reading.
+    ///
+    /// # Safety
+    /// `target` must be a reduced dyad from the store.
+    pub(crate) unsafe fn note_receiver_write(&mut self, target: DyadPtr) {
+        let target = self.types.through(target);
+        if !crate::identities::this::is_field_read(self.types, target) {
+            return;
+        }
+        let this = *((*target).value as *const DyadPtr);
+        if let Some(def) = self.definitions.last_mut() {
+            def.wrote_receiver |= !def.in_parse && !this.is_null() && this == def.this_param;
+        }
     }
 
     /// Add `gate` to a name's binding, once.
