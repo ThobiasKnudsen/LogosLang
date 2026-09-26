@@ -2931,6 +2931,42 @@ fn a_member_function_called_through_a_node_reads_that_node() {
 }
 
 #[test]
+fn a_value_left_unwritten_is_filled_one_field_at_a_time() {
+    let pt = "pt := type ( mut x := i32 ?, mut y := i32 ? )";
+    let bx = "bx := type ( mut p := own @i32 ?, mut size := u64 0, share drop = ( free p ), \
+              share parse_rank = dyad.parse_rank, share parse = ( tape.is_constructed[0] = true ) )";
+    for (src, want) in [
+        (format!("{pt}, f := fn () -> i32 ( mut v := pt ?, v.x = 3, v.y = 4, v.x + v.y ), f()"), "7\n"),
+        (format!("{pt}, mut v := pt ?, v.x = 3, v.y = 4, v.x * v.y"), "12\n"),
+        // A field with a default already holds it.
+        (
+            format!("{bx}, f := fn (n := u64 ?) -> u64 ( mut v := bx ?, v.p = mut alloc n of i32 ?, v.size ), f(2)"),
+            "0\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "{src}: stderr: {stderr}");
+    }
+    for (src, expect) in [
+        (format!("{pt}, f := fn () -> i32 ( mut v := pt ?, v.x = 3, v.y ), f()"), "`v.y` is read before"),
+        (
+            format!("{pt}, g := fn (q := pt ?) -> i32 ( 1 ), f := fn () -> i32 ( mut v := pt ?, v.x = 3, g(v) ), f()"),
+            "`v` is read before",
+        ),
+        // A write inside a branch does not fill it.
+        (
+            format!("{pt}, f := fn () -> i32 ( mut v := pt ?, if true ( v.x = 3 ), v.y = 1, v.x ), f()"),
+            "`v.x` is read before",
+        ),
+        (format!("{bx}, f := fn () -> u64 ( mut v := bx ?, v.size = 2, own v ), f()"), "`v` is read before"),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn a_bare_share_call_works_on_the_value_the_body_is_about() {
     let quad = COUNTED.replace(
         "share twice := fn () -> u64 ( n * 2 ),",

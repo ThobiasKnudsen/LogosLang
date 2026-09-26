@@ -97,6 +97,7 @@ fn construct(
             return Err(ParseError::NonOwningIntoOwning);
         }
         let node = build(p.store(), types, id, target, value)?;
+        p.note_field_write(node, target);
         p.note_write(node);
         node
     };
