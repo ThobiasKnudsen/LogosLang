@@ -1898,7 +1898,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Stand-in for #152.
+    /// stand-in for #152
     ///
     /// # Safety
     /// `ty` must be a key of `bracket_builders` and `bracket` a bracket node from the store.
