@@ -2220,6 +2220,44 @@ fn a_parse_is_ranked_by_what_it_takes_from_its_right() {
 }
 
 #[test]
+fn a_run_hands_a_bare_share_call_its_own_value_in_both_tiers() {
+    let (mut store, mut trie, core) = new_core();
+    let src = "inc := type ( a := i32 ?, output_type := type ?, \
+        share twice := fn () -> i32 ( a * 2 ), share run = ( twice() + 1 ), \
+        share parse_rank = *.parse_rank + 1, share parse = ( tape[0]:type = inc, \
+        tape[0].a = tape[-1], tape[0].output_type = i32, tape.is_constructed[0] = true, \
+        tape.remove(-1) ) ),\nf := fn (y := i32 ?) -> i32 ( y inc ),\nf(5)";
+    let seq = {
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes).with_lower(&core.lower);
+        p.parse_sequence().unwrap()
+    };
+    // SAFETY: a sequence node's first slot is its expression array; `f`'s body is its one line.
+    let (call, spec) = unsafe {
+        let exprs = array::items(*((*seq).value as *const DyadPtr));
+        let call = ran::expr_of(&core, exprs[2]);
+        let read::Read::Executable(read::Dispatch::Call(f)) = read::read_kind(&core, call) else {
+            panic!("`f(5)` is a call");
+        };
+        let body = *((*f).value as *const DyadPtr).add(FN_BODY);
+        let node = if (*body).ty == core.scope {
+            *scope::exprs_of(body).unwrap().last().unwrap()
+        } else {
+            body
+        };
+        (call, run_body::spec_of(node))
+    };
+    assert!(!spec.is_null());
+    let mut rt = Runtime::new(&core, &mut store).with_compiler(&core.lower);
+    // SAFETY: `call` and `spec` are valid nodes just parsed.
+    let interp = unsafe { rt.run(call) }.unwrap();
+    let _compiled = unsafe { compile_fn(rt.store, &core.lower, &core, spec) }.unwrap();
+    let jit = unsafe { rt.run(call) }.unwrap();
+    assert_eq!((interp, jit), (11, 11));
+}
+
+#[test]
 fn a_node_of_a_run_type_compiles_as_a_call_of_its_function() {
     // Only the caller compiles; the node's function stays interpreted behind the boundary.
     assert_eq!(

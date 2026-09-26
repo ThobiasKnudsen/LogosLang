@@ -1155,11 +1155,13 @@ pub(crate) unsafe fn commit_call_args(
                 _ => return Err(ParseError::TypeMismatch),
             },
             Some((read::Read::Container(t), _)) if t == types.dyad_ => {
-                let ok = match read::read_kind(types, *arg) {
-                    read::Read::Identity | read::Read::Address => true,
-                    read::Read::Container(c) => !c.is_null(),
-                    _ => node_type_of(types, *arg).is_some(),
-                };
+                // A run's own value, made when the call runs, is a node's address too.
+                let ok = (**arg).ty == types.this.pack
+                    || match read::read_kind(types, *arg) {
+                        read::Read::Identity | read::Read::Address => true,
+                        read::Read::Container(c) => !c.is_null(),
+                        _ => node_type_of(types, *arg).is_some(),
+                    };
                 if !ok {
                     return Err(ParseError::TypeMismatch);
                 }

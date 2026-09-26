@@ -2938,6 +2938,21 @@ fn a_bare_share_call_works_on_the_value_the_body_is_about() {
     );
     let (code, stdout, stderr) = run_line(&format!("{quad}, a := q (1, 2, 3), a.quad()"));
     assert_eq!((code, stdout.as_str()), (Some(0), "12\n"), "stderr: {stderr}");
+    // From a run: a value holding this run's fields, so an operand written as an
+    // expression, or a function's parameter, is read as its value.
+    let inc = "inc := type ( a := i32 ?, output_type := type ?, \
+        share twice := fn () -> i32 ( a * 2 ), share run = ( twice() + 1 ), \
+        share parse_rank = *.parse_rank + 1, share parse = ( tape[0]:type = inc, \
+        tape[0].a = tape[-1], tape[0].output_type = i32, tape.is_constructed[0] = true, \
+        tape.remove(-1) ) )";
+    for (tail, want) in [
+        ("x := i32 5, x inc", "11\n"),
+        ("f := fn (y := i32 ?) -> i32 ( (y + 1) inc ), f(20)", "43\n"),
+        ("f := fn (y := i32 ?) -> i32 ( y inc ), f.compile(), f(20) + f(1)", "44\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{inc}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), want), "{tail}: stderr: {stderr}");
+    }
     // A parse has no value to hand one that reads a field; outside the type it is no name.
     for (src, expect) in [
         (

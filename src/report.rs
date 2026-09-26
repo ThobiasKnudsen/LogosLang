@@ -230,7 +230,7 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::ShareFnNeedsValue(name) => format!(
-            "`{name}` works on a value of its type: call it through one, `v.{name}(…)`, or bare from that type's `drop` or `share` functions; a parse calls bare only a function that reads no field"
+            "`{name}` works on a value of its type: call it through one, `v.{name}(…)`, or bare from that type's `run`, `drop` or `share` functions; a parse calls bare only a function that reads no field"
         ),
         ParseError::FlagTakesBool => {
             "`tape.is_constructed[k] = …` takes a bool, `true` or `false`".into()

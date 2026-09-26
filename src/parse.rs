@@ -1544,6 +1544,8 @@ pub struct Parser<'a> {
     /// The field binding behind each field read a type's body built: the
     /// constructor's fill, granted by default and vetoed by `immut`.
     fills: HashMap<DyadPtr, DyadPtr>,
+    /// The type and field parameters of the run body being constructed.
+    run_fields: Option<(DyadPtr, Vec<DyadPtr>)>,
     /// The `share` functions that read a field of their value, which a parse may not call bare.
     reads_receiver: HashSet<DyadPtr>,
     /// Open function frames, innermost last: empty at top level, where
@@ -1748,6 +1750,7 @@ impl<'a> Parser<'a> {
             unfolded: HashMap::new(),
             member_root: std::ptr::null_mut(),
             fills: HashMap::new(),
+            run_fields: None,
             reads_receiver: HashSet::new(),
             lifted: Vec::new(),
             queued: std::collections::VecDeque::new(),
@@ -3869,13 +3872,14 @@ impl<'a> Parser<'a> {
     }
 
     /// A bare call of a `share` function that works on a value takes the value the calling
-    /// body is about (DESIGN ›There is no `this`‹): a `drop`'s or `share` function's own, or
-    /// in a parse none, so only one that reads no field of its value is called bare there.
+    /// body is about (DESIGN ›There is no `this`‹): a `run`'s node, a `drop`'s or `share`
+    /// function's own, or in a parse none, so only one that reads no field of its value is
+    /// called bare there.
     ///
     /// # Safety
     /// `callee` must be a reduced dyad from the store.
     unsafe fn with_receiver(
-        &self,
+        &mut self,
         callee: DyadPtr,
         args: Vec<DyadPtr>,
     ) -> Result<Vec<DyadPtr>, ParseError> {
@@ -3891,15 +3895,23 @@ impl<'a> Parser<'a> {
             };
             Box::new(spelled)
         };
-        let Some(def) = self.definitions.last().filter(|d| !d.this_param.is_null()) else {
-            return Err(ParseError::ShareFnNeedsValue(name()));
+        let receiver = match self.definitions.last().filter(|d| !d.this_param.is_null()) {
+            Some(def) => {
+                if def.in_parse
+                    && (self.reads_receiver.contains(&f) || self.reads_receiver.contains(&callee))
+                {
+                    return Err(ParseError::ShareFnNeedsValue(name()));
+                }
+                def.this_param
+            }
+            None => match &self.run_fields {
+                Some((ty, places)) => {
+                    crate::identities::this::build_pack(self.rt.store, self.types, *ty, places)
+                }
+                None => return Err(ParseError::ShareFnNeedsValue(name())),
+            },
         };
-        if def.in_parse
-            && (self.reads_receiver.contains(&f) || self.reads_receiver.contains(&callee))
-        {
-            return Err(ParseError::ShareFnNeedsValue(name()));
-        }
-        let mut with = vec![def.this_param];
+        let mut with = vec![receiver];
         with.extend(args);
         Ok(with)
     }
@@ -4180,6 +4192,7 @@ impl<'a> Parser<'a> {
         let saved_lifted = std::mem::take(&mut self.lifted);
         let saved_queued = std::mem::take(&mut self.queued);
         let saved_discovering = std::mem::replace(&mut self.discovering, false);
+        let saved_run_fields = self.run_fields.take();
         let saved_feed =
             self.feed.replace(Feed { cells, next: 0, base_depth, in_run_order: false });
 
@@ -4198,6 +4211,7 @@ impl<'a> Parser<'a> {
         self.lifted = saved_lifted;
         self.queued = saved_queued;
         self.discovering = saved_discovering;
+        self.run_fields = saved_run_fields;
         self.feed = saved_feed;
 
         match inner {
@@ -4270,7 +4284,8 @@ impl<'a> Parser<'a> {
             .and_then(|r| fields.iter().position(|&f| f == r.identity))
             .filter(|&i| (*fields[i]).ty == types.type_)
             .map_or(types.void_, |i| key[i]);
-        let (input, _) = self.hidden_param_record(&params, 0)?;
+        let (input, places) = self.hidden_param_record(&params, 0)?;
+        self.run_fields = Some((ty, places));
         let param_scope = crate::identities::meta::record_scope_of(input);
         self.scopes.push(param_scope);
         let declared =

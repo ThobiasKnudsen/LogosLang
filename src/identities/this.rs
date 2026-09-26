@@ -36,6 +36,9 @@ pub struct ThisIds {
     /// `[template, op]`: a new node of the template's type holding its slots, made per run.
     pub copy: DyadPtr,
     pub copy_leaf: DyadPtr,
+    /// `[type, places, op]`: a new value of `type` holding a run's field values, made per run.
+    pub pack: DyadPtr,
+    pub pack_leaf: DyadPtr,
 }
 
 /// Neither has a spelling: `.` builds the read right of a parse's `tape[0]`, a bare field
@@ -59,6 +62,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     let (store, store_leaf) = op(cx, &["this", "k", "value", "type", "op"], run_store);
     let (copy, copy_leaf) = op(cx, &["this", "op"], run_copy);
     cx.lower.insert(copy, lower_copy);
+    let (pack, pack_leaf) = op(cx, &["type", "places", "op"], run_pack);
+    cx.lower.insert(pack, lower_pack);
     ThisIds {
         slot,
         slot_leaf,
@@ -70,6 +75,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
         store_leaf,
         copy,
         copy_leaf,
+        pack,
+        pack_leaf,
     }
 }
 
@@ -329,4 +336,96 @@ unsafe fn copy_of(store: &mut Store, template: DyadPtr) -> DyadPtr {
     let slots = std::slice::from_raw_parts((*template).value as *const DyadPtr, n).to_vec();
     let value = store.alloc_operands(&slots);
     store.alloc_raw(ty, value)
+}
+
+/// The value a bare `share` call from a `run` hands on: a new value of `ty` whose fields are
+/// the run's own, `places` its parameters in field order (DESIGN ›There is no `this`‹). The
+/// node itself would not do: its fields hold the operands as written, which the run evaluates.
+pub(crate) fn build_pack(
+    store: &mut Store,
+    types: &Core,
+    ty: DyadPtr,
+    places: &[DyadPtr],
+) -> DyadPtr {
+    let places = super::array::build(store, types.array_, places);
+    node(store, types.this.pack, types.this.pack_leaf, &[ty, places])
+}
+
+/// A number or pointer is held as a node of its type, as a field write stores it; any other
+/// value is the address the slot holds.
+///
+/// # Safety
+/// `ty` must be a record type from the store; `places` its run's parameters in field order,
+/// `bits` their values.
+unsafe fn pack_of(
+    store: &mut Store,
+    types: &Core,
+    ty: DyadPtr,
+    places: &[DyadPtr],
+    bits: &[i64],
+) -> DyadPtr {
+    use super::read::{place_layout, Read};
+    let mut slots: Vec<DyadPtr> = places
+        .iter()
+        .zip(bits)
+        .map(|(&place, &b)| {
+            let pty = (*place).ty;
+            match (!pty.is_null()).then(|| place_layout(types, pty)).flatten() {
+                Some((Read::Scalar(_) | Read::Pointer(_), width)) => {
+                    let storage = store.alloc_bytes(&b.to_ne_bytes()[..width]);
+                    store.alloc_raw(pty, storage)
+                }
+                _ => b as DyadPtr,
+            }
+        })
+        .collect();
+    slots.extend([std::ptr::null_mut(); 2]);
+    let value = store.alloc_operands(&slots);
+    store.alloc_raw(ty, value)
+}
+
+fn run_pack(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a pack node from `build_pack`, `[type, places, op]`.
+    unsafe {
+        let ops = (*node).value as *const DyadPtr;
+        let (ty, places) = (*ops, super::array::items(*ops.add(1)));
+        let bits = places.iter().map(|&p| rt.run(p)).collect::<Result<Vec<_>, _>>()?;
+        let types: *const Core = rt.types();
+        Ok(pack_of(rt.store(), &*types, ty, places, &bits) as i64)
+    }
+}
+
+/// Each place is read at its own width and travels widened, as an argument does.
+fn lower_pack(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    use cranelift_codegen::ir::types;
+    // SAFETY: `node` is a pack node from `build_pack`; its places are the run's frame places.
+    unsafe {
+        let ops = (*node).value as *const DyadPtr;
+        let (ty, arr) = (*ops, *ops.add(1));
+        let mut values = Vec::new();
+        for &place in super::array::items(arr) {
+            let pty = (*place).ty;
+            values.push(if super::numtype::is_scalar_type(pty) {
+                let nt = super::numtype::of_type_node(pty);
+                let v = lw.read_place(place, nt.cranelift_type())?;
+                lw.widen(v, nt)
+            } else {
+                lw.read_place(place, types::I64)?
+            });
+        }
+        let argv = lw.spill(&values);
+        let (ty, arr) = (lw.const_i64(ty as i64), lw.const_i64(arr as i64));
+        Ok(lw.call_seed(compiled_pack as *const () as usize, &[ty, arr, argv]))
+    }
+}
+
+/// # Safety
+/// Called only by compiled code, with the operands `lower_pack` baked and `argv` one value
+/// per place.
+unsafe extern "C" fn compiled_pack(ty: DyadPtr, places: DyadPtr, argv: *const i64) -> i64 {
+    let rt = &mut *crate::run::standing_by();
+    let places = super::array::items(places);
+    let bits = std::slice::from_raw_parts(argv, places.len());
+    let types: *const Core = rt.types();
+    pack_of(rt.store(), &*types, ty, places, bits) as i64
 }
