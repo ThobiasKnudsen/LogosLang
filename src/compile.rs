@@ -20,8 +20,8 @@ use cranelift_module::{default_libcall_names, FuncId, Linkage, Module};
 use crate::dyad::{frame_ref, DyadPtr};
 use crate::identities::numtype::{is_void_type, of_type_node, ArithOp, CmpOp, NumType};
 use crate::identities::read::{read_kind, Dispatch, Read};
-use crate::identities::{numtype_of, operands, Operand};
-use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
+use crate::identities::{by_copy, numtype_of, operands, Operand};
+use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_OUTPUT};
 use crate::Core;
 
 /// Emit the IR for a node and return the SSA value it computes, recursing on
@@ -132,6 +132,8 @@ pub struct Lowerer<'a, 'f> {
     promoted: &'a HashMap<usize, (Variable, types::Type)>,
     /// The declared result, `None` for `-> void`: what a `return` widens.
     ret: Option<NumType>,
+    /// A record result's slot address, from the argument block, and its width.
+    ret_dest: Option<(Value, usize)>,
     /// The call-depth counter the epilogue counts this call out of.
     depth_addr: Value,
     /// Scopes being lowered whose exit runs teardowns, which a `return` would jump past.
@@ -148,7 +150,7 @@ impl Lowerer<'_, '_> {
         let node = self.through(node);
         let op = (*node).ty;
         match read_kind(self.types, node) {
-            Read::Executable(Dispatch::Call(f)) => self.lower_call_to(f, node),
+            Read::Executable(Dispatch::Call(f)) => self.lower_call_into(f, node, None),
             // Rational operations and places are interpreted only.
             Read::Executable(Dispatch::Leaf(leaf)) if self.types.ops.is_rational_leaf(leaf) => {
                 Err(CompileError::NotLowerable(node))
@@ -383,6 +385,11 @@ impl Lowerer<'_, '_> {
             "store-through's value must lower to the pointee's type"
         );
         self.builder.ins().store(self.flags, v, addr, offset as i32);
+    }
+
+    /// Copy `width` bytes from `src` to `dst`.
+    pub(crate) fn copy_bytes(&mut self, dst: Value, src: Value, width: usize) {
+        emit_copy(self.builder, self.flags, dst, src, width);
     }
 
     /// `v` in its `i64` container, as an argument travels.
@@ -823,9 +830,13 @@ impl Lowerer<'_, '_> {
             return Err(CompileError::NotLowerable(value));
         }
         let v = self.lower(value)?;
-        let ret64 = match self.ret {
-            Some(nt) => widen_to_i64(self.builder, v, nt),
-            None => self.builder.ins().iconst(types::I64, 0),
+        let ret64 = match (self.ret_dest, self.ret) {
+            (Some((dest, width)), _) => {
+                self.copy_bytes(dest, v, width);
+                dest
+            }
+            (None, Some(nt)) => widen_to_i64(self.builder, v, nt),
+            (None, None) => self.builder.ins().iconst(types::I64, 0),
         };
         count_out(self.builder, self.depth_addr);
         self.builder.ins().return_(&[ret64]);
@@ -861,60 +872,79 @@ impl Lowerer<'_, '_> {
 
     /// A self-call is a direct `call` the JIT patches to this function; a
     /// compiled callee is a `call_indirect` through its baked entry; an
-    /// uncompiled callee is a jump into the interpreter. Each argument widens
-    /// into its container per its own type; the result narrows per the
-    /// callee's return type. Compile order decides the call's shape, never
-    /// whether it compiles.
+    /// uncompiled callee is a jump into the interpreter. The argument block is
+    /// laid out as the interpreter's: a record copied at its width, anything else
+    /// widened into its container; `dest` is the slot a record result is copied
+    /// into. The result narrows per the callee's return type. Compile order
+    /// decides the call's shape, never whether it compiles.
     ///
     /// # Safety
     /// `callee` must be a `fn` node from the store and `node` a node whose
-    /// value is its null-terminated argument run.
-    unsafe fn lower_call_to(
+    /// value is its null-terminated argument run; `dest` an address of the result's width.
+    pub(crate) unsafe fn lower_call_into(
         &mut self,
         callee: DyadPtr,
         node: DyadPtr,
+        dest: Option<Value>,
     ) -> Result<Value, CompileError> {
         let fields = (*callee).value as *const DyadPtr;
         if fields.is_null() {
             // No signature to size the call by: an unbound placeholder.
             return Err(CompileError::NotLowerable(callee));
         }
-        let input = *fields.add(FN_INPUT);
-        let param_count =
-            crate::identities::array::items(crate::identities::meta::record_fields_of(input)).len();
         let ret = return_kind(self.types, *fields.add(FN_OUTPUT))?;
-
+        let core = self.types;
         let args = (*node).value as *const DyadPtr; // [arg0 …, null] or null
-        let mut args64 = Vec::new();
-        if !args.is_null() {
-            let mut i = 0;
-            while !(*args.add(i)).is_null() {
-                let arg = *args.add(i);
-                let v = self.lower(arg)?;
-                // Already at the container's width: a type value or an address.
-                if self.builder.func.dfg.value_type(v) == types::I64 {
-                    args64.push(v);
-                    i += 1;
-                    continue;
-                }
-                let nt = match numtype_of(self.types, arg) {
-                    Operand::Concrete(nt) => nt,
-                    // A pointer rides the container as its 8-byte address.
-                    Operand::Pointer(_) => NumType::U64,
-                    // An uncommitted literal is the bare-literal i32 default; a
-                    // non-numeric value (a void call's unit) rides as the i32 unit.
-                    Operand::Literal | Operand::NonNumeric => NumType::I32,
-                };
-                args64.push(widen_to_i64(self.builder, v, nt));
-                i += 1;
-            }
-        }
-        if args64.len() != param_count {
+        let arg_count = if args.is_null() {
+            0
+        } else {
+            (0..).take_while(|&i| !(*args.add(i)).is_null()).count()
+        };
+        if arg_count != by_copy::slots(core, callee).count() {
             return Err(CompileError::ArityMismatch);
         }
-
-        let argv = self.spill(&args64);
-        let argc = self.builder.ins().iconst(types::I64, args64.len() as i64);
+        let words = by_copy::words(core, callee);
+        let argv = if words == 0 {
+            self.builder.ins().iconst(self.ptr_ty, 0)
+        } else {
+            let block = self.builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                (words * 8) as u32,
+                3,
+            ));
+            if by_copy::result_width(core, callee).is_some() {
+                let dest = dest.ok_or(CompileError::NotLowerable(node))?;
+                self.builder.ins().stack_store(dest, block, 0);
+            }
+            for (i, slot) in by_copy::slots(core, callee).enumerate() {
+                let arg = *args.add(i);
+                let at = (slot.word * 8) as i32;
+                if let Some(width) = slot.width {
+                    let src = by_copy::lower_record_addr(self, arg)?;
+                    let dst = self.builder.ins().stack_addr(self.ptr_ty, block, at);
+                    self.copy_bytes(dst, src, width);
+                    continue;
+                }
+                let v = self.lower(arg)?;
+                // Already at the container's width: a type value or an address.
+                let v = if self.builder.func.dfg.value_type(v) == types::I64 {
+                    v
+                } else {
+                    let nt = match numtype_of(self.types, arg) {
+                        Operand::Concrete(nt) => nt,
+                        // A pointer rides the container as its 8-byte address.
+                        Operand::Pointer(_) => NumType::U64,
+                        // An uncommitted literal is the bare-literal i32 default; a
+                        // non-numeric value (a void call's unit) rides as the i32 unit.
+                        Operand::Literal | Operand::NonNumeric => NumType::I32,
+                    };
+                    widen_to_i64(self.builder, v, nt)
+                };
+                self.builder.ins().stack_store(v, block, at);
+            }
+            self.builder.ins().stack_addr(self.ptr_ty, block, 0)
+        };
+        let argc = self.builder.ins().iconst(types::I64, words as i64);
         let inst = if callee == self.self_fn {
             let fref = self.module.declare_func_in_func(self.func_id, &mut *self.builder.func);
             self.builder.ins().call(fref, &[argv, argc])
@@ -1010,24 +1040,24 @@ unsafe fn compile_fn_body(
     if fields.is_null() {
         return Err(CompileError::NotLowerable(fn_node));
     }
-    let input = *fields.add(FN_INPUT);
-    let params: Vec<DyadPtr> =
-        crate::identities::array::items(crate::identities::meta::record_fields_of(input)).to_vec();
     let body = *fields.add(FN_BODY);
     let ret = return_kind(types, *fields.add(FN_OUTPUT))?;
-    compile_body(lower, types, fn_node, body, &params, ret)
+    compile_body(lower, types, fn_node, body, ret)
 }
 
 /// How the declared output travels in the container: not at all for `void`,
-/// as an address for a type value or a node a Logos `parse` builds, at its
-/// width for a scalar; anything else (a record) is not compilable yet.
+/// as an address for a type value, a node a Logos `parse` builds, or a record's
+/// result slot, at its width for a scalar.
 ///
 /// # Safety
 /// `out` must be a type node from the store.
 unsafe fn return_kind(types: &Core, out: DyadPtr) -> Result<Option<NumType>, CompileError> {
     if is_void_type(out) {
         Ok(None)
-    } else if out == types.type_ || crate::identities::meta::is_node_valued(out, types.fn_type) {
+    } else if out == types.type_
+        || crate::identities::meta::is_node_valued(out, types.fn_type)
+        || by_copy::record_width(types, out).is_some()
+    {
         Ok(Some(NumType::I64))
     } else if crate::identities::numtype::is_scalar_type(out) {
         Ok(Some(of_type_node(out)))
@@ -1065,12 +1095,12 @@ pub unsafe fn compile_nullary_i32(
     root: DyadPtr,
 ) -> Result<Compiled, CompileError> {
     // No self to recurse into; v1 bare expressions are i32 (or bool, physically i32).
-    compile_body(lower, types, std::ptr::null_mut(), root, &[], Some(NumType::I32))
+    compile_body(lower, types, std::ptr::null_mut(), root, Some(NumType::I32))
 }
 
-/// Compile `root` as a function of `params`, each argument spilled from its
-/// container into the parameter's frame slot on entry, returning `ret` (`None`
-/// for `-> void`, which yields unit).
+/// Compile `root` as the body of `self_fn`, each argument copied from the argument
+/// block into the parameter's frame slot on entry, returning `ret` (`None` for
+/// `-> void`, which yields unit).
 ///
 /// # Safety
 /// `root` must be a valid dyad tree from the store, and any variable storage its
@@ -1081,16 +1111,15 @@ pub(crate) unsafe fn compile_body(
     types: &Core,
     self_fn: DyadPtr,
     root: DyadPtr,
-    params: &[DyadPtr],
     ret: Option<NumType>,
 ) -> Result<Compiled, CompileError> {
     // Two passes: the first lowers into a discarded function, recording how
     // every frame place is used; the offsets used only as consistent scalars,
     // address never taken, promote to register variables on the real pass.
     let mut stats = PlaceStats::default();
-    build_pass(lower, types, self_fn, root, params, ret, Some(&mut stats), &[], false)?;
+    build_pass(lower, types, self_fn, root, ret, Some(&mut stats), &[], false)?;
     let promote = stats.promotable();
-    let compiled = build_pass(lower, types, self_fn, root, params, ret, None, &promote, true)?;
+    let compiled = build_pass(lower, types, self_fn, root, ret, None, &promote, true)?;
     Ok(compiled.expect("the finishing pass returns the artifact"))
 }
 
@@ -1106,9 +1135,8 @@ unsafe fn build_pass(
     types: &Core,
     self_fn: DyadPtr,
     root: DyadPtr,
-    params: &[DyadPtr],
     ret: Option<NumType>,
-    collect: Option<&mut PlaceStats>,
+    mut collect: Option<&mut PlaceStats>,
     promote: &[(usize, types::Type)],
     finish: bool,
 ) -> Result<Option<Compiled>, CompileError> {
@@ -1189,8 +1217,10 @@ unsafe fn build_pass(
 
         // Promoted locals start at the zero of their type, the register form of
         // the zeroed frame; promoted parameters are defined from their arguments below.
+        let slots: Vec<by_copy::Slot> =
+            if self_fn.is_null() { Vec::new() } else { by_copy::slots(types, self_fn).collect() };
         let param_offs: Vec<Option<usize>> =
-            params.iter().map(|&p| frame_ref((*p).value).map(|(_, off)| off)).collect();
+            slots.iter().map(|s| frame_ref((*s.param).value).map(|(_, off)| off)).collect();
         let mut promoted: HashMap<usize, (Variable, types::Type)> = HashMap::new();
         for &(off, ct) in promote {
             let var = builder.declare_var(ct);
@@ -1207,13 +1237,32 @@ unsafe fn build_pass(
         }
 
         // Each argument loads from `argv` and narrows to its declared scalar
-        // type; a bare or type-valued parameter keeps the full container.
+        // type; a bare or type-valued parameter keeps the full container, and a
+        // record is copied at its width into a slot that stays in memory.
         let argv = builder.block_params(entry)[0];
-        for (i, &p) in params.iter().enumerate() {
-            let v = builder.ins().load(types::I64, MemFlagsData::new(), argv, (i * 8) as i32);
+        let ret_dest = if self_fn.is_null() {
+            None
+        } else {
+            by_copy::result_width(types, self_fn)
+                .map(|width| (builder.ins().load(types::I64, MemFlagsData::new(), argv, 0), width))
+        };
+        for s in &slots {
+            let p = s.param;
             let Some((_, off)) = frame_ref((*p).value) else {
                 return Err(CompileError::NotLowerable(p));
             };
+            let at = (s.word * 8) as i32;
+            if let Some(width) = s.width {
+                if let Some(stats) = collect.as_deref_mut() {
+                    stats.dirty.push((off, width));
+                }
+                let slot = frame_slot.expect("parameters occupy the frame, so a frame slot exists");
+                let dst = builder.ins().stack_addr(ptr_ty, slot, off as i32);
+                let src = builder.ins().iadd_imm(argv, i64::from(at));
+                emit_copy(&mut builder, MemFlagsData::new(), dst, src, width);
+                continue;
+            }
+            let v = builder.ins().load(types::I64, MemFlagsData::new(), argv, at);
             let logos = (*p).ty;
             let scalar = crate::identities::numtype::is_scalar_type(logos);
             if let Some(&(var, _)) = promoted.get(&off) {
@@ -1245,16 +1294,21 @@ unsafe fn build_pass(
                 collect,
                 promoted: &promoted,
                 ret,
+                ret_dest,
                 depth_addr,
                 teardowns: 0,
             };
             lw.lower(root)?
         };
-        // The body's value widens back to the container; a `-> void` body ran
-        // for effect and returns unit.
-        let ret64 = match ret {
-            Some(nt) => widen_to_i64(&mut builder, value, nt),
-            None => builder.ins().iconst(types::I64, 0),
+        // The body's value widens back to the container, or is a record's address,
+        // copied into the caller's slot; a `-> void` body ran for effect and returns unit.
+        let ret64 = match (ret_dest, ret) {
+            (Some((dest, width)), _) => {
+                emit_copy(&mut builder, MemFlagsData::new(), dest, value, width);
+                dest
+            }
+            (None, Some(nt)) => widen_to_i64(&mut builder, value, nt),
+            (None, None) => builder.ins().iconst(types::I64, 0),
         };
         count_out(&mut builder, depth_addr);
         builder.ins().return_(&[ret64]);
@@ -1288,6 +1342,18 @@ fn narrow_from_i64(b: &mut FunctionBuilder, v: Value, nt: NumType) -> Value {
             } else {
                 b.ins().ireduce(ct, v)
             }
+        }
+    }
+}
+
+/// `width` bytes from `src` to `dst`, widest loads first, no alignment assumed.
+fn emit_copy(b: &mut FunctionBuilder, flags: MemFlagsData, dst: Value, src: Value, width: usize) {
+    let mut at = 0;
+    for (ty, size) in [(types::I64, 8), (types::I32, 4), (types::I16, 2), (types::I8, 1)] {
+        while width - at >= size {
+            let v = b.ins().load(ty, flags, src, at as i32);
+            b.ins().store(flags, v, dst, at as i32);
+            at += size;
         }
     }
 }

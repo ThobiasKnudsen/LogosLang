@@ -9,8 +9,9 @@
 use std::cell::Cell;
 
 use crate::dyad::{frame_ref, Dyad, DyadPtr};
+use crate::identities::by_copy;
 use crate::identities::read::{read_kind, Dispatch, Read};
-use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
+use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_OUTPUT};
 
 /// What a `seed-native` callable's entry points at: takes the application
 /// node, returns its scalar result.
@@ -137,9 +138,9 @@ unsafe fn call_machine(p: *const u8, args: &[i64]) -> i64 {
     f(args.as_ptr(), args.len())
 }
 
-/// The one signature every compiled function has: the arguments as `i64`
-/// bit-containers in a block the caller owns, their count, and the result
-/// container; one shape for every arity. DESIGN ›Operands travel on the stack‹.
+/// The one signature every compiled function has: the argument block the caller
+/// owns, its length in 8-byte words, and the result container; one shape for every
+/// arity. DESIGN ›Operands travel on the stack‹.
 pub type MachineFn = extern "C" fn(*const i64, usize) -> i64;
 
 /// The jump a compiled caller makes into a callee that is not compiled: the
@@ -148,14 +149,14 @@ pub type MachineFn = extern "C" fn(*const i64, usize) -> i64;
 ///
 /// # Safety
 /// Called only by compiled code the seed emitted: `fn_node` a `fn` node from
-/// the store, `argv` holding `argc` containers.
+/// the store, `argv` its argument block of `argc` words.
 pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *const i64) -> i64 {
     let rt = standing_by();
     // SAFETY: `rt` was set by the runtime around this very jump and is live for its duration.
     let saved = unsafe { ((*rt).activations.len(), (*rt).stack.mark(), (*rt).constructing) };
     let depth = CALL_DEPTH.with(|d| d.get());
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: as above; `argv` holds `argc` containers; `fn_node` is the fn the caller baked.
+        // SAFETY: as above; `argv` holds `argc` words; `fn_node` is the fn the caller baked.
         unsafe {
             let args = if argc == 0 { &[][..] } else { std::slice::from_raw_parts(argv, argc) };
             (*rt).apply_values(fn_node, args)
@@ -642,17 +643,31 @@ impl<'a> Runtime<'a> {
     /// `f` must be a `fn` node from the store and `node` a node whose value
     /// is a null-terminated operand run (or null for a nullary call).
     pub unsafe fn apply(&mut self, f: DyadPtr, node: DyadPtr) -> Result<i64, RunError> {
-        let values = self.eval_args(f, node)?;
+        self.apply_into(f, node, None)
+    }
+
+    /// [`Runtime::apply`] with the slot a record result is copied into; a call of a
+    /// function whose result is a record has one, and yields its address.
+    ///
+    /// # Safety
+    /// As [`Runtime::apply`]; `dest` must be a place of the result's width.
+    pub(crate) unsafe fn apply_into(
+        &mut self,
+        f: DyadPtr,
+        node: DyadPtr,
+        dest: Option<*mut u8>,
+    ) -> Result<i64, RunError> {
+        let values = self.eval_args(f, node, dest)?;
         self.apply_values(f, &values)
     }
 
-    /// Apply `f` to arguments already in their `i64` containers: jump to the
-    /// installed entry, or claim the callee's zeroed frame, write the
-    /// containers into its parameter slots, walk the body, and pop both again.
+    /// Apply `f` to its argument block (the words `by_copy::slots` lays out): jump to
+    /// the installed entry, or claim the callee's zeroed frame, copy the arguments into
+    /// its parameter slots, walk the body, and pop both again.
     ///
     /// # Safety
-    /// `f` must be a `fn` node from the store; `values` one container per
-    /// parameter.
+    /// `f` must be a `fn` node from the store; `values` its argument block, whose first
+    /// word is a live result slot's address when the result is a record.
     pub unsafe fn apply_values(&mut self, f: DyadPtr, values: &[i64]) -> Result<i64, RunError> {
         let fields = (*f).value as *const DyadPtr;
         if fields.is_null() {
@@ -673,16 +688,22 @@ impl<'a> Runtime<'a> {
         }
         let mark = self.stack.mark();
         let base = self.stack.alloc(fn_frame_size(f));
-        if let Err(e) = Self::bind_values(f, base, values) {
+        if let Err(e) = self.bind_values(f, base, values) {
             self.stack.release(mark);
             return Err(e);
         }
         CALL_DEPTH.with(|d| d.set(d.get() + 1));
         self.activations.push(base);
-        let result = match self.run(body) {
+        let mut result = match self.run(body) {
             Err(RunError::Return(v)) => Ok(v),
             other => other,
         };
+        // The body handed back its record's address in this frame, which is still live.
+        if let (Some(width), Ok(src)) = (by_copy::result_width(self.types, f), &result) {
+            let dest = values[0];
+            std::ptr::copy(*src as *const u8, dest as *mut u8, width);
+            result = Ok(dest);
+        }
         self.activations.pop();
         CALL_DEPTH.with(|d| d.set(d.get() - 1));
         self.stack.release(mark);
@@ -771,61 +792,77 @@ impl<'a> Runtime<'a> {
         Ok(std::ptr::read_unaligned(slot as *const i64))
     }
 
-    /// Evaluate a call's arguments in the caller's frame into their containers;
-    /// the parameter and the argument arrays are both null-terminated.
+    /// Evaluate a call's arguments in the caller's frame into its argument block: a
+    /// record copied at its width, anything else in its container.
     ///
     /// # Safety
     /// `fn_node` must be a valid function node and `call_node` a valid
-    /// application of it, both from the store.
+    /// application of it, both from the store; `dest` as for [`Runtime::apply_into`].
     unsafe fn eval_args(
         &mut self,
         fn_node: DyadPtr,
         call_node: DyadPtr,
+        dest: Option<*mut u8>,
     ) -> Result<Vec<i64>, RunError> {
-        let input = *((*fn_node).value as *const DyadPtr).add(FN_INPUT);
-        let params =
-            crate::identities::array::items(crate::identities::meta::record_fields_of(input));
+        if (*fn_node).value.is_null() {
+            return Err(RunError::NotRunnable(fn_node));
+        }
         let args = (*call_node).value as *const DyadPtr; // [arg0 …, null] or null
-        let mut values = Vec::with_capacity(params.len());
-        let mut i = 0usize;
-        loop {
-            let param = params.get(i).copied().unwrap_or(std::ptr::null_mut());
-            let arg = if args.is_null() { std::ptr::null_mut() } else { *args.add(i) };
-            match (param.is_null(), arg.is_null()) {
-                (true, true) => break, // both exhausted: counts matched
-                (false, false) => {
-                    values.push(self.run(arg)?);
-                    i += 1;
+        let arg_count = if args.is_null() {
+            0
+        } else {
+            (0..).take_while(|&i| !(*args.add(i)).is_null()).count()
+        };
+        let types = self.types;
+        if arg_count != by_copy::slots(types, fn_node).count() {
+            return Err(RunError::ArityMismatch);
+        }
+        let mut values = vec![0i64; by_copy::words(types, fn_node)];
+        if by_copy::result_width(types, fn_node).is_some() {
+            values[0] = dest.ok_or(RunError::NoWholeRead)? as i64;
+        }
+        for (i, slot) in by_copy::slots(types, fn_node).enumerate() {
+            let arg = *args.add(i);
+            match slot.width {
+                Some(width) => {
+                    let src = by_copy::record_addr(self, arg)?;
+                    let block = values.as_mut_ptr().add(slot.word).cast::<u8>();
+                    std::ptr::copy_nonoverlapping(src, block, width);
                 }
-                _ => return Err(RunError::ArityMismatch),
+                None => values[slot.word] = self.run(arg)?,
             }
         }
         Ok(values)
     }
 
-    /// Write `values` into the parameter slots of the fresh frame at `base`: a
-    /// scalar parameter at its type's width, any other as the full container.
+    /// Copy the argument block into the parameter slots of the fresh frame at `base`: a
+    /// record at its width, a scalar at its type's width, any other as the full container.
     ///
     /// # Safety
     /// `fn_node` must be a valid function node; `base` a frame allocation of
     /// its frame size, which covers every parameter slot the parser assigned.
-    unsafe fn bind_values(fn_node: DyadPtr, base: *mut u8, values: &[i64]) -> Result<(), RunError> {
-        let input = *((*fn_node).value as *const DyadPtr).add(FN_INPUT);
-        let params =
-            crate::identities::array::items(crate::identities::meta::record_fields_of(input));
-        if params.len() != values.len() {
+    unsafe fn bind_values(
+        &self,
+        fn_node: DyadPtr,
+        base: *mut u8,
+        values: &[i64],
+    ) -> Result<(), RunError> {
+        if values.len() != by_copy::words(self.types, fn_node) {
             return Err(RunError::ArityMismatch);
         }
-        for (&param, &bits) in params.iter().zip(values) {
-            let Some((_, off)) = frame_ref((*param).value) else {
+        for slot in by_copy::slots(self.types, fn_node) {
+            let Some((_, off)) = frame_ref((*slot.param).value) else {
                 return Err(RunError::MalformedFn(fn_node));
             };
-            let slot = base.add(off);
-            let ty = (*param).ty;
-            if crate::identities::numtype::is_scalar_type(ty) {
-                crate::identities::numtype::write_scalar(ty, slot, bits);
-            } else {
-                std::ptr::write_unaligned(slot as *mut i64, bits);
+            let dst = base.add(off);
+            let ty = (*slot.param).ty;
+            let at = values.as_ptr().add(slot.word);
+            match slot.width {
+                Some(width) => std::ptr::copy_nonoverlapping(at.cast(), dst, width),
+                None if crate::identities::numtype::is_scalar_type(ty) => {
+                    crate::identities::numtype::write_scalar(ty, dst, *at)
+                }
+                None => std::ptr::write_unaligned(dst as *mut i64, *at),
             }
         }
         Ok(())

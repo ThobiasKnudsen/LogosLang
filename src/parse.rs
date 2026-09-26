@@ -1718,8 +1718,7 @@ struct OpenFn {
     returns: Vec<DyadPtr>,
 }
 
-/// A scalar at its own width; anything else the 8-byte container the call
-/// convention passes.
+/// A scalar at its own width; anything else an 8-byte container.
 ///
 /// # Safety
 /// `logos` must be null or a type node from the store.
@@ -4434,8 +4433,7 @@ impl<'a> Parser<'a> {
             for &param in crate::identities::array::items(fields) {
                 let logos = (*param).ty;
                 // A parameter's slot is sized by the rule that sizes a local; a
-                // bare one holds the 8-byte container. A record parameter gets
-                // its layout's width though the call binds only the container (stand-in for #115).
+                // bare one holds the 8-byte container.
                 let width = if logos.is_null() {
                     8
                 } else {
@@ -6015,6 +6013,25 @@ impl<'a> Parser<'a> {
                 crate::identities::commit_call_args(self.rt.store, types, callee, &mut args)?;
             }
             let call = build_call(self.rt.store, callee, &args);
+            // SAFETY: `callee` is a reduced dyad; a `fn` callee's value is its field record or null.
+            let record_out = unsafe {
+                if (*callee).ty == types.fn_type && !(*callee).value.is_null() {
+                    let out = *((*callee).value as *const DyadPtr).add(FN_OUTPUT);
+                    crate::identities::by_copy::record_width(types, out).map(|w| (out, w))
+                } else {
+                    None
+                }
+            };
+            if let Some((out, width)) = record_out {
+                // The caller provides the slot the record result is copied into.
+                let slot = self.alloc_local(out, width);
+                return Ok(crate::identities::by_copy::build_result(
+                    self.rt.store,
+                    types,
+                    slot,
+                    call,
+                ));
+            }
             // A type-returning call resolves now, at comptime, so the result
             // flows as an ordinary type value; the outer-name check runs first,
             // since a body that reads a dead name must not run.
@@ -6652,7 +6669,9 @@ impl<'a> Parser<'a> {
                     }
                 }
                 value
-            } else if (*read).ty == self.types.construct_ {
+            } else if (*read).ty == self.types.construct_ || (*read).ty == self.types.by_copy.result
+            {
+                // Both fill the place at operand 0, which becomes the name's own.
                 let ops = (*read).value as *mut DyadPtr;
                 let instance = *ops;
                 (*placeholder).ty = (*instance).ty;

@@ -3087,3 +3087,128 @@ fn a_field_default_fills_each_new_node() {
         assert_eq!((code, stdout.as_str()), (Some(0), want), "{src}: stderr: {stderr}");
     }
 }
+
+/// DESIGN ›Operands travel on the stack‹: a plain record crosses a call by copy, in, out,
+/// and straight on into another call, on both tiers and with the caller compiled too.
+#[test]
+fn a_plain_record_passes_into_and_out_of_a_function_by_copy() {
+    let types = "p := type ( mut x := i32 ?, mut y := i32 ? ), \
+                 w := type ( a := i64 ?, b := i64 ?, c := i64 ? )";
+    let f = "f := fn (v := p ?) -> i32 ( v.x )";
+    let mk = "mk := fn () -> p ( p (3, 4) )";
+    let cases: &[(&str, &[&str], &str, &str, &str)] = &[
+        ("", &[], "a := p (1, 2), a.x", "i32", "1"),
+        (f, &["f"], "a := p (1, 2), f(a)", "i32", "1"),
+        (f, &["f"], "f(p (1, 2))", "i32", "1"),
+        (mk, &["mk"], "b := mk(), b.x", "i32", "3"),
+        (mk, &["mk"], "b := mk(), b.x * 10 + b.y", "i32", "34"),
+        ("f := fn (v := @p ?) -> i32 ( v@.x )", &["f"], "a := p (1, 2), f(&a)", "i32", "1"),
+        (
+            "f := fn (q := w ?) -> i64 ( q.a + q.b + q.c )",
+            &["f"],
+            "q := w (1, 20, 300), f(q)",
+            "i64",
+            "321",
+        ),
+        (
+            "f := fn (n := i32 ?, q := w ?, v := p ?, m := i64 ?) -> i64 ( i64(n) + q.c + i64(v.y) + m )",
+            &["f"],
+            "f(1, w (1, 2, 30), p (5, 600), 4000)",
+            "i64",
+            "4631",
+        ),
+        (
+            "mkw := fn (k := i64 ?) -> w ( w (k, k + 1, k + 2) )",
+            &["mkw"],
+            "r := mkw(10), r.a * 100 + r.b * 10 + r.c",
+            "i64",
+            "1122",
+        ),
+        (
+            "f := fn (mut v := p ?) -> i32 ( v.x = 9, v.x )",
+            &["f"],
+            "a := p (1, 2), f(a) + a.x * 100",
+            "i32",
+            "109",
+        ),
+        (
+            "g := fn (v := p ?) -> i32 ( v.y ), mk := fn () -> p ( p (3, 4) )",
+            &["mk", "g"],
+            "g(mk())",
+            "i32",
+            "4",
+        ),
+        (
+            "id := fn (v := p ?) -> p ( v )",
+            &["id"],
+            "a := p (7, 8), b := id(id(a)), b.x + b.y",
+            "i32",
+            "15",
+        ),
+        (
+            "pick := fn (k := i32 ?, u := p ?, v := p ?) -> p ( if k > 0 return u, v )",
+            &["pick"],
+            "b := pick(1, p (1, 2), p (3, 4)), c := pick(0, p (1, 2), p (3, 4)), b.y * 10 + c.y",
+            "i32",
+            "24",
+        ),
+        (
+            "fact := fn (n := i32 ?, acc := p ?) -> p ( \
+             if n == 0 (acc) else (fact(n - 1, p (acc.x * n, acc.y + 1))) )",
+            &["fact"],
+            "r := fact(5, p (1, 0)), r.x * 100 + r.y",
+            "i32",
+            "12005",
+        ),
+    ];
+    for &(defs, compiled, tail, ty, want) in cases {
+        let compiles: String = compiled.iter().map(|name| format!("{name}.compile(), ")).collect();
+        let defs = if defs.is_empty() { String::new() } else { format!("{defs}, ") };
+        for src in [
+            format!("{types}, {defs}{tail}"),
+            format!("{types}, {defs}{compiles}{tail}"),
+            format!("{types}, {defs}h := fn () -> {ty} ( {tail} ), h.compile(), h()"),
+            format!("{types}, {defs}{compiles}h := fn () -> {ty} ( {tail} ), h.compile(), h()"),
+        ] {
+            let (code, stdout, stderr) = run_line(&src);
+            assert_eq!((code, stdout.trim_end()), (Some(0), want), "{src}: stderr: {stderr}");
+        }
+    }
+    // Filled one field at a time, then passed whole; a `T ?` record local does not compile yet.
+    for compile in ["", "f.compile(), "] {
+        let src = format!("{types}, {f}, {compile}mut u := p ?, u.x = 1, u.y = 2, f(u)");
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.as_str()), (Some(0), "1\n"), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_record_argument_or_result_is_checked_at_parse() {
+    let p = "p := type ( mut x := i32 ?, mut y := i32 ? ), q := type ( z := i32 ?, t := i32 ? )";
+    for (tail, reason) in [
+        ("f := fn (v := p ?) -> i32 ( v.x ), f(5)", "do not match"),
+        ("f := fn (v := p ?) -> i32 ( v.x ), f(q (1, 2))", "do not match"),
+        ("mk := fn () -> p ( q (1, 2) ), 1", "do not match"),
+        ("mk := fn () -> p ( 5 ), 1", "do not match"),
+        (
+            "f := fn (v := p ?) -> i32 ( v.x ), mut u := p ?, u.x = 1, f(u)",
+            "read before it is written",
+        ),
+    ] {
+        let (code, _, stderr) = run_line(&format!("{p}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains(reason), "{tail}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_run_body_takes_a_plain_record_field_by_copy() {
+    let fx = "p := type ( x := i32 ?, y := i32 ? ), fx := type ( a := p ?, output_type := type ?, \
+              share run = ( a.y ), share parse_rank = 60, share parse = ( tape[0]:type = fx, \
+              tape[0].a = tape[1], tape[0].output_type = i32, tape.is_constructed[0] = true, \
+              tape.remove(1) ) ), v := p (1, 2)";
+    for tail in ["fx v", "g := fn () -> i32 ( fx v ), g.compile(), g()"] {
+        let (code, stdout, stderr) = run_line(&format!("{fx}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), "2\n"), "{tail}: stderr: {stderr}");
+    }
+}

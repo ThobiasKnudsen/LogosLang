@@ -27,6 +27,7 @@ mod assign;
 mod binary;
 #[path = "bool.rs"]
 pub(crate) mod bool_mod;
+pub(crate) mod by_copy;
 pub(crate) mod callable;
 mod colon;
 mod comment;
@@ -152,6 +153,7 @@ pub struct Core {
     pub print: print::PrintIds,
     pub error: error::ErrorIds,
     pub run_body: run_body::RunBodyIds,
+    pub by_copy: by_copy::ByCopyIds,
     pub here: here::HereIds,
     /// The identity of the cell a `[` lands, as `scope` is a `(`'s.
     pub square_brackets: DyadPtr,
@@ -317,6 +319,7 @@ impl Core {
         let print = print::register(&mut cx, &callables);
         let error = error::register(&mut cx, &callables);
         let run_body = run_body::register(&mut cx);
+        let by_copy = by_copy::register(&mut cx, &callables);
         let here = here::register(&mut cx, &callables);
         // Last: the `binding` type's fields are `@dyad` places, so it waits for `dyad` and `@`.
         binding::register_type(&mut cx, scope_, array_, dyad_, numtypes[NumType::F64 as usize]);
@@ -404,6 +407,7 @@ impl Core {
             print,
             error,
             run_body,
+            by_copy,
             here,
             square_brackets,
             callable_: callables.callable,
@@ -709,7 +713,7 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
                 && (out == types.rational
                     || out == types.type_
                     || meta::kind_of(out).is_none()
-                    || meta::is_node_valued(out, types.fn_type))
+                    || meta::is_record_type(out))
             {
                 return Operand::NonNumeric;
             }
@@ -1146,9 +1150,14 @@ pub(crate) unsafe fn commit_call_args(
         if pty.is_null() {
             continue;
         }
-        // A record or code-carrying parameter has no whole read here; it is checked
-        // where its type is built.
+        // A code-carrying parameter has no whole read here; it is checked where its
+        // type is built.
         match read::place_layout(types, pty) {
+            Some((read::Read::Aggregate, _)) if by_copy::record_width(types, pty).is_some() => {
+                if by_copy::record_type_of(types, *arg) != Some(pty) {
+                    return Err(ParseError::TypeMismatch);
+                }
+            }
             // A literal committed into a pointer parameter would be dereferenced as a wild address.
             Some((read::Read::Pointer(pp), _)) => match numtype_of(types, *arg) {
                 Operand::Pointer(pointee) if pointee_types_match(pp, pointee) => {}
@@ -1206,6 +1215,18 @@ pub(crate) unsafe fn commit_fn_body(
         check_type_tail(types, body)?;
         return Ok(body);
     }
+    if by_copy::record_width(types, output).is_some() {
+        // A record result is handed back as the address of its bytes, which the call copies.
+        return walk_tail(types, body, &mut |leaf| {
+            if (*leaf).ty != types.construct_ {
+                refuse_statement(types, leaf)?;
+            }
+            if by_copy::record_type_of(types, leaf) != Some(output) {
+                return Err(ParseError::TypeMismatch);
+            }
+            Ok(by_copy::build_out(store, types, leaf))
+        });
+    }
     if !is_numtype_node(types, output) {
         return Ok(body);
     }
@@ -1214,7 +1235,6 @@ pub(crate) unsafe fn commit_fn_body(
 
 /// Walk the value-producing positions of `node` (itself, a `return`'s operand, both
 /// `if` branches, a scope's trailing expression) and write back what `leaf` returns.
-/// Statements are refused: they yield unit.
 ///
 /// # Safety
 /// `node` is a valid dyad from the store.
@@ -1239,16 +1259,6 @@ unsafe fn walk_tail(
         *ops.add(1) = then_c;
         *ops.add(2) = else_c;
         return Ok(node);
-    }
-    if (*node).ty == types.while_
-        || (*node).ty == types.for_
-        || (*node).ty == types.construct_
-        || (*node).ty == types.declare_
-        || (*node).ty == types.assign
-        || (*node).ty == types.storeptr_
-        || (*node).ty == types.compile_
-    {
-        return Err(ParseError::StatementAsValue);
     }
     // Trailing prose is invisible to value flow, so the tail is the last non-comment expression.
     if (*node).ty == types.scope {
@@ -1282,6 +1292,7 @@ unsafe fn commit_tail(
     output: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
     walk_tail(types, node, &mut |leaf| {
+        refuse_statement(types, leaf)?;
         if (*leaf).ty == types.rational && !crate::dyad::is_place((*leaf).value) {
             let nt = numtype::of_type_node(output);
             let bits = rational::mold_to(leaf, nt).ok_or(ParseError::UncomputableLiteral)?;
@@ -1300,6 +1311,25 @@ unsafe fn commit_tail(
     })
 }
 
+/// A statement yields unit, so it is no value's tail.
+///
+/// # Safety
+/// `node` is a valid dyad from the store.
+unsafe fn refuse_statement(types: &Core, node: DyadPtr) -> Result<(), ParseError> {
+    let ty = (*node).ty;
+    if ty == types.while_
+        || ty == types.for_
+        || ty == types.construct_
+        || ty == types.declare_
+        || ty == types.assign
+        || ty == types.storeptr_
+        || ty == types.compile_
+    {
+        return Err(ParseError::StatementAsValue);
+    }
+    Ok(())
+}
+
 /// A `-> type` call's result bits are read as a node address, so a non-type tail
 /// would be a wild address.
 ///
@@ -1307,6 +1337,7 @@ unsafe fn commit_tail(
 /// `node` is a valid dyad from the store.
 unsafe fn check_type_tail(types: &Core, node: DyadPtr) -> Result<(), ParseError> {
     walk_tail(types, node, &mut |leaf| {
+        refuse_statement(types, leaf)?;
         if yields_type(types, leaf) {
             Ok(leaf)
         } else {
