@@ -1,12 +1,12 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `pub`, `mut`, `immut` and `shared`: the gate words, each a prefix word
+//! `pub`, `mut`, `immut` and `share`: the gate words, each a prefix word
 //! over a declaration (`pub x := 5`, `mut x := i32 ?`, `pub mut x := 5`) that
 //! adds itself to the name's binding, first in the set, so the set reads in
 //! text order. Unmarked stays private and unwritable, so there is no
 //! `private` word to write; `immut` vetoes the one write a field gets by
-//! default, its constructor's fill. `shared` is read by the type body's own reader,
+//! default, its constructor's fill. `share` is read by the type body's own reader,
 //! and anywhere else by the declaration's own constructor. `mut alloc …` is the
 //! allocation that may be written through.
 //! DESIGN ›Read and write are one mechanism across the system‹
@@ -16,7 +16,7 @@ use crate::dyad::DyadPtr;
 use crate::parse::{Constructed, ParseError};
 
 /// No node is ever typed by a gate word; its identity exists to stand on a
-/// binding. Returns `pub`, `mut`, `immut`, `shared`.
+/// binding. Returns `pub`, `mut`, `immut`, `share`.
 pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     let word = |cx: &mut Cx, name: &str| {
         let record = meta::record_assoc(
@@ -35,9 +35,9 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     cx.metas.insert(mut_, construct);
     let immut_ = word(cx, "immut");
     cx.metas.insert(immut_, construct);
-    let shared_ = word(cx, "shared");
-    cx.metas.insert(shared_, outside_block);
-    (pub_, mut_, immut_, shared_)
+    let share_ = word(cx, "share");
+    cx.metas.insert(share_, outside_block);
+    (pub_, mut_, immut_, share_)
 }
 
 /// A type body's reader takes the word at a line's start; anywhere else on
@@ -48,7 +48,7 @@ fn outside_block(
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<Constructed, ParseError> {
     if p.in_type_body_lines() {
-        return Err(ParseError::SharedMisplaced);
+        return Err(ParseError::ShareMisplaced);
     }
     construct(p, id, tape)
 }

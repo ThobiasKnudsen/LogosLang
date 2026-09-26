@@ -5,7 +5,7 @@ proof := type (
     replacement := dyad ?
     derivation := ?
     world := array @proof ()
-    parse = (
+    share parse = (
         ?
     )
 )

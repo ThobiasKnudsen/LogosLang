@@ -875,7 +875,7 @@ impl ScopeStack {
     }
 
     /// The sibling check, run too across a type body's two scopes: its
-    /// `shared` members live in the body's, its fields in the list's.
+    /// `share` members live in the body's, its fields in the list's.
     pub fn declared_in(
         &self,
         trie: &RegexTrie,
@@ -1109,16 +1109,16 @@ pub enum ParseError {
     /// A line of a `type (…)` body that neither fills a slot, declares a
     /// field or member, nor is prose.
     TypeBodyLine,
-    /// `shared` on a parameter, or anywhere but at the start of a type body's line.
-    SharedMisplaced,
-    /// `shared parse = (…)`: a slot is the type's, one place already.
-    SharedSlotFill,
-    /// A `shared` name's initializer read a name that holds no value where it
+    /// `share` on a parameter, or anywhere but at the start of a type body's line.
+    ShareMisplaced,
+    /// `parse = (…)` without `share`: a slot is stored once per type.
+    SlotFillNeedsShare,
+    /// A `share` name's initializer read a name that holds no value where it
     /// runs, once at the definition: a parameter or local of the function
     /// around it, or a name declared in the loop or branch around it.
-    SharedInitReadsUnmade,
-    /// `shared` not followed by a `name := value` declaration.
-    SharedNeedsDeclaration,
+    ShareInitReadsUnmade,
+    /// `share` not followed by a `name := value` declaration or a slot fill.
+    ShareNeedsDeclaration,
     /// A slot word left of `=` where no type is being defined.
     SlotOutsideDefinition,
     /// `t.x` where `x` is a place per node, not stored with the type.
@@ -1602,13 +1602,13 @@ pub struct Parser<'a> {
     held_depth: usize,
     /// A cell the branch about to open is checked against a type, with that type.
     narrow_next: Option<(CellKey, DyadPtr)>,
-    /// While a `shared` line of a type body is read, the frame depth a
+    /// While a `share` line of a type body is read, the frame depth a
     /// `fn` written as the member's value opens at: that `fn` takes `this`.
     member_fn_depth: Option<usize>,
-    /// While the initializer of a `shared` name parses: the frame depth it
+    /// While the initializer of a `share` name parses: the frame depth it
     /// stands at. It runs once, at the definition, so its places are global
     /// and no call's slot is in reach (DESIGN ›Two muts, and the storage partition‹).
-    shared_init: Option<usize>,
+    share_init: Option<usize>,
     /// Names declared outside any function in a body the pass does not run
     /// in parse order, a loop or a branch: at parse they hold no value yet.
     unmade: HashSet<DyadPtr>,
@@ -1766,7 +1766,7 @@ impl<'a> Parser<'a> {
             held_depth: 0,
             narrow_next: None,
             member_fn_depth: None,
-            shared_init: None,
+            share_init: None,
             unmade: HashSet::new(),
         }
     }
@@ -1933,19 +1933,18 @@ impl<'a> Parser<'a> {
     /// the parameters, its storage per call; at top level an absolute global
     /// blob. The value is a `FRAME_TAG` offset or a real address respectively.
     pub(crate) fn alloc_local(&mut self, ty_node: DyadPtr, width: usize) -> DyadPtr {
-        let place = if self.frames.len() <= self.held_depth
-            || self.shared_init == Some(self.frames.len())
-        {
-            // Tagged as storage, so a place and a definition's record are
-            // told apart everywhere, not only where a frame exists.
-            crate::dyad::global_place(self.rt.store.alloc_bytes(&vec![0u8; width]))
-        } else {
-            let depth = self.frames.len();
-            let frame = self.frames.last_mut().unwrap();
-            let offset = frame.size;
-            frame.size += width;
-            crate::dyad::frame_place(depth, offset)
-        };
+        let place =
+            if self.frames.len() <= self.held_depth || self.share_init == Some(self.frames.len()) {
+                // Tagged as storage, so a place and a definition's record are
+                // told apart everywhere, not only where a frame exists.
+                crate::dyad::global_place(self.rt.store.alloc_bytes(&vec![0u8; width]))
+            } else {
+                let depth = self.frames.len();
+                let frame = self.frames.last_mut().unwrap();
+                let offset = frame.size;
+                frame.size += width;
+                crate::dyad::frame_place(depth, offset)
+            };
         self.rt.store.alloc_raw(ty_node, place)
     }
 
@@ -1958,8 +1957,8 @@ impl<'a> Parser<'a> {
     unsafe fn check_capture(&self, node: DyadPtr) -> Result<(), ParseError> {
         let node = self.types.through(node);
         if let Some((depth, _)) = crate::dyad::frame_ref((*node).value) {
-            if self.shared_init.is_some_and(|at| depth <= at) {
-                return Err(ParseError::SharedInitReadsUnmade);
+            if self.share_init.is_some_and(|at| depth <= at) {
+                return Err(ParseError::ShareInitReadsUnmade);
             }
             if depth != self.frames.len() {
                 return Err(ParseError::CapturedLocal);
@@ -1968,11 +1967,11 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// A `shared` initializer runs at parse, where a name of the loop or
+    /// A `share` initializer runs at parse, where a name of the loop or
     /// branch around it has no value yet.
     fn check_made(&self, binding: DyadPtr) -> Result<(), ParseError> {
-        if self.shared_init.is_some() && self.unmade.contains(&binding) {
-            return Err(ParseError::SharedInitReadsUnmade);
+        if self.share_init.is_some() && self.unmade.contains(&binding) {
+            return Err(ParseError::ShareInitReadsUnmade);
         }
         Ok(())
     }
@@ -2855,7 +2854,7 @@ impl<'a> Parser<'a> {
     /// A `fn`'s parameter list checks each name against every open scope, since
     /// the body reopens the list's scope; a type body's fields against their
     /// siblings alone (`relaxed`), where the list is the body itself, its
-    /// slot fills, `shared` members and prose among the fields (DESIGN ›A type
+    /// slot fills, `share` members and prose among the fields (DESIGN ›A type
     /// body describes one level‹).
     fn parse_field_list(
         &mut self,
@@ -2892,7 +2891,13 @@ impl<'a> Parser<'a> {
                     let at = self.pos;
                     self.skip_prose();
                     if self.at_slot_word() {
-                        self.slot_line(at)?;
+                        return Err(ParseError::SlotFillNeedsShare);
+                    }
+                    if self.at_share_slot() {
+                        self.pos = at;
+                        self.lift_prose()?;
+                        self.lex_spelling();
+                        self.slot_line(self.pos)?;
                     }
                     continue;
                 }
@@ -2905,12 +2910,16 @@ impl<'a> Parser<'a> {
             let word = self.scopes.resolve(self.trie, name).ok().map(|r| r.identity);
             // One place stored with the type, not a field of the layout; never a
             // parameter, which each call fills (DESIGN ›Two muts, and the storage partition‹).
-            if word == Some(self.types.shared_) {
+            if word == Some(self.types.share_) {
                 if !relaxed {
                     self.pos = start;
-                    return Err(ParseError::SharedMisplaced);
+                    return Err(ParseError::ShareMisplaced);
                 }
-                self.shared_member(start)?;
+                if self.at_slot_word() {
+                    self.slot_line(self.pos)?;
+                } else {
+                    self.share_member(start)?;
+                }
                 continue;
             }
             // `mut` or `immut` before a field or parameter gates its binding, as before any name.
@@ -2932,10 +2941,16 @@ impl<'a> Parser<'a> {
                 }
             }
             if relaxed && gate.is_none() {
+                let declares =
+                    matches!(self.peek_token(), Some((id, _)) if id == self.types.declare_tok);
                 let def = self.definitions.last().expect("a relaxed field list is a type body");
                 if word.is_some_and(|id| id == self.types.drop_ || def.slots.contains(&id)) {
-                    self.slot_line(start)?;
-                    continue;
+                    self.pos = start;
+                    return Err(if declares {
+                        ParseError::Resolve(ResolveError::Shadowed(name.to_string()))
+                    } else {
+                        ParseError::SlotFillNeedsShare
+                    });
                 }
             }
             // `name := T ?` declares the field's type through the hole `?`
@@ -3006,7 +3021,7 @@ impl<'a> Parser<'a> {
             // a binding in the one name index (DESIGN ›Name resolution is scope-filtered‹).
             let binding = if relaxed {
                 // One block, one no-shadowing rule: a field is checked against
-                // the `shared` members too, which live in the type's own scope.
+                // the `share` members too, which live in the type's own scope.
                 let body =
                     self.definitions.last().expect("a relaxed field list is a type body").scope;
                 if self.scopes.declared_in(self.trie, name, body).map_err(ParseError::Resolve)? {
@@ -3045,29 +3060,29 @@ impl<'a> Parser<'a> {
         Ok((scope, fields_arr, size_bytes))
     }
 
-    /// `shared name := value` in a type body: one place stored with the type,
+    /// `share name := value` in a type body: one place stored with the type,
     /// declared in the body scope (DESIGN ›Two muts, and the storage
     /// partition‹). The fields and the members stay one scope for no-shadowing.
-    fn shared_member(&mut self, at: usize) -> Result<(), ParseError> {
+    fn share_member(&mut self, at: usize) -> Result<(), ParseError> {
         let body = match self.definitions.last() {
             Some(def) => def.scope,
             None => {
                 self.pos = at;
-                return Err(ParseError::SharedMisplaced);
+                return Err(ParseError::ShareMisplaced);
             }
         };
         if self.consume_token(self.types.declare_tok) {
             self.pos = at;
-            return Err(ParseError::SharedNeedsDeclaration);
+            return Err(ParseError::ShareNeedsDeclaration);
         }
         let field_scope = self.scopes.pop().expect("the field list's scope is open");
         self.last_declared = std::ptr::null_mut();
         let outer_member = self.member_fn_depth.replace(self.frames.len());
-        let items = self.shared_line();
+        let items = self.share_line();
         self.member_fn_depth = outer_member;
         self.scopes.push(field_scope);
         // The line's one declaration, a member or a slot fill, with its prose
-        // lifted out beside it; anything else is not what `shared` marks.
+        // lifted out beside it; anything else is not what `share` marks.
         let mut declared = None;
         for item in items? {
             // SAFETY: `item` is a reduced dyad just parsed.
@@ -3079,18 +3094,13 @@ impl<'a> Parser<'a> {
                 declared = Some(item);
             } else {
                 self.pos = at;
-                return Err(ParseError::SharedNeedsDeclaration);
+                return Err(ParseError::ShareNeedsDeclaration);
             }
         }
         let Some(item) = declared else {
             self.pos = at;
-            return Err(ParseError::SharedNeedsDeclaration);
+            return Err(ParseError::ShareNeedsDeclaration);
         };
-        // A slot is the type's, one place already; `shared` marks a member.
-        if self.is_slot_fill(item) {
-            self.pos = at;
-            return Err(ParseError::SharedSlotFill);
-        }
         {
             // SAFETY: a declaration that fills no slot is `:=`'s, its lhs the binding.
             let name = unsafe { Binding::spelling(crate::identities::declare::binding_of(item)) };
@@ -3105,9 +3115,9 @@ impl<'a> Parser<'a> {
             let binding = self.last_declared;
             if binding.is_null() {
                 self.pos = at;
-                return Err(ParseError::SharedNeedsDeclaration);
+                return Err(ParseError::ShareNeedsDeclaration);
             }
-            self.add_gate(binding, self.types.shared_)?;
+            self.add_gate(binding, self.types.share_)?;
         }
         // SAFETY: the pending bindings were minted by this parser's declares.
         unsafe { self.scopes.settle_item(body, item) };
@@ -3117,7 +3127,7 @@ impl<'a> Parser<'a> {
     /// The first `parse_next` lexes and constructs the segment and queues
     /// what it yielded; the rest are taken while queued, before anything
     /// further is lexed, so none is left for the enclosing body's loop.
-    fn shared_line(&mut self) -> Result<Vec<DyadPtr>, ParseError> {
+    fn share_line(&mut self) -> Result<Vec<DyadPtr>, ParseError> {
         let mut items = Vec::new();
         let Some(first) = self.parse_next() else {
             return Ok(items);
@@ -3135,7 +3145,7 @@ impl<'a> Parser<'a> {
         let body = self.definitions.last().expect("a slot line is in a type body").scope;
         self.pos = start;
         let field_scope = self.scopes.pop().expect("the field list's scope is open");
-        let items = self.shared_line();
+        let items = self.share_line();
         self.scopes.push(field_scope);
         let mut filled = false;
         for item in items? {
@@ -3189,6 +3199,30 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// The comments at the cursor, settled into the body beside the line after them.
+    fn lift_prose(&mut self) -> Result<(), ParseError> {
+        let body = self.definitions.last().expect("read inside a type body").scope;
+        while self.at_prose() {
+            self.pos += 1;
+            let node = self.comment_after_hash()?;
+            // SAFETY: `node` is the comment node just built.
+            unsafe { self.scopes.settle_item(body, node) };
+        }
+        Ok(())
+    }
+
+    /// The next words are `share` and a slot word or `drop`; nothing is consumed.
+    fn at_share_slot(&mut self) -> bool {
+        let at = self.pos;
+        let word = self.lex_spelling().and_then(|(start, len)| {
+            let source = self.source;
+            self.scopes.resolve(self.trie, &source[start..start + len]).ok().map(|r| r.identity)
+        });
+        let slot = word == Some(self.types.share_) && self.at_slot_word();
+        self.pos = at;
+        slot
+    }
+
     /// The next word is a slot word or `drop`; nothing is consumed.
     fn at_slot_word(&mut self) -> bool {
         let at = self.pos;
@@ -3212,7 +3246,7 @@ impl<'a> Parser<'a> {
 
     /// One body for one level (DESIGN ›A type body describes one level‹): its
     /// lines fill the type's slots, declare its values' fields, and declare
-    /// its `shared` members; every other line must be prose, since nothing runs a type body later.
+    /// its `share` members; every other line must be prose, since nothing runs a type body later.
     pub fn parse_type_body(&mut self, id: DyadPtr) -> Result<DyadPtr, ParseError> {
         if self.runtime_depth > 0 {
             return self.hold_type_body();
@@ -3729,7 +3763,7 @@ impl<'a> Parser<'a> {
         let field = resolved.as_ref().map(|r| r.identity);
         let index = field.and_then(|f| items.iter().position(|&x| x == f));
         let Some(index) = index else {
-            // A `shared` member is one place read through every node, so
+            // A `share` member is one place read through every node, so
             // `this.element_type` is the member itself, known here.
             let mut members = ScopeStack::new();
             members.push(body);
@@ -4158,7 +4192,7 @@ impl<'a> Parser<'a> {
         fn_type: DyadPtr,
         declared: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
-        // A `shared` member's `fn` reached through a value binds `this` to it
+        // A `share` member's `fn` reached through a value binds `this` to it
         // (DESIGN ›The constructor is a field‹): the `fn` takes it first.
         let member = !declared.is_null()
             && self.member_fn_depth == Some(self.frames.len())
@@ -4790,7 +4824,7 @@ impl<'a> Parser<'a> {
 
     /// `lhs.f` where `lhs` yields a node of `t` only when the program runs, a place of the
     /// type or a call returning it: the field read through the node's address when it runs,
-    /// or a `shared` member, a fields-block `fn` called with `lhs` as its `this`.
+    /// or a `share` member, a fields-block `fn` called with `lhs` as its `this`.
     ///
     /// # Safety
     /// `lhs` must be a reduced dyad from the store and `t` a type `is_node_valued` accepts.
@@ -4816,7 +4850,7 @@ impl<'a> Parser<'a> {
             self.note_owning_read(node, binding);
             return Ok(Some((node, 0)));
         }
-        let Some(member) = self.shared_member_read(t, name) else {
+        let Some(member) = self.share_member_read(t, name) else {
             return Ok(None);
         };
         if let Some(args) = call {
@@ -4894,7 +4928,7 @@ impl<'a> Parser<'a> {
             if let Some(def) = self.definitions.last() {
                 if !def.this_param.is_null() && lhs == def.this_param {
                     let member = self.this_field(name, nstart)?;
-                    // `this.f(…)`, a `shared` member `fn`: called on the node `this` holds.
+                    // `this.f(…)`, a `share` member `fn`: called on the node `this` holds.
                     if let Some(args) = call {
                         if self.takes_this(member) {
                             let mut with_this = vec![lhs];
@@ -5081,7 +5115,7 @@ impl<'a> Parser<'a> {
                 Ok(found) => found,
                 Err(e) => {
                     let name = &self.source[nstart..nstart + nlen];
-                    return self.shared_member_read(pointee, name).map(|n| (n, 0)).ok_or(e);
+                    return self.share_member_read(pointee, name).map(|n| (n, 0)).ok_or(e);
                 }
             };
             let types = self.types;
@@ -5109,7 +5143,7 @@ impl<'a> Parser<'a> {
             Ok(found) => found,
             Err(e) => {
                 let name = &self.source[nstart..nstart + nlen];
-                let Some(member) = self.shared_member_read(record_logos, name) else {
+                let Some(member) = self.share_member_read(record_logos, name) else {
                     return Err(e);
                 };
                 if let Some(args) = call {
@@ -5674,10 +5708,10 @@ impl<'a> Parser<'a> {
         self.open[scope].defers.push(defer_node);
     }
 
-    /// Where a binding's teardown goes: its own scope, or the root for a `shared` place,
+    /// Where a binding's teardown goes: its own scope, or the root for a `share` place,
     /// which lives as long as the program.
     fn teardown_scope(&self) -> usize {
-        if self.shared_init == Some(self.frames.len()) {
+        if self.share_init == Some(self.frames.len()) {
             0
         } else {
             self.open.len() - 1
@@ -6147,7 +6181,7 @@ impl<'a> Parser<'a> {
         Ok(self.rt.store.alloc_raw(self.types.comment_, text_node.cast()))
     }
 
-    /// `name := value`, or `shared name := value`: one place for every context
+    /// `name := value`, or `share name := value`: one place for every context
     /// that reaches the line, every call of the function around it and every
     /// pass of the loop around it, its value made once here at the definition;
     /// the line itself then only names it.
@@ -6155,13 +6189,13 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        if !self.marked_shared(tape) {
+        if !self.marked_share(tape) {
             return self.declare_here(tape);
         }
-        let saved_init = self.shared_init.replace(self.frames.len());
+        let saved_init = self.share_init.replace(self.frames.len());
         let saved_runtime_depth = std::mem::replace(&mut self.runtime_depth, 0);
         let built = self.declare_here(tape);
-        self.shared_init = saved_init;
+        self.share_init = saved_init;
         self.runtime_depth = saved_runtime_depth;
         if !matches!(built?, Constructed::Placed) {
             return Ok(Constructed::Decline);
@@ -6187,8 +6221,8 @@ impl<'a> Parser<'a> {
         self.definitions.last().is_some_and(|def| self.scopes.current() == Some(def.scope))
     }
 
-    /// The gate words left of the name being declared include `shared`.
-    fn marked_shared(&self, tape: &ParsingTape) -> bool {
+    /// The gate words left of the name being declared include `share`.
+    fn marked_share(&self, tape: &ParsingTape) -> bool {
         let t = self.types;
         let mut k = -2;
         while let Some(cell) = tape.at(k) {
@@ -6196,7 +6230,7 @@ impl<'a> Parser<'a> {
                 return false;
             }
             let id = cell.identity(t);
-            if id == t.shared_ {
+            if id == t.share_ {
                 return true;
             }
             if id != t.mut_ && id != t.pub_ && id != t.immut_ {
@@ -7027,7 +7061,7 @@ impl<'a> Parser<'a> {
     }
 
     /// The shared metadata stored once per type: `.arity`, `.roles[i]`,
-    /// `.parse_rank`, `.associativity`, `.parse`, `.run`, a `shared` member,
+    /// `.parse_rank`, `.associativity`, `.parse`, `.run`, a `share` member,
     /// `.size_bytes`, `.scope`; a null slot is the honest undefined and errors until `?` exists.
     ///
     /// # Safety
@@ -7100,8 +7134,8 @@ impl<'a> Parser<'a> {
                 .store
                 .alloc_raw(self.types.dyad_, meta::record_scope_of(logos) as *mut u8)),
             "type" => Err(ParseError::TypeIsColonRead),
-            _ if self.shared_member_of(logos, name).is_some() => {
-                Ok(self.shared_member_read(logos, name).expect("found just above"))
+            _ if self.share_member_of(logos, name).is_some() => {
+                Ok(self.share_member_read(logos, name).expect("found just above"))
             }
             _ if self.per_node_field_of(logos, name) => {
                 Err(ParseError::PerNodeThroughType(name.to_string()))
@@ -7110,14 +7144,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// A `shared` member of `logos`, one place stored with the type, read
+    /// A `share` member of `logos`, one place stored with the type, read
     /// through the type or a node alike: the member's own gate decides a
     /// write, since the place is no node's.
     ///
     /// # Safety
     /// `logos` must be a type identity node from the store.
-    unsafe fn shared_member_read(&mut self, logos: DyadPtr, name: &str) -> Option<DyadPtr> {
-        let (identity, binding) = self.shared_member_of(logos, name)?;
+    unsafe fn share_member_read(&mut self, logos: DyadPtr, name: &str) -> Option<DyadPtr> {
+        let (identity, binding) = self.share_member_of(logos, name)?;
         self.paths.insert(identity, vec![binding]);
         Some(identity)
     }
@@ -7127,17 +7161,17 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `ty` must be a type identity node from the store.
     unsafe fn bracket_element_type(&self, ty: DyadPtr) -> Option<DyadPtr> {
-        let (identity, _) = self.shared_member_of(ty, "element_type")?;
+        let (identity, _) = self.share_member_of(ty, "element_type")?;
         let element = self.types.through(identity);
         crate::identities::is_type_value(self.types, element).then_some(element)
     }
 
-    /// The identity and binding of `logos`'s `shared` member `name`, declared
+    /// The identity and binding of `logos`'s `share` member `name`, declared
     /// in the definition body's scope.
     ///
     /// # Safety
     /// `logos` must be a type identity node from the store.
-    unsafe fn shared_member_of(&self, logos: DyadPtr, name: &str) -> Option<(DyadPtr, DyadPtr)> {
+    unsafe fn share_member_of(&self, logos: DyadPtr, name: &str) -> Option<(DyadPtr, DyadPtr)> {
         use crate::identities::meta;
         if !meta::is_record_type(logos) {
             return None;
@@ -7570,7 +7604,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// A `shared` member `fn` of a type body, whose first parameter is the hidden `this`.
+    /// A `share` member `fn` of a type body, whose first parameter is the hidden `this`.
     ///
     /// # Safety
     /// `f` must be a resolved dyad from the store.
@@ -8253,9 +8287,9 @@ mod tests {
             go("sq := fn (a := i32 ?) -> i32 ( a * a )", &mut store, &mut trie, types, scopes);
         let (_, s) = go(
             "squared := type ( \
-                a := i32 ?, output := type ?, run = ( sq(this.a) ), \
-                parse_rank = *.parse_rank + 1, \
-                parse = ( this.a = tape[-1], this.output = i32, tape[0] = this, \
+                a := i32 ?, output := type ?, share run = ( sq(this.a) ), \
+                share parse_rank = *.parse_rank + 1, \
+                share parse = ( this.a = tape[-1], this.output = i32, tape[0] = this, \
                           tape.is_constructed[0] = true, tape.remove(-1) ) )",
             &mut store,
             &mut trie,

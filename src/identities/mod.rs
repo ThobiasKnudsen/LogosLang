@@ -134,7 +134,7 @@ pub struct Core {
     pub pub_: DyadPtr,
     pub mut_: DyadPtr,
     pub immut_: DyadPtr,
-    pub shared_: DyadPtr,
+    pub share_: DyadPtr,
     /// Its node is the trace of the load; running it re-yields the file's tail.
     pub import_: DyadPtr,
     /// The cell type.
@@ -282,7 +282,7 @@ impl Core {
         op_leaves.return_ = return_leaf;
         let (declare_, declare_leaf, declare_tok) = declare::register(&mut cx, &callables);
         op_leaves.declare_ = declare_leaf;
-        let (pub_, mut_, immut_, shared_) = gate::register(&mut cx);
+        let (pub_, mut_, immut_, share_) = gate::register(&mut cx);
         let (import_, import_leaf) = import::register(&mut cx, &callables);
         op_leaves.import_ = import_leaf;
         let dyad_ = dyad::register(&mut cx);
@@ -390,7 +390,7 @@ impl Core {
             pub_,
             mut_,
             immut_,
-            shared_,
+            share_,
             import_,
             dyad_,
             binding_,

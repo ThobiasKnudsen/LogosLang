@@ -1010,11 +1010,11 @@ mod tests {
     const BAG: &str = "import ./identities/array.logos, t := array i32, \
         bag := type ( \
             mut items := own t ?, \
-            shared fill := fn (elements) -> this:type ( this.items = array i32 [4, 5, 6], this ), \
-            drop = ( drop this.items ), \
-        parse_rank = dyad.parse_rank, \
-        associativity = left, \
-        parse = ( \
+            share fill := fn (elements) -> this:type ( this.items = array i32 [4, 5, 6], this ), \
+            share drop = ( drop this.items ), \
+        share parse_rank = dyad.parse_rank, \
+        share associativity = left, \
+        share parse = ( \
             if tape[1]:type == scope ( tape[0] = this.fill(tape[1]), tape.remove(1) ), \
             tape.is_constructed[0] = true \
         ) ),\n";
@@ -1033,7 +1033,7 @@ mod tests {
             assert_eq!(run(&format!("{BAG}{tail}")), (want, 0), "{tail}");
         }
         // The count sees the array: a drop that leaves the field alone leaks its one block.
-        let forgetful = BAG.replace("drop = ( drop this.items )", "drop = ( 0 )");
+        let forgetful = BAG.replace("share drop = ( drop this.items )", "share drop = ( 0 )");
         assert_eq!(run(&format!("{forgetful}b := bag (), 1")), (1, 1));
     }
 
@@ -1213,10 +1213,10 @@ mod tests {
     fn a_node_of_a_run_type_is_a_use_of_every_name_its_body_reads() {
         const POW: &str = "n := i32 2,\n\
             ^ := type (\n\
-                a := i32 ?, b := i32 ?, output := type ?, run = ( this.a * this.b * n ),\n\
-                parse_rank = *.parse_rank + 1,\n\
-                associativity = right,\n\
-                parse = (\n\
+                a := i32 ?, b := i32 ?, output := type ?, share run = ( this.a * this.b * n ),\n\
+                share parse_rank = *.parse_rank + 1,\n\
+                share associativity = right,\n\
+                share parse = (\n\
                     this.a = tape[-1],\n\
                     this.b = tape[1],\n\
                     this.output = i32,\n\

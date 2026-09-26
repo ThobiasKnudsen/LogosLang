@@ -16,15 +16,15 @@
     lhs := ?,
     rhs := i32 ?,
     output := type ?,
-    run = (
+    share run = (
         mut r := this.output 1,
         for 0..this.rhs ( r = r * this.lhs ),
         r
     ),
 
-    parse_rank = *.parse_rank + 1,
-    associativity = right,
-    parse = (
+    share parse_rank = *.parse_rank + 1,
+    share associativity = right,
+    share parse = (
         this.lhs = tape[-1],
         this.rhs = tape[1],
         this.output = tape[-1]:type,

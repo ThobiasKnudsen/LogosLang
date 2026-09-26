@@ -9,9 +9,9 @@
 # expressions, the array the scope dyad's value references. no holding, no re-invocation.
 
 ( := type (
-    parse_rank = …
-    associativity = left
-    parse = (
+    share parse_rank = …
+    share associativity = left
+    share parse = (
         body := array @dyad ()
         mut first := 1
         mut i := 1

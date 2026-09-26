@@ -6,8 +6,8 @@ fn := type (
     frame := u64 ?
     shared compile := fn () -> void ( ? )
 
-    parse_rank = …
-    associativity = left
+    share parse_rank = …
+    share associativity = left
     # Takes `(params)`, `->` and the body; the function it builds runs, and is never parsed again.
-    parse = ( ? )
+    share parse = ( ? )
 )

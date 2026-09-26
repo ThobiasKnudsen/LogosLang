@@ -2,7 +2,7 @@
 scope := type (
     dyads := array dyad []
     back := @scope ?       # the one it stands in, null at the arche
-    parse = (
+    share parse = (
 
     )
 )

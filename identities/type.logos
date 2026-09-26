@@ -15,9 +15,9 @@ type := type (
     run := run ?
     drop := drop ?
 
-    parse_rank = f64 2.0
-    associativity = left
-    parse = (
+    share parse_rank = f64 2.0
+    share associativity = left
+    share parse = (
         if tape[1] != lex «(»[0]
             error «type must be followed by (»
         (.parse(tape.recenter(1))
