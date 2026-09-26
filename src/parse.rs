@@ -3971,7 +3971,12 @@ impl<'a> Parser<'a> {
         };
         if let Some(r) = resolved {
             self.note_owning_read(node, r.binding);
-            self.fills.insert(node, r.binding);
+            // Only the type's own parse fills a field through its default entry.
+            if self.definitions.last().is_some_and(|d| d.in_parse) {
+                self.fills.insert(node, r.binding);
+            } else {
+                self.paths.insert(node, vec![r.binding]);
+            }
         }
         Ok(node)
     }

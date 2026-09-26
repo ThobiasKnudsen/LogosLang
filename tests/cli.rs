@@ -573,6 +573,23 @@ fn a_share_function_writes_the_value_it_is_called_on() {
 }
 
 #[test]
+fn a_share_function_writes_only_a_mut_field() {
+    let p = |gate: &str| {
+        format!(
+            "p := type ( {gate}x := i32 ?, share bump := fn () -> i32 ( x = x + 10, x ) ), \
+             mut m := p (1), m.bump(), m.x"
+        )
+    };
+    let (code, stdout, stderr) = run_line(&p("mut "));
+    assert_eq!((code, stdout.as_str()), (Some(0), "11\n"), "stderr: {stderr}");
+    for (gate, expect) in [("", "`x` is not `mut`"), ("immut ", "`x` is `immut`")] {
+        let (code, _, stderr) = run_line(&p(gate));
+        assert_eq!(code, Some(1), "stderr: {stderr}");
+        assert!(stderr.contains(expect), "stderr: {stderr}");
+    }
+}
+
+#[test]
 fn the_array_written_in_logos_reads_an_element_and_its_size() {
     let out = logos().args(["import", "./identities/array.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
