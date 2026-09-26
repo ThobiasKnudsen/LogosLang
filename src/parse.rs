@@ -1609,6 +1609,9 @@ pub struct Parser<'a> {
     /// stands at. It runs once, at the definition, so its places are global
     /// and no call's slot is in reach (DESIGN ›Two muts, and the storage partition‹).
     share_init: Option<usize>,
+    /// While a type body's field declaration reads its type: a hole there names the
+    /// field's type and needs no place, so a type without one, `square_brackets ?`, may stand.
+    field_hole: bool,
     /// Names declared outside any function in a body the pass does not run
     /// in parse order, a loop or a branch: at parse they hold no value yet.
     unmade: HashSet<DyadPtr>,
@@ -1767,6 +1770,7 @@ impl<'a> Parser<'a> {
             narrow_next: None,
             member_fn_depth: None,
             share_init: None,
+            field_hole: false,
             unmade: HashSet::new(),
         }
     }
@@ -2432,10 +2436,11 @@ impl<'a> Parser<'a> {
                     if t == types.bool_ {
                         return Err(ParseError::NonNumericDeclaredType);
                     }
-                    let Some((_, width)) = crate::identities::read::place_layout(types, t) else {
-                        return Err(ParseError::NonNumericDeclaredType);
-                    };
-                    self.alloc_local(t, width)
+                    match crate::identities::read::place_layout(types, t) {
+                        Some((_, width)) => self.alloc_local(t, width),
+                        None if self.field_hole => self.rt.store.alloc_raw(t, std::ptr::null_mut()),
+                        None => return Err(ParseError::NonNumericDeclaredType),
+                    }
                 };
                 tape.remove(-1);
                 self.holes.insert(place);
@@ -2960,7 +2965,10 @@ impl<'a> Parser<'a> {
             let mut default = std::ptr::null_mut();
             let mut owns_node = false;
             let logos = if self.consume_token(self.types.declare_tok) {
-                let value = self.parse_expression()?;
+                let outer = std::mem::replace(&mut self.field_hole, relaxed);
+                let value = self.parse_expression();
+                self.field_hole = outer;
+                let value = value?;
                 owns_node = self.owning_holes.remove(&value);
                 if self.holes.remove(&value) {
                     // SAFETY: `value` is the place `?` just built.
@@ -3793,7 +3801,7 @@ impl<'a> Parser<'a> {
 
     /// The field's parameter place, the frame place the node's operand is
     /// evaluated into (DESIGN ›Execution is function application‹), or for a
-    /// field of type `type` the type this set holds in it, so `this.output 1` reads `i32 1`.
+    /// field of type `type` the type this set holds in it, so `output_type 1` reads `i32 1`.
     fn run_body_field(&mut self, name: &str, at: usize) -> Result<DyadPtr, ParseError> {
         let (field_scope, fields, places, key) = {
             let rb = self.run_body.as_ref().expect("this_param is set while a run body is built");
@@ -4086,7 +4094,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Over the swapped-in state: the hidden parameter record, the return
-    /// type (the type the set holds in the field named `output`, or `void`),
+    /// type (the type the set holds in the field named `output_type`, or `void`),
     /// and the body read as a function's.
     ///
     /// # Safety
@@ -4117,7 +4125,7 @@ impl<'a> Parser<'a> {
         let mut scope = ScopeStack::new();
         scope.push(field_scope);
         let output = scope
-            .resolve(self.trie, "output")
+            .resolve(self.trie, "output_type")
             .ok()
             .and_then(|r| fields.iter().position(|&f| f == r.identity))
             .filter(|&i| (*fields[i]).ty == types.type_)
@@ -8287,9 +8295,9 @@ mod tests {
             go("sq := fn (a := i32 ?) -> i32 ( a * a )", &mut store, &mut trie, types, scopes);
         let (_, s) = go(
             "squared := type ( \
-                a := i32 ?, output := type ?, share run = ( sq(this.a) ), \
+                a := i32 ?, output_type := type ?, share run = ( sq(this.a) ), \
                 share parse_rank = *.parse_rank + 1, \
-                share parse = ( this.a = tape[-1], this.output = i32, tape[0] = this, \
+                share parse = ( this.a = tape[-1], this.output_type = i32, tape[0] = this, \
                           tape.is_constructed[0] = true, tape.remove(-1) ) )",
             &mut store,
             &mut trie,

@@ -49,7 +49,7 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
         meta::TUPLE_TAG,
         meta::prec::READER,
         Assoc::Left,
-        &["input", "output", "body", "bcode", "frame", "outer"],
+        &["input", "output_type", "body", "bcode", "frame", "outer"],
     );
     // SAFETY: `fn_type` was allocated by [`register`] and nothing has read its value slot.
     unsafe {

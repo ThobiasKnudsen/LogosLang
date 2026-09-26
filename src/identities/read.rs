@@ -343,13 +343,13 @@ mod tests {
     fn a_node_of_a_run_type_is_a_call_of_its_function_and_a_leafless_record_is_named() {
         let (mut store, core, exprs) = parse_seq(
             "pw := type (\n\
-                 a := ?, b := i32 ?, output := type ?, share run = ( this.a ),\n\
+                 a := ?, b := i32 ?, output_type := type ?, share run = ( this.a ),\n\
                  share parse_rank = *.parse_rank + 1,\n\
                  share associativity = right,\n\
                  share parse = (\n\
                      this.a = tape[-1],\n\
                      this.b = tape[1],\n\
-                     this.output = tape[-1]:type,\n\
+                     this.output_type = tape[-1]:type,\n\
                      tape[0] = this,\n\
                      tape.is_constructed[0] = true,\n\
                      tape.remove(1),\n\

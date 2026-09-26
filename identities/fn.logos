@@ -1,7 +1,7 @@
 
 fn := type (
     input := type ?
-    output := ?
+    output_type := ?
     bcode := callable ?
     frame := u64 ?
     shared compile := fn () -> void ( ? )

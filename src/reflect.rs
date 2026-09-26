@@ -414,7 +414,10 @@ mod tests {
             panic!("an fn value reads as its fixed slots");
         };
         let roles: Vec<&[u8]> = slots.iter().map(|s| unsafe { text_of(s.role) }).collect();
-        assert_eq!(roles, [b"input" as &[u8], b"output", b"body", b"bcode", b"frame", b"outer"]);
+        assert_eq!(
+            roles,
+            [b"input" as &[u8], b"output_type", b"body", b"bcode", b"frame", b"outer"]
+        );
         assert!(!slots[4].node.is_null(), "a fn with locals carries its frame size");
         assert!(!slots[5].node.is_null(), "a fn whose body reads an outer name lists it");
     }
@@ -528,7 +531,7 @@ mod tests {
                 .collect();
             assert_eq!(roles, [&b"variable"[..], b"start", b"end", b"step", b"body", b"op"]);
             assert_eq!(text_of(meta::role_of(core.return_, 0)), b"value");
-            assert_eq!(text_of(meta::role_of(core.fn_type, 1)), b"output");
+            assert_eq!(text_of(meta::role_of(core.fn_type, 1)), b"output_type");
         }
     }
 
