@@ -1,7 +1,7 @@
-# The array collection, written in ordinary Logos. `array` is a chooser: it takes the element type and
-# leaves on the tape the type of its values, `array i32`, minted once per element type. That type's one
-# parse builds a value when the type stands before a `[…]` and reads an index when a value does
-# (DESIGN ›A type body describes one level‹).
+# The array collection, written in ordinary Logos. `array` takes the element type and leaves the type
+# of its values, `array i32`, minted once per element type, whose parse reads an index. Before a `[…]`
+# it builds an `array` node instead, whose run makes a new value of that type each time it is evaluated
+# (DESIGN ›An array expression is a node of `array`, and its run makes the value‹).
 
 import ./next_power_of_two.logos,
 
@@ -32,45 +32,21 @@ get_mint := fn (t := type ?) -> type (
             (this.ptr + u64(index))@
         ),
 
-        # `=` builds a bracket line by the element type's parse.
-        shared fill := fn (elements) -> this:type (
-            this.size = elements.dyads.size,
-            this.capacity = next_power_of_two(this.size),
-            this.ptr = mut alloc this.capacity of this.element_type ?,
-            for i in 0..this.size (
-                (this.ptr + i)@ = elements.dyads[i]
-            ),
-            this
-        ),
-
         # Takes a bracket at application's rank (DESIGN ›A parse is ranked by what it takes from its right‹).
         parse_rank = dyad.parse_rank,
         associativity = left,
         parse = (
-            if tape[1]:type == scope
-                error «the list is written in square brackets, `array i32 [1, 2]`, not `array i32 (1, 2)`»,
-            if tape[1]:type == square_brackets (
-                if tape[0]:type == type (
-                    # A bracket line is checked when `fill`'s `=` builds it.
-                    for i in 0..tape[1].dyads.size (
-                        if tape[1].dyads[i]:type != square_brackets and tape[1].dyads[i]:type != scope (
-                            if not (tape[1].dyads[i]:type ⊆ this.element_type)
-                                error «an element does not fit the element type»
-                        )
-                    ),
-                    tape[0] = this.fill(tape[1])
+            if tape[0]:type != type and tape[1]:type == square_brackets (
+                # A signed index goes to `at_signed`, whose bounds check refuses a negative value.
+                if tape[1].dyads[0]:type ⊆ this.size:type (
+                    tape[0] = this.at(tape[1].dyads[0])
                 ) else (
-                    # A signed index goes to `at_signed`, whose bounds check refuses a negative value.
-                    if tape[1].dyads[0]:type ⊆ this.size:type (
-                        tape[0] = this.at(tape[1].dyads[0])
-                    ) else (
-                        # A literal's value is known now, so one outside the size type is refused now.
-                        if tape[1].dyads[0]:type == rational_number
-                            error «the index type is not within the size type, so the index could lie outside the array»,
-                        if not tape[1].dyads[0]:type ⊆ i64
-                            error «the index is not an integer»,
-                        tape[0] = this.at_signed(tape[1].dyads[0])
-                    )
+                    # A literal's value is known now, so one outside the size type is refused now.
+                    if tape[1].dyads[0]:type == rational_number
+                        error «the index type is not within the size type, so the index could lie outside the array»,
+                    if not tape[1].dyads[0]:type ⊆ i64
+                        error «the index is not an integer»,
+                    tape[0] = this.at_signed(tape[1].dyads[0])
                 ),
                 tape.remove(1)
             ),
@@ -82,14 +58,53 @@ get_mint := fn (t := type ?) -> type (
 ),
 
 pub array := type (
-    # Above application, so the chooser takes its type before the mint takes the bracket.
+    element_type := type ?,
+    elements := ?,
+    output := type ?,
+    run = (
+        mut v := this.output ?,
+        v.size = this.elements.dyads.size,
+        v.capacity = next_power_of_two(v.size),
+        v.ptr = mut alloc v.capacity of this.element_type ?,
+        for i in 0..v.size (
+            (v.ptr + i)@ = this.elements.dyads[i]
+        ),
+        own v
+    ),
+
+    # Above application, so it takes its element type before anything else reads it.
     parse_rank = fn.parse_rank,
     associativity = right,
     parse = (
-        if tape[1]:type != type
-            error «id after array is not a type»,
-        t := tape[1],
-        tape[0] = get_mint(t),
-        tape.remove(1)
+        if tape[1] == ? (
+            tape.is_constructed[0] = true
+        ) else (
+            if tape[1]:type != type
+                error «id after array is not a type»,
+            t := tape[1],
+            mint := get_mint(t),
+            if tape[2]:type == scope
+                error «the list is written in square brackets, `array i32 [1, 2]`, not `array i32 (1, 2)`»,
+            # Right of another `array` this one is the element type, and the list is the outer one's.
+            if tape[2]:type == square_brackets and tape[-1] != tape[0] (
+                # A bracket line is checked when the run's `=` builds it.
+                for i in 0..tape[2].dyads.size (
+                    if tape[2].dyads[i]:type != square_brackets and tape[2].dyads[i]:type != scope (
+                        if not (tape[2].dyads[i]:type ⊆ t)
+                            error «an element does not fit the element type»
+                    )
+                ),
+                this.element_type = t,
+                this.elements = tape[2],
+                this.output = mint,
+                tape[0] = this,
+                tape.is_constructed[0] = true,
+                tape.remove(2),
+                tape.remove(1)
+            ) else (
+                tape[0] = mint,
+                tape.remove(1)
+            )
+        )
     )
 )

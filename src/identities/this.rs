@@ -90,6 +90,21 @@ pub(crate) fn build_copy(store: &mut Store, types: &Core, template: DyadPtr) -> 
     node(store, types.this.copy, types.this.copy_leaf, &[template])
 }
 
+/// A node of `ty` with each field at its default or null, then the run's terminator and
+/// the slot for the node's field-type set.
+///
+/// # Safety
+/// `ty` must be a record type from the store.
+pub(crate) unsafe fn empty_node(store: &mut Store, ty: DyadPtr) -> DyadPtr {
+    let mut slots: Vec<DyadPtr> = super::array::items(meta::record_fields_of(ty))
+        .iter()
+        .map(|&field| if (*field).value.is_null() { std::ptr::null_mut() } else { field })
+        .collect();
+    slots.extend([std::ptr::null_mut(); 2]);
+    let value = store.alloc_operands(&slots);
+    store.alloc_raw(ty, value)
+}
+
 /// `this.f`: a `load` when the field's declared type says what it holds, a number, a
 /// pointer, or a node a Logos `parse` built (DESIGN ›A value of a type built by a Logos
 /// `parse` travels as a pointer‹), so the read carries that type; else the slot's node.

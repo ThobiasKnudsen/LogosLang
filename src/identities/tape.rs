@@ -81,6 +81,9 @@ pub struct TapeIds {
     /// parse when it is a bracket (DESIGN ›A type body describes one level‹).
     pub cell_into: DyadPtr,
     pub cell_into_leaf: DyadPtr,
+    /// `[tape, k, op]`: the identity the cell names, read through its binding.
+    pub cell_identity: DyadPtr,
+    pub cell_identity_leaf: DyadPtr,
 }
 
 /// The members are declared in the type's own scope, where `.` resolves them; the
@@ -142,6 +145,7 @@ pub(super) fn register(
     let (placed_call, placed_call_leaf) = op(cx, &["call", "op"], run_placed_call);
     let (bracket_arg, bracket_arg_leaf) = op(cx, &["bracket", "op"], run_bracket_arg);
     let (cell_into, cell_into_leaf) = op(cx, &["tape", "k", "i", "type", "op"], run_cell_into);
+    let (cell_identity, cell_identity_leaf) = op(cx, &["tape", "k", "op"], run_cell_identity);
     cx.lower.insert(bracket_arg, lower_bracket_arg);
     let nothing = cx.store.alloc_raw(void_ty, std::ptr::null_mut());
     for (name, id) in [
@@ -194,6 +198,8 @@ pub(super) fn register(
         nothing,
         cell_into,
         cell_into_leaf,
+        cell_identity,
+        cell_identity_leaf,
     }
 }
 
@@ -430,6 +436,25 @@ pub(crate) fn build_bracket_line(
 pub(crate) unsafe fn build_cell_dyads(store: &mut Store, types: &Core, slot: DyadPtr) -> DyadPtr {
     let (recv, k) = slot_parts(slot);
     node(store, types.tape.cell_dyads, types.tape.cell_dyads_leaf, &[recv, k])
+}
+
+/// # Safety
+/// `slot` must be a slot node from `build_slot`.
+pub(crate) unsafe fn build_cell_identity(
+    store: &mut Store,
+    types: &Core,
+    slot: DyadPtr,
+) -> DyadPtr {
+    let (recv, k) = slot_parts(slot);
+    node(store, types.tape.cell_identity, types.tape.cell_identity_leaf, &[recv, k])
+}
+
+fn run_cell_identity(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
+    unsafe {
+        let cell = read_cell(rt, (*node).value as *const DyadPtr)?;
+        Ok(rt.through(cell.dyad) as i64)
+    }
 }
 
 /// # Safety
@@ -924,7 +949,7 @@ fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
                 let bracket =
                     (*operand).ty == types.scope || (*operand).ty == types.square_brackets;
                 if bracket {
-                    owned_lines(types, operand)?;
+                    owned_lines(types, operand).map_err(|e| RunError::Parse(Box::new(e)))?;
                 }
                 args.push(if scalar {
                     let operand = narrowed_operand(rt, arg_at(i), operand);
@@ -964,14 +989,14 @@ fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 ///
 /// # Safety
 /// `bracket` must be a scope or `square_brackets` node from the store.
-unsafe fn owned_lines(types: &Core, bracket: DyadPtr) -> Result<(), RunError> {
+unsafe fn owned_lines(types: &Core, bracket: DyadPtr) -> Result<(), crate::parse::ParseError> {
     for &line in super::scope::exprs_of(bracket).unwrap_or(&[]) {
         let line = types.through(line);
         let named = matches!(super::read::read_kind(types, line), super::read::Read::Container(_));
         let owned =
             super::node_type_of(types, line).is_some_and(|t| !meta::instances_drop_of(t).is_null());
         if named && owned {
-            return Err(RunError::Parse(Box::new(crate::parse::ParseError::LineNotMoved)));
+            return Err(crate::parse::ParseError::LineNotMoved);
         }
     }
     Ok(())
@@ -999,6 +1024,20 @@ unsafe fn node_operand(rt: &mut Runtime, d: DyadPtr) -> DyadPtr {
         return d;
     }
     store.alloc_raw((*types).dyad_, d.cast())
+}
+
+/// A bracket a node holds in a field: its lines are evaluated each time the node runs, in the
+/// frame it runs in, and the run reads a new bracket of their values.
+///
+/// # Safety
+/// `bracket` must be a scope or `square_brackets` node from the store.
+pub(crate) unsafe fn build_bracket_arg(
+    store: &mut Store,
+    types: &Core,
+    bracket: DyadPtr,
+) -> Result<DyadPtr, crate::parse::ParseError> {
+    owned_lines(types, bracket)?;
+    Ok(node(store, types.tape.bracket_arg, types.tape.bracket_arg_leaf, &[bracket]))
 }
 
 /// A line with a value to evaluate where the call runs: a number, or a node of a type a Logos

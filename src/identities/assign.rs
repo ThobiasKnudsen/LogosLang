@@ -73,6 +73,8 @@ fn construct(
         return Ok(crate::parse::Constructed::Placed);
     }
     let value = p.parse_expression()?;
+    // SAFETY: `target` and `value` are reduced dyads from the store.
+    let value = unsafe { p.bracket_into(target, value) }?;
     let node = if let Some(kind) = slot {
         // SAFETY: `value` is the reduced dyad of the right side.
         unsafe { p.slot_fill(kind, target, value) }?

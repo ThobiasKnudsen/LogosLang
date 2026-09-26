@@ -264,11 +264,23 @@ fn build_identity_compare(
         let truth = if matches!(c, CmpOp::Eq) { same } else { !same };
         return Some(bool_mod::literal_node(store, types.bool_, truth));
     }
-    // A tape cell's `:type` is read at run, and it yields the type's address.
+    // A tape cell compares as the identity it names, read at run as its `:type` is.
+    // SAFETY: as above.
+    let mut cell = |n: DyadPtr| unsafe {
+        if (*types.through(n)).ty == types.tape.slot {
+            super::tape::build_cell_identity(store, types, types.through(n))
+        } else {
+            n
+        }
+    };
+    let (lhs, rhs) = (cell(lhs), cell(rhs));
     let addressed = |n: DyadPtr, k: Read| {
         matches!(k, Read::Identity | Read::Container(_) | Read::Address)
             // SAFETY: as above.
-            || unsafe { (*types.through(n)).ty == types.tape.cell_type }
+            || unsafe {
+                let ty = (*types.through(n)).ty;
+                ty == types.tape.cell_type || ty == types.tape.cell_identity
+            }
             // SAFETY: as above.
             || unsafe { super::yields_type(types, n) }
     };

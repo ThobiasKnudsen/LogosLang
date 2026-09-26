@@ -481,7 +481,7 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
         ("t := array i32", ""),
         ("b := a", ""),
         ("b := a, b[1]", "2"),
-        ("t := array i32, x := t [4, 5], x[1]", "5"),
+        ("t := array i32, mut x := t ?, x = [4, 5], x[1]", "5"),
     ] {
         let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
         assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -497,12 +497,26 @@ fn the_array_written_in_logos_reads_an_element_and_its_size() {
         ("b := array u8 [1, 300]", "an element does not fit the element type"),
         // The list is written in square brackets; a parenthesis is a scope argument.
         ("b := array i32 (1, 2)", "the list is written in square brackets, `array i32 [1, 2]`"),
-        ("t := array i32, x := t (4, 5)", "the list is written in square brackets"),
+        ("t := array u8, mut x := t ?, x = [4, 300]", "an element does not fit the element type"),
+        ("b := array array u8 [[1, 300]]", "an element does not fit the element type"),
+        // `array ?` is an empty node of `array`, with nothing to run.
+        ("n := array ?", "was never written by its constructor"),
     ] {
         let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(!out.status.success() && stderr.contains(expect), "{tail}: stderr: {stderr}");
     }
+}
+
+/// `v := T ?` of a type whose values are nodes is a new empty node, filled field by field.
+#[test]
+fn an_empty_node_is_filled_field_by_field() {
+    let src =
+        "t := type ( mut a := i32 0, mut b := i32 0, parse = ( tape.is_constructed[0] = true ) ), \
+               f := fn () -> i32 ( mut v := t ?, v.a = 3, v.b = 4, v.a + v.b ), f()";
+    let out = logos().arg(src).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
 }
 
 #[test]
