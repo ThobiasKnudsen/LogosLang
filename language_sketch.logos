@@ -31,10 +31,10 @@ parsing_tape := type (
                                                       # a literal's constructor its digits (tape.spelling[0]); the binding knows only its own
                                                       # spelling (a:name), never what was matched here
         center := @dyad ?                             # tape[0]: the center is a node of the list (DESIGN; the seed's list ruled 9 September 2026)
-        shared insert := fn (k := i64 ?, cells := parsing_tape ?) -> void ( ? )   # splice a fragment in: the macro mechanism. lex «…» returns a
+        share insert := fn (k := i64 ?, cells := parsing_tape ?) -> void ( ? )    # splice a fragment in: the macro mechanism. lex «…» returns a
                                                                                  # parsing_tape, cells with flags and spellings (ruled 14 September 2026:
                                                                                  # a bare array @dyad has no place for the text a cell was lexed from)
-        shared remove := fn (k := i64 ?) -> void ( ? )                    # drop a cell before it lexes or after
+        share remove := fn (k := i64 ?) -> void ( ? )                     # drop a cell before it lexes or after
         # tape[k]: the instance's constructor consumes the [ ] to its right (ruled 9 September 2026: [ is ( in
         # square brackets, its interior any expression); tape[k]:dyad is the cell, tape[k]:type = T a fresh
         # node of type T with an empty operand record, tape[k]:dyad.value.operands.append(a and b) fills it
@@ -179,7 +179,6 @@ type {
         value -> {
           element -> dyad
           size -> {type -> u64, value -> ?}
-          capacity -> {type -> u64, value -> ?}
           data -> [
             {
               type -> f64
@@ -192,7 +191,7 @@ type {
                 type -> fn
                 value -> {
                   input -> type (tape := parsing_tape ?)
-                  output -> void
+                  output_type -> void
                 }
               }
               value -> ?
