@@ -1,8 +1,0 @@
-# The smallest power of two at or above n, written in Logos: no dependency cycle
-# needs it native. array's mint sizes its capacity with it; 0 and 1 give 1.
-
-pub next_power_of_two := fn (n := u64 ?) -> u64 (
-    mut p := u64 1,
-    while (p < n) ( p = p * 2 ),
-    p
-)

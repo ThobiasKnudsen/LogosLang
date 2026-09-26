@@ -643,24 +643,6 @@ fn a_shared_name_in_a_function_is_made_once_at_the_definition() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "14\n");
 }
 
-#[test]
-fn next_power_of_two_is_written_in_logos() {
-    for (n, want) in [(0, 1), (1, 1), (5, 8), (8, 8), (9, 16)] {
-        let out = logos()
-            .arg(format!("import identities/next_power_of_two.logos, next_power_of_two({n})"))
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "n = {n}");
-    }
-    let out = logos()
-        .arg("import identities/next_power_of_two.logos, next_power_of_two.compile(), next_power_of_two(1000)")
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "1024\n");
-}
-
 /// The power operator with the bare run body, on one line for the REPL.
 const POWER: &str = "^ := type ( lhs := ?, rhs := i32 ?, output_type := type ?, \
     run = ( mut r := this.output_type 1, for 0..this.rhs ( r = r * this.lhs ), r ), \

@@ -3,8 +3,6 @@
 # it builds an `array` node instead, whose run makes a new value of that type each time it is evaluated
 # (DESIGN ›An array expression is a node of `array`, and its run makes the value‹).
 
-import ./next_power_of_two.logos,
-
 get_mint := fn (t := type ?) -> type (
     shared array_mints := hashmap type -> type,
     mut mint := array_mints[t],
@@ -13,9 +11,7 @@ get_mint := fn (t := type ?) -> type (
         shared element_type := t,
         mut ptr := own @element_type ?,
         mut size := u64 0,
-        mut capacity := u64 0,
         shared size_bytes := fn () -> u64 (this.size * this.element_type.size_bytes),
-        shared capacity_bytes := fn () -> u64 (this.capacity * this.element_type.size_bytes),
 
         drop = (
             for i in 0..this.size ( drop (this.ptr + i)@ ),
@@ -64,8 +60,7 @@ pub array := type (
     run = (
         mut v := this.output_type ?,
         v.size = this.elements.dyads.size,
-        v.capacity = next_power_of_two(v.size),
-        v.ptr = mut alloc v.capacity of this.element_type ?,
+        v.ptr = mut alloc v.size of this.element_type ?,
         for i in 0..v.size (
             (v.ptr + i)@ = this.elements.dyads[i]
         ),
