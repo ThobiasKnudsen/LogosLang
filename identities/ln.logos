@@ -1,0 +1,22 @@
+# The natural logarithm, written in Logos.
+
+# ln(m * 2^k) = ln(m) + k ln 2 with m in [1, 2), and ln(m) = 2 atanh((m - 1) / (m + 1)).
+pub ln := fn (x := f64 ?) -> f64 (
+    mut m := x,
+    mut k := f64 0.0,
+    while m >= 2.0 
+        ( m = m / 2.0, k = k + 1.0 ),
+    while m < 1.0 
+        ( m = m * 2.0, k = k - 1.0 ),
+    t := (m - 1.0) / (m + 1.0),
+    t2 := t * t,
+    mut term := t,
+    mut sum := f64 0.0,
+    mut n := f64 1.0,
+    while n < 60.0 ( 
+        sum = sum + term / n, 
+        term = term * t2, 
+        n = n + 2.0 
+    ),
+    2.0 * sum + k * 0.6931471805599453
+)

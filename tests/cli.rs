@@ -229,7 +229,9 @@ fn the_power_demo_prints_nine() {
 fn the_power_demo_takes_floats_fractions_and_negative_exponents() {
     // The demo's own `^`, its last line swapped for each case.
     let demo = std::fs::read_to_string("identities/power.logos").unwrap();
-    let body = demo.trim_end().rsplit_once('\n').unwrap().0;
+    // Given on the command line, its imports resolve against the working directory.
+    let body =
+        demo.trim_end().rsplit_once('\n').unwrap().0.replace("import ", "import identities/");
     for (tail, want) in [
         ("x := f64 2.0, x ^ 3", "8.0"),
         ("x := i32 3, y := f64 2.0, x ^ y", "9.0"),

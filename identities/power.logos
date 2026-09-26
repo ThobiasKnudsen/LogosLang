@@ -12,52 +12,11 @@
 # (a ^ b).lhs walks into the node and runs nothing.
 #
 # A whole exponent multiplies, a negative one divides; any other exponent goes
-# through exp and ln, written here too. A float on either side, or a fraction as
+# through exp and ln, in exp.logos and ln.logos. A float on either side, or a fraction as
 # the exponent, makes the result a float.
 
-# ln(m * 2^k) = ln(m) + k ln 2 with m in [1, 2), and ln(m) = 2 atanh((m - 1) / (m + 1)).
-ln := fn (x := f64 ?) -> f64 (
-    mut m := x,
-    mut k := f64 0.0,
-    while m >= 2.0 
-        ( m = m / 2.0, k = k + 1.0 ),
-    while m < 1.0 
-        ( m = m * 2.0, k = k - 1.0 ),
-    t := (m - 1.0) / (m + 1.0),
-    t2 := t * t,
-    mut term := t,
-    mut sum := f64 0.0,
-    mut n := f64 1.0,
-    while n < 60.0 ( 
-        sum = sum + term / n, 
-        term = term * t2, 
-        n = n + 2.0 
-    ),
-    2.0 * sum + k * 0.6931471805599453
-),
-
-# exp(k ln 2 + r) = 2^k exp(r), with |r| < ln 2 so the series is short.
-exp := fn (y := f64 ?) -> f64 (
-    k := i64(y / 0.6931471805599453),
-    r := y - f64(k) * 0.6931471805599453,
-    mut term := f64 1.0,
-    mut sum := f64 1.0,
-    mut n := f64 1.0,
-    while n < 30.0 ( 
-        term = term * r / n, 
-        sum = sum + term, 
-        n = n + 1.0 
-    ),
-    mut i := i64 0,
-    if k >= 0 ( 
-        while i < k 
-            ( sum = sum * 2.0, i = i + 1 ) 
-    ) else ( 
-        while i > k 
-            ( sum = sum / 2.0, i = i - 1 ) 
-    ),
-    sum
-),
+import ln.logos,
+import exp.logos,
 
 ^ := type (
     lhs := ?,
