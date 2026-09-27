@@ -10,6 +10,7 @@ use crate::dyad::DyadPtr;
 use crate::store::Store;
 
 use super::Cx;
+use crate::dyad;
 
 /// One per name, never per identity: `x := i32` binds a second name to i32's own
 /// dyad, and a binding shared through the dyad would let `x := pub i32` gate i32 itself.
@@ -83,7 +84,7 @@ impl Binding {
     /// # Safety
     /// As `Binding::read`.
     unsafe fn fields(dyad: DyadPtr) -> *mut Binding {
-        (*dyad).value as *mut Binding
+        dyad::value(dyad) as *mut Binding
     }
 
     /// # Safety
@@ -181,7 +182,7 @@ impl Binding {
 /// # Safety
 /// `p` must be null or a valid dyad from the store; `binding_ty` the `binding` identity.
 pub unsafe fn through(binding_ty: DyadPtr, p: DyadPtr) -> DyadPtr {
-    if !p.is_null() && (*p).ty == binding_ty {
+    if !p.is_null() && dyad::ty(p) == binding_ty {
         (*Binding::fields(p)).dyad
     } else {
         p
@@ -227,6 +228,6 @@ pub(super) fn register_type(
         crate::parse::Assoc::Left,
     );
     // SAFETY: `binding_` is the type node minted at the head of the build.
-    unsafe { (*binding_).value = layout };
+    unsafe { dyad::set_value(binding_, layout) };
     cx.declare("binding", binding_);
 }

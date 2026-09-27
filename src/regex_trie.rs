@@ -565,13 +565,13 @@ mod tests {
 
     /// A leaked dyad whose address is its id; serves as identity and as scope.
     fn dummy(tag: usize) -> DyadPtr {
-        Box::into_raw(Box::new(Dyad { ty: std::ptr::null_mut(), value: tag as *mut u8 }))
+        Box::into_raw(Box::new(Dyad::new(std::ptr::null_mut(), tag as *mut u8)))
     }
 
     /// A leaked binding dyad in `scope` for `identity`.
     fn rec(identity: DyadPtr, scope: DyadPtr) -> DyadPtr {
         let fields = Box::into_raw(Box::new(Binding::new(identity, scope, std::ptr::null_mut())));
-        Box::into_raw(Box::new(Dyad { ty: std::ptr::null_mut(), value: fields as *mut u8 }))
+        Box::into_raw(Box::new(Dyad::new(std::ptr::null_mut(), fields as *mut u8)))
     }
 
     fn f(binding: DyadPtr) -> Binding {

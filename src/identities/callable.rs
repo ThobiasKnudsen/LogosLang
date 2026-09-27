@@ -12,6 +12,7 @@ use crate::run::RunFn;
 use crate::store::Store;
 
 use super::{meta, string, Cx};
+use crate::dyad;
 
 pub(crate) const ENTRY_OFF: usize = 0;
 const CONVENTION_OFF: usize = 8;
@@ -79,26 +80,26 @@ pub(crate) fn mint_native(
 /// # Safety
 /// `leaf` must be a callable value (`is_callable`) from the store.
 pub(crate) unsafe fn install_entry(leaf: DyadPtr, entry: usize) {
-    std::ptr::write_unaligned((*leaf).value.add(ENTRY_OFF) as *mut usize, entry);
+    std::ptr::write_unaligned(dyad::value(leaf).add(ENTRY_OFF) as *mut usize, entry);
 }
 
 /// # Safety
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn is_callable(node: DyadPtr) -> bool {
-    let logos = (*node).ty;
+    let logos = dyad::ty(node);
     !logos.is_null() && meta::kind_of(logos) == Some(meta::CALLABLE_TAG)
 }
 
 /// # Safety
 /// `leaf` must be a callable value (`is_callable`).
 pub(crate) unsafe fn entry_of(leaf: DyadPtr) -> usize {
-    std::ptr::read_unaligned((*leaf).value.add(ENTRY_OFF) as *const usize)
+    std::ptr::read_unaligned(dyad::value(leaf).add(ENTRY_OFF) as *const usize)
 }
 
 /// # Safety
 /// As `entry_of`.
 pub(crate) unsafe fn convention_of(leaf: DyadPtr) -> DyadPtr {
-    std::ptr::read_unaligned((*leaf).value.add(CONVENTION_OFF) as *const DyadPtr)
+    std::ptr::read_unaligned(dyad::value(leaf).add(CONVENTION_OFF) as *const DyadPtr)
 }
 
 #[cfg(test)]
@@ -132,14 +133,14 @@ mod tests {
 
         // SAFETY: the handles are identities Core::build just allocated.
         unsafe {
-            assert_eq!((*core.conv_seed_native).ty, core.convention_);
-            assert_eq!((*core.conv_container).ty, core.convention_);
+            assert_eq!(dyad::ty(core.conv_seed_native), core.convention_);
+            assert_eq!(dyad::ty(core.conv_container), core.convention_);
             assert_eq!(
-                crate::reflect::text_of((*core.conv_seed_native).value.cast()),
+                crate::reflect::text_of(dyad::value(core.conv_seed_native).cast()),
                 b"seed-native"
             );
             assert_eq!(
-                crate::reflect::text_of((*core.conv_container).value.cast()),
+                crate::reflect::text_of(dyad::value(core.conv_container).cast()),
                 b"container-i64"
             );
             assert_eq!(meta::kind_of(core.callable_), Some(meta::CALLABLE_TAG));

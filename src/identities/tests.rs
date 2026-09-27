@@ -22,7 +22,7 @@ fn new_core() -> (Store, RegexTrie, Core) {
 fn test_binding(binding_ty: DyadPtr, identity: DyadPtr) -> DyadPtr {
     let fields =
         Box::into_raw(Box::new(Binding::new(identity, std::ptr::null_mut(), std::ptr::null_mut())));
-    Box::into_raw(Box::new(crate::dyad::Dyad { ty: binding_ty, value: fields as *mut u8 }))
+    Box::into_raw(Box::new(crate::dyad::Dyad::new(binding_ty, fields as *mut u8)))
 }
 
 /// A hand-built binding of a variable the test writes.

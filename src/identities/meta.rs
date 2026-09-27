@@ -29,6 +29,7 @@ use crate::store::Store;
 
 use super::numtype::ADDR_TAG;
 use super::{string, Cx};
+use crate::dyad;
 
 /// Values are `arity` fixed `dyad@` operand slots, each named by a role string; a
 /// null slot is an absent optional. Also an fn value's `[input, output, body, bcode]`.
@@ -177,19 +178,19 @@ pub(crate) fn record_layout(
 /// # Safety
 /// `id` must carry a `RECORD_TAG` record.
 pub(crate) unsafe fn record_scope_of(id: DyadPtr) -> DyadPtr {
-    std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF) as *const DyadPtr)
+    std::ptr::read_unaligned(dyad::value(id).add(PAYLOAD_OFF) as *const DyadPtr)
 }
 
 /// # Safety
 /// As `record_scope_of`.
 pub(crate) unsafe fn record_fields_of(id: DyadPtr) -> DyadPtr {
-    std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF + 8) as *const DyadPtr)
+    std::ptr::read_unaligned(dyad::value(id).add(PAYLOAD_OFF + 8) as *const DyadPtr)
 }
 
 /// # Safety
 /// As `record_scope_of`.
 pub(crate) unsafe fn record_size_of(id: DyadPtr) -> u64 {
-    std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF + 16) as *const u64)
+    std::ptr::read_unaligned(dyad::value(id).add(PAYLOAD_OFF + 16) as *const u64)
 }
 
 /// The definition body's scope, or null where the type has no body.
@@ -197,7 +198,7 @@ pub(crate) unsafe fn record_size_of(id: DyadPtr) -> u64 {
 /// # Safety
 /// As `record_scope_of`.
 pub(crate) unsafe fn record_body_of(id: DyadPtr) -> DyadPtr {
-    std::ptr::read_unaligned((*id).value.add(PAYLOAD_OFF + 24) as *const DyadPtr)
+    std::ptr::read_unaligned(dyad::value(id).add(PAYLOAD_OFF + 24) as *const DyadPtr)
 }
 
 const INSTANCES_DROP_OFF: usize = PAYLOAD_OFF + 32;
@@ -208,13 +209,13 @@ const INSTANCES_DROP_OFF: usize = PAYLOAD_OFF + 32;
 /// # Safety
 /// As `record_scope_of`.
 pub(crate) unsafe fn instances_drop_of(id: DyadPtr) -> DyadPtr {
-    std::ptr::read_unaligned((*id).value.add(INSTANCES_DROP_OFF) as *const DyadPtr)
+    std::ptr::read_unaligned(dyad::value(id).add(INSTANCES_DROP_OFF) as *const DyadPtr)
 }
 
 /// # Safety
 /// `id` must carry a `RECORD_TAG` record; `drop` must be null or a `fn` node from the store.
 pub(crate) unsafe fn install_instances_drop(id: DyadPtr, drop: DyadPtr) {
-    std::ptr::write_unaligned((*id).value.add(INSTANCES_DROP_OFF) as *mut DyadPtr, drop);
+    std::ptr::write_unaligned(dyad::value(id).add(INSTANCES_DROP_OFF) as *mut DyadPtr, drop);
 }
 
 const BRACKET_BUILDER_OFF: usize = PAYLOAD_OFF + 40;
@@ -225,13 +226,13 @@ const BRACKET_BUILDER_OFF: usize = PAYLOAD_OFF + 40;
 /// # Safety
 /// As `record_scope_of`.
 pub(crate) unsafe fn bracket_builder_of(id: DyadPtr) -> DyadPtr {
-    std::ptr::read_unaligned((*id).value.add(BRACKET_BUILDER_OFF) as *const DyadPtr)
+    std::ptr::read_unaligned(dyad::value(id).add(BRACKET_BUILDER_OFF) as *const DyadPtr)
 }
 
 /// # Safety
 /// `id` must carry a `RECORD_TAG` record; `builder` a type node from the store.
 pub(crate) unsafe fn install_bracket_builder(id: DyadPtr, builder: DyadPtr) {
-    std::ptr::write_unaligned((*id).value.add(BRACKET_BUILDER_OFF) as *mut DyadPtr, builder);
+    std::ptr::write_unaligned(dyad::value(id).add(BRACKET_BUILDER_OFF) as *mut DyadPtr, builder);
 }
 
 fn header(kind: u8, assoc: Assoc, parse_rank: f64) -> [u8; PAYLOAD_OFF] {
@@ -251,7 +252,7 @@ fn header(kind: u8, assoc: Assoc, parse_rank: f64) -> [u8; PAYLOAD_OFF] {
 /// # Safety
 /// As `parse_rank_of`.
 pub(crate) unsafe fn constructor_of(id: DyadPtr) -> DyadPtr {
-    std::ptr::read_unaligned((*id).value.add(CTOR_OFF) as *const DyadPtr)
+    std::ptr::read_unaligned(dyad::value(id).add(CTOR_OFF) as *const DyadPtr)
 }
 
 /// Null on every identity but an owning pointer type; never faked with a no-op.
@@ -259,20 +260,20 @@ pub(crate) unsafe fn constructor_of(id: DyadPtr) -> DyadPtr {
 /// # Safety
 /// As `parse_rank_of`.
 pub(crate) unsafe fn destructor_of(id: DyadPtr) -> DyadPtr {
-    std::ptr::read_unaligned((*id).value.add(DTOR_OFF) as *const DyadPtr)
+    std::ptr::read_unaligned(dyad::value(id).add(DTOR_OFF) as *const DyadPtr)
 }
 
 /// # Safety
 /// `id` must carry a record and `leaf` must be a callable leaf whose entry is a `ConstructFn`.
 pub(crate) unsafe fn install_constructor(id: DyadPtr, leaf: DyadPtr) {
-    std::ptr::write_unaligned((*id).value.add(CTOR_OFF) as *mut DyadPtr, leaf);
+    std::ptr::write_unaligned(dyad::value(id).add(CTOR_OFF) as *mut DyadPtr, leaf);
 }
 
 /// # Safety
 /// `id` must carry a record and `leaf` must be a callable leaf whose entry runs the
 /// identity's teardown.
 pub(crate) unsafe fn install_destructor(id: DyadPtr, leaf: DyadPtr) {
-    std::ptr::write_unaligned((*id).value.add(DTOR_OFF) as *mut DyadPtr, leaf);
+    std::ptr::write_unaligned(dyad::value(id).add(DTOR_OFF) as *mut DyadPtr, leaf);
 }
 
 /// The lexed body a `run = (…)` line held, constructed per field-type set;
@@ -281,13 +282,13 @@ pub(crate) unsafe fn install_destructor(id: DyadPtr, leaf: DyadPtr) {
 /// # Safety
 /// As `parse_rank_of`.
 pub(crate) unsafe fn run_body_of(id: DyadPtr) -> DyadPtr {
-    std::ptr::read_unaligned((*id).value.add(RUN_BODY_OFF) as *const DyadPtr)
+    std::ptr::read_unaligned(dyad::value(id).add(RUN_BODY_OFF) as *const DyadPtr)
 }
 
 /// # Safety
 /// `id` must carry a record and `body` must be a run-body node from the store.
 pub(crate) unsafe fn install_run_body(id: DyadPtr, body: DyadPtr) {
-    std::ptr::write_unaligned((*id).value.add(RUN_BODY_OFF) as *mut DyadPtr, body);
+    std::ptr::write_unaligned(dyad::value(id).add(RUN_BODY_OFF) as *mut DyadPtr, body);
 }
 
 /// The interned `@T` of `id`, or null while none has been minted.
@@ -295,13 +296,13 @@ pub(crate) unsafe fn install_run_body(id: DyadPtr, body: DyadPtr) {
 /// # Safety
 /// As `parse_rank_of`.
 pub(crate) unsafe fn pointer_type_of(id: DyadPtr) -> DyadPtr {
-    std::ptr::read_unaligned((*id).value.add(POINTER_TYPE_OFF) as *const DyadPtr)
+    std::ptr::read_unaligned(dyad::value(id).add(POINTER_TYPE_OFF) as *const DyadPtr)
 }
 
 /// # Safety
 /// `id` must carry a record and `p` must be the plain pointer type node over `id`.
 pub(crate) unsafe fn install_pointer_type(id: DyadPtr, p: DyadPtr) {
-    std::ptr::write_unaligned((*id).value.add(POINTER_TYPE_OFF) as *mut DyadPtr, p);
+    std::ptr::write_unaligned(dyad::value(id).add(POINTER_TYPE_OFF) as *mut DyadPtr, p);
 }
 
 /// `None` where there is no record to read: a null value (an unbound placeholder) or
@@ -311,7 +312,7 @@ pub(crate) unsafe fn install_pointer_type(id: DyadPtr, p: DyadPtr) {
 /// # Safety
 /// `id` must be a valid dyad from the store.
 pub(crate) unsafe fn kind_of(id: DyadPtr) -> Option<u8> {
-    let v = (*id).value;
+    let v = dyad::value(id);
     if v.is_null() || crate::dyad::is_place(v) {
         None
     } else {
@@ -325,8 +326,8 @@ pub(crate) unsafe fn kind_of(id: DyadPtr) -> Option<u8> {
 /// `id` must be null or a valid dyad from the store.
 pub(crate) unsafe fn is_record_type(id: DyadPtr) -> bool {
     !id.is_null()
-        && !(*id).ty.is_null()
-        && (*id).ty == (*(*id).ty).ty
+        && !dyad::ty(id).is_null()
+        && dyad::ty(id) == dyad::ty(dyad::ty(id))
         && kind_of(id) == Some(RECORD_TAG)
 }
 
@@ -341,7 +342,7 @@ pub(crate) unsafe fn is_node_valued(id: DyadPtr, fn_type: DyadPtr) -> bool {
         return false;
     }
     let ctor = constructor_of(id);
-    !ctor.is_null() && (*ctor).ty == fn_type
+    !ctor.is_null() && dyad::ty(ctor) == fn_type
 }
 
 /// The last fixed slot of the type's operand record, where a resolved node stores its
@@ -362,14 +363,14 @@ pub(crate) unsafe fn op_slot_of(id: DyadPtr) -> Option<usize> {
 /// # Safety
 /// `id` must carry a record (`kind_of` is `Some`).
 pub(crate) unsafe fn parse_rank_of(id: DyadPtr) -> f64 {
-    let v = (*id).value;
+    let v = dyad::value(id);
     f64::from_ne_bytes(std::ptr::read_unaligned(v.add(PREC_OFF) as *const [u8; 8]))
 }
 
 /// # Safety
 /// As `parse_rank_of`.
 pub(crate) unsafe fn assoc_of(id: DyadPtr) -> Assoc {
-    if *(*id).value.add(ASSOC_OFF) == 0 {
+    if *dyad::value(id).add(ASSOC_OFF) == 0 {
         Assoc::Left
     } else {
         Assoc::Right
@@ -379,12 +380,12 @@ pub(crate) unsafe fn assoc_of(id: DyadPtr) -> Assoc {
 /// # Safety
 /// `id` must carry an operand record (a `TUPLE_TAG` or `LIST_TAG` kind).
 pub(crate) unsafe fn arity_of(id: DyadPtr) -> usize {
-    *(*id).value.add(PAYLOAD_OFF) as usize
+    *dyad::value(id).add(PAYLOAD_OFF) as usize
 }
 
 /// # Safety
 /// As `arity_of`, with `i < arity_of(id)`.
 pub(crate) unsafe fn role_of(id: DyadPtr, i: usize) -> DyadPtr {
-    let p = (*id).value.add(PAYLOAD_OFF + 1 + i * std::mem::size_of::<DyadPtr>());
+    let p = dyad::value(id).add(PAYLOAD_OFF + 1 + i * std::mem::size_of::<DyadPtr>());
     std::ptr::read_unaligned(p as *const DyadPtr)
 }

@@ -9,6 +9,7 @@
 use super::callable;
 use super::meta;
 use super::numtype::{self, NumType, ADDR_TAG, COMMENT_TAG, STRING_TAG, VOID_TAG};
+use crate::dyad;
 use crate::dyad::{is_place, DyadPtr};
 use crate::Core;
 
@@ -64,15 +65,15 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
     if node.is_null() {
         return Read::Undefined;
     }
-    let op = (*node).ty;
-    let value = (*node).value;
+    let op = dyad::ty(node);
+    let value = dyad::value(node);
     let place = is_place(value);
     // A bare parameter's slot holds the container its call bound; a hole or marker holds nothing.
     if op.is_null() {
         return if place { Read::Container(op) } else { Read::Undefined };
     }
     // Before any record read: a function node's value is an operand array, not a record.
-    if (*op).ty == types.fn_type {
+    if dyad::ty(op) == types.fn_type {
         return Read::Executable(Dispatch::Call(op));
     }
     // `fn`'s own record is an operand record like `+`'s, so only the identity tells them apart.
@@ -82,7 +83,7 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
     let Some(kind) = meta::kind_of(op) else {
         // The roots are back-filled in `Core::build`, and holes never stand in a type
         // slot, so no reachable node is classified by a type with no record.
-        debug_assert!(!(*op).value.is_null(), "a type with no record stands in a type slot");
+        debug_assert!(!dyad::value(op).is_null(), "a type with no record stands in a type slot");
         return if place { Read::Container(op) } else { Read::Undefined };
     };
     match kind {
@@ -239,7 +240,7 @@ mod tests {
         let types = &core;
         // SAFETY: a sequence node's first slot is its expression array.
         let exprs = unsafe {
-            array::items(*((*seq).value as *const DyadPtr))
+            array::items(*(dyad::value(seq) as *const DyadPtr))
                 .iter()
                 .map(|&e| crate::identities::ran::expr_of(types, e))
                 .collect()
@@ -305,16 +306,16 @@ mod tests {
             // The place is behind the binding's initializer store or construction.
             let declared = |i: usize| {
                 let d = declare::declared_of(exprs[i]);
-                if (*d).ty == core.assign {
+                if dyad::ty(d) == core.assign {
                     types.through(crate::identities::operands(d).0)
-                } else if (*d).ty == core.construct_ {
-                    *((*d).value as *const DyadPtr)
+                } else if dyad::ty(d) == core.construct_ {
+                    *(dyad::value(d) as *const DyadPtr)
                 } else {
                     d
                 }
             };
             assert_eq!(read_kind(types, declared(0)), Read::Scalar(NumType::I32));
-            assert!(is_place((*declared(0)).value));
+            assert!(is_place(dyad::value(declared(0))));
             assert_eq!(read_kind(types, declared(1)), Read::Pointer(core.i32_));
             assert_eq!(read_kind(types, declared(2)), Read::Container(core.type_));
             assert_eq!(read_kind(types, declared(3)), Read::Container(core.dyad_));
@@ -322,12 +323,12 @@ mod tests {
             assert_eq!(read_kind(types, declared(5)), Read::Aggregate);
             let f = declared(6);
             assert_eq!(read_kind(types, f), Read::Unit);
-            let input = *((*f).value as *const DyadPtr).add(crate::parse::FN_INPUT);
+            let input = *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_INPUT);
             let params = array::items(meta::record_fields_of(input));
             assert_eq!(read_kind(types, params[0]), Read::Scalar(NumType::I32));
             assert_eq!(read_kind(types, params[1]), Read::Container(std::ptr::null_mut()));
             assert_eq!(read_kind(types, exprs[7]), Read::Scalar(NumType::I32));
-            assert!(!is_place((*exprs[7]).value), "a literal's storage carries no mark");
+            assert!(!is_place(dyad::value(exprs[7])), "a literal's storage carries no mark");
             assert_eq!(read_kind(types, exprs[8]), Read::Literal);
             assert_eq!(read_kind(types, exprs[9]), Read::Opaque);
             assert_eq!(read_kind(types, exprs[10]), Read::Unit);

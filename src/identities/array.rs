@@ -9,6 +9,7 @@ use crate::dyad::DyadPtr;
 use crate::store::Store;
 
 use super::{meta, Cx};
+use crate::dyad;
 
 /// Byte offset of the element count in an array value.
 const LEN_OFF: usize = 0;
@@ -42,13 +43,13 @@ pub(crate) unsafe fn push(store: &mut Store, node: DyadPtr, item: DyadPtr) {
         let mut grown = vec![std::ptr::null_mut(); (len + 1).next_power_of_two().max(4)];
         grown[..len].copy_from_slice(items(node));
         let grown = store.alloc_operands(&grown) as *mut DyadPtr;
-        std::ptr::write_unaligned((*node).value.add(DATA_OFF) as *mut *mut DyadPtr, grown);
+        std::ptr::write_unaligned(dyad::value(node).add(DATA_OFF) as *mut *mut DyadPtr, grown);
         grown
     } else {
         data as *mut DyadPtr
     };
     *data.add(len) = item;
-    std::ptr::write_unaligned((*node).value.add(LEN_OFF) as *mut u64, (len + 1) as u64);
+    std::ptr::write_unaligned(dyad::value(node).add(LEN_OFF) as *mut u64, (len + 1) as u64);
 }
 
 /// The `(len, data)` of an array node.
@@ -56,7 +57,7 @@ pub(crate) unsafe fn push(store: &mut Store, node: DyadPtr, item: DyadPtr) {
 /// # Safety
 /// `node` must be an array node as [`build`] lays it out.
 pub(crate) unsafe fn parts(node: DyadPtr) -> (usize, *const DyadPtr) {
-    let v = (*node).value;
+    let v = dyad::value(node);
     let len = std::ptr::read_unaligned(v.add(LEN_OFF) as *const u64) as usize;
     let data = std::ptr::read_unaligned(v.add(DATA_OFF) as *const *const DyadPtr);
     (len, data)

@@ -10,10 +10,7 @@ fn rec(identity: DyadPtr) -> DyadPtr {
 
 fn rec_in(identity: DyadPtr, scope: DyadPtr) -> DyadPtr {
     let fields = Box::into_raw(Box::new(Binding::new(identity, scope, std::ptr::null_mut())));
-    Box::into_raw(Box::new(crate::dyad::Dyad {
-        ty: std::ptr::null_mut(),
-        value: fields as *mut u8,
-    }))
+    Box::into_raw(Box::new(crate::dyad::Dyad::new(std::ptr::null_mut(), fields as *mut u8)))
 }
 
 /// The fields behind a binding dyad.

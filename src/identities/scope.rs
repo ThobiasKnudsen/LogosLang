@@ -12,6 +12,7 @@ use cranelift_codegen::ir::Value;
 use super::callable::{self, Callables};
 use super::{array, Cx};
 use crate::compile::{CompileError, Lowerer};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::Constructed;
 use crate::run::{RunError, Runtime};
@@ -60,7 +61,7 @@ pub(crate) fn mint(store: &mut Store, scope_ty: DyadPtr, parent: DyadPtr) -> Dya
 /// # Safety
 /// `node` must be a scope [`mint`] built; nothing else may hold its slots.
 pub(crate) unsafe fn fill(node: DyadPtr, op: DyadPtr) {
-    *((*node).value as *mut DyadPtr).add(OP) = op;
+    *(dyad::value(node) as *mut DyadPtr).add(OP) = op;
 }
 
 /// The scope's `dyads`, made empty on first read; null for a scope minted
@@ -69,10 +70,10 @@ pub(crate) unsafe fn fill(node: DyadPtr, op: DyadPtr) {
 /// # Safety
 /// `node` must be a scope or `square_brackets` node from the store.
 pub(crate) unsafe fn dyads(store: &mut Store, array_ty: DyadPtr, node: DyadPtr) -> DyadPtr {
-    if (*node).value.is_null() {
+    if dyad::value(node).is_null() {
         return std::ptr::null_mut();
     }
-    let slot = ((*node).value as *mut DyadPtr).add(EXPRS);
+    let slot = (dyad::value(node) as *mut DyadPtr).add(EXPRS);
     if (*slot).is_null() {
         *slot = array::build(store, array_ty, &[]);
     }
@@ -97,10 +98,10 @@ pub(crate) unsafe fn push_item(store: &mut Store, array_ty: DyadPtr, node: DyadP
 /// # Safety
 /// `node` must be a scope or `square_brackets` node from the store.
 pub(crate) unsafe fn exprs_array(node: DyadPtr) -> DyadPtr {
-    if (*node).value.is_null() {
+    if dyad::value(node).is_null() {
         return std::ptr::null_mut();
     }
-    *((*node).value as *const DyadPtr).add(EXPRS)
+    *(dyad::value(node) as *const DyadPtr).add(EXPRS)
 }
 
 /// # Safety
@@ -125,10 +126,10 @@ pub(crate) unsafe fn with_exprs(
     node: DyadPtr,
     exprs: &[DyadPtr],
 ) -> DyadPtr {
-    let slots = (*node).value as *const DyadPtr;
+    let slots = dyad::value(node) as *const DyadPtr;
     let lines = array::build(store, array_ty, exprs);
     let value = store.alloc_operands(&[lines, *slots.add(OP), *slots.add(PARENT)]);
-    store.alloc_raw((*node).ty, value)
+    store.alloc_raw(dyad::ty(node), value)
 }
 
 /// Null at the arche, and on a scope minted with no value (the root, a type's
@@ -137,10 +138,10 @@ pub(crate) unsafe fn with_exprs(
 /// # Safety
 /// `node` must be a scope node from the store.
 pub(crate) unsafe fn parent_of(node: DyadPtr) -> DyadPtr {
-    if (*node).value.is_null() {
+    if dyad::value(node).is_null() {
         return std::ptr::null_mut();
     }
-    *((*node).value as *const DyadPtr).add(PARENT)
+    *(dyad::value(node) as *const DyadPtr).add(PARENT)
 }
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
@@ -153,7 +154,7 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let mut last = 0i64;
         let mut defers: Vec<DyadPtr> = Vec::new();
         for &expr in exprs {
-            let logos = (*expr).ty;
+            let logos = dyad::ty(expr);
             // Prose: never run, never the tail.
             if super::numtype::is_comment_type(logos) {
                 continue;
@@ -195,8 +196,11 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         let Some(exprs) = exprs_of(node) else {
             return Err(CompileError::EmptyScope);
         };
-        let lines: Vec<DyadPtr> =
-            exprs.iter().copied().filter(|&e| !super::numtype::is_comment_type((*e).ty)).collect();
+        let lines: Vec<DyadPtr> = exprs
+            .iter()
+            .copied()
+            .filter(|&e| !super::numtype::is_comment_type(dyad::ty(e)))
+            .collect();
         lw.lower_with_teardowns(&lines)?.ok_or(CompileError::EmptyScope)
     }
 }

@@ -11,6 +11,7 @@ use cranelift_codegen::ir::types;
 use crate::dyad::DyadPtr;
 
 use super::Cx;
+use crate::dyad;
 
 /// `#[repr(u8)]` so the discriminant is the type node's tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,7 +147,7 @@ fn construct(
     let node = match right {
         Some(c)
             // SAFETY: a constructed, non-bracket cell holds a node from the store.
-            if c.constructed && !c.is_bracket() && unsafe { (*c.dyad).ty } == types.rational =>
+            if c.constructed && !c.is_bracket() && unsafe { dyad::ty(c.dyad) } == types.rational =>
         {
             let l = c.dyad;
             tape.remove(1);
@@ -185,7 +186,7 @@ pub(crate) unsafe fn is_void_type(type_node: DyadPtr) -> bool {
     if type_node.is_null() {
         return false;
     }
-    let v = (*type_node).value;
+    let v = dyad::value(type_node);
     !v.is_null() && *(v as *const u8) == VOID_TAG
 }
 
@@ -199,7 +200,7 @@ pub(crate) unsafe fn is_comment_type(type_node: DyadPtr) -> bool {
     if type_node.is_null() {
         return false;
     }
-    let v = (*type_node).value;
+    let v = dyad::value(type_node);
     !v.is_null() && *(v as *const u8) == COMMENT_TAG
 }
 
@@ -212,14 +213,14 @@ pub(crate) unsafe fn is_pointer_type(type_node: DyadPtr) -> bool {
     if type_node.is_null() {
         return false;
     }
-    let v = (*type_node).value;
+    let v = dyad::value(type_node);
     !v.is_null() && *(v as *const u8) == ADDR_TAG
 }
 
 /// # Safety
 /// `type_node` must be a pointer type node (`is_pointer_type`).
 pub(crate) unsafe fn pointee_of(type_node: DyadPtr) -> DyadPtr {
-    let p = (*type_node).value.add(super::meta::PAYLOAD_OFF);
+    let p = dyad::value(type_node).add(super::meta::PAYLOAD_OFF);
     std::ptr::read_unaligned(p as *const DyadPtr)
 }
 
@@ -231,7 +232,7 @@ pub(crate) unsafe fn is_scalar_type(type_node: DyadPtr) -> bool {
     if type_node.is_null() {
         return false;
     }
-    let v = (*type_node).value;
+    let v = dyad::value(type_node);
     if v.is_null() {
         return false;
     }
@@ -299,7 +300,7 @@ pub(crate) unsafe fn write_scalar_nt(nt: NumType, slot: *mut u8, bits: i64) {
 /// # Safety
 /// `type_node` must be a numeric or pointer type node.
 pub(crate) unsafe fn of_type_node(type_node: DyadPtr) -> NumType {
-    let tag = *((*type_node).value as *const u8);
+    let tag = *(dyad::value(type_node) as *const u8);
     if tag == ADDR_TAG {
         return NumType::U64;
     }
@@ -311,7 +312,7 @@ pub(crate) unsafe fn of_type_node(type_node: DyadPtr) -> NumType {
 /// # Safety
 /// `node` must be a conversion node from `convert::build_convert`.
 pub(crate) unsafe fn stored_type(node: DyadPtr) -> DyadPtr {
-    *((*node).value as *const DyadPtr).add(2)
+    *(dyad::value(node) as *const DyadPtr).add(2)
 }
 
 /// Integer `Div`/`Rem` are total: a zero divisor yields the type's MAX, the signed

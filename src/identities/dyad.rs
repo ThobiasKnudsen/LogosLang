@@ -15,8 +15,40 @@ pub struct Dyad {
     pub value: *mut u8,
 }
 
+impl Dyad {
+    pub(crate) fn new(ty: DyadPtr, value: *mut u8) -> Self {
+        Dyad { ty, value }
+    }
+}
+
 /// A node's handle; its address is its identity.
 pub type DyadPtr = *mut Dyad;
+
+/// The four readers of the cell's layout; nothing outside this file spells it.
+///
+/// # Safety
+/// `p` must be a valid dyad from the store.
+pub unsafe fn ty(p: DyadPtr) -> DyadPtr {
+    (*p).ty
+}
+
+/// # Safety
+/// As [`ty`].
+pub unsafe fn value(p: DyadPtr) -> *mut u8 {
+    (*p).value
+}
+
+/// # Safety
+/// As [`ty`].
+pub unsafe fn set_ty(p: DyadPtr, t: DyadPtr) {
+    (*p).ty = t;
+}
+
+/// # Safety
+/// As [`ty`].
+pub unsafe fn set_value(p: DyadPtr, v: *mut u8) {
+    (*p).value = v;
+}
 
 /// At application rank, so `dyad (…)` reads the bracket to its right and `dyad` alone is the type.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {

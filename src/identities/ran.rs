@@ -13,6 +13,7 @@ use super::callable::{self, Callables};
 use super::numtype::NumType;
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
@@ -50,10 +51,10 @@ pub fn build(store: &mut Store, types: &Core, expr: DyadPtr, bits: i64) -> DyadP
 /// `node` must be a valid dyad from the store that nothing is reading while
 /// this runs.
 pub unsafe fn rewrite(store: &mut Store, types: &Core, node: DyadPtr, bits: i64) {
-    let copy = store.alloc_raw((*node).ty, (*node).value);
+    let copy = store.alloc_raw(dyad::ty(node), dyad::value(node));
     let ran = build(store, types, copy, bits);
-    (*node).ty = (*ran).ty;
-    (*node).value = (*ran).value;
+    dyad::set_ty(node, dyad::ty(ran));
+    dyad::set_value(node, dyad::value(ran));
 }
 
 /// The item a ran node holds, or `node` itself for anything else: the hop for
@@ -62,23 +63,23 @@ pub unsafe fn rewrite(store: &mut Store, types: &Core, node: DyadPtr, bits: i64)
 /// # Safety
 /// `node` must be null or a valid dyad from the store.
 pub unsafe fn expr_of(types: &Core, node: DyadPtr) -> DyadPtr {
-    if node.is_null() || (*node).ty != types.ran_ {
+    if node.is_null() || dyad::ty(node) != types.ran_ {
         return node;
     }
-    *((*node).value as *const DyadPtr).add(EXPR)
+    *(dyad::value(node) as *const DyadPtr).add(EXPR)
 }
 
 /// # Safety
 /// `node` must be a ran node as [`build`] lays it out.
 pub unsafe fn value_of(node: DyadPtr) -> i64 {
-    let cell = *((*node).value as *const DyadPtr).add(VALUE);
-    std::ptr::read_unaligned((*cell).value as *const i64)
+    let cell = *(dyad::value(node) as *const DyadPtr).add(VALUE);
+    std::ptr::read_unaligned(dyad::value(cell) as *const i64)
 }
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a ran node; its value slot is the cell, a scalar node.
     unsafe {
-        let cell = *((*node).value as *const DyadPtr).add(VALUE);
+        let cell = *(dyad::value(node) as *const DyadPtr).add(VALUE);
         rt.run(cell)
     }
 }
@@ -88,7 +89,7 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: as [`run`].
     unsafe {
-        let cell = *((*node).value as *const DyadPtr).add(VALUE);
+        let cell = *(dyad::value(node) as *const DyadPtr).add(VALUE);
         lw.lower(cell)
     }
 }
@@ -132,8 +133,8 @@ mod tests {
             assert!(matches!(numtype_of(types, ran), Operand::Concrete(NumType::I32)));
             assert_eq!(display_value(types, ran, 1), "true");
             rewrite(rt.store, types, cmp, 1);
-            assert_eq!((*cmp).ty, types.ran_);
-            assert_eq!((*expr_of(types, cmp)).ty, types.eq);
+            assert_eq!(dyad::ty(cmp), types.ran_);
+            assert_eq!(dyad::ty(expr_of(types, cmp)), types.eq);
             assert_eq!(rt.run(cmp).unwrap(), 1);
             assert_eq!(display_value(types, cmp, 1), "true");
         }

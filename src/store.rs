@@ -203,7 +203,7 @@ impl Store {
     }
 
     pub fn alloc_raw(&mut self, ty: DyadPtr, value: *mut u8) -> DyadPtr {
-        self.alloc(Dyad { ty, value })
+        self.alloc(Dyad::new(ty, value))
     }
 
     /// An operand run (`dyad@` fields) as a `void@`, in the arena. A write pointer:
@@ -295,6 +295,7 @@ impl Store {
 #[allow(clippy::undocumented_unsafe_blocks)] // a test reads the nodes it built a line above
 mod tests {
     use super::*;
+    use crate::dyad;
 
     /// A sentinel `value` bit-pattern, never dereferenced.
     fn tag(n: usize) -> *mut u8 {
@@ -318,7 +319,7 @@ mod tests {
             s.alloc_raw(std::ptr::null_mut(), tag(i));
         }
         unsafe {
-            assert_eq!((*first).value, tag(1));
+            assert_eq!(dyad::value(first), tag(1));
         }
         assert_eq!(s.len(), CHUNK * 2 + 1);
     }
@@ -389,8 +390,8 @@ mod tests {
         let mut s = Store::new();
         let n = s.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut());
         unsafe {
-            (*n).ty = n;
-            assert_eq!((*n).ty, n);
+            dyad::set_ty(n, n);
+            assert_eq!(dyad::ty(n), n);
         }
     }
 }

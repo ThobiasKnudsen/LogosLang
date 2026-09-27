@@ -7,6 +7,7 @@
 
 use super::numtype::STRING_TAG;
 use super::{meta, Cx};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::{Constructed, ParseError, Parser, ParsingTape};
 use crate::store::Store;
@@ -18,7 +19,7 @@ pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, STRING_TAG, meta::prec::LITERAL);
     let id = cx.string_;
     // SAFETY: `id` is the string type node the build allocated, its value null until now.
-    unsafe { (*id).value = record };
+    unsafe { dyad::set_value(id, record) };
     cx.declare("«[^»]*»", id);
     cx.metas.insert(id, construct);
     id
@@ -49,7 +50,7 @@ pub(crate) fn build_text(store: &mut Store, string_ty: DyadPtr, text: &[u8]) -> 
 /// `node` must be a string node built by [`build_text`] (its value the
 /// `[len, bytes]` blob), and the slice must not outlive the store.
 pub(crate) unsafe fn text<'a>(node: DyadPtr) -> &'a [u8] {
-    let p = (*node).value;
+    let p = dyad::value(node);
     let len = std::ptr::read_unaligned(p as *const u64) as usize;
     std::slice::from_raw_parts(p.add(8), len)
 }
