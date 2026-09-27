@@ -781,6 +781,9 @@ Nothing moved from this section.
 ### Lookup rides the scoped walk; the index only speeds things up
 - **History:** derived id → metadata index for that case, superseded 8 September 2026.
 
+### The store is keyed by address
+- **History:** until 28 September 2026 the seed read "the address is an index" as a raw `*mut Dyad`, the cell two raw pointers; the 32-bit index handle behind store accessors superseded that reading (#165).
+
 ## Standard library and ecosystem strategy
 
 Nothing moved from this section.

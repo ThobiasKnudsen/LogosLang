@@ -1002,7 +1002,8 @@ A binary `+` is one 16-byte cell pointing at its operands. An operand that uses 
 ### Numeric literals are uncommitted until context classifies them
 It can become any `int`, `uint` or `float`. Beside a typed value it takes that type: `a + 1` with `a` an `i32` is i32 addition. Two literals: the operation is exact on the reduced fraction (`[num, den]`, never text) and the result stays `rational_number` until it lands in a typed slot. Same concrete type keeps it; two *different* concrete types do **not** lower.
 - **Why:** one operator and one literal form for every numeric type, no suffixes (`1i32`, `1.0f`).
-- **Seed:** done over `i64` fractions; out of range is a clean error, not a wrap; arbitrary precision deferred.
+- **Ruled:** 28 September 2026, Thobias: a run-time rational is a 16-byte value `[num, den]` in its place, copied like a record; `1/3 + 1/6` at run writes its result into a frame slot and makes no node. **Why:** the fraction is the value; a node per operation grew the graph on every loop iteration.
+- **Seed:** done over `i64` fractions; out of range is a clean error, not a wrap; arbitrary precision deferred. Until #165 a rational value was the address of a literal node carried in the `i64` container.
 - **Source:** DESIGN.md l.166
 
 ### No implicit coercion; a numeric type applied to a value is the conversion
@@ -1142,6 +1143,8 @@ The name index (resident trie of bindings) never mis-resolves: each binding carr
 
 ### The calling convention is not part of `@exec`
 It lives in the code on both sides of the jump, both emitted by a backend from one abstract signature (the `input` binding's order and widths), so platform differences vanish where one compiler emits both. The signature survives sealing (a seal keeps the types read out, drops the body). Conventions are declared metadata, ordinary open-ended identities a backend renders per target, decisive only at the FFI boundary, where the foreign side froze its convention. Cost: interpretation pays a trampoline per call; co-compilation (including JIT promotion) may inline, re-register or delete the call; only real foreign code keeps an unremovable boundary.
+- **Ruled:** 28 September 2026, Thobias: every compiled function takes the run's **context** as its first argument and reaches nodes, `share` places, the call-depth counter and the fault channel through it (the pattern Wasmtime uses with Cranelift); locals and constants stay immediates. **Why:** code that bakes per-run addresses can run on no other thread and can never be written out (›Cached machine code comes back as foreign code‹), and the counter and the fault channel are the run's, not the thread's.
+- **Seed:** the one convention becomes `(context, argv, argc) -> i64` (#165); before it, `(argv, argc)` with the compiling thread's `CALL_DEPTH` cell and every node address baked.
 - **Source:** DESIGN.md l.185
 
 ### `compile` never fails on an uncompiled Logos callee
@@ -1248,6 +1251,8 @@ A write to `tape[k]` replaces the pointer, nothing more. A constructor that fini
 
 ### The executing primitive has two paths: jump to `bcode`, or walk the body
 `bcode` present: jump. Null: walk `body`. Interpretation is the null path, so deopt is just nulling `bcode`: fail-closed. No per-call check that `bcode` matches `body` (the checker's and deopt layer's job). Only the body-walk has a reflectable live stack; compiled code is an opaque leaf (frames on the machine stack), so inspecting a running function means deopting it first. The paths are simple primitives; choosing between them is policy, not theirs.
+- **Ruled:** 28 September 2026, Thobias: the fn record owns its compiled code; recompiling or deoptimizing retires it, and it is freed once no call of it is live. A compiled caller reads the callee's `bcode` entry at the jump, so a recompile reaches every caller and a nulled `bcode` sends them to the body-walk. **Why:** an artifact is a reader of the graph (›Compilation reads frozen structure; a structural write is deoptimization‹) and a dropped reader gives its memory back; freeing under a live call would pull code from under a running frame.
+- **Seed:** every compile leaked its module until #165.
 - **Source:** DESIGN.md l.189
 
 ### A function's surface is `fn (params) -> T (body)`, and its parameter list is a record type
@@ -1287,7 +1292,8 @@ Whether a `( )`'s value is used or thrown away is fixed by the construct around 
 
 ### Operands travel on the stack, so `run` and `compile` take no arguments
 `run` and `compile` each read their own fields (body, signature, code). The caller puts the call's operands on the stack and the callee's code reads them: the ordinary calling convention.
-Interpreted, each operand is copied from its dyad onto the stack per execution (the interpreter's standing cost, as in any bytecode VM). Compiled, the dyad is read once at compile time and operand access is baked into machine code (immediates inlined, locals in registers or stack slots), so compiled code touches no dyad at run time and runs at native speed.
+Interpreted, each operand is copied from its dyad onto the stack per execution (the interpreter's standing cost, as in any bytecode VM). Compiled, the dyad is read once at compile time and operand access is baked into machine code (immediates inlined, locals in registers or stack slots), so compiled code touches no dyad at run time and runs at native speed; the node or `share` place it does reach, it reaches as an offset from the run's context (next rule but one).
+- **Ruled:** 28 September 2026, Thobias: locals and constants stay baked; nodes and `share` places are context-relative.
 - **Why:** operands live on each thread's own stack, never in the shared graph. So execution is safe under concurrency by construction: the shared Logic Graph is unchanging code, and the changing per-call state is each thread's own stack frame. It is also what makes recursion work (each call gets its own frame), independent of and before any borrow checker.
 - **Source:** DESIGN.md l.195
 
@@ -1904,11 +1910,11 @@ Direction (recorded with the August ruling): gates over the view are the fine gr
 ### `:` reads a name's binding, `.` reads a thing's own fields
 Every declared name has one **binding** (the trie entry). Its fields: `scope`, `start`, `end`, `gate`, `name`, `lex_rank`, plus a pointer to the dyad that is not a spelling. `a:scope` is where `a` was declared.
 A binding is a value: a dyad of type `binding`. Its reading rule is "the dyad it names": read as a value it yields what that dyad yields, so a name can stand anywhere a value can. `:` reads a field of the binding itself, bypassing the reading rule; `.` reads through it. `a.x` reads `x` from a's value, `a:scope` reads `scope` from a's binding.
-A use of a name in code (an operand of `+`, the right side of `:=`, an argument) stores the binding, never the dyad. The tape hands a constructor the binding for a resolved spelling (*The scope's constructor is the driver*); the constructor stores the cell as it stands; the interpreter reads through the reading rule at run time; compiled code bakes the address. So code walking the graph that reaches a named operand holds its binding and asks it `:scope`, `:gate`, `:type` directly, with no index and no binding stored in the cell (*Meta-navigation*).
+A use of a name in code (an operand of `+`, the right side of `:=`, an argument) stores the binding, never the dyad. The tape hands a constructor the binding for a resolved spelling (*The scope's constructor is the driver*); the constructor stores the cell as it stands; the interpreter reads through the reading rule at run time; compiled code bakes the offset from the run's context (›The calling convention is not part of `@exec`‹). So code walking the graph that reaches a named operand holds its binding and asks it `:scope`, `:gate`, `:type` directly, with no index and no binding stored in the cell (*Meta-navigation*).
 An anonymous node is reached through a field that holds it: in `b := a + 1`, `b:start.rhs.type` reads the `+` node's type (`b:start` is the declaring `:=` node, since b's value is the number, not the code). A name gets you a binding, a binding gets you a dyad or a node, a node's fields get you more nodes, and only the first hop uses `:`. Exception: a constructed node reached by path answers `:scope`, `:start`, `:end`, `:gate` from the path (*Meta-navigation*, 8 September 2026).
 A `:` read the binding has no field for is a checked error, exactly as a `.` read the type does not declare.
 - **Why:** with the reverse index and the in-cell binding both rejected, a use pointing at the bare dyad would leave the binding unreachable by structure. A binding that is a value makes `:` a field read like any other, not a second mechanism. `:` and `.` are two operators because they read two levels (next rule).
-- **Ruled:** 7 September 2026 (`:` reads the binding; `id_context` renamed `binding`, see *`mut` is a gate on the binding*); 8 September 2026 (a binding is a value, a use points at it); 14 September 2026 (`name`, `lex_rank` added).
+- **Ruled:** 7 September 2026 (`:` reads the binding; `id_context` renamed `binding`, see *`mut` is a gate on the binding*); 8 September 2026 (a binding is a value, a use points at it); 14 September 2026 (`name`, `lex_rank` added); 28 September 2026, Thobias: compiled code reaches a node through the run's context, not a baked address.
 - **Seed:** since 8 September 2026 (#70); a constructed node's `:start`/`:end`/`:gate` are null.
 - **Source:** DESIGN.md l.213
 
@@ -2038,6 +2044,8 @@ The **source graph** is file-backed, persistent, and the program's identity; a b
 Runtime structure is reflected on like source: by walking the structure, found by reachability from the use sites that reference it. There is no value-level or time-travel reflection: a value to inspect is stored in a variable, as in any language; rebuilding past states is the debugger's job over DAP.
 Reproducibility needs no separate levels: a build reads only the files, and comptime runs without I/O, so the artifact is a pure function of the source. Cleanup needs none either: derived and runtime structure share the lifetimes of the scopes that make them, so when a scope ends its generated graph is freed like any data. That is *reclamation*, the effect-free return of memory, the one thing that stays implicit because it runs no teardown; anything with real teardown carries constructor-inserted `defer` structure (*Memory and concurrency*). When the program ends, everything generated is gone.
 The runtime may change the source, but only on explicit command, a **promotion**: its dependencies are closed over; it must be free of runtime-only inputs (or have them reified as constants); it is copied out of its arena, unparsed to a source diff, re-checked, and committed under gate. Source is never silently rewritten. Unparsing any subgraph back to text is a presentation and serialization tool, not the reflection mechanism.
+- **Seed:** the runtime graph's arena is the **node frame** (#165): a stack of run-time cells inside the store span, marked when a call or a scope begins and cut back when it ends, the twin of the frame stack. Named 28 September 2026, Thobias; not built yet.
+- **Open:** the node that leaves a call, as its result (›A last value moves out‹) or by a write into an older node or place: hand the node frame up to the caller, or copy the node out. Deferred 28 September 2026.
 - **Source:** DESIGN.md l.225
 
 ### A scope may have several versions
@@ -2187,6 +2195,8 @@ An identity is an interned handle in a backing store with stable addresses (arra
 - A content → id hash is a *separate, optional* index, only where **sharing** is wanted: interned canonical identities (one `i32` everywhere) and the e-graph. Source nodes are not deduped: each `a + a` is its own node.
 - Ids are *per-run*, never persisted. The durable form is source text (files canonical; promotion serializes by unparsing); the graph is rebuilt at load, with throwaway content-keyed caches where startup cost warrants.
 - Anything that survives a session (caches, compiled artifacts, certificates) keys by content or structure, never by id.
+- **Ruled:** 28 September 2026, Thobias: the seed's handle is a 32-bit index into one reserved span (address = base + index × 16); the cell keeps its 16 bytes as a 32-bit type index, 32 spare bits and a 64-bit value word, behind the store's accessors, so "is this a node" is a bound check. **Why:** once the store is one span an index reads as fast as a pointer, and it is what makes freeing, a second thread and a cached artifact possible.
+- **Open:** the 8-byte header layout (a node one pointer, the type the value's first word): not chosen while a fresh cell is stamped (`tape[0]:type = T`) after it exists, since a block cannot be allocated before its type is known; revisit with that protocol.
 - **Source:** DESIGN.md l.261
 
 ### Names are an optional index, not the management mechanism
