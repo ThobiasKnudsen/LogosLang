@@ -57,6 +57,14 @@ impl Cell {
         false,
     );
 
+    fn facts_from(&mut self, from: &Cell) {
+        self.path = from.path;
+        self.origin = from.origin;
+        self.target = from.target;
+        self.hole = from.hole;
+        self.owning = from.owning;
+    }
+
     /// The cell placed over `dyad`, its facts cleared.
     fn over(&mut self, dyad: DyadPtr) {
         let (path, origin, target, hole, owning) = Self::NO_FACTS;
@@ -474,6 +482,12 @@ impl ParsingTape {
     pub fn place_bracket(&mut self, dyad: DyadPtr) {
         self.place(dyad);
         self.at_mut(0).expect("placed above").bracket = true;
+    }
+
+    /// A bracket standing as its one expression stands with that expression's facts.
+    pub fn place_bracket_cell(&mut self, cell: Cell) {
+        self.place_bracket(cell.dyad);
+        self.at_mut(0).expect("placed above").facts_from(&cell);
     }
 
     /// An infix constructor's splice: `tape[-1]`, the center and `tape[+1]`
@@ -1664,7 +1678,7 @@ struct Context<'a> {
     lifted: Vec<(usize, DyadPtr)>,
     /// Body items a constructed segment yielded, in source order, not yet
     /// handed out.
-    queued: std::collections::VecDeque<DyadPtr>,
+    queued: std::collections::VecDeque<Cell>,
     /// The last `=` node built and the scope it was built in.
     last_write: (DyadPtr, DyadPtr),
     /// Whether the constructor now running was woken at discovery, its token
@@ -5603,6 +5617,7 @@ impl<'a> Parser<'a> {
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
         let (scope, key) = self.parse_block()?;
+        let key = key.dyad;
         self.expect_close_sq()?;
         // An index right after a tape value is the element read, a slot node
         // the identity to its left owns; after a `.` it stays a passive cell.
@@ -6263,12 +6278,17 @@ impl<'a> Parser<'a> {
     /// `[expr0 … exprN, null]` yielding the trailing one, itself the scope
     /// its declarations live in (DESIGN ›A scope's value is what it evaluates to‹).
     pub fn parse_sequence(&mut self) -> Result<DyadPtr, ParseError> {
+        self.parse_sequence_cell().map(|c| c.dyad)
+    }
+
+    /// [`Self::parse_sequence`] as the cell, its facts with it.
+    pub(crate) fn parse_sequence_cell(&mut self) -> Result<Cell, ParseError> {
         self.parse_block().map(|(_, value)| value)
     }
 
     /// [`Parser::parse_sequence`], with the scope the block opened, whose `dyads` hold
     /// every line whatever the value collapsed to.
-    fn parse_block(&mut self) -> Result<(DyadPtr, DyadPtr), ParseError> {
+    fn parse_block(&mut self) -> Result<(DyadPtr, Cell), ParseError> {
         // `open` has one entry per open scope, so its length is the nesting
         // depth; past the limit the parse is the checked error, not a Rust stack overflow.
         if self.cx.open.len() >= MAX_BRACKET_DEPTH {
@@ -6278,15 +6298,18 @@ impl<'a> Parser<'a> {
         let narrowed = self.cx.narrow_next.take().into_iter().collect();
         self.cx.open.push(OpenScope { narrowed, ..OpenScope::default() });
         let array_ = self.types.array_;
-        while let Some(item) = self.parse_next() {
-            let item = match item {
-                Ok(item) => item,
+        // SAFETY: null is a legal cell dyad.
+        let mut last = unsafe { Cell::built(std::ptr::null_mut()) };
+        while let Some(item) = self.next_cell() {
+            last = match item {
+                Ok(cell) => cell,
                 Err(e) => {
                     self.cx.scopes.pop();
                     self.cx.open.pop();
                     return Err(e);
                 }
             };
+            let item = last.dyad;
             // SAFETY: the pending bindings were minted by this parser's declares;
             // `scope` is the innermost open scope, minted by `open_scope` above.
             unsafe { self.cx.scopes.close_item(self.rt.store, array_, item) };
@@ -6330,12 +6353,17 @@ impl<'a> Parser<'a> {
             // with nothing to run, yielding unit.
             (0, _) => {
                 // SAFETY: `scope` was minted by `open_scope` above and is unaliased.
-                unsafe {
+                let cell = unsafe {
                     crate::identities::scope::fill(scope, self.types.ops.scope_);
-                }
-                Ok((scope, scope))
+                    Cell::built(scope)
+                };
+                Ok((scope, cell))
             }
-            (_, 1) => Ok((scope, exprs[0])),
+            (_, 1) => {
+                // SAFETY: `exprs` are reduced dyads from the store.
+                let expr = unsafe { Cell::built(exprs[0]) };
+                Ok((scope, if last.dyad == exprs[0] { last } else { expr }))
+            }
             _ => {
                 // Outside a function a `return` before the tail has nothing to leave.
                 let types = self.types;
@@ -6395,10 +6423,11 @@ impl<'a> Parser<'a> {
                     }
                 }
                 // SAFETY: `scope` was minted by `open_scope` above and is unaliased.
-                unsafe {
+                let cell = unsafe {
                     crate::identities::scope::fill(scope, self.types.ops.scope_);
-                }
-                Ok((scope, scope))
+                    Cell::built(scope)
+                };
+                Ok((scope, cell))
             }
         }
     }
@@ -6588,6 +6617,11 @@ impl<'a> Parser<'a> {
     /// type body: a comment node or one expression, an optional `,` after it
     /// consumed. `None` at the sequence's end. Where parse order is run order the item is left pending.
     pub fn parse_next(&mut self) -> Option<Result<DyadPtr, ParseError>> {
+        self.next_cell().map(|item| item.map(|c| c.dyad))
+    }
+
+    /// [`Self::parse_next`] as the cell, its facts with it.
+    fn next_cell(&mut self) -> Option<Result<Cell, ParseError>> {
         loop {
             // What the last segment yielded, its expression and the prose
             // lifted out of it, goes out first.
@@ -6595,7 +6629,7 @@ impl<'a> Parser<'a> {
                 // Where parse order is run order the item is pending: it runs
                 // when the pass needs a value or when its scope runs.
                 if self.cx.runtime_depth == 0 {
-                    self.cx.open.last_mut().expect("the root scope is open").unrun.push(item);
+                    self.cx.open.last_mut().expect("the root scope is open").unrun.push(item.dyad);
                 }
                 return Some(Ok(item));
             }
@@ -6633,9 +6667,13 @@ impl<'a> Parser<'a> {
                 // SAFETY: `item` is a reduced dyad just constructed.
                 unsafe { self.fill_if_sibling_write(item.dyad) };
             }
-            let mut ordered = std::mem::take(&mut self.cx.lifted);
+            let mut ordered: Vec<(usize, Cell)> = std::mem::take(&mut self.cx.lifted)
+                .into_iter()
+                // SAFETY: a lifted comment cell holds a node from the store.
+                .map(|(start, d)| (start, unsafe { Cell::built(d) }))
+                .collect();
             if let Some((item, start)) = items.pop() {
-                ordered.push((start, item.dyad));
+                ordered.push((start, item));
             }
             ordered.sort_by_key(|&(start, _)| start);
             self.cx.queued.extend(ordered.into_iter().map(|(_, n)| n));
