@@ -1,6 +1,6 @@
 # Logos: A Unified Programming System
 
-**What this is.** The ruling design document of Logos, in the shape it took on 27 September 2026: one rule per heading, the live rule first in plain present tense, then its reason, its ruling, what was rejected, what is open, what the seed does, and its history, each on its own line. It replaced the earlier DESIGN.md, one paragraph per topic with the history inline, whose last version is git commit e75bcdc. The **Source** bullets cite that version's line numbers, so `DESIGN.md l.189` means line 189 of e75bcdc. A pointer at a rule from code, an issue or a note names the rule's heading, ›like this‹, never a line number: headings hold still and lines do not.
+**What this is.** The ruling design document of Logos, in the shape it took on 27 September 2026: one rule per heading, the live rule first in plain present tense, then its reason, its ruling, what was rejected, what is open, what the seed does, and its history, each on its own line. It replaced the earlier DESIGN.md, one paragraph per topic with the history inline, whose last version is git commit e75bcdc. The **Source** bullets cite that version's line numbers, so `DESIGN.md l.189` means line 189 of e75bcdc. A pointer at a rule from code, an issue or a note names the rule's heading, ›like this‹, never a line number: headings hold still and lines do not. DESIGN_HISTORY.md holds, under the same headings, everything that left this file on 27 September 2026.
 
 **How to read a rule.**
 - The heading is the claim; the text under it is the rule as it stands today.
@@ -9,7 +9,7 @@
 - **Rejected:** alternatives turned down; "to stay rejected" where DESIGN.md says so.
 - **Open:** what is not decided.
 - **Seed:** what the Rust seed does today, its stand-ins and issue numbers.
-- **History:** one line per superseded rule: the old rule, when it changed, why.
+- **History** is not in this file: what a rule superseded, when and why, with the seed detail and the quotes that left this file, stands in DESIGN_HISTORY.md under the same heading.
 - **Source:** the DESIGN.md line(s) the rule comes from. DESIGN.md's `##` sections stand here in the same order, so a section is found by its old name.
 - **CONFLICT:** two passages of DESIGN.md that both read as live and disagree; both are quoted. These are questions for Thobias, not rulings.
 
@@ -26,25 +26,25 @@ Kept in the old spelling because the current one is not written anywhere: `mk :=
 
 **Conflicts found by the rewrite, and how Thobias ruled them on 27 September 2026.** Each rule below carries its ruling; the paragraph form at e75bcdc holds the same rulings inline at the lines named.
 1. l.71 against l.69: dissolved. A conjecture states a boolean and a call yields the other side of a fact; the `->` mapper and the value/truth split are history (›A conjecture states a boolean…‹, first rule of ›The proof layer‹).
-2. l.99 against l.75: l.99 superseded; branches stand alone (›Branches and universes‹).
+2. l.99 against l.75: l.99 superseded; branches stand alone (DESIGN_HISTORY.md ›Branches and universes‹).
 3. l.108 against l.107: the 20 September removal covered the value slot only; a later gate line, `immut x` or `lock x`, is admitted from the declaring scope and below (›A gate is a node of the body‹).
 4. l.127 against l.135: on an unlocked name `mut` may return after `immut`; "the reverse flip" means un-freezing a locked set (›`immut x` removes `mut`; `lock` seals the gate set‹).
 5. l.127 against l.107: after `immut x` no entry says true to a write of the value (same rule).
 6. l.119 against l.107: filling a valueless declaration needs `mut`, `mut key := T ?`; the `?` entry only refuses reads (›Filling a valueless declaration needs `mut`‹).
-7. l.131 against l.207: l.207 wins; every slot fill carries `share` (›`share` means one place…‹).
+7. l.131 against l.207: l.207 wins; every slot fill carries `share` (›Two muts, and the storage partition‹).
 8. l.145 against l.189: the signature is the slot's declaration in `type`'s own definition, so `share parse = (…)` carries no arrow; and error values move into v0.1.0 (›Error handling‹).
-9. l.178: the old sentence superseded; `,` stands between every two expressions (›`,` outranks a type's optional operand…‹).
+9. l.178: the old sentence superseded; `,` stands between every two expressions (›`,` outranks a type's optional operand: `f(i32 3)` is one argument, `f(i32, 3)` two‹).
 10. l.180: reworded; a dyad whose type is neither a `fn` nor carries a `run` is never run (›Hosted text does not owe a single reading‹).
 11. l.191: `[ ]` is the identity `square_brackets`; after a value it indexes, otherwise it is a list (›Brackets divide by role‹).
-12. l.189: compiling a function compiles every run body it reaches; a named callee only by its own compile; the spelling is `compile f`, `f.compile()` superseded (›`fn` is not a primitive…‹).
+12. l.189: compiling a function compiles every run body it reaches; a named callee only by its own compile; the spelling is `compile f`, `f.compile()` superseded (›`fn` is not a primitive: a function is a type in this same shape‹).
 13. l.201: no shadowing, fields included; the seed's outer-stack check is right (›Fields are read with a dot outside their scope‹).
 14. l.211 against l.203: `a[k] = v` writes; the open note is closed (›A call that ends in a dereference is a place‹).
 15. l.221 against l.375: l.375 wins; an importer reaches only `pub` names in v0.1.0, the view stays readable (›`import` is the one identity that loads a file‹).
-16. l.241: the sentence making `a:type` an error was superseded on 23 September; `:dyad` is the long form again since 27 September, so the example stands (›A constructed node answers `:` from the path…‹).
-Also ruled the same day, outside the sixteen: `a:type` and `a:value` are short forms of `a:dyad.type` and `a:dyad.value`, `:dyad` and `:value` not retired (›`a:type` reads the type…‹); `alloc` returns `@T!` (›The heap is explicit‹); and the error model (›Error handling‹).
+16. l.241: the sentence making `a:type` an error was superseded on 23 September; `:dyad` is the long form again since 27 September, so the example stands (›A constructed node answers `:` from the path it was reached by‹).
+Also ruled the same day, outside the sixteen: `a:type` and `a:value` are short forms of `a:dyad.type` and `a:dyad.value`, `:dyad` and `:value` not retired (›`a:type` reads the type of the value a name stands for‹); `alloc` returns `@T!` (›Explicit heap, and no implicit destruction‹); and the error model (›Error handling‹).
 Noted without a CONFLICT mark: `share` now names both the co-owning reference word (`share @T`) and the placement mark; `immut` both removes an entry and is a veto; `?` is a run-time value (l.119) and also "inert, making any build that reaches it incomplete" (l.135); l.34 calls `hashmap` pending where its seed note says it works; l.207 says "Seed: not yet (#153)" where dev b2b854c has it; l.375 places `exp` and `ln` in power.logos where d9a78cd moved them to their own files.
 
-**Size.** The paragraph form was 470 KB in 383 lines; this form is about 410 KB in 388 rules. The rules are the same rules. The saving is in finding them, not in their number; a real cut needs decisions on what may leave (dated quotes, per-rule seed status).
+**Size.** The paragraph form was 470 KB in 383 lines; this form is about 335 KB in 345 rules, with 90 KB more in DESIGN_HISTORY.md. The rules are the same rules. The saving is in finding them, not in their number; a real cut needs decisions on what may leave (dated quotes, per-rule seed status).
 
 ### How to read this document
 Top-down: vision and architecture first, then detail. Some later sections (identity recognition, representation internals) describe a target not yet tested against a real corpus; they are flagged where they appear. A live rule carries *ruled* or *settled* plus a date; a dead one is marked *superseded*. Search for those words to list either.
@@ -55,7 +55,6 @@ Top-down: vision and architecture first, then detail. Some later sections (ident
 **v0.1.0** is the preview, the first public milestone. **v1.0.0** is the release, the stability promise. The *seed* is the Rust program that runs at every version until self-hosting replaces it; it is never a version.
 - **Why:** the old words *v1* and *Core* each had two readings, and "a stage word with two readings is a ruling nobody can check".
 - **Ruled:** 5 September 2026. Who is not stated.
-- **History:** *v1* and *Core* respelled by meaning, 5 September 2026. (l.89 still says "Core".)
 - **Source:** DESIGN.md l.3
 
 ## The core vision
@@ -73,7 +72,6 @@ Static memory safety through a borrow checker (lexical lifetimes, no GC, explici
 LG code is interpreted by default. Any function can be explicitly JIT compiled with Cranelift, faster in most cases. Mutable code too: a structural edit to compiled code drops the compiled form and falls back to interpretation (›Mutable code is compilable‹).
 - **Why:** whether to compile is a question of profit, never of what the code means.
 - **Ruled:** 27 September 2026, Thobias: "mut functions should also be compilable".
-- **History:** until 27 September 2026: "an immutable (frozen) region can be explicitly JIT compiled … whereas mutable code stays interpreted". Dropped because it disagreed with ›Mutable code is compilable‹ and with the 7 September 2026 ruling that there is no frozen state.
 - **Source:** DESIGN.md l.11
 
 ### Reflection needs the LG form
@@ -130,16 +128,15 @@ The line runs between callables and data, not between seed and user code. Every 
 Never by ordering the Logos definitions. Each identity in the cycle (`array`'s chooser keeps its mints in a map; a map is built on an array) has a native version in the seed first, and the Logos definitions replace them one at a time.
 - **Why:** Thobias: "likely have some version of each identity that runs in rust before defining all in LogosLang".
 - **Ruled:** applied 23 September 2026, Thobias.
-- **Seed:** the 23 Sept text calls `hashmap` "a native the seed owes, pending"; the 25 Sept seed note (#137, below) describes it as present.
+- **Seed:** done since 25 September 2026 (#137); the 23 September 2026 text said pending.
 - **Source:** DESIGN.md l.34
 
 ### A declared hashmap is the empty map: `m := hashmap K -> V`
-`m` is readable at once. `m[k]` on a missing key hands back `?` or is the checked error, as the value type's tolerance for `?` decides; `m[k] = v` fills it. Example: `share array_mints := hashmap type -> type` inside `get_mint`, identities/array.logos (chooser mechanics under ›Representation, elaboration, and lifetimes‹). Chosen knowing it reads unlike `t := array i32` (leaves the mint standing as a type value, ›A type is a comptime value‹) and `x := i32` (names the type): alike spellings, different meanings, since `hashmap`'s constructor decides what its bare form gives, as tolerance for `?` is written per constructor.
+`m` is readable at once. `m[k]` on a missing key hands back `?` or is the checked error, as the value type's tolerance for `?` decides; `m[k] = v` fills it. Example: `share array_mints := hashmap type -> type` in `array`'s body, identities/array.logos (26 September 2026; ›`array` is a chooser‹) (chooser mechanics under ›Representation, elaboration, and lifetimes‹). Chosen knowing it reads unlike `t := array i32` (leaves the mint standing as a type value, ›A type is a comptime value‹) and `x := i32` (names the type): alike spellings, different meanings, since `hashmap`'s constructor decides what its bare form gives, as tolerance for `?` is written per constructor.
 - **Why:** a declared container has a known value, empty, so nothing is unknown and the read veto of ›Declarations are immutable by default‹ has nothing to guard. Thobias: "The hashmap is empty after it's first declared so there shouldn't be any problem"; he chose the bare spelling when asked.
 - **Ruled:** 25 September 2026, Thobias.
 - **Open (to Thobias):** is `m := hashmap K -> V ?` refused ("a hashmap is never unknown") or what the seed makes it (the same empty map, no veto)? Does the bare type want its own spelling?
-- **Seed:** (#137) `hashmap K -> V` places a fresh empty map, and the interned type only where `?` follows, so `(w := hashmap K -> V ?)` stays a parameter. The type is read off a map: `m:type` or `(hashmap K -> V):type`.
-- **History:** first a top-level `array_mints := …`; inside `get_mint` with the mark since 25 September 2026. The mark `shared` was renamed `share` on 26 September 2026 (l.207).
+- **Seed:** done (#137); `hashmap K -> V ?` stays a parameter, and the type is read off a map, `m:type`.
 - **Source:** DESIGN.md l.34
 
 ### The Logos IR sits between the Logic Graph and every backend
@@ -198,13 +195,11 @@ Opt-in decreasing measures for functions that take part in proofs. Functions wit
 
 ### Top tier: any mathematical statement about a program is statable and provable
 How: proofs are rewrite rules and `proof` is its own type (›The proof layer‹).
-- **History:** was "full dependent types and proof terms: types depending on values, propositions as types, proofs as programs, checked by a small trusted kernel". Superseded in discussion, August 2026: statable-and-provable stands, the propositions-as-types shape does not.
 - **Source:** DESIGN.md l.61
 
 ### A rewrite rule is its own proof, so verification composes with rewriting
 The rule *is* the proof; its derivation is the body the trusted core checks. So simplification provably preserves the property (equality, refinement satisfaction, numerical equivalence within tolerance). A verified CAS comes out as a library.
 - **Ruled:** sharpened in discussion, August 2026.
-- **History:** first "each rewrite rule can carry a proof"; August 2026: the rule does not carry a proof, it is one.
 - **Source:** DESIGN.md l.63
 
 ## The proof layer
@@ -216,19 +211,8 @@ A derivation is a chain of relations, each step citing its conjecture where it a
 - **Checker rules (Claude's, ruled with the form):** a call whose yielded side holds a hole the argument did not bind is refused (`zero(0)` on `a * 0 == 0`); an argument matching both sides of a fact (`x + 0` against `a + 0 == a`) is read both ways and the reading that makes the next line hold is taken, so the written next line decides; relations compose down a chain by a table for the core relations (`==` with any relation is that relation, `<` with `<=` is `<`, `<` with `>` is refused, a chain proving `<` also proves `<=`), a relation the core does not know composing only through a cited transitivity conjecture; `!=` does not chain, so a `!=` fact is a single step.
 - **Why:** Thobias: "it would be nice to be able to write a+a == 2*a and to use this conjecture called double you write double(x+x) == 2*x … you know which way to travel by which side the content inside double parenthesis matches". A conjecture then reads as mathematics is written and is one object, not a value rule beside a truth twin; equality saturation is undirected already and which way a simplifier goes is the cost function's business; a chain of cited relation steps is Lean 4's `calc` block.
 - **Ruled:** 27 September 2026, Thobias.
-- **History:** supersedes the `->` mapper (the statement as `pattern -> replacement`, "the left side is what is recognized", "two recognizers, two conjectures"), "a chain of `->` steps", "the relation a mapping preserves is fixed by what it maps" with the `S -> true` truth-rule form and goal reduction, the rejection of a relation symbol between derivation lines, and "the truth rule is the primitive". Those rules stand below as the superseded record. `->` stays where it is a type arrow, `fn (…) -> T` and `hashmap K -> V`.
-- **Seed:** nothing; the proof layer is v1.0.0 standard-library work.
+- **Seed:** nothing; v1.0.0 standard-library work.
 - **Source:** DESIGN.md l.69, l.71
-
-### A conjecture is statement, context, evidence (superseded record, 27 September 2026)
-`half := conjecture ( (a + a) / a -> 2 ) where ( a:type is number and a != 0 ) proof ( … )`
-- The statement holds `pattern` and `replacement` as one `->`. **Left side: what is recognized. Right side: what it becomes.** `a + a -> 2 * a` recognizes the sum and yields the product; `a + a == 2 * a -> true` recognizes the equation and yields `true`. Two recognizers, two conjectures, never one object read two ways.
-- `where` holds **one boolean**, the `premises`. A hole's type is a premise, not a declaration: `a:type is number`, `is` being membership in the collection of numeric types (›Element access is `[…]`‹).
-- `proof` holds the `derivation`. The `world` is computed.
-- **Ruled:** in discussion, 6/7 September 2026; left/right precision and `is` 8 September 2026.
-- **Rejected:** `== generic_number` (`==` on types is identity, and inheritance is rejected); `where (a := generic_number ?, …)` (a hole's type is a premise).
-- **History:** `a:dyad.type` respelled `a:type` 23 September 2026. August spellings superseded by this form (see ›A proof is its own type‹).
-- **Source:** DESIGN.md l.69
 
 ### The signature is a pattern: an unknown spelling in it is a hole
 The same spelling is the same hole. This is the one place an unknown spelling may stand anywhere but left of `:=` (›A language is a section with an authored start‹): the regex capture group lifted to the graph.
@@ -246,22 +230,6 @@ The same spelling is the same hole. This is the one place an unknown spelling ma
 A statement without `proof (…)` has derivation `?`, attached later through the field, `half.proof = ( … )`; the slot is writable until defined. Such a conjecture is an axiom exactly where a scope's rule set registers it (›The branch is the axiom-closure‹); cited elsewhere it enters the citing proof's world as an assumption. A root theorem is proved from the base exactly when its world holds nothing else. `theorem`, `axiom` and open are states the identifier reports (accepted derivation / registered without one / neither), not types.
 - **Rejected, to stay rejected:** the `axiom` keyword.
 - **Ruled:** in discussion, 6/7 September 2026.
-- **Source:** DESIGN.md l.69
-
-### A derivation is a chain of `->` steps (superseded record, 27 September 2026: a chain of relations, see the first rule of this section)
-`->` is the *mapper*: directed, "convert this form into that", target named. A boolean operator is a *relation* and names no target, so only `->` stands between lines. Each right side holds one call of the cited conjecture at the position it applies, its argument the pattern instance, checked against the previous line's reduced form. A line with no call is an identity step showing the reduced form. The trailing form is the replacement:
-`proof ( (a + a) / a -> double(a + a) / a -> mul_div_assoc((2 * a) / a) -> 2 * div_self(a / a) -> mul_one(2 * 1) -> 2 )` (`div_self`'s premise `a != 0` is `half`'s own).
-- **Rejected, to stay rejected:** a relation symbol or implication symbol between lines. The mapper is what a step is; the relation it preserves is the cited rule's.
-- **Ruled:** in discussion, 6/7 September 2026.
-- **Source:** DESIGN.md l.69
-
-### The relation a mapping preserves is fixed by what it maps (superseded record, 27 September 2026: steps carry their relation and compose by the table, see the first rule of this section)
-- Over **values**: equality. A step rewrites a subterm anywhere; accepting the conjecture merges its two sides into one equality class (the engine's *known equal*).
-- Over **booleans**: goal reduction, the left implied by the right. `a <= c -> (a <= b and b <= c)` reads "a <= c reduces to those two". A truth rule `S -> true` is a chain from S down to `true`: `x <= x^2 + 1 -> 0 <= x^2 - x + 1 -> 0 <= (x - 1/2)^2 + 3/4 -> true`, each step citing an iff rule, a value rewrite inside the line, or a rule whose right side is `true`, as written by hand.
-- No relation slot. "A implies B" is the reduction `B -> A`, or the truth rule `(A => B) -> true` cited through modus ponens.
-- **Why:** it follows from the recognizer reading with nothing added (for a value the sides are equal; for a boolean the right side is what is left to show). Goal reduction is the direction the coherentist backward search already walks, so written and searched proofs read alike. A relation slot would add a spelling and a composition table for a case the boolean chain covers.
-- **Ruled:** 8 September 2026.
-- **History:** superseded 8 September 2026: the composed relation ("`==` with `<=` is `<=`", `x <= x^2 + 1` proved by mapping `x` to `x^2 + 1`) and "steps cite truth rules only: a value rule is the reading of an accepted equation, never a second object".
 - **Source:** DESIGN.md l.69
 
 ### Implication lives in two places, neither the chain
@@ -296,21 +264,13 @@ The behavioural merge with `fn`. The argument is the shape, holes bind by matchi
 ### `where` is checked where it can be
 What the pass decides (type premises, premises over comptime values) is checked there; the rest becomes a residual each call checks at run time. In v0.1.0 a `where` may hold only what the pass decides; a run-time residual is the checked error until the refinement tier lands.
 - **Ruled:** 8 September 2026.
-- **History:** "fn a type, proof a shape" superseded: both arrows are followed by a shape, a bare type being the shape "a value of that type".
 - **Source:** DESIGN.md l.69
 
 ### A proof is its own type, merged with `fn` in behaviour, never in structure
 Both bind typed identities, carry bodies and share `->`; each type's constructor decides what may follow its arrow. A proof also stores `pattern`, `replacement`, `premises`, `derivation`, and its **world** (the axiom set it rests on). Being an ordinary type makes it an ordinary *value*: a sorted array can hold beside its bytes the proof of its ordering. Premises are extra inputs that must rewrite to true at the site (implication); typed holes are quantification; `==` and kin stay plain boolean operators.
 - **Ruled:** in discussion, August 2026; respelled 6/7 September 2026 by the conjecture form, this substance standing.
 - **Rejected, to stay rejected:** usage verbs on proposition types (`forward`/`backward` on `==`); the proposition-as-output-type spelling `fn (a) -> (a + a == 2 * a)`.
-- **History:** superseded propositions-as-types (August 2026). Superseded August spellings: `p1 := proof (a := generic_number ?, a + a) -> (2 * a) ( … )`, `proof (a := generic_number ?, a + a == 2 * a) -> true ( … )`, `proof (a := generic_number ?, a != 0, a / a) -> 1`.
 - **Source:** DESIGN.md l.71
-
-### Truth rules and value rules (superseded record)
-A **truth rule** states any proposition whatever.
-- **Ruled:** 27 September 2026, Thobias: dissolved. A conjecture is one boolean statement, and calling it yields the other side of a fact (›A conjecture states a boolean…‹); there is no value rule beside a truth twin.
-- **History:** l.71 (August 2026): "The truth rule is the primitive: a value rule is accepted exactly when its truth counterpart holds." l.69 (6 to 8 September 2026): "two recognizers, two conjectures, never one object read two ways". Both superseded.
-- **Source:** DESIGN.md l.69, l.71
 
 ### The trusted core checks derivations and demands totality
 Checking the chain (every step cites an already-accepted proof or axiom) is the core's whole job. Only the core may accept a body as evidence. It demands totality: a non-terminating body would prove anything.
@@ -322,7 +282,6 @@ An axiom is asserted, never derived. Induction is one: higher-order (one premise
 
 ### Application is the rewriting engine unchanged; matching is fail-closed
 Matching binds holes (calling in reverse). A non-linear pattern like `a + a` needs both slots to hold the same `a`: *known equal*, meaning same content or proven equal by the rules applied so far (the engine's equality class); with no engine running, the same dyad by address. Fail-closed; the binding is checked against the hole's declared type. The engine applies rules non-destructively under equality saturation, extracting by cost under budget, so registered directions never ping-pong and a goal not reached in budget is not proven.
-- **History:** wording amended in discussion 30 August 2026: "by address" is the case with nothing yet proven.
 - **Source:** DESIGN.md l.71
 
 ### Rule sets as values carry the ecumenical system over unchanged
@@ -332,19 +291,16 @@ A scope (section, sub-language, import) registers the rule set it accepts; an ax
 ### Proofs are a layer over the Logic Graph, not a property of the substrate
 The node model classifies a value by its `type` pointer, ending in the self-referential `type : type`. That loop is sound as *operational* machinery (never read as a logic) but inconsistent as a logic (Girard's paradox), so the proof system does not build on it. A proof is an ordinary, distinguishable, reflectable value; no type of types is involved; erasure is an optimization. Stratification returns only if rules quantifying over rules (induction as a higher-order axiom) are shown to admit a paradox.
 - **Ruled:** 30 August 2026, in discussion.
-- **History:** superseded 30 August 2026, because proofs as rewrite rules involve no type of types: the `universe_of` classification stored per node beside `type_of` (the Lean/Coq universe treatment); the predicative tower `Universe 0 : Universe 1 : …`; `Prop` as impredicative, proof-irrelevant, erased before codegen; connectives (`False`, `And`, `Or`, implication, `Forall`, `Exists`, equality) as inductive and function types; Curry-Howard at the representation level; kernel obligations (checking stored universes, strict positivity, definitional equality only on the terminating tagged fragment, no elimination from `type : type` into `Prop`). The June 2026 open question (proof-irrelevant `Prop` needing the large-elimination restriction, or proof-relevance) is closed by the proof-relevant reading above.
 - **Source:** DESIGN.md l.73-81
 
 ### The sound layer can reason about any node, but not its own consistency
 It can prove properties of *any* LG node (the substrate and the proof system itself included) by reasoning over representations and an operational model, treating substrate types as syntax and never lifting substrate classification into logical truth (the CompCert/MetaCoq discipline). It verifies everything above it. By Gödel's second theorem it cannot prove its own consistency; that part is trusted by hand-audit.
-- **History:** the same paragraph defined a theorem as "a definition whose type is a proposition and whose value is a kernel-checked term" and an axiom as "a proposition declared with an empty value slot": propositions-as-types, superseded August 2026 (l.71). Now theorem/axiom/open are states (›No proof means derivation `?`‹).
 - **Source:** DESIGN.md l.83
 
 ### The proof layer ships in v1.0.0's standard library, not in the seed
 The substrate runs without it, so it ships after the base language, in the standard library, **inside v1.0.0**: refinements, the rewrite-rule proof layer, its trusted core, the ecumenical system. The proof kernel is an ordinary importable library, trusted only by code that opts in, so it never enlarges the seed's mandatory trusted base (still the single core everything is processed by). Everything on top (connectives, theorems, tactics) is *checked* by it, not trusted.
 - **Why v1.0.0:** the release is the completeness promise (›Completeness, not cleanliness‹); leaving verification out would leave exactly the hole downstream fills differently.
 - **Ruled:** 5 September 2026.
-- **History:** ›Feasibility‹'s "not needed for an initial release", superseded 5 September 2026.
 - **Source:** DESIGN.md l.85
 
 ## The ecumenical proof system
@@ -372,11 +328,6 @@ Backward search reduces a goal to the sub-statements that would establish it, re
 - **Why:** humility: the system corrects itself the instant a proof or contradiction arrives, keeping every still-consistent branch alive.
 - **Source:** DESIGN.md l.97
 
-### Branches and universes (superseded record)
-- **Ruled:** 27 September 2026, Thobias: l.99 superseded. Branches stand alone; the universe remark returns only if the paradox case of ›Proofs are a layer over the Logic Graph‹ ever appears. Reason: the 30 August ruling already says when stratification comes back.
-- **History:** l.99 (June 2026 direction): "It composes with the universe kernel rather than replacing it. The two are orthogonal layers over the one graph: *universes* stop self-referential paradox **within** a theory (the stratified `universe_of` tower above); *branches* manage incompatible assumptions **across** theories. They meet at one productive point: large-cardinal axioms, which assert that taller universes exist, so there 'which branch am I in?' and 'how tall is the universe tower?' are the same choice, settled (as in real mathematics) by fruitfulness, i.e. by the coherentist layer." l.75 (ruled 30 August 2026): "the `universe_of` tower, `Prop` as an erased proof-irrelevant universe, and the June proof-relevance question below are no longer live spec … Stratification re-enters only if rules quantifying over rules … is shown to admit a paradox, not before."
-- **Source:** DESIGN.md l.99, l.75
-
 ## Memory and concurrency
 
 ### Locals live on the stack; there is no garbage collector
@@ -388,8 +339,7 @@ Locals belong to their scope, and their memory comes back with the frame in one 
 - **Why:** Thobias: "one spelling, no hidden default; the count is the caller's business".
 - **Ruled:** 8 September 2026, Thobias; recorded 23 September 2026.
 - **Ruled (27 September 2026, Thobias):** `alloc` returns `@T!`. Out of memory is an error value, and every `alloc` is written with `try` (Zig's choice over Rust's abort). See ›Error handling‹. Seed: not yet.
-- **Seed:** since 23 September 2026 the span's byte count sits in a header before the first cell, and `free` reads it back.
-- **History:** first spelled `alloc T v`, returning an owning `@T`.
+- **Seed:** since 23 September 2026.
 - **Source:** DESIGN.md l.104
 
 ### Nothing is destroyed implicitly: the constructor writes the teardown as `defer`
@@ -403,22 +353,20 @@ No hidden end-of-scope rule frees anything. The constructor writes the teardown 
 Defining such a type without a destructor is a checked error at the type definition, pointing at the fields. There is no derived last-in-first-out fallback: the order is written per type, and the destructor's lines are the per-field teardown items (which a partial move can make the scope exit skip, see ›`own` and `drop` take a field path too‹). A destructor gets its value by **mutable reference**, never by `own`, and tears fields down in place: `free` and `close` on each resource, and a nested field's destructor called as the ordinary function it is.
 - **Why (mutable reference):** an `own` parameter is a binding site, and the binding-site rule would attach to it the very teardown the destructor is.
 - **Ruled:** 30 August 2026 (order per type). Mutable reference: from the 3 September 2026 ruling, still standing.
-- **Seed:** composing field teardowns waits on the destructor-authoring check.
-- **History:** at first a record type's auto-derived constructor composed its fields' teardowns; per-type order 30 August 2026.
+- **Seed:** not yet.
 - **Source:** DESIGN.md l.104
 
 ### `drop` and `own` end a name; the teardown is removed or moved at parse; no drop flag
 `drop x` runs an identity's destructor. `drop` and `own` both read the value and end the name, leaving the source `undefined`. The inserted teardown is then **removed or moved at parse**: an early `drop` already did it; `own` moves it to the taker's binding site (and removes the source identity); a move inside an `if` moves it into the arms that do not move. So no teardown runs over an emptied place, there is no run-time drop flag, and compiled code checks nothing (Rust keeps a flag for the conditional case).
 - **Why:** with the tag bits gone the flag had no clean home, and a lifetime should be a fact the graph states, not a byte the run looks up.
 - **Ruled:** 7 September 2026.
-- **Seed:** stand-in: a place is emptied by writing a **null pointer**, and the scope-exit teardown does nothing on null, a run-time check the ruled model lacks; removing it is pending. `alloc`/`own`/`drop`/`free`/`defer` exist; the teardown runs last-in-first-out at scope exit as body structure. The owning heap pointer is the first identity with a non-null `drop` slot; a `&x` borrow mints the same `@T` with a null destructor, so owning-ness rides on the node `alloc` built, not on `@T`.
-- **History:** first a sanctioned no-op over a null drop flag, "all with no graph edit"; replaced 7 September 2026. `own` as an access kind: gone 7 September 2026. The null stand-in, binding-site attachment and the `share` direction: settled in discussion, July 2026.
+- **Seed:** stand-in (a null pointer empties the place), removal pending.
 - **Source:** DESIGN.md l.104
 
 ### Teardown attaches at the binding site, parameters included
 `a := alloc …` and `b := own a` insert `defer free <place>` into that place's scope. A constructor result passed straight as an argument, `f(alloc 1 of i32 5)`, is bound to the parameter in the callee's frame, and its teardown attaches there; no `own` gate is needed, since no caller place is emptied. A value that reaches no name at all is a checked error.
 - **Ruled:** binding site, July 2026; parameters, 30 August 2026.
-- **Seed:** covers only *named* owning bindings. A bare owning temporary passed as an argument is rejected: a bug against the ruling.
+- **Seed:** named bindings only; the parameter case is a bug against the ruling.
 - **Source:** DESIGN.md l.104
 
 ### Three fail-closed ownership rules, and `-> own @T`
@@ -429,7 +377,6 @@ Each guards a place where ownership would escape the machinery that frees it:
 
 Rules 2 and 3 no longer apply to a *last* value since 25 September 2026 (›A last value moves out‹). `-> own @T` hands ownership to the caller, whose binding site attaches the teardown (`own`/`drop` as gates on a reference, the same primitive as `pub`/`mut`).
 - **Ruled:** rules, July 2026; `-> own @T`, 30 August 2026.
-- **History:** "ownership may not cross a function return at all" and "a bare `-> @T` returning an owned place stays the checked error": superseded for a last value 25 September 2026.
 - **Source:** DESIGN.md l.104
 
 ### `&T` / `&mut T` are checked statically
@@ -441,7 +388,7 @@ Many shared OR one exclusive, with lexical lifetimes to keep the model predictab
 - **Why:** an array written in Logos walks its cells this way, and only a whole-cell step makes `p + 1` the next value of the same type.
 - **Ruled:** 23 September 2026, Thobias: "pointer arithmetics should work though".
 - **Open:** direction, not ruled: the borrow-checked tier should refuse it, Thobias: "in the future safe scope it should likely not be allowed".
-- **Seed:** since 25 September 2026 (#137): pointer on the left, integer on the right, k scaled to bytes as an `i64` product in the graph, both tiers. `k + p`, `p - q` and every other pointer operator stay refused.
+- **Seed:** since 25 September 2026 (#137); `k + p`, `p - q` and every other pointer operator stay refused.
 - **Source:** DESIGN.md l.104
 
 ### A filled `share drop` is the constructor's teardown; one name owns each value
@@ -449,8 +396,7 @@ Binding a value just made by a type whose body fills `share drop = (…)`, e.g. 
 - **Why:** an array is then freed with nothing written for it; existing code keeps working; and it is `alloc`'s model plus one rule (the last value moves out), which a block handing its value to its binder already follows.
 - **Ruled:** 25 September 2026, Thobias (second of three options).
 - **Open:** known hole, not fixed: until the borrow checker (#35) a borrow can outlive its owner: `b := a` then `a`'s scope ends; or `p := alloc 1 of i32 5, q := p, drop p, q@` reads freed memory.
-- **Seed:** since 25 September 2026. The owner's binding carries `own` in its gate set, read by `a:gate` and consulted by `own a` and `drop a` (Claude's choice, open to Thobias: the gate set is where a name's other facts live, and it outlasts one REPL line). A move writes the null stand-in, and `free ptr` in the drop empties the field; so a borrow's `b[0]` after the owner's drop is the checked null-pointer error, while `b[1]` steps a cell past the null and faults (the hole in full). Not freed yet: a value that moves out and reaches no name (`mk()` as a statement); a value just made passed straight to a call (`f(array i32 (1, 2))`). A value a type's own `parse` places as the node itself, not a call on it, gets no owner (text: "places as `this` itself"). `own` on a parameter, which would consume the argument, is not built: checked error meanwhile.
-- **History:** text spells the mark `shared drop`: renamed `share` 26 September 2026 (l.207). Text says "fields block fills": the fields block was removed 25 September 2026 (l.203); members stand in the type body. Text uses `this.ptr` and "`this` bound to the instance": `this` removed 26 September 2026 (l.207).
+- **Seed:** since 25 September 2026; the owner's binding carries `own` in its gate set, read by `a:gate` (Claude's choice, open to Thobias); not yet: a value that reaches no name, a value just made passed straight to a call, `own` on a parameter.
 - **Source:** DESIGN.md l.104
 
 ### A last value moves out
@@ -463,7 +409,7 @@ A function's or block's last value, when it is a place that scope owns, moves to
 The field owns what it points to, so `free ptr` in the type's `share drop` is the owner's free. An `own` field with no `share drop` is the checked error of ›A type whose fields carry teardowns must write its own destructor‹.
 - **Why:** the instance owns its elements' memory, and its drop frees it.
 - **Ruled:** 25 September 2026, Thobias.
-- **Seed:** `own` in a type takes a pointer hole on a field or a name: `mut a := own @i32 ?` frees what is written into it.
+- **Seed:** done; on a name too, `mut a := own @i32 ?` frees what is written into it.
 - **Source:** DESIGN.md l.104
 
 ### A field may be `own t ?`, `t` a type whose body fills `share drop`
@@ -471,8 +417,7 @@ The field owns what it points to, so `free ptr` in the type's `share drop` is th
 - **Why:** the instance owns the node its field holds just as it owns the block behind `own @T ?`, so the same word and destructor rule apply. A type with no teardown gives an owner nothing to run.
 - **Ruled:** Claude's reading 25 September 2026, asked by Thobias to "fix this"; open to Thobias. Derived from "one name owns each value" and "`=` into an owner takes only a value just made or moved".
 - **Open (for Thobias):** `=` into an owning field that already holds a node does not drop the displaced node, so it leaks (as with a filled `own @T` place: "the displaced block is not freed yet"). A value just made written into a borrowing field reaches no owner and is not freed; the 30 August 2026 rule "a value that reaches no name at all stays the checked error" would refuse it once a field counts as no name.
-- **Seed:** since 25 September 2026, no array-specific code; `drop items` and `own b.items` run interpreted like every field read. Closed the note "`own array i32 ?` is not in the seed yet".
-- **History:** text writes `this.items` and "fields block"; see renames above.
+- **Seed:** since 25 September 2026.
 - **Source:** DESIGN.md l.104
 
 ### Shared ownership through `share` (direction)
@@ -486,7 +431,6 @@ Three rules, needing nothing the parse has not already seen:
 2. *Nested block:* `own x` inside an `if` body or inner scope, `x` from the outer scope, ends `x`'s life **at that item, on every path**. The moving arm moves it; every other path gets `x`'s pending teardown at its end (an `if` without `else` gains a hidden arm holding only the teardown: the defer node is relocated, ›Metadata has three homes‹). After the item `x` is dead, so a later `x := …` gets a fresh place. There is no "maybe moved"; nothing is looked up at scope exit.
 3. *Bodies that run again or later:* `own x` / `drop x` on an outer name inside a loop or `fn` body is a checked error: the loop would read a dead name next pass, and a function may own only what it got through its parameters.
 - **Ruled:** 3 September 2026; "every path" 7 September 2026; `drop` added to rule 3 the same day (it empties the place as `own` does).
-- **History:** maybe-moved reading ("the phase bit still decides at run time whether the teardown fires"): superseded 7 September 2026, since every legal `own` ends a lifetime at a point the parse can name.
 - **Source:** DESIGN.md l.104
 
 ### A call is a use of every outer name the callee's body reads
@@ -494,7 +438,7 @@ A body resolves outside names when parsed, so the function knows which outer nam
 - **Why:** Thobias: a dropped name's place may hold anything, so a body that reads it must not run. The list is the function's own, filled by the parse it already makes, so no per-name list of users (declined in ›Meta-navigation‹). The check is a range lookup per outer name per call, at elaboration; running code checks nothing.
 - **Ruled:** 15 September 2026.
 - **Open:** the 8 September 2026 capture rule (inner function reading an outer function's locals) still lacks wording.
-- **Seed:** since 15 September 2026 (#125): the list is the fn value's trailing `outer` slot, filled by the body's parse (identities it dispatches, operands it takes, once each), read wherever a node that runs a body comes to exist: a call, a node of a `run`-carrying type (applied or built by its constructor), a Logos-written constructor's run. A name from a section on no caller's stack counts as live: an imported `pub` function reads its private siblings after the section's parse ended, and importers share the one loaded scope (›Importing is dropping the text there‹). A scope that the code asking for a body stands in (a held `type (…)` built when its function runs, a run body built for a field-type set) counts as open while that body is built, since that code runs inside it: Claude's fix 25 September 2026, open to Thobias (`array bag` built the mint's held body in array.logos's scopes alone, so `bag`, whose `parse` calls a `fill` reading the command line's `array`, was refused "`array` is not in scope here"). Callee outer names join the caller's list.
+- **Seed:** since 15 September 2026 (#125); a name from a section on no caller's stack counts as live, and a scope the code asking for a body stands in counts as open while that body is built (Claude's fix 25 September 2026, open to Thobias).
 - **Source:** DESIGN.md l.104
 
 ### A dead name takes nothing until `:=` redeclares it
@@ -505,20 +449,18 @@ No read, write or pass (›Name resolution is scope-filtered‹).
 ### `drop x` works on any identity
 Runs the destructor where one is set, empties the place either way: one verb releases a name whatever its type.
 - **Ruled:** inside the 3 September 2026 passage (no separate date).
-- **Seed:** realized the same day.
+- **Seed:** done, the same day.
 - **Source:** DESIGN.md l.104
 
 ### An `own` argument is consumed at the call; a callee that does not take it hands it back in its error value
-The caller binds the returned value to a new name (›Case study: RCU‹).
-- **History:** "on failure ownership stays with the caller": superseded 3 September 2026, since `own` is static and the name is dead from the call. In v0.1.0 a failed call is a fault, so the case does not arise.
+The caller binds the returned value to a new name (›Case study‹).
 - **Source:** DESIGN.md l.104, l.113
 
 ### `own` and `drop` take a field path too
 `own p.f` ends the life of the path `p.f` at that line, as `own x` ends `x`'s: a **sub-range under p's entry** in the name index, made only when a partial move happens, so it costs nothing otherwise. `drop p.f` runs f's destructor and ends the path the same way. Sibling paths stay live (`p.g` reads on), but **p is dead as a whole**: `g(p)`, `own p` and reading p whole are parse errors until scope end, because a callee holds no record that f is gone. At scope exit p's teardown **skips f**: the destructor's lines are per-field items in the type's written order; an item whose field ended in the scope is skipped, and if it ended inside an `if`, the item moves into the non-moving arms as a bare name's teardown does. So the destructor looks nothing up and no type writes an "empty" value. The three static rules apply to paths as to names.
 - **Why:** lifetimes and gates live on the binding, so a field's end is one more entry of a kind the binding already holds; the 3 September 2026 cost (a per-field record of moves, a flag in the bytes) becomes a sub-range made on deviation and nothing at run time. Pulling one resource out of a value so it outlives the value was the swap door's job; this makes it ordinary.
 - **Ruled:** 5 September 2026; relocation in `if` 7 September 2026.
-- **Seed:** accepts `own p.f` and writes the null; lacks the sub-range, the dead-as-whole mark and the relocation: pending work, no longer a bug.
-- **History:** 3 September 2026: bare names only (a value owned whole or not at all; `own p.x` a parse error), because a field is bytes at an offset, not a dyad, with no phase bits for a moved flag. Superseded 5 September 2026, and the swap door with it. "Guarded by the field's phase bit where it does not": superseded 7 September 2026. Closed 7 September 2026: how a non-pointer field carries a phase bit (none does; the teardown moves instead).
+- **Seed:** partial: `own p.f` accepted; sub-range, dead-as-whole mark and relocation pending.
 - **Source:** DESIGN.md l.104
 
 ### Place-granular borrows
@@ -539,45 +481,40 @@ Beyond the scope tree's coarse grants, access may be set by *functions*: total, 
 
 ### A name's gates are one ordered set on its binding, combined as grants and vetoes
 The set, `a:gate`, runs in declaration order; each entry answers `true`, `false` or `?` (silence). Access is permitted exactly when some entry says `true` and none says `false`, so all-silence is the fail-closed deny. Every declared name starts with one default entry: read for its own scope and below. `pub` says `true` to a read from any scope; `mut` says `true` to a write from anywhere the name is visible; `lock` seals the set, itself included, saying `false` to a write at `:gate`. A name without `mut` is written nowhere: `x := i32 ?` without `mut` can never be filled. The set's reads are membership and position; `a:mut` and `a:pub` are not spellings, since gates are entries, not binding fields. A gate word on a constructed node is the checked error: a gate needs a binding.
-- **Why:** an entry that had to vote on every access would need to know every access, and "the last entry decides" would make order meaningful where it is only cost. Order still matters because a gate may read the call stack, use a budget or record the access, so two gates are not interchangeable; the identifier may reorder only gates it admitted as effect-free (›Admission is a proof obligation‹), cheapest first. No default write, Thobias: "it should not be writable at all". `mut` unscoped, Thobias: "mut just says its mutable, not where its mutable, while pub makes it public": one word, one fact; visibility is `pub`'s, and confining writes to a region is another gate's job.
+- **Why:** an entry that had to vote on every access would need to know every access, and "the last entry decides" would make order meaningful where it is only cost. Order still matters because a gate may read the call stack, use a budget or record the access, so two gates are not interchangeable; the identifier may reorder only gates it admitted as effect-free (›Admission is a proof obligation‹), cheapest first. No default write, Thobias: "it should not be writable at all". `mut` unscoped (Thobias): one word, one fact; visibility is `pub`'s, and confining writes to a region is another gate's job.
 - **Ruled:** 7 September 2026 (ordered set, grants and vetoes); 20 September 2026, Thobias (no default write, `mut` unscoped).
 - **Open:** a gate in the `immut` family permitting a write only while the value is `?`: direction, not ruled.
-- **Seed:** `mut` since 20 September 2026; the gate set is an array on the binding; the declare node's gate slot is gone. Writes through a field path or a dereference are not gated yet.
-- **History:** 7 September 2026 morning: "all of which must pass"; grants and vetoes the same day. Two default entries at first, write "while the slot is null" for the own scope and below; default write removed 20 September 2026. `mut` first allowed writes from the own scope only ("a `pub` name stays writable only where it was declared"); unscoped 20 September 2026.
+- **Seed:** `mut` since 20 September 2026; writes through a field path or a dereference not gated yet.
 - **Source:** DESIGN.md l.107, l.108
 
 ### A gate is a node of the body; the binding's set is a cache folded from those nodes
 `pub mut x := 5` stands in the graph as `pub` and `mut` nodes over x's declaration; `lock x` and `immut x` are later items referring to x. Reflection reads them like a declaring or emptying node: the truth is on the declaration, the binding is the derived fast path (as `start`/`end` relate to their nodes). Making a gate is a **write at each target's `:gate`**, voted on as grants and vetoes by the gates already there: the defaults admit it from the own scope and below, `lock` refuses it. So a name's first gate governs which may follow, and deleting the line deletes the gate, as deleting a `drop` line resets a lifetime. Body order is set order. **One name per gate node**: sealing y is a second line; a rule for several names is one gate identity applied per name. **Targets are names**: a gate over part of a value is a gate on its name with a condition on the path; `f(mut i32 5)` stays the checked error.
 - **Why:** gates are graph structure like teardown and liveness, so they are read, added and deleted as structure, and nothing gains a third slot. One name per node: several would leave unclear which one a reader means. Names only: an anonymous node has no binding to hold the cache, and the address-keyed index that would replace it was rejected 8 September 2026 (›Meta-navigation‹).
 - **Ruled:** 15 September 2026, #123.
-- **Open:** after 20 September 2026 it is unclear which default admits a gate write, the default write entry being gone; the 15 September 2026 words "the defaults admit it from the own scope and its descendants" are kept as written.
-- **History:** "one ordered set on its record" (7 September 2026) stands as what the binding holds, no longer as where the truth is.
+- **Ruled (27 September 2026, Thobias):** the gate list keeps its own default: a later gate line, `immut x` or `lock x`, is admitted from the declaring scope and its descendants until `lock` refuses further change; only the value's default write was removed on 20 September.
 - **Source:** DESIGN.md l.108
 
 ### The check is lexical and static: no ambient authority
 Access is decided from the viewer's scope chain at elaboration and never looked up by compiled code; the binding stays resident for reflection and re-validation, but running code never resolves a name. Being *called by* a holder grants nothing, an indirect call cannot launder access, and the only way to give a callee access is to hand it the reference. A gate's requirement flows *backward* through the call graph as a static obligation, discharged at the scope that rightly grants it, analyzable from any code section.
-- **History:** "erased before codegen" amended 5 September 2026 to "resident, never resolved by running code".
 - **Source:** DESIGN.md l.107
 
 ### Two access kinds: read and write, on a path
 A gate answers one question: *may this viewer read, or write, at this path?* Everything else is one of the two at another path or under another rule: `call` is read of `f.run` without read of `f`'s value (jump allowed, copying the address not, so the reference is usable but not storable or passable); `own` is read of the value plus the *end of the name*, which is the parser's static rule, not a gate; `drop` likewise, with the destructor run; `share` is a read of the pointer, the count being the type's business; a borrow is read or write for a lifetime (the lifetime is the checker's); reflection is read at `x:type`; editing the gate set is write at `x:gate`.
 - **Why:** the base rule already said visibility is a read, a borrow a read or write, reflection and graph mutation a node's read and write; the extra kinds were stacked on top, and deleting them makes grants and vetoes statable.
 - **Ruled:** 7 September 2026.
-- **History:** first an open set: `call`, `own`, and "more (borrow, alias, drop, observe-for-proof) admitted the same way"; superseded 7 September 2026. Text writes `f.code` (slot renamed `run` 17 September 2026, l.189) and `x:dyad` (`:type` since 23 September 2026, l.108).
 - **Source:** DESIGN.md l.107
 
 ### Effect signatures keep the classification honest; gates run on the stack they analyze
 Each operator declares an **effect signature** marking operand slots read or write, and the trusted evaluator stamps the access from it, so evaluator code cannot forge a read into a write. Gates run on the *same* stack they analyze; everything above the first gate-evaluation marker runs ungated, so gate evaluation terminates. That stack is the pass's own (static scope chain and call structure as elaboration sees them), never a runtime call stack; since the one pass builds and rebuilds structure, the chain can change at run time, so a gate is decided when the access is elaborated and re-validated on structural change.
 - **Rejected:** a separate meta-stack (a regress).
 - **Ruled:** mechanism from design discussion, June 2026, not yet validated; stack clarified 30 August 2026.
-- **Seed:** the chokepoint, the lexical tier and the classified `?` seam only; **no prover**. Borrow checker and proof layer bolt onto `?` later.
+- **Seed:** lexical tier only, no prover.
 - **Source:** DESIGN.md l.107
 
 ### Gate spelling: words left of `:=`; ownership in the reference type
 A gate's spelling belongs to its constructor; there is no global gate syntax. Gates are prefix words left of `:=`: `pub x := 5`, `pub mut x := 5`; `immut x` and `lock x` edit and seal later (›`immut x` removes `mut`, and `lock` seals the gate set‹). Ownership is a word in a reference's type: `a := own @T ?` consumes (callee owns, source empties), `a := @T ?` borrows, `a := share @T ?` co-owns; `-> own @T` hands ownership to the caller. Unmarked is fail-closed: private, immutable, borrow-only. `own` is one word for the kind and the act: `own @T` says the reference owns (a fact about the value, like its type); `own a` reads `a` and ends the name, legal where read is granted and the static rules allow the end.
 - **Ruled:** surface settled in discussion, August 2026; `own` as one word, 30 August 2026.
 - **Rejected, to stay rejected:** `take` as a separate gate word (30 August 2026).
-- **History:** moved right, `x := pub mut 5`, 5 September 2026 (the left of `:=` was a name alone); back left 15 September 2026, since a gate is an entry on the name's binding and the left of `:=` is the name with its gate words (›Declarations are immutable by default‹). Ownership words respelled with the one declaration operator 2 September 2026. "The reference's gate grants `own`" respelled 7 September 2026.
 - **Source:** DESIGN.md l.107
 
 ### Two grains of access: the name index and the gate
@@ -603,22 +540,19 @@ Reflection is the read at `:type`. Coarsely, by the name index: a section that c
 - **Why:** reflection cannot touch the world, but it reads what visibility hides: privacy-sensitive as effects are world-sensitive.
 - **Ruled:** settled in discussion, August 2026; `:` as the view 8 September 2026.
 - **Open:** is `:` among the ambient names an import resolves? The August default said no view unless handed down; the binding gate makes yes safe for values.
-- **Seed:** (August 2026) the view registers ambient like every identity; the fail-closed target waits for the grant path (a capability passed by argument, needing `type`-typed parameters).
-- **History:** `:dyad`, retired for `:type` 23 September 2026.
+- **Seed:** ambient since August 2026; the fail-closed target not yet.
 - **Source:** DESIGN.md l.108
 
-### A language is a section with a written start of five names
+### A language is a section with an authored start of five names
 `language (…)` parses its body in a section holding **five names**, `:=`, `,`, `«`, `»`, `logos`, plus unknown spellings, allowed only left of `:=` (since 10 September 2026 two pattern identities of the start, a word and a symbol run, ranked by `lex_rank`, ›The scope's constructor is the driver‹). Every other name is declared: `if := logos (if)`; what cannot stand alone, `lex «)» := logos (lex «)»)`; a comment, `# := logos (#)`; a word with no meaning yet, `leave := logos (?)`, or `? := logos (?)` once and `leave := ?` after. `logos (…)` is the Logos scope continued (›Substrate vocabulary‹), read with Logos's own bracket, so brackets need not be in the start set.
 - **Why:** the five are exactly what the door and a declaration cannot be written without: `logos («)` would open a string; `logos (:=)` and `logos (,)` have no operand and no value to stand as. Nothing the door can fetch belongs in the start. `lex` with nothing to consume stands as its own value, so it is fetched: `lex := logos (lex)`.
 - **Ruled:** 3/4 September 2026; `?`, 4 September 2026.
-- **History:** six names on the morning of 4 September 2026 (`lex` among them); `lex` left that evening.
 - **Source:** DESIGN.md l.108
 
 ### A language opens closed; the door back, `logos (…)`, is opt-in
 Inside `my_language (…)` only its own names exist. A language admits the door by declaring `logos := logos (logos)`, shaped like `if := logos (if)`; one that does not is sealed, and inside it `logos` is an unknown spelling. `logos (…)` continues **the Logos scope the block stands in lexically**: `english ( she leave at logos (t). )` in a function body reads that function's `t`; at top level `logos (…)` is the plain group. `{ }` is only the `«` and `#` constructors' interpolation spelling, unassigned elsewhere.
 - **Why ({ } rejected):** a language block is code with names, not text, and already had a door. Making `{` a bracket every language must honor would reserve a spelling where every spelling belongs to its declaring constructor, and would give a closed section a door its author never declared.
 - **Ruled:** 4 September 2026 evening.
-- **History:** that morning `{ }` was "the hole to the surroundings" of every closed scope; rolled back that evening.
 - **Source:** DESIGN.md l.108
 
 ### `type (…)` is the open block
@@ -639,14 +573,14 @@ An interpreted region *is* its LG; a JITed region stays reflectable *through* it
 - **Ruled:** settled in discussion, July 2026.
 - **Source:** DESIGN.md l.111
 
-### Scheduling, preemption and cancellation happen at boundaries
+### Scheduling, preemption, and cancellation happen at boundaries
 A task yields at each `.await`. Beyond that, the runtime can step in at any *boundary* where the task's live state is graph data: between interpreter steps, or at the edge of a compiled burst. A hot region may compile to short bursts that read inputs from the task's state, run at full speed, and write results back at each boundary. A paused task *is* its state: no stack maps, nothing rebuilt from registers. Cancelling drops that arena-scoped state like any runtime graph, running its live scopes' pending `defer`s. Only work inside a burst sits in registers, unseen, since control is taken only at boundaries. Burst size is a per-region dial: short bursts preempt and cancel quickly but write state out often and optimize only within a burst; one big burst (a whole hot loop) gives top throughput with few stops, for compute kernels; the longest burst bounds worst-case time to preempt. It rides on the interpret/compile boundary: where an artifact can deoptimize, the scheduler regains control. Preemption is invisible and resumes seamlessly. Cancelling stops a task at its last boundary for good: values dropped, remaining steps never run, so staying consistent across a possible cancel is the program's job.
 Two rulings bound the dial:
 1. Splitting into bursts is never hidden. Boundaries are placed by the user or an ordinary identity (a backend or pool policy), inserted as reflectable structure, the same law as constructor-inserted teardown; the compiler never adds yield points behind the graph's back.
 2. A pool's latency promise (no burst over a millisecond) is not a static WCET proof, which exists only for heavily restricted code. It is empirical: measured history plus the region's structure, enforced by deoptimization. A burst over budget is an observable event that demotes its region to finer bursts or interpretation, so the bound corrects itself instead of being proven.
 - **Why:** keeps one task from freezing its pool; makes preemption and cancellation uniform and cheap.
 - **Ruled:** the two rulings settled in discussion, July 2026, both in the adaptive layer after v1.0.0. The scheduling model: design discussion, not yet validated.
-- **Seed:** the bootstrap can ship cooperative `.await` yielding and add boundary preemption as the compiled tier matures.
+- **Seed:** not yet.
 - **Source:** DESIGN.md l.112
 
 ### Case study: an RCU library's comment-only rules become machine-checked
@@ -659,7 +593,6 @@ Two rulings bound the dial:
 - *A type node must outlive the nodes it types*: an ordinary lifetime relation.
 
 The interpreted tier catches the dynamic classes at runtime as checked errors, never UB; the static tiers (borrow checker, capabilities) close aliasing and effect ordering. Together: 100% of the header's stated obligations machine-enforced, where C enforces none.
-- **History:** "on failure ownership stays with the caller": superseded 3 September 2026 (›An `own` argument is consumed at the call‹); in v0.1.0 a failed call is a fault.
 - **Source:** DESIGN.md l.113
 
 ## Mutability and construction
@@ -669,7 +602,6 @@ The interpreted tier catches the dynamic classes at runtime as checked errors, n
 - **Why:** identity is address. Rebinding the name to a fresh dyad would break it.
 - **Ruled:** mechanics settled in design iteration, June 2026; in-place writing ruled 30 August 2026.
 - **Rejected:** rebinding to a fresh dyad on `=` (breaks identity-is-address).
-- **History:** June 2026, `mut` was recast as a type modifier and phase bits were proposed as storage. Both are gone, see the History lines of the rules below.
 - **Source:** DESIGN.md l.117
 
 ### Declarations are immutable by default; two operators write a dyad, `:=` declares and `=` reassigns
@@ -682,13 +614,12 @@ A dyad is a type slot and a value slot. `:=` introduces a name and binds it to a
 - **Why:** a gate is name data, an entry on the binding, never on the value. So it stands on the name's side of `:=`. This also closes for gates the "reach" question *The constructor is a field* had left open, and `pub x := a + b` still gates `x`.
 - **Ruled:** 15 September 2026.
 - **Open:** a gated return type (it has no name to stand beside). Whether the reference words `own` and `share`, which spell what a reference *does* on binding and stand in its type (*Sections, the arche, and effect identities*), keep that place ("unsure", 15 September 2026).
-- **History:** 5 September 2026 the gates were prefix constructors on the right, `x := pub 5`, `y := pub mut i32 5`, binding just above `:=` so `x := pub a + b` gated the sum. Its ground, "a name is a placeholder for an identity, not a thing attributes attach to", was overtaken on 7 September when gates became entries on the name's binding. Replaced 15 September.
 - **Source:** DESIGN.md l.119
 
 ### A gate word reads the declaration to its right
 Each gate is a prefix constructor over the declaration: `pub mut x := 5` is `pub` reading `mut` reading `x := 5`, each filling the binding of the declaration it read. A gate that reads otherwise is that gate's own rule, not a second grammar ("a gate's spelling belongs to its constructor", *Sections, the arche, and effect identities*).
 - **Ruled:** 15 September 2026, Thobias: "most gates read the constructor to their right, but it depends on the constructor for the gate".
-- **Seed:** the seed's `pub` has done this since August 2026; it never followed the 5 September respelling.
+- **Seed:** since August 2026.
 - **Source:** DESIGN.md l.119
 
 ### `?` is one value, the unknown; `key := T ?` declares without a value
@@ -697,8 +628,7 @@ Each gate is a prefix constructor over the declaration: `pub mut x := 5` is `pub
 Since `:=` accepts any dyad as its value, a type included, the valueless form needs its `?`: `x := i32` names the type, `x := i32 ?` declares.
 - **Why:** Thobias: "i dont want any special cases".
 - **Ruled:** 23 September 2026, Thobias.
-- **Seed (#137):** a bare `?` stands as the one identity. `?` reads a type to its left only when that type applies to it, not when an operator waits there (`x != ?`). `T ?` still allocates zeroed bytes, which no read reaches.
-- **History:** before 23 September, `?` was a constructor building a fresh dyad with both slots `undefined` at every appearance, a literal, so `x := ?` bound x "to its own hole rather than aliasing one global unknown". Replaced because freshness belongs to the place.
+- **Seed:** done (#137); `?` reads a type to its left only when that type applies to it, not when an operator waits there (`x != ?`).
 - **Ruled (27 September 2026, Thobias):** the later fill needs `mut` on the name, `mut key := T ?`; the examples above omit it. See ›Filling a valueless declaration needs `mut`‹ at the end of this section.
 - **Source:** DESIGN.md l.119
 
@@ -706,8 +636,8 @@ Since `:=` accepts any dyad as its value, a type included, the valueless form ne
 The refusal is a gate entry on the binding. From the declaration to the place's first write the entry says `false` to a read; after it, nothing. The run never checks a byte to learn whether a place is filled. The entry belongs to the `?` constructor: the declaration that left the value `undefined` puts it on the binding. It is a distinct entry in the ordered gate set, not a word the author writes.
 Which write ends the range: a sibling write in text order fills the name from that line. A write inside a nested block, loop or `fn` body does not, so a read after only such writes is refused.
 - **Why:** a "parse time gate is the correct option" (Thobias); no run-time byte, the drop-flag reason of *Explicit heap*. The declaration that leaves a value unwritten is the one that knows it, so nothing is spelled twice and no place can be declared empty and lose the veto. Text position is decided from what the pass has already seen: no path analysis, and fail-closed where a branch might not run.
-- **Ruled:** 23 September 2026, Thobias (the same evening, on his own question "maybe it should be a separate gate?").
-- **Seed (#137):** the entry refuses at parse every use of the name except the target of `x = …` and the binding read `x:…`, until the sibling write.
+- **Ruled:** 23 September 2026, Thobias (the same evening, on his own question).
+- **Seed:** done (#137); the target of `x = …` and the binding read `x:…` pass.
 - **Source:** DESIGN.md l.119
 
 ### A value of several fields is filled one field at a time
@@ -715,7 +645,7 @@ Which write ends the range: a sibling write in text order fills the name from th
 - **Why:** the entry exists so nothing reads a place holding nothing. A value of several places is safe to read exactly when each place is. One field's write filling the whole value would let the others be read empty; refusing `v.f = …` left no way to build a value field by field.
 - **Ruled:** 26 September 2026, Thobias, choosing "option 1" of three.
 - **Rejected:** any field write filling the whole value; keeping `v.f = …` refused (reasons above).
-- **Seed:** narrowed 26 September 2026 (Thobias: "filling fields one by one is fine"): for a type whose values are nodes, `v := T ?` is a new empty node and writes to its fields fill it one by one, as a parse fills its node (see *An array expression is a node of `array`*). The general rule widens this to every type with fields.
+- **Seed:** since 26 September 2026, for types whose values are nodes only.
 - **Source:** DESIGN.md l.119
 
 ### Each type decides whether it can stand without a value
@@ -730,7 +660,7 @@ Tolerance for `?` is authored per constructor (*Deferral is authored*). A type t
 - A value that cannot be copied (an owning `@T`, whose copy would be a second free) is the checked error. Move it with `y := own x` or borrow with `y := &x` (*Memory and concurrency*).
 - **Why:** identity is address. A data name yielding its dyad rather than its bytes would make `y = 7` write x and `&x == &y` hold with no `&` in sight: reference semantics without a reference. A copy is the safest default and aliasing already has a spelling. A decision in `:=` would make one operator carry a rule per kind of value, when the reading rule already lives on the type.
 - **Ruled:** 5 September 2026 (corrected the same day from a first wording that put the decision in `:=` with types as its exception).
-- **Seed:** has always copied data here.
+- **Seed:** done.
 - **Source:** DESIGN.md l.119
 
 ### A function reads as a copy
@@ -750,8 +680,7 @@ The declaration forms are `key := value`, `key := T ?` and `key := ?`, and nothi
 - **Ruled:** 2 September 2026.
 - **Rejected, to stay rejected:** `:` as a declaration operator; the composed declaration `key : T = value` (also listed in ›Substrate vocabulary‹).
 - **Open:** `:` may come back as pure sugar, `a : T` meaning exactly `a := T ?`, if parameter lists force it.
-- **Seed:** retired `:` with the driver convergence (September 2026, #59). It accepts `key := T ?`, `?` being an identity just below application that reads the type to its left.
-- **History:** `key : T` and bare `key :` were the old valueless forms; replaced 2 September 2026 by `key := T ?` and `key := ?`.
+- **Seed:** done since September 2026 (#59).
 - **Source:** DESIGN.md l.119
 
 ### Names, types and values
@@ -771,7 +700,6 @@ They sit at the top of the `parse_rank` order. This lets the language define its
 ### Parentheses are one identity, near the top of the order
 `(` is constructed at discovery (*The scope's constructor is the driver*), so a group is one finished cell before any operator around it runs. A call `f(a)` is that same cell consumed by the callee's own constructor, the tight juxtaposition just below it. There is no second bracket.
 - **Ruled:** rewritten 2 September 2026.
-- **History:** July 2026 wording: grouping paren loosest, call paren tightest. It described the superseded model; replaced 2 September 2026.
 - **Source:** DESIGN.md l.121
 
 ### A constructor that takes a type as operand writes its own `parse_rank`
@@ -786,8 +714,7 @@ They sit at the top of the `parse_rank` order. This lets the language define its
 - `*.parse_rank + 1` (array.logos took it from power.logos on 23 September as a stand-in) stays right for `^`, an infix that reads both sides once built, and is wrong for these three: that far below `(`, `i32` has already taken `(1, 2, 3)` as a conversion before the chooser runs.
 - **Why:** `(…)` or `[k]` right after a value is the same act as a call, so it takes the call's place; what holds for `f(2).x` then holds for `a[1].x` and `array i32 (1, 2).size`. Ranks spelled relative follow `dyad` and `fn` if those move, and no new number is invented.
 - **Ruled:** 25 September 2026. Thobias delegated the choice to Claude ("do what you think is best"). Closes the #137 open question on the ranks of array.logos's three parses.
-- **Seed:** the numbers are already the seed's (application and an unfilled `share parse_rank` 91, `fn` 92). Two blockers were recorded open and closed 25 September 2026: a parse written in Logos running at discovery could not read past what is lexed (the #61 stand-in, closed by the lazy-read ruling of *The scope's constructor is the driver*), and the chooser reading `i32` would wake `i32`'s own read of the bracket (closed by *A cell a constructor reads from the tape arrives unbuilt*: the chooser gets `i32` unbuilt and `(1, 2, 3)` as a bracket; "just below it" means a bracket is built as it is lexed and a juxtaposition is not). As written on 25 September, array.logos still stopped at `tape[0] = get_mint(t)`, a cell read from the tape not being taken as a `type` argument.
-- **History:** as ruled it said "a fields block that fills `shared parse`"; the fields block is gone (25 September 2026, *A type body describes one level*) and `shared` is spelled `share` (26 September 2026).
+- **Seed:** done; the two blockers (one the #61 stand-in) closed 25 September 2026.
 - **Source:** DESIGN.md l.121
 
 ### `mut` is a gate on the binding, not a type
@@ -795,7 +722,6 @@ Every declared name's binding holds its gates. `mut` is the write gate on the va
 - **Why:** a value's permissions are facts about identities, not about machine types, so one binding lookup answers reachable, live and permitted. The seed's liveness range already had that shape (graph truth on the declaration, the binding as the fast path). `mut` in the type made every type carry a second identity and made inference copy mutability from value to name.
 - **Ruled:** 5 September 2026. Scope clause ruled 7 September, removed 20 September 2026 (`mut` is not scoped, *Read and write are one mechanism*). Gate words left of `:=` since 15 September 2026.
 - **Rejected, to stay rejected:** `mut T` as a type; **name-mutability**, `mut key` as a renameable trie entry: nothing used it, and it made the commonest declaration mean something exotic. Deleted 5 September 2026.
-- **History:** first recorded as "`mut T` is the type of a mutable T" (June 2026): mutability stated by the type, `&mut T` the same `mut`, per-field mutability on each field's type (`f := mut F ?`), and `mut` left-prefixing any level of the classifier tower, giving four construction states (`i32 32`, `mut i32 32`, `mut type i32 32` reinterpret-only, `mut type mut i32 32`). Also `mut key` for name-mutability and `mut (…code…)` for a structurally mutable region; these stratified as compilable value writes, deopting type writes, interpreted `mut (…)` regions. A 4 September conflict with `pub mut x := 5` was resolved 5 September by this rule. Before 15 September the gate was spelled `x := pub mut 5`.
 - **Source:** DESIGN.md l.123
 
 ### A writable pointer is made by `mut` on what makes the pointer
@@ -803,22 +729,19 @@ Every declared name's binding holds its gates. `mut` is the write gate on the va
 - **Why:** Thobias: "to get mutable pointer you need to write mut alloc". Only a pointer from `mut alloc` may be written through.
 - **Ruled:** 20 September 2026, Thobias. 25 September 2026, Thobias: identities/array.logos allocates with `mut alloc`, so `fill`'s element writes and `a[k] = v` are licensed.
 - **Open:** how a parameter spells the writable pointer's type, and how that sits with ›A type never carries mutability‹.
-- **Seed:** `mut alloc` accepted since 25 September 2026; the pointer carries no mark yet, and a write through `@` is unchecked.
-- **History:** the older spelling `&mut` (`&`'s own spelling) was respelled 20 September 2026.
+- **Seed:** `mut alloc` accepted since 25 September 2026; the pointer carries no mark yet and a write through `@` is unchecked.
 - **Source:** DESIGN.md l.123
 
 ### One binding per declared name
 The trie entry itself, named **`binding`**, holds the name's scope, its liveness range, its gate set and the pointer to its dyad. `:` reads it (*The dyad's read surface*). So `pub y := x` makes y a public copy of x's value and leaves x private and untouched.
 - **Why:** the alias decides it. `x := i32` binds a second name to i32's own dyad; with a shared identity binding, `pub x := i32` would make i32 itself public and `lock x` would seal i32. Per-name bindings keep `x:gate` x's and `i32:gate` i32's while both point at one cell. No other case parts a name from its value (`:=` copies, `y := own x` gives y a fresh place), so the split answered nothing and cost a pointer chase on every lookup.
 - **Ruled:** 7 September 2026.
-- **History:** 5 September 2026 split a name entry (scope, liveness range) from a separate identity binding (lifetime, gates); replaced 7 September. The entry was once called `id_context`.
 - **Source:** DESIGN.md l.123
 
 ### A gate word stands only where a binding is being filled
 Left of the name in `:=`; in a field or parameter declaration (the same operator); and a return type (open, see above). On a constructed node a gate word is the checked error: `f(mut i32 5)` is written as the gate on the parameter, `fn (mut a := i32 ?)`.
 - **Why:** a constructed node has no binding (›Substrate vocabulary‹). What guards it is that almost nothing knows where it is. A gate needs a binding, and a binding per calculation step is a cost the substrate refuses.
 - **Ruled:** 7 September 2026, restated 20 September 2026.
-- **History:** first wording, "an anonymous value is gated the same way because it has the record and never needed the name", replaced 7 September 2026.
 - **Source:** DESIGN.md l.123, l.129
 
 ### A type never carries mutability
@@ -830,7 +753,7 @@ Left of the name in `:=`; in a field or parameter declaration (the same operator
 `b.x = 5` needs the write gate on `b` and on the field declaration `x`. So an immutable binding protects its contents, and a frozen field stays frozen inside a mutable one. Gates compose under the Kleene rule of *Read and write are one mechanism*.
 A **dereference starts a new path**: `b.r@ = 5` writes at the address `r` holds, not inside `b`, so it needs only the reference's own write-through permission. A reference binding therefore carries two gates: write to its slot, and write through it (the permission *Reference-granular permissions* puts on the reference).
 - **Ruled:** 5 September 2026. Through the type: 20 September 2026, Thobias: `t.y = 4` needs `mut` on the `share` member alone, the type standing as a namespace there, not as a container.
-- **Seed:** since 20 September 2026, `q.v = 3` needs `mut` on `q` and on `v`; `t.y = 4` needs it on the member alone. A type's own parse fills a field through the field's default entry (›Fields start writable by the type's own parse‹).
+- **Seed:** since 20 September 2026.
 - **Source:** DESIGN.md l.123
 
 ### A field's gate lives once per type, never per instance
@@ -853,21 +776,16 @@ Permission is the gate's question; discipline is the borrow rule's. A write to a
 ### Fields start writable by the type's own parse
 A field declaration starts with a write entry for the type's own `parse` (so the parse can fill the node it builds, now spelled `tape[0].f = …`). `immut f := i32 ?` removes it: a veto on the write wherever the name is reached, so `immut mut x := …` is written nowhere (Kleene rule). `mut x := f32 ?` adds the write from anywhere the instance is reached, `b.x = 5`.
 - **Why:** Thobias: "to make gates non ambiguous there should then be a default gate where the fields are writable during parse time and it can be overriden if you want it immutable in parse as well". One mechanism: every permission an entry, none an exception.
-- **Ruled:** 20 September 2026, Thobias. The word: "immut is the word" (same day).
-- **Seed:** both since 20 September 2026.
-- **History:** ruled over the fill `this.lhs = tape[-1]`; `this` was removed 26 September 2026 and a parse writes fields as `tape[0].f`.
+- **Ruled:** 20 September 2026, Thobias. The word `immut`: same day.
+- **Seed:** since 20 September 2026.
 - **Source:** DESIGN.md l.129
 
 ### What still holds of the old lifecycle
 `undefined` is a null slot, and reading it is a checked error, never undefined behavior. Whether a cell is constructed during parse is the tape's `is_constructed` list, never the dyad's. A type write (reclassifying a live dyad) must discharge **validity** (the existing bytes are a valid value of the new type) and **layout** (the new type reads the same shape, or storage is reallocated); the refinement/proof layer discharges these where it can, `unsafe` where it cannot, like a checked `transmute`. A structural graph edit that rewrites a dyad's type triggers re-validation, as every `graph_mut` write does.
 - **Ruled:** 7 September 2026 (what stands of the June lifecycle).
-- **History:**
-  - Three-state lifecycle `undefined` → defined → frozen for both slots, with `mut` on the classifier keeping a slot writable past definition, and exclusivity making undefined-slot checks local ("the flip *is* publication"). Superseded 7 September 2026: there is no phase and no frozen state; writability is the gate on the binding.
-  - Phase stored as tag bits in the low four bits of the 16-byte-aligned type pointer, not as wrapper nodes (a wrapper breaks type transparency); reflection could synthesize a wrapper view. Proposed June 2026, superseded 7 September 2026: `undefined` is a null slot and writability is a gate.
-  - "The default gate of a declared name is write allowed while the slot is null" (7 September 2026). Removed 20 September 2026.
 - **Source:** DESIGN.md l.125, l.129
 
-### `immut x` removes `mut`; `lock` seals the gate set
+### `immut x` removes `mut`, and `lock` seals the gate set
 There is no phase to flip. `immut x` removes the `mut` entry from x's gate set. "Frozen" names that resulting state; it is not a gate word. Editing a gate set is a structural write: exclusive under the borrow rule and re-validated like every `graph_mut`. So a name may go `mut`, then `immut`, then `mut` again.
 **`lock`** is an entry that denies every later change to the set it stands in, itself included, so it is one-way by construction: `x := lock mut 5`, or `lock x` later. After it neither `immut x` nor a new `mut` can pass.
 - **Why:** a reader that draws a conclusion from a stable dyad keeps the conclusion after dropping its reference. Once gates are editable, that guarantee must be opted into. `lock` is the opt-in, which a compiled reader, a type's layout at first instantiation, or a proof may demand on what it reads, instead of every dyad paying for a permanence most never need.
@@ -875,23 +793,28 @@ There is no phase to flip. `immut x` removes the `mut` entry from x's gate set. 
 - **Rejected, to stay rejected:** `metamut`, a separate grant of flip authority (delegating flip authority is just ownership transfer).
 - **Ruled (27 September 2026, Thobias):** allowed unless locked. On an unlocked name `mut` may return after `immut`; "the reverse flip" in ›Substrate vocabulary‹'s rejected list means un-freezing a *locked* set. Reason: since 7 September permanence is `lock`'s job, opted into by whoever needs it.
 - **Ruled (27 September 2026, Thobias):** the default gate "write allowed while the slot is null" is gone since 20 September; after `immut x` no entry says true to a write of the value, so the name is written nowhere until `mut` returns.
-- **History:** the one-way phase flip `immut x` (June 2026): owner-only with no live borrows, like a move; frozen was final so a flip never invalidated anyone. Respelled 7 September 2026 into gates plus `lock`.
 - **Source:** DESIGN.md l.127
 
-### Two muts, and the storage partition: `share` places a member once, unmarked members are per value
-In a type body, `share x := …` is one place stored with the type, reached through every node (`p.dims`) and through the type itself (`point.dims`). An unmarked member is a place per node whatever its gates: `size := u64 0` is a per-node default, `share mut mints := …` is one mutable place every use of the type writes.
+### Two muts, and the storage partition
+In a type body, `share x := …` is one place stored with the type, reached through every node (`p.dims`) and through the type itself (`point.dims`). An unmarked member is a place per node whatever its gates: `size := u64 0` is a per-node default, `share mut mints := …` is one mutable place every use of the type writes. Every line stored once per type says so: `share parse_rank = …`, `share associativity = left`, `share parse = (…)`, `share run = (…)`, `share drop = (…)`, beside `share array_mints := …`. An unmarked line is a place in every value. **An unmarked slot fill is the checked error.** The mark is spelled `share`: `shared` is respelled `share` wherever DESIGN names the mark, kept only inside quotations and dated records.
+
 `share` is a gate: an entry on the name's binding beside `pub` and `mut`, read where they are read (`x:gate`). It decides placement where the others decide access. It stands first: `share mut x := …`.
+
+`share` means one place, the same value at the same time, everywhere it is written. Its value is made once, at the definition. Where the line stands only decides which contexts reach it:
+- in a type body: every node of the type and the type itself;
+- in a function body: every call (C's `static` local). `share mut n := i32 0, n = n + 1` counts the calls. A `share` line in a loop or branch inside the body is still the function's. Two functions each own their own place under the same name;
+- at a file's top level: every importer of the file in the run (a file loads once per run already; `share` makes it a guarantee that holds even if loading changes);
+- in a loop or branch outside any function: every pass (an unmarked name is made again on each pass).
+
+"At the same time": one value for every task and thread, never a per-task copy (async and threads come after v1; recorded so they inherit it). Without `mut` the name is not rewritten, while a map behind it is written through it as through any place. The initializer runs **once, when the definition is parsed**, not at the first call. So it cannot read the function's parameters or locals, or a name of the loop or branch around it (no value there yet): the checked error. A `print` in it prints at the definition.
+
 The partition stands: layout is the unmarked members (the per-instance layout is derived, like C++'s struct), namespace is the `share` members (stored once, like C++'s namespace). A type whose members are all shared is a pure namespace, which is what a language is; the merge of `type` and `struct` into the one identity `type` is this partition read to its end (›Substrate vocabulary‹).
-- **Why (placement by a word):** deriving placement from mutability left shared-and-mutable state unspeakable, so a generic's memo needed a sibling identity (18 September); a reader had to apply a rule to know where a line lived instead of reading a word on it; and the derivation already had an exception, a per-instance constructor being immutable yet per instance (*The constructor is a field*).
-- **Why (a gate):** Thobias: "shared is a gate, put it on the record". One family of words left of `:=`, one home, one reader.
-- **Ruled:** 19 September 2026, Thobias (placement by the word); 20 September 2026, later, Thobias (it is a gate). Partition: July 2026, respelled 4 September 2026.
-- **Seed:** since 20 September 2026 the reader puts it on the member's binding, first in the set. Since 24 September 2026 (#141) a node's `.` finds a `share` member where no field of its own answers.
-- **History:**
-  - Derivation (July 2026): a field ever mutable, even only during `init`, is per instance; one never mutable is stored once with the type; placement decidable at the declaration site. Superseded 19 September 2026 by the `share` word (reasons above).
-  - 19 September 2026: `share` was "placement, not a gate". Superseded 20 September 2026.
-  - Members stood in a `fields = (…)` block (spelled `instance` until 19 September evening), and the type read them as `point.fields.dims` (23 September 2026: "point.dims is actually not allowed"). The block was removed 25 September 2026 (*A type body describes one level*): members stand in the type body, and `point.dims` reads through the type.
-  - The mark was spelled `shared`; renamed `share` 26 September 2026, Thobias ("one letter less").
-- **Source:** DESIGN.md l.131
+- **Why:** (placement by a word) deriving placement from mutability left shared-and-mutable state unspeakable, so a generic's memo needed a sibling identity (18 September); a reader had to apply a rule to know where a line lived instead of reading a word on it; and the derivation already had an exception, a per-instance constructor being immutable yet per instance (*The constructor is a field*). (a gate) Thobias: "shared is a gate, put it on the record". One family of words left of `:=`, one home, one reader. (one meaning) Thobias: "it just means that this value is the same at the same time across all contexts". One word, one meaning: a reader never has to ask where a `share` line stands to know what it does. A call frame is an instance of its function (›Resolution is one rule‹), so a `share` name in a body is what `share` already is in a type. A cache a type keeps for itself lives with it: since 26 September 2026 `array`'s memo is `array`'s own `share` member, not a top-level name (it sat inside `get_mint` on 25 September; 26 September wins, Thobias, 27 September 2026). On files, Thobias: "maybe you want the same shared value across all imports?" (the spelling, and the mark on slot fills) "i want to rename shared to share. one letter less. also run and parse_rank and associativity and parse and others such which is shared should also be named as shared so that no confusion arrizes"; "share is fine" (Thobias). `share` is the plain word for what happens.
+- **Ruled:** July 2026 (the partition; a type stores its `parse_rank`, `associativity`, `parse`, `run` and `drop` once and shares them with every value, the per-value bytes being the per-value fields), respelled 4 September 2026; 19 September 2026, Thobias (placement by the word); 20 September 2026, later, Thobias (it is a gate); 25 September 2026, Thobias (function bodies: "it can be used on names inside functions to get some persistent storage across runs of the same function"; later that day, Thobias: "shared should be available everywhere"; the initializer at definition: Claude's choice, agreed by Thobias the same day, "agree"); 26 September 2026, Thobias (the mark spelled `share`, slot fills carry it); 27 September 2026, Thobias (the type-body half of the open point below is superseded by the slot-fill rule: every slot fill carries `share`, `share parse = (…)`, and an unmarked fill is the checked error).
+- **Rejected:** `one`, `all`, `same`.
+- **Open (Claude's choice, open to Thobias):** `share` stays refused on a parameter, whose value each call supplies (*A function's surface*).
+- **Seed:** `share` on the binding since 20 September 2026; read through a node since 24 September 2026 (#141); one place per `share` line since 25 September 2026; the spelling `share` and the mark on slot fills not yet (#153).
+- **Source:** DESIGN.md l.131, l.201, l.207
 
 ### A type's layout locks at its first instance
 A type's layout-relevant slots must be defined before its first instantiation. The first instance adds `lock` to those slots' gate sets.
@@ -899,29 +822,10 @@ A type's layout-relevant slots must be defined before its first instantiation. T
 - **Ruled:** stated as consequence of the 7 September 2026 `lock` ruling.
 - **Source:** DESIGN.md l.131
 
-### `share` means one place, the same value at the same time, everywhere it is written
-Its value is made once, at the definition. Where the line stands only decides which contexts reach it:
-- in a type body: every node of the type and the type itself;
-- in a function body: every call (C's `static` local). `share mut n := i32 0, n = n + 1` counts the calls. A `share` line in a loop or branch inside the body is still the function's. Two functions each own their own place under the same name;
-- at a file's top level: every importer of the file in the run (a file loads once per run already; `share` makes it a guarantee that holds even if loading changes);
-- in a loop or branch outside any function: every pass (an unmarked name is made again on each pass).
-"At the same time": one value for every task and thread, never a per-task copy (async and threads come after v1; recorded so they inherit it).
-Without `mut` the name is not rewritten, while a map behind it is written through it as through any place. The initializer runs **once, when the definition is parsed**, not at the first call. So it cannot read the function's parameters or locals, or a name of the loop or branch around it (no value there yet): the checked error. A `print` in it prints at the definition.
-- **Why:** Thobias: "it just means that this value is the same at the same time across all contexts". One word, one meaning: a reader never has to ask where a `share` line stands to know what it does. A call frame is an instance of its function (›Resolution is one rule‹), so a `share` name in a body is what `share` already is in a type. A cache a function keeps for itself (a generic's mints, identities/array.logos) lives inside the function, not beside it as a top-level name. On files, Thobias: "maybe you want the same shared value across all imports?"
-- **Ruled:** 25 September 2026, Thobias (function bodies: "it can be used on names inside functions to get some persistent storage across runs of the same function"); later that day, Thobias ("shared should be available everywhere"). Initializer at definition: Claude's choice, agreed by Thobias the same day ("agree").
-- **Open (Claude's choice, open to Thobias):** `share` stays refused on a parameter, whose value each call supplies (*A function's surface*).
-- **Ruled (27 September 2026, Thobias):** the type-body half of that open point is superseded by ›The mark is spelled `share`‹: every slot fill carries `share`, `share parse = (…)`, and an unmarked fill is the checked error.
-- **Seed:** since 25 September 2026 every position gets a global place, the initializer runs once as the definition parses, an owning value there is freed at program end, and the line itself then only names the place. A function whose `share` name holds a map is not compiled (the checked "cannot be compiled yet" every map in a compiled body gets).
-- **History:** 19 September 2026, `share` was a reserved word only inside a type's field block ("yes reserved inside instance inside type"), an ordinary name elsewhere. Widened 25 September 2026 to function bodies, then to everywhere.
-- **Source:** DESIGN.md l.131
-
 ### Resolution is one rule
 A type keeps the defining scope it was constructed from. `a.x` asks `a`'s type for `x`, and climbs no further inside one `.`. The declaration found decides what is found: an unmarked member is a place (the byte offset inside `a`'s value area); a `share` member is the stored dyad. A node reads `p.dims`; a type reads its own `share` members through itself, `point.dims`. Visibility is one extra test at the same lookup. A call frame is an instance of its function: parameter declarations resolve to a frame exactly as field declarations resolve to an instance. Lookup continues up the type chain and ends at the `type : type` self-loop.
 - **Ruled:** precision 30 August 2026; the mark (not `mut`) decides what is found, 19 September 2026; reads through the type, 25 September 2026 (*A type body describes one level*).
-- **Seed:** since 24 September 2026 (#141): a node's `.` finds a `share` member where no field of its own answers; `t.fields.x` reads one through the type and `t.x` is a checked error pointing at `t.fields.x`. (That was the 23 September spelling; the 25 September ruling makes `t.x` the read.)
-- **History:**
-  - 30 August 2026: `a.x` probed the type's field scope, then `a`'s own bare scope; mut decided place vs stored dyad. 19 September: the mark decides.
-  - 23 September 2026, Thobias: `point.dims` refused, `point.fields.dims` the read. Reason then: one word, `fields`, as the step from a type to what its instances hold. Superseded 25 September 2026 when the fields block was removed.
+- **Seed:** since 24 September 2026 (#141), still with the 23 September `t.fields.x` spelling.
 - **Source:** DESIGN.md l.133
 
 ### Filling a valueless declaration needs `mut`
@@ -944,11 +848,7 @@ Every classification chain ends at the `type : type` self-loop: `3 : i32 : type 
 - **Why:** a type-rooted chain is what a newcomer expects; a language being one identity among the types it defines lets a new language be written as one. For `type` over `word` (19 September): the design turns on two levels, and `type` names the first where `word` names a spelling. (As ruled, the two levels were "a type's own lines and its fields block"; the fields block is gone since 25 September 2026.)
 - **Ruled:** 4 September 2026 (substance); `type` again 19 September 2026, Thobias.
 - **Rejected, to stay rejected:** a separate `struct` core identity (merged into the ground; `language` is distinct from it by the 4 September ruling).
-- **Seed:** spells the root `type` and keeps `logos` as a transitional alias of it until the `language` identity exists to give `logos (…)` its ruled meaning. #131 closed unneeded; the README spells `type`.
-- **History:**
-  - July 2026: `logos` was the ground identity's proper name and the definition keyword, and "`type` and `struct` … never as separate core identities". Superseded 4 September 2026; sketches and examples respelled.
-  - 18 September 2026, Thobias: the ground spelled `word` ("everything we write are words"; a definition gives a word its spelling, parse, run and what its nodes hold, more than a traditional type states). Objections recorded then as outweighed: the binding is the word level (in `^ := word (…)` the word is `^`), types with no word (`fn (…)`, `@i32`, `array i32`, an anonymous definition), data types that are not words (`point`), and DESIGN's prose using "word" for a spelling. Reverted 19 September 2026: the two-level split confirmed those objections. The dyad field stayed `.type` throughout ("dyad.type doesnt need to be changed to dyad.word").
-  - Ground test was spelled `x:dyad.type == type`; `a:type` replaced `a:dyad.type` 23 September 2026.
+- **Seed:** done (#131 closed unneeded); `logos` stays a transitional alias of `type` until `language` exists.
 - **Source:** DESIGN.md l.135
 
 ### `undefined`, `?`, `@void` and `native`
@@ -957,7 +857,7 @@ Every classification chain ends at the `type : type` self-loop: `3 : i32 : type 
 - `@void` is a type-erased address whose interpretation comes from elsewhere: the honest type of the dyad's value field, since interpretation always comes from the type pointer.
 - `native` is a callable-only function: a machine-code body (`@exec`) with no Logos source, opaque to reflection (invoked, never read into). It differs from `undefined` and `?` because it runs and reaching it is no error.
 - **Rejected, to stay rejected:** `any` (removed and split into `undefined` and `?`).
-- **Seed:** all primitives are `native`, ported to reflectable Logos source one identity at a time (*The architecture*).
+- **Seed:** all primitives `native`.
 - **Source:** DESIGN.md l.135
 
 ### Rejected, to stay rejected (vocabulary and structure)
@@ -999,7 +899,7 @@ Logos ships as a standalone interpreter. Native code comes in four ways: compile
 Errors are tagged unions `(T | Error)`, spelled `T!`: `fn () -> i32!` hands a recoverable error to its caller. A fallible function declares its error types. Callers handle results with `match`, with `success` / `fails` combinators for yes/no outcomes. No exceptions, no hidden propagation: `try f()` inside a `!` function hands the callee's error to the enclosing function's caller, sugar over `match` (Zig's shape). `T!` is for declared fallibility only.
 - **Why:** one visible word per call site.
 - **Ruled:** `T!` 30 August 2026; `try` 31 August 2026, in discussion.
-- **Seed:** none of it in v0.1.0 (see next rules). It lands later as library and driver work over tagged unions; these shapes stay the target.
+- **Seed:** not yet (see the next rules).
 - **Source:** DESIGN.md l.145
 
 ### A checked error is a fault: the task that hit it is cancelled
@@ -1011,16 +911,14 @@ A checked error is never part of a declared type, so it is not a value but a **f
 The constructor builds the error with `error «…»`. The driver (the enclosing scope's constructor) records the diagnostic, marks the cell, and resynchronizes at the next segment boundary or closer.
 - **Why:** one parse yields many diagnostics, which tooling needs.
 - **Ruled:** 31 August 2026, in discussion.
-- **Seed:** v0.1.0 constructors are `-> void`; the resynchronizing driver comes later.
-- **History:** 30 August 2026: constructors "carry no `!`"; replaced 31 August.
+- **Seed:** not yet, constructors are `-> void`.
 - **Ruled (27 September 2026, Thobias):** the signature is the slot's declaration in `type`'s own definition: type.logos declares `parse` as a body yielding `void!`, every `share parse = (…)` inherits it, and a fill carries no arrow ("for all these names inside type body which is assigned and not declared their declaration, which is in definition of type, can absolutely be defined as returning an error as an option"). `error.X «…»` inside the body is the error value, a fault until `T!` lands.
 - **Source:** DESIGN.md l.145
 
 ### Error values are in v0.1.0; an error names a category, which is a scoped name
 `T!` is `T` or an error; it needs the union type defined first (open). A category is a name declared in a scope with `error.X := «description»`: no type, no value. `error`'s own parse reads the `.X := «…»` to its right, the one place a path stands left of `:=`. `error.X` declared in two libraries are two identities, so a handler tells `http.error.not_found` from `fs.error.not_found`; categories live in the declaring library's scope, never in one global set. An unknown category in a raise is the checked error.
-- **Why:** Thobias: "i think its wise to implement error handling for v0.1.0 so i want to use ! as an option for types"; "its rather just only a name without and type or value … in one scope you can define error.X and in another you can defined the same error name error.X and they are actually different … maybe a better word is error category". A declared name is already an identity resolved by scope, so nothing new is needed.
+- **Why:** Thobias: "i think its wise to implement error handling for v0.1.0 so i want to use ! as an option for types"; the word category is his. A declared name is already an identity resolved by scope, so nothing new is needed.
 - **Ruled:** 27 September 2026, Thobias.
-- **History:** supersedes the 2 September 2026 staging-out below.
 - **Seed:** nothing yet.
 - **Source:** DESIGN.md l.145
 
@@ -1033,7 +931,7 @@ Each element holds its category, its message (`{…}` read as `print` reads it),
 ### There is no bare `error «…»`; `abort «…»` stops the program; `alloc` returns `@T!`
 Every error carries a category. `abort «…»` is the fault word, the "cannot happen" case that cancels the task. `alloc` returns `@T!`: out of memory is an error value, and every `alloc` is written with `try` (Zig's choice over Rust's abort).
 - **Ruled:** 27 September 2026, Thobias: "abort should be used instead to stop the program. bare error is not allowed. should strictly give category to each error".
-- **Seed:** `error «…»` is the fault today and becomes `abort «…»`; `alloc` is not `!` yet; both pending.
+- **Seed:** both pending.
 - **Source:** DESIGN.md l.145, l.104
 
 ### v0.1.0 knows faults only; `error «…»` aborts the run (superseded 27 September 2026, see above)
@@ -1061,7 +959,6 @@ Each `{…}` is run and shown as the echo shows it; `\{` and `\}` are braces as 
 
 ### Paradoxes are handled by stratification, only if needed
 If type strata reason about themselves or proofs quantify over the proof system, a universe hierarchy (as in Lean 4) keeps things consistent; only explicit meta-mathematics meets it. With proofs as rewrite rules it is not needed for the ruled shape; it returns only if rules over rules are shown to admit a paradox (›The proof layer‹).
-- **History:** qualified August 2026, once proofs became rewrite rules.
 - **Source:** DESIGN.md l.158
 
 ## Representation, elaboration, and lifetimes
@@ -1086,20 +983,19 @@ A binary `+` is one 16-byte cell pointing at its operands. An operand that uses 
 ### Numeric literals are uncommitted until context classifies them
 It can become any `int`, `uint` or `float`. Beside a typed value it takes that type: `a + 1` with `a` an `i32` is i32 addition. Two literals: the operation is exact on the reduced fraction (`[num, den]`, never text) and the result stays `rational_number` until it lands in a typed slot. Same concrete type keeps it; two *different* concrete types do **not** lower.
 - **Why:** one operator and one literal form for every numeric type, no suffixes (`1i32`, `1.0f`).
-- **Seed:** folds all-literal arithmetic exactly over `i64` fractions; out of range is a clean error, not a wrap. Arbitrary precision deferred, not blocked.
+- **Seed:** done over `i64` fractions; out of range is a clean error, not a wrap; arbitrary precision deferred.
 - **Source:** DESIGN.md l.166
 
 ### No implicit coercion; a numeric type applied to a value is the conversion
 `i32(a)` is the conversion, per constructor, reusing token consumption; there is no `cast` identity. Comparisons resolve operands the same way and yield `bool`. Logical operators short-circuit.
-- **Seed:** `not` takes a bracketed operand, a parsing shortcut, not a keep.
+- **Seed:** stand-in (`not` takes a bracketed operand).
 - **Source:** DESIGN.md l.166
 
 ### `-` before an operand is negation: one identity that reads its left side
 A constructed operand at `tape[-1]` makes it subtraction; anything else, prefix. `a-1` is subtraction; `-3` folds into the literal (the literal's constructor reads the `-`). One identity has one rank, the additive one, so `-y * 3` is `-(y * 3)`, the same number as `(-y) * 3` for every arithmetic operator the seed has.
 - **Why:** `-y` is what readers write; `0 - y` was a workaround. Deciding arity from neighbouring cells is what the eager-segment model gives every constructor, so no second identity.
 - **Ruled:** 5 September 2026 (spec silent; the sketch had `-` always binary).
-- **Seed:** rejecting `-y * 3` is a bug, folded into #59.
-- **History:** first worded "binds tighter than the binary arithmetic operators"; corrected 5 Sept, since one rank cannot do that.
+- **Seed:** bug, folded into #59.
 - **Source:** DESIGN.md l.166
 
 ### Integer `/` and `%` are total and saturate; float `%` does not exist
@@ -1113,7 +1009,7 @@ A string is never a comment by position. Prose is marked: `#` takes a following 
 - **Why:** no value rule has to guess what a bare string means.
 - **Ruled:** July 2026, in discussion.
 - **Rejected:** a docstring convention: at an untyped tail, `x := ( 40 + 2, «a» )` cannot tell doc from value.
-- **Seed:** builds the comment node over `string` in both forms: `# raw text` to end of line, and `# «…»` bounded by the string (may span lines; anything after `»` is live code). `#` becomes a graph-resident constructor at self-hosting.
+- **Seed:** done; `# «…»` may span lines and anything after `»` is live code.
 - **Source:** DESIGN.md l.168
 
 ### Strings nest by depth; only five escapes; `«…»` is the only spelling
@@ -1154,20 +1050,17 @@ The tape has `insert`/`remove`: a constructor may splice tokens in or drop upcom
 ### The tape is Logic Graph with a string extension
 A constructed cell is already a graph dyad. An unconstructed cell points at its candidate identity's binding (7 Sept 2026), its span in the derived source map. The string is the source not yet lexed. So reflecting on the tape needs no second metalanguage; positions, `insert`, `remove` are ordinary identities (the sketch's `parsing_tape`) for self-hosted constructors. The tape is throwaway: source and graph persist, a re-parse rebuilds it.
 - **Ruled:** July 2026; wording amended 2 September 2026.
-- **History:** `token` as a wrapper identity superseded 2 Sept 2026: an unconstructed cell points at the identity itself.
 - **Source:** DESIGN.md l.174
 
 ### The driver lexes a segment whole and builds it highest `parse_rank` first
 The eager-segment model (›The scope's constructor is the driver‹). Higher binds tighter; associativity breaks ties.
 - **Ruled:** 30 August 2026.
-- **History:** replaced one-token-lookahead shift/reduce. "Operator precedence" gave way to the slot name `parse_rank` 10 Sept 2026.
 - **Source:** DESIGN.md l.176
 
 ### `parse_rank` is one `f64` on one shared axis, and may be relative
 Fractions let a new operator slot between two others without renumbering. Relative: `share parse_rank = mul.parse_rank - 1`, ordinary comptime field arithmetic under ›Deferral is authored‹ (unresolved stays a visible node until forced), resolved by the operator's first use or the use-before-definition error.
 - **Ruled:** relative ranks August 2026, in discussion; the operator is `=` (a declared slot is filled, not redeclared) 4 September 2026 (›The constructor is a field‹).
 - **Rejected:** a partial order of binding groups (closed 30 August 2026). If unrelated operators should ever demand brackets, that is an ordinary check on top, changing neither the field nor the driver.
-- **History:** written without `share` until 26 Sept 2026 (l.207: slot fills carry `share`).
 - **Source:** DESIGN.md l.176
 
 ### A token's identity is fixed when it is reduced; brackets bound backward reach
@@ -1178,7 +1071,6 @@ Until reduced, tokens can be rewritten; a reduced dyad is immune. So a higher-ra
 No terminator: the finality rule ends each expression. The same `,` separates fields, arguments and expressions (other languages' `;`). In the eager-segment model `,` ranks above `(` and closes a segment when found, which also puts declaration before use in a scope.
 - **Why:** one rule; the reader never judges whether two steps are independent.
 - **Ruled:** 26 September 2026, Thobias; one separator since July 2026.
-- **History:** before 26 Sept: "between independent expressions nothing at all stands, while between dependent ones the `,` is required", which disagreed with the seed's rule (›The scope's constructor is the driver‹).
 - **Source:** DESIGN.md l.178
 
 ### Newlines are whitespace; `;` does not exist
@@ -1189,8 +1081,7 @@ No terminator: the finality rule ends each expression. The same `,` separates fi
 ### `if` needs no brackets around a complete condition or its body
 The condition is the first complete expression after `if`, the next expression the body; a `(` right after a complete condition starts the body: `if mint != ? return mint`, `if t:type == scope (…)`, `if x == 1 (10) else (20)`. A condition ending in a type that can read a value keeps brackets: `if (t == f64) y = 1`, since the type reads its right side and would take the body's first name.
 - **Why:** fewer brackets for the commonest control word; the condition's end is known once it is complete (reason pending Thobias's confirmation). Brackets for types: a type reading its right side is one rule everywhere; the condition gets no exception (Thobias: "you need brackets around t == f64").
-- **Ruled:** bare bodies 25 September 2026, Thobias ("brackets should not be needed"); type conditions 26 September 2026, Thobias.
-- **History:** 2 Sept 2026 declined bare `if c body`. 5 Sept: any constructed cell may be a condition (`if` reads its own right side). 25 Sept: bodies decline reversed.
+- **Ruled:** bare bodies 25 September 2026, Thobias; type conditions 26 September 2026, Thobias.
 - **Open:** the bare-body reason awaits Thobias's confirmation.
 - **Source:** DESIGN.md l.178
 
@@ -1200,7 +1091,7 @@ The condition is the first complete expression after `if`, the next expression t
 - **Source:** DESIGN.md l.178
 
 ### Hosted text does not owe a single reading
-A hosted clause (Latin, English) parses to data, and data is a legitimate resting state: it stands in the graph, open to recognizer, reflection and rewriting. Ambiguous recognition: the dyad carries every matching identity. Ambiguous structure: it carries the alternative sub-dyads (a parse forest as plain values). Nothing known: the text literal is the floor. Resolution is lazy, at a use site, where later information removes alternatives or the demand surfaces `?`, the universal unknown. Hosted language is for truth: a sentence denotes a proposition (ambiguous: a set of candidates); "executing" it is the proof layer applied to it, checker as function and proposition as operand, so the evaluation rule is untouched. The kernel rarely certifies such claims (›Received code is checked before it runs‹), so an empirical claim enters as an asserted axiom with provenance, in a branch of ›the ecumenical proof system‹, where contradicting testimony coexists and the coherentist layer grades it: proven, refuted, plausible to a degree, unknown. Rankings guide what to try proving and never count as proofs. The proof layer, never the parser, assigns status, lazily and revisably.
+A hosted clause (Latin, English) parses to data, and data is a legitimate resting state: it stands in the graph, open to recognizer, reflection and rewriting. Ambiguous recognition: the dyad carries every matching identity. Ambiguous structure: it carries the alternative sub-dyads (a parse forest as plain values). Nothing known: the text literal is the floor. Resolution is lazy, at a use site, where later information removes alternatives or the demand surfaces `?`, the universal unknown. Hosted language is for truth: a sentence denotes a proposition (ambiguous: a set of candidates); "executing" it is the proof layer applied to it, checker as function and proposition as operand, so the evaluation rule is untouched. The kernel rarely certifies such claims (›Received code is checked before it runs‹), so an empirical claim enters as an asserted axiom with provenance, in a branch of ›The ecumenical proof system‹, where contradicting testimony coexists and the coherentist layer grades it: proven, refuted, plausible to a degree, unknown. Rankings guide what to try proving and never count as proofs. The proof layer, never the parser, assigns status, lazily and revisably.
 - **Ruled:** July 2026, in discussion.
 - **Rejected, to stay rejected:** driver backtracking (stored branches, rollback of final dyads): finality stays guarantee-based and one-way, exploring happens before commitment (guards, in-constructor lookahead), ambiguity is represented, not searched. `undefined` as the sign of ambiguity: it mixes too-many-readings with nothing-written, which `undefined` keeps meaning.
 - **Ruled (27 September 2026, Thobias):** reworded: a dyad whose type is neither a `fn` nor carries a `run` is never run. A hosted clause's type carries neither, so it stands as data as before.
@@ -1239,15 +1130,14 @@ The call becomes a jump into the interpreter's body-walk over the callee. Order 
 - **Why:** an uncompiled callee is no mistake (interpreting is always valid; compile is profitability, never meaning). And `compile f` must mean f is compiled; silently doing nothing is the one thing a user cannot detect.
 - **Ruled:** 4 September 2026.
 - **Rejected:** an error on an uncompiled callee; leaving the whole function uninstalled.
-- **Seed:** since 10 Sept 2026 emits the jump into the interpreter, and a second compile (`f.compile()` in the seed's spelling today) lifts a boundary. Before, it failed fast and left the caller interpreted.
+- **Seed:** since 10 Sept 2026, spelled `f.compile()`.
 - **Source:** DESIGN.md l.185
 
 ### Which machine operation an operator is (`+` over `i32` → `add_i32`) is a lowering rule
 Machine operations are identities (`add_i32`, `fadd_f64`), each carrying its `@exec`, unchangeable. `+` is the constructor that builds the application node. A rewrite rule, one per operator and operand-type combination, picks the operation the first time the node is lowered or run and stores it in the node's op slot; run, compile and reflection dispatch on it, no side table. Evaluate: consult the type; op slot filled, jump; else apply the rules once and fill it. Alternative implementations live in versioned scopes, not per-phase tables.
 - **Why:** the node's type is `+` either way, which reflection and rewrite patterns read; the only question is who picks the machine op. That is a lowering, which ›Backends are identities‹ makes a rule set, so a new numeric type is new rules, never an edit to `+`.
 - **Ruled:** 8 September 2026.
-- **Seed:** `+` resolves at parse, the divergence to remove. Run tier follows the rule since July 2026: every native is a `callable` value `[entry: @exec, convention]` (the type of `add_i32` and of compiled fn code alike) in the dyad's op slot; the interpreter consults no table. Cranelift lowering still uses a Rust-side table until lowering is re-keyed per backend identity.
-- **History:** before 8 Sept: "the parse-time constructor that resolves an application to one of them".
+- **Seed:** divergence: `+` resolves at parse; run tier since July 2026.
 - **Source:** DESIGN.md l.185
 
 ### Foreign code is a declaration, and the C ABI is the common language
@@ -1259,7 +1149,6 @@ Machine operations are identities (`add_i32`, `fadd_f64`), each carrying its `@e
 ### Execution is function application: to evaluate a dyad, read its type; run a `fn`, run a type's `run`, else it is data
 Operators (`+`, `=`), field access and control flow run this way. Type is a `fn`: run it on the operand record. Else, the type carries a `run`: run that body over the node, its fields being the frame. Else the dyad is data, read through the type's layout. A dyad typed by a function is an application. Control flow works as a function because operands arrive unevaluated, as Logic Graph: `if` runs its condition, then only the taken branch. Laziness is the substrate's default, not a special form.
 - **Ruled:** `run` branch 4 September 2026, restated 16 September 2026.
-- **History:** first: "Everything runnable is a `fn`", two branches only.
 - **Source:** DESIGN.md l.189
 
 ### A user-defined operator is a `type` that fills its own slots, `run` included
@@ -1267,8 +1156,7 @@ Operators (`+`, `=`), field access and control flow run this way. Type is a `fn`
 - **Why (name `run`):** Thobias, 17 Sept 2026: "everything is code so code doesn't really work"; the name must say what runs when the node is interpreted, or compiled and run.
 - **Ruled:** 4 September 2026 (slot `code`); `run` 17 September 2026, Thobias.
 - **Rejected:** names `body`, `do`, `eval`. A constructor emitting the operation inline as residual code: an operator is one operation with one definition; inlining copies it per site and hides it from reflection and `compile`, where a `^` node keeps the call visible. A separate `code` identity (signature, body, bcode, frame) shared by `fn` and operators: what it held is exactly a `fn` (dropped the same evening, 4 Sept).
-- **History:** 4 Sept: `code = fn (a := i32 ?, b := i32 ?)` over a positional operand record; "`constructor`, `destructor`, and `code` are three slots of one shape, each holding a function". 16 Sept: `run` holds a body (next rule). 17 Sept: renamed `run`; the `fn` type's member `run` gave up its name (running a node is the evaluation rule; `f.run` is the body it runs). 19 Sept: `shared run = (…)` in the fields block, bare `run = (…)` the type's own. 25 Sept (l.203): fields block gone, `^.run` not `^.fields.run`. 26 Sept (l.207): mark spelled `share`, required on every slot fill; an unmarked fill is the checked error.
-- **Seed:** the 4 Sept shape ran beside the new (#126) until #133 slice 9 deleted it, as ruled 20 Sept 2026: "to be deleted, not kept beside the new one, once the new shape runs".
+- **Seed:** done (#126; the 4 Sept shape deleted by #133 slice 9, as ruled 20 Sept 2026).
 - **Source:** DESIGN.md l.189
 
 ### `run` is a bare body over the node's own fields
@@ -1276,26 +1164,22 @@ No `fn`, no parameter list; fields are in scope by bare name (Thobias: "the body
 - **Why:** the 4 Sept form tied `a`, `b` to operands only by append order ("a and b now magically connects to the operands").
 - **Ruled:** 16 September 2026, Thobias.
 - **Rejected:** the body as instance lines: instance-building code runs when an instance is built, `run` when the node is evaluated. (The other half of that 4 Sept decline, parameters as instance fields, became the rule 16 Sept.)
-- **History:** fields declared in `fields = (…)` 16-25 Sept (l.203); read as `this.f` 17-26 Sept (l.207).
 - **Source:** DESIGN.md l.189
 
 ### A parse connects each operand to a field by name and removes the cells it took
 Today's spelling (l.207, l.213): with `tape[0]` holding the type, `tape[0]:type = ^` makes it a new `^` node, fields as holes; the parse writes `tape[0].lhs = tape[-1]` and removes the consumed cells, so `^` is what remains of the three (Thobias: "the constructor should remove lhs and rhs in the tape since ^ now is the only thing being consumed since it has consumed lhs and rhs"). The same stamp builds a node of any other type (`squared`'s call of `sq`), so the constructor decides and nothing is granted in advance (›The constructor is a field‹).
 - **Ruled:** 16 September 2026, Thobias; respelled 23 Sept (l.213) and 26 Sept (l.207).
-- **History:** 16 Sept: `tape[0]:dyad.value.lhs = tape[-1]`, stamp `tape[0]:dyad.type = ^` (respelling ›The preview milestone‹'s 9 Sept "so that .operands is valid"). 17 Sept: `this` = shorthand for `tape[0]:dyad.value`; first write into `this` built the node (so a self-typed node needed no stamp: "the stamp said it twice"); `this` legal only in a constructor or `run` body inside `type (…)`, found by walking up the scope spine (#123); first use converted the cell ("this needs real lots of reflection on the LG"). 18 Sept, Thobias: `this` a separate fresh node placed by `tape[0] = this` (reason: placement written where it happens, no act on a first use), the write word.logos's own `parse` already made with `tape[0] = dyad (type, definition)`; it could be placed anywhere (`tape[1] = this`, `tape.insert(k, this)`) or nowhere (edit-and-leave error, #81). 19 Sept: in the instances' `parse`, `this` was the instance that appeared. 23 Sept: `:dyad` retired for `a:type` (Thobias had disliked writing `:dyad` first). 26 Sept: `this` removed (l.207). Declined 18 Sept: `value` as `this`'s name (it is the slot name in the same body, would name the block inside a `fields = (…)` line, and `tape[0] = value` places a bare value needing its type back); `node` noted as the only alternative.
 - **Source:** DESIGN.md l.189
 
 ### `tape` is a word the `parse` slot declares into its body
 Bound per run to the tape centred on the appearance; ordinary name resolution, undeclared elsewhere. So a slot body has no parameter list.
 - **Ruled:** 17 September 2026.
-- **History:** replaced the `fn (tape := parsing_tape ?) -> void` wrapper. `this` was declared the same way 17-26 Sept (in `parse`, `run`, `drop`); a helper read it as an outer name under "a call is a use of every outer name" (#125).
 - **Source:** DESIGN.md l.189
 
 ### What `=` does is decided by the type of the place on its left
-`=` drives its right side (as the seed's does) and builds it by the left place's type's `parse`. So `share parse = ( … )` reads the bracket as a deferred parse body, `share run = ( … )` as a deferred run body. This is ›the type defines how the value is read‹ (›Declarations are immutable by default‹) at parse time, and answers who defers the bracket.
+`=` drives its right side (as the seed's does) and builds it by the left place's type's `parse`. So `share parse = ( … )` reads the bracket as a deferred parse body, `share run = ( … )` as a deferred run body. This is *the type defines how the value is read* (›Declarations are immutable by default‹) at parse time, and answers who defers the bracket.
 - **Why:** Thobias: "how parse still works is by defining what = means when lhs is the type of parse. same for run".
 - **Ruled:** 17 September 2026, Thobias.
-- **History:** also read `fields = ( … )` as the field declaration block until 25 Sept.
 - **Source:** DESIGN.md l.189
 
 ### A field is filled at run, per evaluation; its type decides how the operand is used
@@ -1307,9 +1191,8 @@ The node's storage is its frame. `rhs := i32 ?` evaluates the operand into an i3
 ### A node's output type is per node, and its parse writes it
 The author declares `output_type := type ?`; the parse writes `tape[0].output_type = tape[-1]:type`; use sites and the lowering read it from the node.
 - **Why:** `^` over i32 and f64 is one definition whose result follows its operands (Thobias: "the constructor has to look at the type of lhs and rhs to decide what the output type should be"). Written at build time, so a body using `^` gets its types in the one pass, no lookahead.
-- **Ruled:** 16 September 2026, Thobias. Renamed `output_type` 26 Sept 2026, Thobias ("need to rename to output_type everywhere"): it holds the type of what the run yields.
+- **Ruled:** 16 September 2026, Thobias. Renamed `output_type` 26 Sept 2026, Thobias: it holds the type of what the run yields.
 - **Rejected:** one result type fixed on the type (not dynamic enough).
-- **History:** 16 Sept: `output := type ?`, `tape[0]:dyad.value.output = tape[-1]:dyad.type`.
 - **Source:** DESIGN.md l.189
 
 ### Each field-type combination a node is built with is its own specialization for `compile`
@@ -1319,14 +1202,13 @@ The author declares `output_type := type ?`; the parse writes `tape[0].output_ty
 ### A member stands before any body that reads it
 A type body is read once, in order, no lookahead; reading a field uses its name, and names are declared before use.
 - **Ruled:** 20 September 2026, Thobias: "instance needs to come before parse" (then about the fields block).
-- **History:** open 18-20 Sept as "must a `fields = (…)` block precede a body that reads `this.f`?"; power.logos already had that order.
 - **Source:** DESIGN.md l.189
 
 ### The constructor sets `tape.is_constructed[0] = true` itself; a tape write never sets it
 A write to `tape[k]` replaces the pointer, nothing more. A constructor that finishes its cell sets the flag; one that hands the cell on leaves it false.
 - **Why:** a constructor may leave an unfinished value (the array chooser places the mint, whose own `parse` the driver still runs), so a write cannot mean "done"; only the constructor knows.
 - **Ruled:** 19 September 2026, Thobias.
-- **Seed:** since #133 slice 6: tape write replaces the pointer alone; `tape.is_constructed[k] = true` is a native; a Logos constructor is judged by the flag; a Rust constructor's decline sets it.
+- **Seed:** since #133 slice 6.
 - **Source:** DESIGN.md l.189
 
 ### A constructor that finds nothing to consume sets its flag and stands as itself
@@ -1339,8 +1221,7 @@ A write to `tape[k]` replaces the pointer, nothing more. A constructor that fini
 `fn (a := i32 ?) -> i32 ( … )` is a type whose fields are its parameters, whose `output_type` the call constructor writes from `-> i32`, whose `run` is the body, with call defaults for `parse_rank`, associativity and `parse`. Every field typed and output declared, so exactly one specialization, built at definition; nothing a function does today changes. The old `fn` fields `input`, `output_type`, `body` are these three; `compile`, `bcode`, `frame` and the executing primitive belong to the specialization a node runs as. `fn` is shorthand for what `^` spells out; an operator adds only its own parse.
 - **Why:** one mechanism for everything that runs. Thobias, 4 Sept 2026: "fn is just a shorthand for not needing to define constructor, precedence and associativity".
 - **Ruled:** 16 September 2026.
-- **Seed:** #127, after #126.
-- **History:** the `fn` type was two shared functions, `compile` (lower body to `bcode`) and `run` (execute), plus per-instance `input`, `output_type`, `body` (reflectable graph), `bcode` (opaque, null until compiled), `frame` (byte size of parameters and locals per call, null when none).
+- **Seed:** not yet (#127, after #126).
 - **Open:** where the `run` slot is stored (since 10 Sept 2026).
 - **Ruled (27 September 2026, Thobias):** yes. Compiling a function compiles every run body it reaches: the specialization of a Logos-defined operator is compiled with the first function that uses it and shared afterwards, since a `^` node has no name to compile on its own. A named callee keeps the 4 September rule and is compiled only by its own compile. Reason: otherwise every compiled function pays an interpreter jump per operator, and the demo's point is a compiled operator. **The spelling is `compile f`**, a prefix word over the name like `own x` and `drop x`; `f.compile()` is superseded wherever it stands. Seed: `compile` resolves after `.` on an fn value today and compiles the named function alone; both pending.
 - **Open:** what an absent constructor means for a `run`-carrying type: the seed refuses it as a call form since #133 slice 9 (before, `sq2(5)` ran as a call); ›The constructor is a field‹ leaves it inert.
@@ -1348,12 +1229,10 @@ A write to `tape[k]` replaces the pointer, nothing more. A constructor that fini
 
 ### The executing primitive has two paths: jump to `bcode`, or walk the body
 `bcode` present: jump. Null: walk `body`. Interpretation is the null path, so deopt is just nulling `bcode`: fail-closed. No per-call check that `bcode` matches `body` (the checker's and deopt layer's job). Only the body-walk has a reflectable live stack; compiled code is an opaque leaf (frames on the machine stack), so inspecting a running function means deopting it first. The paths are simple primitives; choosing between them is policy, not theirs.
-- **History:** was the `fn` type's member `run`; lost that name 17 Sept 2026.
 - **Source:** DESIGN.md l.189
 
 ### A function's surface is `fn (params) -> T (body)`, and its parameter list is a record type
 `main := fn () -> i32 ( return 40 + 2 )`. Fields are `name := T ?` or a bare `name` (any dyad); `()` is the empty record. `input` is literally the type the brackets define. `->` is mandatory (`-> void` if nothing). The body is a `( )` scope valued by its trailing expression; `return` only exits early.
-- **History:** a colon field form replaced 2 September 2026.
 - **Source:** DESIGN.md l.191
 
 ### Positional arguments fill the holes in order; an expression line among them is a precondition
@@ -1363,7 +1242,6 @@ A member given a value at definition is not an argument; arity is the hole count
 
 ### Mandatory named arguments are rejected
 - **Rejected, to stay rejected:** `f(x=X, y=Y)` as the only call form: `f(x := X)` is the no-shadowing error when the caller has its own `x`, and renaming a parameter breaks every caller. Optional labels may come after v0.1.0 as sugar, not spelled `=`.
-- **History:** a third reason (the callee is asleep while `(` builds, so `x = X` hits an undeclared name) was superseded 3 Sept 2026: a callable reads its own bracket (›The scope's constructor is the driver‹).
 - **Source:** DESIGN.md l.191
 
 ### Brackets divide by role
@@ -1394,13 +1272,6 @@ Interpreted, each operand is copied from its dyad onto the stack per execution (
 - **Why:** operands live on each thread's own stack, never in the shared graph. So execution is safe under concurrency by construction: the shared Logic Graph is unchanging code, and the changing per-call state is each thread's own stack frame. It is also what makes recursion work (each call gets its own frame), independent of and before any borrow checker.
 - **Source:** DESIGN.md l.195
 
-### A type stores its shared data once; what differs per value is stored per value
-A type stores `parse_rank`, `associativity`, `parse`, `run` and `drop` once and shares them with every value of the type. The bytes that differ per value are the per-value fields. Which members are stored once is written with the `share` mark (see *The mark is spelled `share`* below).
-- **Ruled:** July 2026 (in discussion; who not stated). Placement by the mark: 19 September 2026, spelled `share` 26 September 2026, Thobias.
-- **History:** July 2026: `shared` was a placeholder, not real syntax; placement was to be *derived* from mutability (a never-`mut` member is the same in every value, so stored once), and `shared` would disappear once `mut` and `pub` landed, reflection reading "shared" off "immutable". Changed August 2026 (l.201): since a per-value constructor is immutable yet differs per value, placement is written structure and can no longer be derived from mutability. Changed 19 September 2026: `shared` is real syntax, the one mark of placement; reflection reads the mark. Respelled `share` 26 September 2026 (l.207).
-- **History:** 18 September 2026: bringing back `shared` for a member all values share and may write was proposed and withdrawn, because the case behind it (a generic's memo of its mintings) was a plain variable, not value data. 19 September: shared-and-mutable state became a `shared mut` member of the fields block, the memo staying a plain variable beside its chooser. 26 September (l.205): the memo is `array`'s own `share` member.
-- **Source:** DESIGN.md l.197, l.201, l.205, l.207
-
 ### Plain data and hand-written types are one identity, `type`
 A type whose `parse` derives its layout automatically (it reads the field declarations in its scope and fills `fields` and `size_bytes`, so ordinary data needs no hand-written layout) and a type whose parsing or meaning is written by hand (operators, primitives) are **one identity, not two**. The derived layout is a default of `type`.
 - **Why:** the old `struct`/`type` pair was "nearly identical by design, differing only in that a struct auto-derives what a type leaves to its author."
@@ -1417,8 +1288,7 @@ Field names are not stored on the type's record. They enter the shared name inde
 Each identity's `parse` does its own consumption. The seed's driver is the minimal deferred-reduction loop. The driver classifies a token from the record it already reads: the `parse_rank`, together with whether a constructor is present. Every identity has a `parse_rank`; a `parse_rank` at or above `(`'s means construction at discovery (see *The scope's constructor is the driver*).
 A type may carry a *declarative consumption signature*. It stays the optional fast path that *Source becomes runnable* allows: never a ceiling, and no longer a stored byte.
 - **Ruled:** July 2026; three-way classification replaced 30 August 2026.
-- **Seed:** stores the metadata head in full as each identity's metadata head (not on the name's binding of *Name resolution*). The core `parse` is a `native` callable leaf (called, never read into, per the reflection boundary) under one entry signature that self-hosting will replace with Logos source.
-- **History:** a schedule byte stood in until the constructors drove the tape; retired July 2026. The seed's NaN / finite / +infinity three-way classification of `parse_rank` was superseded 30 August 2026 by "every identity has a `parse_rank`".
+- **Seed:** done; the core `parse` is `native`.
 - **Source:** DESIGN.md l.197
 
 ### `drop` runs a value's destructor; only the owning heap pointer has one in core
@@ -1431,11 +1301,10 @@ A type may carry a *declarative consumption signature*. It stays the optional fa
 - **Why:** the same naming rule that named `run` the same day.
 - **Rejected:** the name *poiesis* (bringing forth from concealment into presence) for the slot. Plain words win.
 - **Ruled:** 17 September 2026 (slot names); poiesis declined August 2026.
-- **Seed:** #130 renamed the slots, README with it.
-- **History:** the slots were `constructor` and `destructor` until 17 September 2026. The 17 September text also said the building of an instance was `this`'s job; `this` is gone since 26 September 2026 (see *There is no `this`*).
+- **Seed:** done (#130).
 - **Source:** DESIGN.md l.199
 
-**The constructor is a field** (DESIGN.md l.199 to l.201 at e75bcdc; the rules that paragraph held follow, and the per-instance field switch itself is history, see ›History of type-body layout‹)
+**The constructor is a field** (DESIGN.md l.199 to l.201 at e75bcdc; the rules that paragraph held follow, and the per-instance field switch itself is history, see DESIGN_HISTORY.md ›History of type-body layout‹)
 
 ### No climbing: a type without a parse leaves its values inert
 Dispatch is one lookup with no climbing. A type without a constructor leaves its values inert on the frontier: data for neighbouring constructors to consume. This is the delimiter behaviour generalised, and it fails closed.
@@ -1447,7 +1316,6 @@ Dispatch is one lookup with no climbing. A type without a constructor leaves its
 - **Why:** reflection must read parse behaviour as data.
 - **Rejected:** moving binding order into constructor code alone (reflection must read it as data). Richer multi-node triggers.
 - **Ruled:** August 2026 (in discussion); partial-order question closed 30 August 2026: one axis, a mixing check can be layered on top (see *Elaboration*).
-- **History:** whether the one global number should become a partial order of binding groups was open, closed 30 August 2026.
 - **Source:** DESIGN.md l.199, l.201
 
 ### Associativity's values are the identities `left` and `right`
@@ -1468,15 +1336,13 @@ Dispatch is one lookup with no climbing. A type without a constructor leaves its
 - **Why:** the three (rank, associativity, parse) are one unit: a constructor without a rank never wakes at the right moment, and a rank without a constructor wakes nothing.
 - **Ruled:** 14 September 2026.
 - **Open:** how a pattern identity (which has no other spelling) gets its `lex_rank` written after its declaration. `x:lex_rank = …` is to be the one way for every name; that spelling for pattern identities is what stays open.
-- **Seed:** since 14 September 2026 (#122): `x:lex_rank` reads, `x:lex_rank = …` writes, the lexer ranks every match by its binding, the two fresh patterns carry theirs from the start, and the head's slot is gone. Stand-in: a `lex_rank = …` line in a `type (…)` body writes the binding of the declaration the body is the value of; the checked error where no declaration is being filled. Kept because a pattern identity has no other spelling to be written on; to be deleted once it has.
-- **History:** `lex_rank` was listed among the slots `type` declares until 14 September 2026. The open question "how a definition writes `lex_rank` and a gate from inside the right side of `:=`" was closed for gates 15 September 2026: a gate stands left of `:=` beside its name (*Declarations are immutable by default*).
+- **Seed:** since 14 September 2026 (#122); stand-in: a `lex_rank = …` line in a `type (…)` body writes the declaration's binding.
 - **Source:** DESIGN.md l.201
 
 ### A slot is filled with `=`; `:=` declares a member of your own
 `parse_rank`, `associativity`, `parse`, `run` and `drop` are places `type` declares for every type it builds. A type body fills them with `=`. So inside `^ := type (…)` the body writes `share parse_rank = *.parse_rank + 1`, `share associativity = right`, `share parse = (…)`. A `:=` on a slot name is the ordinary no-shadowing error.
 - **Why:** the two operators keep one meaning each: `=` writes what exists, `:=` introduces what does not.
 - **Ruled:** 4 September 2026. `run` joined 16 September 2026. `share` on slot fills: 26 September 2026 (l.207).
-- **History:** a further reason was given for the fields block: `^.parse_rank` probed the `fields = (…)` scope before `^`'s own bare members, so a redeclared member would be found second or never (block gone 25 September 2026). `:=` spellings of these slots in earlier sketches were respelled. `fields` (spelled `value` 17 to 19 September, `instance` 19 to 23 September) was a slot too, until 25 September 2026. l.201 wrote the fills without the mark (`parse_rank = …`).
 - **Source:** DESIGN.md l.201, l.203, l.207
 
 ### Slot words are known only inside a type body
@@ -1486,22 +1352,192 @@ In a type body, `b = 3` is the checked error whatever `b` names, an alias of a s
 - **Why:** "they cannot be known everywhere since there is e.g. a different parse inside type and instance" (Thobias). One word, two places, and the position decides, as for every field.
 - **Rejected:** filling a slot through an alias.
 - **Ruled:** 19 September 2026, Thobias.
-- **Seed:** the root identities of #133 slice 4 were undone 20 September 2026: a type body declares the six slot words into a scope of its own around the body, closed with it.
-- **History:** earlier 19 September 2026: the slot names were the core words, known everywhere, `=` with one on its left filled the innermost definition's slot, and outside any definition it was the checked error. Superseded the same day.
+- **Seed:** done 20 September 2026 (#133 slice 4 undone).
 - **Source:** DESIGN.md l.201
 
 ### `drop` is one word
 `drop`'s parse looks to its right. If `=` stands there, it is the slot being filled; anything else, and it drops what follows. So `drop x` works in every scope, a collection's own drop body included.
 - **Why:** "when it is not assigned something it is rather dropping RHS … its still only one drop word" (Thobias).
 - **Ruled:** 19 September 2026, Thobias.
-- **Seed:** `=`'s constructor, not `drop`'s, takes a lone `drop` to its left as the slot's name, since `=` constructs at discovery before a prefix keyword's turn (divergence). #130 closed into #132.
-- **History:** 17 September 2026: a bare `drop = ( … )` in a type body named the slot, the fields-block binding being "the innermost `drop`" the lookup meets, never the `drop x` statement (#130 ambiguity). Superseded 19 September 2026: there is no second `drop` to be innermost.
+- **Seed:** done with a divergence (#130 closed into #132).
 - **Source:** DESIGN.md l.199, l.201
 
-### `[…]` builds itself; the collection consumes it
-`[…]` constructs **itself**: its inside is parsed once, generically, into a passive node carrying the index. The collection's constructor consumes that node and emits the bounds check as leftover code where the index or the size is not known statically (see the deferral ruling).
-- **Ruled:** August to early September 2026 ("same discussions").
-- **Source:** DESIGN.md l.201
+**There is no `this`: a type's bodies name fields directly; a parse builds its node in `tape[0]`**
+
+### A type body describes one level
+A type body holds its slots and its values' fields together. `mut size := u64 0` and `share element_type := t` stand directly in the body, `share` marking one place and an unmarked member a place per value. `share parse = (…)`, `share run = (…)` and `share drop = (…)` fill the slots with `=`. Reads have no middle step: `^.run`, `point.dims`. `run` is a slot of the type, holding its values' body.
+
+A value never has its own parse; the only parse is written in a type body. A type standing on the tape (`array`, `if`) runs the parse in its own body. Any other value runs the parse in its type's body. Every type is made by `type (…)`, so `x:type:type == type` for any identity `x`: one type level for everything. A constructor makes a node a value of a type by stamping it (`tape[0]:type = T`, below); being a type is an act, not a property granted in advance.
+
+There is no `this`. Inside a type's `run`, `drop` and `share` functions a field is named bare: `(ptr + index)@`, `for i in 0..size ( … )` (as *The `run` is a body over the node's own fields* first had it, "the instance fields in scope by name"). Inside a `parse` the node is `tape[0]`, and a field is always written through its cell, `tape[0].f`; a bare field name there is the checked error. While the cell holds a value of the type, `tape[0]` is that value: `tape[0].at(k)`. While it holds the type itself, **`tape[0]:type = T` makes it a new node of `T`**, and its fields are then written by name, `tape[0].element_type = t`, so nothing is left to place. Reading or writing `tape[0].f` before the stamp is the checked error, unless `f` belongs to the type the cell holds then.
+
+A bare field name means one thing because Logos has no shadowing: a type body written inside another must not reuse the outer one's names. So in array.logos `get_mint`, with the mint's body inside it, is declared before `array`'s own `element_type`.
+- **Why:** (one level) the type's own lines and the fields block held the same slots (`parse_rank`, `associativity`, `parse`, `drop`), so every type described two levels in one body, while a type needs only one `parse`. (one parse) parse code lives in one place per type, and no value carries any. (no `this`) "could this be completely removed? i would say so"; "just simply write the fields directly in tape[0]"; "logos already uses non shadowing though so people should get used to creating expressive names to avoid name conflicts … remember logos uses non shadowing like zig" (Thobias). The mark said nothing structure did not already say (the reason `self.` and `child.` were declined). One spelling for the node, `tape[0]`, in every parse. On the stamp: "what about just writing tape[0]:type = array ? that should initialize it. if something tries to read or write before that … it should be an error unless the read or write matches the type tape[0] already has". (through the cell) the cell may hold the type or a value, and its neighbours are cells too.
+- **Ruled:** 25 September 2026, Thobias (one level; a value never has its own parse); 26 September 2026, Thobias (no `this`, the stamp, and a field written through its cell, the same ruling).
+- **Rejected:** reading `array`'s parse as `type`'s (since `array` is a value of `type`). It brings back the metaclass tower: a type of its own for every keyword, no `array_type`, no singleton type per keyword. Also rejected earlier (August 2026): unique syntax (an `import`, a `#`) on a singleton type of its one identity, the Smalltalk-metaclass shape, and any per-identity override slot.
+- **Open:** whether `x[i] = …` in user code writes into the array, which needs `at` to give a place, not a copy (closed 27 September 2026, Thobias: `a[k] = v` writes, see ›`a[k]` is an application, exactly as `a(k)`‹ below). Naming the value as a whole outside a parse (a `share` function returning or handing on its own receiver): nothing needs it today; the test types that did so are rewritten in array's shape (Thobias).
+- **Seed:** one level since 26 September 2026 (#150); no `this` and the cell write not yet (#153).
+- **Source:** DESIGN.md l.199, l.201, l.203, l.207
+
+### `array` is a chooser
+`array i32` is the type "array of i32", written by juxtaposition: a specialized identity, interned, so `array i32 == array i32`. `array i32 (1, 2, 3)` is a value of it, `a := array i32 ?` a declaration, the hole's ordinary reading of the type to its left. A generic type is a chooser like a generic fn (*Deferral is authored*): each parameter yields its own concrete identity, built once. The constructor decides.
+
+The array is two levels, not three: `array` takes any type and leaves the type of its values, `array i32`, one per element type. The element type is stored once, in the mint `array i32`, never in each value. The mint's parse reads an index and nothing else (›An array expression is a node of `array`, and its run makes the value‹). `array` is a constructor for another word with its own parse and value. Its mints live in a memo: `share array_mints := hashmap type -> type` and `share get_mint := fn (t := type ?) -> type (…)` stand in `array`'s body, `share` because the memo is one place for all of `array`, never one per node. The chooser looks the parameter up by `==`, mints an anonymous `type (…)` when absent and adds it, places the mint in its own cell and leaves `tape.is_constructed[0]` false. The driver then constructs the cell in its turn like any unconstructed cell: it wakes by the flag and the cell's `parse_rank`, never by a spelling, so an anonymous type needs none (*Execution is function application*). `t := array i32` leaves the mint standing as a type value (unlike `m := hashmap K -> V`, which declares an empty map, *The reflection boundary is callable-versus-data*, 25 September 2026). The sketch is identities/array.logos.
+
+The chooser sits at `fn.parse_rank` (›A parse is ranked by what it takes from its right‹).
+
+`array` binds right to left: an `array` with another `array` to its left takes no bracket and is that one's element type; the outer `array` takes the list, so `array array i32 [ … ]` needs no brackets around the element type. When `?` stands right of `array`, its parse takes nothing and stands as itself; the hole makes the node: `array ?` is an empty node of `array`.
+- **Why:** (a chooser with a memo) Thobias (18 September): "array should actually just be a constructor for another word with its own parse and value while array doesn't necessarily have any value at all … there should rather be an array_mints to store all the mints of array". On 25 September the memo sat inside `get_mint` because only `get_mint` reads or writes it, so it lived in the function that owned it, not as a top-level name any line of the file could touch. Since 26 September, Thobias: "get_mints should be a shared fn inside array and array_mints should also be a field inside array"; `array` has values now (its expression nodes), so the old reason for a plain variable, "a chooser has no instances", no longer holds. (mints stay) "array i32 needs to be minted so that type doesnt need to be stored in each minted instance" (Thobias). (`array array i32`) "array array i32 as its solved is actually good" (Thobias).
+- **Ruled:** 30 August 2026 (juxtaposition, interned, a chooser like a generic fn); 18 September 2026, Thobias (a constructor for another word; the memo `array_mints`); 19 September 2026 (the driver constructs the mint); 25 September 2026, Thobias (two levels, not three; the memo inside `get_mint`, his own edit of array.logos, under the ruling that `shared` names a function's own place, ›Two muts, and the storage partition‹; that day the mint's parse also built a value when the type itself stood before a `[…]`, `tape[0]:type == type`, the cell holding the type until the parse stamped it, which the 26 September node-and-run ruling replaced); 26 September 2026, Thobias (mints stay; the memo and the minting `array`'s own members; `array array i32`; `array ?`, "agree").
+- **Rejected:** `array(i32)` (collides with conversion); `array[i32]` (`[]` is element access). A middle layer, a mint that builds and a second type for its values: the name `array i32` can name only one of the two, and both the building and the `⊆` check need it. Making every value a plain `array` holding its element type (asked about and declined). **Rejected, to stay declined (18 September 2026):** `a:type is array`, a generic read as the collection of its mints, for "is it some array". Thobias: "isn't it enough for always?": the mint is interned, so `a:type == array i32` answers every concrete question, and generic code writes `array T` with a hole the chooser matches, so no use site needs the wider predicate.
+- **Open:** none recorded beyond the placement of the memo (see the report: the 25 September placement inside `get_mint` and the 26 September placement in `array`'s body are both in the text).
+- **Seed:** `array array i32` and `array ?` since 26 September 2026 (#151); the chooser, its memo and the mint are identities/array.logos.
+- **Source:** DESIGN.md l.203, l.205, l.217
+
+### An array expression is a node of `array`, and its run makes the value
+`array T [ … ]` is an expression, as `2 ^ 3` is. `array`'s parse builds it as a node of `array` with fields: the element type (kept for reflection), the bracket as `elements`, and `output_type`, the mint `array T`. `elements` is typed `square_brackets`, since it is the bracket as written; each run evaluates its lines; it is never an array value.
+
+The node's `run` allocates a value of the mint, assigns each line with `=` and returns it. So each evaluation makes a new array: each pass of a loop, each call of a function holding `array i32 [x, y, 3]` is a new array. The value's type is the mint; the node's type seen from outside is its `output_type`, as `^`'s is. The mint's parse reads an index and nothing else. A mint is not written before a bracket (`t [4, 5]`) but assigned one: `x = [4, 5]`, the same act as `x = 9` with a bracket of dyads where the number stood.
+
+Elements are built by assignment: the list's type counts the n lines of the bracket, allocates n places, and assigns each, `(ptr + i)@ = elements.dyads[i]`. `=` constructs each by the element type's parse (what `=` does is decided by the type of the place on its left). The element type decides how a line becomes an element: when the element type has its own parse, each line of the outer list is built as that type applied to the line; a line that already is a value of the element type is taken as it is; numbers keep their rule. With element type `array i32`, `[[1, 2], [3, 4]]` builds `array i32 [1, 2]` and `array i32 [3, 4]`, while `own x` or `mk()` of that type is taken as is; so `array (array i32) [[1, 2], [3, 4]]` builds each inner line as an `array i32`, no special case. `array u8 [1, 300]` stays "an element does not fit the element type" (a number type's own parse would take a number line as a conversion, so only bracket lines are handed over). Each run makes new inner arrays, as it makes a new outer one. `array array i32 [[1, 2], [3, 4]]`, three levels, lines naming a run-time `x`, a function returning a nested array and its compiled form all run. A bare bracket has no type yet, so its lines are read through `.dyads`, never `[i]`.
+
+A list's elements are filled when the code runs: the elements of `array i32 [x, y, 3]` are filled at run, like the arguments of `make(x, y, 3)`, each line typed at parse against the element type (`array u8 [1, 300]` refused where written) and evaluated at run.
+
+The array's list is written in square brackets: `array i32 [1, 2]`. A `scope` there is the checked error with the guide "the list is written in square brackets, `array i32 [1, 2]`, not `array i32 (1, 2)`". Examples written `array T (…)` in older text are read as `array T […]`.
+
+A value holds no spare capacity: `capacity`, `capacity_bytes` and identities/next_power_of_two.logos are deleted.
+- **Why:** (a node with a run) "i think array needs run as well. so it will be similar to ^ but after it runs it returns a mint array" (Thobias). A list exists only when the expression is evaluated, and a node's `run` is what the language has for "each time this is evaluated". One path for building, not a second in the mint. Element type kept: "its nice to have it there for reflection". (a new array per evaluation) the contents exist only at run, so one node built at parse and shared by every run of the site would hold only the last run's elements. (assignment) a parse set loose on the open tape can take whatever stands next to it, while `=` hands the parse the one right side and works the same way for every type. (the element type decides) as a type's parse decides everywhere (*`X (…)` is one spelling, and X's constructor decides what the bracket is*). (square brackets) Thobias: "replace () with [] for the literal list given to array T () so it becomes array T []". Reason, in Claude's words, open to Thobias: `( )` delimits scopes, parameter lists and bodies, and a parenthesis after a value is a scope argument, so a list written `(…)` would look like a scope while being data. One spelling for one meaning, and `array i32 [1, 2]` reads like the index `a[1]` it is read back with. (no capacity) rounding room up for growth serves nothing until an array can grow. Thobias: "delete that file completely".
+- **Ruled:** 25 September 2026 (elements filled at run); 25 September 2026, Thobias (each evaluation a new array; elements built by assignment; the element type decides, a principle that stands after 25 September, l.203; the list in square brackets); 26 September 2026, Thobias ("go with b": the node of `array` and its run; no spare capacity).
+- **Rejected:** running a type's parse by hand (the 19 September ruling replaced it by the driver's turn); splicing the lines onto the tape (a line lies inside the bracket cell, not on the tape).
+- **Open:** how `=` takes a bracket into a place of a mint, there and for each line of a nested list: the open question *How an operation is defined for its operands* (under *Identity recognition*). Thobias: `=` should consume the mint, not the mint `=`. The square-bracket reason above is Claude's, open to Thobias.
+- **Seed:** since 25 September 2026 (#137) and 26 September 2026 (#151); stand-in for #152: a square bracket taken by `=` into a mint's place is built in Rust as an `array` node.
+- **Source:** DESIGN.md l.203, l.205, l.207, l.211
+
+### A value of a type built by a Logos `parse` travels as a pointer
+Such a value is the address of its node, eight bytes in a place. `b := a`, `f(a)` and returning it copy the address. So `b := a` shares the array, it does not copy it: a write through either is seen through both. `a`, the name the array was made into, frees it (*A filled `share drop` is the teardown the constructor authors*); `b` borrows. The type's reading rule decides this (*`:=` decides nothing about copy versus reference; the type's reading rule does*, 5 September 2026): this rule reads the node's address as `type`'s reads the identity, so "two names for one place among data exist only where written, `y := &x`" does not reach these values. A parameter `p := array i32 ?` is such a place; `p.size` reads through the address when the body runs, and `p.size_bytes()` calls the member on `p`.
+
+A field of such a type holds the node's address: a field `items := t ?` with `t := array i32` holds the address of the array's node. Reading the field gives a value of `t`, so it wakes `t`'s parse like any expression of the type: `b.items[1]`, `b.items.size`, `b.items.at(1)`, `b.items[0] = i32 9` and `f(b.items)` work as on a name; `c := b.items` borrows, as `c := a` does. Writing the field stores the node `v` yields, typed at parse against `t`, never the expression (a stored expression would build a new array at each read). The field is read when the code runs, even through a node the parse already knows (a top-level `b`), since it may be written again before then; a field of any other type keeps the parse-time read of a known node.
+
+`alloc n of T`, for such a `T`, gives n cells of its address: `alloc n of array i32 ?` allocates n cells of pointer width. `p@` reads the address held as the value; `p@ = v` stores `v`'s address; `p + k` steps k cells of eight bytes. As consequence: a line `tape[k].dyads[i]` checked `⊆ T` for such a `T` reads as a value of `T` after the check; a line's `:type` is the type of what it yields, so a made value `array i32 [1, 2]` in a list answers `array i32`, not the call that makes it; a handed-over bracket evaluates such a line where the call runs, giving the callee the node's address. So `t := array i32, b := array t [own x, own y]` holds two arrays, `b[1][0]` reads through both, `b[0][1] = i32 9` writes inside the inner one (seen by every holder), and a parameter `p := array t ?` reads `p[1][1]`, interpreted and compiled.
+- **Why:** one storage shape for these values, the node's address; it fits the 8-byte argument slot, so passing one needs no copy rule of #115. A field is a place, so the shape is the same wherever the value stands ("such a value is the address of its node, eight bytes in a place"). The value is the address, so a cell that holds one holds eight bytes of address.
+- **Ruled:** 25 September 2026, Thobias (the value travels as a pointer; `alloc n of T` for such a `T`); 25 September 2026, Claude's reading, asked by Thobias to "fix this", open to Thobias (a field of such a type holds the node's address).
+- **Rejected:** none recorded.
+- **Open:** a record built by applying its type, `p (1, 2)`, is not such a value: it stays bytes at the type's width (the stand-in "a record-typed declared place is its layout's bytes"), and a fields-block function reading a node's fields on one is the checked error until ruled (#149); moving those records to the pointer shape too would be the one-shape answer, recorded open, since it reaches every record's layout, compiled field reads and `@T` over a record.
+- **Seed:** since 25 September 2026 (#137); a function holding a field read of such a type stays interpreted.
+- **Source:** DESIGN.md l.211
+
+### A value owns what its elements hold and drops it
+The outer's `share drop` drops each element whose type fills a `share drop`, then frees its own memory (array.logos: `for i in 0..size ( drop (ptr + i)@ )` before `free ptr`). `drop p@`, over a cell holding a node whose type fills `share drop`, runs that drop and empties the cell, as `drop a` does for an owner; over any other cell it stays the inert drop.
+
+A line that names a value whose type fills a `share drop` is refused: "write `own x` to move it in". `own x` moves it, `x` dead from that line. A value made in the list (`array i32 [1, 2]`, `box (1, 2)`, `mk()`) belongs to the new value from the start.
+- **Why:** Thobias: "the outer array owns its inner arrays". One name owns each value, and for an inner array that name is the outer one, so the outer's drop frees the inner ones: nothing leaks and nothing is freed twice. (lines move in) from DESIGN: "`=` into an owner takes only a value just made or moved" and "`b := a` and passing `f(a)` borrow". A line is an operand, which borrows, and the element is owned, so a bare name would give one value two owners and two drops. Moving it silently would end a name nobody wrote `own` on, where *Explicit heap, and no implicit destruction* ends nothing behind your back.
+- **Ruled:** 25 September 2026, Thobias (a value owns its elements); 25 September 2026, Claude's decision (asked by Thobias to decide from DESIGN), open to Thobias (lines move in).
+- **Rejected:** none recorded.
+- **Open:** a parameter that says it consumes its argument (`own` on a parameter, not in the seed) is the precise form, recorded open.
+- **Seed:** the refusal of a bare name in a list stands for every type written in Logos; `own` on a parameter not yet.
+- **Source:** DESIGN.md l.211
+
+**A call that ends in a dereference is a place**
+
+### `a[k]` is an application, exactly as `a(k)`
+An object storing many elements, whatever its storage or indexing, is a **collection**. Reading a stored element is always `c[k]`: an array by position, a map by key, a set by membership. Each collection kind picks only its index domain. So three surfaces, three jobs: `.` fetches a field, `[…]` fetches an element, `(…)` computes. A node's operands are the collection its type defines, `(x + x).operands[0]`; a type's role names are `.roles[i]`. Model underneath (for the proof layer): a collection is a function from its index domain to its elements (shapes and positions), which also makes every strictly positive inductive type one.
+
+The type's parse that takes the `[k]` builds a node the way a call builds its call node: its fields hold the value and the index, and its run reads the element when it runs. `a[1]` is the call of `at` over `a` and `1`, run where it stands, at top level, in a function and compiled alike, bounds check included (the residual code of *Deferral is authored*). A call written into a tape cell is placed, not run: a cell is a node-typed place, and "a field typed as a node keeps the operand as graph" (*Execution is function application*, item 4).
+
+An index may be of any integer type. One that fits the size type (`u8` to `u64`, or a literal that molds to `u64`) goes to `at` as a `u64`. A signed one goes to `at_signed := fn (index := i64 ?) -> element_type`, whose check refuses a negative value as it refuses one at or past the size: "index out of range" when the call runs. So `for i in (i32 0)..(i32 3) ( s = s + a[i] )` sums, and `a[i] = v` writes alike. A literal index still answers at parse: `a[-1]` and `a[1.5]` stay "the index type is not within the size type". The widening is the narrowing's own (›A tape read checked against a number type reads as that number‹): a line checked `⊆ T` is read as a `T` in the call it places, converted when the call runs; no cast is written and none is implicit, the check being the cast. `a.at(k)` is an ordinary call and stays "these types do not match" for `k := u8 1`.
+
+A call that ends in a dereference is a place. `f(…) = v`, where `f`'s body ends in a dereference `p@`, runs the body with the call's operands as the read does (bounds check included) and stores `v` where `p` points instead of reading there. `v` is typed at parse against the dereference's type, a literal molding to it, as for `p@ = v`. So `a[k] = v` is `=` over the call of `at`, at top level, in a function and compiled alike; `a.at(k) = v` is the same write; `a[j + 1] = …` runs the index when the write runs; an index out of range fails when the write runs. A write through a parameter (`p[1] = …`) or through `b := a` is seen by every holder. A call whose body ends in anything else is "this is not an assignable place"; so is one whose body holds a `return` (it could leave with a value where the write needs an address) or a teardown of its own (it would free what the address points at before the write lands).
+
+`a` need not be `mut` to write its elements: the element is not inside `a`'s binding but at the address `ptr` holds, and "a dereference starts a new path" (*`mut` is a gate on the binding, not a type*), as `m[k] = v` fills a map declared without `mut`.
+- **Why:** (`a[k]` a call) Thobias: "a[1] would be almost identical to a(1) just that a consumes square_brackets instead of a scope. square_brackets and () behave identical, its just the name that is different." One mechanism for `(…)` and `[…]`. (any integer index) a loop counter is an index (`for i in 0..3` counts in `i32`), and the bounds check, not the index's type, keeps a read inside the array. (a place) `a[k]` is an application, so its write is an application's write: one rule for every call, none for arrays. `at` already reads through a dereference, so the place exists and only `=` must reach it.
+- **Ruled:** August 2026, in discussion (element access is `[…]`, application is `(…)`); 25 September 2026, Thobias (`a[k]` an application; any integer index, "yes"; `a` need not be `mut`, with the place ruling); 25 September 2026, Claude's choice (DESIGN was silent), approved by Thobias the same day, "yes" (a call that ends in a dereference is a place); 27 September 2026, Thobias (settled, `a[k] = v` writes; the 26 September open note under ›A type body describes one level‹ is closed: `at` ends in a dereference, so it is a place, and the seed already does it).
+- **Rejected:** the `[k]` parse seeing `=` on its right and placing a `set(k, v)` (a parse cannot construct the right side of `=`, and a second member would repeat the check); `at` yielding an `@T` the parse dereferences (`a.at(k)` would then hand out a pointer).
+- **Open:** Claude's choices, open to Thobias: the member's name, `at`; a second member rather than one `at` over `i64` (a `u64` index does not fit `i64`, and the size type is `u64`); `at_signed` repeating the bounds check rather than calling `at` (only a body ending in its own dereference is a place); the name `at_signed`. For Thobias: the through-gate of the path a write takes (a pointer made by `mut alloc`) is not checked by the seed ("a write through `@` is unchecked"), and array.logos allocates with plain `alloc`, whose writes that gate would refuse once checked.
+- **Seed:** since 25 September 2026 (#137); a fault a compiled caller parks is the first one.
+- **Source:** DESIGN.md l.211, l.213
+
+### A bracket goes to the call whole
+`[…]` constructs **itself**: its inside is parsed once, generically, into a passive node carrying the index. The collection's constructor consumes that node and emits the bounds check as leftover code where the index or the size is not known statically (see the deferral ruling, *Deferral is authored*).
+
+A `[…]` is parsed as any bracket and any expression. The cell a `[` lands is a value of its own identity, `square_brackets`, as the cell a `(` lands is a `scope`. The tape's constructor consumes the `[…]` on its right; `tape[k]` is that read. The index inside is read as a scope's lines are: `tape[1].dyads[0]`, and `tape[1].dyads.size` counts entries. `[i, j]` gives two entries with no extra rule.
+
+The bracket is handed over as one argument; the callee evaluates each line when it builds the array. The bracket keeps its own type: the callee reads `elements.dyads.size`, `elements.dyads[i]:type`, and after a check `elements.dyads[i]` as the line's value. Only the array's list must be square; a type of the author's own may still take a `scope` as its argument.
+
+At top level, where lines run as they are parsed, a list line that is itself a `[…]` is left for the call that takes the list. Otherwise the parse of a later line (a type's parse running first runs what stands before it) would run it early, where a `[…]` has nothing to run.
+- **Why:** Thobias: "square brackets work basically exactly the same as () just that its square brackets instead". Own identity: "square_brackets should be an identity just like scope is an identity"; a constructor that consumes a `[k]` tells the bracket apart by type, `tape[1]:type == square_brackets`, which a `scope` could not be told from `a (k)`. Reading `.dyads`: the bracket reads as a scope reads, `.dyads` already exists, no new word needed. (whole) Thobias: "hand over elements as bracket arguments yes as long as square_bracket is used and not parenthesis because if its parenthesis then it should be passed on as scope argument. but really they are the same just different name." One rule for every bracket: lines are operands, and one bracket fits a fixed parameter list however many lines it holds.
+- **Ruled:** August to early September 2026 ("same discussions": `[…]` builds itself); 9 September 2026, Thobias (`[` is `(`); 23 September 2026, Thobias (the `square_brackets` identity); 25 September 2026, Thobias (the `.dyads` read; the bracket handed whole); 25 September 2026, consequence (a top-level `[…]` line is not run early).
+- **Rejected:** none recorded.
+- **Open:** Claude's readings, open to Thobias: the parameter is a bare name (a typed `scope` parameter would refuse a `square_brackets`; *A function's surface*: "a bare `name` that accepts any dyad"); lines are evaluated in the frame the call stands in, when it runs, into a new bracket of the same kind holding their values (a number line as its value, a literal as itself), since the callee's frame holds none of the caller's names, so in `fn (x := i32 ?) -> i32 ( c := array i32 [x, x + 1], c[1] )` the lines read that call's `x`.
+- **Seed:** since 25 September 2026 (#137); the seed's `[` still folds `t[k]` in its own constructor.
+- **Source:** DESIGN.md l.201, l.211
+
+**Inclusion between types is `⊆`**
+
+### A tape read checked against a number type reads as that number
+`tape[k]` hands a constructor the cell. Where a `type` is wanted (a `type ?` parameter, or a `:=` whose box then holds a type), an unchecked cell is refused, since crossing types is explicit (*Numeric literals are uncommitted until context classifies them*). After a check the constructor already writes, the read is the type the cell holds: after `if tape[k]:type != type error «…»`, to the end of the scope holding the check; inside the branch of `if tape[k]:type == type`, and inside the `else` of the `!=` form. Then `t := tape[1]` declares a `type` box and `get_mint(t)` passes, as identities/array.logos's chooser writes. Limits: only a cell named by the tape and a written index narrows (never an index computed at run). The narrowing ends at the first tape edit after the check (`tape[j] = …`, `insert`, `remove`, `recenter`), since the cell at `k` may then be another. The read checks the cell again when it runs, so a tape edited between check and read in a way the pass cannot see (a loop) is the checked error, not a wrong address.
+
+With `T` a number type, the read `tape[k]` yields the number the cell holds, as a `T`: after `if not tape[k]:type ⊆ u64 error «…»`, or after a raising `tape[k]:type != T`; inside the branch of `if tape[k]:type ⊆ T` or `== T`, and inside the `else` of the negative forms. Scope rules as for the `type` check: the narrowing ends at the first tape edit; `not` before a check swaps which branch holds. A line of a bracket cell, `tape[k].dyads[i]`, is checked and narrowed like a cell; `tape[k].dyads[i]:type` is the line's type (a name's declared type, an expression's result type). array.logos writes `if tape[1].dyads[0]:type ⊆ this.size:type ( … ) else ( … )` (text's spelling; `this` is retired by l.207), a signed index going to `at_signed` as an `i64` (›`a[k]` is an application, exactly as `a(k)`‹). A literal line has no committed type ("a concrete type beside a literal molds the literal to it"), so `⊆ T` answers for a literal by whether it molds into `T`: `[1]` passes `⊆ u64`, `[-1]` and `[1.5]` do not; the narrowed read is that number molded. A line that is a constant of `T`, `i32 7`, reads as its value. A line that is an expression (a name included) is the checked error when the narrowed read runs in the parse, never evaluated there: the value exists only when it runs ("Only a use that needs the type during the parse … is the checked error"). Passed to a call a parse places, a narrowed line is the line itself, kept as graph for the call to run and read there as a `T`.
+
+A placed call keeps its tape lines as operands: an argument of a placed call that reads the tape (the index line `tape[1].dyads[0]`) is that line itself, an operand run when the call runs, exactly as `f(i)` keeps `i`. It is never its value read at parse. The parse checks only the line's type, which it knows: `tape[k].dyads[i]:type` is a name's declared type and an expression's result type, and a literal molds to the checked type. Only what the placed node cannot reach later runs as it is placed: an argument that reads the parse's own node or locals. So `i := u64 1, a[i]` is 2; `fn (i := u64 ?) -> i32 ( a[i] )` reads `i` per call, interpreted and compiled; `a[j + 1]` runs `j + 1`; an index at or past the size is "index out of range" when the call runs.
+
+Inclusion between types is `⊆`: `A ⊆ B` is true exactly when every value `A` can hold is also a value of `B` ("all possible values in LHS also in RHS"). It is its own identity beside `is`. Its rank is `==`'s, above `not`, so `not a:type ⊆ b:type` negates the inclusion; this rank is a stand-in, no rank being ruled.
+- **Why:** (narrowing) the check already says what the cell is, so no cast is needed; it is the binding's own reading rule, "read as a value it yields what that dyad yields" (*The dyad's read surface*); one check-then-narrow rule for types and numbers. (placed call) Thobias: "a[i] and f(i) should handle i in the same way". A name or expression has no value while the parse runs; reading one there is what made `i := u64 1, a[i]` fail. (`⊆`) an array's element read must say its index type cannot reach outside its size type, and neither `is` (one value's membership) nor `==` (identity) says that of two types. Since 25 September 2026 the read takes any integer index and a bounds check keeps it inside; `⊆` now sorts the index to `at` or `at_signed`. In the seed: array.logos checks that an index type fits the size type, and keeping that check beats deleting it.
+- **Ruled:** 23 September 2026, Thobias (`⊆`, first ruled not for the seed); 25 September 2026, Thobias (option (c): check `:type` first, then pass; option (a) of the #137 question: a number check narrows; the placed call keeps its lines; "lets go for ⊆", the seed carrying it as a native).
+- **Rejected:** none recorded.
+- **Open:** two readings, Claude's, 25 September 2026, open to Thobias: (1) a literal answers `⊆` by molding, the only reading under which his `⊆ u64` example passes a literal index; (2) a line index that is a name, the same name in check and read, names one line, so the mint's `fill` loop `for i in 0..this.size ( if not (elements.dyads[i]:type ⊆ this.element_type) error «…», (this.ptr + i)@ = elements.dyads[i] )` narrows (a bracket handed to a call is read as a tape cell's bracket is, ›A bracket goes to the call whole‹; the condition bracketed because the seed lets a type read through `.` take the cell after it), while the cell index stays literal; safe because the read checks the line again when it runs. Claude's, 25 September 2026, open to Thobias (with *Each element is built by the element type*): a type built by a Logos `parse` includes only itself, and no other type includes it, so `3 ⊆ array i32` is false, and `array array i32 [[1, 2], 3]` is "an element does not fit the element type" rather than this error; reason: its values are the nodes its own `parse` builds (›A value of a type built by a Logos `parse` travels as a pointer‹), which no other type's value is.
+- **Seed:** since 25 September 2026 (#137).
+- **Source:** DESIGN.md l.211, l.213, l.217
+
+### A name of a type with an instances' `parse` wakes it, as the instance does, and so does any expression of the type
+A name, a parameter, a field, or any expression whose type is known at parse to have a parse wakes that parse where it stands, as the value itself does. The value there is that expression, an operand of the call the parse places, run when the call runs. So `a[1]` works on `a := array i32 [x, y, 3]`, whose contents exist only at run, and on a parameter `p := array i32 ?`. With `mk := fn () -> array i32 ( array i32 [1, 2] )`, `mk()[1]` is 2 as `m := mk(), m[1]` is; `mk().at(1)` is the same call spelled out; each run of `mk()[1]` runs `mk` anew, as `f(x) + f(x)` runs `f` twice.
+
+A name standing with nothing to its right wakes and stands: in `f(a)` or `b := a` the woken parse reads `void` at `tape[1]`, takes no bracket and stands. So `b := a, b[1]` is 2, and `t := array i32` stands as the type.
+
+When a type's parse places the node it built for itself, that node's next moment is its run. So `^`'s parse needs no word for a `^` node, and `n := 2 ^ 3, n + 1` runs `n`. What runs a type's parse on a value is the appearance of a value that already existed: a name or a call's result, `a[1]` and `mk()[1]`.
+- **Why:** the type decides how a value is read, whether it is known at parse or only at run, and whatever produced it. (never parsed again) "^ doesnt need to parse a second time. it rather runs the second time" (Thobias). Parsing is how a spelling becomes a node, and a node is past that.
+- **Ruled:** 25 September 2026, Thobias (names, parameters, fields, "go with B"; any expression, "yes"); 25 September 2026 (a name with nothing to its right, closed by the `void` read, ›A `tape[k]` read past the lexed frontier lexes on demand‹ below); 26 September 2026, Thobias (a node a parse built runs).
+- **Rejected:** Claude's consequence of the same night, that every parse building a node of its own type must say what a value of it does (`if tape[0]:type == type ( … )`); the 26 September ruling made it needless.
+- **Open:** Claude's reading, open to Thobias: a bracket an identity to its left takes stays that identity's argument (`f (a)` is a call of `f`), since `(` builds its bracket at discovery, before that identity's turn; only a bracket nothing took, with a cell to its right, wakes, once the segment's other constructors have run. Claude's consequence, open to Thobias: the node a parse places runs and is never parsed again *whatever its type* (not only its own type's node).
+- **Seed:** since 25 September 2026 (#137), interpreted and compiled.
+- **Source:** DESIGN.md l.203, l.205, l.211
+
+**A reader's read builds an equal right-associative cell first**
+
+### A `tape[k]` read past the lexed frontier lexes on demand for every constructor
+Every index a tape native takes (`tape[k]`, `tape[k] = …`, `tape.is_constructed[k]`, `tape.spelling[k]`, `tape.insert`, `tape.remove`, `tape.recenter`, and `tape[k]:type`, `tape[k]:name`, `tape[k].dyads`) lexes the driver's tape on to cell k first, through the one lazy read the built-in readers use. A cell arrives exactly as it would to `:` or application; a bracket as its built scope cell. A tape that is not the one the running constructor was handed (a `lex «…»` fragment, or any read at run time) is never lexed on.
+
+A `tape[k]` read that lexes a cell past the frontier hands it over as lexed, its constructor not run; the reader decides what it is. In `array i32 [1, 2, 3]`, the chooser `array` (at `fn.parse_rank`) gets `tape[1]` as the type `i32` itself (`tape[1]:type` is `type`: an unbuilt cell answers with its identity's own type) and `tape[2]` as the bracket. A cell the reader leaves on the tape is built in its normal turn, at the loop's next step. Only a cell whose building is its lexing is built as a read lexes it: a bracket (`(`, `[`) into its scope cell, a literal, a raw-text word (`#`, `«…»`, `import`). As consequence: this is what "application sits just below `(`" (2 September) means: a bracket is built as it is lexed, a juxtaposition is not; a juxtaposition the loop itself lexes still takes its turn at discovery (seed 91 above 90), which `f(2).x` needs, since built at the boundary its `(2)` would already be taken by the `.` as its left.
+
+When a constructor's `tape[k]` read lexes a cell whose identity has the reader's own `parse_rank`, and both associate right, that cell is built as it is lexed, and the reader gets what it leaves. In `array array i32 [[1, 2], [3, 4]]` the inner `array` takes `i32` and leaves the mint `array i32`; the outer takes that and leaves `array (array i32)`, whose parse takes the list. `array array array i32 [[[1]]]` chains alike; `array (array i32)` reads alike, its bracket built as lexed. This narrows the unbuilt arrival for this case only: `i32` sits at application's rank, below the chooser's, so it still arrives unbuilt; a cell of another rank, or of equal rank associating left, arrives as lexed.
+
+Past the end of the source, past a boundary the tape does not cross for this constructor (the `,`, the enclosing closer, and the body bracket a return type, a condition or a range stops before), and left of the first cell alike: `tape[k]` is one `void` node, already constructed; `tape[k]:type` is `void`, `tape.is_constructed[k]` is `true`, `tape.spelling[k]` is the empty text. A read that needs more than a cell has (`tape[k].dyads`, `tape[k]:name`) is the error it is on any cell without one. So `-> array i32 ( … )` takes no elements.
+- **Why:** (lazy) Thobias: "its lazy lexing in tape so you you request something further down the line which isnt lexed it gets lexed automatically". The tape is lazy, and one rule then holds for every constructor. (unbuilt) the tape only lexes and remembers, and `X (…)` is one spelling whose meaning X decides, so whoever reads a cell decides what it is: one rule for every reader, built-in or written in Logos. It closes the second open reason of ›A parse is ranked by what it takes from its right‹. (right-associative) the boundary already orders two cells of one rank by associativity, the right one first for `right`, so a read at discovery keeps the order the boundary would have had. A chain of choosers is one rule and no array rule. Thobias: "the first array parses then it parses the next array which consumes the i32 and emits a minted array. then the first array emits another minted array and that minted array has to read the elements of the outer list and construct each of the fields with the type the outer array holds which is array i32". (`void`) Thobias: "maybe tape should be able to return a void node to express there is nothing more here … so if you write tape[1] and you get void then the parse decides what to do and yes it should be the same as the void type. they do the same thing. but this void which is just emptiness after the string is already constructed instead so it stops things from parsing when at the end." "Nothing more here" is a value a parse tests like any other (`if tape[1]:type == void …`): no error handling and no second query for the common case; a `void` already built cannot be parsed on.
+- **Ruled:** 25 September 2026, Thobias (the lazy read for every constructor; a cell arrives unbuilt, "yes"; the right-associative case, its general form Claude's, asked by Thobias to decide from DESIGN; the `void` node).
+- **Rejected:** the queries `tape.last` and `tape.at_end` (first part of #147), not built.
+- **Open:** Claude's, open to Thobias: the return-type/condition/range stop (from the seed's sealed read); the boundaries and left edge counting as "nothing more here" (from the constructor's side each is the end of its reach); a write past the reach (`tape[k] = …`, `tape.is_constructed[k] = …`) stays the checked error, no cell to write; `insert`, `remove`, `recenter` keep the seed's behaviour; a `void` value reads as nothing, as a comment node and a `-> void` call do ("they do the same thing"), so a `void` a constructor writes into its own cell is a finished line that yields nothing and the loop needs no rule for it.
+- **Seed:** since 25 September 2026 (#137, #147).
+- **Source:** DESIGN.md l.211
+
+### The seed's tape shape (#60, #121) and its remaining stand-ins
+A cell is the binding the trie resolved, a fresh dyad for an unknown spelling, or the node; `is_constructed` and the span are the tape's own facts. `parsing_tape` is a spelled type whose value holds the tape's handle. Its natives: `tape[k]`, `tape[k] = …`, `tape.is_constructed[k]`, `tape.insert(k, cells)`, `tape.remove(k)`, `tape.recenter(k)`, and `tape.spelling[k]` (#121). A Logos function reaches them through a `@parsing_tape` parameter. `tape.spelling[k]` hands back a string node built into the parser's store, the seed's form of a string value until strings are live: a string still has no storage to read, so a constructor may write the text into a cell, but nothing may yet run that cell.
+
+Stand-ins that remain:
+- A one-expression bracket is unwrapped to its expression, so the bracket a `(` landed is marked on the cell rather than read off the scope type.
+- A member call passes its receiver as an address (the seed's form of a member reading the value's fields bare).
+- A record-typed declared place is its layout's bytes, so `tape := parsing_tape ?` passes the tape by value (9 September 2026, #61); a record wider than the 8-byte container reaches a call only with #47.
+- The tape natives run interpreted.
+- A type body's constructor, written in Logos, runs for every appearance with the driver's own tape as argument and the parser's store attached (#61, 9 September 2026).
+- The `parse_rank` expression runs at the definition and must be known there, since deferral to first use needs the deferral machinery.
+- A Logos constructor at or above `(`'s `parse_rank` runs at discovery; its reads lex on demand (since 25 September 2026).
+- `drop = fn …` is the checked error rather than a slot `drop x` would never run. The `fn` wrapper went 17 September; the slot moved into the type body with the mark (#132, 19 September 2026); an owner's teardown runs it since 25 September 2026 (*Explicit heap, and no implicit destruction*). A type's own `drop = (…)` on a bare line is the checked error.
+- A literal appended into a call node is not committed to the callee's parameter type, the same divergence as the op slot (#69).
+- `[` folds `t[k]` in its own constructor, a tape value having no constructor of its own yet.
+- **Why:** none recorded; the rule records what the seed does.
+- **Ruled:** none recorded; seed facts dated 9 September 2026 (#60, #61), 14 September 2026 (#121), 17 and 19 September 2026 (#132) and 25 September 2026.
+- **Rejected:** none recorded.
+- **Open:** none recorded.
+- **Seed:** the tape shape since 9 September 2026 (#60), the spelling since 14 September 2026 (#121); the stand-ins above with their numbers #61, #47, #132, #69.
+- **Source:** DESIGN.md l.211
 
 ### Expression lines in a type body are construction code (status after 25 September unclear)
 Original wording: "An *expression* line in a `fields = (…)` scope is instance-construction code: undecidable at definition, where the per-instance places are holes, it runs per instance once the fields are filled, a construction invariant, the frame's precondition of *A function's surface* generalized."
@@ -1512,8 +1548,7 @@ Original wording: "An *expression* line in a `fields = (…)` scope is instance-
 ### Fields are read with a dot outside their scope
 A field is never a bare name in surrounding code; outside its scope it is reached with `.`.
 - **Rejected:** `self.` and `child.` prefixes. Structure carries what a mark would have said.
-- **Ruled (27 September 2026, Thobias):** no shadowing, fields included. `x := 1, p := type ( x := i32 ? )` is the error, and the seed's check against the outer stack is right, not a bug. Reason: "logos uses non shadowing like zig" (26 September), ›Members are dot-only…‹ has "strictness has no exceptions", and since 25 September fields and body lines are one list.
-- **History:** l.201 (30 August 2026) had "a field's declaration is checked only against its siblings"; superseded.
+- **Ruled (27 September 2026, Thobias):** no shadowing, fields included. `x := 1, p := type ( x := i32 ? )` is the error, and the seed's check against the outer stack is right, not a bug. Reason: "logos uses non shadowing like zig" (26 September), ›Members are dot-only outside their scope; strictness has no exceptions‹ has "strictness has no exceptions", and since 25 September fields and body lines are one list.
 - **Source:** DESIGN.md l.201, l.207
 
 ### Still to be written in type.logos; reflection of fields is open
@@ -1524,113 +1559,14 @@ Direction (23 September 2026, Thobias): type.logos is not done. Every field unde
 
 ### Sketches for type bodies
 identities/array.logos, identities/power.logos, identities/fn.logos. fn.logos fills no `run`: each function's body is its own value's.
-- **Seed (per l.201, 19 to 24 September):** `run` is installed on the type as the body's lexed cells, with the functions constructed from them per field-type set kept beside them (since #133 slice 8; the `fn` form deleted since slice 9). A `share` member is read through the type alone, `g.y`, not `inst.y` (#116); Thobias, 23 September: "the shared fields are also readable from per instance its just that its the same across all instances".
+- **Seed (per l.201, 19 to 24 September):** since #133 slices 8 and 9; `share` members read through the type alone (#116).
 - **Source:** DESIGN.md l.201
-
-### A type body describes one level
-A type body holds its slots and its values' fields together. `mut size := u64 0` and `share element_type := t` stand directly in the body, `share` marking one place and an unmarked member a place per value. `share parse = (…)`, `share run = (…)` and `share drop = (…)` fill the slots with `=`. Reads have no middle step: `^.run`, `point.dims`. `run` is a slot of the type, holding its values' body.
-- **Why:** the type's own lines and the fields block held the same slots (`parse_rank`, `associativity`, `parse`, `drop`), so every type described two levels in one body, while a type needs only one `parse`.
-- **Ruled:** 25 September 2026, Thobias.
-- **Open:** whether `x[i] = …` in user code writes into the array. That needs `at` to give a place, not a copy.
-- **Seed:** since 26 September 2026 (#150): a type body is read as one list of fields, share members, slot fills and prose; a type stores one parse, rank and associativity; a value that appears wakes its type's parse; a node a Logos parse placed for its own type is not woken again; `^.run` and `point.dims` read through the type; the fields-block errors are gone. Prose before a field or member is read past; before a slot fill it is kept beside it. (#150 made a bare slot fill legal and `shared parse = (…)` the checked error; that rule is superseded by the `share` ruling, see below.)
-- **History:** see *History of type-body layout* at the end of this part.
-- **Source:** DESIGN.md l.203
-
-### A value never has its own parse; the only parse is written in a type body
-A type standing on the tape (`array`, `if`) runs the parse in its own body. Any other value runs the parse in its type's body. Every type is made by `type (…)`, so `x:type:type == type` for any identity `x`: one type level for everything. A constructor makes a node a value of a type by stamping it (see `tape[0]:type = T` below); being a type is an act, not a property granted in advance.
-- **Why:** parse code lives in one place per type, and no value carries any.
-- **Rejected:** reading `array`'s parse as `type`'s (since `array` is a value of `type`). It brings back the metaclass tower: a type of its own for every keyword, no `array_type`, no singleton type per keyword. Also rejected earlier (August 2026): unique syntax (an `import`, a `#`) on a singleton type of its one identity, the Smalltalk-metaclass shape, and any per-identity override slot.
-- **Ruled:** 25 September 2026, Thobias.
-- **History:** see *History of type-body layout*.
-- **Source:** DESIGN.md l.199, l.201, l.203
-
-### The array is two levels, not three
-`array` takes any type and leaves the type of its values, `array i32`, one per element type (the memo of *The chooser's mintings* unchanged). That type's one parse builds a value when the type itself stands before a `[…]` (`tape[0]:type == type`, the cell holding the type until the parse stamps it) and reads an index when a value does.
-- **Rejected:** a middle layer, a mint that builds and a second type for its values. The name `array i32` can name only one of the two, and both the building and the `⊆` check need it.
-- **Ruled:** 25 September 2026, Thobias.
-- **Source:** DESIGN.md l.203
-
-### Elements are built by assignment
-The list's type counts the n lines of the bracket, allocates n places, and assigns each, `(ptr + i)@ = elements.dyads[i]`. `=` constructs each by the element type's parse (what `=` does is decided by the type of the place on its left). So `array (array i32) [[1, 2], [3, 4]]` builds each inner line as an `array i32`, no special case. A bare bracket has no type yet, so its lines are read through `.dyads`, never `[i]`.
-- **Why:** a parse set loose on the open tape can take whatever stands next to it, while `=` hands the parse the one right side and works the same way for every type.
-- **Ruled:** 25 September 2026, Thobias. The principle that the element type decides (*Each element is built by the element type*) stands.
-- **History:** the tape affordances `tape.construct(T, v)` and `tape[k].dyads[i] = v` are deleted 25 September 2026, since only the array used them. The example was written `(this.ptr + i)@` until `this` went (26 September).
-- **Source:** DESIGN.md l.203, l.207
-
-### A node a parse built runs, and is never parsed again
-When a type's parse places the node it built for itself, that node's next moment is its run. So `^`'s parse needs no word for a `^` node, and `n := 2 ^ 3, n + 1` runs `n`. What runs a type's parse on a value is the appearance of a value that already existed: a name or a call's result, `a[1]` and `mk()[1]`.
-- **Why:** "^ doesnt need to parse a second time. it rather runs the second time" (Thobias). Parsing is how a spelling becomes a node, and a node is past that.
-- **Rejected:** Claude's consequence of the same night, that every parse building a node of its own type must say what a value of it does (`if tape[0]:type == type ( … )`). This ruling made it needless.
-- **Ruled:** 26 September 2026, Thobias.
-- **Open:** Claude's consequence, open to Thobias: the node a parse places runs and is never parsed again *whatever its type* (not only its own type's node).
-- **Source:** DESIGN.md l.203, l.205
 
 ### `fn` needs one rank: it parses once, then runs
 `fn` takes its parameters, `->` and its body at its own rank, and the function it builds runs. A call is the function running, not a second parse at another rank.
 - **Why:** "fn should consume the three things to its right which is the arguments -> and the body. afterwards it just runs instead of parsing a second time" (Thobias). A type has one `parse_rank` because its parse happens once per spelling.
 - **Ruled:** 26 September 2026, Thobias.
 - **Source:** DESIGN.md l.203
-
-### An array expression is a node of `array`, and its run makes the value
-`array T [ … ]` is an expression, as `2 ^ 3` is. `array`'s parse builds it as a node of `array` with fields: the element type (kept for reflection), the bracket as `elements`, and `output_type`, the mint `array T`. `elements` is typed `square_brackets`, since it is the bracket as written; each run evaluates its lines; it is never an array value.
-The node's `run` allocates a value of the mint, assigns each line with `=` (*Elements are built by assignment*) and returns it. So each evaluation makes a new array. The value's type is the mint; the node's type seen from outside is its `output_type`, as `^`'s is.
-The mint's parse reads an index and nothing else. A mint is not written before a bracket (`t [4, 5]`) but assigned one: `x = [4, 5]`, the same act as `x = 9` with a bracket of dyads where the number stood.
-- **Why:** "i think array needs run as well. so it will be similar to ^ but after it runs it returns a mint array" (Thobias). A list exists only when the expression is evaluated, and a node's `run` is what the language has for "each time this is evaluated". One path for building, not a second in the mint. Element type kept: "its nice to have it there for reflection".
-- **Ruled:** 26 September 2026, Thobias ("go with b").
-- **Open:** how `=` takes a bracket into a place of a mint, there and for each line of a nested list: the open question *How an operation is defined for its operands* (under *Identity recognition*). Thobias: `=` should consume the mint, not the mint `=`.
-- **Seed:** since 26 September 2026 (#151): `array T [ … ]` is a node of `array` whose run makes a new value each time. `array`'s parse leaves the mint when no bracket follows. `v := T ?` of a type whose values are nodes is a new empty node. An untyped field holding a bracket has its lines evaluated at each run where the node stands. A node a Logos parse placed, of any type, is not woken again by its own type, while the value its run yields wakes the value's type, so `array i32 [4, 5][1]` reads 5. Stand-in for #152: a square bracket taken by `=` into a place of a mint (`x = [4, 5]` and each line of a nested list) is built in Rust as an `array` node over it; #152 recognises a mint as a type minted while `array`'s parse runs and reads its element type from its `element_type` member.
-- **History:** the name `fill` is gone, its body being `array`'s run ("dont think fill name is needed at all", Thobias). This supersedes, in *The placed call returns the mint*, the placed call `this.fill(tape[1])` and its per-run copy of `this`; the run now does that per-run work.
-- **Source:** DESIGN.md l.205
-
-### `array array i32 [ … ]` needs no brackets around the element type
-`array` binds right to left. An `array` with another `array` to its left takes no bracket and is that one's element type; the outer `array` takes the list.
-- **Why:** "array array i32 as its solved is actually good" (Thobias).
-- **Ruled:** 26 September 2026, Thobias.
-- **Seed:** done in #151.
-- **Source:** DESIGN.md l.205
-
-### `array ?` is an empty node of `array`
-When `?` stands right of `array`, its parse takes nothing and stands as itself; the hole makes the node.
-- **Ruled:** 26 September 2026, Thobias ("agree").
-- **Seed:** done in #151.
-- **Source:** DESIGN.md l.205
-
-### Mints stay: the element type is stored once, in the mint
-The element type is stored once, in the mint `array i32`, never in each value.
-- **Why:** "array i32 needs to be minted so that type doesnt need to be stored in each minted instance" (Thobias).
-- **Rejected:** making every value a plain `array` holding its element type (asked about and declined).
-- **Ruled:** 26 September 2026, Thobias.
-- **Source:** DESIGN.md l.205
-
-### The memo and the minting are `array`'s own members
-`share array_mints := hashmap type -> type` and `share get_mint := fn (t := type ?) -> type (…)` stand in `array`'s body. `share` because the memo is one place for all of `array`, never one per node.
-- **Why:** "get_mints should be a shared fn inside array and array_mints should also be a field inside array" (Thobias). `array` has values now (its expression nodes), so the old reason for a plain variable, "a chooser has no instances", no longer holds.
-- **Ruled:** 26 September 2026, Thobias.
-- **History:** supersedes *The chooser's mintings live in a plain variable* (its reason).
-- **Source:** DESIGN.md l.205
-
-### A value holds no spare capacity
-`capacity`, `capacity_bytes` and identities/next_power_of_two.logos are deleted.
-- **Why:** rounding room up for growth serves nothing until an array can grow. Thobias: "delete that file completely".
-- **Ruled:** 26 September 2026, Thobias.
-- **Source:** DESIGN.md l.205
-
-### There is no `this`: a type's bodies name fields directly; a parse builds its node in `tape[0]`
-Inside a type's `run`, `drop` and `share` functions a field is named bare: `(ptr + index)@`, `for i in 0..size ( … )` (as *The `run` is a body over the node's own fields* first had it, "the instance fields in scope by name").
-Inside a `parse` the node is `tape[0]`. While the cell holds a value of the type, `tape[0]` is that value: `tape[0].at(k)`. While it holds the type itself, **`tape[0]:type = T` makes it a new node of `T`**, and its fields are then written by name, `tape[0].element_type = t`, so nothing is left to place. Reading or writing `tape[0].f` before the stamp is the checked error, unless `f` belongs to the type the cell holds then.
-A bare field name means one thing because Logos has no shadowing: a type body written inside another must not reuse the outer one's names. So in array.logos `get_mint`, with the mint's body inside it, is declared before `array`'s own `element_type`.
-- **Why:** "could this be completely removed? i would say so"; "just simply write the fields directly in tape[0]"; "logos already uses non shadowing though so people should get used to creating expressive names to avoid name conflicts … remember logos uses non shadowing like zig" (Thobias). The mark said nothing structure did not already say (the reason `self.` and `child.` were declined). One spelling for the node, `tape[0]`, in every parse. On the stamp: "what about just writing tape[0]:type = array ? that should initialize it. if something tries to read or write before that … it should be an error unless the read or write matches the type tape[0] already has".
-- **Ruled:** 26 September 2026, Thobias.
-- **Open:** naming the value as a whole outside a parse (a `share` function returning or handing on its own receiver). Nothing needs it today; the test types that did so are rewritten in array's shape (Thobias).
-- **Seed:** not yet (#153), per DESIGN.
-- **History:** superseded 26 September 2026: `this` legal only inside a constructor or `run` body (17 September); `tape[0] = this` as the placement (18 September); "this should be used inside instance as well" (19 September, a body reached through an instance bound `this` to it, and in the type's own parse `this` was the fresh instance); every `this.f` spelling in DESIGN, the sketches and the seed. The stamp was first written `tape[0].type = array` (August). Kept: the per-run copy of a parse's fresh node (*The placed call returns the mint*) for a call a parse places on the node it is building.
-- **Source:** DESIGN.md l.207, l.201
-
-### In a parse, a field is always written through its cell
-In a parse a field is written `tape[0].f`; a bare field name there is the checked error.
-- **Why:** the cell may hold the type or a value, and its neighbours are cells too.
-- **Ruled:** 26 September 2026 (Thobias, same ruling).
-- **Source:** DESIGN.md l.207
 
 ### A bare call of a `share` function works on the value the calling body is about
 From a `run`, a `drop` or another `share` function, a bare call works on that same value. From a parse it works on no value, so only a function that reads no per-value field is called bare there (`get_mint(t)`); per-value work goes through the cell, `tape[0].at(k)`.
@@ -1645,29 +1581,9 @@ A `share` function that writes a field is refused on a value that is not `mut`, 
 - **Ruled:** 26 September 2026, Thobias.
 - **Source:** DESIGN.md l.207
 
-### The mark is spelled `share`, and slot fills carry it too
-Every line stored once per type says so: `share parse_rank = …`, `share associativity = left`, `share parse = (…)`, `share run = (…)`, `share drop = (…)`, beside `share array_mints := …`. An unmarked line is a place in every value. **An unmarked slot fill is the checked error.** `shared` is respelled `share` wherever DESIGN names the mark, kept only inside quotations and dated records.
-- **Why:** "i want to rename shared to share. one letter less. also run and parse_rank and associativity and parse and others such which is shared should also be named as shared so that no confusion arrizes"; "share is fine" (Thobias). `share` is the plain word for what happens.
-- **Rejected:** `one`, `all`, `same`.
-- **Ruled:** 26 September 2026, Thobias.
-- **Seed:** not yet (#153), per DESIGN.
-- **History:** supersedes the 26 September seed rule of *A type body describes one level* (a slot filled bare, `shared parse = (…)` the checked error). 19 September 2026: `shared` on the fill was one place, an unmarked fill a per-instance default, an unfilled slot a place per instance costing nothing until written, the layout locking at the first instance (reason then: per-instance behaviour takes the same mark as per-instance data).
-- **Source:** DESIGN.md l.207, l.201
-
-### History of type-body layout
-- **August 2026, parse dispatches through the type:** an identity's `parse` ran for appearances of its *instances*, so the code elaborating `array i32 0` lived on array's type ("the C++ intuition restored one honest meta-level up"); shared behaviour lived on shared types (operator, keyword, data type; the record's kind byte lifting into real intermediate types); unique syntax lived on a singleton type per identity. Realizing it was #48's mandate. Superseded the same month by the constructor-as-field ruling (the dispatch reading and the singleton shape; its ground kept: fail-closed inertness, no climbing, parse behaviour readable as data).
-- **August 2026, the constructor is a field:** `parse` was an ordinary field a type declares for its instances, and where it was declared decided everything: per-instance (each instance supplies its own; `type` declares it so, which let each type and keyword define its own parse in its own definition, `array := type ( parse = (…), … )`, an `if` or `import` a one-liner, deleting the metaclass tower), shared (one behaviour for every instance), or absent (inert). Dispatch: an appearance of X ran X's `parse` field. Superseded 25 September 2026 by *A value never has its own parse*; the deletion of the metaclass tower stands.
-- **August / 30 August 2026, two directions in one body:** bare body lines belonged to the identity itself (its slots, and new members living on it, a namespace's); everything about its instances lived in an inner block. 19 September 2026: a bare `:=` line in a type body became the checked error; every member went in the block, shared ones marked. Superseded 25 September 2026: one level, members and slot fills stand in the body together.
-- **The block's name:** `instance` (disliked, 2 September 2026) → `value = (…)` (17 September: it names the dyad's `.value` slot) → `instance = (…)` (19 September, Thobias: the block carried behaviour too, so `value` named too little) → `fields = (…)` (23 September, Thobias, "i like fields more": the block held fields and nothing else). Gone 25 September 2026. Seed #128 tracked the respellings.
-- **19 September 2026, the block holds instances' data and behaviour:** every block started with predeclared slots (`parse_rank`, `associativity`, `parse`, `run`, `drop`, `instance`) filled with `shared … = (…)`; a bare `run = (…)` or `drop = (…)` filled the type's own slot. Reason then: `run` and `drop` are about the instances as much as their fields. Closed the 16 September open "where `run` is stored", the 18 September open on `parse := parse (…)`, and the #130 spelling. The `run` fill was held as its lexed tape until a node's field types are known (*Deferral is authored*, 20 September 2026). Superseded 25 September 2026.
-- **23 September 2026, `run` not a slot of the type itself:** "remove type.run. run should only be inside instance" (Thobias); the values' body was read `^.fields.run`, `^.run` the checked error; shared members read `g.fields.y`. Reason then: nothing wanted the type's own run, and it stood as an empty slot in front of the shared fill. Seed #141 (24 September) read `^.fields.run` through a `dyad` view. Superseded 25 September 2026: `^.run` and `point.dims`, `run` again a slot of the type holding its values' body.
-- **A type body as a plain scope (August):** `g := type (y := 3, z := y + 3)` saw `y` in `z`'s line, members reached `g.y`. 19 September: spelled `g := type (fields = (shared y := 3, shared z := y + 3))`. Since 25 September members stand in the body again (spelled with `share` since 26 September).
-- **Source:** DESIGN.md l.199, l.201, l.203
-
 ### Plain substrate words: dyad, `.type`, `.value`
 The cell is the **dyad**; its fields are **`.type`** and **`.value`**. The view read is `a:type` (see *The dyad's read surface*). *synolon* and *hyle* are retired everywhere. `logos` names the language alone.
 - **Ruled:** August 2026 (in discussion; who not stated).
-- **History:** the view read was first written `(dyad a).type`, superseded 8 September 2026 by `a:dyad.type`, which `a:type` replaced (l.213). `logos` first survived in three places (the ground identity's name, the definition keyword, the language's name); superseded 4 September 2026: the first two are `type`'s (*Substrate vocabulary*).
 - **Source:** DESIGN.md l.199
 
 ### Text is the quote: `lex «…»` hands back the tape, unconstructed
@@ -1677,7 +1593,6 @@ Two things never needed a quote: reading an identity's fields and its binding (`
 - **Why:** a one-token prefix sign is ambiguous between a bracket and a group (`'(` beside `'(a, b)`), and a bracket-shaped quote can never name a bracket at all (`())` has no reading).
 - **Rejected, to stay rejected:** a prefix quote sign (`'`, which is the postfix prime; `\`, which the sketch briefly tried as `\(`, `\)`, `\:`, `\:\=`, those spellings superseded) and a quote keyword (`bare`, `quote`). Each is a second mechanism for what text plus the lexer already give, and each has the arity problem.
 - **Ruled:** August 2026 (in discussion; who not stated).
-- **History:** the founding example was respelled 2 September 2026, `:` having left the declaration surface. l.209 writes the field read `if.constructor`; the slot is `parse` since 17 September 2026.
 - **Source:** DESIGN.md l.209
 
 ### What `lex` returns: a `parsing_tape` fragment
@@ -1685,13 +1600,12 @@ Two things never needed a quote: reading an identity's fields and its binding (`
 Text that names nothing lexes to a fresh dyad with both slots `undefined`, its spelling kept tape-side in `tape.spelling[k]` (*The scope's constructor is the driver*). Not an error: it is how a constructor spells a name that does not exist yet; constructing it later is the ordinary unknown-name error.
 - **Why (for `parsing_tape`):** a bare array of pointers has no tape side, so no place for the text a cell was lexed from. `lex «5»` hands back the number pattern's binding and must hand back «5» beside it, or the constructor reading `tape.spelling[0]` finds nothing; and `lex «foo»` would lose the very spelling `:=` is to declare.
 - **Ruled:** stated as consequence in the August session; tape fragment ruled 2 September 2026; `parsing_tape` 14 September 2026; cells as bindings 8 September 2026; fresh dyad ruled 2 September 2026, read spelled 14 September 2026.
-- **History:** 2 September 2026: the fragment was an `array @dyad`. Superseded 14 September 2026 by `parsing_tape`.
 - **Source:** DESIGN.md l.209
 
 ### `lex` runs whenever it runs: no comptime/runtime split
 `lex` turns any string into unconstructed identities whenever it runs, and the fragment is owned by the graph like any other value of the scope that made it.
 - **Ruled:** 30 August 2026.
-- **Seed:** since 15 September 2026 (#62): an identity at the rank of the raw-text consumers that reads its quote at discovery (as `regex` does) and lexes it when its node *runs*, against the scopes open at that moment (the appearance's, for a constructor: the seed's reading of "the lex site"). The runtime carries the lexer only while the parser runs something. Each run lexes afresh, so an undeclared spelling gets its own fresh dyad per run. The spelling rides on the cell, so a spliced cell keeps its text and the number pattern's constructor builds `2` from `lex «* 2»`. `insert` takes a tape; the single-cell insert is gone. Stand-ins left: `lex` reads only its quote (a string value has no storage to read yet); a `tape[k]` read past the frontier at run time stays the checked error; a spliced cell's error caret falls where the fragment's offset lands in the source, the derived source map being unbuilt.
+- **Seed:** since 15 September 2026 (#62), with stand-ins (`lex` reads only its quote).
 - **Source:** DESIGN.md l.209
 
 ### The scope's constructor is the driver
@@ -1705,14 +1619,13 @@ The "driver" is not special machinery and not the tape. It is the constructor of
 ### The tape is data with four affordances
 The tape has exactly four affordances: `tape[k]` (a read lexes lazily, on demand), `is_constructed` per cell, `insert`, `remove`. Beside the flag it keeps a second per-cell fact, `tape.spelling[k]`.
 - **Ruled:** August 2026 (four affordances); `tape.spelling[k]` 14 September 2026.
-- **Seed:** the seed also has `tape.recenter(k)` as a native (see Seed status).
+- **Seed:** done, plus `tape.recenter(k)` (see Seed status).
 - **Source:** DESIGN.md l.211
 
 ### A cell is a pointer to the binding the trie resolved
 A cell points at the binding the trie resolved. The binding is itself a dyad of type `binding`. `lex «array»` gives a one-cell tape fragment whose cell points at `array`'s binding. There is no `token` wrapper: `token` is not an identity, and the sketch's `token` type is superseded.
 - **Why:** one read surface; no wrapper type between a spelling and what it names.
 - **Ruled:** 2 September 2026; binding as a dyad of type `binding` 8 September 2026 (*The dyad's read surface*).
-- **History:** `lex «array»` yielded an `array @dyad` until 14 September 2026 (see *Text is the quote*). 7 September 2026: a resolved cell was read as `tape[1]:scope`, `tape[1]:gate`, and its dyad as `tape[1]:dyad`; a constructed cell answered `:dyad` (its own dyad) and `:scope` (the tape's scope), under the path rule of *Meta-navigation* (8 September 2026). The `:dyad` read was later retired for `a:type` (see *The dyad's read surface*).
 - **Source:** DESIGN.md l.211
 
 ### A constructor never writes through an unconstructed cell
@@ -1731,14 +1644,14 @@ The flag lives on the tape, as a linked list parallel to the cells, never as a f
 The spelling is the tape's second list, parallel to the cells like the flag. It is how a constructor learns an appearance's text: `:=` reads `tape.spelling[-1]` to declare a fresh name; the number pattern's constructor reads `tape.spelling[0]` to build its value. A cell nothing lexed (built or spliced by a constructor) answers the empty text. The text stays readable after the cell is constructed.
 - **Why:** it is the tape's fact, not the binding's: the number pattern is one binding for every `5` and `42`, so the binding can only say what its own spelling is (`x:name`), never what matched here. Nothing outside a constructor needs it, since after construction the text has become the value or the name. The empty-text answer lets a constructor test "was this cell lexed?" with one read and no fault, in a preview that has faults only.
 - **Ruled:** 14 September 2026.
-- **Seed:** #121, 14 September 2026 (the seed's span already kept the text readable).
+- **Seed:** since 14 September 2026 (#121).
 - **Source:** DESIGN.md l.211
 
 ### The tape is a cheap view with a movable center, over a doubly linked list
 A constructor gets the tape as a view: `tape[0]` is its own cell, negative offsets its left context, positive its right. Passing a tape re-centers a window over the same cells; nothing is copied. The tape is a doubly linked list whose center is a node, so re-centering is a pointer move and `insert`/`remove` at the center are constant-time. `tape[k]` walks k links: an index meant for the small offsets a constructor reads.
 - **Why:** constructors make many splices; a list makes each one cheap.
 - **Ruled:** direction August 2026 (the sketch's `doublylinkedlist dyad`); built as a list, not a vector stand-in, 9 September 2026.
-- **Seed:** `ParsingTape` is an arena of linked nodes, the center a node.
+- **Seed:** done.
 - **Source:** DESIGN.md l.211
 
 **Lexing and fresh spellings**
@@ -1751,8 +1664,7 @@ The cell holds a pointer to the fresh dyad; the spelling is kept tape-side. `:=`
 ### Unknown spellings are two pattern identities
 The trie holds patterns beside literals. The two fresh-spelling patterns are identities of the language start, beside the five names: a word, `[A-Za-z_][A-Za-z0-9_]*`, and a symbol run, `[^A-Za-z0-9_\s()\[\],«»#]+`. Each builds the fresh null-slotted dyad. Numbers keep their own pattern, since `1.05` split at the dot loses its zero. `«` and `#` read their own extent and need no pattern.
 - **Ruled:** 10 September 2026.
-- **Seed:** the letters-and-digits identifier scanner and the word-boundary check are divergences (#110).
-- **History:** 9 September 2026 (superseded 10 September): a fresh spelling reached from where the trie stops matching to the next whitespace, bracket, `,`, or start of a known spelling. So `^ := …` declared `^`, `a:=1` lexed `a` then `:=`, `x^2` with `x` declared lexed `x`, fresh `^`, `2`; a first appearance wanted spaces. Reason then: the lexer must bound an unknown spelling before it sees the `:=`; whitespace, brackets and `,` are the only structure; stopping at a known spelling keeps `a:=1` and `f(x)` readable.
+- **Seed:** divergences (#110).
 - **Source:** DESIGN.md l.211
 
 ### Every spelling has a `lex_rank`; rank first, then length
@@ -1761,7 +1673,6 @@ At one position, the highest-ranked candidate that matches wins, whatever its le
 Examples: `ab2` is one fresh name even with `a` declared. `a^2` is `a` `^` `2`. `@@i32` is `@` `@` `i32` (`@` outranks the run). `x=-1` is `x` `=` `-` `1` with no rank set anywhere, since `=-` is nobody's spelling. `..` is its own identity, `regex «..» := type (…)`, and wins over `.` by length at equal rank, as `:=` wins over `:`.
 - **Why:** rank before length is the only order where a catch-all can exist without swallowing `x^2` or `@@`. Longest match at equal rank is the rule the trie already had. The word-boundary rule is needed because rank alone would let a higher-ranked `a` cut `ab2`, while the greedy word pattern never ends inside a word.
 - **Ruled:** 10 September 2026; `lex_rank` lives on the binding, `x:lex_rank`, 14 September 2026 (*The constructor is a field*).
-- **History:** first form, 10 September 2026, same day: only patterns ranked, and a literal met a pattern by length. First wording also claimed the boundary rule fell out of longest match; corrected the same day (under rank-before-length it does not).
 - **Source:** DESIGN.md l.211
 
 ### Two declared spellings of equal rank that can match the same length are a definition error
@@ -1783,148 +1694,7 @@ The byte walk already narrows literals to the one that can match (no shadowing, 
 
 **Brackets and application**
 
-### `[` is `(` in square brackets, and lands a `square_brackets` cell
-A `[…]` is parsed as any bracket and any expression. The cell a `[` lands is a value of its own identity, `square_brackets`, as the cell a `(` lands is a `scope`. The tape's constructor consumes the `[…]` on its right; `tape[k]` is that read. The index inside is read as a scope's lines are: `tape[1].dyads[0]`, and `tape[1].dyads.size` counts entries. `[i, j]` gives two entries with no extra rule.
-- **Why:** Thobias: "square brackets work basically exactly the same as () just that its square brackets instead". Own identity: "square_brackets should be an identity just like scope is an identity"; a constructor that consumes a `[k]` tells the bracket apart by type, `tape[1]:type == square_brackets`, which a `scope` could not be told from `a (k)`. Reading `.dyads`: the bracket reads as a scope reads, `.dyads` already exists, no new word needed.
-- **Ruled:** `[` is `(` 9 September 2026, Thobias; `square_brackets` identity 23 September 2026, Thobias; `.dyads` read 25 September 2026, Thobias.
-- **Seed:** since 25 September 2026 (#137), `[` lands a `square_brackets` cell whose `dyads` hold its lines. The seed's `[` still folds `t[k]` in its own constructor, a tape value having no constructor of its own yet.
-- **History:** `tape[1].index`, first written in identities/array.logos, respelled `tape[1].dyads[0]` (25 September 2026).
-- **Source:** DESIGN.md l.211
-
-### `a[k]` is an application, exactly as `a(k)`
-The type's parse that takes the `[k]` builds a node the way a call builds its call node: its fields hold the value and the index, and its run reads the element when it runs. `a[1]` is the call of `at` over `a` and `1`, run where it stands, at top level, in a function and compiled alike, bounds check included (the residual code of *Deferral is authored*). A call written into a tape cell is placed, not run: a cell is a node-typed place, and "a field typed as a node keeps the operand as graph" (*Execution is function application*, item 4).
-- **Why:** Thobias: "a[1] would be almost identical to a(1) just that a consumes square_brackets instead of a scope. square_brackets and () behave identical, its just the name that is different." One mechanism for `(…)` and `[…]`.
-- **Ruled:** 25 September 2026, Thobias.
-- **Open:** Claude's, open to Thobias: the member's name, `at`.
-- **History:** the first array.logos read the parse's own locals after the parse had returned, `tape[0] = scope ( … index … this … )`; superseded by this ruling. The 25 September spelling was `tape[0] = this.at(tape[1].dyads[0])` with `shared at := fn (index := u64 ?) -> element_type ( if index >= this.size error «…», (this.ptr + index)@ )`; since 26 September 2026 there is no `this` and the mark is `share` (a value in the cell is `tape[0]`, `tape[0].at(k)`; fields named bare in the function body, see l.207).
-- **Source:** DESIGN.md l.211
-
-### A placed call keeps its tape lines as operands
-An argument of a placed call that reads the tape (the index line `tape[1].dyads[0]`) is that line itself, an operand run when the call runs, exactly as `f(i)` keeps `i`. It is never its value read at parse. The parse checks only the line's type, which it knows: `tape[k].dyads[i]:type` is a name's declared type and an expression's result type, and a literal molds to the checked type. Only what the placed node cannot reach later runs as it is placed: an argument that reads the parse's own node or locals. So `i := u64 1, a[i]` is 2; `fn (i := u64 ?) -> i32 ( a[i] )` reads `i` per call, interpreted and compiled; `a[j + 1]` runs `j + 1`; an index at or past the size is "index out of range" when the call runs.
-- **Why:** Thobias: "a[i] and f(i) should handle i in the same way". A name or expression has no value while the parse runs; reading one there is what made `i := u64 1, a[i]` fail.
-- **Ruled:** 25 September 2026, Thobias.
-- **History:** Claude's reading of the same day, "the placed call's arguments run as it is placed … so the node holds values", superseded.
-- **Source:** DESIGN.md l.211
-
-### An index may be of any integer type
-`a[i]` takes an index of any integer type. One that fits the size type (`u8` to `u64`, or a literal that molds to `u64`) goes to `at` as a `u64`. A signed one goes to `at_signed := fn (index := i64 ?) -> element_type`, whose check refuses a negative value as it refuses one at or past the size: "index out of range" when the call runs. So `for i in (i32 0)..(i32 3) ( s = s + a[i] )` sums, and `a[i] = v` writes alike. A literal index still answers at parse: `a[-1]` and `a[1.5]` stay "the index type is not within the size type". The widening is the narrowing's own (*A tape read checked against a number type reads as that number*): a line checked `⊆ T` is read as a `T` in the call it places, converted when the call runs; no cast is written and none is implicit, the check being the cast. `a.at(k)` is an ordinary call and stays "these types do not match" for `k := u8 1`.
-- **Why:** a loop counter is an index (`for i in 0..3` counts in `i32`), and the bounds check, not the index's type, keeps a read inside the array.
-- **Ruled:** 25 September 2026, Thobias ("yes").
-- **Open:** Claude's choices, open to Thobias: a second member rather than one `at` over `i64` (a `u64` index does not fit `i64`, and the size type is `u64`); `at_signed` repeating the bounds check rather than calling `at` (only a body ending in its own dereference is a place); the name `at_signed`.
-- **Seed:** since 25 September 2026, in array.logos and in the placed call's read of a narrowed line.
-- **History:** before, the check `⊆ size:type` was the whole rule, and `k := u8 1, a[k]` was "these types do not match".
-- **Source:** DESIGN.md l.211
-
-### A call that ends in a dereference is a place
-`f(…) = v`, where `f`'s body ends in a dereference `p@`, runs the body with the call's operands as the read does (bounds check included) and stores `v` where `p` points instead of reading there. `v` is typed at parse against the dereference's type, a literal molding to it, as for `p@ = v`. So `a[k] = v` is `=` over the call of `at`, at top level, in a function and compiled alike; `a.at(k) = v` is the same write; `a[j + 1] = …` runs the index when the write runs; an index out of range fails when the write runs. A write through a parameter (`p[1] = …`) or through `b := a` is seen by every holder. A call whose body ends in anything else is "this is not an assignable place"; so is one whose body holds a `return` (it could leave with a value where the write needs an address) or a teardown of its own (it would free what the address points at before the write lands).
-- **Why:** `a[k]` is an application, so its write is an application's write: one rule for every call, none for arrays. `at` already reads through a dereference, so the place exists and only `=` must reach it.
-- **Ruled:** 25 September 2026, Claude's choice (DESIGN was silent), approved by Thobias the same day ("yes").
-- **Rejected:** the `[k]` parse seeing `=` on its right and placing a `set(k, v)` (a parse cannot construct the right side of `=`, and a second member would repeat the check); `at` yielding an `@T` the parse dereferences (`a.at(k)` would then hand out a pointer).
-- **Seed:** since 25 September 2026, `=` over such a call builds a copy of `f` whose body ends in `p` and returns `@T`, and stores through that copy's call; no array-specific code. A fault a compiled caller parks is the first one, so the null guard over the zero an interpreted callee's error left does not replace that error.
-- **Ruled (27 September 2026, Thobias):** settled, `a[k] = v` writes. The 26 September open note under ›A type body describes one level‹ is closed: `at` ends in a dereference, so it is a place, and the seed already does it.
-- **Source:** DESIGN.md l.211
-
-### `a` need not be `mut` to write its elements
-The element is not inside `a`'s binding but at the address `ptr` holds, and "a dereference starts a new path" (*`mut` is a gate on the binding, not a type*), as `m[k] = v` fills a map declared without `mut`.
-- **Ruled:** 25 September 2026 (with the place ruling).
-- **Open:** for Thobias: the through-gate of that path (a pointer made by `mut alloc`) is not checked by the seed ("a write through `@` is unchecked"), and array.logos allocates with plain `alloc`, whose writes that gate would refuse once checked.
-- **Source:** DESIGN.md l.211
-
-### A name of a type with an instances' `parse` wakes it, as the instance does, and so does any expression of the type
-A name, a parameter, a field, or any expression whose type is known at parse to have a parse wakes that parse where it stands, as the value itself does. The value there is that expression, an operand of the call the parse places, run when the call runs. So `a[1]` works on `a := array i32 [x, y, 3]`, whose contents exist only at run, and on a parameter `p := array i32 ?`. With `mk := fn () -> array i32 ( array i32 [1, 2] )`, `mk()[1]` is 2 as `m := mk(), m[1]` is; `mk().at(1)` is the same call spelled out; each run of `mk()[1]` runs `mk` anew, as `f(x) + f(x)` runs `f` twice.
-- **Why:** the type decides how a value is read, whether it is known at parse or only at run, and whatever produced it.
-- **Ruled:** names, parameters, fields 25 September 2026, Thobias ("go with B"); any expression 25 September 2026, Thobias ("yes").
-- **Open:** Claude's reading, open to Thobias: a bracket an identity to its left takes stays that identity's argument (`f (a)` is a call of `f`), since `(` builds its bracket at discovery, before that identity's turn. Only a bracket nothing took, with a cell to its right, wakes, once the segment's other constructors have run.
-- **Seed:** since 25 September 2026 (#137): names, parameters, call results and brackets wake, interpreted and compiled; `a[1]`, `b := a, b[1]`, and `f := fn (p := array i32 ?) -> i32 ( p[1] ), f(a)` work, the last also after `f.compile()`. A field read wakes too (later on 25 September; before, `this.items[1]` over a field was refused).
-- **History:** the 25 September wording said "a type whose fields block fills the instances' `parse`" and "`this` there is that name's value"; since 25/26 September a type has one parse and no fields block (l.203) and there is no `this` (l.207).
-- **Source:** DESIGN.md l.211
-
-### A name standing with nothing to its right wakes and stands
-`f(a)` or `b := a`: the woken parse reads `void` at `tape[1]`, takes no bracket and stands. So `b := a, b[1]` is 2, and `t := array i32` stands as the type.
-- **Ruled:** 25 September 2026, closed by the `void` read (see Lazy tape reads).
-- **Source:** DESIGN.md l.211
-
 **Arrays and values of Logos-built types**
-
-### A list's elements are filled when the code runs
-The elements of `array i32 [x, y, 3]` are filled at run, like the arguments of `make(x, y, 3)`: each line typed at parse against the element type (`array u8 [1, 300]` refused where written) and evaluated at run.
-- **Ruled:** 25 September 2026.
-- **History:** the mint's fill loop read each line's number at parse, which refused a name among them; superseded 25 September 2026.
-- **Source:** DESIGN.md l.211
-
-### A bracket goes to the call whole
-The bracket is handed over as one argument; the callee evaluates each line when it builds the array. The bracket keeps its own type: the callee reads `elements.dyads.size`, `elements.dyads[i]:type`, and after a check `elements.dyads[i]` as the line's value. Only the array's list must be square; a type of the author's own may still take a `scope` as its argument.
-- **Why:** Thobias: "hand over elements as bracket arguments yes as long as square_bracket is used and not parenthesis because if its parenthesis then it should be passed on as scope argument. but really they are the same just different name." One rule for every bracket: lines are operands, and one bracket fits a fixed parameter list however many lines it holds.
-- **Ruled:** 25 September 2026, Thobias.
-- **Open:** Claude's readings, open to Thobias: the parameter is a bare name (a typed `scope` parameter would refuse a `square_brackets`; *A function's surface*: "a bare `name` that accepts any dyad"); lines are evaluated in the frame the call stands in, when it runs, into a new bracket of the same kind holding their values (a number line as its value, a literal as itself), since the callee's frame holds none of the caller's names. So in `fn (x := i32 ?) -> i32 ( c := array i32 [x, x + 1], c[1] )` the lines read that call's `x`.
-- **History:** 25 September: the mint's parse placed `tape[0] = this.fill(tape[1])` with `fill := fn (elements) -> this:type (…)`. Since 26 September 2026 (l.205) `fill` is gone: `array T [ … ]` is a node of `array` whose `elements` field holds the bracket and whose run does the work.
-- **Source:** DESIGN.md l.211
-
-### The array's list is written in square brackets
-`array i32 [1, 2]`. A `scope` there is the checked error with the guide "the list is written in square brackets, `array i32 [1, 2]`, not `array i32 (1, 2)`". Examples written `array T (…)` in older text are read as `array T […]`.
-- **Why:** Thobias: "replace () with [] for the literal list given to array T () so it becomes array T []". Reason, in Claude's words, open to Thobias: `( )` delimits scopes, parameter lists and bodies, and a parenthesis after a value is a scope argument, so a list written `(…)` would look like a scope while being data. One spelling for one meaning, and `array i32 [1, 2]` reads like the index `a[1]` it is read back with.
-- **Ruled:** 25 September 2026, Thobias.
-- **Seed:** identities/array.logos since 25 September 2026, no Rust change.
-- **History:** `t := array i32, x := t [4, 5]` was also valid on 25 September; since 26 September a mint is not written before a bracket but assigned one, `x = [4, 5]` (l.205).
-- **Source:** DESIGN.md l.211
-
-### A value of a type built by a Logos `parse` travels as a pointer
-Such a value is the address of its node, eight bytes in a place. `b := a`, `f(a)` and returning it copy the address. So `b := a` shares the array, it does not copy it: a write through either is seen through both. `a`, the name the array was made into, frees it (*A filled `share drop` is the teardown the constructor authors*); `b` borrows. The type's reading rule decides this (*`:=` decides nothing about copy versus reference; the type's reading rule does*, 5 September 2026): this rule reads the node's address as `type`'s reads the identity, so "two names for one place among data exist only where written, `y := &x`" does not reach these values. A parameter `p := array i32 ?` is such a place; `p.size` reads through the address when the body runs, and `p.size_bytes()` calls the member on `p`.
-- **Why:** one storage shape for these values, the node's address. It fits the 8-byte argument slot, so passing one needs no copy rule of #115.
-- **Ruled:** 25 September 2026, Thobias.
-- **Open:** a record built by applying its type, `p (1, 2)`, is not such a value: it stays bytes at the type's width (the stand-in "a record-typed declared place is its layout's bytes"), and a fields-block function reading a node's fields on one is the checked error until ruled (#149). Moving those records to the pointer shape too would be the one-shape answer, recorded open, since it reaches every record's layout, compiled field reads and `@T` over a record.
-- **Source:** DESIGN.md l.211
-
-### A field of such a type holds the node's address
-A field `items := t ?` with `t := array i32` holds the address of the array's node. Reading the field gives a value of `t`, so it wakes `t`'s parse like any expression of the type: `b.items[1]`, `b.items.size`, `b.items.at(1)`, `b.items[0] = i32 9` and `f(b.items)` work as on a name; `c := b.items` borrows, as `c := a` does. Writing the field stores the node `v` yields, typed at parse against `t`, never the expression (a stored expression would build a new array at each read). The field is read when the code runs, even through a node the parse already knows (a top-level `b`), since it may be written again before then; a field of any other type keeps the parse-time read of a known node.
-- **Why:** from "such a value is the address of its node, eight bytes in a place", and a field is a place: one storage shape wherever the value stands.
-- **Ruled:** 25 September 2026, Claude's reading, asked by Thobias to "fix this"; open to Thobias.
-- **Seed:** since 25 September 2026, no array-specific code. A function holding the field read stays interpreted, as every field read does (only the per-run copy lowers); a compiled callee handed `b.items` runs compiled.
-- **Source:** DESIGN.md l.211
-
-### Each evaluation of an array expression makes a new array
-Each evaluation of `array i32 [x, y, 3]` (each pass of a loop, each call of a function holding it) is a new array.
-- **Why:** the contents exist only at run, so one node built at parse and shared by every run of the site would hold only the last run's elements.
-- **Ruled:** 25 September 2026, Thobias.
-- **Seed:** since 25 September 2026 (#137): `array i32 [x, y, 3]` fills at run; a function that makes an array compiles (the bracket's number lines run in the compiled frame; the new bracket and the per-run copy, nodes of the store, are made by a call from machine code back into the seed; the builder runs interpreted as any uncompiled callee does). A return type spelled `-> array i32 ( … )` stops before the body's bracket (the mint's `tape[1]` reads `void`), so `mk := fn () -> array i32 ( array i32 [1, 2] )` returns the array.
-- **History:** 25 September: "the placed call returns the mint": the call yielded the mint as a pointer; Claude's spelling (open to Thobias) named the mint `this:type` inside its own fields block, and a call a type's parse placed on its `this` took a per-run copy of that node, begun as the parse left it. Superseded 26 September 2026 (l.205): the array expression is a node of `array` whose run makes the value; `fill` and its per-run copy are gone. Before the sealed read, the mint lexed past the return type into the body, and a function returning an array had to name the type first, `t := array i32, … -> t ( … )`.
-- **Source:** DESIGN.md l.211
-
-### `alloc n of T`, for such a `T`, gives n cells of its address
-`alloc n of array i32 ?` allocates n cells of pointer width. `p@` reads the address held as the value; `p@ = v` stores `v`'s address; `p + k` steps k cells of eight bytes. As consequence: a line `tape[k].dyads[i]` checked `⊆ T` for such a `T` reads as a value of `T` after the check; a line's `:type` is the type of what it yields, so a made value `array i32 [1, 2]` in a list answers `array i32`, not the call that makes it; a handed-over bracket evaluates such a line where the call runs, giving the callee the node's address. So `t := array i32, b := array t [own x, own y]` holds two arrays, `b[1][0]` reads through both, `b[0][1] = i32 9` writes inside the inner one (seen by every holder), and a parameter `p := array t ?` reads `p[1][1]`, interpreted and compiled.
-- **Why:** the value is the address, so a cell that holds one holds eight bytes of address.
-- **Ruled:** 25 September 2026, Thobias.
-- **Seed:** 25 September 2026, one test in `read.rs` for which cells load whole (`cell_numtype`), no array-specific code.
-- **Source:** DESIGN.md l.211
-
-### A value owns what its elements hold, and drops it
-The outer's `share drop` drops each element whose type fills a `share drop`, then frees its own memory (array.logos: `for i in 0..size ( drop (ptr + i)@ )` before `free ptr`). `drop p@`, over a cell holding a node whose type fills `share drop`, runs that drop and empties the cell, as `drop a` does for an owner; over any other cell it stays the inert drop.
-- **Why:** Thobias: "the outer array owns its inner arrays". One name owns each value, and for an inner array that name is the outer one, so the outer's drop frees the inner ones: nothing leaks and nothing is freed twice.
-- **Ruled:** 25 September 2026, Thobias.
-- **Source:** DESIGN.md l.211
-
-### A list's lines move into the value built from it
-A line that names a value whose type fills a `share drop` is refused: "write `own x` to move it in". `own x` moves it, `x` dead from that line. A value made in the list (`array i32 [1, 2]`, `box (1, 2)`, `mk()`) belongs to the new value from the start.
-- **Why:** from DESIGN: "`=` into an owner takes only a value just made or moved" and "`b := a` and passing `f(a)` borrow". A line is an operand, which borrows, and the element is owned, so a bare name would give one value two owners and two drops. Moving it silently would end a name nobody wrote `own` on, where *Explicit heap, and no implicit destruction* ends nothing behind your back.
-- **Ruled:** 25 September 2026, Claude's decision (asked by Thobias to decide from DESIGN); open to Thobias.
-- **Open:** a parameter that says it consumes its argument (`own` on a parameter, not in the seed) is the precise form, recorded open.
-- **Seed:** the refusal stands where a type's parse hands a bracket to the call it places, for every type written in Logos; a callee that only reads its list is refused alike.
-- **History:** `own array i32 ?` as a field was found (Claude, 25 September) not to be this mechanism, missing three pieces (`own` over a non-pointer hole, `drop` over a field read, a field waking its type's parse); closed later on 25 September by *A field may be `own t ?`* and *A field of such a type holds the node's address*.
-- **Source:** DESIGN.md l.211
-
-### The element type decides how a line becomes an element
-When the element type has its own parse, each line of the outer list is built as that type applied to the line; a line that already is a value of the element type is taken as it is; numbers keep their rule. With element type `array i32`, `[[1, 2], [3, 4]]` builds `array i32 [1, 2]` and `array i32 [3, 4]`, while `own x` or `mk()` of that type is taken as is. `array u8 [1, 300]` stays "an element does not fit the element type" (a number type's own parse would take a number line as a conversion, so only bracket lines are handed over). Each run makes new inner arrays, as it makes a new outer one. `array array i32 [[1, 2], [3, 4]]`, three levels, lines naming a run-time `x`, a function returning a nested array and its compiled form all run.
-- **Why:** the element type decides how a line becomes an element, as a type's parse decides everywhere (*`X (…)` is one spelling, and X's constructor decides what the bracket is*).
-- **Ruled:** 25 September 2026, Thobias. The principle stands after 25 September (l.203).
-- **Rejected:** running a type's parse by hand (the 19 September ruling replaced it by the driver's turn); splicing the lines onto the tape (a line lies inside the bracket cell, not on the tape).
-- **History:** 25 September, Claude's spelling (open to Thobias): two tape affordances, `tape.construct(T, v)` (construct the two cells `T v` as the driver does a segment, give the one node, else the checked error) and `tape[k].dyads[i] = v` (replace line i of bracket cell k); array.logos wrote `if tape[1].dyads[i]:type == square_brackets or tape[1].dyads[i]:type == scope ( tape[1].dyads[i] = tape.construct(element_type, tape[1].dyads[i]) )`. Reasons then: the construct is the driver's own act ("the driver wakes by the flag and the cell's `parse_rank`", 19 September), offered to every Logos type; the line write was the 20 September "mutate the dyad array inside scope". Both deleted later on 25 September 2026 (l.203): elements are built by assignment, `(ptr + i)@ = elements.dyads[i]`, and `=` constructs each by the element type's parse.
-- **Source:** DESIGN.md l.211
-
-### At top level, a `[…]` line of a list is not run early
-Stated as consequence of *A bracket goes to the call whole*: at top level, where lines run as they are parsed, a list line that is itself a `[…]` is left for the call that takes the list. Otherwise the parse of a later line (a type's parse running first runs what stands before it) would run it early, where a `[…]` has nothing to run.
-- **Ruled:** 25 September 2026, consequence.
-- **Seed:** 25 September 2026, the top level's pending run skips a `[…]` line.
-- **Source:** DESIGN.md l.211
 
 **Text and interpolation**
 
@@ -1936,7 +1706,6 @@ Stated as consequence of *A bracket goes to the call whole*: at top level, where
 ### `{ }` is text interpolation
 Inside `«…»` or a `#` comment, `{` opens an ordinary full scope whose value is turned into text and spliced where it stood: `«total {n}»`. A string is a scope that builds exactly its braces. `{ }` is unassigned outside text. The conversion is the text type applied to the value (`string(n)`; a type applied to a value is the conversion, *Numeric literals*). An interpolation in a `#` comment is not comptime-gated: the comment's text is a value that resolves when its inputs exist, and documentation tooling reads what is resolved.
 - **Ruled:** interpolation August 2026; not comptime-gated 30 August 2026; the rest stated as consequence.
-- **History:** extended to closed language blocks on 4 September 2026, rolled back the same day: a language block's door is `logos (…)` (see *Sections, the arche, and effect identities*).
 - **Source:** DESIGN.md l.211
 
 **Ordering: the eager-segment driver**
@@ -1945,8 +1714,7 @@ Inside `«…»` or a `#` comment, `{` opens an ordinary full scope whose value 
 Every identity nameable in text has a finite `parse_rank` (no NaN, no ±infinity class). Step 1, lex: `(` lexes its interior one token at a time. A token whose `parse_rank` is at or above `(`'s is built at discovery, before the next token is lexed: the raw-text consumers `#`, `«`, `import`, a hosted-clause opener, and `(` itself (an inner bracket recurses and lands as one built scope cell, its closer consumed by its opener). Every other token goes on the tape unbuilt. Step 2, build: at a segment boundary (the `,`, which sits above `(` and acts at discovery, or the closing bracket), it builds the cells lexed since the last boundary, highest `parse_rank` first, associativity breaking ties. Each constructor takes what its syntax needs from the fully lexed segment, left or right, any arity, no lookahead (a postfix taking two cells to its left is as expressible as an infix). At top level it runs them. Other scope kinds author their own ordering.
 - **Why:** position on one axis is what keeps `# a ( in prose` and `import ./path` from being lexed as code, with no raw-consumer marker.
 - **Ruled:** 30 August 2026, in discussion.
-- **Seed:** converged September 2026 (#59): the loop lives in the scope's constructor, every identity has a finite `parse_rank`, a leftover cell is the error, the `,` is required.
-- **History:** superseded 30 August 2026: the incremental shift/reduce-with-holding form first recorded here; the one-token lookahead of *Elaboration*; the threefold applied/holding/declined answer; the NaN/finite/+infinity classification of *A type's metadata*; the zero-or-one-cell wording.
+- **Seed:** converged September 2026 (#59).
 - **Source:** DESIGN.md l.211
 
 ### Two dependent expressions in one scope need a `,` between them
@@ -1957,7 +1725,7 @@ Every identity nameable in text has a finite `parse_rank` (no NaN, no ±infinity
 ### A constructor's outcome is read off its own cell; no holding, no re-invocation
 The cell is either constructed, or declined (frontier untouched, the identity standing as its own value, like `i32` before a `,`). An error (operand missing, unfinished construct) returns as its `!` value for the driver; faults are for broken invariants (*Error handling*, amended 31 August 2026). In v0.1.0 every constructor error is a fault and the `!` return is staged (*Error handling*, 2 September 2026). After a segment is built, a leftover unconstructed cell is the checked error; the built cells in order are the scope's expressions.
 - **Ruled:** 30 August 2026.
-- **Seed:** #81, 15 September 2026: the outcome is read off the construct's cell by handle, whatever the center is after the call. Built, removed, or rewritten to another token is progress; an untouched frontier is the decline; a cell left unconstructed after an edit is the checked error. Nothing runs twice.
+- **Seed:** since 15 September 2026 (#81).
 - **Source:** DESIGN.md l.211
 
 **Readers of their own bracket**
@@ -1966,7 +1734,7 @@ The cell is either constructed, or declined (frontier untouched, the identity st
 Such an identity sits at or above `(`, is built at discovery before the bracket is lexed, and drives the bracket's parse with its own scope open. The set: `fn` (the forced case: a body resolves in the parameter scope, which does not exist until `fn` has run, *A function's surface*); `for` and `while` (the loop variable, and the runs-again rule of *Memory and concurrency*); `defer` (runs later); `type` (its definition body); a language and a value's block that continue their scope; `conjecture` for its signature, where an unknown spelling is a hole (8 September 2026, *The proof layer*). A constructor that takes scope cells as operands sits above application, so `fn () -> i32 ( body )` is taken by `fn` before `i32`'s juxtaposition could read a conversion.
 - **Why:** a bracket parsed first would already have resolved its names against the surroundings.
 - **Ruled:** 3 September 2026.
-- **Seed:** `fn`, `for`, `while` parse their own bodies with the barrier pushed first; this is the ruled shape.
+- **Seed:** done for `fn`, `for`, `while`.
 - **Source:** DESIGN.md l.211
 
 ### `:=` is a reader too: it declares before its right side is built
@@ -1979,22 +1747,19 @@ Such an identity sits at or above `(`, is built at discovery before the bracket 
 `if`'s condition is built to one cell; then the body; then an optional `else` and its body. A condition known at parse time skips the untaken bracket's text unlexed.
 - **Why:** this is what *A type is a comptime value* promises, and a boundary-time `if`, finding both brackets already built, could not do it. `if` decides when, and whether, its body runs, the rule's own second clause.
 - **Ruled:** 5 September 2026, planning #59.
-- **History:** 3 September: "`if` keeps the plain order, its bodies being inline, once, and naming nothing new"; superseded 5 September.
 - **Source:** DESIGN.md l.211
 
 ### An `if` body needs no brackets
 The condition is the first complete expression after `if`; the next expression is the body; a `(` right after a complete condition starts the body. `if m != ? (1) else (2)` and `if t:type == scope (…)` need no extra brackets; `if (c) (body)` still reads. `else` takes the next expression as its body; a bare `else` binds to the nearest `if`.
 - **Why:** fewer brackets for the most common control word; the condition's end is already known when it is a complete expression (reason written by the implementing session; Thobias to confirm). Thobias: "brackets should not be needed".
 - **Ruled:** 25 September 2026, Thobias, reversing the decline recorded under *Expressions are self-delimiting*.
-- **Seed:** 25 September 2026 (#137): a bare body is a scope holding one expression, ending at a `,`, a closer, or an `else`. An untaken bare branch is parsed and dropped, since only building it finds its end; the unlexed skip holds for a bracket only.
-- **History:** before, bodies stayed scope cells, `if (c) (body)`, while a condition could be any built cell (5 September 2026).
+- **Seed:** since 25 September 2026 (#137); a bare body ends at a `,`, a closer or an `else`, and the unlexed skip holds for a bracket only.
 - **Source:** DESIGN.md l.211
 
 ### A call stays a call in a condition, and `while` reads as `if`
 The identity left of a `(` decides, in a condition as everywhere: a call `f(x)` stays a call, and a compared type leaves the `(` to the body. `if 1 == f(x) (10) else (20)`, `if f(x) == 1 (10)`, `if t:type == scope (…)`, `if x:type == i32 (10)` read with no extra brackets. `while i < n i = i + 1` takes a bare body as `if` does.
 - **Why:** no extra brackets around a call, and one rule for every control word.
 - **Ruled:** 25 September 2026, Thobias.
-- **History:** earlier the same day, in the seed: a condition ended at a value, `?`, or an identity right of a comparison, so `if 1 == f(x) (…)` compared with `f` itself and the call had to be written `if 1 == (f(x)) (…)`; `while` kept its bracketed body. Both superseded the same day.
 - **Source:** DESIGN.md l.211
 
 ### Anything yielding a `bool` is a condition
@@ -2002,26 +1767,24 @@ The condition is the first complete expression, and its result must be `bool`, w
 - **Why:** Thobias: "anything returning a bool should be accepted by if". A comparison written in Logos, a function returning `bool`, or a later operator then needs no parser change.
 - **Ruled:** 25 September 2026, Thobias.
 - **Open:** to settle with Thobias: whether the shape below (a `bool` infix outside the comparisons, a type right of it) earns a field on the record.
-- **Seed:** 25 September 2026 (#137): a value with a constructor (a fn value or an instance) takes a `(` after it as its call. A type left of a `(` is the compared value when it stands right of an infix its record ranks among the comparisons (below the range, above `not`), and otherwise reads its bracket, as `i32` does in `x + i32 (1) == 2`. An infix is what its record says, its first operand or field named `lhs`. `if` and `while` take any node whose function declares a `bool` output. The rank is a stand-in: whether an operator gives `bool` is known only once its constructor has built the node (a result fixed on the type is superseded, 16 September 2026, *Execution is function application*), and building it early to look, then again, is the re-invocation the driver rules out. So a `bool` infix ranked outside the comparisons, with a type right of it, leaves the `(` to the type; that shape is written `if (t ≈ i32) (…)`.
+- **Seed:** since 25 September 2026 (#137), the rank a stand-in: a `bool` infix ranked outside the comparisons, with a type right of it, leaves the `(` to the type, written `if (t ≈ i32) (…)`.
 - **Source:** DESIGN.md l.211
 
 ### Inside a right-side read, a `(` after a cell that is not yet an operand belongs to that cell
 Stated as consequence: `X (…)` is X's decision. `if f(x) (body)` calls `f`; `if not (c) (body)` negates `c`; `for i in n..(n + 3) (body)` ends the range there. So the body bracket is the first one after a completed operand. A return type takes no bracket: `fn () -> type ( body )` names the classifier and leaves the body to `fn`.
 - **Ruled:** September 2026 (#59 convergence), consequence.
-- **History:** "a bracket wanted inside a condition after its first cell is written by parenthesizing the whole condition": for `if`, narrowed 25 September 2026 by *An `if` body needs no brackets* (a `(` right after a complete condition is the body even where the cell before it could take it).
 - **Source:** DESIGN.md l.211
 
 ### `for a..b` with no index is the same loop without the variable
 - **Why:** Thobias: "sometimes you don't need the index".
 - **Ruled:** 17 September 2026, Thobias.
-- **Seed:** #129, in the seed since #133 slice 7.
+- **Seed:** since #133 slice 7 (#129).
 - **Source:** DESIGN.md l.211
 
 ### `X (…)` is one spelling, and X's constructor decides what the bracket is
 A type's constructor fills its holes from values, positional in order. A language's constructor continues its one scope: every `my_language (…)` block appends to the same body (the REPL's session model), so a name declared in one block is live in every later one until `own` or `drop` ends it (*Name resolution is scope-filtered*). A value's constructor does the same for the value: `a (x + y)` reads `a`'s fields bare (so the derived record case supplies that constructor to its values, stated as consequence). `type`'s defines. No rule decides among the three: each identity authors its own (*The constructor is a field*).
 - **Ruled:** 5 September 2026.
 - **Open:** whether another type's bracket (not `type (…)`) may still take a bare declaration line.
-- **History:** a type's constructor also took declaration lines as new shared members, per-instance fields locking at first instantiation (*Two muts*). Struck for `type (…)` 19 September 2026: a bare declaration line in a type body was not allowed, members being declared in the fields block. (The fields block itself is gone since 25 September 2026, l.203.)
 - **Source:** DESIGN.md l.211
 
 **Scopes as data**
@@ -2032,7 +1795,6 @@ The built cells in order are the scope's expressions, an array the scope's value
 - **Ruled:** 24 September 2026, Thobias.
 - **Rejected:** `body`, this document's prose word for the same thing, offered and not taken.
 - **Seed:** since 24 September 2026 (#142).
-- **History:** spelled `self` from the 2 September sketch until 24 September 2026, no reason recorded.
 - **Source:** DESIGN.md l.211
 
 ### A scope's `dyads` fill as its lines complete, and hold everything
@@ -2071,64 +1833,12 @@ Thobias: "you dont change scopes by inserting in the end. you rather mutate the 
 `=` is built at discovery beside `:=`, reading the place to its left (the cells since the boundary, built to one) and driving its right side to the boundary. An assignment is an act, not a value: `a = b = c` is the error of assigning nothing, and an `=` in a value position is the statement-as-value error.
 - **Why:** as recorded: the two are the one dyad's two writers, and drive alike (Thobias's own wording pending).
 - **Ruled:** 8 September 2026.
-- **Seed:** 9 September 2026 (#60): `:`, `.`, `@` build at discovery with their right cell lexed on demand; a reader followed by a tight read is put to sleep before it drives; the seed's right-side drives lex onto a fresh tape; `=` drives at discovery. Application and juxtaposition also build at discovery, reading their bracket or literal lazily in source order (seed rank 91, above `(`'s 90), since a tight read above them would otherwise take the bracket first: `f(2).x` and `dyad (i32, 7):dyad` read the call.
-- **Source:** DESIGN.md l.211
-
-### A cell a constructor reads from the tape arrives unbuilt
-A `tape[k]` read that lexes a cell past the frontier hands it over as lexed, its constructor not run; the reader decides what it is. In `array i32 [1, 2, 3]`, the chooser `array` (at `fn.parse_rank`) gets `tape[1]` as the type `i32` itself (`tape[1]:type` is `type`: an unbuilt cell answers with its identity's own type) and `tape[2]` as the bracket. A cell the reader leaves on the tape is built in its normal turn, at the loop's next step. Only a cell whose building is its lexing is built as a read lexes it: a bracket (`(`, `[`) into its scope cell, a literal, a raw-text word (`#`, `«…»`, `import`). As consequence: this is what "application sits just below `(`" (2 September) means: a bracket is built as it is lexed, a juxtaposition is not; a juxtaposition the loop itself lexes still takes its turn at discovery (seed 91 above 90), which `f(2).x` needs, since built at the boundary its `(2)` would already be taken by the `.` as its left.
-- **Why:** the tape only lexes and remembers, and `X (…)` is one spelling whose meaning X decides, so whoever reads a cell decides what it is: one rule for every reader, built-in or written in Logos. It closes the second open reason of *A parse is ranked by what it takes from its right*.
-- **Ruled:** 25 September 2026, Thobias ("yes").
-- **Seed:** 25 September 2026 (#137).
-- **History:** 9 September 2026 seed rule: a cell lexed on demand was built at discovery when it read nothing to its left. So `i32` was built as it was lexed, took the bracket as a conversion, and failed with "a conversion takes exactly one numeric value".
-- **Source:** DESIGN.md l.211
-
-### A reader's read builds an equal right-associative cell first
-When a constructor's `tape[k]` read lexes a cell whose identity has the reader's own `parse_rank`, and both associate right, that cell is built as it is lexed, and the reader gets what it leaves. In `array array i32 [[1, 2], [3, 4]]` the inner `array` takes `i32` and leaves the mint `array i32`; the outer takes that and leaves `array (array i32)`, whose parse takes the list. `array array array i32 [[[1]]]` chains alike; `array (array i32)` reads alike, its bracket built as lexed. This narrows *arrives unbuilt* for this case only: `i32` sits at application's rank, below the chooser's, so it still arrives unbuilt; a cell of another rank, or of equal rank associating left, arrives as lexed.
-- **Why:** the boundary already orders two cells of one rank by associativity, the right one first for `right`, so a read at discovery keeps the order the boundary would have had. A chain of choosers is one rule and no array rule. Thobias: "the first array parses then it parses the next array which consumes the i32 and emits a minted array. then the first array emits another minted array and that minted array has to read the elements of the outer list and construct each of the fields with the type the outer array holds which is array i32".
-- **Ruled:** 25 September 2026, Thobias (the case); the general form Claude's, asked by Thobias to decide from DESIGN.
-- **Seed:** 25 September 2026, in the driver's lazy read, no array-specific code.
+- **Seed:** since 9 September 2026 (#60).
 - **Source:** DESIGN.md l.211
 
 **Lazy tape reads**
 
-### A `tape[k]` read past the lexed frontier lexes on demand, for every constructor
-Every index a tape native takes (`tape[k]`, `tape[k] = …`, `tape.is_constructed[k]`, `tape.spelling[k]`, `tape.insert`, `tape.remove`, `tape.recenter`, and `tape[k]:type`, `tape[k]:name`, `tape[k].dyads`) lexes the driver's tape on to cell k first, through the one lazy read the built-in readers use. A cell arrives exactly as it would to `:` or application; a bracket as its built scope cell. A tape that is not the one the running constructor was handed (a `lex «…»` fragment, or any read at run time) is never lexed on.
-- **Why:** Thobias: "its lazy lexing in tape so you you request something further down the line which isnt lexed it gets lexed automatically". The tape is lazy, and one rule then holds for every constructor.
-- **Ruled:** 25 September 2026, Thobias.
-- **Seed:** 25 September 2026 (#137).
-- **History:** from #61 (9 September) until 25 September, such a read by a Logos constructor was the checked error, because it re-entered the driver from inside a constructor; a Logos constructor at or above `(` could not lex past the frontier.
-- **Source:** DESIGN.md l.211
-
-### A read where the tape reaches no cell gives a `void` node, already constructed
-Past the end of the source, past a boundary the tape does not cross for this constructor (the `,`, the enclosing closer, and the body bracket a return type, a condition or a range stops before), and left of the first cell alike: `tape[k]` is that one node, `tape[k]:type` is `void`, `tape.is_constructed[k]` is `true`, `tape.spelling[k]` is the empty text. A read that needs more than a cell has (`tape[k].dyads`, `tape[k]:name`) is the error it is on any cell without one. So `-> array i32 ( … )` takes no elements.
-- **Why:** Thobias: "maybe tape should be able to return a void node to express there is nothing more here … so if you write tape[1] and you get void then the parse decides what to do and yes it should be the same as the void type. they do the same thing. but this void which is just emptiness after the string is already constructed instead so it stops things from parsing when at the end." "Nothing more here" is a value a parse tests like any other (`if tape[1]:type == void …`): no error handling and no second query for the common case; a `void` already built cannot be parsed on.
-- **Ruled:** 25 September 2026, Thobias.
-- **Open:** Claude's, open to Thobias: the return-type/condition/range stop (from the seed's sealed read); the boundaries and left edge counting as "nothing more here" (from the constructor's side each is the end of its reach); a write past the reach (`tape[k] = …`, `tape.is_constructed[k] = …`) stays the checked error, no cell to write; `insert`, `remove`, `recenter` keep the seed's behaviour; a `void` value reads as nothing, as a comment node and a `-> void` call do ("they do the same thing"), so a `void` a constructor writes into its own cell is a finished line that yields nothing and the loop needs no rule for it.
-- **Rejected:** the queries `tape.last` and `tape.at_end` (first part of #147), not built.
-- **Seed:** 25 September 2026 (#147). A tape read to its end point is sealed, so a later read past it gives `void`.
-- **History:** after the lazy-read ruling, such a read was the checked error "this index is off the tape". #147's second part (a tape index failing as an error value under `T!`/`try`) has nothing left to do for reads; it stays staged after v0.1.0 for a write past the reach only.
-- **Source:** DESIGN.md l.211
-
 **Seed status**
-
-### Seed tape shape (#60, #121)
-A cell is the binding the trie resolved, a fresh dyad for an unknown spelling, or the node; `is_constructed` and the span are the tape's own facts. `parsing_tape` is a spelled type whose value holds the tape's handle. Its natives: `tape[k]`, `tape[k] = …`, `tape.is_constructed[k]`, `tape.insert(k, cells)`, `tape.remove(k)`, `tape.recenter(k)`, and `tape.spelling[k]` (#121). A Logos function reaches them through a `@parsing_tape` parameter. `tape.spelling[k]` hands back a string node built into the parser's store, the seed's form of a string value until strings are live: a string still has no storage to read, so a constructor may write the text into a cell, but nothing may yet run that cell.
-- **Seed:** 9 September 2026 (#60); spelling 14 September 2026 (#121).
-- **Source:** DESIGN.md l.211
-
-### Seed stand-ins that remain
-- A one-expression bracket is unwrapped to its expression, so the bracket a `(` landed is marked on the cell rather than read off the scope type.
-- A member call passes its receiver as an address (the seed's form of a member reading the value's fields bare).
-- A record-typed declared place is its layout's bytes, so `tape := parsing_tape ?` passes the tape by value (9 September 2026, #61); a record wider than the 8-byte container reaches a call only with #47.
-- The tape natives run interpreted.
-- A type body's constructor, written in Logos, runs for every appearance with the driver's own tape as argument and the parser's store attached (#61, 9 September 2026).
-- The `parse_rank` expression runs at the definition and must be known there, since deferral to first use needs the deferral machinery.
-- A Logos constructor at or above `(`'s `parse_rank` runs at discovery; its reads lex on demand (since 25 September 2026).
-- `drop = fn …` is the checked error rather than a slot `drop x` would never run. The `fn` wrapper went 17 September; the slot moved into the type body with the mark (#132, 19 September 2026); an owner's teardown runs it since 25 September 2026 (*Explicit heap, and no implicit destruction*). A type's own `drop = (…)` on a bare line is the checked error.
-- A literal appended into a call node is not committed to the callee's parameter type, the same divergence as the op slot (#69).
-- `[` folds `t[k]` in its own constructor, a tape value having no constructor of its own yet.
-- **History:** l.211 described a `type (…)` body with four slots filled by `=` and a `fields = (…)` block (spelled `instance` in the seed until #128) taking holes and bare names only, stored-once members there waiting. The fields block is gone since 25 September 2026 (l.203; seed #150).
-- **Source:** DESIGN.md l.211
 
 ### The dyad's read surface: two fields, and the type answers the rest
 A dyad (a cell) has exactly two stored fields, `s.type` and `s.value`, and nothing more. Reads that decode a value are not on the dyad. They are ordinary `.` reads on the value itself, through the value's own type: an operator node's slots are the fields its type defines, so `(x + x).operands[0]` reads the first operand just as `p.x` reads a record field. An array's elements and a string's characters belong to the array and string types' own fields in the same way.
@@ -2138,7 +1848,7 @@ A read that does not fit the node's type (`.text` of a number, an operand index 
 - **Why:** `.` does one job: it reads fields the type defines, and every such field is about the value. A value's type is never one of its own fields, so a universal `.type` on every value would be `.` doing a second job.
 - **Ruled:** August 2026, in discussion (corrected August 2026 after the seed briefly put the decoding reads on the view).
 - **Rejected:** a `.kind` field, a second classification axis: redundant with the cell's self-description. The universal `.type` metaproperty on every value: retired.
-- **Seed:** since August 2026 (#52 in part): `.operands[i]` is ordinary field access on any operand-kinded value; the type members (`.arity`, `.roles[i]`, `.parse_rank`, `.associativity`, `.parse`, `.drop`, `.fields`, `.size_bytes`, `.scope`) read the shared record as fields of the type value; every read folds at parse (comptime reflection, the regime a Logos-written constructor runs in); a mismatched read is the checked error.
+- **Seed:** since August 2026 (#52 in part).
 - **Open:** in the seed: `.items` and `.text` (the array and string types' own fields), runtime-indexed reads, and runtime-callable method forms.
 - **Source:** DESIGN.md l.213
 
@@ -2148,9 +1858,8 @@ A read that does not fit the node's type (`.text` of a number, an operand index 
 - **Why:** Thobias: "i want to use a:type instead of a:dyad.type. its shorter and you dont really need to access a:value as you can access all its fields by just using .[name]". The type is the one fact about a value that `.` cannot give (it is never one of the value's own fields), so it takes the short spelling. The cell was only ever reached to get its two slots: one is now `:type`, the other is `.`.
 - **Ruled:** 23 September 2026, Thobias.
 - **Rejected:** `(a as dyad)`: the less consistent spelling.
-- **Seed:** since 24 September 2026 (#139): `:dyad` and `:value` are checked errors; the binding's pointer to its dyad stays a layout field that `:` does not spell.
-- **Amended (27 September 2026, Thobias):** `:dyad` and `:value` are not retired. `a:type` and `a:value` are the short forms of `a:dyad.type` and `a:dyad.value`: "its just a simplification in the definition of : where it emmits dyad when accessing type and value but you can still write a:dyad.type". `a:value` is needed because `.` reads a field at an offset inside the value, the `@void` slot; the binding still holds `dyad` as a field. Seed: #139's refusal of `:dyad` and `:value` is to be undone, pending.
-- **History:** August 2026: the dyad view was `(dyad a).type`, replacing the universal `.type` metaproperty. 7-8 September 2026: respelled `a:dyad.type` (`:dyad` = the view; `(dyad a)` as a second spelling dropped). In that period `a:type` was a checked error. 23 September 2026: `:dyad` and `:value` retired, `a:type` replaces `a:dyad.type`.
+- **Seed:** since 24 September 2026 (#139).
+- **Amended (27 September 2026, Thobias):** `:dyad` and `:value` are not retired. `a:type` and `a:value` are the short forms of `a:dyad.type` and `a:dyad.value` (Thobias). `a:value` is needed because `.` reads a field at an offset inside the value, the `@void` slot; the binding still holds `dyad` as a field. Seed: #139's refusal of `:dyad` and `:value` is to be undone, pending.
 - **Source:** DESIGN.md l.213
 
 ### Writing a cell's fields is decided by gates
@@ -2158,13 +1867,6 @@ Writing goes through constructors and the tape ops, never setters. What may be w
 In v0.1.0 the view is ungated: every field readable and writable, until gates land.
 Direction (recorded with the August ruling): gates over the view are the fine grain over the coarse section default: a value a gate makes unviewable as dyad, a `.type` readable but never writable, a `.value` sealed both ways (see *Sections, the arche, and effect identities*).
 - **Ruled:** 31 August 2026 (read-only after construction); 2 September 2026 (v0.1.0 ungated, staged); 7 September 2026 (gates decide).
-- **History:** 31 August 2026: a constructor could write `tape[0].type` and `tape[0].value` while its own cell was unconstructed, and "the flip to constructed seals both against the view". Superseded 7 September 2026 by the gate ruling of *Mutability and construction*.
-- **Source:** DESIGN.md l.213
-
-### Element access is `[…]`, application is `(…)`
-An object storing many elements, whatever its storage or indexing, is a **collection**. Reading a stored element is always `c[k]`: an array by position, a map by key, a set by membership. Each collection kind picks only its index domain. So three surfaces, three jobs: `.` fetches a field, `[…]` fetches an element, `(…)` computes. A node's operands are the collection its type defines, `(x + x).operands[0]`; a type's role names are `.roles[i]`.
-Model underneath (for the proof layer): a collection is a function from its index domain to its elements (shapes and positions), which also makes every strictly positive inductive type one.
-- **Ruled:** August 2026, in discussion.
 - **Source:** DESIGN.md l.213
 
 ### `x is c` is membership
@@ -2173,20 +1875,11 @@ Model underneath (for the proof layer): a collection is a function from its inde
 - **Ruled:** 8 September 2026.
 - **Source:** DESIGN.md l.213
 
-### Inclusion between types is `⊆`
-`A ⊆ B` is true exactly when every value `A` can hold is also a value of `B` ("all possible values in LHS also in RHS"). It is its own identity beside `is`. Its rank is `==`'s, above `not`, so `not a:type ⊆ b:type` negates the inclusion; this rank is a stand-in, no rank being ruled.
-- **Why:** an array's element read must say its index type cannot reach outside its size type, and neither `is` (one value's membership) nor `==` (identity) says that of two types. Since 25 September 2026 the read takes any integer index and a bounds check keeps it inside (*An index may be of any integer type*); `⊆` now sorts the index to `at` or `at_signed`. In the seed: array.logos checks that an index type fits the size type, and keeping that check beats deleting it.
-- **Ruled:** 23 September 2026, Thobias (first ruled not for the seed); 25 September 2026, Thobias, "lets go for ⊆" (the seed carries it as a native).
-- **Open:** Claude's, 25 September 2026, open to Thobias (with *Each element is built by the element type*): a type built by a Logos `parse` includes only itself, and no other type includes it. So `3 ⊆ array i32` is false, and `array array i32 [[1, 2], 3]` is "an element does not fit the element type" rather than this error. Reason: its values are the nodes its own `parse` builds (*A value of a type built by a Logos `parse` travels as a pointer*), which no other type's value is.
-- **Seed:** since 25 September 2026 (#137): `⊆` between two types, folded at parse when both are known, run interpreted when one is read at run (a tape cell's `:type`). A type includes itself. Two integer types compare by value range: `u8 ⊆ u16` and `u8 ⊆ i16` true, `i8 ⊆ u64` false. Any other pair (float and integer, two floats, `bool`, a record, `type`, `dyad`) is a checked error, what those types hold not being settled here.
-- **History:** array.logos first wrote `index:dyad.type ⊆ this.size:dyad.type` (old `:dyad` and `this` spellings).
-- **Source:** DESIGN.md l.213
-
 ### `.size_bytes` is a `u64`
 `i32.size_bytes` is `u64 4`, `(@u8).size_bytes` is `u64 8`.
 - **Why:** it counts bytes, which are never negative. array.logos multiplies it by the array's `size`, a `u64`, so a byte count and an element count meet with no conversion. language_sketch.logos already spells a type's record `size_bytes -> { type -> u64 }`. Thobias: "u64 is fine".
 - **Ruled:** 25 September 2026, Thobias.
-- **Seed:** since 25 September 2026 (#137), for a record, a number type and a pointer type.
+- **Seed:** since 25 September 2026 (#137).
 - **Source:** DESIGN.md l.213
 
 ### `:` reads a name's binding, `.` reads a thing's own fields
@@ -2197,8 +1890,7 @@ An anonymous node is reached through a field that holds it: in `b := a + 1`, `b:
 A `:` read the binding has no field for is a checked error, exactly as a `.` read the type does not declare.
 - **Why:** with the reverse index and the in-cell binding both rejected, a use pointing at the bare dyad would leave the binding unreachable by structure. A binding that is a value makes `:` a field read like any other, not a second mechanism. `:` and `.` are two operators because they read two levels (next rule).
 - **Ruled:** 7 September 2026 (`:` reads the binding; `id_context` renamed `binding`, see *`mut` is a gate on the binding*); 8 September 2026 (a binding is a value, a use points at it); 14 September 2026 (`name`, `lex_rank` added).
-- **Seed:** since 8 September 2026 (#70): every trie entry is a dyad of type `binding`, a use stores it, `:` reads its fields. A constructed node answers `:scope` with the scope open at the read and `:start`/`:end`/`:gate` null, the enclosing item being the segment still under construction.
-- **History:** 7 September 2026: the binding held `dyad`, `scope`, `start`, `end`, `gate`; `a:dyad` was its cell. 23 September 2026: `:dyad` retired (see `a:type` above). The `b:start.rhs.type` example corrected 8 September 2026.
+- **Seed:** since 8 September 2026 (#70); a constructed node's `:start`/`:end`/`:gate` are null.
 - **Source:** DESIGN.md l.213
 
 ### Two levels: the binding is the lex level, the dyad is the value level
@@ -2213,7 +1905,7 @@ Parse behaviour is not a third level. It is content of a value: a type identity'
 `x:name` is the spelling the trie holds for `x`: «x», or the pattern text for an identity declared `regex «…» := type (…)`. It is a string, readable wherever `:` reaches: a constructor holding `tape[-1]`, an error message, documentation tooling, a `#` comment interpolating a name, the proof layer printing a conjecture. `:name` on a constructed node reached by path (`b:start.rhs:name`) is a checked error, a node having no name.
 - **Why:** the trie already keys on it, so the binding only gives it back; nothing is indexed after the fact, which separates this from the `uses` field declined 8 September (*Meta-navigation*). It is the binding's, not the dyad's, because `x := i32` gives i32's dyad a second name with a different spelling. It is not the tape's, because the pattern identity for numbers is one binding for every `5` in a program. So a name's spelling is the binding's fact, and an appearance's text is the tape's, `tape.spelling[k]` (*The scope's constructor is the driver*).
 - **Ruled:** 14 September 2026.
-- **Seed:** since 14 September 2026 (#120): the binding's sixth slot, a place of type `string` holding the name node. `x:name` reads it as the container it is; the display shows its text. A constructor reaches it for the binding a cell holds as `tape[k]:name` (always the identity's name, never the appearance's text, which is `tape.spelling[k]`).
+- **Seed:** since 14 September 2026 (#120).
 - **Source:** DESIGN.md l.213
 
 ### Build and run are one self-directing pass
@@ -2243,48 +1935,18 @@ When a `-> type` call runs in the pass, the concrete type it produces stands in 
 ### A `type ?` place is a box, written any number of times
 `a := type ?` declares a box. Write it as often as you like, read it as an ordinary value. Where the pass has already run the assignment that filled it, the box is read during the pass and what it holds is the declared logos: `a := type ?, a = i32, x := a 5` declares an `i32`. Where it has not (a body that runs later), the box holds a type at run time, and uses that need the identity now are the checked error.
 - **Ruled:** 12 September 2026.
-- **History:** before 12 September 2026 the first `a = i32` rebound the name to the type, making it define-once; a second assignment said a type is not an assignable place, because the name by then *was* the type.
 - **Source:** DESIGN.md l.217
 
 ### `dyad ?` is the general box, `type ?` the narrow case
 Both hold a node address. What the general one holds is asked the ordinary way, `a:type == type`.
 - **Why the box needs a mark:** the type slot separates a value from a place only where the value is not itself an address. For `type` and `dyad` it is: a logos node standing as a value carries its identity as its value, so a definition and a box of one are both a `type` over an address. Pointers box every value instead (which is why `&x` allocates); types cannot, because the inline form is what lets a `-> type` function compile. So the mark is the cost of the ruling, and it covers both.
 - **Ruled:** 12 September 2026, on the reading that the type slot should carry the distinction.
-- **History:** written `a:dyad.type == type` until the 23 September 2026 respelling.
-- **Source:** DESIGN.md l.217
-
-### A tape cell checked to be a `type` passes as a `type`
-`tape[k]` hands a constructor the cell. Where a `type` is wanted (a `type ?` parameter, or a `:=` whose box then holds a type), an unchecked cell is refused, since crossing types is explicit (*Numeric literals are uncommitted until context classifies them*). After a check the constructor already writes, the read is the type the cell holds:
-- after `if tape[k]:type != type error «…»`, to the end of the scope holding the check;
-- inside the branch of `if tape[k]:type == type`, and inside the `else` of the `!=` form.
-Then `t := tape[1]` declares a `type` box and `get_mint(t)` passes, as identities/array.logos's chooser writes.
-Limits: only a cell named by the tape and a written index narrows (never an index computed at run). The narrowing ends at the first tape edit after the check (`tape[j] = …`, `insert`, `remove`, `recenter`), since the cell at `k` may then be another. The read checks the cell again when it runs, so a tape edited between check and read in a way the pass cannot see (a loop) is the checked error, not a wrong address.
-- **Why:** the check already says what the cell is, so no cast is needed. It is the binding's own reading rule: "read as a value it yields what that dyad yields" (*The dyad's read surface*).
-- **Ruled:** 25 September 2026, Thobias, option (c): check `:type` first, then pass.
-- **Seed:** since 25 September 2026 (#137).
-- **History:** the text said "Only a check against `type` narrows: what a read narrowed to a number type would yield is not ruled"; superseded the same day by the next rule.
-- **Source:** DESIGN.md l.217
-
-### A tape read checked against a number type reads as that number
-With `T` a number type, the read `tape[k]` yields the number the cell holds, as a `T`:
-- after `if not tape[k]:type ⊆ u64 error «…»`, or after a raising `tape[k]:type != T`;
-- inside the branch of `if tape[k]:type ⊆ T` or `== T`, and inside the `else` of the negative forms.
-Scope rules as for the `type` check: the narrowing ends at the first tape edit; `not` before a check swaps which branch holds.
-A line of a bracket cell, `tape[k].dyads[i]`, is checked and narrowed like a cell; `tape[k].dyads[i]:type` is the line's type (a name's declared type, an expression's result type, by *A placed call keeps its tape lines as operands*). array.logos writes `if tape[1].dyads[0]:type ⊆ this.size:type ( … ) else ( … )` (text's spelling; `this` is retired by l.207), a signed index going to `at_signed` as an `i64` (*An index may be of any integer type*).
-A literal line has no committed type ("a concrete type beside a literal molds the literal to it"), so `⊆ T` answers for a literal by whether it molds into `T`: `[1]` passes `⊆ u64`, `[-1]` and `[1.5]` do not; the narrowed read is that number molded. A line that is a constant of `T`, `i32 7`, reads as its value.
-A line that is an expression (a name included) is the checked error when the narrowed read runs in the parse, never evaluated there: the value exists only when it runs ("Only a use that needs the type during the parse … is the checked error"). Passed to a call a parse places, a narrowed line is the line itself, kept as graph for the call to run and read there as a `T` (*A placed call keeps its tape lines as operands*, 25 September 2026).
-- **Why:** one check-then-narrow rule for types and numbers; the check already says what the value is, so no cast is needed.
-- **Ruled:** 25 September 2026, Thobias, option (a) of the #137 question.
-- **Open:** two readings, Claude's, 25 September 2026, open to Thobias: (1) a literal answers `⊆` by molding, the only reading under which his `⊆ u64` example passes a literal index. (2) A line index that is a name, the same name in check and read, names one line, so the mint's `fill` loop `for i in 0..this.size ( if not (elements.dyads[i]:type ⊆ this.element_type) error «…», (this.ptr + i)@ = elements.dyads[i] )` narrows (a bracket handed to a call is read as a tape cell's bracket is, *A bracket goes to the call whole*; the condition bracketed because the seed lets a type read through `.` take the cell after it), while the cell index stays literal. Safe because the read checks the line again when it runs.
-- **Seed:** since 25 September 2026 (#137).
-- **History:** before 25 September array.logos wrote `if not tape[1].dyads[0]:type ⊆ this.size:type error «…»` and passed the index to `this.at` as a `u64`; changed by *An index may be of any integer type*.
 - **Source:** DESIGN.md l.217
 
 ### A block settles its boxes as the top level does
 Reading a box during the pass is honest only if the answer does not depend on where the box sits. Lexing the box's cell runs what stands before it, once (*The pass runs only as far as it must*). Inside a deferred body (a function, a loop, a runtime branch), parse order is not run order, and a box used where an identity is needed is the checked error.
 - **Why:** it used to depend: the top level ran each item as it parsed, while a `( )` block parsed its whole body first, so the same source meant two things.
 - **Ruled:** 12 September 2026.
-- **History:** 12 September 2026: the stores filling such a box were replayed at parse, in parse order (the right side a node address fixed at parse, so the run stored the same bits again). Replay superseded 13 September 2026 by *The pass runs only as far as it must*: nothing is replayed.
 - **Source:** DESIGN.md l.217
 
 ### Inside a body, a `-> type` call may take an argument known only at run
@@ -2298,24 +1960,8 @@ A `-> type` call whose arguments are types or literals runs in the pass, and its
 A `type (…)` written where parse order is not run order (function body, loop body, run-time branch) is not built once where written, where the body's names hold nothing yet. It is held as its lexed tape (the level-one deferral of *Deferral is authored*), and each time its node runs the parser builds it from those cells with that call's values live. So `mk := fn (t := type ?) -> type ( type ( fields = ( shared e := t ) ) )` gives a new type per call whose `e` is that call's `t`. The running program calling back into the parser is the one pass building on demand, not a second pass.
 - **Why:** a chooser mints an anonymous `type (…)` for a parameter it has not seen and that is known only when its body runs; building at the definition would use names that hold nothing. The text is lexed once and only its cells are built again, so nothing is re-parsed.
 - **Ruled:** 25 September 2026, Thobias, "yes" (same question).
-- **Seed:** since 25 September 2026 (#137): a held `type (…)` builds a fresh type on every run, so one type per element type is array.logos's `array_mints`, not the seed's.
+- **Seed:** since 25 September 2026 (#137).
 - **Source:** DESIGN.md l.217 (the example keeps the text's `fields = (…)` / `shared` spelling; see report)
-
-### A generic type is written by juxtaposition: `array i32`
-`array i32` is the type "array of i32": a specialized identity, interned, so `array i32 == array i32`. `array i32 (1, 2, 3)` is a value of it, `a := array i32 ?` a declaration. A generic type is a chooser like a generic fn (*Deferral is authored*): each parameter yields its own concrete identity, built once. The constructor decides.
-- **Ruled:** 30 August 2026.
-- **Rejected:** `array(i32)` (collides with conversion); `array[i32]` (`[]` is element access).
-- **Source:** DESIGN.md l.217
-
-### The chooser keeps its mints in a memo, and the driver constructs the mint
-`array` is a constructor for another word with its own parse and value; `array` itself need not have a value. Its mints live in a memo that is not instance data (a chooser has no instances). Today the memo is `shared array_mints := hashmap type -> type`, the first line of `get_mint`, the function the chooser's `parse` calls to fetch or mint. The chooser looks the parameter up by `==`, mints an anonymous `type (…)` when absent and adds it, places the mint in its own cell and leaves `tape.is_constructed[0]` false. The driver then constructs the cell in its turn like any unconstructed cell: it wakes by the flag and the cell's `parse_rank`, never by a spelling, so an anonymous type needs none (*Execution is function application*).
-`array i32 ?` is then the hole's ordinary reading of the type to its left. `t := array i32` leaves the mint standing as a type value (unlike `m := hashmap K -> V`, which declares an empty map, *The reflection boundary is callable-versus-data*, 25 September 2026).
-The sketch is identities/array.logos.
-- **Why:** Thobias (18 September): "array should actually just be a constructor for another word with its own parse and value while array doesn't necessarily have any value at all … there should rather be an array_mints to store all the mints of array". The memo sits inside `get_mint` because only `get_mint` reads or writes it, so it lives in the function that owns it, not as a top-level name any line of the file could touch.
-- **Ruled:** 18 September 2026, Thobias; driver half 19 September 2026; memo placement 25 September 2026, Thobias (his own edit of array.logos, under the ruling that `shared` names a function's own place, *Two muts, and the storage partition*).
-- **Rejected, to stay declined (18 September 2026):** `a:type is array`, a generic read as the collection of its mints, for "is it some array". Thobias: "isn't it enough for always?": the mint is interned, so `a:type == array i32` answers every concrete question, and generic code writes `array T` with a hole the chooser matches, so no use site needs the wider predicate.
-- **History:** 18 September 2026: memo `array_mints` a plain top-level variable beside the chooser, read by its `parse` as an outer name (a top-level name read in a body is the shared place itself, *Memory and concurrency*; a call is a use of every outer name, #125); the chooser ran the placed cell's `parse` itself. 19 September 2026: the driver runs it by the flag. 18 September 2026: reinstating `shared` for a fields-block member proposed and withdrawn within the minute (the memo is not instance data); the withdrawal superseded 19 September 2026 (`shared` reinstated as the mark of placement, *Two muts, and the storage partition*). array_mints.logos folded into array.logos 19 September 2026. 25 September 2026: memo moved into `get_mint`.
-- **Source:** DESIGN.md l.217
 
 ### Deferral is authored, and unfinished work is visible
 Progress is driven by data, never scheduled: a node missing an input stays built and moves on the moment the input arrives. One rule at three levels: an unconstructed neighbour on the tape (the `is_constructed` flags), an unresolved type (the conserved op slot, which does not lower until resolved), an unknown runtime value (control flow arriving).
@@ -2329,8 +1975,7 @@ Accepting `?` and holding is what a generic function is: `fn`'s constructor acce
 A generic `fn` is a chooser, exactly as `+` is: the concrete function for each argument-type combination is its own identity, built once from the written body with op slots resolved, then reused. A call site with known types resolves to that identity by the same lowering rules that fill `+`'s op slot, and stores it in the dyad as `+`'s op slot stores `add_i32`. The written generic body never runs itself.
 - **Why:** the level-one deferral needs no new mechanism (cells and flags exist). Filling op slots later would give every operator a slot to fill (#69), and reading text again is the re-parse the deferral rule forbids.
 - **Ruled:** 30 August 2026 (generic fn is a chooser); 8 September 2026 (same lowering rules as `+`); 20 September 2026, Thobias (lexed once, built per field-type set).
-- **Seed:** #126; since #133 slice 8: the body held as lexed cells and constructed per set; a bare literal in an untyped field gives the `rational_number` set, whose body runs over rational places and operators, interpreted only; a node whose value fields are all literals folds at construction to its literal.
-- **History:** August 2026: the body was "parsed once with unresolved op slots that a call's concrete types fill, walkable meanwhile through `run`'s null-`bcode` path". The text's example was spelled `shared run = (…)` (before *Fields block collapse*, 25 September 2026, which gives `^.run`).
+- **Seed:** since #133 slice 8 (#126); an all-literal node folds at construction, and a literal-typed set runs interpreted only.
 - **Source:** DESIGN.md l.219
 
 ### The command line is Logos source; the binary stays out of the way
@@ -2339,15 +1984,13 @@ A program's command-line interface is its `pub` names. Arguments are not a separ
 Bare `logos` is the REPL over the same one pass; the command line is a one-shot REPL line. A failed line rolls its declarations back out of the name index, leaving no trace.
 The binary has no subcommands and no compile flags, ever: it joins its arguments into source and runs them. What compiles, links and builds is decided inside Logos source. `--help` is the only flag.
 - **Ruled:** July 2026 (binary with no flags); August 2026, in discussion (command-line-as-source, `import`, pub-only exposure).
-- **Seed:** converged August 2026 (#58): argv-as-source with file-path mode removed, `import` with pub-only exposure, once-per-run DAG loading, the fresh-view section boundary (command line and REPL each run as their own section), file-relative path resolution.
-- **History:** `logos file.logos` superseded August 2026: ambiguous against the since-retired `.logos` metaproperty (`file.logos` read as "the logos of `file`").
+- **Seed:** converged August 2026 (#58).
 - **Source:** DESIGN.md l.221
 
 ### `import` is the one identity that loads a file
 Its constructor consumes the path token (the same licensed token consumption as `#` and the planned header reader). The imported file runs top to bottom. An importer, command line or Logos file alike, reaches only the imported file's `pub` names: the ordinary visibility rule, with no import-specific exception.
 - **Ruled:** August 2026, in discussion.
 - **Ruled (27 September 2026, Thobias):** the 20 September ruling wins. An importer reaches only `pub` names in v0.1.0 as well, which the seed does; the dyad view stays readable in v0.1.0 as ›Writing a cell's fields is decided by gates‹ says.
-- **History:** l.221 had "v0.1.0 has no gates and an importer sees every top-level name" (4 September 2026); superseded.
 - **Source:** DESIGN.md l.221
 
 ### `print «…»` is the output word
@@ -2356,7 +1999,7 @@ A `print` may run at comptime (for example inside a constructor, while the progr
 The trailing value of a program prints: the seed's stand-in until `print` lands with I/O.
 - **Why:** the website's examples used the spelling since 22 September with nothing in the spec behind it; one recorded word keeps the site and the spec one thing. The echo already shows every value the seed has, so one way of showing a value serves both. A backslash before a brace is the spelling readers know from other languages. Comptime `print`: printing only writes, so a run stays a pure function of its source, and a constructor can show what it is doing while it parses.
 - **Ruled:** 23 September 2026 (`print`, `{…}` details); 24 September 2026 (`print` at comptime).
-- **Seed:** since 24 September 2026 (#140): each run writes the quote and a newline and yields unit, a statement the echo rule keeps silent.
+- **Seed:** since 24 September 2026 (#140); writes the quote and a newline, yields unit.
 - **Source:** DESIGN.md l.221, l.215
 
 ### Importing is dropping the text there, wrapped in its own scope
@@ -2403,7 +2046,7 @@ How the graph answers "what is this?" for parsing, reflection and rewrite matchi
 
 ### How an operation is defined for its operand types is OPEN
 `x = 9`, `x = [4, 5]`, `h == j`, `a + b` share one question: which code decides what the operation does for these operand types.
-- **Seed:** hard-codes it for core types. `=` is handed to the `parse` of the type of the place on its left (the l.189 sentence), which stands as seed practice but is in question. A square-bracket literal goes into an array's place in Rust, like number literals. Seed and spec issue #152.
+- **Seed:** hard-coded for core types (#152).
 - **Open:** to Thobias, nothing concluded (26 September 2026). His leaning, not a ruling: "i dont think the mint array should consume = but rather = should consume array mint … the operations them selves needs to be overloaded somehow instead". Operators would be defined in this section's identification system (not built): an operator can stand empty, as `->` does, and the system recognises *lhs op rhs*, finds both types and the operator, then decides what to do.
 - **Source:** DESIGN.md l.237
 
@@ -2424,8 +2067,7 @@ One link: the parent scope, null at the arche. A node that owns scopes (`fn`: pa
 - **Why one link:** a second link to the owner was considered and declined the same day: the owner is already found from the node.
 - **Why `back`:** on a scope, `.scope` read as the scope's own scope; the path word `back` was retired, so the word was free. `here.scope`, `caller.scope`, `x:scope` keep `scope`: "the scope of" a spot, call or name reads right.
 - **Ruled:** link 15 September 2026 (#123). Spelling 24 September 2026, Thobias (he asked whether `s.scope` should be `back`).
-- **Seed:** since #123 every scope is minted `[exprs, op, parent]`; `ScopeStack.open` is the cache. `.scope` on any `@dyad` value reads the link when it runs (`.back` since 24 September 2026), null at the arche, checked error past it. Addresses compare with `==`.
-- **History:** link spelled `.scope` (`here.scope.scope`) until 24 September 2026.
+- **Seed:** since #123, `.back` since 24 September 2026; past the arche the seed gives a checked error, not null.
 - **Source:** DESIGN.md l.241
 
 ### `here` is where a line is written; `caller` is where it was called from
@@ -2434,8 +2076,7 @@ One link: the parent scope, null at the arche. A node that owns scopes (`fn`: pa
 - `caller` in an ordinary function is per-call, so a body reading it is elaborated per call node (as a gate is decided when the access is elaborated). For a constructor, `caller` is its tape.
 - Both work inside a constructor. **Why:** every enclosing scope exists before a constructor runs, so walking up is over settled structure; only the frontier is unfinished, and the tape reads that.
 - **Ruled:** 15 September 2026 (#123).
-- **Seed:** `here`, `caller` are identities. `here.scope` folds to the scope open at the appearance, as `x:scope` does. `caller.scope` answers the pass's position while a constructor runs, checked error elsewhere: stand-in for the per-call read. Not carried: bare `caller` as a value; the section-boundary stop (waits for gates); a one-item group, which the seed elides, so `here` inside one names a scope no path reaches.
-- **History:** `this` joined them 17 September 2026 (a name the slot's type declared, from 18 September); `this` is gone since 26 September 2026 (l.207).
+- **Seed:** done, with `caller.scope` a stand-in (constructors only); not carried: bare `caller`, the section-boundary stop, one-item groups.
 - **Source:** DESIGN.md l.241
 
 ### A walk down stops at a section boundary; a function's scopes count as one
@@ -2460,14 +2101,13 @@ Every path into the graph is written in code, so known before anything runs. At 
 Reached as `f:dyad.value.body[0].rhs`, a node's `:scope` is the innermost enclosing scope on the path, `:start`/`:end` the enclosing item, `:gate` the named bindings along the path composed by the path rule of *`mut` is a gate on the binding*, and `:dyad` the node itself. Four facts, zero storage, because every path starts at a name. The pass walks the path; nobody spells the walk.
 - **Why:** the path already fixes the facts. Storing them would cost 40 bytes per application and literal; an address-keyed index would serve a pointer-without-a-path, which never exists.
 - **Ruled:** 8 September 2026.
-- **Ruled (27 September 2026, Thobias):** the sentence "a `:` field no binding has, `a:type`, stays the checked error" was superseded on 23 September, `a:type` being the read (the short form of `a:dyad.type`). The path rule stands, and so does the `:dyad` example, since `:dyad` is the long form again (›`a:type` reads the type…‹).
+- **Ruled (27 September 2026, Thobias):** the sentence "a `:` field no binding has, `a:type`, stays the checked error" was superseded on 23 September, `a:type` being the read (the short form of `a:dyad.type`). The path rule stands, and so does the `:dyad` example, since `:dyad` is the long form again (›`a:type` reads the type of the value a name stands for‹).
 - **Source:** DESIGN.md l.241
 
 ### The meta-access surface is `:` and `.`
 `:` for the binding, `.` for a thing's own fields. Up the tree: the scope link `back`. Up the path: the path's own earlier step.
 - **Why the path word `back` went:** Thobias, 24 September 2026: "i think back is just unintuitive. you can access all things with back just with .scope instead right? also having back is just extra things to store and manage". It stored nothing, but gave a reader nothing: its answer was always an earlier step the reader had written.
 - **Open:** navigation words a two-node conjecture needs (*The proof layer*).
-- **History:** 7 September 2026: `:`, `.`, and a `back` step walking up the written path one `.`/`:` at a time; retired 24 September 2026.
 - **Source:** DESIGN.md l.241
 
 ### All recognizers compile into one shared, layered structure
@@ -2478,7 +2118,7 @@ Run over a node, the merged graph yields every matching identity, sharing sub-te
 Not a trie or automaton walked by a special machine: ordinary graph code run over the start node, interpreted cold and compiled hot. Each identity's recognition code is first minimized and canonicalized by the ordinary rewriting engine under a compute-cost function, so recognizers branch alike and equivalent ones share paths. Adding an identity is a local, hash-consed merge, not a rebuild; the graph may drift from minimal and is re-minimized in periodic recompaction. Convergence is guaranteed on the decidable skeleton, best-effort above (program equivalence is undecidable; only identical guards merge).
 - **Source:** DESIGN.md l.245
 
-### Admitting a recognizer is a proof obligation; identification is proof
+### Admission is a proof obligation, and identification is itself proof
 A recognizer is admitted at a recorded *level*: proven safe (terminates, deterministic, no effects) or, during bootstrap, not-yet-refuted. A use site demands the level it needs. Refuted, or resisting checking where proof is demanded, means rejected; nothing below not-yet-refuted, no escape past a use site's demand. "X is identity I" is the proposition "X has I's defining properties": a trivial pattern is a trivial proof, a rich property (totality, type-correctness, a non-conflicting borrow) a real one. Identification, type-, borrow- and termination-checking are one activity at different strengths, run on ordinary code, on extensions, and on the system itself, bottoming out in the small hand-trusted seed.
 - **Source:** DESIGN.md l.247
 
@@ -2492,7 +2132,6 @@ Where a theory has a normal form (ring expressions → one polynomial; a rationa
 - No canonical form (most maths above algebra: irreducibility of a representation, modularity of a curve): equality stays *proven equal by the rules applied so far*, bounded saturation is the only path, no index changes that, the budget stands.
 - **Why:** here the recognizer's near-linear lookup meets the proof layer. Equality costs one traversal, not a search, and the restated helper lemmas that drown the largest machine-written proofs (one normalization each) become free. Same shape as everywhere: a fast decidable canonical core, search only past it.
 - **Ruled:** in discussion, 5 September 2026.
-- **History:** conjecture respelled 7 September 2026; `where` read `x:dyad.type == T` until 23 September 2026.
 - **Source:** DESIGN.md l.249
 
 ### Queries specialize the structure
@@ -2538,10 +2177,9 @@ Every identity is reached by its handle and by walking from its uses; the handle
 
 ### The name index maps a spelling to a list of bindings
 A **binding** pairs an identity with its declaring scope and holds its own spelling and `lex_rank` (`x:name`, `x:lex_rank`): the binding is the lex level, every fact tied to the name. A binding is a dyad of type `binding`, which reflection reads and a use points at.
-- **Why `binding`:** Thobias, 24 September 2026, wanted a word more intuitive than `record`, "the opposite of anonymous": "i think binding is best". It ties a spelling to a dyad, in a scope, for a range, under gates (all the entry holds), and every language uses the word.
+- **Why `binding`:** Thobias, 24 September 2026, wanted a word more intuitive than `record`, "the opposite of anonymous", and chose `binding`. It ties a spelling to a dyad, in a scope, for a range, under gates (all the entry holds), and every language uses the word.
 - **Rejected:** `name` (text read as `x:spelling`) and `naming` (24 September 2026).
-- **Seed:** `record`/`Record` and the README followed as `binding`/`Binding` 24 September 2026 (#138).
-- **History:** `id_context` → `record` 7 September 2026 (seed `IdContext` → `Record` 8 September, #67) → `binding` 24 September. `record` remains only for: an operand record, a record type, a type's own metadata head, the archival sense. Spelling and `lex_rank` on it since 14 September; a use points at it since 8 September 2026.
+- **Seed:** since 24 September 2026 (#138).
 - **Source:** DESIGN.md l.265
 
 ### Name resolution is scope-filtered, and shadowing is disallowed
@@ -2567,7 +2205,6 @@ Outside its declaring scope a member is reached only by `.`, which probes exactl
 
 ### The binding carries the name's gates; a partial move adds a sub-range
 Gates sit beside the range: one lookup answers open, live and permitted (*`mut` is a gate on the binding*). `own p.f` adds a **sub-range**: it ends path `p.f` at that line (created only then) and marks `p` dead as a whole, sibling paths live (*Memory and concurrency*, 5 September 2026). Consulted at every elaboration (parse, graph mutation, reflection), never by running code.
-- **History:** gates ruled 5 September 2026 as a separate identity binding; merged into the one binding per name 7 September 2026.
 - **Source:** DESIGN.md l.265
 
 ### A dead name takes nothing; only `:=` may follow
@@ -2586,12 +2223,10 @@ Default: the scope tree gives lifetime (enclosing scope) and visibility (own sco
 - **The rule:** a deviation the user writes lives in the declaration; one analysis infers lives in a fact node. A fact that can be either (annotated vs inferred lifetime) enters by its own door.
 - Source positions are not a facet: they are the span a node was parsed from, in a derived source map (one-to-one with source, rebuilt, absent for runtime-made nodes). Fine-grained permissions ride the reference (*Reference-granular permissions*).
 - **Ruled:** revised June 2026, replacing the wrapping design.
-- **History:** home (1) was four construction-phase tag bits per node, superseded 7 September 2026 (`undefined` is a null slot, writability a gate). A derived id → metadata index superseded 8 September 2026: no address-keyed index; facts come from name or path. Gates: separate identity binding 5 September, one binding 7 September.
 - **Source:** DESIGN.md l.267
 
 ### Lookup rides the scoped walk; the index only speeds things up
 Lexical scoping makes a declaration an *ancestor* of every use, so a top-down walk (push on scope entry, pop on exit) has the metadata in hand; the batch pass needs no index. References skipping ancestors (types, functions, definitions elsewhere) are the `'static`/default cases. Out-of-walk access (re-check after an edit, a hover) re-resolves the spelling at that position via source map and trie, or walks the written path.
-- **History:** derived id → metadata index for that case, superseded 8 September 2026.
 - **Source:** DESIGN.md l.269
 
 ### A uniform model is not uniform storage
@@ -2624,7 +2259,7 @@ Collections and the iterator protocol `for` desugars onto; Unicode-aware strings
 **Single canonical solutions, opinions formed, batteries included, idioms documented.** Competing libraries may exist; the stdlib defines idiomatic Logos, and the language is opinionated enough to back it.
 - **Source:** DESIGN.md l.283
 
-### Completeness, not a clean minimal core, stops fragmentation
+### Completeness, not cleanliness, stops fragmentation
 A minimal core causes dialect sprawl: each gap is filled downstream, differently. Scheme (cleanest core) fragmented worst; Common Lisp and Python (complete, canonical) held together. Cleanliness buys something narrower and real (no wart-patching extensions), but the load-bearing protection is a base so complete nothing is missing. The trap: a beautiful minimal core whose gaps invite a thousand well-meant fillings.
 - **Ruled:** recorded in discussion, 31 August 2026.
 - **Source:** DESIGN.md l.285
@@ -2687,7 +2322,6 @@ A sketch, not stable (August 2026; examples in language_sketch.logos). Recorded 
 - **The stack is the index half of names vs indices:** named anchors over `before`/`after` stay the general mechanism for deep or long-range reference; short forms are sugar. The stack is a pure function of the words to the left, so parsing stays the one tape pass with no new parser state (a constructor reads back on the tape).
 - **Open:** `-ing` is the first suffix and the participle's composition is undesigned; generic `when` («ears at him turn red when he lie») vs its episodic ruling; no words for quantifiers over times («never», «ever»); trailing `not` in live examples unreconciled with rightward scope.
 - **Rejected, to stay rejected:** tense morphemes carrying counterfactuality (English's fake past). **Why:** a counterfactual marks an ecumenical branch, and an antecedent's falsity is cancellable implicature, status assigned by the proof layer, never the parser.
-- **History:** a push-simultaneous `o` deleted as redundant (moved depth, never time). Interim `paoil` as "eternal" superseded: its set reading cannot survive sequence semantics; eternity is quantification over times, not a marker.
 - **Source:** DESIGN.md l.326
 
 ### The surface converges on English, and speakability gates admission
@@ -2720,7 +2354,7 @@ Direction, August 2026. Nearer-term than the other direction sections, not on th
 ### A durable store, in files, managed by Logos code alone
 Things that outlive a process live in a file-backed store keyed by content, structure or nominal identity, never per-run address ("anything that must survive a session (caches, compiled artifacts, certificates) keys by content or structure, never by id"). Cross-process identity = the graph-CRDT one: nominal pair plus origin-attributed part, covering anonymous nodes.
 - **Durable references (direction):** the type defines how a value is read, so a durable pointer type resolves a stable id where `@T` dereferences a per-run address; the type, not tag bits, says which store. Format undesigned.
-- **Seed:** owes only file syscalls, already in the `native` floor. Formats, manifests, compaction, policy are stdlib or third-party Logos; the manifest is graph values.
+- **Seed:** owes only file syscalls, already in the `native` floor.
 - **Two tenant classes:** **re-derivable** (cached compilations, proof certificates, derived facts): deletion loses only time. **Authoritative** (checkpoints, later database data): the only record of what the outside world told the program.
 - Databases (hosted query surfaces as constructors, storage engines behind one interface like allocators, planners as the rewriting engine under I/O cost functions) are a later tenant, not a subsystem.
 - **Source:** DESIGN.md l.348
@@ -2762,7 +2396,6 @@ A third `@exec` mint for cache loads; runtime-automatic checkpointing in any for
 | Compiler-extension framework | Partly free from meta-reflection; conventions mature with the stdlib, which shows the patterns. |
 | Verified demonstration projects | Verified kernel module, crypto library, or compiler pass; research-grade; earns credibility in the verification niche. |
 
-- **History:** dependent types were "not needed for an initial release" until 5 September 2026.
 - **Source:** DESIGN.md l.358-373
 
 ### The v0.1.0 preview leads with "the language defines itself"
@@ -2780,26 +2413,22 @@ Although the reshaped demo never quotes text.
 A `run`-carrying node holds its operands as named fields the constructor writes. The write never reaches the identity the cell pointed at: a fresh node of the assigned type replaces the cell (*The scope's constructor is the driver*). Current spelling (l.207): stamp `tape[0]:type = ^`, then `tape[0].lhs = tape[-1]`.
 - **Why the type write initializes:** Thobias, 9 September 2026: "when assigning the type of a dyad the value should be automatically initialized so that .operands is valid and available".
 - **Ruled:** 9 September 2026; named fields 16 September 2026.
-- **History:** 9 September: `tape[0]:dyad.type = ^` then `tape[0]:dyad.value.operands.append(tape[-1] and tape[1])` (the and-group distributing so both append, *The proof layer* 7 September; that and-group ruling stands on its own); the operand record was the null-terminated run call arguments travel in. 16 September: named fields. 17/18 September: `this.lhs = tape[-1]`, `this` placed by `tape[0] = this`. `this` gone 26 September (l.207); `:dyad.type` → `:type` 23 September.
 - **Source:** DESIGN.md l.375 (current spelling from l.207)
 
 ### The LSP server comes after v0.1.0
 - **Why:** the preview promises the demo and the language defining itself; a server is tooling the graph makes cheap later; gating on it delays the invitation for no language evidence.
 - **Ruled:** 9 September 2026.
-- **History:** before: "A thin LSP server gates v0.1.0's public release, not the demo."
 - **Source:** DESIGN.md l.375
 
 ### Staged out of v0.1.0: error values, and writing a name's dyad view
 v0.1.0 has faults only and `-> void` constructors (*Error handling*). The dyad view is fully readable, writable only where the demo needs it: a constructor writing a tape cell nothing has read yet, `tape[k]:type = T`. Writing a declared name's view, `x:type = f64`, is the checked error; gate rulings decide after v0.1.0 who may write where.
 - **Why:** it would rebind the name's type or storage under every reader and static range: bug-prone, no preview gain.
 - **Ruled:** 2 September 2026; name-write refusal 9 September 2026.
-- **History:** 2 September: view "fully readable and writable". Spelled `:dyad` (`tape[k]:dyad.type = T`, `x:dyad.type = f64`) until 23 September 2026.
 - **Source:** DESIGN.md l.375
 
 ### Gates before v0.1.0: `pub` stays and `mut` lands
 - **Why:** Thobias, 20 September 2026: gate machinery is best tested early, and `pub` already carries imports. #64 closed without the change.
 - **Ruled:** 20 September 2026, Thobias.
-- **History:** 4 September 2026: v0.1.0 has no gates (no `pub`, no `mut`; all readable and writable; `=` writes any declared name; an importer sees every top-level name), because a gateless seed is smaller; `pub`-only exposure, `mut` as type modifier and the fail-closed default were to land together after v0.1.0. The seed's `pub` gate slot and pub-only import tests were a divergence pending removal until 20 September.
 - **Source:** DESIGN.md l.375
 
 ### The v0.1.0 demo: a user-defined power operator `^`
@@ -2808,13 +2437,12 @@ v0.1.0 has faults only and `-> void` constructors (*Error handling*). The dyad v
 - **Step 3 must expose from the seed:** `tape[k]` read and write, `remove`, `dyad (type, value)` construction from Logos, `tape` as a word inside `parse` (slot body with no parameter list), `.parse_rank` as a comptime field read, a type's `run` slot used by the evaluation rule and `compile`.
 - **Rejected:** a separate Logos-written `pow` called through `^` (2 September form), deleted as old thinking. **Why:** the operator is the operation; `fn` would only be shorthand filling the parse slots `^` fills by hand.
 - **Ruled:** pinned 2 September 2026; reshaped 4 September; respelled 16 September (fields, `output_type`, bare `run`).
-- **History:** computation first in a `code` slot as an ordinary function (now `run`). Parameter first `x : i32` (superseded colon form), respelled the same day; the `:`-as-sugar door of *Declarations are immutable by default* stays open but unused. "`fn`-typed parameters carrying a tape" superseded 17 September 2026 by `tape` as a word in `parse`.
 - **Source:** DESIGN.md l.375
 
 ### `^` takes floats and any real exponent
 A float on either side, or a literal fraction exponent, makes `output_type` that float (`f64` over `f32`); else `lhs`'s type. A whole exponent multiplies; a negative whole one divides (1 / lhs^n), refused as the checked error for a whole-number result (2 ^ -1 is no integer). Other exponents go through `exp` and `ln`, ordinary Logos functions in identities/power.logos; a negative base there is the checked error.
 - **Why:** the demo shows a whole operator defined inside the language, so its maths is Logos too; nothing native added.
-- **Ruled:** 26 September 2026, Thobias: "make definition of ^ more complete so that it supports floats as well? and if lhs or rhs is float then output_type has to be float as well"; then "Any real exponent", negative whole exponents as 1 / lhs^n, exp and ln "written in Logos".
+- **Ruled:** 26 September 2026, Thobias: "make definition of ^ more complete so that it supports floats as well? and if lhs or rhs is float then output_type has to be float as well"; then any real exponent, negative whole exponents as 1 / lhs^n, exp and ln written in Logos.
 - **Source:** DESIGN.md l.375
 
 ### Accelerants and decelerants
