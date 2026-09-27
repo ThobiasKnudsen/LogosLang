@@ -1606,9 +1606,6 @@ pub struct Parser<'a> {
     trie: &'a mut RegexTrie,
     types: &'a Core,
     imports: Imports,
-    /// Each type of node values, and the run type whose node builds one from a bracket;
-    /// stand-in for #152.
-    bracket_builders: HashMap<DyadPtr, DyadPtr>,
     /// The pass's one runtime (DESIGN ›Build and run are one self-directing
     /// pass‹): one runtime keeps the frame arena and the allocation ledger
     /// whole across the pass.
@@ -1887,7 +1884,6 @@ impl<'a> Parser<'a> {
             rt,
             trie,
             types,
-            bracket_builders: HashMap::new(),
             imports: Imports::default(),
             lower: None,
         }
@@ -1962,15 +1958,17 @@ impl<'a> Parser<'a> {
         let p = &mut *parser.cast::<Self>();
         let types = p.types;
         let bracket = (*value).ty == types.scope || (*value).ty == types.square_brackets;
-        let built = match p.bracket_builders.get(&ty).copied().filter(|_| bracket) {
-            Some(_) => p.bracket_node(ty, value),
-            None => {
-                let mut head = Cell::built(ty);
-                head.constructed = false;
-                let mut arg = Cell::built(value);
-                arg.bracket = bracket;
-                p.construct_cells(vec![head, arg])
-            }
+        let builds = bracket
+            && crate::identities::meta::is_record_type(ty)
+            && !crate::identities::meta::bracket_builder_of(ty).is_null();
+        let built = if builds {
+            p.bracket_node(ty, value)
+        } else {
+            let mut head = Cell::built(ty);
+            head.constructed = false;
+            let mut arg = Cell::built(value);
+            arg.bracket = bracket;
+            p.construct_cells(vec![head, arg])
         };
         built.map(|d| d as i64).map_err(|e| crate::run::RunError::Parse(Box::new(e)))
     }
@@ -2002,7 +2000,10 @@ impl<'a> Parser<'a> {
             return Ok(value);
         }
         match read_kind(types, types.through(target)) {
-            Read::Container(t) if self.bracket_builders.contains_key(&t) => {
+            Read::Container(t)
+                if crate::identities::meta::is_record_type(t)
+                    && !crate::identities::meta::bracket_builder_of(t).is_null() =>
+            {
                 self.bracket_node(t, types.through(value))
             }
             _ => Ok(value),
@@ -2012,13 +2013,14 @@ impl<'a> Parser<'a> {
     /// stand-in for #152
     ///
     /// # Safety
-    /// `ty` must be a key of `bracket_builders` and `bracket` a bracket node from the store.
+    /// `ty` must be a record type with a bracket builder installed and `bracket` a bracket
+    /// node from the store.
     unsafe fn bracket_node(
         &mut self,
         ty: DyadPtr,
         bracket: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
-        let builder = self.bracket_builders[&ty];
+        let builder = crate::identities::meta::bracket_builder_of(ty);
         let element = self.bracket_element_type(ty).ok_or(ParseError::BadDeclaredType)?;
         let mut head = Cell::built(builder);
         head.constructed = false;
@@ -3661,8 +3663,10 @@ impl<'a> Parser<'a> {
             if crate::identities::meta::is_record_type(reader)
                 && !crate::identities::meta::run_body_of(reader).is_null()
                 && crate::identities::meta::is_node_valued(ty, self.types.fn_type)
+                && crate::identities::meta::is_record_type(ty)
             {
-                self.bracket_builders.insert(ty, reader);
+                // SAFETY: `ty` carries the record its body just built; `reader` is a type node.
+                unsafe { crate::identities::meta::install_bracket_builder(ty, reader) };
             }
         }
         built.map_err(|e| {

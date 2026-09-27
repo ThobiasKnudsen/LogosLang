@@ -168,6 +168,7 @@ pub(crate) fn record_layout(
     blob.extend_from_slice(&size_bytes.to_ne_bytes());
     blob.extend_from_slice(&(body as usize).to_ne_bytes());
     blob.extend_from_slice(&0usize.to_ne_bytes());
+    blob.extend_from_slice(&0usize.to_ne_bytes());
     store.alloc_bytes(&blob)
 }
 
@@ -214,6 +215,23 @@ pub(crate) unsafe fn instances_drop_of(id: DyadPtr) -> DyadPtr {
 /// `id` must carry a `RECORD_TAG` record; `drop` must be null or a `fn` node from the store.
 pub(crate) unsafe fn install_instances_drop(id: DyadPtr, drop: DyadPtr) {
     std::ptr::write_unaligned((*id).value.add(INSTANCES_DROP_OFF) as *mut DyadPtr, drop);
+}
+
+const BRACKET_BUILDER_OFF: usize = PAYLOAD_OFF + 40;
+
+/// The run type whose node builds a value of this type from a bracket; null where none
+/// does. stand-in for #152.
+///
+/// # Safety
+/// As `record_scope_of`.
+pub(crate) unsafe fn bracket_builder_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned((*id).value.add(BRACKET_BUILDER_OFF) as *const DyadPtr)
+}
+
+/// # Safety
+/// `id` must carry a `RECORD_TAG` record; `builder` a type node from the store.
+pub(crate) unsafe fn install_bracket_builder(id: DyadPtr, builder: DyadPtr) {
+    std::ptr::write_unaligned((*id).value.add(BRACKET_BUILDER_OFF) as *mut DyadPtr, builder);
 }
 
 fn header(kind: u8, assoc: Assoc, parse_rank: f64) -> [u8; PAYLOAD_OFF] {
