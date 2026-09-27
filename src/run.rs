@@ -6,7 +6,7 @@
 //! jumps to the callable leaf in its op slot. Scalars ride an `i64` bit-container.
 //! DESIGN ›The callable ground is `@exec`‹.
 
-use crate::dyad::{frame_ref, Dyad, DyadPtr};
+use crate::dyad::{frame_ref, Dyad, DyadPtr, Global};
 use crate::identities::by_copy;
 use crate::identities::read::{read_kind, Dispatch, Read};
 use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_OUTPUT};
@@ -124,6 +124,8 @@ pub struct Context {
     /// The calls in flight across both tiers: the interpreter and each compiled
     /// prologue count in and out, and both refuse the frame past [`MAX_CALL_DEPTH`].
     pub depth: usize,
+    /// The store's arena base: a top-level or `share` place is an offset from it.
+    pub globals: *mut u8,
     /// The checked error a step under compiled code raised; an `extern "C"`
     /// function cannot return it, so the runtime reads it back the moment the
     /// machine code returns.
@@ -135,7 +137,12 @@ pub struct Context {
 
 impl Context {
     fn new() -> Self {
-        Context { depth: 0, pending: None, runtime: std::ptr::null_mut() }
+        Context {
+            depth: 0,
+            globals: std::ptr::null_mut(),
+            pending: None,
+            runtime: std::ptr::null_mut(),
+        }
     }
 }
 
@@ -640,7 +647,11 @@ impl<'a> Runtime<'a> {
                 Some(base.add(off))
             }
             // Global storage carries its own tag; an untagged value is a literal's blob.
-            None => crate::dyad::global_ref((*node).value).or(Some((*node).value)),
+            None => Some(match crate::dyad::global_ref((*node).value) {
+                Some(Global::Address(addr)) => addr,
+                Some(Global::Arena(off)) => self.store.arena_at(off),
+                None => (*node).value,
+            }),
         }
     }
 
@@ -739,6 +750,7 @@ impl<'a> Runtime<'a> {
         // below before the borrow it came from ends.
         let this: *mut Runtime<'static> = (self as *mut Runtime<'a>).cast();
         (*this).ctx.runtime = this;
+        (*this).ctx.globals = (*this).store.arena_base();
         (*this).ctx.pending = None;
         let r = call_machine(entry, std::ptr::addr_of_mut!((*this).ctx), args);
         match self.ctx.pending.take() {

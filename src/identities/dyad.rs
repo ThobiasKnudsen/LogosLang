@@ -63,17 +63,41 @@ pub const GLOBAL_TAG: usize = 1 << 62;
 
 pub fn global_place(addr: *mut u8) -> *mut u8 {
     let bits = addr as usize;
-    debug_assert!(bits & (FRAME_TAG | GLOBAL_TAG) == 0, "a real address must carry no place tag");
+    debug_assert!(
+        bits & (FRAME_TAG | GLOBAL_TAG | ARENA_TAG) == 0,
+        "a real address must carry no place tag"
+    );
     std::ptr::without_provenance_mut(GLOBAL_TAG | bits)
 }
 
-pub fn global_ref(value: *mut u8) -> Option<*mut u8> {
+/// Bit 47 under the global tag marks the place an offset into the store's arena;
+/// no canonical address sets it, so an absolute global place keeps decoding.
+pub const ARENA_TAG: usize = 1 << 47;
+
+pub fn arena_place(offset: usize) -> *mut u8 {
+    debug_assert!(offset < ARENA_TAG, "an arena offset must fit under bit 47");
+    std::ptr::without_provenance_mut(GLOBAL_TAG | ARENA_TAG | offset)
+}
+
+/// What a global place's `value` denotes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Global {
+    Address(*mut u8),
+    /// An offset into the store's arena (`Store::arena_at`).
+    Arena(usize),
+}
+
+pub fn global_ref(value: *mut u8) -> Option<Global> {
     let bits = value as usize;
     if bits & GLOBAL_TAG == 0 {
-        None
-    } else {
-        Some(std::ptr::with_exposed_provenance_mut(bits & !GLOBAL_TAG))
+        return None;
     }
+    let bits = bits & !GLOBAL_TAG;
+    Some(if bits & ARENA_TAG != 0 {
+        Global::Arena(bits & !ARENA_TAG)
+    } else {
+        Global::Address(std::ptr::with_exposed_provenance_mut(bits))
+    })
 }
 
 /// The one question a reader asks before it reads a record.
@@ -94,8 +118,13 @@ mod tests {
 
         let global = global_place(real);
         assert!(is_place(global));
-        assert_eq!(global_ref(global), Some(real), "the tag comes off exactly");
+        assert_eq!(global_ref(global), Some(Global::Address(real)), "the tag comes off exactly");
         assert!(frame_ref(global).is_none(), "a global place is not a frame place");
+
+        let arena = arena_place(24);
+        assert!(is_place(arena));
+        assert_eq!(global_ref(arena), Some(Global::Arena(24)));
+        assert!(frame_ref(arena).is_none(), "an arena place is not a frame place");
 
         let frame = frame_place(2, 24);
         assert!(is_place(frame));

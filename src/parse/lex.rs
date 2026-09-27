@@ -144,7 +144,8 @@ impl<'a> Parser<'a> {
                 _ => return id,
             };
             let addr = match crate::dyad::global_ref((*id).value) {
-                Some(addr) => addr,
+                Some(crate::dyad::Global::Address(addr)) => addr,
+                Some(crate::dyad::Global::Arena(off)) => self.rt.store.arena_at(off),
                 None if self.is_live_call_slot(id) => match self.rt.place_addr(id) {
                     Some(addr) => addr,
                     None => return id,

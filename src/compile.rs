@@ -17,7 +17,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{default_libcall_names, FuncId, Linkage, Module};
 
-use crate::dyad::{frame_ref, DyadPtr};
+use crate::dyad::{frame_ref, DyadPtr, Global};
 use crate::identities::numtype::{is_void_type, of_type_node, ArithOp, CmpOp, NumType};
 use crate::identities::read::{read_kind, Dispatch, Read};
 use crate::identities::{by_copy, numtype_of, operands, Operand};
@@ -211,8 +211,8 @@ impl Lowerer<'_, '_> {
         crate::binding::through(self.types.binding_, p)
     }
 
-    /// A place's address as an SSA pointer: a baked `iconst` for a global,
-    /// `stack_addr(frame_slot, offset)` for a frame place. Taking the address
+    /// A place's address as an SSA pointer: the context's arena base plus the
+    /// offset for a global, `stack_addr(frame_slot, offset)` for a frame place. Taking the address
     /// pins the place to memory, so the analysis pass marks it dirty here.
     ///
     /// # Safety
@@ -251,11 +251,21 @@ impl Lowerer<'_, '_> {
                 };
                 Ok(self.builder.ins().stack_addr(self.ptr_ty, slot, off as i32))
             }
-            // The global tag comes off before the address is baked.
+            // An arena place is reached through the context; an absolute place and
+            // a literal's blob are immediates.
             None => {
                 let v = (*node).value;
-                let addr = crate::dyad::global_ref(v).unwrap_or(v);
-                Ok(self.builder.ins().iconst(self.ptr_ty, addr as usize as i64))
+                Ok(match crate::dyad::global_ref(v) {
+                    Some(Global::Arena(off)) => {
+                        let at = std::mem::offset_of!(crate::run::Context, globals) as i64;
+                        let base = self.load_at(self.ptr_ty, self.ctx, at);
+                        self.builder.ins().iadd_imm(base, off as i64)
+                    }
+                    Some(Global::Address(addr)) => {
+                        self.builder.ins().iconst(self.ptr_ty, addr as usize as i64)
+                    }
+                    None => self.builder.ins().iconst(self.ptr_ty, v as usize as i64),
+                })
             }
         }
     }

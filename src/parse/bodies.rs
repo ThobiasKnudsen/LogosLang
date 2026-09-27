@@ -1311,15 +1311,15 @@ impl<'a> Parser<'a> {
     }
 
     /// Inside a function the place is frame-relative, the next offset after
-    /// the parameters, its storage per call; at top level an absolute global
-    /// blob. The value is a `FRAME_TAG` offset or a real address respectively.
+    /// the parameters, its storage per call; at top level an offset into the
+    /// store's arena. The value is a `FRAME_TAG` offset or an arena place respectively.
     pub(crate) fn alloc_local(&mut self, ty_node: DyadPtr, width: usize) -> DyadPtr {
         let place = if self.cx.frames.len() <= self.cx.held_depth
             || self.cx.share_init == Some(self.cx.frames.len())
         {
             // Tagged as storage, so a place and a definition's record are
             // told apart everywhere, not only where a frame exists.
-            crate::dyad::global_place(self.rt.store.alloc_bytes(&vec![0u8; width]))
+            crate::dyad::arena_place(self.rt.store.arena_alloc(width))
         } else {
             let depth = self.cx.frames.len();
             let frame = self.cx.frames.last_mut().unwrap();

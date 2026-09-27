@@ -14,11 +14,53 @@ use crate::dyad::{Dyad, DyadPtr};
 /// buffer never reallocates and the addresses into it stay stable.
 const CHUNK: usize = 4096;
 
-/// Dyads in fixed-capacity chunks, plus boxed side blobs (operand runs, literal
-/// bytes, bindings, map tables); every address handed out stays valid for the store's life.
+/// One span reserved up front and never grown, so a bump never moves what came
+/// before, which every in-place writer relies on.
+struct Arena {
+    span: Vec<u8>,
+    /// The span's write pointer, minted once: a read-only borrow could not mint it later.
+    base: *mut u8,
+    used: usize,
+    allocs: usize,
+}
+
+const ARENA_CAP: usize = 1 << 30;
+
+impl Arena {
+    fn new() -> Self {
+        let mut span = Vec::with_capacity(ARENA_CAP);
+        let base = span.as_mut_ptr();
+        Arena { span, base, used: 0, allocs: 0 }
+    }
+
+    /// `len` zeroed bytes at an 8-aligned offset from the base.
+    fn bump(&mut self, len: usize) -> usize {
+        let at = self.used;
+        let end = at
+            .checked_add(len)
+            .and_then(|end| end.checked_next_multiple_of(8))
+            .filter(|&end| end <= self.span.capacity())
+            .unwrap_or_else(|| panic!("the store arena is full ({ARENA_CAP} bytes)"));
+        // SAFETY: `at..end` lies inside the reserved capacity, handed out to no one yet.
+        unsafe { std::ptr::write_bytes(self.base.add(at), 0, end - at) };
+        self.used = end;
+        self.allocs += 1;
+        at
+    }
+}
+
+impl Default for Arena {
+    fn default() -> Self {
+        Arena::new()
+    }
+}
+
+/// Dyads in fixed-capacity chunks, the byte arena, plus boxed side blobs (operand runs,
+/// literal bytes, bindings, map tables); every address handed out stays valid for the store's life.
 #[derive(Default)]
 pub struct Store {
     chunks: Vec<Vec<Dyad>>,
+    arena: Arena,
     operands: Vec<Box<[DyadPtr]>>,
     blobs: Vec<Box<[u8]>>,
     /// Boxed: a binding's address is handed out and must survive the vector's growth.
@@ -35,7 +77,6 @@ pub struct Store {
 pub struct StoreStats {
     pub cells: usize,
     pub cell_bytes: usize,
-    /// The inline arena's; zero until it exists.
     pub arena_bytes: usize,
     pub arena_allocs: usize,
     /// Each boxed side blob's payload plus its box's slot in the store's vector.
@@ -81,6 +122,7 @@ impl Store {
     pub fn new() -> Self {
         Store {
             chunks: Vec::new(),
+            arena: Arena::new(),
             operands: Vec::new(),
             blobs: Vec::new(),
             bindings: Vec::new(),
@@ -148,6 +190,22 @@ impl Store {
         ptr
     }
 
+    /// `width` zeroed bytes in the arena: the offset a place carries (`dyad::arena_place`).
+    pub fn arena_alloc(&mut self, width: usize) -> usize {
+        self.arena.bump(width)
+    }
+
+    pub fn arena_base(&self) -> *mut u8 {
+        self.arena.base
+    }
+
+    /// The address an arena offset denotes, stable for the store's life.
+    pub fn arena_at(&self, offset: usize) -> *mut u8 {
+        debug_assert!(offset <= self.arena.used, "an arena offset is one the arena handed out");
+        // SAFETY: `offset` lies inside the one reserved span.
+        unsafe { self.arena.base.add(offset) }
+    }
+
     pub fn alloc_table(&mut self) -> *mut HashMap<i64, i64> {
         let mut boxed = Box::default();
         let ptr: *mut HashMap<i64, i64> = &mut *boxed;
@@ -188,8 +246,8 @@ impl Store {
         StoreStats {
             cells,
             cell_bytes: cells * size_of::<Dyad>(),
-            arena_bytes: 0,
-            arena_allocs: 0,
+            arena_bytes: self.arena.used,
+            arena_allocs: self.arena.allocs,
             boxed_bytes,
             boxed_allocs: self.operands.len()
                 + self.blobs.len()
@@ -253,6 +311,25 @@ mod tests {
         unsafe {
             assert_eq!(std::slice::from_raw_parts(p, 3), b"123");
         }
+    }
+
+    #[test]
+    fn arena_offsets_are_aligned_zeroed_and_stable() {
+        let mut s = Store::new();
+        let a = s.arena_alloc(3);
+        let b = s.arena_alloc(16);
+        assert_eq!((a, b), (0, 8));
+        unsafe { *s.arena_at(a) = 7 };
+        for _ in 0..1000 {
+            s.arena_alloc(64);
+        }
+        unsafe {
+            assert_eq!(*s.arena_at(a), 7);
+            assert_eq!(*s.arena_at(b), 0);
+        }
+        assert!(!s.contains(s.arena_at(b).cast()), "an arena address is no node");
+        let st = s.stats();
+        assert_eq!((st.arena_allocs, st.arena_bytes), (1002, 24 + 1000 * 64));
     }
 
     #[test]
