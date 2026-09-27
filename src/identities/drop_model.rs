@@ -5,7 +5,8 @@
 //! file. `alloc n of T v` yields an owning `@T` to the first of n cells (a pointer type
 //! with a non-null destructor), `alloc n` an `@u8` over n bytes; binding it inserts
 //! `defer free <place>`, and `own`/`drop` empty the place to null so
-//! a pending teardown no-ops. None of the five lower. DESIGN ›Explicit heap, and no implicit
+//! a pending teardown no-ops. `own`, `drop` and a scope's `defer`s lower; `alloc` and
+//! `free` keep a function interpreted. DESIGN ›Explicit heap, and no implicit
 //! destruction‹.
 
 use crate::Core;

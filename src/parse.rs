@@ -768,9 +768,6 @@ impl ScopeStack {
     /// intersection.
     ///
     /// # Safety
-    /// `binding` must be a binding dyad from the store; this writes its `scope`.
-    ///
-    /// # Safety
     /// `binding` must be a binding dyad from the store ([`Binding::alloc`]); this
     /// writes its `scope` field through the pointer.
     pub unsafe fn declare_pattern(
@@ -5769,7 +5766,6 @@ impl<'a> Parser<'a> {
         tape.at(1).is_some_and(|cell| !cell.constructed && self.cell_identity(cell) == id)
     }
 
-    /// The six fields, the spelling as a string node (`a:name`).
     /// A gate word marks the declaration that just reduced to its right.
     pub(crate) fn gate_declared(&mut self, gate: DyadPtr) -> Result<(), ParseError> {
         let binding = self.last_declared;
@@ -5921,8 +5917,6 @@ impl<'a> Parser<'a> {
         Ok(binding)
     }
 
-    /// `node` has emptied `ended`'s place: its name is dead from here on
-    /// (DESIGN ›Memory and concurrency‹).
     /// Whether `d` is the place a `?` built and no declaration has taken yet.
     pub(crate) fn is_hole(&self, d: DyadPtr) -> bool {
         self.holes.contains(&d)
@@ -5987,6 +5981,8 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// `node` has emptied `ended`'s place: its name is dead from here on
+    /// (DESIGN ›Memory and concurrency‹).
     pub(crate) fn mark_dead(&mut self, ended: Ended, node: DyadPtr) {
         // SAFETY: `ended.binding` is the binding the resolver returned for the operand.
         unsafe { self.scopes.mark_dead(ended.binding, node) };

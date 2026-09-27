@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The shared-member record every identity carries in its value slot: parse rank
-//! and associativity, the constructor and destructor leaves, the code and run-body
-//! slots, the interned pointer type, and the layout its values are read by.
+//! and associativity, the constructor and destructor leaves, the run-body slot, the
+//! interned pointer type, and the layout its values are read by.
 //!
 //! Record layout (unaligned, native-endian, byte offsets):
 //!
@@ -13,10 +13,9 @@
 //! [2..10]    f64  parse_rank
 //! [10..18]   u64  constructor: a `seed-parse` callable leaf, or 0
 //! [18..26]   u64  destructor: the owning pointer's teardown, else 0
-//! [26..34]   u64  code: the `fn` node a node of the type runs as, or 0
-//! [34..42]   u64  run body: the lexed body a `run = (…)` line held, or 0
-//! [42..50]   u64  pointer type: the interned `@T` of this type, or 0
-//! [50..]     payload, per kind:
+//! [26..34]   u64  run body: the lexed body a `run = (…)` line held, or 0
+//! [34..42]   u64  pointer type: the interned `@T` of this type, or 0
+//! [42..]     payload, per kind:
 //!              ADDR              pointee type node (`dyad@`)
 //!              TUPLE/LIST         u8 arity, then arity × `dyad@` role-name strings
 //! ```

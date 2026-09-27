@@ -7,9 +7,9 @@ authors = ["Thobias Melfjord Knudsen <thobknu@gmail.com>"]
 license = "Apache-2.0"
 repository = "https://github.com/ThobiasKnudsen/LogosLang"
 
-# The `logos` binary: `logos file.logos` runs a file top to bottom (no main,
-# no build flags — the code itself decides what compiles); bare `logos` is the
-# REPL. The release pipeline stages this exact name at bin/logos.
+# The `logos` binary: its arguments are one line of Logos source, so
+# `logos import ./file.logos` runs a file top to bottom (no main, no build flags:
+# the code itself decides what compiles); bare `logos` is the REPL. The release pipeline stages this exact name at bin/logos.
 [[bin]]
 name = "logos"
 path = "src/main.rs"
