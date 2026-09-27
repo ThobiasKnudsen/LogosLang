@@ -47,7 +47,7 @@ caller := ?   # where it was called from: for a constructor the appearance of it
               # (ruled 15 September 2026, #123; a walk down stops at a section boundary, a function's scopes counting as one)
 
 mut := type (
-    # a gate word (DESIGN ›mut is a gate on the binding‹, ruled 5-7 September 2026; its place ruled 15 September 2026): a
+    # a gate word (DESIGN ›`mut` is a gate on the binding‹, ruled 5-7 September 2026; its place ruled 15 September 2026): a
     # prefix word on the NAME, left of :=, mut x := 5, pub mut x := i32 5, superseding the right-side x := mut 5 of
     # 5 September. It is the entry «write allowed from the declaring scope and its descendants»; the binding := fills
     # takes it where the gate type and := meet on the tape, on the name's side, so mut never reaches across := (the

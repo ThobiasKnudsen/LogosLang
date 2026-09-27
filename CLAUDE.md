@@ -9,13 +9,14 @@
 - DESIGN.md is the ruling document. language_sketch.logos illustrates it; issues, plans, memories, old comments, and existing code are downstream and may be stale. Never implement from a downstream source alone.
 - Before implementing anything spec-governed, quote the exact DESIGN.md passage(s) that license it, in the plan or the commit message. No quote → stop and ask.
 - If any two sources disagree — DESIGN vs sketch, DESIGN vs an issue, one DESIGN section vs another — STOP and surface the conflict as a blocking question, with both quotes. Never silently pick a side, even if one side is newer or was written by Thobias: staleness is invisible from inside a session.
-- When a conflict is ruled on, or a design is rejected in conversation, record it in the same session: in DESIGN.md (the existing pattern: "Recorded as rejected, to stay rejected: …") or, if spec wording must wait, as an explicit pending-spec-edit in the session log AND auto-memory. An unrecorded decision is a future bug.
+- When a conflict is ruled on, or a design is rejected in conversation, record it in the same session: in DESIGN.md, at the rule it touches (a **Ruled** line with date, who and reason; a **Rejected, to stay rejected** line; a **History** line for what it supersedes; or a new `###` rule) or, if spec wording must wait, as an explicit pending-spec-edit in the session log AND auto-memory. An unrecorded decision is a future bug.
+- DESIGN.md is one rule per `###` heading (since 27 September 2026). Point at a rule by its heading, ›like this‹, never by line number; a `DESIGN.md l.N` in a Source bullet, an issue or a memory means line N of the paragraph form at git e75bcdc.
 - Before starting work in a spec area not touched recently, run /faithfulness-audit.
 - All rulings MUST have a good reason for existing otherwise i will forget later why i choose what i choose and change the rule
 - ALLWAYS EXPLAIN WITH SIMPLE WORDS
 
 # Comment rules (as few comments as possible; only what is actually important):
-- A comment says what the code cannot: a one-line WHY at a spot a reader would not guess, an invariant (the SAFETY line on an unsafe block, a byte layout, what a slot holds), a bare pointer to the DESIGN.md paragraph by its title, or a two-to-four-line module header saying what the file is. Nothing else.
+- A comment says what the code cannot: a one-line WHY at a spot a reader would not guess, an invariant (the SAFETY line on an unsafe block, a byte layout, what a slot holds), a bare pointer to the DESIGN.md rule by its heading, or a two-to-four-line module header saying what the file is. Nothing else.
 - No ruling history in code: no dates, no "ruled", "superseded", "amended", no issue numbers, no quotes from DESIGN.md. That story lives in DESIGN.md, the commit message and CLAUDE_LOG. The one exception is a known stand-in, marked with one phrase: "stand-in for #N".
 - No comment that restates the line below it, and no doc comment that only rephrases the item's name. If the name says it, the comment goes.
 - When in doubt, leave it out. A reader who needs more reads DESIGN.md or the git log, which is where the reasons are kept.

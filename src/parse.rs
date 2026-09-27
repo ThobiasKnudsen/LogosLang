@@ -1217,7 +1217,8 @@ pub enum ParseError {
     /// binding has no machine storage to write.
     BadAssignTarget,
     /// The target is a bare literal: `x := 5` binds the name to the number
-    /// itself, so there is no storage for `x = 6` to write (DESIGN ›Numbers‹).
+    /// itself, so there is no storage for `x = 6` to write (DESIGN ›Numeric
+    /// literals are uncommitted‹).
     /// Carries the literal's spelling.
     AssignToLiteral(Box<String>),
     /// A gate word (`pub`) not followed by a declaration: a gate fills a
