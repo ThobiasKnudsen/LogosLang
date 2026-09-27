@@ -361,11 +361,12 @@ impl Lowerer<'_, '_> {
             is_null,
             |s| {
                 let mut sig = s.module.make_signature();
+                sig.params.push(AbiParam::new(s.ptr_ty));
                 sig.returns.push(AbiParam::new(types::I64));
                 let sigref = s.builder.import_signature(sig);
                 let entry = crate::run::park_null_pointer as *const () as usize;
                 let a = s.builder.ins().iconst(s.ptr_ty, entry as i64);
-                s.builder.ins().call_indirect(sigref, a, &[]);
+                s.builder.ins().call_indirect(sigref, a, &[s.ctx]);
                 Ok(s.zero_of(ct))
             },
             ok,
@@ -1192,11 +1193,12 @@ unsafe fn build_pass(
         builder.seal_block(fault);
         builder.ins().store(MemFlagsData::new(), depth, depth_addr, 0);
         let mut park_sig = module.make_signature();
+        park_sig.params.push(AbiParam::new(ptr_ty));
         park_sig.returns.push(AbiParam::new(types::I64));
         let park_sigref = builder.import_signature(park_sig);
         let park =
             builder.ins().iconst(ptr_ty, crate::run::park_call_depth as *const () as usize as i64);
-        builder.ins().call_indirect(park_sigref, park, &[]);
+        builder.ins().call_indirect(park_sigref, park, &[run_ctx]);
         let zero = builder.ins().iconst(types::I64, 0);
         builder.ins().return_(&[zero]);
         builder.switch_to_block(body_b);

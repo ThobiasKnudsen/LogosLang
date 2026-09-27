@@ -123,10 +123,6 @@ thread_local! {
     /// machine code so a call back into the interpreter finds it, null outside
     /// one. Saved and restored per jump, so nested jumps each see their own.
     static CURRENT: Cell<*mut Runtime<'static>> = const { Cell::new(std::ptr::null_mut()) };
-    /// The checked error an interpreted callee raised under compiled code; an
-    /// `extern "C"` function cannot return it, so the runtime reads it back
-    /// the moment the machine code returns.
-    static PENDING: Cell<Option<RunError>> = const { Cell::new(None) };
 }
 
 /// What compiled code reaches the run through, its first argument. The fields
@@ -137,13 +133,24 @@ pub struct Context {
     /// The calls in flight across both tiers: the interpreter and each compiled
     /// prologue count in and out, and both refuse the frame past [`MAX_CALL_DEPTH`].
     pub depth: usize,
+    /// The checked error a step under compiled code raised; an `extern "C"`
+    /// function cannot return it, so the runtime reads it back the moment the
+    /// machine code returns.
+    pending: Option<RunError>,
+}
+
+impl Context {
+    fn new() -> Self {
+        Context { depth: 0, pending: None }
+    }
 }
 
 /// Jump to compiled code of the one signature ([`MachineFn`]).
 ///
 /// # Safety
-/// `p` must point at live machine code of that signature.
-unsafe fn call_machine(p: *const u8, ctx: &mut Context, args: &[i64]) -> i64 {
+/// `p` must point at live machine code of that signature; `ctx` must be the
+/// context of the runtime making the jump.
+unsafe fn call_machine(p: *const u8, ctx: *mut Context, args: &[i64]) -> i64 {
     let f = std::mem::transmute::<*const u8, MachineFn>(p);
     f(ctx, args.as_ptr(), args.len())
 }
@@ -155,7 +162,7 @@ pub type MachineFn = unsafe extern "C" fn(*mut Context, *const i64, usize) -> i6
 
 /// The jump a compiled caller makes into a callee that is not compiled: the
 /// runtime in [`CURRENT`] applies the callee by value. An error or a panic is
-/// parked in [`PENDING`] and 0 returned, since neither may cross into machine code.
+/// parked in the context and 0 returned, since neither may cross into machine code.
 ///
 /// # Safety
 /// Called only by compiled code the seed emitted: `fn_node` a `fn` node from
@@ -175,7 +182,7 @@ pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *
     }));
     // The machine code runs on with the 0 and may call back in before the park
     // surfaces, so the interpreter's mid-call state is unwound here.
-    let restore = || {
+    let restore = move || {
         // SAFETY: as above.
         unsafe {
             (*rt).activations.truncate(saved.0);
@@ -184,11 +191,14 @@ pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *
             (*rt).ctx.depth = depth;
         }
     };
+    // SAFETY: as above.
+    let ctx = unsafe { std::ptr::addr_of_mut!((*rt).ctx) };
     match outcome {
         Ok(Ok(v)) => v,
         Ok(Err(e)) => {
             restore();
-            park(e);
+            // SAFETY: `ctx` is the live runtime's context.
+            unsafe { park(ctx, e) };
             0
         }
         Err(panic) => {
@@ -198,7 +208,8 @@ pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *
                 .cloned()
                 .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
                 .unwrap_or_else(|| "unknown panic".to_string());
-            park(RunError::Faulted(Box::new(msg)));
+            // SAFETY: as above.
+            unsafe { park(ctx, RunError::Faulted(Box::new(msg))) };
             0
         }
     }
@@ -217,30 +228,33 @@ pub(crate) fn standing_by() -> *mut Runtime<'static> {
 }
 
 /// The fault a compiled read or write through a null pointer raises: parked
-/// in [`PENDING`] as [`interpret_call`] parks one; the zero is discarded when
+/// in the context as [`interpret_call`] parks one; the zero is discarded when
 /// the runtime reads the park back.
 ///
 /// # Safety
-/// Called only by compiled code, on the null arm of a pointer guard.
-pub unsafe extern "C" fn park_null_pointer() -> i64 {
-    park(RunError::NullPointer);
+/// Called only by compiled code, on the null arm of a pointer guard, with the
+/// context it was called with.
+pub unsafe extern "C" fn park_null_pointer(ctx: *mut Context) -> i64 {
+    park(ctx, RunError::NullPointer);
     0
 }
 
 /// The first fault parked is the cause: machine code runs on with the zero it left, so a
 /// later fault, a null guard over that zero, is its consequence and never replaces it.
-fn park(e: RunError) {
-    let first = PENDING.take();
-    PENDING.set(Some(first.unwrap_or(e)));
+///
+/// # Safety
+/// `ctx` must be the context of the runtime whose machine code is running.
+unsafe fn park(ctx: *mut Context, e: RunError) {
+    (*ctx).pending.get_or_insert(e);
 }
 
 /// The fault a compiled prologue raises past [`MAX_CALL_DEPTH`], parked as
 /// [`park_null_pointer`]'s is.
 ///
 /// # Safety
-/// Called only by compiled code, on the over-limit arm of its prologue.
-pub unsafe extern "C" fn park_call_depth() -> i64 {
-    park(RunError::CallDepth);
+/// As [`park_null_pointer`], on the over-limit arm of a prologue.
+pub unsafe extern "C" fn park_call_depth(ctx: *mut Context) -> i64 {
+    park(ctx, RunError::CallDepth);
     0
 }
 
@@ -401,7 +415,7 @@ impl<'a> Runtime<'a> {
             constructing: 0,
             ctor_tape: None,
             fresh_this: None,
-            ctx: Context { depth: 0 },
+            ctx: Context::new(),
         }
     }
 
@@ -717,7 +731,7 @@ impl<'a> Runtime<'a> {
     }
 
     /// Jump to machine code with this runtime standing by in [`CURRENT`], and
-    /// read back any error parked in [`PENDING`] when it returns (0 is a value).
+    /// read back any error parked in the context when it returns (0 is a value).
     ///
     /// # Safety
     /// `entry` must be live machine code of the one compiled signature
@@ -731,10 +745,10 @@ impl<'a> Runtime<'a> {
         // below before the borrow it came from ends.
         let this: *mut Runtime<'static> = (self as *mut Runtime<'a>).cast();
         let prev = CURRENT.replace(this);
-        PENDING.set(None);
-        let r = call_machine(entry, &mut self.ctx, args);
+        self.ctx.pending = None;
+        let r = call_machine(entry, std::ptr::addr_of_mut!((*this).ctx), args);
         CURRENT.set(prev);
-        match PENDING.take() {
+        match self.ctx.pending.take() {
             Some(e) => Err(e),
             None => Ok(r),
         }
