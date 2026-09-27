@@ -203,6 +203,7 @@ Nothing moved from this section.
 ### `?` is one value, the unknown; `key := T ?` declares without a value
 - **History:** before 23 September, `?` was a constructor building a fresh dyad with both slots `undefined` at every appearance, a literal, so `x := ?` bound x "to its own hole rather than aliasing one global unknown". Replaced because freshness belongs to the place.
 - **Seed detail (27 September 2026):** a bare `?` stands as the one identity. `?` reads a type to its left only when that type applies to it, not when an operator waits there (`x != ?`). `T ?` still allocates zeroed bytes, which no read reaches.
+- **History (28 September 2026):** `key := ?` questioned by Thobias ("i dont think x := ? should be possible to write though i dont see any reason why you wouldnt give it the type when its declared") and kept; the reason is at the rule. Seed detail the same day: the seed still makes the null-typed placeholder node at the lex and retypes it in place at the fill, the shape #166 would remove.
 
 ### Reading a place before its first write is refused at parse
 - **Seed detail (27 September 2026):** the entry refuses at parse every use of the name except the target of `x = …` and the binding read `x:…`, until the sibling write.
@@ -372,6 +373,9 @@ Nothing moved from this section.
 
 ### What `=` does is decided by the type of the place on its left
 - **History:** also read `fields = ( … )` as the field declaration block until 25 Sept.
+
+### A field is filled at run, per evaluation; its type decides how the operand is used
+- **History:** an Open line from 16 to 28 September 2026: "the two moments of a field (operand slot written at parse, frame place evaluated at run) are implied but not yet said in one sentence." Closed by the two-moments sentence at the rule.
 
 ### A node's output type is per node, and its parse writes it
 - **History:** 16 Sept: `output := type ?`, `tape[0]:dyad.value.output = tape[-1]:dyad.type`.

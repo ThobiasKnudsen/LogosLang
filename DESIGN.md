@@ -649,6 +649,7 @@ Since `:=` accepts any dyad as its value, a type included, the valueless form ne
 - **Ruled:** 23 September 2026, Thobias.
 - **Seed:** done (#137); `?` reads a type to its left only when that type applies to it, not when an operator waits there (`x != ?`).
 - **Ruled (27 September 2026, Thobias):** the later fill needs `mut` on the name, `mut key := T ?`; the examples above omit it. See ›Filling a valueless declaration needs `mut`‹ at the end of this section.
+- **Ruled (28 September 2026, Thobias):** `key := ?` stays. Questioned the same day ("i dont see any reason why you wouldnt give it the type when its declared") and kept, because `?` is the one general valueless form for a name, a field and a parameter alike, and because `lhs := ?` is what gives `^` one body per operand-type pair: `lhs := dyad ?` would hand the run body an unrun node, so `r * a` could not settle its operation once per node and the operand would run again inside the loop; the seed refuses `a * 2` on a `dyad ?` field. The two moments of a field are said at ›A field is filled at run, per evaluation‹. Keeping it does not bar a one-word node (#166): the declaration makes a binding, the first write makes the node.
 - **Source:** DESIGN.md l.119
 
 ### Reading a place before its first write is refused at parse
@@ -986,6 +987,7 @@ How the Logic Graph is represented, how source becomes runnable, and how structu
 
 ### A dyad is a type and a value: two pointers, and its identity is its address
 Sixteen bytes. Any allocator can hold it (no arena needed; the address is the id). Every dyad is an identity; most have no string name and are found by pattern-matching over the trie and graph. With a handle a dyad is directly addressable, but the graph is not addressable by position or name without context: source means nothing without its context, so lookup from text walks the trie (the parser's trie), plus indexes where repeated reflection needs them.
+- **Open (28 September 2026, Thobias):** whether a node becomes one 8-byte word pointing at a block whose first word is the type, the value bytes inline; a place stays `[type][address]`. It needs every node born with its type and its size, so the stamp `tape[0]:type = T` would allocate the block and the fresh-spelling node would go, the binding being the early home. Pros and cons, and the four rules it touches, in #166; the others are ›The store is keyed by address‹, ›Operands are reached through `value`, never stored inline‹ and ›An unknown spelling lexes to a fresh dyad with both slots `undefined`‹.
 - **Source:** DESIGN.md l.164
 
 ### A dyad's type defines how its value is read, and everything else
@@ -997,6 +999,7 @@ The type's definition, itself a Logic Graph, gives layout, how the dyad takes su
 ### Operands are reached through `value`, never stored inline
 A binary `+` is one 16-byte cell pointing at its operands. An operand that uses a name is the name's binding; a constructed operand is the node itself (›The dyad's read surface‹, 8 Sept). `value` points at an operand binding whose layout the definition gives: for a binary operator, (LHS, RHS) plus a third field once the operand type resolves, `[LHS, RHS, type]`, so run, compile and reflection dispatch on the stored concrete operation. That field is filled by a lowering rule, never by the operator's constructor at parse (›The callable ground is `@exec`‹). A call's value is its argument binding (one field per argument; one-field anonymous binding for one argument); a variadic call's is sized per call site. A list is never inline: a sequence's expression array sits behind one pointer, an `array` value the scope dyad's value points at. Which machine `+` runs comes from operator plus operand type.
 - **Ruled:** lowering-rule fill 8 September 2026.
+- **Open (28 September 2026):** with a one-word node the operand list would sit inline after the type word; see ›A dyad is a type and a value‹ and #166.
 - **Source:** DESIGN.md l.164
 
 ### Numeric literals are uncommitted until context classifies them
@@ -1206,8 +1209,9 @@ Bound per run to the tape centred on the appearance; ordinary name resolution, u
 
 ### A field is filled at run, per evaluation; its type decides how the operand is used
 The node's storage is its frame. `rhs := i32 ?` evaluates the operand into an i32 (a literal molds as a call argument does). A node-typed field keeps the operand as graph (how control-flow words are written with `run`). An untyped hole `lhs := ?` takes the type of the first value written into it, so `lhs` is typed per node.
+A field has two moments. At parse it is a slot in the node holding the operand node itself, `tape[0].lhs = tape[-1]`, eight bytes whatever the operand's type. At run it is a place in the node's frame holding what the declared type says: the operand's value at that type; for `?`, the operand's value at the operand's own type, fixed when the node is built; for `dyad ?`, the node itself, unrun.
 - **Ruled:** 16 September 2026, Thobias.
-- **Open:** the two moments of a field (operand slot written at parse, frame place evaluated at run) are implied but not yet said in one sentence.
+- **Ruled (28 September 2026, Thobias):** the two-moments sentence, closing the open line. **Why:** Thobias asked why `lhs` is not `dyad ?`, "because it should just reference a node". The slot does; the declared type describes the other moment.
 - **Source:** DESIGN.md l.189
 
 ### A node's output type is per node, and its parse writes it
@@ -1684,6 +1688,7 @@ A constructor gets the tape as a view: `tape[0]` is its own cell, negative offse
 ### An unknown spelling lexes to a fresh dyad with both slots `undefined`
 The cell holds a pointer to the fresh dyad; the spelling is kept tape-side. `:=` fills that dyad and enters the spelling into the trie at declaration (`key := ?` of *Declarations are immutable by default* binds exactly such a dyad). A fresh spelling nobody declares is the leftover-cell error at the segment boundary.
 - **Ruled:** 2 September 2026.
+- **Open (28 September 2026):** this is the one rule that makes a node before its type is known. With a one-word node the fresh dyad would go: the spelling stays tape-side, `:=` makes the binding, and the node comes with the value; see ›A dyad is a type and a value‹ and #166.
 - **Source:** DESIGN.md l.211
 
 ### Unknown spellings are two pattern identities
@@ -2196,7 +2201,7 @@ An identity is an interned handle in a backing store with stable addresses (arra
 - Ids are *per-run*, never persisted. The durable form is source text (files canonical; promotion serializes by unparsing); the graph is rebuilt at load, with throwaway content-keyed caches where startup cost warrants.
 - Anything that survives a session (caches, compiled artifacts, certificates) keys by content or structure, never by id.
 - **Ruled:** 28 September 2026, Thobias: the seed's handle is a 32-bit index into one reserved span (address = base + index × 16); the cell keeps its 16 bytes as a 32-bit type index, 32 spare bits and a 64-bit value word, behind the store's accessors, so "is this a node" is a bound check. **Why:** once the store is one span an index reads as fast as a pointer, and it is what makes freeing, a second thread and a cached artifact possible.
-- **Open:** the 8-byte header layout (a node one pointer, the type the value's first word): not chosen while a fresh cell is stamped (`tape[0]:type = T`) after it exists, since a block cannot be allocated before its type is known; revisit with that protocol.
+- **Open:** the 8-byte header layout (a node one pointer, the type the value's first word): not chosen while a fresh cell is stamped (`tape[0]:type = T`) after it exists, since a block cannot be allocated before its type is known; revisit with that protocol. Pros and cons, and the four rules it touches, in #166 (28 September 2026); the Open line at ›A dyad is a type and a value‹ is the same question.
 - **Source:** DESIGN.md l.261
 
 ### Names are an optional index, not the management mechanism
