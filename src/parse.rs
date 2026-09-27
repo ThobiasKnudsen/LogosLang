@@ -1609,12 +1609,6 @@ pub struct Parser<'a> {
     /// what a write into it must be granted by.
     paths: HashMap<DyadPtr, Vec<DyadPtr>>,
     imports: Imports,
-    /// The valueless places `?` built: a `:=` binds its name straight to such
-    /// a place, no snapshot and no initializer.
-    holes: HashSet<DyadPtr>,
-    /// The holes `own` marked over a type whose body fills `drop`: the
-    /// name or field declared with one owns the node written into it.
-    owning_holes: HashSet<DyadPtr>,
     /// A field write's node, with the name and the field it fills.
     field_writes: HashMap<DyadPtr, (DyadPtr, DyadPtr)>,
     /// The field node `v.f` built as a write's target, with the name and the field.
@@ -1881,8 +1875,6 @@ impl<'a> Parser<'a> {
             types,
             paths: HashMap::new(),
             bracket_builders: HashMap::new(),
-            holes: HashSet::new(),
-            owning_holes: HashSet::new(),
             field_writes: HashMap::new(),
             field_targets: HashMap::new(),
             imports: Imports::default(),
@@ -2548,6 +2540,7 @@ impl<'a> Parser<'a> {
             }
             None => None,
         };
+        let mut hole = false;
         let node = match base {
             None => self.stand_as_value(tape, id),
             Some(t)
@@ -2578,11 +2571,12 @@ impl<'a> Parser<'a> {
                     }
                 };
                 tape.remove(-1);
-                self.holes.insert(place);
+                hole = true;
                 place
             }
         };
         tape.place(node);
+        tape.at_mut(0).expect("placed above").hole = hole;
         Ok(Constructed::Placed)
     }
 
@@ -3132,11 +3126,12 @@ impl<'a> Parser<'a> {
             let mut owns_node = false;
             let logos = if self.consume_token(self.types.declare_tok) {
                 let outer = std::mem::replace(&mut self.cx.field_hole, relaxed);
-                let value = self.parse_expression();
+                let value = self.parse_expression_cell();
                 self.cx.field_hole = outer;
-                let value = value?;
-                owns_node = self.owning_holes.remove(&value);
-                if self.holes.remove(&value) {
+                let cell = value?;
+                let value = cell.dyad;
+                owns_node = cell.owning;
+                if cell.hole {
                     // SAFETY: `value` is the place `?` just built.
                     unsafe { (*value).ty }
                 } else {
@@ -6028,11 +6023,6 @@ impl<'a> Parser<'a> {
         Ok(binding)
     }
 
-    /// Whether `d` is the place a `?` built and no declaration has taken yet.
-    pub(crate) fn is_hole(&self, d: DyadPtr) -> bool {
-        self.holes.contains(&d)
-    }
-
     /// Whether `d` is a read of a field declared `own` over a node's type: what it reaches
     /// is owned, for `=`, `own` and `drop` to consult.
     pub(crate) fn is_owning_read(&self, d: DyadPtr) -> bool {
@@ -6045,11 +6035,6 @@ impl<'a> Parser<'a> {
                 !binding.is_null() && self.owns_node(binding)
             }
         }
-    }
-
-    /// `own t ?`: the hole owns the node written into it.
-    pub(crate) fn mark_owning_hole(&mut self, hole: DyadPtr) {
-        self.owning_holes.insert(hole);
     }
 
     /// Whether the name owns the node it holds: its binding site inserted the teardown
@@ -6838,12 +6823,13 @@ impl<'a> Parser<'a> {
         self.cx.pending_fn = placeholder;
         self.cx.filling.push(binding);
         self.cx.filling_at.push(self.cx.pos);
-        let value = self.parse_expression();
+        let value = self.parse_expression_cell();
         self.cx.filling.pop();
         self.cx.filling_at.pop();
         self.cx.last_declared = binding;
         self.cx.pending_fn = std::ptr::null_mut();
-        let value = value?;
+        let cell = value?;
+        let value = cell.dyad;
         // A bare name as the value is its binding (a use); the fixpoint
         // inspects the dyad behind it and keeps `value` as what the initializer stores.
         // SAFETY: `value` is a dyad from the store.
@@ -6868,13 +6854,12 @@ impl<'a> Parser<'a> {
         };
         // SAFETY: `placeholder` was minted for the name and nothing has read a value from it; `binding`, `value` and `read` are dyads from the store.
         let declared = unsafe {
-            let empty_node = self.holes.contains(&value)
-                && !self.owning_holes.contains(&value)
+            let empty_node = cell.hole
+                && !cell.owning
                 && crate::identities::meta::is_node_valued((*value).ty, self.types.fn_type);
             if empty_node {
                 // `v := T ?` of a type whose values are nodes: a new empty node each time the
                 // declaration runs, its fields filled one by one as a parse fills `tape[0]`.
-                self.holes.remove(&value);
                 let t = (*value).ty;
                 let template = crate::identities::this::empty_node(self.rt.store, t);
                 let node = crate::identities::this::build_copy(self.rt.store, self.types, template);
@@ -6888,14 +6873,14 @@ impl<'a> Parser<'a> {
                 // A field with a default starts with it, the empty node's slot holding it.
                 self.leave_fields_unwritten(binding, t, true);
                 init
-            } else if self.holes.remove(&value) {
+            } else if cell.hole {
                 // `x := i32 ?`: the place `?` built is what the name binds to;
                 // nothing initializes it, and `?`'s entry refuses a read until
                 // a sibling write fills it. A hashmap's zeroed place is already
                 // its empty map, so nothing is unknown to refuse.
                 self.cx.scopes.rebind(binding, value);
                 // `a := own t ?`: the owner of whatever node is written into it later.
-                if self.owning_holes.remove(&value) {
+                if cell.owning {
                     let drop = crate::identities::meta::instances_drop_of((*value).ty);
                     self.own_node(binding, value, drop);
                 }

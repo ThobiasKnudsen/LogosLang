@@ -86,13 +86,16 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     let own_ =
         keyword(cx, "own", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
             let (place, ended) = p.place_operand_cell(tape, true)?;
-            let place = place.dyad;
             // In a type position, `own @T ?`, the word makes the hole an owning one.
-            if p.is_hole(place) {
-                own_hole(p, place)?;
-                tape.place(place);
+            if place.hole {
+                let owning = own_hole(p, place.dyad)?;
+                tape.place(place.dyad);
+                let cell = tape.at_mut(0).expect("placed above");
+                cell.hole = true;
+                cell.owning = owning;
                 return Ok(crate::parse::Constructed::Placed);
             }
+            let place = place.dyad;
             let types = p.types();
             // SAFETY: `place` is a resolved dyad whose type is a valid type node, and
             // `ended` holds the binding the resolver returned for it.
@@ -334,16 +337,15 @@ pub(crate) fn is_owning_place(place: DyadPtr) -> bool {
 
 /// `own @T ?`: the hole `?` built for a pointer type becomes a place of an owning pointer
 /// type, what a field or name declared with it holds (DESIGN ›Memory and concurrency‹).
-/// `own t ?`, `t` a type whose body fills `drop`: the hole is marked, and
-/// the field or name declared with it owns the node written into it.
-fn own_hole(p: &mut crate::parse::Parser, hole: DyadPtr) -> Result<(), ParseError> {
+/// `own t ?`, `t` a type whose body fills `drop`: the hole becomes an owning one (`true`),
+/// and the field or name declared with it owns the node written into it.
+fn own_hole(p: &mut crate::parse::Parser, hole: DyadPtr) -> Result<bool, ParseError> {
     let types = p.types();
     // SAFETY: `hole` is the place `?` just built; its type is a type node.
     unsafe {
         let ty = (*hole).ty;
         if meta::is_node_valued(ty, types.fn_type) && !meta::instances_drop_of(ty).is_null() {
-            p.mark_owning_hole(hole);
-            return Ok(());
+            return Ok(true);
         }
         if !numtype::is_pointer_type(ty) || !meta::destructor_of(ty).is_null() {
             return Err(ParseError::OwnNeedsPointer);
@@ -356,7 +358,7 @@ fn own_hole(p: &mut crate::parse::Parser, hole: DyadPtr) -> Result<(), ParseErro
         );
         (*hole).ty = owning;
     }
-    Ok(())
+    Ok(false)
 }
 
 /// `own a` where `a` owns a node: the move reads the node's address and empties the place,
