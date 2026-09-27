@@ -16,6 +16,7 @@ use super::callable::{self, Callables};
 use super::numtype;
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::{Assoc, ParseError};
 use crate::run::{RunError, Runtime};
@@ -103,8 +104,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
                 (
                     ended.as_ref().is_some_and(|e| p.owns_node(e.binding))
                         || p.is_owning_read(place),
-                    meta::is_node_valued((*place).ty, types.fn_type),
-                    super::node_type_of(types, place).unwrap_or((*place).ty),
+                    meta::is_node_valued(dyad::ty(place), types.fn_type),
+                    super::node_type_of(types, place).unwrap_or(dyad::ty(place)),
                 )
             };
             let node = if owner {
@@ -141,7 +142,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
                 // whose body fills `drop`.
                 let drop = unsafe {
                     meta::instances_drop_of(
-                        super::node_type_of(types, place).unwrap_or((*place).ty),
+                        super::node_type_of(types, place).unwrap_or(dyad::ty(place)),
                     )
                 };
                 build_instance_drop(p.store(), types, place, drop)
@@ -303,7 +304,7 @@ pub(crate) fn build_teardown(
     require_owning: bool,
 ) -> Result<DyadPtr, ParseError> {
     // SAFETY: `place` is a reduced dyad; its type is a valid type node.
-    let logos = unsafe { (*place).ty };
+    let logos = unsafe { dyad::ty(place) };
     // SAFETY: `logos` is a type node from the store (above).
     if unsafe { !numtype::is_pointer_type(logos) } {
         return Err(ParseError::BadAssignTarget);
@@ -330,7 +331,7 @@ pub(crate) fn build_teardown(
 pub(crate) fn is_owning_place(place: DyadPtr) -> bool {
     // SAFETY: `place` is a reduced dyad; its type is a valid type node.
     unsafe {
-        let logos = (*place).ty;
+        let logos = dyad::ty(place);
         numtype::is_pointer_type(logos) && !meta::destructor_of(logos).is_null()
     }
 }
@@ -343,7 +344,7 @@ fn own_hole(p: &mut crate::parse::Parser, hole: DyadPtr) -> Result<bool, ParseEr
     let types = p.types();
     // SAFETY: `hole` is the place `?` just built; its type is a type node.
     unsafe {
-        let ty = (*hole).ty;
+        let ty = dyad::ty(hole);
         if meta::is_node_valued(ty, types.fn_type) && !meta::instances_drop_of(ty).is_null() {
             return Ok(true);
         }
@@ -356,7 +357,7 @@ fn own_hole(p: &mut crate::parse::Parser, hole: DyadPtr) -> Result<bool, ParseEr
             numtype::pointee_of(ty),
             types.ops.teardown_,
         );
-        (*hole).ty = owning;
+        dyad::set_ty(hole, owning);
     }
     Ok(false)
 }
@@ -392,7 +393,7 @@ pub(crate) fn build_instance_drop(
 /// # Safety
 /// `place` must be a reduced dyad from the store.
 unsafe fn cell_drop(types: &Core, place: DyadPtr) -> Option<DyadPtr> {
-    if (*place).ty != types.deref_ {
+    if dyad::ty(place) != types.deref_ {
         return None;
     }
     let (_, pointee, _) = super::pointer::deref_parts(place);
@@ -433,7 +434,7 @@ fn build_inert_drop(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr 
 fn lower_drop(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a `drop` node `[place, pointee, op]` or `[place, drop, op]`.
     let (place, pointee, op) = unsafe {
-        let slots = (*node).value as *const DyadPtr;
+        let slots = dyad::value(node) as *const DyadPtr;
         (*slots, *slots.add(TEARDOWN_POINTEE), *slots.add(2))
     };
     if pointee.is_null() {
@@ -470,7 +471,7 @@ unsafe extern "C" fn compiled_instance_drop(
 fn lower_own(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is an `own` node `[place, pointee, op]`; the place holds an address.
     unsafe {
-        let place = *((*node).value as *const DyadPtr).add(TEARDOWN_PLACE);
+        let place = *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_PLACE);
         let held = lw.read_place(place, types::I64)?;
         let empty = lw.const_i64(0);
         lw.write_place(place, types::I64, empty)?;
@@ -486,7 +487,7 @@ pub(crate) fn build_defer(store: &mut Store, types: &Core, inner: DyadPtr) -> Dy
 /// # Safety
 /// `node` must be a `defer` node from `build_defer`.
 pub(crate) unsafe fn deferred_inner_of(node: DyadPtr) -> DyadPtr {
-    *((*node).value as *const DyadPtr).add(DEFER_INNER)
+    *(dyad::value(node) as *const DyadPtr).add(DEFER_INNER)
 }
 
 /// The place an inserted `defer free <place>` frees; the escape check compares a scope's
@@ -496,7 +497,7 @@ pub(crate) unsafe fn deferred_inner_of(node: DyadPtr) -> DyadPtr {
 /// `defer_node` must be a `defer` node over a teardown, as the binding site builds.
 pub(crate) unsafe fn teardown_place_of(defer_node: DyadPtr) -> DyadPtr {
     let inner = deferred_inner_of(defer_node);
-    *((*inner).value as *const DyadPtr).add(TEARDOWN_PLACE)
+    *(dyad::value(inner) as *const DyadPtr).add(TEARDOWN_PLACE)
 }
 
 /// What a bound owning pointer points at, so the binding site can mint its owning
@@ -506,12 +507,12 @@ pub(crate) unsafe fn teardown_place_of(defer_node: DyadPtr) -> DyadPtr {
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn owning_pointee_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
     let node = types.through(node);
-    let logos = (*node).ty;
+    let logos = dyad::ty(node);
     if logos == types.alloc_ {
-        Some(*((*node).value as *const DyadPtr).add(ALLOC_POINTEE))
+        Some(*(dyad::value(node) as *const DyadPtr).add(ALLOC_POINTEE))
     } else if logos == types.own_ {
         // A move of a node carries the node's type there, and owns no pointer.
-        let pointee = *((*node).value as *const DyadPtr).add(TEARDOWN_POINTEE);
+        let pointee = *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_POINTEE);
         (!meta::is_node_valued(pointee, types.fn_type)).then_some(pointee)
     } else if let Some(output) = moving_call_output(types, node) {
         numtype::is_pointer_type(output).then(|| numtype::pointee_of(output))
@@ -535,10 +536,10 @@ unsafe fn moving_call_output(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
     let Read::Executable(Dispatch::Call(f)) = read_kind(types, node) else {
         return None;
     };
-    if (*f).ty != types.fn_type || (*f).value.is_null() {
+    if dyad::ty(f) != types.fn_type || dyad::value(f).is_null() {
         return None;
     }
-    let fields = (*f).value as *const DyadPtr;
+    let fields = dyad::value(f) as *const DyadPtr;
     let body = *fields.add(crate::parse::FN_BODY);
     (!body.is_null() && moves_out_within(types, body, 1))
         .then(|| *fields.add(crate::parse::FN_OUTPUT))
@@ -565,7 +566,7 @@ unsafe fn moves_out_within(types: &Core, node: DyadPtr, depth: usize) -> bool {
         return false;
     }
     let node = types.through(node);
-    let logos = (*node).ty;
+    let logos = dyad::ty(node);
     if logos == types.alloc_ || logos == types.own_ || logos == types.this.copy {
         return true;
     }
@@ -580,14 +581,14 @@ unsafe fn moves_out_within(types: &Core, node: DyadPtr, depth: usize) -> bool {
         super::read::read_kind(types, node)
     {
         // A call a type's own `parse` placed on its fresh node, yielding that node.
-        let args = (*node).value as *const DyadPtr;
-        if !args.is_null() && !(*args).is_null() && (**args).ty == types.this.copy {
-            let template = *((**args).value as *const DyadPtr);
-            let fields = (*f).value as *const DyadPtr;
-            return !fields.is_null() && *fields.add(crate::parse::FN_OUTPUT) == (*template).ty;
+        let args = dyad::value(node) as *const DyadPtr;
+        if !args.is_null() && !(*args).is_null() && dyad::ty(*args) == types.this.copy {
+            let template = *(dyad::value(*args) as *const DyadPtr);
+            let fields = dyad::value(f) as *const DyadPtr;
+            return !fields.is_null() && *fields.add(crate::parse::FN_OUTPUT) == dyad::ty(template);
         }
-        if (*f).ty == types.fn_type && !(*f).value.is_null() {
-            let body = *((*f).value as *const DyadPtr).add(crate::parse::FN_BODY);
+        if dyad::ty(f) == types.fn_type && !dyad::value(f).is_null() {
+            let body = *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_BODY);
             return !body.is_null() && moves_out_within(types, body, depth + 1);
         }
     }
@@ -606,7 +607,7 @@ pub(crate) unsafe fn is_owning_value(types: &Core, node: DyadPtr) -> bool {
 fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an `alloc` node `[pointee, count, init, op]` from the store.
     unsafe {
-        let slots = (*node).value as *const DyadPtr;
+        let slots = dyad::value(node) as *const DyadPtr;
         let pointee = *slots.add(ALLOC_POINTEE);
         let count = rt.run(*slots.add(ALLOC_COUNT))?;
         if count < 0 {
@@ -639,7 +640,7 @@ fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 fn run_teardown(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `[place, pointee, op]` teardown node from the store.
     unsafe {
-        let slots = (*node).value as *const DyadPtr;
+        let slots = dyad::value(node) as *const DyadPtr;
         let place = *slots.add(TEARDOWN_PLACE);
         let slot = rt.place_addr(place).ok_or(RunError::NoActivation)?;
         if slot.is_null() {
@@ -667,12 +668,12 @@ fn run_drop(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `drop` node; in the owning form its place's type carries a
     // destructor whose entry is a `RunFn` over this node's layout.
     unsafe {
-        let slots = (*node).value as *const DyadPtr;
+        let slots = dyad::value(node) as *const DyadPtr;
         if (*slots.add(TEARDOWN_POINTEE)).is_null() {
             return Ok(0);
         }
         let place = *slots.add(TEARDOWN_PLACE);
-        let dtor = meta::destructor_of((*place).ty);
+        let dtor = meta::destructor_of(dyad::ty(place));
         if dtor.is_null() || !callable::is_callable(dtor) {
             return Err(RunError::NoDestructor(place));
         }
@@ -686,7 +687,7 @@ fn run_instance_drop(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `[place, drop, op]` node from `build_instance_drop`; the place
     // holds a node's address or the null an earlier teardown or move left.
     unsafe {
-        let slots = (*node).value as *const DyadPtr;
+        let slots = dyad::value(node) as *const DyadPtr;
         let place = *slots.add(TEARDOWN_PLACE);
         let slot = owned_slot(rt, place)?;
         if slot.is_null() {
@@ -707,11 +708,11 @@ fn run_field_free(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `[field read, pointee, op]` node from `build_field_free`; the node
     // a filled slot holds keeps the pointer in its eight value bytes.
     unsafe {
-        let read = *((*node).value as *const DyadPtr).add(TEARDOWN_PLACE);
+        let read = *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_PLACE);
         let Some(held) = super::this::field_node(rt, read)? else {
             return Ok(0);
         };
-        let bytes = (*held).value as *mut i64;
+        let bytes = dyad::value(held) as *mut i64;
         let ptr = std::ptr::read_unaligned(bytes) as u64 as *mut u8;
         if ptr.is_null() {
             return Ok(0);
@@ -729,7 +730,7 @@ fn run_field_free(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 /// # Safety
 /// `place` must be the place operand of an `own` or `drop` node.
 unsafe fn owned_slot(rt: &mut Runtime, place: DyadPtr) -> Result<*mut u8, RunError> {
-    if (*place).ty == rt.types().deref_ {
+    if dyad::ty(place) == rt.types().deref_ {
         return super::pointer::deref_addr(rt, place);
     }
     if super::this::is_field_read(rt.types(), place) {
@@ -742,7 +743,7 @@ unsafe fn owned_slot(rt: &mut Runtime, place: DyadPtr) -> Result<*mut u8, RunErr
 fn run_own(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an `own` node `[place, pointee, op]` from the store.
     unsafe {
-        let place = *((*node).value as *const DyadPtr).add(TEARDOWN_PLACE);
+        let place = *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_PLACE);
         let slot = owned_slot(rt, place)?;
         if slot.is_null() {
             return Err(RunError::Uninitialized);
@@ -1070,12 +1071,12 @@ mod tests {
         };
         // SAFETY: `scope` is a sequence node; its body is an array of exprs.
         unsafe {
-            let arr = *((*scope).value as *const DyadPtr);
+            let arr = *(dyad::value(scope) as *const DyadPtr);
             let exprs = crate::identities::array::items(arr);
-            let defer = exprs.iter().find(|&&e| (*e).ty == core.defer_);
+            let defer = exprs.iter().find(|&&e| dyad::ty(e) == core.defer_);
             assert!(defer.is_some(), "an inserted defer node is in the scope body");
             let inner = deferred_inner_of(*defer.unwrap());
-            assert_eq!((*inner).ty, core.free_, "it defers a free");
+            assert_eq!(dyad::ty(inner), core.free_, "it defers a free");
             let _ = crate::reflect::describe(types, *defer.unwrap());
         }
     }
@@ -1096,16 +1097,16 @@ mod tests {
         };
         // SAFETY: the scope body holds the inserted `defer free a`, whose place slot is `a`.
         unsafe {
-            let arr = *((*scope).value as *const DyadPtr);
+            let arr = *(dyad::value(scope) as *const DyadPtr);
             let exprs = crate::identities::array::items(arr);
             let defer = *exprs
                 .iter()
-                .find(|&&e| (*e).ty == core.defer_)
+                .find(|&&e| dyad::ty(e) == core.defer_)
                 .expect("the binding inserted a defer");
             let a = teardown_place_of(defer);
-            assert!(numtype::is_pointer_type((*a).ty), "a is a pointer place");
+            assert!(numtype::is_pointer_type(dyad::ty(a)), "a is a pointer place");
             assert!(
-                !meta::destructor_of((*a).ty).is_null(),
+                !meta::destructor_of(dyad::ty(a)).is_null(),
                 "an owning pointer's logos carries the destructor"
             );
         }

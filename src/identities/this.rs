@@ -13,6 +13,7 @@ use super::callable::{self, Callables};
 use super::numtype::{read_scalar_nt, write_scalar_nt, NumType};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
@@ -131,7 +132,7 @@ pub(crate) fn build_copy(store: &mut Store, types: &Core, template: DyadPtr) -> 
 pub(crate) unsafe fn empty_node(store: &mut Store, ty: DyadPtr) -> DyadPtr {
     let mut slots: Vec<DyadPtr> = super::array::items(meta::record_fields_of(ty))
         .iter()
-        .map(|&field| if (*field).value.is_null() { std::ptr::null_mut() } else { field })
+        .map(|&field| if dyad::value(field).is_null() { std::ptr::null_mut() } else { field })
         .collect();
     slots.extend([std::ptr::null_mut(); 2]);
     let value = store.alloc_operands(&slots);
@@ -185,7 +186,7 @@ pub(crate) fn build_load(
 /// # Safety
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn is_field_read(types: &Core, node: DyadPtr) -> bool {
-    (*node).ty == types.this.slot || (*node).ty == types.this.load
+    dyad::ty(node) == types.this.slot || dyad::ty(node) == types.this.load
 }
 
 /// The binding of the field a read reaches, null for a read built at run.
@@ -193,8 +194,8 @@ pub(crate) unsafe fn is_field_read(types: &Core, node: DyadPtr) -> bool {
 /// # Safety
 /// `read` must be a node `is_field_read` accepts.
 pub(crate) unsafe fn field_binding_of(types: &Core, read: DyadPtr) -> DyadPtr {
-    let ops = (*read).value as *const DyadPtr;
-    *ops.add(if (*read).ty == types.this.slot { 2 } else { 3 })
+    let ops = dyad::value(read) as *const DyadPtr;
+    *ops.add(if dyad::ty(read) == types.this.slot { 2 } else { 3 })
 }
 
 /// Whether the type's own `parse` built the read.
@@ -202,8 +203,8 @@ pub(crate) unsafe fn field_binding_of(types: &Core, read: DyadPtr) -> DyadPtr {
 /// # Safety
 /// `read` must be a node `is_field_read` accepts.
 pub(crate) unsafe fn is_fill(types: &Core, read: DyadPtr) -> bool {
-    let ops = (*read).value as *const DyadPtr;
-    *ops.add(if (*read).ty == types.this.slot { 3 } else { 4 }) == types.this.fill
+    let ops = dyad::value(read) as *const DyadPtr;
+    *ops.add(if dyad::ty(read) == types.this.slot { 3 } else { 4 }) == types.this.fill
 }
 
 /// The field's declared type, for a read of a number or pointer field.
@@ -211,7 +212,7 @@ pub(crate) unsafe fn is_fill(types: &Core, read: DyadPtr) -> bool {
 /// # Safety
 /// `read` must be a node `is_field_read` accepts.
 pub(crate) unsafe fn load_type(types: &Core, read: DyadPtr) -> Option<DyadPtr> {
-    ((*read).ty == types.this.load).then(|| *((*read).value as *const DyadPtr).add(2))
+    (dyad::ty(read) == types.this.load).then(|| *(dyad::value(read) as *const DyadPtr).add(2))
 }
 
 /// A number or pointer field takes the value the right side yields, molded to the
@@ -226,7 +227,7 @@ pub(crate) unsafe fn build_write(
     read: DyadPtr,
     value: DyadPtr,
 ) -> Result<DyadPtr, crate::parse::ParseError> {
-    let ops = (*read).value as *const DyadPtr;
+    let ops = dyad::value(read) as *const DyadPtr;
     let (this, k) = (*ops, *ops.add(1));
     if let Some(ty) = load_type(types, read) {
         // The slot holds the node the right side yields, its address, never the expression.
@@ -271,10 +272,10 @@ unsafe fn field_of(rt: &mut Runtime, ops: *const DyadPtr) -> Result<Field, RunEr
     if this.is_null() {
         return Err(RunError::NoThis);
     }
-    if crate::dyad::is_place((*this).value) {
+    if crate::dyad::is_place(dyad::value(this)) {
         let bytes = rt.place_addr(this).ok_or(RunError::NoActivation)?;
         let k = rt.run(*ops.add(1))?;
-        let (fields, _) = super::instance::layout((*this).ty).map_err(|_| RunError::NoThis)?;
+        let (fields, _) = super::instance::layout(dyad::ty(this)).map_err(|_| RunError::NoThis)?;
         let &(_, nt, offset) =
             usize::try_from(k).ok().and_then(|k| fields.get(k)).ok_or(RunError::BadIndex(k))?;
         return Ok(Field::Bytes(bytes.add(offset), nt));
@@ -282,7 +283,7 @@ unsafe fn field_of(rt: &mut Runtime, ops: *const DyadPtr) -> Result<Field, RunEr
     if rt.unstamped(this) {
         return Err(RunError::FieldBeforeStamp);
     }
-    let slots = (*this).value as *mut DyadPtr;
+    let slots = dyad::value(this) as *mut DyadPtr;
     if slots.is_null() {
         return Err(RunError::NoThis);
     }
@@ -312,7 +313,7 @@ pub(crate) unsafe fn field_node(
     rt: &mut Runtime,
     read: DyadPtr,
 ) -> Result<Option<DyadPtr>, RunError> {
-    let (slot, _) = slot_of(rt, (*read).value as *const DyadPtr)?;
+    let (slot, _) = slot_of(rt, dyad::value(read) as *const DyadPtr)?;
     Ok((!(*slot).is_null()).then_some(*slot))
 }
 
@@ -321,13 +322,13 @@ pub(crate) unsafe fn field_node(
 /// # Safety
 /// As `field_node`.
 pub(crate) unsafe fn slot_addr(rt: &mut Runtime, read: DyadPtr) -> Result<*mut u8, RunError> {
-    Ok(slot_of(rt, (*read).value as *const DyadPtr)?.0 as *mut u8)
+    Ok(slot_of(rt, dyad::value(read) as *const DyadPtr)?.0 as *mut u8)
 }
 
 fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a slot node from the store; its value holds a node with a slot per field.
     unsafe {
-        let ops = (*node).value as *const DyadPtr;
+        let ops = dyad::value(node) as *const DyadPtr;
         let (slot, k) = slot_of(rt, ops)?;
         if (*slot).is_null() {
             return Err(RunError::UnfilledField(k));
@@ -341,7 +342,7 @@ fn run_load(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: as `run_slot`; the node a slot holds is one this file or a constructor stored,
     // a record's bytes are its layout's.
     unsafe {
-        let ops = (*node).value as *const DyadPtr;
+        let ops = dyad::value(node) as *const DyadPtr;
         match field_of(rt, ops)? {
             Field::Bytes(addr, nt) => Ok(read_scalar_nt(nt, addr)),
             Field::Slot(slot, k) if (*slot).is_null() => Err(RunError::UnfilledField(k)),
@@ -354,7 +355,7 @@ fn run_load(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 fn run_store(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: as `run_load`; the type operand is a number or pointer type node.
     unsafe {
-        let ops = (*node).value as *const DyadPtr;
+        let ops = dyad::value(node) as *const DyadPtr;
         let field = field_of(rt, ops)?;
         let bits = rt.run(*ops.add(2))?;
         match field {
@@ -375,7 +376,7 @@ fn run_store(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 fn run_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: as `run_slot`; the value operand is a reduced dyad.
     unsafe {
-        let ops = (*node).value as *const DyadPtr;
+        let ops = dyad::value(node) as *const DyadPtr;
         let (slot, _) = slot_of(rt, ops)?;
         let value = rt.run(*ops.add(2))? as DyadPtr;
         *slot = value;
@@ -385,13 +386,13 @@ fn run_write(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 
 fn run_copy(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a copy node from `build_copy`.
-    unsafe { Ok(copy_of(rt.store(), *((*node).value as *const DyadPtr)) as i64) }
+    unsafe { Ok(copy_of(rt.store(), *(dyad::value(node) as *const DyadPtr)) as i64) }
 }
 
 /// The template is baked; the new node is the store's, so the step calls back into the seed.
 fn lower_copy(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a copy node from `build_copy`.
-    let template = unsafe { *((*node).value as *const DyadPtr) };
+    let template = unsafe { *(dyad::value(node) as *const DyadPtr) };
     let template = lw.node_addr(template);
     Ok(lw.call_seed(compiled_copy as *const () as usize, &[template]))
 }
@@ -407,9 +408,9 @@ unsafe extern "C" fn compiled_copy(ctx: *mut crate::run::Context, template: Dyad
 /// # Safety
 /// `template` must be a node `run_logos_ctor` minted, `[field…, null, spec]`.
 unsafe fn copy_of(store: &mut Store, template: DyadPtr) -> DyadPtr {
-    let ty = (*template).ty;
+    let ty = dyad::ty(template);
     let n = super::array::items(meta::record_fields_of(ty)).len() + 2;
-    let slots = std::slice::from_raw_parts((*template).value as *const DyadPtr, n).to_vec();
+    let slots = std::slice::from_raw_parts(dyad::value(template) as *const DyadPtr, n).to_vec();
     let value = store.alloc_operands(&slots);
     store.alloc_raw(ty, value)
 }
@@ -445,7 +446,7 @@ unsafe fn pack_of(
         .iter()
         .zip(bits)
         .map(|(&place, &b)| {
-            let pty = (*place).ty;
+            let pty = dyad::ty(place);
             match (!pty.is_null()).then(|| place_layout(types, pty)).flatten() {
                 Some((Read::Scalar(_) | Read::Pointer(_), width)) => {
                     let storage = store.alloc_bytes(&b.to_ne_bytes()[..width]);
@@ -463,7 +464,7 @@ unsafe fn pack_of(
 fn run_pack(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a pack node from `build_pack`, `[type, places, op]`.
     unsafe {
-        let ops = (*node).value as *const DyadPtr;
+        let ops = dyad::value(node) as *const DyadPtr;
         let (ty, places) = (*ops, super::array::items(*ops.add(1)));
         let bits = places.iter().map(|&p| rt.run(p)).collect::<Result<Vec<_>, _>>()?;
         let types: *const Core = rt.types();
@@ -476,11 +477,11 @@ fn lower_pack(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     use cranelift_codegen::ir::types;
     // SAFETY: `node` is a pack node from `build_pack`; its places are the run's frame places.
     unsafe {
-        let ops = (*node).value as *const DyadPtr;
+        let ops = dyad::value(node) as *const DyadPtr;
         let (ty, arr) = (*ops, *ops.add(1));
         let mut values = Vec::new();
         for &place in super::array::items(arr) {
-            let pty = (*place).ty;
+            let pty = dyad::ty(place);
             values.push(if super::numtype::is_scalar_type(pty) {
                 let nt = super::numtype::of_type_node(pty);
                 let v = lw.read_place(place, nt.cranelift_type())?;
@@ -533,7 +534,7 @@ fn receiver(store: &mut Store, ty: DyadPtr, bytes: *mut u8) -> DyadPtr {
 fn run_on_record(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a node from `build_on_record`, `[type, record, op]`.
     unsafe {
-        let ops = (*node).value as *const DyadPtr;
+        let ops = dyad::value(node) as *const DyadPtr;
         let bytes = super::by_copy::record_addr(rt, *ops.add(1))?;
         Ok(receiver(rt.store(), *ops, bytes) as i64)
     }
@@ -542,7 +543,7 @@ fn run_on_record(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 fn lower_on_record(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: as `run_on_record`.
     unsafe {
-        let ops = (*node).value as *const DyadPtr;
+        let ops = dyad::value(node) as *const DyadPtr;
         let bytes = super::by_copy::lower_record_addr(lw, *ops.add(1))?;
         let ty = lw.node_addr(*ops);
         Ok(lw.call_seed(compiled_on_record as *const () as usize, &[ty, bytes]))
