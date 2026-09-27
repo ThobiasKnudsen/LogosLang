@@ -2961,6 +2961,28 @@ impl<'a> Parser<'a> {
         if let Some(ty) = leading {
             fields.push(self.rt.store.alloc_raw(ty, std::ptr::null_mut()));
         }
+        let lines = self.field_lines(relaxed, scope, &mut fields);
+
+        self.cx.scopes.pop();
+        lines?;
+        if !relaxed {
+            self.expect_close()?;
+        }
+
+        // Fields pack in declaration order at the width rule parameters claim
+        // frame offsets by.
+        // SAFETY: each field is the dyad just built, its type null or a type node.
+        let size_bytes: u64 = fields.iter().map(|&f| unsafe { field_width((*f).ty) }).sum();
+        let fields_arr = crate::identities::array::build(self.rt.store, self.types.array_, &fields);
+        Ok((scope, fields_arr, size_bytes))
+    }
+
+    fn field_lines(
+        &mut self,
+        relaxed: bool,
+        scope: DyadPtr,
+        fields: &mut Vec<DyadPtr>,
+    ) -> Result<(), ParseError> {
         loop {
             if self.at_close() {
                 break;
@@ -3136,18 +3158,7 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
-
-        self.cx.scopes.pop();
-        if !relaxed {
-            self.expect_close()?;
-        }
-
-        // Fields pack in declaration order at the width rule parameters claim
-        // frame offsets by.
-        // SAFETY: each field is the dyad just built, its type null or a type node.
-        let size_bytes: u64 = fields.iter().map(|&f| unsafe { field_width((*f).ty) }).sum();
-        let fields_arr = crate::identities::array::build(self.rt.store, self.types.array_, &fields);
-        Ok((scope, fields_arr, size_bytes))
+        Ok(())
     }
 
     /// `share name := value` in a type body: one place stored with the type,
@@ -3371,8 +3382,10 @@ impl<'a> Parser<'a> {
         for (name, &marker) in SLOT_NAMES.iter().zip(&slots) {
             let binding = self.mint_binding(marker, words, name.as_bytes());
             // SAFETY: `binding` was minted by `Binding::alloc` just above.
-            unsafe { self.cx.scopes.declare_field(self.trie, name, binding) }
-                .map_err(ParseError::Resolve)?;
+            if let Err(e) = unsafe { self.cx.scopes.declare_field(self.trie, name, binding) } {
+                self.cx.scopes.pop();
+                return Err(ParseError::Resolve(e));
+            }
         }
         let head = crate::identities::meta::record(
             self.rt.store,
@@ -4488,14 +4501,13 @@ impl<'a> Parser<'a> {
         self.cx.scopes.push_barrier();
         self.cx.scopes.push(scope);
         self.cx.runtime_depth += 1;
-        self.expect_open()?;
-        let body = self.parse_sequence()?;
-        self.expect_close()?;
+        let body = self.bracketed_body();
         self.cx.runtime_depth -= 1;
         self.cx.scopes.pop();
         self.cx.scopes.pop_barrier();
         let OpenFn { size: frame_size, outer, returns, .. } =
             self.cx.frames.pop().expect("parse_fn pushed a frame");
+        let body = body?;
 
         // A comptime-rational tail commits to the declared return type here,
         // so `fn () -> i64 (…)` returns i64 rather than the i32 default.
@@ -4584,23 +4596,25 @@ impl<'a> Parser<'a> {
         self.cx.narrow_next = check.filter(|&(_, _, holds)| holds).map(|(key, ty, _)| (key, ty));
         let then = self.parse_branch();
         self.cx.narrow_next = None;
-        let then = then?;
-
         // `else if …` is sugar: the `if` right after `else` becomes the
         // else-branch directly, so a chain nests right-associatively.
-        let els = if self.consume_else() {
-            if self.consume_token(self.types.if_) {
-                self.parse_if(if_type)?
+        let branches = then.and_then(|then| {
+            let els = if self.consume_else() {
+                if self.consume_token(self.types.if_) {
+                    self.parse_if(if_type)
+                } else {
+                    self.cx.narrow_next =
+                        check.filter(|&(_, _, holds)| !holds).map(|(key, ty, _)| (key, ty));
+                    self.parse_branch()
+                }
             } else {
-                self.cx.narrow_next =
-                    check.filter(|&(_, _, holds)| !holds).map(|(key, ty, _)| (key, ty));
-                self.parse_branch()?
-            }
-        } else {
-            std::ptr::null_mut()
-        };
+                Ok(std::ptr::null_mut())
+            };
+            els.map(|els| (then, els))
+        });
         self.cx.narrow_next = None;
         self.cx.runtime_depth -= 1;
+        let (then, els) = branches?;
 
         // A `!=` check whose branch raises leaves the cell checked for the rest of the scope.
         if let Some((key, ty, false)) = check {
@@ -4615,14 +4629,18 @@ impl<'a> Parser<'a> {
         Ok(self.rt.store.alloc_raw(if_type, value))
     }
 
+    fn bracketed_body(&mut self) -> Result<DyadPtr, ParseError> {
+        self.expect_open()?;
+        let body = self.parse_sequence()?;
+        self.expect_close()?;
+        Ok(body)
+    }
+
     /// A branch of `if`, or a `while` body: a bracket, or the next expression,
     /// which ends before an `else` (DESIGN ›Expressions are self-delimiting‹).
     fn parse_branch(&mut self) -> Result<DyadPtr, ParseError> {
         if self.at_open() {
-            self.expect_open()?;
-            let body = self.parse_sequence()?;
-            self.expect_close()?;
-            return Ok(body);
+            return self.bracketed_body();
         }
         // A bare branch is a scope as a bracket is, holding one expression.
         self.skip_whitespace();
@@ -4883,16 +4901,18 @@ impl<'a> Parser<'a> {
         self.cx.scopes.push(scope);
         // Parse-time rebinding is off inside a repeated body, the counter's name included.
         self.cx.runtime_depth += 1;
-        if let Some((nstart, nlen)) = name {
-            let source = self.cx.source;
-            self.declare_name(&source[nstart..nstart + nlen], var, nstart)?;
-        }
-        self.expect_open()?;
-        let body = self.parse_sequence()?;
-        self.expect_close()?;
+        let body = match name {
+            Some((nstart, nlen)) => {
+                let source = self.cx.source;
+                self.declare_name(&source[nstart..nstart + nlen], var, nstart)
+                    .and_then(|_| self.bracketed_body())
+            }
+            None => self.bracketed_body(),
+        };
         self.cx.runtime_depth -= 1;
         self.cx.scopes.pop();
         self.cx.scopes.pop_barrier();
+        let body = body?;
         // SAFETY: `body` is the reduced dyad just parsed.
         if self.cx.frames.is_empty() && unsafe { contains_return(types, body) } {
             return Err(ParseError::EarlyReturn);
@@ -6189,7 +6209,14 @@ impl<'a> Parser<'a> {
         self.cx.open.push(OpenScope { narrowed, ..OpenScope::default() });
         let array_ = self.types.array_;
         while let Some(item) = self.parse_next() {
-            let item = item?;
+            let item = match item {
+                Ok(item) => item,
+                Err(e) => {
+                    self.cx.scopes.pop();
+                    self.cx.open.pop();
+                    return Err(e);
+                }
+            };
             // SAFETY: the pending bindings were minted by this parser's declares;
             // `scope` is the innermost open scope, minted by `open_scope` above.
             unsafe { self.cx.scopes.close_item(self.rt.store, array_, item) };
@@ -6506,7 +6533,10 @@ impl<'a> Parser<'a> {
             };
             let mut items = match self.construct_segment(&mut tape) {
                 Ok(items) => items,
-                Err(e) => return Some(Err(e)),
+                Err(e) => {
+                    self.cx.lifted.clear();
+                    return Some(Err(e));
+                }
             };
             // The `,` is consumed once the segment before it is constructed; a
             // `,` where nothing stands is purely for the reader.
@@ -6515,6 +6545,7 @@ impl<'a> Parser<'a> {
             }
             if items.len() > 1 {
                 self.cx.pos = items[1].1;
+                self.cx.lifted.clear();
                 return Some(Err(ParseError::Trailing));
             }
             if let Some(&(item, _)) = items.first() {
