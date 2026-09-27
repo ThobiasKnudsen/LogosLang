@@ -392,7 +392,7 @@ fn run_copy(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 fn lower_copy(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a copy node from `build_copy`.
     let template = unsafe { *((*node).value as *const DyadPtr) };
-    let template = lw.const_i64(template as i64);
+    let template = lw.node_addr(template);
     Ok(lw.call_seed(compiled_copy as *const () as usize, &[template]))
 }
 
@@ -490,7 +490,7 @@ fn lower_pack(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
             });
         }
         let argv = lw.spill(&values);
-        let (ty, arr) = (lw.const_i64(ty as i64), lw.const_i64(arr as i64));
+        let (ty, arr) = (lw.node_addr(ty), lw.node_addr(arr));
         Ok(lw.call_seed(compiled_pack as *const () as usize, &[ty, arr, argv]))
     }
 }
@@ -544,7 +544,7 @@ fn lower_on_record(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileErro
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         let bytes = super::by_copy::lower_record_addr(lw, *ops.add(1))?;
-        let ty = lw.const_i64(*ops as i64);
+        let ty = lw.node_addr(*ops);
         Ok(lw.call_seed(compiled_on_record as *const () as usize, &[ty, bytes]))
     }
 }

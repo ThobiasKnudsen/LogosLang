@@ -447,7 +447,7 @@ fn lower_drop(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         let this = lw.read_place(place, types::I64)?;
         let empty = lw.const_i64(0);
         lw.write_place(place, types::I64, empty)?;
-        let drop = lw.const_i64(pointee as i64);
+        let drop = lw.node_addr(pointee);
         Ok(lw.call_seed(compiled_instance_drop as *const () as usize, &[this, drop]))
     }
 }

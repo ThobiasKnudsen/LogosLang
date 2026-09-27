@@ -163,10 +163,9 @@ impl Lowerer<'_, '_> {
             },
             Read::Executable(Dispatch::None) => Err(CompileError::NotLowerable(op)),
             Read::Unit => Ok(self.const_i32(0)),
-            // An identity's address is baked: identities and the code baking
-            // them are both per-run.
-            Read::Identity | Read::Node => Ok(self.builder.ins().iconst(types::I64, node as i64)),
-            Read::Address => Ok(self.builder.ins().iconst(types::I64, (*node).value as i64)),
+            Read::Identity | Read::Node => Ok(self.node_addr(node)),
+            // A view's value is the viewed node.
+            Read::Address => Ok(self.node_addr((*node).value.cast())),
             Read::Container(t) if t == self.types.rational => Err(CompileError::NotLowerable(node)),
             Read::Container(_) => self.read_place(node, types::I64),
             Read::Literal => match crate::identities::rational::mold(node) {
@@ -196,6 +195,12 @@ impl Lowerer<'_, '_> {
 
     pub(crate) fn const_i64(&mut self, v: i64) -> Value {
         self.builder.ins().iconst(types::I64, v)
+    }
+
+    /// A node as machine code holds it, in the `i64` container: the one seam every
+    /// node bake goes through. Baked, since nodes and the code baking them are both per-run.
+    pub(crate) fn node_addr(&mut self, node: DyadPtr) -> Value {
+        self.builder.ins().iconst(types::I64, node as i64)
     }
 
     /// The reading rule over an operand: a binding operand yields the dyad it names.
@@ -958,7 +963,7 @@ impl Lowerer<'_, '_> {
         } else {
             let bcode = *fields.add(FN_BCODE);
             if bcode.is_null() {
-                let fn_node = self.builder.ins().iconst(self.ptr_ty, callee as i64);
+                let fn_node = self.node_addr(callee);
                 let entry = crate::run::interpret_call as *const () as usize;
                 let r = self.call_seed(entry, &[fn_node, argc, argv]);
                 return Ok(match ret {
