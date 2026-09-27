@@ -1541,13 +1541,10 @@ pub struct Parser<'a> {
     owning_holes: HashSet<DyadPtr>,
     /// The field reads whose field carries `own`.
     owning_reads: HashSet<DyadPtr>,
-    /// Each name `?` left unwritten whose type has fields: the fields not yet written
-    /// (DESIGN ›Declarations are immutable by default‹, one field at a time).
-    unwritten_fields: HashMap<DyadPtr, Vec<usize>>,
     /// A field write's node, with the name and the field it fills.
-    field_writes: HashMap<DyadPtr, (DyadPtr, usize)>,
+    field_writes: HashMap<DyadPtr, (DyadPtr, DyadPtr)>,
     /// The field node `v.f` built as a write's target, with the name and the field.
-    field_targets: HashMap<DyadPtr, (DyadPtr, usize)>,
+    field_targets: HashMap<DyadPtr, (DyadPtr, DyadPtr)>,
     /// Each type of node values, and the run type whose node builds one from a bracket;
     /// stand-in for #152.
     bracket_builders: HashMap<DyadPtr, DyadPtr>,
@@ -1817,7 +1814,6 @@ impl<'a> Parser<'a> {
             holes: HashSet::new(),
             owning_holes: HashSet::new(),
             owning_reads: HashSet::new(),
-            unwritten_fields: HashMap::new(),
             field_writes: HashMap::new(),
             field_targets: HashMap::new(),
             imports: Imports::default(),
@@ -6341,7 +6337,8 @@ impl<'a> Parser<'a> {
             return Ok(());
         }
         // `v.f`: the field read or write decides, one field at a time.
-        if self.unwritten_fields.contains_key(&binding)
+        // SAFETY: as above.
+        if !unsafe { Binding::read(binding) }.unwritten.is_null()
             && matches!(self.peek_token(), Some((t, _)) if t == self.types.dot_)
         {
             return Ok(());
@@ -6416,16 +6413,21 @@ impl<'a> Parser<'a> {
             return;
         }
         if let Some((binding, field)) = self.field_writes.remove(&item) {
-            if Binding::read(binding).scope != scope {
+            let rec = Binding::read(binding);
+            if rec.scope != scope || rec.unwritten.is_null() {
                 return;
             }
-            let Some(unwritten) = self.unwritten_fields.get_mut(&binding) else {
-                return;
-            };
-            unwritten.retain(|&f| f != field);
-            if unwritten.is_empty() {
-                self.unwritten_fields.remove(&binding);
+            let left: Vec<DyadPtr> = crate::identities::array::items(rec.unwritten)
+                .iter()
+                .copied()
+                .filter(|&f| f != field)
+                .collect();
+            if left.is_empty() {
+                Binding::set_unwritten(binding, std::ptr::null_mut());
                 Binding::remove_gate(self.rt.store, self.types.array_, binding, self.types.unknown);
+            } else {
+                let arr = crate::identities::array::build(self.rt.store, self.types.array_, &left);
+                Binding::set_unwritten(binding, arr);
             }
             return;
         }
@@ -6438,7 +6440,7 @@ impl<'a> Parser<'a> {
             return;
         }
         Binding::remove_gate(self.rt.store, self.types.array_, target, self.types.unknown);
-        self.unwritten_fields.remove(&target);
+        Binding::set_unwritten(target, std::ptr::null_mut());
     }
 
     /// `v := T ?` of a type with fields: each field waits for its own write, those with a
@@ -6448,15 +6450,16 @@ impl<'a> Parser<'a> {
     /// `binding` must be a binding dyad from the store; `t` a record type.
     unsafe fn leave_fields_unwritten(&mut self, binding: DyadPtr, t: DyadPtr, defaults: bool) {
         let fields = crate::identities::array::items(crate::identities::meta::record_fields_of(t));
-        let unwritten: Vec<usize> =
-            (0..fields.len()).filter(|&i| !defaults || (*fields[i]).value.is_null()).collect();
+        let unwritten: Vec<DyadPtr> =
+            fields.iter().copied().filter(|&f| !defaults || (*f).value.is_null()).collect();
         if unwritten.is_empty() {
             return;
         }
         if !Binding::has_gate(binding, self.types.unknown) {
             Binding::add_gate(self.rt.store, self.types.array_, binding, self.types.unknown);
         }
-        self.unwritten_fields.insert(binding, unwritten);
+        let arr = crate::identities::array::build(self.rt.store, self.types.array_, &unwritten);
+        Binding::set_unwritten(binding, arr);
     }
 
     /// `v.f` where `v` is a name `?` left with fields unwritten: a write of `f` is let
@@ -6470,10 +6473,14 @@ impl<'a> Parser<'a> {
         lhs: DyadPtr,
         name: &str,
         writes: bool,
-    ) -> Result<Option<(DyadPtr, usize)>, ParseError> {
-        let Some(unwritten) = self.unwritten_fields.get(&root) else {
+    ) -> Result<Option<(DyadPtr, DyadPtr)>, ParseError> {
+        if root.is_null() {
             return Ok(None);
-        };
+        }
+        let unwritten = Binding::read(root).unwritten;
+        if unwritten.is_null() {
+            return Ok(None);
+        }
         let t = (*lhs).ty;
         let mut scope = ScopeStack::new();
         scope.push(crate::identities::meta::record_scope_of(t));
@@ -6481,14 +6488,14 @@ impl<'a> Parser<'a> {
         let Some(field) = scope
             .resolve(self.trie, name)
             .ok()
-            .and_then(|r| fields.iter().position(|&f| f == r.identity))
+            .and_then(|r| fields.iter().copied().find(|&f| f == r.identity))
         else {
             return Ok(None);
         };
         if writes {
             return Ok(Some((root, field)));
         }
-        if unwritten.contains(&field) {
+        if crate::identities::array::items(unwritten).contains(&field) {
             return Err(ParseError::Unwritten(Box::new(format!(
                 "{}.{name}",
                 Binding::spelling(root)

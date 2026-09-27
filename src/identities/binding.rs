@@ -37,6 +37,9 @@ pub struct Binding {
     /// Declared outside any function in a body the pass does not run in parse order, a loop
     /// or a branch: at parse the name holds no value yet.
     pub unmade: bool,
+    /// The fields of a `T ?` name not yet written, an `array` node of the record's field
+    /// dyads; null while none wait.
+    pub unwritten: DyadPtr,
 }
 
 impl Binding {
@@ -50,6 +53,7 @@ impl Binding {
             name,
             lex_rank: 0.0,
             unmade: false,
+            unwritten: std::ptr::null_mut(),
         }
     }
 
@@ -116,6 +120,12 @@ impl Binding {
     /// As `Binding::read`.
     pub unsafe fn set_lex_rank(dyad: DyadPtr, rank: f64) {
         (*Self::fields(dyad)).lex_rank = rank;
+    }
+
+    /// # Safety
+    /// As `Binding::read`; `fields` null or an `array` node from the store.
+    pub unsafe fn set_unwritten(dyad: DyadPtr, fields: DyadPtr) {
+        (*Self::fields(dyad)).unwritten = fields;
     }
 
     /// # Safety
