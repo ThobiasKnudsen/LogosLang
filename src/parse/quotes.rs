@@ -25,7 +25,17 @@ enum ImportState {
     /// The `pub` names in declaration order, each with the identity it
     /// resolves to inside the file, and the file's tail node (null for a
     /// declaration-only file).
-    Loaded { pubs: Vec<(String, DyadPtr)>, tail: DyadPtr },
+    Loaded { pubs: Vec<(String, DyadPtr)>, tail: DyadPtr, text: &'static str },
+}
+
+impl Imports {
+    /// The text of every file loaded so far.
+    pub fn sources(&self) -> impl Iterator<Item = &str> + '_ {
+        self.entries.values().filter_map(|state| match state {
+            ImportState::Loaded { text, .. } => Some(&text[..]),
+            ImportState::Loading => None,
+        })
+    }
 }
 
 impl<'a> Parser<'a> {
@@ -337,7 +347,7 @@ impl<'a> Parser<'a> {
             Some(ImportState::Loading) => {
                 return Err(ParseError::ImportCycle(path_text.to_string()))
             }
-            Some(ImportState::Loaded { pubs, tail }) => {
+            Some(ImportState::Loaded { pubs, tail, .. }) => {
                 let (pubs, tail) = (pubs.clone(), *tail);
                 self.publish(&pubs)?;
                 return Ok(tail);
@@ -385,7 +395,7 @@ impl<'a> Parser<'a> {
             Ok((pubs, tail)) => {
                 self.imports
                     .entries
-                    .insert(canon, ImportState::Loaded { pubs: pubs.clone(), tail });
+                    .insert(canon, ImportState::Loaded { pubs: pubs.clone(), tail, text });
                 self.publish(&pubs)?;
                 Ok(tail)
             }

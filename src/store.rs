@@ -30,6 +30,53 @@ pub struct Store {
     tables: Vec<Box<HashMap<i64, i64>>>,
 }
 
+/// The store's size, counted by hand: malloc's own per-block overhead is left out.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StoreStats {
+    pub cells: usize,
+    pub cell_bytes: usize,
+    /// The inline arena's; zero until it exists.
+    pub arena_bytes: usize,
+    pub arena_allocs: usize,
+    /// Each boxed side blob's payload plus its box's slot in the store's vector.
+    pub boxed_bytes: usize,
+    pub boxed_allocs: usize,
+}
+
+impl StoreStats {
+    pub fn total_bytes(&self) -> usize {
+        self.cell_bytes + self.arena_bytes + self.boxed_bytes
+    }
+
+    /// What grew between two readings; the store is append-only, so nothing shrinks.
+    pub fn since(&self, earlier: &StoreStats) -> StoreStats {
+        StoreStats {
+            cells: self.cells - earlier.cells,
+            cell_bytes: self.cell_bytes - earlier.cell_bytes,
+            arena_bytes: self.arena_bytes - earlier.arena_bytes,
+            arena_allocs: self.arena_allocs - earlier.arena_allocs,
+            boxed_bytes: self.boxed_bytes - earlier.boxed_bytes,
+            boxed_allocs: self.boxed_allocs - earlier.boxed_allocs,
+        }
+    }
+}
+
+impl std::fmt::Display for StoreStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "cells={} cell_bytes={} arena_bytes={} arena_allocs={} boxed_bytes={} boxed_allocs={} total_bytes={}",
+            self.cells,
+            self.cell_bytes,
+            self.arena_bytes,
+            self.arena_allocs,
+            self.boxed_bytes,
+            self.boxed_allocs,
+            self.total_bytes()
+        )
+    }
+}
+
 impl Store {
     pub fn new() -> Self {
         Store {
@@ -120,6 +167,36 @@ impl Store {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    pub fn stats(&self) -> StoreStats {
+        use std::mem::size_of;
+        let cells = self.len();
+        let mut boxed_bytes = 0;
+        for run in &self.operands {
+            boxed_bytes += size_of::<Box<[DyadPtr]>>() + run.len() * size_of::<DyadPtr>();
+        }
+        for blob in &self.blobs {
+            boxed_bytes += size_of::<Box<[u8]>>() + blob.len();
+        }
+        boxed_bytes += self.bindings.len() * (size_of::<Box<Binding>>() + size_of::<Binding>());
+        for table in &self.tables {
+            // hashbrown: a 16-byte entry and a control byte per bucket.
+            boxed_bytes += size_of::<Box<HashMap<i64, i64>>>()
+                + size_of::<HashMap<i64, i64>>()
+                + table.capacity() * (size_of::<(i64, i64)>() + 1);
+        }
+        StoreStats {
+            cells,
+            cell_bytes: cells * size_of::<Dyad>(),
+            arena_bytes: 0,
+            arena_allocs: 0,
+            boxed_bytes,
+            boxed_allocs: self.operands.len()
+                + self.blobs.len()
+                + self.bindings.len()
+                + self.tables.len(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -176,6 +253,22 @@ mod tests {
         unsafe {
             assert_eq!(std::slice::from_raw_parts(p, 3), b"123");
         }
+    }
+
+    #[test]
+    fn stats_count_cells_and_boxed_side_blobs() {
+        let mut s = Store::new();
+        assert_eq!(s.stats(), StoreStats::default());
+        s.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut());
+        s.alloc_operands(&[tag(1) as DyadPtr, tag(2) as DyadPtr]);
+        s.alloc_bytes(b"abc");
+        let st = s.stats();
+        assert_eq!((st.cells, st.cell_bytes), (1, 16));
+        assert_eq!(st.boxed_allocs, 2);
+        // Two fat-pointer slots, a two-word run, three bytes.
+        assert_eq!(st.boxed_bytes, 16 + 16 + 16 + 3);
+        assert_eq!(st.total_bytes(), 16 + st.boxed_bytes);
+        assert_eq!(st.since(&st), StoreStats::default());
     }
 
     #[test]

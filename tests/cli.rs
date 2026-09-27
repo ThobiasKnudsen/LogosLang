@@ -68,6 +68,34 @@ fn importing_a_library_alone_is_silent_and_clean() {
 }
 
 #[test]
+fn logos_stats_measures_the_store_on_stderr() {
+    let out =
+        logos().env("LOGOS_STATS", "1").args(["import", "examples/answer.logos"]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
+    let err = String::from_utf8_lossy(&out.stderr);
+    for field in [
+        "store core:",
+        "store after:",
+        "store delta:",
+        "cells=",
+        "cell_bytes=",
+        "arena_bytes=",
+        "arena_allocs=",
+        "boxed_bytes=",
+        "boxed_allocs=",
+        "total_bytes=",
+        "source_bytes=",
+        "code_bytes=",
+        "per_source_byte=",
+        "per_code_byte=",
+        "per_cell=",
+    ] {
+        assert!(err.contains(field), "missing {field} in stderr: {err}");
+    }
+}
+
+#[test]
 fn an_imported_file_cannot_see_the_import_site() {
     let out = logos().arg("x := 5, import tests/fixtures/uses_missing.logos").output().unwrap();
     assert_eq!(out.status.code(), Some(1));

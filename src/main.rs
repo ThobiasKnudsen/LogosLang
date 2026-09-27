@@ -14,7 +14,7 @@ use seed::parse::{Imports, ParseError, Parser, ScopeStack};
 use seed::regex_trie::RegexTrie;
 use seed::report;
 use seed::run::Runtime;
-use seed::store::Store;
+use seed::store::{Store, StoreStats};
 
 /// One per process; the REPL reuses it across lines.
 struct Engine {
@@ -129,6 +129,10 @@ fn help() -> String {
 fn run_line(source: &str) -> ExitCode {
     let path = "<command line>";
     let mut engine = Engine::new();
+    // An environment variable, since the command line takes no flags.
+    let core_stats = std::env::var_os("LOGOS_STATS")
+        .is_some_and(|v| !v.is_empty())
+        .then(|| engine.store.stats());
     let mut scopes = ScopeStack::new();
     scopes.push(engine.core.root_scope);
     // The command line is its own section: its declarations sit above the
@@ -212,6 +216,13 @@ fn run_line(source: &str) -> ExitCode {
         eprintln!("{path}: {}", report::parse_message(&e));
         return ExitCode::FAILURE;
     }
+    let imports = p.take_imports();
+    drop(p);
+    let mut sources: Vec<&str> = vec![source];
+    sources.extend(imports.sources());
+    if let Some(core) = core_stats {
+        print_stats(core, engine.store.stats(), &sources);
+    }
 
     match last {
         Some((node, bits)) => {
@@ -229,6 +240,33 @@ fn run_line(source: &str) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// `LOGOS_STATS`: the store after the core, after the line, and their delta
+/// against the source that was parsed (the command line and every loaded file).
+fn print_stats(core: StoreStats, after: StoreStats, sources: &[&str]) {
+    let delta = after.since(&core);
+    let source_bytes: usize = sources.iter().map(|s| s.len()).sum();
+    let code_bytes: usize = sources.iter().map(|s| code_bytes(s)).sum();
+    let per = |n: usize, d: usize| if d == 0 { 0.0 } else { n as f64 / d as f64 };
+    eprintln!("store core:  {core}");
+    eprintln!("store after: {after}");
+    eprintln!("store delta: {delta}");
+    eprintln!(
+        "store ratio: source_bytes={source_bytes} code_bytes={code_bytes} \
+         per_source_byte={:.2} per_code_byte={:.2} per_cell={:.2}",
+        per(delta.total_bytes(), source_bytes),
+        per(delta.total_bytes(), code_bytes),
+        per(delta.total_bytes(), delta.cells),
+    );
+}
+
+/// Bytes of code: each line cut at its first `#`, whitespace dropped.
+fn code_bytes(text: &str) -> usize {
+    text.lines()
+        .map(|line| line.find('#').map_or(line, |i| &line[..i]))
+        .map(|code| code.split_whitespace().map(str::len).sum::<usize>())
+        .sum()
 }
 
 /// One persistent store, index and scope; one expression per line, each value
