@@ -1691,6 +1691,40 @@ fn the_repl_compiles_a_fn_across_lines() {
 }
 
 #[test]
+fn the_repl_recompiles_a_fn_across_lines() {
+    let (echoes, stderr) = repl(
+        b"double := fn (x := i64 ?) -> i64 ( x + x )\ndouble.compile()\ndouble.compile()\ndouble(21)\n",
+    );
+    assert_eq!(echoes, ["42"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
+fn a_recompiled_callee_is_reached_by_an_earlier_compiled_caller() {
+    let out = logos()
+        .arg(
+            "g := fn (x := i64 ?) -> i64 ( x + 1 ), f := fn (x := i64 ?) -> i64 ( g(x) * 2 ), \
+              g.compile(), f.compile(), g.compile(), f(20)",
+        )
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
+}
+
+#[test]
+fn runaway_compiled_recursion_is_a_clean_error() {
+    let out = logos()
+        .arg("f := fn (n := i32 ?) -> i32 ( f(n + 1) ), f.compile(), f(1)")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("calls nested deeper than 10000"), "stderr: {err}");
+    assert!(out.stdout.is_empty());
+}
+
+#[test]
 fn an_else_if_chain_selects_the_matching_arm() {
     let (echoes, stderr) = repl(
         b"x := i32 1\nif (x == 0) (i32 10) else if (x == 1) (i32 20) else (i32 30)\n\

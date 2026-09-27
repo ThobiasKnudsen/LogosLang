@@ -1044,7 +1044,7 @@ impl Drop for Artifact {
 }
 
 /// Compile a function literal, install its machine code as a `callable` under
-/// the `container-i64` convention into the node's `bcode` slot, and hand the
+/// the `container-i64` convention in the node's `bcode` slot, and hand the
 /// store the artifact: the entry stays valid until the store retires it.
 ///
 /// # Safety
@@ -1057,16 +1057,24 @@ pub unsafe fn compile_fn(
     fn_node: DyadPtr,
 ) -> Result<(), CompileError> {
     let artifact = compile_fn_body(lower, types, fn_node)?;
-    let code = crate::identities::callable::mint(
-        store,
-        types.callable_,
-        artifact.ptr as usize,
-        types.conv_container,
-    );
     let bcode_slot = ((*fn_node).value as *mut DyadPtr).add(FN_BCODE);
-    *bcode_slot = code;
+    if (*bcode_slot).is_null() {
+        *bcode_slot =
+            crate::identities::callable::mint(store, types.callable_, 0, types.conv_container);
+    }
+    install(fn_node, artifact.ptr as usize);
     store.install_artifact(fn_node, artifact);
     Ok(())
+}
+
+/// The entry goes into the leaf the `bcode` slot holds: every caller compiled so
+/// far reads that leaf at the jump, so a recompile reaches them there.
+///
+/// # Safety
+/// `fn_node` must be a fn node whose `bcode` slot holds a callable leaf.
+unsafe fn install(fn_node: DyadPtr, entry: usize) {
+    let leaf = *((*fn_node).value as *const DyadPtr).add(FN_BCODE);
+    crate::identities::callable::install_entry(leaf, entry);
 }
 
 /// The shared work of [`compile_fn`] and [`compile_into`]: the body's machine
@@ -1109,9 +1117,10 @@ unsafe fn return_kind(types: &Core, out: DyadPtr) -> Result<Option<NumType>, Com
     }
 }
 
-/// `f.compile()`'s run half: compile the body and install the entry into
-/// `code_leaf`, the callable the parser pre-minted, then that leaf into the
-/// `bcode` slot; the store takes the artifact and retires the one before it.
+/// `f.compile()`'s run half: compile the body and install the entry into the
+/// function's `bcode` leaf, which is `code_leaf`, the callable the parser
+/// pre-minted, when the function had none; the store takes the artifact and
+/// retires the one before it.
 ///
 /// # Safety
 /// As [`compile_fn`]; `code_leaf` must be a callable value from the store.
@@ -1123,9 +1132,11 @@ pub(crate) unsafe fn compile_into(
     code_leaf: DyadPtr,
 ) -> Result<(), CompileError> {
     let artifact = compile_fn_body(lower, types, fn_node)?;
-    crate::identities::callable::install_entry(code_leaf, artifact.ptr as usize);
     let bcode_slot = ((*fn_node).value as *mut DyadPtr).add(FN_BCODE);
-    *bcode_slot = code_leaf;
+    if (*bcode_slot).is_null() {
+        *bcode_slot = code_leaf;
+    }
+    install(fn_node, artifact.ptr as usize);
     store.install_artifact(fn_node, artifact);
     Ok(())
 }
