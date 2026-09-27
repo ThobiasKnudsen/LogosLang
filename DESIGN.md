@@ -255,6 +255,25 @@ The behavioural merge with `fn`. The argument is the shape, holes bind by matchi
 - **Open:** the navigation words `where` needs for this (a graph range `w..r` in program order, `in`, `for x in w..r` over a boolean body), as the first meta-access vocabulary (›Meta-navigation‹).
 - **Source:** DESIGN.md l.69
 
+### A function is simplified into another by rewriting a copy in place, one cited rule per step
+Direction, 27 September 2026. To prove that `slow` may be replaced by `fast`, the proof takes a copy of `slow` and converts parts of its body one step at a time until the copy is `fast`. A step is a call of a conjecture on a path into the copy, `add_loop(f.body[1])`: the node at the path is matched against one side of the rule, the holes bind, and the other side is written at that path in place. Each call is the core-checked step of ›A conjecture is callable‹; the proof closes when the copy has `fast`'s shape, parameter names aside. The chain of ›A conjecture states a boolean, and calling it yields the other side of a fact‹ is this form with expression-shaped lines; here the lines are whole functions, and every one of them runs.
+```logos
+slow := fn (n, x) -> r where ( (n and x and r):type == u64 ) ( r = 0, for i in 0..n ( r = r + x ) )
+fast := fn (n, x) -> r where ( (n and x and r):type == u64 ) ( r = n * x )
+add_loop      := conjecture ( (for i in 0..n ( r = r + x )) ≡ (r = r + n * x) ) where ( (n and x and r):type == u64 )
+zero_then_add := conjecture ( (r = 0, r = r + b) ≡ (r = b) ) where ( (r and b):type == u64 )
+same := conjecture ( slow ≡ fast ) proof (
+    f := copy slow,
+    add_loop(f.body[1]),        # the loop line is now r = r + n * x
+    zero_then_add(f.body),      # the two lines are now r = n * x
+    f ≡ fast,
+)
+```
+- **Why:** Thobias: "copy the start function and then convert specific parts of the body step by step until the copy becomes the other function"; "proofN(f.body[1]) and it will convert it automatically in place". No rule is needed for a call standing for its body, since `slow` is never called, only edited, and none for folding the last line into `fast`, since the last line is `fast`'s shape. Loops, twice-written names and `if` become library rules over statement shapes (the sketch's `total := [start]`, `for i in [walk] ( total = [step] )` is one), proven once by induction, where a chain over values could not state them (›A fact about two distant nodes uses two holes‹). Every line is a runnable function, so a failing step is found by running, as a bug is bisected. It is the optimizer's own trace written by hand (›One operation for optimization, algebra and user transformations‹): one rule library and one checker serve the proof and the compiler, and the lines are the proven-equivalent alternatives the cache keeps (›Cached machine code comes back as foreign code‹). In the graph a copy shares every unchanged subtree, so a step costs only the subtree it changes.
+- **Ruled:** 27 September 2026, Thobias, as a direction; the example is Claude's reading of his spelling.
+- **Open:** the relation between two bodies and its word (`≡` above is a placeholder): same result, same writes to the frame's places, same faults, no differing outside effect; this definition is where soundness lives, since `==` compares values and a body of `=` writes has none. A hole standing for a whole body (the sketch's `[step]`). The word for the copy. The rule from `slow ≡ fast` to `slow(n, x) == fast(n, x)` for every input. Whether the closing line is written or implied. A match that would leave a name unbound in the replacement (`x` bound to something reading the loop's `i`) is refused, fail-closed as ›Application is the rewriting engine unchanged; matching is fail-closed‹ says; to confirm. A fact about the state at one point that no local rule captures still needs an invariant and induction, now inside library rules rather than in every proof.
+- **Seed:** nothing; v1.0.0 standard-library work.
+
 ### `fn` takes the same form
 `f := fn (a, b) -> c where ( (a and b and c):type == i32 ) ( … )`. The signature is a pattern. `-> c` names the result hole, so `where` states postconditions (`c >= a`): the pre/post tier of ›A function's surface‹ with no new mechanism. The body writes `c` by name as often as it likes (a mutable place: `c = …`, never `c := …`); a bare `return` leaves with whatever `c` holds. Short form `fn (a := i32 ?, b := i32 ?) -> i32 ( … )`: `i32` alone is the identity, matching it the premise `a:type == i32`; with an unnamed result the trailing expression is the value and `return X` the early exit (›A scope's value is what it evaluates to‹).
 - **Ruled:** 8 September 2026.
