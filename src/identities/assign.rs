@@ -99,10 +99,9 @@ fn construct(
             return Err(ParseError::NonOwningIntoOwning);
         }
         let node = build(p.store(), types, id, target, value)?;
-        p.note_field_write(node, fill);
         // SAFETY: `target` is the reduced dyad of the cell to the left.
         unsafe { p.note_receiver_write(target) };
-        p.note_write(node);
+        p.note_write(node, fill);
         node
     };
     tape.place(node);

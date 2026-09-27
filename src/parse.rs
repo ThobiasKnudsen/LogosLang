@@ -1606,8 +1606,6 @@ pub struct Parser<'a> {
     trie: &'a mut RegexTrie,
     types: &'a Core,
     imports: Imports,
-    /// A field write's node, with the name and the field it fills.
-    field_writes: HashMap<DyadPtr, (DyadPtr, DyadPtr)>,
     /// Each type of node values, and the run type whose node builds one from a bracket;
     /// stand-in for #152.
     bracket_builders: HashMap<DyadPtr, DyadPtr>,
@@ -1671,8 +1669,8 @@ struct Context<'a> {
     /// Body items a constructed segment yielded, in source order, not yet
     /// handed out.
     queued: std::collections::VecDeque<Cell>,
-    /// The last `=` node built and the scope it was built in.
-    last_write: (DyadPtr, DyadPtr),
+    /// The last `=` built: what the sibling-write rule reads at the next item.
+    last_write: LastWrite,
     /// Whether the constructor now running was woken at discovery, its token
     /// just lexed and the source after it unread, rather than at the boundary:
     /// an identity that reads its own bracket reads source only at discovery.
@@ -1727,7 +1725,7 @@ impl<'a> Context<'a> {
             dir: PathBuf::from("."),
             lifted: Vec::new(),
             queued: std::collections::VecDeque::new(),
-            last_write: (std::ptr::null_mut(), std::ptr::null_mut()),
+            last_write: LastWrite::NONE,
             discovering: false,
             member_asleep: false,
             reader: std::ptr::null_mut(),
@@ -1754,6 +1752,23 @@ impl<'a> Context<'a> {
             ..Context::top(source, scopes)
         }
     }
+}
+
+/// The last `=` node built, the scope it was built in, and the name and field it fills when
+/// its target was a `v.f` the unwritten-fields rule noted (nulls otherwise).
+#[derive(Clone, Copy)]
+struct LastWrite {
+    node: DyadPtr,
+    scope: DyadPtr,
+    fill: (DyadPtr, DyadPtr),
+}
+
+impl LastWrite {
+    const NONE: LastWrite = LastWrite {
+        node: std::ptr::null_mut(),
+        scope: std::ptr::null_mut(),
+        fill: (std::ptr::null_mut(), std::ptr::null_mut()),
+    };
 }
 
 /// Puts back the context a [`Parser::enter`] set aside, by return or by unwinding.
@@ -1873,7 +1888,6 @@ impl<'a> Parser<'a> {
             trie,
             types,
             bracket_builders: HashMap::new(),
-            field_writes: HashMap::new(),
             imports: Imports::default(),
             lower: None,
         }
@@ -6478,19 +6492,15 @@ impl<'a> Parser<'a> {
         Err(ParseError::Unwritten(Box::new(unsafe { Binding::spelling(binding) })))
     }
 
-    /// The `=` over a target `v.f` built with `fill` noted: the item the sibling rule reads.
-    pub(crate) fn note_field_write(&mut self, node: DyadPtr, fill: (DyadPtr, DyadPtr)) {
-        if !fill.0.is_null() {
-            self.field_writes.insert(node, fill);
-        }
-    }
-
-    pub(crate) fn note_write(&mut self, node: DyadPtr) {
+    /// The `=` just built, with the name and field its target `v.f` fills when the
+    /// unwritten-fields rule noted one: the item the sibling rule reads.
+    pub(crate) fn note_write(&mut self, node: DyadPtr, fill: (DyadPtr, DyadPtr)) {
         // SAFETY: `node` is the `=` node just built.
         if unsafe { (*node).ty } == self.types.tape.write {
             self.forget_narrowed();
         }
-        self.cx.last_write = (node, self.cx.scopes.current().unwrap_or(std::ptr::null_mut()));
+        let scope = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
+        self.cx.last_write = LastWrite { node, scope, fill };
     }
 
     /// The type a check has narrowed the cell or line to, the innermost check first.
@@ -6538,11 +6548,12 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `item` must be a reduced dyad from the store.
     pub unsafe fn fill_if_sibling_write(&mut self, item: DyadPtr) {
-        let (node, scope) = self.cx.last_write;
+        let LastWrite { node, scope, fill } = self.cx.last_write;
         if item.is_null() || item != node {
             return;
         }
-        if let Some((binding, field)) = self.field_writes.remove(&item) {
+        if !fill.0.is_null() {
+            let (binding, field) = fill;
             let rec = Binding::read(binding);
             if rec.scope != scope || rec.unwritten.is_null() {
                 return;
