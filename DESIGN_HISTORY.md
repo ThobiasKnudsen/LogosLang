@@ -321,6 +321,7 @@ Nothing moved from this section.
 
 ### Numeric literals are uncommitted until context classifies them
 - **Seed detail (27 September 2026):** folds all-literal arithmetic exactly over `i64` fractions; out of range is a clean error, not a wrap. Arbitrary precision deferred, not blocked.
+- **History:** until 28 September 2026 the seed carried a run-time rational as the address of a literal node made per operation, a `dyad` view boxing a literal; the sixteen-byte value in its place superseded that (#165).
 
 ### No implicit coercion; a numeric type applied to a value is the conversion
 - **Seed detail (27 September 2026):** `not` takes a bracketed operand, a parsing shortcut, not a keep.

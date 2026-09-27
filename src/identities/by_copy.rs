@@ -3,12 +3,13 @@
 
 //! A plain record crosses a call by copy: the caller copies each argument into the
 //! callee's argument block at the argument's own width, and a record result comes back
-//! through a slot the caller provides. DESIGN ›Operands travel on the stack‹. stand-in for #127
+//! through a slot the caller provides. A run-time rational travels the same way, its
+//! sixteen bytes the record. DESIGN ›Operands travel on the stack‹. stand-in for #127
 
 use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
-use super::read::{place_layout, read_kind, Read};
+use super::read::{place_layout, read_kind, Dispatch, Read};
 use super::{array, meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
@@ -63,8 +64,8 @@ pub(crate) fn build_out(store: &mut Store, types: &Core, expr: DyadPtr) -> DyadP
 }
 
 /// The width a value of `t` is copied at: `Some` for a plain record a `type (…)` body
-/// wrote, whose value is its bytes; `None` for everything that travels in one 8-byte
-/// container, a native record (a tape handle, a map) among them.
+/// wrote, whose value is its bytes, and for a rational; `None` for everything that
+/// travels in one 8-byte container, a native record (a tape handle, a map) among them.
 ///
 /// # Safety
 /// `t` must be null or a valid dyad from the store.
@@ -72,6 +73,7 @@ pub(crate) unsafe fn record_width(types: &Core, t: DyadPtr) -> Option<usize> {
     let t = super::type_identity_of(types, t)?;
     match place_layout(types, t)? {
         (Read::Aggregate, width) if !meta::record_body_of(t).is_null() => Some(width),
+        (Read::Rational, width) => Some(width),
         _ => None,
     }
 }
@@ -85,10 +87,15 @@ pub(crate) unsafe fn record_type_of(types: &Core, node: DyadPtr) -> Option<DyadP
     let ty = (*node).ty;
     let t = if ty == types.construct_ || ty == types.by_copy.result {
         (**((*node).value as *const DyadPtr)).ty
-    } else if read_kind(types, node) == Read::Aggregate {
-        ty
+    } else if ty == types.by_copy.out {
+        return record_type_of(types, *((*node).value as *const DyadPtr));
     } else {
-        return None;
+        match read_kind(types, node) {
+            Read::Aggregate | Read::Rational => ty,
+            // A literal's bytes are a rational value's.
+            Read::Literal => types.rational,
+            _ => return None,
+        }
     };
     record_width(types, t).map(|_| t)
 }
@@ -148,18 +155,21 @@ pub(crate) unsafe fn record_addr(rt: &mut Runtime, node: DyadPtr) -> Result<*mut
     let node = rt.through(node);
     let ty = (*node).ty;
     let types = rt.types();
-    let (result, construct, aggregate) =
-        (types.by_copy.result, types.construct_, read_kind(types, node) == Read::Aggregate);
-    if ty == result {
-        return rt.run(node).map(|addr| addr as *mut u8);
+    let (result, out, construct) = (types.by_copy.result, types.by_copy.out, types.construct_);
+    let kind = read_kind(types, node);
+    if ty == result || ty == out {
+        return rt.run(node).map(|addr| addr as usize as *mut u8);
     }
     let place = if ty == construct {
         rt.run(node)?;
         *((*node).value as *const DyadPtr)
-    } else if aggregate {
-        node
     } else {
-        return Err(RunError::NoWholeRead);
+        match kind {
+            Read::Aggregate | Read::Rational => node,
+            // A literal's bytes are a rational value's.
+            Read::Literal => return Ok((*node).value),
+            _ => return Err(RunError::NoWholeRead),
+        }
     };
     let addr = rt.place_addr(place).ok_or(RunError::NoActivation)?;
     if addr.is_null() {
@@ -179,38 +189,55 @@ pub(crate) unsafe fn lower_record_addr(
     let node = lw.through(node);
     let ty = (*node).ty;
     let types = lw.types();
-    let (result, construct, aggregate) =
-        (types.by_copy.result, types.construct_, read_kind(types, node) == Read::Aggregate);
-    if ty == result {
+    let (result, out, construct) = (types.by_copy.result, types.by_copy.out, types.construct_);
+    let kind = read_kind(types, node);
+    if ty == result || ty == out {
         return lw.lower(node);
     }
     if ty == construct {
         lw.lower(node)?;
         return lw.place_addr(*((*node).value as *const DyadPtr));
     }
-    if aggregate {
-        return lw.place_addr(node);
+    match kind {
+        Read::Aggregate | Read::Rational => lw.place_addr(node),
+        // A literal is source: its bytes' address is a constant.
+        Read::Literal => Ok(lw.const_i64((*node).value as usize as i64)),
+        _ => Err(CompileError::NotLowerable(node)),
     }
-    Err(CompileError::NotLowerable(node))
 }
 
 fn run_result(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a result node from `build_result`; its call is a call of a `fn`.
+    // SAFETY: `node` is a result node from `build_result`: a call of a `fn`, a rational
+    // arithmetic node, or a literal, run into the slot.
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         let dest = rt.place_addr(*ops).ok_or(RunError::NoActivation)?;
         let call = *ops.add(1);
-        rt.apply_into((*call).ty, call, Some(dest))
+        match read_kind(rt.types(), call) {
+            Read::Executable(Dispatch::Call(f)) => rt.apply_into(f, call, Some(dest)),
+            Read::Executable(Dispatch::Leaf(_)) => {
+                super::rational::run_into(rt, call, dest)?;
+                Ok(dest as i64)
+            }
+            Read::Literal => {
+                std::ptr::copy_nonoverlapping((*call).value, dest, 16);
+                Ok(dest as i64)
+            }
+            _ => Err(RunError::NoWholeRead),
+        }
     }
 }
 
 fn lower_result(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: as [`run_result`].
+    // SAFETY: as [`run_result`]; a rational step is interpreted only.
     unsafe {
         let ops = (*node).value as *const DyadPtr;
         let dest = lw.place_addr(*ops)?;
         let call = *ops.add(1);
-        lw.lower_call_into((*call).ty, call, Some(dest))
+        match read_kind(lw.types(), call) {
+            Read::Executable(Dispatch::Call(f)) => lw.lower_call_into(f, call, Some(dest)),
+            _ => Err(CompileError::NotLowerable(node)),
+        }
     }
 }
 

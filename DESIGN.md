@@ -1006,7 +1006,7 @@ A binary `+` is one 16-byte cell pointing at its operands. An operand that uses 
 It can become any `int`, `uint` or `float`. Beside a typed value it takes that type: `a + 1` with `a` an `i32` is i32 addition. Two literals: the operation is exact on the reduced fraction (`[num, den]`, never text) and the result stays `rational_number` until it lands in a typed slot. Same concrete type keeps it; two *different* concrete types do **not** lower.
 - **Why:** one operator and one literal form for every numeric type, no suffixes (`1i32`, `1.0f`).
 - **Ruled:** 28 September 2026, Thobias: a run-time rational is a 16-byte value `[num, den]` in its place, copied like a record; `1/3 + 1/6` at run writes its result into a frame slot and makes no node. **Why:** the fraction is the value; a node per operation grew the graph on every loop iteration.
-- **Seed:** done over `i64` fractions; out of range is a clean error, not a wrap; arbitrary precision deferred. Until #165 a rational value was the address of a literal node carried in the `i64` container.
+- **Seed:** done over `i64` fractions; out of range is a clean error, not a wrap; arbitrary precision deferred. A run-time rational is sixteen bytes in its place and crosses a call by copy, the `i64` container carrying their address (#165).
 - **Source:** DESIGN.md l.166
 
 ### No implicit coercion; a numeric type applied to a value is the conversion

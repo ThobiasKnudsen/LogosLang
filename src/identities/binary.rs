@@ -143,7 +143,7 @@ fn build_op(
             }
             let leaf = types.ops.rational_arith_leaf(a);
             // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
-            if let Some(slots) = unsafe { rational_slots(store, types, lhs, rhs, leaf) }? {
+            if let Some(slots) = unsafe { rational_slots(types, lhs, rhs, leaf) }? {
                 slots
             } else {
                 // SAFETY: as above.
@@ -161,7 +161,7 @@ fn build_op(
             }
             let leaf = types.ops.rational_cmp_leaf(c);
             // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
-            if let Some(slots) = unsafe { rational_slots(store, types, lhs, rhs, leaf) }? {
+            if let Some(slots) = unsafe { rational_slots(types, lhs, rhs, leaf) }? {
                 let value = store.alloc_operands(&slots);
                 return Ok(store.alloc_raw(op, value));
             }
@@ -224,13 +224,12 @@ unsafe fn pointer_step(
     Ok(Some(store.alloc_raw(op, value)))
 }
 
-/// When either side is a rational value, the other must be one too or a literal (boxed);
-/// a concrete number beside a rational is the mismatch. `None` when neither side is one.
+/// When either side is a rational value, the other must be one too or a literal; a
+/// concrete number beside a rational is the mismatch. `None` when neither side is one.
 ///
 /// # Safety
-/// `lhs`/`rhs` are valid dyads from the store.
+/// `lhs`/`rhs` must be reduced dyads from the store.
 unsafe fn rational_slots(
-    store: &mut Store,
     types: &Core,
     lhs: DyadPtr,
     rhs: DyadPtr,
@@ -239,9 +238,14 @@ unsafe fn rational_slots(
     if !rational::is_rational_value(types, lhs) && !rational::is_rational_value(types, rhs) {
         return Ok(None);
     }
-    let l = rational::rational_operand(store, types, lhs).ok_or(ParseError::TypeMismatch)?;
-    let r = rational::rational_operand(store, types, rhs).ok_or(ParseError::TypeMismatch)?;
-    Ok(Some([l, r, leaf]))
+    let fits = |n: DyadPtr| {
+        rational::is_rational_value(types, n)
+            || matches!(super::numtype_of(types, n), super::Operand::Literal)
+    };
+    if !fits(lhs) || !fits(rhs) {
+        return Err(ParseError::TypeMismatch);
+    }
+    Ok(Some([lhs, rhs, leaf]))
 }
 
 /// Two identities compare by identity at parse (types are interned); two values that
@@ -306,6 +310,8 @@ fn construct_minus(
     if let Some((lhs, rhs)) = p.binary_operands(tape)? {
         let types = p.types();
         let node = group::apply(p.store(), types, id, lhs, rhs, build::<ARITH, SUB>)?;
+        // SAFETY: `node` was just built over reduced dyads.
+        let node = unsafe { rational::slotted(p, node) };
         tape.reduce_here(node);
         return Ok(crate::parse::Constructed::Placed);
     }
@@ -313,6 +319,8 @@ fn construct_minus(
     let rhs = p.take_right(tape)?;
     let zero = rational::build(p.store(), types.rational, "0")?;
     let node = group::apply(p.store(), types, id, zero, rhs, build::<ARITH, SUB>)?;
+    // SAFETY: as above.
+    let node = unsafe { rational::slotted(p, node) };
     tape.place(node);
     Ok(crate::parse::Constructed::Placed)
 }

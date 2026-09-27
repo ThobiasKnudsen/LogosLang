@@ -1062,7 +1062,16 @@ impl<'a> Parser<'a> {
             self.cx.pos = at;
             return Err(e);
         }
-        self.fold_comptime_node(ty, node, spec)
+        if let Some(folded) = self.fold_comptime_node(ty, node, spec)? {
+            return Ok(Some(folded));
+        }
+        // A run whose result is copied out gets the slot it is copied into.
+        let out = *((*spec).value as *const DyadPtr).add(FN_OUTPUT);
+        let Some(width) = crate::identities::by_copy::record_width(self.types, out) else {
+            return Ok(None);
+        };
+        let slot = self.alloc_local(out, width);
+        Ok(Some(crate::identities::by_copy::build_result(self.rt.store, self.types, slot, node)))
     }
 
     /// A node every value field of which is a literal is comptime, its
@@ -1089,9 +1098,10 @@ impl<'a> Parser<'a> {
             let comptime = match read_kind(types, slot) {
                 Read::Literal => true,
                 Read::Scalar(_) => !crate::dyad::is_place((*slot).value),
-                Read::Address => {
-                    let viewed = (*slot).value as DyadPtr;
-                    !viewed.is_null() && (*viewed).ty == types.rational
+                // A literal handed on by `rational_number`, or into a rational field.
+                Read::Executable(_) if (*slot).ty == types.by_copy.out => {
+                    let expr = types.through(*((*slot).value as *const DyadPtr));
+                    (*expr).ty == types.rational && !crate::dyad::is_place((*expr).value)
                 }
                 _ => false,
             };
@@ -1108,13 +1118,18 @@ impl<'a> Parser<'a> {
         if !numeric && out != types.rational {
             return Ok(None);
         }
-        let bits = self
-            .run_on_pass(node)
-            .map_err(|e| ParseError::ConstructorFailed(Box::new(crate::report::run_message(&e))))?;
+        let failed = |e: crate::run::RunError| {
+            ParseError::ConstructorFailed(Box::new(crate::report::run_message(&e)))
+        };
         let folded = if numeric {
+            let bits = self.run_on_pass(node).map_err(failed)?;
             self.scalar_value(crate::identities::numtype::of_type_node(out), bits)
         } else {
-            bits as DyadPtr
+            // A rational result is copied out: here into a buffer, then a literal.
+            let mut bytes = [0u8; 16];
+            self.run_on_pass_into(spec, node, bytes.as_mut_ptr()).map_err(failed)?;
+            let (num, den) = crate::identities::rational::read_at(bytes.as_ptr());
+            crate::identities::rational::build_literal(self.rt.store, types.rational, num, den)
         };
         Ok(Some(folded))
     }
@@ -1152,12 +1167,10 @@ impl<'a> Parser<'a> {
                 && declared != types.square_brackets
                 && declared != types.scope
             {
+                // A literal stays as it stands in a rational field: its bytes are the value's.
                 if matches!(numtype_of(types, slot), Operand::Literal) {
                     let lit = types.through(slot);
-                    if declared == types.rational {
-                        *slots.add(i) =
-                            crate::identities::rational::box_literal(self.rt.store, types, lit);
-                    } else if crate::identities::is_numtype_node(types, declared) {
+                    if crate::identities::is_numtype_node(types, declared) {
                         *slots.add(i) = crate::identities::commit_literal_to(
                             self.rt.store,
                             types,
@@ -1178,13 +1191,8 @@ impl<'a> Parser<'a> {
             } else {
                 match numtype_of(types, slot) {
                     Operand::Concrete(nt) => types.numtypes[nt as usize],
-                    Operand::Literal => {
-                        // The literal's own type, boxed as the value the call passes.
-                        let lit = types.through(slot);
-                        *slots.add(i) =
-                            crate::identities::rational::box_literal(self.rt.store, types, lit);
-                        types.rational
-                    }
+                    // The literal's own type; its bytes are the value the call copies.
+                    Operand::Literal => types.rational,
                     Operand::Pointer(_) | Operand::NonNumeric => return Ok(None),
                 }
             };

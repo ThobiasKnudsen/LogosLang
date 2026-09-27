@@ -53,16 +53,21 @@ unsafe fn parts(node: DyadPtr) -> (DyadPtr, DyadPtr, NumType) {
 }
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a valid conversion node; a rational value is a literal node's address.
+    // SAFETY: `node` is a valid conversion node; a rational value is the address of its
+    // sixteen bytes.
     unsafe {
         let (operand, from, to) = parts(node);
         let v = rt.run(operand)?;
         if from == rt.types().rational {
-            let lit = v as DyadPtr;
-            if lit.is_null() {
+            let p = v as usize as *const u8;
+            if p.is_null() {
                 return Err(RunError::Uninitialized);
             }
-            return super::rational::cast_to(lit, to).ok_or(RunError::UncomputableLiteral);
+            let (num, den) = super::rational::read_at(p);
+            if den == 0 {
+                return Err(RunError::Uninitialized);
+            }
+            return Ok(super::rational::cast_pair(num, den, to));
         }
         Ok(apply_cast(of_type_node(from), to, v))
     }

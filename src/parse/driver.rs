@@ -915,6 +915,29 @@ impl<'a> Parser<'a> {
         self.rt.hosting(&self.cx.scopes, self.trie, Some(host), |rt| unsafe { rt.run(node) })
     }
 
+    /// [`Parser::run_on_pass`] for a call whose record result is copied into `dest`.
+    ///
+    /// # Safety
+    /// `f` must be a `fn` node and `node` an application of it, both from the store;
+    /// `dest` a place of the result's width.
+    pub(super) unsafe fn run_on_pass_into(
+        &mut self,
+        f: DyadPtr,
+        node: DyadPtr,
+        dest: *mut u8,
+    ) -> Result<i64, crate::run::RunError> {
+        let host = crate::run::Host {
+            parser: (self as *mut Self).cast(),
+            lex_on: Self::lex_on,
+            mint: Self::mint_host,
+            construct: Self::construct_host,
+        };
+        // SAFETY: the caller's contract.
+        self.rt.hosting(&self.cx.scopes, self.trie, Some(host), |rt| unsafe {
+            rt.apply_into(f, node, Some(dest))
+        })
+    }
+
     /// The runtime's way back into the parser running it: build a held `type (…)`.
     ///
     /// # Safety

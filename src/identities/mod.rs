@@ -491,6 +491,8 @@ macro_rules! infix_construct {
             };
             let types = p.types();
             let node = crate::identities::group::apply(p.store(), &types, id, lhs, rhs, $build)?;
+            // SAFETY: `node` was just built over reduced dyads.
+            let node = unsafe { crate::identities::rational::slotted(p, node) };
             tape.reduce_here(node);
             Ok(crate::parse::Constructed::Placed)
         }
@@ -1006,11 +1008,11 @@ pub unsafe fn display_value(types: &Core, node: DyadPtr, bits: i64) -> String {
     if crate::parse::is_bool_result(types, node) {
         return if bits != 0 { "true" } else { "false" }.to_string();
     }
-    // A rational value's bits are the number's address.
+    // A rational value's bits are the address of its sixteen bytes.
     if rational::is_rational_value(types, node) {
-        let held = bits as usize as DyadPtr;
-        if !held.is_null() && (*held).ty == types.rational {
-            return rational::spell(held);
+        let p = bits as usize as *const u8;
+        if !p.is_null() {
+            return rational::spell_at(p);
         }
     }
     match read::read_kind(types, node) {
@@ -1196,6 +1198,13 @@ pub(crate) unsafe fn commit_call_args(
                     check_store_type(types, pty, *arg)?;
                 }
             }
+            // A literal's bytes are a rational value's; a concrete number is not.
+            Some((read::Read::Rational, _))
+                if !rational::is_rational_value(types, *arg)
+                    && !matches!(numtype_of(types, *arg), Operand::Literal) =>
+            {
+                return Err(ParseError::TypeMismatch);
+            }
             _ => {}
         }
     }
@@ -1223,6 +1232,10 @@ pub(crate) unsafe fn commit_fn_body(
         return walk_tail(types, body, &mut |leaf| {
             if (*leaf).ty != types.construct_ {
                 refuse_statement(types, leaf)?;
+            }
+            // `error «…»` never yields, and an `out` already hands back its bytes.
+            if (*leaf).ty == types.error.error || (*leaf).ty == types.by_copy.out {
+                return Ok(leaf);
             }
             if by_copy::record_type_of(types, leaf) != Some(output) {
                 return Err(ParseError::TypeMismatch);

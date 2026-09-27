@@ -3604,6 +3604,28 @@ fn void_function_runs_its_body_for_effect() {
 }
 
 #[test]
+fn a_run_time_rational_operation_makes_no_node() {
+    let (mut store, mut trie, core) = new_core();
+    let mut scopes = ScopeStack::new();
+    scopes.push(core.root_scope);
+    let src = "a := rational_number 1,\nb := rational_number 3,\nmut acc := rational_number 0,\n\
+               for 0..100 ( acc = acc + a / b ),\nacc";
+    let root = {
+        let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes).with_lower(&core.lower);
+        p.parse_sequence().unwrap()
+    };
+    let before = store.len();
+    let mut rt = Runtime::new(&core, &mut store).with_compiler(&core.lower);
+    // SAFETY: `root` is the sequence just parsed; a rational value is the address of its bytes.
+    let (num, den) = unsafe {
+        let bits = rt.run(root).unwrap();
+        rational::read_at(bits as usize as *const u8)
+    };
+    assert_eq!((num, den), (100, 3));
+    assert_eq!(rt.store.len(), before, "a rational operation allocates no node");
+}
+
+#[test]
 fn both_literal_arithmetic_stays_rational() {
     let (mut store, mut trie, core) = new_core();
     let mut s = ScopeStack::new();

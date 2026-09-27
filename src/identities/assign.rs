@@ -214,11 +214,16 @@ pub(super) fn build(
             let value = store.alloc_operands(&[lhs, rhs, types.ops.store_leaf(NumType::I64)]);
             return Ok(store.alloc_raw(op, value));
         }
-        Read::Container(t) if t == types.rational => {
+        Read::Rational => {
             // SAFETY: `rhs` is a reduced dyad from the store.
-            let value = unsafe { super::rational::rational_operand(store, types, rhs) }
-                .ok_or(ParseError::TypeMismatch)?;
-            let value = store.alloc_operands(&[lhs, value, types.ops.store_leaf(NumType::I64)]);
+            let fits = unsafe {
+                super::rational::is_rational_value(types, rhs)
+                    || matches!(super::numtype_of(types, rhs), super::Operand::Literal)
+            };
+            if !fits {
+                return Err(ParseError::TypeMismatch);
+            }
+            let value = store.alloc_operands(&[lhs, rhs, types.ops.rational_store]);
             return Ok(store.alloc_raw(op, value));
         }
         Read::Scalar(_) | Read::Pointer(_) if marked => {}

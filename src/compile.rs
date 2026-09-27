@@ -166,8 +166,9 @@ impl Lowerer<'_, '_> {
             Read::Identity | Read::Node => Ok(self.node_addr(node)),
             // A view's value is the viewed node.
             Read::Address => Ok(self.node_addr((*node).value.cast())),
-            Read::Container(t) if t == self.types.rational => Err(CompileError::NotLowerable(node)),
             Read::Container(_) => self.read_place(node, types::I64),
+            // A rational travels as the address of its sixteen bytes; only its steps refuse.
+            Read::Rational => self.place_addr(node),
             Read::Literal => match crate::identities::rational::mold(node) {
                 Some(v) => Ok(self.const_i32(v)),
                 None => Err(CompileError::UncomputableLiteral),

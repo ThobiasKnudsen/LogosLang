@@ -808,6 +808,8 @@ impl<'a> Runtime<'a> {
             Read::Identity | Read::Node => Ok(node as i64),
             // A view's value is the viewed node's address.
             Read::Address => Ok((*node).value as i64),
+            // A rational value travels as the address of its sixteen bytes.
+            Read::Rational => Ok(self.place_addr(node).ok_or(RunError::NoActivation)? as i64),
             Read::Container(_) => self.read_container(node),
             Read::Literal => crate::identities::rational::mold(node)
                 .map(i64::from)

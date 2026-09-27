@@ -655,8 +655,10 @@ impl<'a> Parser<'a> {
                 read
             } else if let Some(t) = box_ty {
                 // A box on the right: reads are copy by default, so `x` gets
-                // its own box and a copy of what `a` holds.
-                let place = self.alloc_local(t, 8);
+                // its own box and a copy of what `a` holds; a rational's is sixteen bytes.
+                let width = crate::identities::read::place_layout(self.types, t)
+                    .map_or(8, |(_, width)| width);
+                let place = self.alloc_local(t, width);
                 let init = crate::identities::build_init(self.rt.store, self.types, place, read)?;
                 self.cx.scopes.rebind(binding, place);
                 init

@@ -30,6 +30,9 @@ pub enum Read {
     Address,
     /// A comptime rational, molded on read.
     Literal,
+    /// A run-time rational: sixteen bytes `[num, den]` in a place, read by address and
+    /// copied like a record.
+    Rational,
     /// A record instance place: read by field or by address, never whole.
     Aggregate,
     /// No whole-value read: text, unit, a regex, an array, a callable, a convention, a
@@ -136,7 +139,7 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
         }
         meta::FRACTION_TAG => {
             if place {
-                Read::Container(op)
+                Read::Rational
             } else {
                 Read::Literal
             }
@@ -177,8 +180,7 @@ pub unsafe fn place_layout(types: &Core, t: DyadPtr) -> Option<(Read, usize)> {
     let t = super::type_identity_of(types, t)?;
     let kind = meta::kind_of(t)?;
     match kind {
-        // A place of `rational_number` holds a rational value's address.
-        meta::FRACTION_TAG => Some((Read::Container(t), 8)),
+        meta::FRACTION_TAG => Some((Read::Rational, 16)),
         k if k < VOID_TAG => {
             let nt = numtype::of_type_node(t);
             Some((Read::Scalar(nt), nt.bytes()))
@@ -389,6 +391,7 @@ mod tests {
             );
             assert_eq!(place_layout(types, core.type_), Some((Read::Container(core.type_), 8)));
             assert_eq!(place_layout(types, core.dyad_), Some((Read::Container(core.dyad_), 8)));
+            assert_eq!(place_layout(types, core.rational), Some((Read::Rational, 16)));
             for t in [core.string_, core.void_, core.comment_, core.plus, core.fn_type] {
                 assert_eq!(place_layout(types, t), None, "{t:p}");
             }

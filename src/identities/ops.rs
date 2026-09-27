@@ -24,6 +24,8 @@ pub struct OpLeaves {
     /// The leaves over rational values, interpreted only.
     pub(crate) rational_arith: [DyadPtr; 5],
     pub(crate) rational_cmp: [DyadPtr; 6],
+    /// The `=` into a rational place.
+    pub(crate) rational_store: DyadPtr,
     /// `[NumType]`: the `=` store leaf at that width; a pointer target stores as `U64`.
     pub(crate) store: [DyadPtr; 10],
     pub(crate) and_: DyadPtr,
@@ -75,10 +77,20 @@ impl OpLeaves {
         self.rational_cmp[op as usize]
     }
 
-    /// What makes an operator node a rational value, and what the compiler refuses.
+    /// What the compiler refuses: every step over rational values.
     pub(crate) fn is_rational_leaf(&self, leaf: DyadPtr) -> bool {
         !leaf.is_null()
-            && (self.rational_arith.contains(&leaf) || self.rational_cmp.contains(&leaf))
+            && (self.rational_arith.contains(&leaf)
+                || self.rational_cmp.contains(&leaf)
+                || self.rational_store == leaf)
+    }
+
+    /// The op an arithmetic leaf over rationals stands for; `None` for any other leaf.
+    pub(crate) fn rational_arith_op_of(&self, leaf: DyadPtr) -> Option<ArithOp> {
+        if leaf.is_null() {
+            return None;
+        }
+        self.rational_arith.iter().position(|&l| l == leaf).map(|i| ArithOp::from_tag(i as u8))
     }
 
     pub(crate) fn store_leaf(&self, nt: NumType) -> DyadPtr {
@@ -222,12 +234,15 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
     for (o, &run) in super::rational::CMP_RUNS.iter().enumerate() {
         rational_cmp[o] = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     }
+    let rational_store =
+        callable::mint_native(cx.store, cs.callable, super::rational::STORE_RUN, cs.seed_native);
     // The single-native leaves are minted by their own registrations.
     OpLeaves {
         arith,
         cmp,
         rational_arith,
         rational_cmp,
+        rational_store,
         store,
         and_: std::ptr::null_mut(),
         or_: std::ptr::null_mut(),
