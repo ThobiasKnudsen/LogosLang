@@ -43,13 +43,14 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
 
     // Installed now that the string logos exists for the role names. `bcode`
     // is null until compiled, `frame` null for a function with no locals,
-    // `outer` null for one that reads no outer name.
+    // `outer` null for one that reads no outer name, `receiver` null for one
+    // that neither reads nor writes a field of its `share` value.
     let record = meta::operand_record(
         cx,
         meta::TUPLE_TAG,
         meta::prec::READER,
         Assoc::Left,
-        &["input", "output_type", "body", "bcode", "frame", "outer"],
+        &["input", "output_type", "body", "bcode", "frame", "outer", "receiver"],
     );
     // SAFETY: `fn_type` was allocated by [`register`] and nothing has read its value slot.
     unsafe {

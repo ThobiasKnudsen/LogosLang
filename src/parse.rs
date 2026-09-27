@@ -923,11 +923,16 @@ pub const FN_FRAME: usize = 4;
 /// first-read order, or null; read at every call (DESIGN ›`own` and `drop`
 /// are static‹).
 pub const FN_OUTER: usize = 5;
+/// A `u64` leaf of [`RECEIVER_READS`] and [`RECEIVER_WRITES`] bits: whether a
+/// `share` function's body reads or writes a field of its value; null for neither.
+pub const FN_RECEIVER: usize = 6;
+pub const RECEIVER_READS: u64 = 1;
+pub const RECEIVER_WRITES: u64 = 2;
 
 /// `0` when the slot is null (no parameters and no locals).
 ///
 /// # Safety
-/// `fn_node` must be a function node whose value is the six-slot record
+/// `fn_node` must be a function node whose value is the seven-slot record
 /// `parse_fn` builds.
 pub unsafe fn fn_frame_size(fn_node: DyadPtr) -> usize {
     let frame = *((*fn_node).value as *const DyadPtr).add(FN_FRAME);
@@ -954,6 +959,22 @@ pub unsafe fn fn_outer<'a>(fn_node: DyadPtr) -> &'a [DyadPtr] {
         &[]
     } else {
         crate::identities::array::items(outer)
+    }
+}
+
+/// The [`FN_RECEIVER`] bits; `0` for anything but a built function node.
+///
+/// # Safety
+/// `f` must be a resolved dyad from the store.
+pub(crate) unsafe fn fn_receiver(types: &Core, f: DyadPtr) -> u64 {
+    if f.is_null() || (*f).ty != types.fn_type || (*f).value.is_null() {
+        return 0;
+    }
+    let leaf = *((*f).value as *const DyadPtr).add(FN_RECEIVER);
+    if leaf.is_null() {
+        0
+    } else {
+        std::ptr::read_unaligned((*leaf).value as *const u64)
     }
 }
 
@@ -1528,10 +1549,6 @@ pub struct Parser<'a> {
     /// The field binding behind each field read a type's body built: the
     /// constructor's fill, granted by default and vetoed by `immut`.
     fills: HashMap<DyadPtr, DyadPtr>,
-    /// The `share` functions that read a field of their value, which a parse may not call bare.
-    reads_receiver: HashSet<DyadPtr>,
-    /// The `share` functions that write a field of their value, called only through a `mut` name.
-    writes_receiver: HashSet<DyadPtr>,
     imports: Imports,
     /// The valueless places `?` built: a `:=` binds its name straight to such
     /// a place, no snapshot and no initializer.
@@ -1808,8 +1825,6 @@ impl<'a> Parser<'a> {
             paths: HashMap::new(),
             unfolded: HashMap::new(),
             fills: HashMap::new(),
-            reads_receiver: HashSet::new(),
-            writes_receiver: HashSet::new(),
             bracket_builders: HashMap::new(),
             holes: HashSet::new(),
             owning_holes: HashSet::new(),
@@ -3934,12 +3949,11 @@ impl<'a> Parser<'a> {
             };
             Box::new(spelled)
         };
-        let writes = self.writes_receiver.contains(&f) || self.writes_receiver.contains(&callee);
+        let bits = fn_receiver(self.types, f);
+        let writes = bits & RECEIVER_WRITES != 0;
         let receiver = match self.cx.definitions.last_mut().filter(|d| !d.this_param.is_null()) {
             Some(def) => {
-                if def.in_parse
-                    && (self.reads_receiver.contains(&f) || self.reads_receiver.contains(&callee))
-                {
+                if def.in_parse && bits & RECEIVER_READS != 0 {
                     return Err(ParseError::ShareFnNeedsValue(name()));
                 }
                 def.wrote_receiver |= writes && !def.in_parse;
@@ -4410,16 +4424,14 @@ impl<'a> Parser<'a> {
         let f = unsafe { self.fn_over_body(fn_type, input, output, declared) };
         let def = self.cx.definitions.last_mut().expect("still open");
         def.this_param = std::ptr::null_mut();
-        for (did, set) in [
-            (def.read_receiver, &mut self.reads_receiver),
-            (def.wrote_receiver, &mut self.writes_receiver),
-        ] {
-            if did {
-                set.insert(declared);
-                if let Ok(f) = f {
-                    set.insert(f);
-                }
-            }
+        let receiver = (u64::from(def.read_receiver) * RECEIVER_READS)
+            | (u64::from(def.wrote_receiver) * RECEIVER_WRITES);
+        if let (Ok(&f), true) = (f.as_ref(), receiver != 0) {
+            let bytes = self.rt.store.alloc_bytes(&receiver.to_ne_bytes());
+            let u64_ty = self.types.numtypes[crate::identities::NumType::U64 as usize];
+            let leaf = self.rt.store.alloc_raw(u64_ty, bytes);
+            // SAFETY: `f` is the node `fn_over_body` just built over its seven-slot record.
+            unsafe { *((*f).value as *mut DyadPtr).add(FN_RECEIVER) = leaf };
         }
         f
     }
@@ -4478,6 +4490,7 @@ impl<'a> Parser<'a> {
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
+                std::ptr::null_mut(),
             ]);
             // SAFETY: `declared` is the just-declared placeholder; nothing has read it, and the fixpoint overwrites it.
             unsafe {
@@ -4531,6 +4544,7 @@ impl<'a> Parser<'a> {
             std::ptr::null_mut(),
             frame,
             outer,
+            std::ptr::null_mut(),
         ]);
         Ok(self.rt.store.alloc_raw(fn_type, value))
     }
@@ -5835,7 +5849,7 @@ impl<'a> Parser<'a> {
         member: DyadPtr,
     ) -> Result<(), ParseError> {
         let f = self.types.through(member);
-        if !self.writes_receiver.contains(&f) && !self.writes_receiver.contains(&member) {
+        if fn_receiver(self.types, f) & RECEIVER_WRITES == 0 {
             return Ok(());
         }
         match self.paths.get(&receiver) {

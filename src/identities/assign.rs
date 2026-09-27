@@ -14,7 +14,7 @@ use super::read::{read_kind, Dispatch, Read};
 use super::{commit_if_literal, meta, operands, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad::DyadPtr;
-use crate::parse::{Assoc, ParseError, FN_BCODE, FN_BODY, FN_OUTER, FN_OUTPUT};
+use crate::parse::{Assoc, ParseError, FN_BCODE, FN_BODY, FN_OUTPUT, FN_RECEIVER};
 use crate::store::Store;
 
 /// The run natives are the per-width store leaves ([`crate::identities::ops`]).
@@ -287,7 +287,7 @@ unsafe fn build_call_write(
         return Ok(None);
     };
     let (_, pointee, offset) = super::pointer::deref_parts(tail);
-    let mut record: Vec<DyadPtr> = (0..=FN_OUTER).map(|k| *fields.add(k)).collect();
+    let mut record: Vec<DyadPtr> = (0..=FN_RECEIVER).map(|k| *fields.add(k)).collect();
     record[FN_OUTPUT] = super::pointer::make_pointer_type(store, types.type_, pointee);
     record[FN_BODY] = body;
     record[FN_BCODE] = std::ptr::null_mut();

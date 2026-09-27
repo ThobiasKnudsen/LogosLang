@@ -416,7 +416,7 @@ mod tests {
         let roles: Vec<&[u8]> = slots.iter().map(|s| unsafe { text_of(s.role) }).collect();
         assert_eq!(
             roles,
-            [b"input" as &[u8], b"output_type", b"body", b"bcode", b"frame", b"outer"]
+            [b"input" as &[u8], b"output_type", b"body", b"bcode", b"frame", b"outer", b"receiver"]
         );
         assert!(!slots[4].node.is_null(), "a fn with locals carries its frame size");
         assert!(!slots[5].node.is_null(), "a fn whose body reads an outer name lists it");
@@ -505,7 +505,7 @@ mod tests {
             assert_eq!(meta::kind_of(core.ran_), Some(meta::TUPLE_TAG));
             assert_eq!(meta::kind_of(core.array_), Some(meta::ARRAY_TAG));
             assert_eq!(meta::kind_of(core.fn_type), Some(meta::TUPLE_TAG));
-            assert_eq!(meta::arity_of(core.fn_type), crate::parse::FN_OUTER + 1);
+            assert_eq!(meta::arity_of(core.fn_type), crate::parse::FN_RECEIVER + 1);
         }
     }
 
