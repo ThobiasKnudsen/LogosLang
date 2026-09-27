@@ -13,7 +13,7 @@
 - **Source:** the DESIGN.md line(s) the rule comes from. DESIGN.md's `##` sections stand here in the same order, so a section is found by its old name.
 - **CONFLICT:** two passages of DESIGN.md that both read as live and disagree; both are quoted. These are questions for Thobias, not rulings.
 
-**Spellings.** Live rules use the spellings ruled by 26 September 2026: `a:type` (not `a:dyad.type`), `share` (not `shared`), no `this`, no `fields = (…)` block, `run`/`parse`/`drop` as the slot names, `binding` (not `record`). Old spellings appear only in History lines and dated quotes. Some examples were rewritten into today's spelling where DESIGN.md never wrote them that way; those rewrites are the editors' reading and not rulings:
+**Spellings.** Live rules use the spellings ruled by 26 September 2026: `a:type` (the short form of `a:dyad.type`; both legal since 27 September 2026), `share` (not `shared`), no `this`, no `fields = (…)` block, `run`/`parse`/`drop` as the slot names, `binding` (not `record`). Old spellings appear only in History lines and dated quotes. Some examples were rewritten into today's spelling where DESIGN.md never wrote them that way; those rewrites are the editors' reading and not rulings:
 - `a:type is number`, `a:type == i32`, `(a and b and c):type == i32` in the conjecture and `fn` examples (l.69 wrote `:dyad.type`); `share array_mints` (l.34 wrote `shared`).
 - `f.run` for `f.code` in the `call` access kind (l.107, l.108); bare `free ptr`, `drop items`, `items = …` and `tape[0].items = …` for `this.items` and `free this.ptr` (l.104); `x:type` for `x:dyad` (l.107, l.108).
 - `share` for `shared` in the l.121 and l.131 examples; `p:type` for `p:dyad.type` (l.123); `mut &a` and "write-through permission" for `&mut` (l.123); `tape[0].f = …` for `this.lhs = tape[-1]` (l.129); `point.dims` for `point.fields.dims` (l.133).
@@ -22,28 +22,29 @@
 - `array T [ … ]` for `array T (…)` throughout l.211, where the text itself says to read them so; bare `size`, `ptr`, `element_type`, `at` and `tape[0].at(k)` for `this.size`, `this.ptr`, `this.element_type`, `this.at(…)` (l.211); `share at` for `shared at` in a History line.
 - `a:type` for `a:dyad.type` (l.213, l.217); `run = (…)` for `shared run = (…)` (l.219); `x:type == T` in the normalizer conjecture (l.249).
 - `tape[0]:type = ^`, `tape[0].lhs = tape[-1]`, `tape[k]:type = T`, `x:type = f64` in the preview-milestone rules (l.375 wrote `this.lhs = tape[-1]`, `tape[0] = this`, `tape[0]:dyad.type = ^`, `tape[k]:dyad.type = T`, `x:dyad.type = f64`).
-Kept in the old spelling because the current one is not written anywhere: `mk := fn (t := type ?) -> type ( type ( fields = ( shared e := t ) ) )` and `shared array_mints := hashmap type -> type` (l.217); the array.logos snippets with `this.size`, `this.at`, `this.element_type` in the narrowing rules (l.217); `a:dyad` "in the frame is the matched node" (l.69); `f:dyad.value.body[0].rhs` (l.241); `self` in the refinement example (l.58).
+Kept in the old spelling because the current one is not written anywhere: `mk := fn (t := type ?) -> type ( type ( fields = ( shared e := t ) ) )` and `shared array_mints := hashmap type -> type` (l.217); the array.logos snippets with `this.size`, `this.at`, `this.element_type` in the narrowing rules (l.217); `a:dyad` "in the frame is the matched node" (l.69); `f:dyad.value.body[0].rhs` (l.241, legal again since `:dyad` is the long form, 27 September 2026); `self` in the refinement example (l.58).
 
-**Conflicts found by the rewrite**, each marked CONFLICT at its rule, with both passages quoted there:
-1. l.71 against l.69: the truth rule as the primitive, against two recognizers, two conjectures (›Truth rules and value rules‹).
-2. l.99 against l.75: the ecumenical system composing with the universe kernel, against the universe tower being no longer live (›Branches and universes‹).
-3. l.108 (15 September) against l.107 (20 September): "the defaults admit" a gate write, against the default write entry being gone (an Open under ›A gate is a node of the body‹).
-4. l.127 against l.135: a name may go `mut`, `immut`, `mut` again, against "the reverse flip" rejected to stay rejected (›`immut x` removes `mut`; `lock` seals the gate set‹).
-5. l.127 against l.107 and l.129: the default gate "write allowed while the slot is null", against no default write entry (same rule).
-6. l.119 against l.107 and l.123: `key := T ?` then `key = value`, and `v.f = …`, shown without `mut`, against a name without `mut` being written nowhere (›CONFLICT: `=` refused on a non-`mut` name…‹ at the end of ›Mutability and construction‹).
-7. l.131 against l.207: `share` refused on a type body's own line, against `share parse = (…)` being required there (›`share` means one place…‹).
-8. l.145 against l.189: constructor signatures `-> void`, against a parse body having no parameter list (›Target: a constructor returns `void!`…‹).
-9. l.178 against itself: the `,` between every two expressions, against "explicit only where adjacency would otherwise read as consumption" (›`,` outranks a type's optional operand…‹).
-10. l.180 against l.189: only a `fn` is ever run, against a type with `run` running (›Hosted text does not owe a single reading‹).
-11. l.191 against l.205: `[ ]` reserved for indexing, against the array's list written in `[ ]` (›Brackets divide by role‹).
-12. l.189 against itself, recorded open in DESIGN.md: whether `f.compile()` reaches the code of a type its body uses (›`fn` is not a primitive…‹).
-13. l.201 against l.201 and l.207: a field checked against its siblings only, against no shadowing, once fields and body lines are one list (›Fields are read with a dot outside their scope‹).
-14. l.211 against l.203: `a[k] = v` writes into the array, approved and in the seed, against the same question recorded open the next day (›A call that ends in a dereference is a place‹).
-15. l.221 against l.375: v0.1.0 has no gates and an importer sees every top-level name, against `pub` staying and `mut` landing before v0.1.0; l.213's "view ungated in v0.1.0" may share the root (›`import` is the one identity that loads a file‹).
-16. l.241 against l.213 and l.189: `a:type` stays the checked error, against `a:type` being the read (›A constructed node answers `:` from the path…‹).
+**Conflicts found by the rewrite, and how Thobias ruled them on 27 September 2026.** Each rule below carries its ruling; DESIGN.md holds the same rulings inline at the lines named.
+1. l.71 against l.69: dissolved. A conjecture states a boolean and a call yields the other side of a fact; the `->` mapper and the value/truth split are history (›A conjecture states a boolean…‹, first rule of ›The proof layer‹).
+2. l.99 against l.75: l.99 superseded; branches stand alone (›Branches and universes‹).
+3. l.108 against l.107: the 20 September removal covered the value slot only; a later gate line, `immut x` or `lock x`, is admitted from the declaring scope and below (›A gate is a node of the body‹).
+4. l.127 against l.135: on an unlocked name `mut` may return after `immut`; "the reverse flip" means un-freezing a locked set (›`immut x` removes `mut`; `lock` seals the gate set‹).
+5. l.127 against l.107: after `immut x` no entry says true to a write of the value (same rule).
+6. l.119 against l.107: filling a valueless declaration needs `mut`, `mut key := T ?`; the `?` entry only refuses reads (›Filling a valueless declaration needs `mut`‹).
+7. l.131 against l.207: l.207 wins; every slot fill carries `share` (›`share` means one place…‹).
+8. l.145 against l.189: the signature is the slot's declaration in `type`'s own definition, so `share parse = (…)` carries no arrow; and error values move into v0.1.0 (›Error handling‹).
+9. l.178: the old sentence superseded; `,` stands between every two expressions (›`,` outranks a type's optional operand…‹).
+10. l.180: reworded; a dyad whose type is neither a `fn` nor carries a `run` is never run (›Hosted text does not owe a single reading‹).
+11. l.191: `[ ]` is the identity `square_brackets`; after a value it indexes, otherwise it is a list (›Brackets divide by role‹).
+12. l.189: compiling a function compiles every run body it reaches; a named callee only by its own compile; the spelling is `compile f`, `f.compile()` superseded (›`fn` is not a primitive…‹).
+13. l.201: no shadowing, fields included; the seed's outer-stack check is right (›Fields are read with a dot outside their scope‹).
+14. l.211 against l.203: `a[k] = v` writes; the open note is closed (›A call that ends in a dereference is a place‹).
+15. l.221 against l.375: l.375 wins; an importer reaches only `pub` names in v0.1.0, the view stays readable (›`import` is the one identity that loads a file‹).
+16. l.241: the sentence making `a:type` an error was superseded on 23 September; `:dyad` is the long form again since 27 September, so the example stands (›A constructed node answers `:` from the path…‹).
+Also ruled the same day, outside the sixteen: `a:type` and `a:value` are short forms of `a:dyad.type` and `a:dyad.value`, `:dyad` and `:value` not retired (›`a:type` reads the type…‹); `alloc` returns `@T!` (›The heap is explicit‹); and the error model (›Error handling‹).
 Noted without a CONFLICT mark: `share` now names both the co-owning reference word (`share @T`) and the placement mark; `immut` both removes an entry and is a veto; `?` is a run-time value (l.119) and also "inert, making any build that reaches it incomplete" (l.135); l.34 calls `hashmap` pending where its seed note says it works; l.207 says "Seed: not yet (#153)" where dev b2b854c has it; l.375 places `exp` and `ln` in power.logos where d9a78cd moved them to their own files.
 
-**Size.** DESIGN.md is 455 KB in 383 lines; this file is about 400 KB in 384 rules. The rules are the same rules. The saving is in finding them, not in their number; a real cut needs decisions on what may leave (dated quotes, per-rule seed status).
+**Size.** DESIGN.md is 470 KB in 383 lines; this file is about 405 KB in 388 rules. The rules are the same rules. The saving is in finding them, not in their number; a real cut needs decisions on what may leave (dated quotes, per-rule seed status).
 
 ### How to read this document
 Top-down: vision and architecture first, then detail. Some later sections (identity recognition, representation internals) describe a target not yet tested against a real corpus; they are flagged where they appear. A live rule carries *ruled* or *settled* plus a date; a dead one is marked *superseded*. Search for those words to list either.
@@ -208,7 +209,18 @@ The rule *is* the proof; its derivation is the body the trusted core checks. So 
 
 ## The proof layer
 
-### A conjecture is statement, context, evidence
+### A conjecture states a boolean, and calling it yields the other side of a fact
+The form is unchanged: `a := conjecture ( … ) where ( … ) proof ( … )`, `proof` optional. The statement is any boolean expression over the holes, every boolean operator allowed: `double := conjecture ( a + a == 2 * a ) where ( a:type is number )`, `conj1 := conjecture ( b > (c and d) ) where ( … )`. The `and` group distributes, so `b > (c and d)` holds two facts, `b > c` and `b > d`.
+A call reaches any fact the statement holds on its own: a relation standing under `and` alone, or the whole statement when it is one relation. The argument is matched against one side of that fact, the holes bind, the other side comes back, and the relation is written from the argument's side: `double(x + x) == 2 * x`, `double(2 * x) == x + x`, `conj1(c) < b`. A relation under `or` is not callable alone, `x or y` saying nothing about `x`; `not` applies to what it wraps, so `not (a == b)` is the fact `a != b`; the whole statement is always usable as a boolean, in a `where` or as a step ending at `true`.
+A derivation is a chain of relations, each step citing its conjecture where it applies: `proof ( (a + a) / a == double(a + a) / a == mul_div_assoc((2 * a) / a) == 2 * div_self(a / a) == mul_one(2 * 1) == 2 )`. An inequality is proved by a chain from its left side to its right side across its relation, `x == … < … <= y` proving `x < y`.
+- **Checker rules (Claude's, ruled with the form):** a call whose yielded side holds a hole the argument did not bind is refused (`zero(0)` on `a * 0 == 0`); an argument matching both sides of a fact (`x + 0` against `a + 0 == a`) is read both ways and the reading that makes the next line hold is taken, so the written next line decides; relations compose down a chain by a table for the core relations (`==` with any relation is that relation, `<` with `<=` is `<`, `<` with `>` is refused, a chain proving `<` also proves `<=`), a relation the core does not know composing only through a cited transitivity conjecture; `!=` does not chain, so a `!=` fact is a single step.
+- **Why:** Thobias: "it would be nice to be able to write a+a == 2*a and to use this conjecture called double you write double(x+x) == 2*x … you know which way to travel by which side the content inside double parenthesis matches". A conjecture then reads as mathematics is written and is one object, not a value rule beside a truth twin; equality saturation is undirected already and which way a simplifier goes is the cost function's business; a chain of cited relation steps is Lean 4's `calc` block.
+- **Ruled:** 27 September 2026, Thobias.
+- **History:** supersedes the `->` mapper (the statement as `pattern -> replacement`, "the left side is what is recognized", "two recognizers, two conjectures"), "a chain of `->` steps", "the relation a mapping preserves is fixed by what it maps" with the `S -> true` truth-rule form and goal reduction, the rejection of a relation symbol between derivation lines, and "the truth rule is the primitive". Those rules stand below as the superseded record. `->` stays where it is a type arrow, `fn (…) -> T` and `hashmap K -> V`.
+- **Seed:** nothing; the proof layer is v1.0.0 standard-library work.
+- **Source:** DESIGN.md l.69, l.71
+
+### A conjecture is statement, context, evidence (superseded record, 27 September 2026)
 `half := conjecture ( (a + a) / a -> 2 ) where ( a:type is number and a != 0 ) proof ( … )`
 - The statement holds `pattern` and `replacement` as one `->`. **Left side: what is recognized. Right side: what it becomes.** `a + a -> 2 * a` recognizes the sum and yields the product; `a + a == 2 * a -> true` recognizes the equation and yields `true`. Two recognizers, two conjectures, never one object read two ways.
 - `where` holds **one boolean**, the `premises`. A hole's type is a premise, not a declaration: `a:type is number`, `is` being membership in the collection of numeric types (›Element access is `[…]`‹).
@@ -236,14 +248,14 @@ A statement without `proof (…)` has derivation `?`, attached later through the
 - **Ruled:** in discussion, 6/7 September 2026.
 - **Source:** DESIGN.md l.69
 
-### A derivation is a chain of `->` steps
+### A derivation is a chain of `->` steps (superseded record, 27 September 2026: a chain of relations, see the first rule of this section)
 `->` is the *mapper*: directed, "convert this form into that", target named. A boolean operator is a *relation* and names no target, so only `->` stands between lines. Each right side holds one call of the cited conjecture at the position it applies, its argument the pattern instance, checked against the previous line's reduced form. A line with no call is an identity step showing the reduced form. The trailing form is the replacement:
 `proof ( (a + a) / a -> double(a + a) / a -> mul_div_assoc((2 * a) / a) -> 2 * div_self(a / a) -> mul_one(2 * 1) -> 2 )` (`div_self`'s premise `a != 0` is `half`'s own).
 - **Rejected, to stay rejected:** a relation symbol or implication symbol between lines. The mapper is what a step is; the relation it preserves is the cited rule's.
 - **Ruled:** in discussion, 6/7 September 2026.
 - **Source:** DESIGN.md l.69
 
-### The relation a mapping preserves is fixed by what it maps
+### The relation a mapping preserves is fixed by what it maps (superseded record, 27 September 2026: steps carry their relation and compose by the table, see the first rule of this section)
 - Over **values**: equality. A step rewrites a subterm anywhere; accepting the conjecture merges its two sides into one equality class (the engine's *known equal*).
 - Over **booleans**: goal reduction, the left implied by the right. `a <= c -> (a <= b and b <= c)` reads "a <= c reduces to those two". A truth rule `S -> true` is a chain from S down to `true`: `x <= x^2 + 1 -> 0 <= x^2 - x + 1 -> 0 <= (x - 1/2)^2 + 3/4 -> true`, each step citing an iff rule, a value rewrite inside the line, or a rule whose right side is `true`, as written by hand.
 - No relation slot. "A implies B" is the reduction `B -> A`, or the truth rule `(A => B) -> true` cited through modus ponens.
@@ -294,10 +306,10 @@ Both bind typed identities, carry bodies and share `->`; each type's constructor
 - **History:** superseded propositions-as-types (August 2026). Superseded August spellings: `p1 := proof (a := generic_number ?, a + a) -> (2 * a) ( … )`, `proof (a := generic_number ?, a + a == 2 * a) -> true ( … )`, `proof (a := generic_number ?, a != 0, a / a) -> 1`.
 - **Source:** DESIGN.md l.71
 
-### Truth rules and value rules
+### Truth rules and value rules (superseded record)
 A **truth rule** states any proposition whatever.
-
-CONFLICT: l.71 (August 2026, not marked superseded): "The truth rule is the primitive: a value rule is accepted exactly when its truth counterpart holds." l.69 (6/8 September 2026): "`a + a -> 2 * a` recognizes the sum and yields the product where `a + a == 2 * a -> true` recognizes the whole equation and yields `true`: two recognizers, two conjectures, never one object read two ways"; "a mapping over **values** preserves equality … accepting the conjecture merges its two sides into one equality class"; and it supersedes "steps cite truth rules only: a value rule is the reading of an accepted equation, never a second object". Unclear whether a value rule is still accepted only through its truth counterpart.
+- **Ruled:** 27 September 2026, Thobias: dissolved. A conjecture is one boolean statement, and calling it yields the other side of a fact (›A conjecture states a boolean…‹); there is no value rule beside a truth twin.
+- **History:** l.71 (August 2026): "The truth rule is the primitive: a value rule is accepted exactly when its truth counterpart holds." l.69 (6 to 8 September 2026): "two recognizers, two conjectures, never one object read two ways". Both superseded.
 - **Source:** DESIGN.md l.69, l.71
 
 ### The trusted core checks derivations and demands totality
@@ -360,9 +372,9 @@ Backward search reduces a goal to the sub-statements that would establish it, re
 - **Why:** humility: the system corrects itself the instant a proof or contradiction arrives, keeping every still-consistent branch alive.
 - **Source:** DESIGN.md l.97
 
-### Branches and universes
-
-CONFLICT: l.99 (June 2026 direction, not marked superseded): "It composes with the universe kernel rather than replacing it. The two are orthogonal layers over the one graph: *universes* stop self-referential paradox **within** a theory (the stratified `universe_of` tower above); *branches* manage incompatible assumptions **across** theories. They meet at one productive point: large-cardinal axioms, which assert that taller universes exist, so there 'which branch am I in?' and 'how tall is the universe tower?' are the same choice, settled (as in real mathematics) by fruitfulness, i.e. by the coherentist layer." l.75 (ruled 30 August 2026): "the `universe_of` tower, `Prop` as an erased proof-irrelevant universe, and the June proof-relevance question below are no longer live spec … Stratification re-enters only if rules quantifying over rules … is shown to admit a paradox, not before."
+### Branches and universes (superseded record)
+- **Ruled:** 27 September 2026, Thobias: l.99 superseded. Branches stand alone; the universe remark returns only if the paradox case of ›Proofs are a layer over the Logic Graph‹ ever appears. Reason: the 30 August ruling already says when stratification comes back.
+- **History:** l.99 (June 2026 direction): "It composes with the universe kernel rather than replacing it. The two are orthogonal layers over the one graph: *universes* stop self-referential paradox **within** a theory (the stratified `universe_of` tower above); *branches* manage incompatible assumptions **across** theories. They meet at one productive point: large-cardinal axioms, which assert that taller universes exist, so there 'which branch am I in?' and 'how tall is the universe tower?' are the same choice, settled (as in real mathematics) by fruitfulness, i.e. by the coherentist layer." l.75 (ruled 30 August 2026): "the `universe_of` tower, `Prop` as an erased proof-irrelevant universe, and the June proof-relevance question below are no longer live spec … Stratification re-enters only if rules quantifying over rules … is shown to admit a paradox, not before."
 - **Source:** DESIGN.md l.99, l.75
 
 ## Memory and concurrency
@@ -375,6 +387,7 @@ Locals belong to their scope, and their memory comes back with the frame in one 
 `alloc n` allocates n bytes and returns `@u8`. `alloc n of T v` allocates n cells of `T` in one unbroken span, each built from the constructed value `T v` (`T ?` leaves them unfilled), and returns `@T` to the first cell. The count is always written: one value is `alloc 1 of i32 5`; there is no form without a count. Cell k is `(p + k)@`.
 - **Why:** Thobias: "one spelling, no hidden default; the count is the caller's business".
 - **Ruled:** 8 September 2026, Thobias; recorded 23 September 2026.
+- **Ruled (27 September 2026, Thobias):** `alloc` returns `@T!`. Out of memory is an error value, and every `alloc` is written with `try` (Zig's choice over Rust's abort). See ›Error handling‹. Seed: not yet.
 - **Seed:** since 23 September 2026 the span's byte count sits in a header before the first cell, and `free` reads it back.
 - **History:** first spelled `alloc T v`, returning an owning `@T`.
 - **Source:** DESIGN.md l.104
@@ -686,7 +699,7 @@ Since `:=` accepts any dyad as its value, a type included, the valueless form ne
 - **Ruled:** 23 September 2026, Thobias.
 - **Seed (#137):** a bare `?` stands as the one identity. `?` reads a type to its left only when that type applies to it, not when an operator waits there (`x != ?`). `T ?` still allocates zeroed bytes, which no read reaches.
 - **History:** before 23 September, `?` was a constructor building a fresh dyad with both slots `undefined` at every appearance, a literal, so `x := ?` bound x "to its own hole rather than aliasing one global unknown". Replaced because freshness belongs to the place.
-- **CONFLICT:** see ›`=` refused on a non-`mut` name vs. filling a valueless declaration‹ at the end of this section.
+- **Ruled (27 September 2026, Thobias):** the later fill needs `mut` on the name, `mut key := T ?`; the examples above omit it. See ›Filling a valueless declaration needs `mut`‹ at the end of this section.
 - **Source:** DESIGN.md l.119
 
 ### Reading a place before its first write is refused at parse
@@ -860,8 +873,8 @@ There is no phase to flip. `immut x` removes the `mut` entry from x's gate set. 
 - **Why:** a reader that draws a conclusion from a stable dyad keeps the conclusion after dropping its reference. Once gates are editable, that guarantee must be opted into. `lock` is the opt-in, which a compiled reader, a type's layout at first instantiation, or a proof may demand on what it reads, instead of every dyad paying for a permanence most never need.
 - **Ruled:** in discussion, 7 September 2026.
 - **Rejected, to stay rejected:** `metamut`, a separate grant of flip authority (delegating flip authority is just ownership transfer).
-- **CONFLICT:** l.127: "a name may go `mut`, then `immut`, then `mut` again" vs l.135 (›Substrate vocabulary‹): "Recorded as rejected, to stay rejected: `metamut`, the reverse flip, …". The reverse flip was rejected because "facts derived from reading a frozen dyad outlive any reference to it … un-freezing is unsound without universal dependency tracking" (l.127, superseded record).
-- **CONFLICT:** l.127: "after which the default gate (write allowed while the slot is null) refuses every further write" vs l.107 / l.129: "the default write entry gone 20 September 2026 … a name without `mut` is written nowhere".
+- **Ruled (27 September 2026, Thobias):** allowed unless locked. On an unlocked name `mut` may return after `immut`; "the reverse flip" in ›Substrate vocabulary‹'s rejected list means un-freezing a *locked* set. Reason: since 7 September permanence is `lock`'s job, opted into by whoever needs it.
+- **Ruled (27 September 2026, Thobias):** the default gate "write allowed while the slot is null" is gone since 20 September; after `immut x` no entry says true to a write of the value, so the name is written nowhere until `mut` returns.
 - **History:** the one-way phase flip `immut x` (June 2026): owner-only with no live borrows, like a move; frozen was final so a flip never invalidated anyone. Respelled 7 September 2026 into gates plus `lock`.
 - **Source:** DESIGN.md l.127
 
@@ -896,8 +909,8 @@ Its value is made once, at the definition. Where the line stands only decides wh
 Without `mut` the name is not rewritten, while a map behind it is written through it as through any place. The initializer runs **once, when the definition is parsed**, not at the first call. So it cannot read the function's parameters or locals, or a name of the loop or branch around it (no value there yet): the checked error. A `print` in it prints at the definition.
 - **Why:** Thobias: "it just means that this value is the same at the same time across all contexts". One word, one meaning: a reader never has to ask where a `share` line stands to know what it does. A call frame is an instance of its function (›Resolution is one rule‹), so a `share` name in a body is what `share` already is in a type. A cache a function keeps for itself (a generic's mints, identities/array.logos) lives inside the function, not beside it as a top-level name. On files, Thobias: "maybe you want the same shared value across all imports?"
 - **Ruled:** 25 September 2026, Thobias (function bodies: "it can be used on names inside functions to get some persistent storage across runs of the same function"); later that day, Thobias ("shared should be available everywhere"). Initializer at definition: Claude's choice, agreed by Thobias the same day ("agree").
-- **Open (Claude's choice, open to Thobias):** `share` stays refused on a parameter, whose value each call supplies (*A function's surface*), and on a type body's own line, which fills a slot (*The constructor is a field*).
-- **CONFLICT:** l.131: "`shared` stays refused … on a type body's own line, which fills a slot …, a type's shared member being declared inside `fields = (…)`" vs l.207: "every line stored once per type says so, `share parse_rank = …`, `share associativity = left`, `share parse = (…)` … an unmarked slot fill is the checked error".
+- **Open (Claude's choice, open to Thobias):** `share` stays refused on a parameter, whose value each call supplies (*A function's surface*).
+- **Ruled (27 September 2026, Thobias):** the type-body half of that open point is superseded by ›The mark is spelled `share`‹: every slot fill carries `share`, `share parse = (…)`, and an unmarked fill is the checked error.
 - **Seed:** since 25 September 2026 every position gets a global place, the initializer runs once as the definition parses, an owning value there is freed at program end, and the line itself then only names the place. A function whose `share` name holds a map is not compiled (the checked "cannot be compiled yet" every map in a compiled body gets).
 - **History:** 19 September 2026, `share` was a reserved word only inside a type's field block ("yes reserved inside instance inside type"), an ordinary name elsewhere. Widened 25 September 2026 to function bodies, then to everywhere.
 - **Source:** DESIGN.md l.131
@@ -911,8 +924,11 @@ A type keeps the defining scope it was constructed from. `a.x` asks `a`'s type f
   - 23 September 2026, Thobias: `point.dims` refused, `point.fields.dims` the read. Reason then: one word, `fields`, as the step from a type to what its instances hold. Superseded 25 September 2026 when the fields block was removed.
 - **Source:** DESIGN.md l.133
 
-### CONFLICT: `=` refused on a non-`mut` name vs. filling a valueless declaration
-l.119 (live, 23 September 2026): "`key := T ?` is the valueless declaration and `key := ?` the bare one, the value taken by later reassignment (`key := T ?`, then `key = value`)", and (26 September) "`v := T ?` leaves unwritten each field … `v.f = …` is a write of `f`", with no `mut` in either example. l.107 (20 September 2026): "a name without `mut` is written nowhere, so `x := i32 ?` without `mut` can never be filled, 'it should not be writable at all'". l.123: "An access along a path is permitted only when every binding along the path grants it: `b.x = 5` needs the write gate on `b` and on the field declaration `x`".
+### Filling a valueless declaration needs `mut`
+`mut key := T ?` then `key = value`; `mut v := T ?` then `v.f = …`. A name without `mut` is written nowhere, so `x := i32 ?` without `mut` can never be filled. The `?` entry on the binding only refuses reads until the first sibling write.
+- **Ruled:** 27 September 2026, Thobias, keeping his 20 September words ("it should not be writable at all"); the l.119 examples omitted `mut`.
+- **Rejected:** the `?` entry admitting the one first write without `mut` (Rust's `let x; x = 5;`), offered and declined the same day.
+- **Source:** DESIGN.md l.119, l.107, l.123
 
 **Substrate vocabulary** (DESIGN.md l.135, a passage inside ›Mutability and construction‹)
 
@@ -946,7 +962,7 @@ Every classification chain ends at the `type : type` self-loop: `3 : i32 : type 
 
 ### Rejected, to stay rejected (vocabulary and structure)
 - `metamut`.
-- The reverse flip (see CONFLICT under ›`immut x` removes `mut`; `lock` seals the gate set‹).
+- The reverse flip: un-freezing a locked gate set (27 September 2026: on an unlocked name `mut` may return after `immut`, see ›`immut x` removes `mut`; `lock` seals the gate set‹).
 - `any`.
 - A separate `struct` core identity.
 - The plural "logoi" in any Logos writing: `logos` is invariant; a dyad pluralizes as dyads.
@@ -997,10 +1013,30 @@ The constructor builds the error with `error «…»`. The driver (the enclosing
 - **Ruled:** 31 August 2026, in discussion.
 - **Seed:** v0.1.0 constructors are `-> void`; the resynchronizing driver comes later.
 - **History:** 30 August 2026: constructors "carry no `!`"; replaced 31 August.
-- **CONFLICT:** l.145: "constructor signatures in v0.1.0 are therefore `-> void`"; l.189 (17 Sept): "the `fn (tape := parsing_tape ?) -> void` wrapper a parse slot carried is gone ... a slot body has no parameter list at all". Whether a `parse` body has a signature (and a `void!` target) is unclear.
+- **Ruled (27 September 2026, Thobias):** the signature is the slot's declaration in `type`'s own definition: type.logos declares `parse` as a body yielding `void!`, every `share parse = (…)` inherits it, and a fill carries no arrow ("for all these names inside type body which is assigned and not declared their declaration, which is in definition of type, can absolutely be defined as returning an error as an option"). `error.X «…»` inside the body is the error value, a fault until `T!` lands.
 - **Source:** DESIGN.md l.145
 
-### v0.1.0 knows faults only; `error «…»` aborts the run
+### Error values are in v0.1.0; an error names a category, which is a scoped name
+`T!` is `T` or an error; it needs the union type defined first (open). A category is a name declared in a scope with `error.X := «description»`: no type, no value. `error`'s own parse reads the `.X := «…»` to its right, the one place a path stands left of `:=`. `error.X` declared in two libraries are two identities, so a handler tells `http.error.not_found` from `fs.error.not_found`; categories live in the declaring library's scope, never in one global set. An unknown category in a raise is the checked error.
+- **Why:** Thobias: "i think its wise to implement error handling for v0.1.0 so i want to use ! as an option for types"; "its rather just only a name without and type or value … in one scope you can define error.X and in another you can defined the same error name error.X and they are actually different … maybe a better word is error category". A declared name is already an identity resolved by scope, so nothing new is needed.
+- **Ruled:** 27 September 2026, Thobias.
+- **History:** supersedes the 2 September 2026 staging-out below.
+- **Seed:** nothing yet.
+- **Source:** DESIGN.md l.145
+
+### A raise is `error.X «message»`; the error value is an array with one element per hop
+Each element holds its category, its message (`{…}` read as `print` reads it), the exact Logic Graph location of the raise, and one optional value the raise writes, `?` when none, so a handler reads the bad index or the path as a value, `e[0].data`, never out of the message text. Every `try` that passes the error up adds its own element with its own location, so the array is the whole path from the raise to the handler (Zig's error return trace, as graph locations); a scope that raises over an error it received stacks its element on top.
+- **Ruled:** 27 September 2026, Thobias.
+- **Open:** whether the array is read as a chain (each element caused by the next) or a bag (a parse's several mistakes); what a fault becomes at a task boundary for whoever awaits the task; an error inside a `drop` or `defer` body, with nobody to return to (a fault, Claude's reading); how an `extern` declaration turns C return codes and `errno` into elements; the name of the category for a raise with none, `error.undefined` or `error.any`.
+- **Source:** DESIGN.md l.145
+
+### There is no bare `error «…»`; `abort «…»` stops the program; `alloc` returns `@T!`
+Every error carries a category. `abort «…»` is the fault word, the "cannot happen" case that cancels the task. `alloc` returns `@T!`: out of memory is an error value, and every `alloc` is written with `try` (Zig's choice over Rust's abort).
+- **Ruled:** 27 September 2026, Thobias: "abort should be used instead to stop the program. bare error is not allowed. should strictly give category to each error".
+- **Seed:** `error «…»` is the fault today and becomes `abort «…»`; `alloc` is not `!` yet; both pending.
+- **Source:** DESIGN.md l.145, l.104
+
+### v0.1.0 knows faults only; `error «…»` aborts the run (superseded 27 September 2026, see above)
 No `T!`, no `try`, no `match` over errors. `error «…»` is the one primitive: it never returns, the run aborts with its message, one diagnostic per run.
 - **Ruled:** 2 September 2026, in discussion.
 - **Source:** DESIGN.md l.145
@@ -1160,21 +1196,21 @@ The condition is the first complete expression after `if`, the next expression t
 
 ### `,` outranks a type's optional operand: `f(i32 3)` is one argument, `f(i32, 3)` two
 `i32 3` is juxtaposition: `i32` takes `3` into an anonymous value of its type. In `f(i32, 3)` `,` is built first (higher rank), so `i32` finds nothing and, accepting that, yields itself, the type as a value; `3` stays an uncommitted literal. No special rule.
-- **CONFLICT:** l.178 opens "the `,` stands between every two expressions of a scope" (26 Sept) but later says "Separation must be explicit only where adjacency would otherwise read as consumption", older wording.
+- **Ruled (27 September 2026, Thobias):** the older sentence "Separation must be explicit only where adjacency would otherwise read as consumption" is superseded; the `,` stands between every two expressions, and this example only shows what `,` does.
 - **Source:** DESIGN.md l.178
 
 ### Hosted text does not owe a single reading
 A hosted clause (Latin, English) parses to data, and data is a legitimate resting state: it stands in the graph, open to recognizer, reflection and rewriting. Ambiguous recognition: the dyad carries every matching identity. Ambiguous structure: it carries the alternative sub-dyads (a parse forest as plain values). Nothing known: the text literal is the floor. Resolution is lazy, at a use site, where later information removes alternatives or the demand surfaces `?`, the universal unknown. Hosted language is for truth: a sentence denotes a proposition (ambiguous: a set of candidates); "executing" it is the proof layer applied to it, checker as function and proposition as operand, so the evaluation rule is untouched. The kernel rarely certifies such claims (›Received code is checked before it runs‹), so an empirical claim enters as an asserted axiom with provenance, in a branch of ›the ecumenical proof system‹, where contradicting testimony coexists and the coherentist layer grades it: proven, refuted, plausible to a degree, unknown. Rankings guide what to try proving and never count as proofs. The proof layer, never the parser, assigns status, lazily and revisably.
 - **Ruled:** July 2026, in discussion.
 - **Rejected, to stay rejected:** driver backtracking (stored branches, rollback of final dyads): finality stays guarantee-based and one-way, exploring happens before commitment (guards, in-constructor lookahead), ambiguity is represented, not searched. `undefined` as the sign of ambiguity: it mixes too-many-readings with nothing-written, which `undefined` keeps meaning.
-- **CONFLICT:** l.180: "Per *Execution is function application*, a dyad whose type is not a `fn` is never run"; l.189: "otherwise, if the type carries a `run`, run that body over the node" and "`fn` is not a primitive".
+- **Ruled (27 September 2026, Thobias):** reworded: a dyad whose type is neither a `fn` nor carries a `run` is never run. A hosted clause's type carries neither, so it stands as data as before.
 - **Source:** DESIGN.md l.180
 
 ### Compilation reads frozen structure; a structural write is deoptimization
 A compiled artifact is a long-lived reader of a subgraph's structure, allowed while no structural writer touches it. The rule that a `graph_mut` invalidates readers *is* deopt: the write drops the artifact and falls back to interpretation. Runtime values are unaffected; the structure froze, not the data. So interpret versus compile is profitability, not meaning, and needs no syntax: cold or unstable code is interpreted, hot and frozen code compiled. `comptime` is the one execution marker with meaning (when evaluation happens, what is baked in). The same freeze allows optimization: equality saturation needs a fixed input, so compile, optimize and extract a cheaper proven-equal variant are one operation under one condition. Editing runs only this pure analysis (no I/O); the user's program runs nothing until invoked; the language's own machinery stays compiled, untouched by user edits.
 - **Source:** DESIGN.md l.182
 
-### The seed compiles only when told: `f.compile()`
+### The seed compiles only when told: `compile f` (spelled `f.compile()` until 27 September 2026, see ›`fn` is not a primitive‹)
 The seed interprets everything and compiles only on request: in v0.1.0 via the `fn` type's shared `compile` member (›Execution is function application‹). Call `f.compile()` in the pass; the next call jumps to the installed code. The `backend cranelift (...)` marker and profile-driven promotion are later work on the same deopt boundary.
 - **Ruled:** July 2026, in discussion.
 - **Source:** DESIGN.md l.182
@@ -1306,7 +1342,7 @@ A write to `tape[k]` replaces the pointer, nothing more. A constructor that fini
 - **Seed:** #127, after #126.
 - **History:** the `fn` type was two shared functions, `compile` (lower body to `bcode`) and `run` (execute), plus per-instance `input`, `output_type`, `body` (reflectable graph), `bcode` (opaque, null until compiled), `frame` (byte size of parameters and locals per call, null when none).
 - **Open:** where the `run` slot is stored (since 10 Sept 2026).
-- **Open (CONFLICT already recorded in DESIGN):** does `f.compile()` reach the code of a type its body uses? l.189 says yes ("`f.compile()` on a call site whose type carries a `run` compiles that function"); the 4 Sept compile ruling declined transitive compile; the seed leaves it interpreted.
+- **Ruled (27 September 2026, Thobias):** yes. Compiling a function compiles every run body it reaches: the specialization of a Logos-defined operator is compiled with the first function that uses it and shared afterwards, since a `^` node has no name to compile on its own. A named callee keeps the 4 September rule and is compiled only by its own compile. Reason: otherwise every compiled function pays an interpreter jump per operator, and the demo's point is a compiled operator. **The spelling is `compile f`**, a prefix word over the name like `own x` and `drop x`; `f.compile()` is superseded wherever it stands. Seed: `compile` resolves after `.` on an fn value today and compiles the named function alone; both pending.
 - **Open:** what an absent constructor means for a `run`-carrying type: the seed refuses it as a call form since #133 slice 9 (before, `sq2(5)` ran as a call); ›The constructor is a field‹ leaves it inert.
 - **Source:** DESIGN.md l.189
 
@@ -1332,7 +1368,7 @@ A member given a value at definition is not an argument; arity is the hole count
 
 ### Brackets divide by role
 `( )`: scopes, parameter lists, bodies. `[ ]`: reserved for indexing. `{ }`: interpolation inside `«…»` and `#`, unassigned elsewhere; a closed language block reaches out through `logos (…)` (›Sections, the arche, and effect identities‹, 4 Sept 2026).
-- **CONFLICT:** l.191: "`[ ]` is reserved for indexing"; l.205 (26 Sept): "`array T [ … ]` ... the bracket as `elements`, typed `square_brackets`" and "`x = [4, 5]`".
+- **Ruled (27 September 2026, Thobias):** reworded: `[ ]` is the square bracket, the identity `square_brackets`; after a value it indexes, after a type or standing as a value it is a list (`array T [ … ]`, `x = [4, 5]`), its meaning decided by its left neighbour as `( )`'s is. Reason: "`[` is `(` in square brackets".
 - **Source:** DESIGN.md l.191
 
 ### A parameter is on the same level as the body's top lines
@@ -1474,7 +1510,8 @@ Original wording: "An *expression* line in a `fields = (…)` scope is instance-
 ### Fields are read with a dot outside their scope
 A field is never a bare name in surrounding code; outside its scope it is reached with `.`.
 - **Rejected:** `self.` and `child.` prefixes. Structure carries what a mark would have said.
-- **CONFLICT:** l.201 says "a field's declaration is checked only against its siblings (the seed's check against the outer stack is a bug)", with `x := 1, p := type (fields = (x := i32 ?))` legal. But l.201 also says a type body's declarations "obey the no-shadowing rule like any block's (`y := 1, g := type (y := 3)` is the error)", and its 19 September note keeps that for the fields block ("no-shadowing applies as before"). Since 25 September (l.203) fields and body lines are the same lines, so the two cannot both hold. l.207 sides with no shadowing: "a type body written inside another must not reuse the outer one's names … remember logos uses non shadowing like zig".
+- **Ruled (27 September 2026, Thobias):** no shadowing, fields included. `x := 1, p := type ( x := i32 ? )` is the error, and the seed's check against the outer stack is right, not a bug. Reason: "logos uses non shadowing like zig" (26 September), ›Members are dot-only…‹ has "strictness has no exceptions", and since 25 September fields and body lines are one list.
+- **History:** l.201 (30 August 2026) had "a field's declaration is checked only against its siblings"; superseded.
 - **Source:** DESIGN.md l.201, l.207
 
 ### Still to be written in type.logos; reflection of fields is open
@@ -1782,7 +1819,7 @@ An argument of a placed call that reads the tape (the index line `tape[1].dyads[
 - **Ruled:** 25 September 2026, Claude's choice (DESIGN was silent), approved by Thobias the same day ("yes").
 - **Rejected:** the `[k]` parse seeing `=` on its right and placing a `set(k, v)` (a parse cannot construct the right side of `=`, and a second member would repeat the check); `at` yielding an `@T` the parse dereferences (`a.at(k)` would then hand out a pointer).
 - **Seed:** since 25 September 2026, `=` over such a call builds a copy of `f` whose body ends in `p` and returns `@T`, and stores through that copy's call; no array-specific code. A fault a compiled caller parks is the first one, so the null guard over the zero an interpreted callee's error left does not replace that error.
-- **CONFLICT:** l.203 (26 September 2026) says: "Recorded open: whether `x[i] = …` in user code writes into the array, which needs `at` to give a place and not a copy." l.211 (25 September 2026) says `a[k] = v` writes, approved by Thobias, and is in the seed.
+- **Ruled (27 September 2026, Thobias):** settled, `a[k] = v` writes. The 26 September open note under ›A type body describes one level‹ is closed: `at` ends in a dereference, so it is a place, and the seed already does it.
 - **Source:** DESIGN.md l.211
 
 ### `a` need not be `mut` to write its elements
@@ -2110,6 +2147,7 @@ A read that does not fit the node's type (`.text` of a number, an operand index 
 - **Ruled:** 23 September 2026, Thobias.
 - **Rejected:** `(a as dyad)`: the less consistent spelling.
 - **Seed:** since 24 September 2026 (#139): `:dyad` and `:value` are checked errors; the binding's pointer to its dyad stays a layout field that `:` does not spell.
+- **Amended (27 September 2026, Thobias):** `:dyad` and `:value` are not retired. `a:type` and `a:value` are the short forms of `a:dyad.type` and `a:dyad.value`: "its just a simplification in the definition of : where it emmits dyad when accessing type and value but you can still write a:dyad.type". `a:value` is needed because `.` reads a field at an offset inside the value, the `@void` slot; the binding still holds `dyad` as a field. Seed: #139's refusal of `:dyad` and `:value` is to be undone, pending.
 - **History:** August 2026: the dyad view was `(dyad a).type`, replacing the universal `.type` metaproperty. 7-8 September 2026: respelled `a:dyad.type` (`:dyad` = the view; `(dyad a)` as a second spelling dropped). In that period `a:type` was a checked error. 23 September 2026: `:dyad` and `:value` retired, `a:type` replaces `a:dyad.type`.
 - **Source:** DESIGN.md l.213
 
@@ -2306,7 +2344,8 @@ The binary has no subcommands and no compile flags, ever: it joins its arguments
 ### `import` is the one identity that loads a file
 Its constructor consumes the path token (the same licensed token consumption as `#` and the planned header reader). The imported file runs top to bottom. An importer, command line or Logos file alike, reaches only the imported file's `pub` names: the ordinary visibility rule, with no import-specific exception.
 - **Ruled:** August 2026, in discussion.
-- **CONFLICT:** l.221: "(the target; v0.1.0 has no gates and an importer sees every top-level name, ruled 4 September 2026, see *Feasibility*)" vs l.375: "(Superseded 20 September 2026, Thobias: `pub` stays and `mut` lands in the seed before v0.1.0, because the gate machinery is best tested early and `pub` already carries imports; #64 closed without the change.)". l.221 still states the 4 September staging as live.
+- **Ruled (27 September 2026, Thobias):** the 20 September ruling wins. An importer reaches only `pub` names in v0.1.0 as well, which the seed does; the dyad view stays readable in v0.1.0 as ›Writing a cell's fields is decided by gates‹ says.
+- **History:** l.221 had "v0.1.0 has no gates and an importer sees every top-level name" (4 September 2026); superseded.
 - **Source:** DESIGN.md l.221
 
 ### `print «…»` is the output word
@@ -2419,7 +2458,7 @@ Every path into the graph is written in code, so known before anything runs. At 
 Reached as `f:dyad.value.body[0].rhs`, a node's `:scope` is the innermost enclosing scope on the path, `:start`/`:end` the enclosing item, `:gate` the named bindings along the path composed by the path rule of *`mut` is a gate on the binding*, and `:dyad` the node itself. Four facts, zero storage, because every path starts at a name. The pass walks the path; nobody spells the walk.
 - **Why:** the path already fixes the facts. Storing them would cost 40 bytes per application and literal; an address-keyed index would serve a pointer-without-a-path, which never exists.
 - **Ruled:** 8 September 2026.
-- **CONFLICT:** l.241: "a `:` field no binding has, `a:type`, stays the checked error of *The dyad's read surface*"; l.189: "`:dyad` is retired and `a:type` is the read" (23 September 2026). The l.241 example also still uses `:dyad`.
+- **Ruled (27 September 2026, Thobias):** the sentence "a `:` field no binding has, `a:type`, stays the checked error" was superseded on 23 September, `a:type` being the read (the short form of `a:dyad.type`). The path rule stands, and so does the `:dyad` example, since `:dyad` is the long form again (›`a:type` reads the type…‹).
 - **Source:** DESIGN.md l.241
 
 ### The meta-access surface is `:` and `.`
@@ -2513,7 +2552,7 @@ A use keeps candidates whose scope is open (ancestor on the scope stack) *and* w
 - **Source:** DESIGN.md l.265
 
 ### Members are dot-only outside their scope; strictness has no exceptions
-Outside its declaring scope a member is reached only by `.`, which probes exactly that scope, never as a bare name; so a field's no-shadowing check runs only against siblings. A type body's bare lines are live within the body and obey the rule like any block's. No exceptions: parameters, locals, loop variables, members alike.
+Outside its declaring scope a member is reached only by `.`, which probes exactly that scope, never as a bare name; so a field's no-shadowing check runs only against siblings (superseded 27 September 2026, Thobias: a field may not reuse a name live outside the type body either, see ›Fields are read with a dot outside their scope‹). A type body's bare lines are live within the body and obey the rule like any block's. No exceptions: parameters, locals, loop variables, members alike.
 - **Why it stays usable:** keep the ambient set to primordial names and ship the stdlib behind namespaces.
 - **Ruled:** 30 August 2026.
 - **Source:** DESIGN.md l.265
