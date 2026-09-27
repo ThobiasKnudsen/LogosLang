@@ -1594,9 +1594,6 @@ pub struct Parser<'a> {
     /// The bindings along the path a field place was reached by, root first:
     /// what a write into it must be granted by.
     paths: HashMap<DyadPtr, Vec<DyadPtr>>,
-    /// Each value a run type's node folded to at parse, and that node, whose
-    /// fields a `.` on the value still reads.
-    unfolded: HashMap<DyadPtr, DyadPtr>,
     imports: Imports,
     /// The valueless places `?` built: a `:=` binds its name straight to such
     /// a place, no snapshot and no initializer.
@@ -1869,7 +1866,6 @@ impl<'a> Parser<'a> {
             trie,
             types,
             paths: HashMap::new(),
-            unfolded: HashMap::new(),
             bracket_builders: HashMap::new(),
             holes: HashSet::new(),
             owning_holes: HashSet::new(),
@@ -4150,7 +4146,6 @@ impl<'a> Parser<'a> {
         } else {
             bits as DyadPtr
         };
-        self.unfolded.insert(folded, node);
         Ok(Some(folded))
     }
 
@@ -5159,26 +5154,36 @@ impl<'a> Parser<'a> {
         self.cx.pos = at;
         Ok(None)
     }
+}
 
+/// The member right of `.`: the name's span in the source, and the `[i]` or `(…)` cell
+/// some reads take after it.
+#[derive(Clone)]
+struct Member {
+    start: usize,
+    len: usize,
+    index: Option<usize>,
+    key: Option<DyadPtr>,
+    call: Option<Vec<DyadPtr>>,
+}
+
+impl<'a> Parser<'a> {
     /// # Safety
     /// `lhs` must be a valid dyad from the store.
     unsafe fn field_access_each(
         &mut self,
         lhs: DyadPtr,
-        nstart: usize,
-        nlen: usize,
-        index: Option<usize>,
-        key: Option<DyadPtr>,
-        call: Option<Vec<DyadPtr>>,
+        left: Cell,
+        member: Member,
     ) -> Result<(DyadPtr, usize), ParseError> {
         let Some((connective, a, b)) = crate::identities::group::members(self.types, lhs) else {
-            return self.field_access(lhs, nstart, nlen, index, key, call);
+            return self.field_access(lhs, left, member);
         };
         // A member reads as `.`'s left operand does, through its name.
         let (a, b) =
             (self.settled_type(self.types.through(a)), self.settled_type(self.types.through(b)));
-        let (a, consumed) = self.field_access_each(a, nstart, nlen, index, key, call.clone())?;
-        let (b, _) = self.field_access_each(b, nstart, nlen, index, key, call)?;
+        let (a, consumed) = self.field_access_each(a, Cell::built(a), member.clone())?;
+        let (b, _) = self.field_access_each(b, Cell::built(b), member)?;
         let joined = crate::identities::group::join(self.rt.store, self.types, connective, a, b)?;
         Ok((joined, consumed))
     }
@@ -5189,15 +5194,13 @@ impl<'a> Parser<'a> {
     ///
     /// # Safety
     /// `lhs` must be a valid dyad from the store.
-    pub(crate) unsafe fn field_access(
+    unsafe fn field_access(
         &mut self,
         lhs: DyadPtr,
-        nstart: usize,
-        nlen: usize,
-        index: Option<usize>,
-        key: Option<DyadPtr>,
-        call: Option<Vec<DyadPtr>>,
+        left: Cell,
+        member: Member,
     ) -> Result<(DyadPtr, usize), ParseError> {
+        let Member { start: nstart, len: nlen, index, key, call } = member;
         let unit_call = matches!(call, Some(ref a) if a.is_empty());
         // The member name is read as its raw spelling: a field is dot-only,
         // so what the driver resolved it to is beside the point. `index` and
@@ -5270,7 +5273,7 @@ impl<'a> Parser<'a> {
                 }
             }
             // `(2 ^ 3).lhs`: the node a comptime value was folded from keeps its fields.
-            let lhs = self.unfolded.get(&lhs).copied().unwrap_or(lhs);
+            let lhs = if left.origin.is_null() { lhs } else { left.origin };
             if (*lhs).ty == self.types.dyad_ {
                 return self.view_member(lhs, name).map(|n| (n, 0));
             }
@@ -5474,10 +5477,10 @@ impl<'a> Parser<'a> {
         // The left is read as it stands: an identity's fields are read off the
         // token before its own constructor wakes (DESIGN ›Text is the quote‹),
         // so a callable to the left is the identity itself, not a call in waiting.
-        let (lhs, root) = match tape.at(-1).copied() {
-            Some(cell) => (self.operand_dyad(cell)?, cell.binding(self.types)),
-            None => return Err(ParseError::MissingOperand),
+        let Some(left) = tape.at(-1).copied() else {
+            return Err(ParseError::MissingOperand);
         };
+        let (lhs, root) = (self.operand_dyad(left)?, left.binding(self.types));
         // The member is read by its spelling at the offset it was lexed at, so a
         // keyword there (`.type`) reads as a name.
         let this_read = self.is_node_cell(lhs);
@@ -5523,8 +5526,9 @@ impl<'a> Parser<'a> {
             return Err(e);
         }
         self.cx.member_root = root;
+        let member = Member { start: nstart, len: nlen, index, key, call };
         // SAFETY: `lhs` is a reduced dyad off the tape.
-        let access = unsafe { self.field_access_each(lhs, nstart, nlen, index, key, call) };
+        let access = unsafe { self.field_access_each(lhs, left, member) };
         self.cx.member_root = std::ptr::null_mut();
         let (node, consumed) = access?;
         if let Ok(Some(fill)) = fills {
@@ -8082,9 +8086,12 @@ impl<'a> Parser<'a> {
                 // SAFETY: the node is the one `run_logos_ctor` minted for `id`, `[field…, null, spec]`.
                 let folded =
                     unsafe { self.resolve_specialization(cell.dyad, cell.start, &spelling)? };
-                // A comptime node folded: its literal stands in the cell.
+                // A comptime node folded: its literal stands in the cell, the node it came
+                // from beside it for `.`.
                 if let Some(lit) = folded {
+                    let origin = cell.dyad;
                     tape.place(lit);
+                    tape.at_mut(0).expect("placed above").origin = origin;
                     return Ok(());
                 }
             }
