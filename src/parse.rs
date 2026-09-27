@@ -1546,9 +1546,6 @@ pub struct Parser<'a> {
     /// Each value a run type's node folded to at parse, and that node, whose
     /// fields a `.` on the value still reads.
     unfolded: HashMap<DyadPtr, DyadPtr>,
-    /// The field binding behind each field read a type's body built: the
-    /// constructor's fill, granted by default and vetoed by `immut`.
-    fills: HashMap<DyadPtr, DyadPtr>,
     imports: Imports,
     /// The valueless places `?` built: a `:=` binds its name straight to such
     /// a place, no snapshot and no initializer.
@@ -1556,8 +1553,6 @@ pub struct Parser<'a> {
     /// The holes `own` marked over a type whose body fills `drop`: the
     /// name or field declared with one owns the node written into it.
     owning_holes: HashSet<DyadPtr>,
-    /// The field reads whose field carries `own`.
-    owning_reads: HashSet<DyadPtr>,
     /// A field write's node, with the name and the field it fills.
     field_writes: HashMap<DyadPtr, (DyadPtr, DyadPtr)>,
     /// The field node `v.f` built as a write's target, with the name and the field.
@@ -1824,11 +1819,9 @@ impl<'a> Parser<'a> {
             types,
             paths: HashMap::new(),
             unfolded: HashMap::new(),
-            fills: HashMap::new(),
             bracket_builders: HashMap::new(),
             holes: HashSet::new(),
             owning_holes: HashSet::new(),
-            owning_reads: HashSet::new(),
             field_writes: HashMap::new(),
             field_targets: HashMap::new(),
             imports: Imports::default(),
@@ -3998,6 +3991,10 @@ impl<'a> Parser<'a> {
             def.read_receiver |= !def.in_parse;
         }
         let k = self.scalar_value(crate::identities::numtype::NumType::U64, index as i64);
+        let binding = resolved.as_ref().map_or(std::ptr::null_mut(), |r| r.binding);
+        // Only the type's own parse fills a field through its default entry.
+        let in_parse = self.cx.definitions.last().is_some_and(|d| d.in_parse);
+        let fill = if in_parse { self.types.this.fill } else { std::ptr::null_mut() };
         // SAFETY: the field is a declaration dyad, its type null or a type node.
         let node = unsafe {
             crate::identities::this::build_field_read(
@@ -4006,16 +4003,12 @@ impl<'a> Parser<'a> {
                 this,
                 k,
                 (*items[index]).ty,
+                binding,
+                fill,
             )
         };
-        if let Some(r) = resolved {
-            self.note_owning_read(node, r.binding);
-            // Only the type's own parse fills a field through its default entry.
-            if self.cx.definitions.last().is_some_and(|d| d.in_parse) {
-                self.fills.insert(node, r.binding);
-            } else {
-                self.paths.insert(node, vec![r.binding]);
-            }
+        if !binding.is_null() && !in_parse {
+            self.paths.insert(node, vec![binding]);
         }
         Ok(node)
     }
@@ -5050,8 +5043,16 @@ impl<'a> Parser<'a> {
             .and_then(|r| Some((items.iter().position(|&f| f == r.identity)?, r.binding)));
         if let Some((i, binding)) = found {
             let k = self.scalar_value(crate::identities::numtype::NumType::U64, i as i64);
-            let node = this::build_field_read(self.rt.store, types, lhs, k, (*items[i]).ty);
-            self.note_owning_read(node, binding);
+            let ty = (*items[i]).ty;
+            let node = this::build_field_read(
+                self.rt.store,
+                types,
+                lhs,
+                k,
+                ty,
+                binding,
+                std::ptr::null_mut(),
+            );
             return Ok(Some((node, 0)));
         }
         let Some(member) = self.share_member_read(t, name) else {
@@ -5812,13 +5813,16 @@ impl<'a> Parser<'a> {
     /// along it, `immut` vetoing first; the constructor's fill of its fresh
     /// node is granted unless `immut` vetoes it; a place reached no such way passes here.
     pub(crate) fn check_path_write(&self, target: DyadPtr) -> Result<(), ParseError> {
-        if let Some(&binding) = self.fills.get(&target) {
-            // SAFETY: a fill's binding is a binding dyad from the store.
-            if unsafe { Binding::has_gate(binding, self.types.immut_) } {
-                // SAFETY: as above.
-                return Err(ParseError::Immutable(Box::new(unsafe { Binding::spelling(binding) })));
+        use crate::identities::this;
+        // SAFETY: `target` is a reduced dyad from the store; a fill's binding is a binding dyad.
+        unsafe {
+            if this::is_field_read(self.types, target) && this::is_fill(self.types, target) {
+                let binding = this::field_binding_of(self.types, target);
+                if Binding::has_gate(binding, self.types.immut_) {
+                    return Err(ParseError::Immutable(Box::new(Binding::spelling(binding))));
+                }
+                return Ok(());
             }
-            return Ok(());
         }
         self.check_gates(self.paths.get(&target).map_or(&[][..], Vec::as_slice))
     }
@@ -5952,18 +5956,18 @@ impl<'a> Parser<'a> {
         self.holes.contains(&d)
     }
 
-    /// A read of a field declared `own` over a node's type owns what it reaches, for
-    /// `=`, `own` and `drop` to consult.
-    fn note_owning_read(&mut self, read: DyadPtr, field: DyadPtr) {
-        // SAFETY: `field` is the binding the resolver returned for the field.
-        if unsafe { self.owns_node(field) } {
-            self.owning_reads.insert(read);
-        }
-    }
-
-    /// Whether `d` is a read of a field declared `own` over a node's type.
+    /// Whether `d` is a read of a field declared `own` over a node's type: what it reaches
+    /// is owned, for `=`, `own` and `drop` to consult.
     pub(crate) fn is_owning_read(&self, d: DyadPtr) -> bool {
-        self.owning_reads.contains(&d)
+        use crate::identities::this;
+        // SAFETY: `d` is null or a reduced dyad from the store; a field read's binding operand
+        // is null or a binding dyad.
+        unsafe {
+            !d.is_null() && this::is_field_read(self.types, d) && {
+                let binding = this::field_binding_of(self.types, d);
+                !binding.is_null() && self.owns_node(binding)
+            }
+        }
     }
 
     /// `own t ?`: the hole owns the node written into it.
@@ -7432,8 +7436,11 @@ impl<'a> Parser<'a> {
         // `tape[0].f:type` is the field's declared type, not the type of the read that reaches it;
         // an untyped field's type is the written value's, unknown until the constructor runs.
         if crate::identities::this::is_field_read(types, lhs) && name == "type" {
-            let declared =
-                self.fills.get(&lhs).map_or(std::ptr::null_mut(), |&b| (*Binding::read(b).dyad).ty);
+            let declared = if crate::identities::this::is_fill(types, lhs) {
+                (*Binding::read(crate::identities::this::field_binding_of(types, lhs)).dyad).ty
+            } else {
+                std::ptr::null_mut()
+            };
             if declared.is_null() {
                 return Err(ParseError::BadReflectRead);
             }

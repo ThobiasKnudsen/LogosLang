@@ -22,15 +22,20 @@ use cranelift_codegen::ir::Value;
 /// The handles: the slot read and the slot write, each with its run leaf.
 #[derive(Debug, Clone, Copy)]
 pub struct ThisIds {
-    /// A field read: `[node, k, op]`, yielding the node slot `k` holds.
+    /// A field read: `[node, k, binding, fill, op]`, yielding the node slot `k` holds;
+    /// `binding` the field's, null for a read built at run, `fill` the mark below or null.
     pub slot: DyadPtr,
     pub slot_leaf: DyadPtr,
     /// A field write: `[node, k, value, op]`, storing `v`'s node into slot `k`.
     pub write: DyadPtr,
     pub write_leaf: DyadPtr,
-    /// A read of a field typed by `build_field_read`: `[node, k, type, op]`, the value it holds.
+    /// A read of a field typed by `build_field_read`: `[node, k, type, binding, fill, op]`,
+    /// the value it holds.
     pub load: DyadPtr,
     pub load_leaf: DyadPtr,
+    /// The mark a field read carries when the type's own `parse` built it: the constructor's
+    /// fill of its fresh node, which `immut` alone vetoes.
+    pub fill: DyadPtr,
     /// A write there: `[node, k, value, type, op]`, a node of `type` holding v's value.
     pub store: DyadPtr,
     pub store_leaf: DyadPtr,
@@ -60,9 +65,13 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
         let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
         (id, leaf)
     };
-    let (slot, slot_leaf) = op(cx, &["this", "k", "op"], run_slot);
+    let (slot, slot_leaf) = op(cx, &["this", "k", "binding", "fill", "op"], run_slot);
     let (write, write_leaf) = op(cx, &["this", "k", "value", "op"], run_write);
-    let (load, load_leaf) = op(cx, &["this", "k", "type", "op"], run_load);
+    let (load, load_leaf) = op(cx, &["this", "k", "type", "binding", "fill", "op"], run_load);
+    let fill = {
+        let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
+        cx.store.alloc_raw(cx.type_, record)
+    };
     let (store, store_leaf) = op(cx, &["this", "k", "value", "type", "op"], run_store);
     let (copy, copy_leaf) = op(cx, &["this", "op"], run_copy);
     cx.lower.insert(copy, lower_copy);
@@ -77,6 +86,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
         write_leaf,
         load,
         load_leaf,
+        fill,
         store,
         store_leaf,
         copy,
@@ -96,8 +106,15 @@ fn node(store: &mut Store, op: DyadPtr, leaf: DyadPtr, operands: &[DyadPtr]) -> 
 }
 
 /// `k` is the field's index among the instance fields, as a `u64` literal.
-pub(crate) fn build_slot(store: &mut Store, types: &Core, this: DyadPtr, k: DyadPtr) -> DyadPtr {
-    node(store, types.this.slot, types.this.slot_leaf, &[this, k])
+pub(crate) fn build_slot(
+    store: &mut Store,
+    types: &Core,
+    this: DyadPtr,
+    k: DyadPtr,
+    binding: DyadPtr,
+    fill: DyadPtr,
+) -> DyadPtr {
+    node(store, types.this.slot, types.this.slot_leaf, &[this, k, binding, fill])
 }
 
 /// A type's own `parse` placing a call on its fresh node: each run of the call takes its own
@@ -133,6 +150,8 @@ pub(crate) unsafe fn build_field_read(
     this: DyadPtr,
     k: DyadPtr,
     declared: DyadPtr,
+    binding: DyadPtr,
+    fill: DyadPtr,
 ) -> DyadPtr {
     use super::read::{place_layout, Read};
     let typed = !declared.is_null()
@@ -142,9 +161,9 @@ pub(crate) unsafe fn build_field_read(
             _ => false,
         };
     if typed {
-        build_load(store, types, this, k, declared)
+        build_load(store, types, this, k, declared, binding, fill)
     } else {
-        build_slot(store, types, this, k)
+        build_slot(store, types, this, k, binding, fill)
     }
 }
 
@@ -155,8 +174,10 @@ pub(crate) fn build_load(
     this: DyadPtr,
     k: DyadPtr,
     ty: DyadPtr,
+    binding: DyadPtr,
+    fill: DyadPtr,
 ) -> DyadPtr {
-    node(store, types.this.load, types.this.load_leaf, &[this, k, ty])
+    node(store, types.this.load, types.this.load_leaf, &[this, k, ty, binding, fill])
 }
 
 /// Either field read.
@@ -165,6 +186,24 @@ pub(crate) fn build_load(
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn is_field_read(types: &Core, node: DyadPtr) -> bool {
     (*node).ty == types.this.slot || (*node).ty == types.this.load
+}
+
+/// The binding of the field a read reaches, null for a read built at run.
+///
+/// # Safety
+/// `read` must be a node `is_field_read` accepts.
+pub(crate) unsafe fn field_binding_of(types: &Core, read: DyadPtr) -> DyadPtr {
+    let ops = (*read).value as *const DyadPtr;
+    *ops.add(if (*read).ty == types.this.slot { 2 } else { 3 })
+}
+
+/// Whether the type's own `parse` built the read.
+///
+/// # Safety
+/// `read` must be a node `is_field_read` accepts.
+pub(crate) unsafe fn is_fill(types: &Core, read: DyadPtr) -> bool {
+    let ops = (*read).value as *const DyadPtr;
+    *ops.add(if (*read).ty == types.this.slot { 3 } else { 4 }) == types.this.fill
 }
 
 /// The field's declared type, for a read of a number or pointer field.

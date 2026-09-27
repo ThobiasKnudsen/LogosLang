@@ -253,11 +253,19 @@ pub(crate) fn build_slot(store: &mut Store, types: &Core, recv: DyadPtr, k: Dyad
 /// any other node is handed by identity, its own address as an `@dyad` value.
 pub(crate) fn cell_arg(store: &mut Store, types: &Core, cell: DyadPtr) -> DyadPtr {
     // A field read by value is handed as the node the field holds, which yields that value.
-    // SAFETY: `cell` is a reduced dyad from the store; a load node's operands are `[this, k, type]`.
+    // SAFETY: `cell` is a reduced dyad from the store; a load node's operands are
+    // `[this, k, type, binding, fill]`.
     unsafe {
         if (*cell).ty == types.this.load {
             let ops = (*cell).value as *const DyadPtr;
-            return super::this::build_slot(store, types, *ops, *ops.add(1));
+            return super::this::build_slot(
+                store,
+                types,
+                *ops,
+                *ops.add(1),
+                *ops.add(3),
+                *ops.add(4),
+            );
         }
     }
     // SAFETY: `cell` is a reduced dyad from the store.
