@@ -43,16 +43,18 @@ fn construct(
     // right, so `=` takes the keyword's use as the slot's name unconstructed.
     let target = match tape.at(-1) {
         Some(c) if tape.cursor() == 1 && !c.constructed && c.identity(types) == types.drop_ => {
-            let binding = c.dyad;
+            let name = *c;
             tape.remove(-1);
-            binding
+            name
         }
         _ => match p.construct_left(tape)? {
-            Some(target) => target.dyad,
+            Some(target) => target,
             None => return Err(ParseError::MissingOperand),
         },
     };
-    p.check_path_write(target)?;
+    p.check_path_write(&target)?;
+    let fill = target.target;
+    let target = target.dyad;
     // SAFETY: `target` is the reduced dyad of the cell to the left.
     let slot = unsafe { p.slot_of(target) };
     if slot.is_some() && !p.filling_definition() {
@@ -97,7 +99,7 @@ fn construct(
             return Err(ParseError::NonOwningIntoOwning);
         }
         let node = build(p.store(), types, id, target, value)?;
-        p.note_field_write(node, target);
+        p.note_field_write(node, fill);
         // SAFETY: `target` is the reduced dyad of the cell to the left.
         unsafe { p.note_receiver_write(target) };
         p.note_write(node);

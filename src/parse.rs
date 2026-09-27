@@ -1605,14 +1605,9 @@ pub struct Parser<'a> {
     outer: Vec<Context<'a>>,
     trie: &'a mut RegexTrie,
     types: &'a Core,
-    /// The bindings along the path a field place was reached by, root first:
-    /// what a write into it must be granted by.
-    paths: HashMap<DyadPtr, Vec<DyadPtr>>,
     imports: Imports,
     /// A field write's node, with the name and the field it fills.
     field_writes: HashMap<DyadPtr, (DyadPtr, DyadPtr)>,
-    /// The field node `v.f` built as a write's target, with the name and the field.
-    field_targets: HashMap<DyadPtr, (DyadPtr, DyadPtr)>,
     /// Each type of node values, and the run type whose node builds one from a bracket;
     /// stand-in for #152.
     bracket_builders: HashMap<DyadPtr, DyadPtr>,
@@ -1647,6 +1642,9 @@ struct Context<'a> {
     last_declared: DyadPtr,
     /// The binding of the name left of the `.` being constructed, or null.
     member_root: DyadPtr,
+    /// The bindings the member read under construction reaches, root first: what `.` writes
+    /// onto the cell it places, for the write it may be the target of.
+    member_path: Vec<DyadPtr>,
     /// The type and field parameters of the run body being constructed.
     run_fields: Option<(DyadPtr, Vec<DyadPtr>)>,
     /// Open function frames, innermost last: empty at top level, where
@@ -1720,6 +1718,7 @@ impl<'a> Context<'a> {
             filling_at: Vec::new(),
             last_declared: std::ptr::null_mut(),
             member_root: std::ptr::null_mut(),
+            member_path: Vec::new(),
             run_fields: None,
             frames: Vec::new(),
             runtime_depth: 0,
@@ -1873,10 +1872,8 @@ impl<'a> Parser<'a> {
             rt,
             trie,
             types,
-            paths: HashMap::new(),
             bracket_builders: HashMap::new(),
             field_writes: HashMap::new(),
-            field_targets: HashMap::new(),
             imports: Imports::default(),
             lower: None,
         }
@@ -4063,9 +4060,6 @@ impl<'a> Parser<'a> {
                 fill,
             )
         };
-        if !binding.is_null() && !in_parse {
-            self.paths.insert(node, vec![binding]);
-        }
         Ok(node)
     }
 
@@ -5087,6 +5081,7 @@ impl<'a> Parser<'a> {
     unsafe fn run_node_member(
         &mut self,
         lhs: DyadPtr,
+        left: Cell,
         t: DyadPtr,
         name: &str,
         call: Option<Vec<DyadPtr>>,
@@ -5119,9 +5114,11 @@ impl<'a> Parser<'a> {
         };
         if let Some(args) = call {
             if self.takes_this(member) {
-                self.check_receiver_write(lhs, member)?;
+                self.check_receiver_write(&left, member)?;
                 let mut with_this = vec![lhs];
                 with_this.extend(args);
+                // The call's result is no member: the path was the member's own.
+                self.cx.member_path.clear();
                 return self.build_call(member, &with_this).map(|n| Some((n, 1)));
             }
         }
@@ -5262,7 +5259,7 @@ impl<'a> Parser<'a> {
             // through a node the parse knows: the node it holds may be replaced before then.
             if let Some(t) = crate::identities::node_type_of(self.types, lhs) {
                 if self.holds_node(t, name) {
-                    if let Some(read) = self.run_node_member(lhs, t, name, None)? {
+                    if let Some(read) = self.run_node_member(lhs, left, t, name, None)? {
                         return Ok(read);
                     }
                 }
@@ -5276,7 +5273,7 @@ impl<'a> Parser<'a> {
                 != crate::identities::read::Read::Node
             {
                 if let Some(t) = crate::identities::node_type_of(self.types, lhs) {
-                    if let Some(read) = self.run_node_member(lhs, t, name, call.clone())? {
+                    if let Some(read) = self.run_node_member(lhs, left, t, name, call.clone())? {
                         return Ok(read);
                     }
                 }
@@ -5440,7 +5437,7 @@ impl<'a> Parser<'a> {
                 };
                 if let Some(args) = call {
                     if self.takes_this(member) {
-                        self.check_receiver_write(lhs, member)?;
+                        self.check_receiver_write(&left, member)?;
                         // A record laid out in bytes is handed on as its own place, any
                         // other value by a `dyad` view, as a `dyad ?` parameter takes a node.
                         let view = if crate::dyad::is_place((*lhs).value) {
@@ -5457,6 +5454,7 @@ impl<'a> Parser<'a> {
                         };
                         let mut with_this = vec![view];
                         with_this.extend(args);
+                        self.cx.member_path.clear();
                         return self.build_call(member, &with_this).map(|n| (n, 1));
                     }
                 }
@@ -5467,12 +5465,12 @@ impl<'a> Parser<'a> {
         let node = self.rt.store.alloc_raw((*field).ty, addr);
         // Every binding along the path grants a write into the place: the
         // name the path starts at, then each field.
-        let mut path = self.paths.get(&lhs).cloned().unwrap_or_default();
+        let mut path = self.path_of(&left);
         if path.is_empty() && !self.cx.member_root.is_null() {
             path.push(self.cx.member_root);
         }
         path.push(binding);
-        self.paths.insert(node, path);
+        self.cx.member_path = path;
         Ok((node, 0))
     }
 
@@ -5535,14 +5533,13 @@ impl<'a> Parser<'a> {
             return Err(e);
         }
         self.cx.member_root = root;
+        self.cx.member_path.clear();
         let member = Member { start: nstart, len: nlen, index, key, call };
         // SAFETY: `lhs` is a reduced dyad off the tape.
         let access = unsafe { self.field_access_each(lhs, left, member) };
         self.cx.member_root = std::ptr::null_mut();
+        let path = std::mem::take(&mut self.cx.member_path);
         let (node, consumed) = access?;
-        if let Ok(Some(fill)) = fills {
-            self.field_targets.insert(node, fill);
-        }
         for _ in 0..(1 + consumed) {
             tape.remove(1);
         }
@@ -5557,7 +5554,17 @@ impl<'a> Parser<'a> {
         if folded_type {
             tape.set_dyad(0, node);
         } else {
+            let path = if path.is_empty() {
+                std::ptr::null_mut()
+            } else {
+                crate::identities::array::build(self.rt.store, self.types.array_, &path)
+            };
             tape.place(node);
+            let cell = tape.at_mut(0).expect("placed above");
+            cell.path = path;
+            if let Ok(Some(fill)) = fills {
+                cell.target = fill;
+            }
         }
         Ok(Constructed::Placed)
     }
@@ -5884,19 +5891,45 @@ impl<'a> Parser<'a> {
     /// A write into a place reached by a path is granted by every binding
     /// along it, `immut` vetoing first; the constructor's fill of its fresh
     /// node is granted unless `immut` vetoes it; a place reached no such way passes here.
-    pub(crate) fn check_path_write(&self, target: DyadPtr) -> Result<(), ParseError> {
+    pub(crate) fn check_path_write(&self, target: &Cell) -> Result<(), ParseError> {
         use crate::identities::this;
-        // SAFETY: `target` is a reduced dyad from the store; a fill's binding is a binding dyad.
+        let node = target.dyad;
+        // SAFETY: `target` holds a reduced dyad from the store and a null or `array` path; a
+        // fill's binding is a binding dyad.
         unsafe {
-            if this::is_field_read(self.types, target) && this::is_fill(self.types, target) {
-                let binding = this::field_binding_of(self.types, target);
+            if this::is_field_read(self.types, node) && this::is_fill(self.types, node) {
+                let binding = this::field_binding_of(self.types, node);
                 if Binding::has_gate(binding, self.types.immut_) {
                     return Err(ParseError::Immutable(Box::new(Binding::spelling(binding))));
                 }
                 return Ok(());
             }
         }
-        self.check_gates(self.paths.get(&target).map_or(&[][..], Vec::as_slice))
+        self.check_gates(&self.path_of(target))
+    }
+
+    /// The bindings a write into the cell's node must be granted by: the cell's path, or
+    /// for a field read outside the type's own parse the field's binding alone.
+    fn path_of(&self, cell: &Cell) -> Vec<DyadPtr> {
+        use crate::identities::this;
+        // SAFETY: a cell's path is null or an `array` node, its dyad null or a dyad from the
+        // store, and a field read's binding operand null or a binding dyad.
+        unsafe {
+            if !cell.path.is_null() {
+                return crate::identities::array::items(cell.path).to_vec();
+            }
+            let node = cell.dyad;
+            if !node.is_null()
+                && this::is_field_read(self.types, node)
+                && !this::is_fill(self.types, node)
+            {
+                let binding = this::field_binding_of(self.types, node);
+                if !binding.is_null() {
+                    return vec![binding];
+                }
+            }
+        }
+        Vec::new()
     }
 
     fn check_gates(&self, path: &[DyadPtr]) -> Result<(), ParseError> {
@@ -5921,17 +5954,20 @@ impl<'a> Parser<'a> {
     /// `member` must be a reduced dyad from the store.
     unsafe fn check_receiver_write(
         &self,
-        receiver: DyadPtr,
+        receiver: &Cell,
         member: DyadPtr,
     ) -> Result<(), ParseError> {
         let f = self.types.through(member);
         if fn_receiver(self.types, f) & RECEIVER_WRITES == 0 {
             return Ok(());
         }
-        match self.paths.get(&receiver) {
-            Some(path) => self.check_gates(path),
-            None if !self.cx.member_root.is_null() => self.check_gates(&[self.cx.member_root]),
-            None => Ok(()),
+        let path = self.path_of(receiver);
+        if !path.is_empty() {
+            self.check_gates(&path)
+        } else if !self.cx.member_root.is_null() {
+            self.check_gates(&[self.cx.member_root])
+        } else {
+            Ok(())
         }
     }
 
@@ -6442,9 +6478,9 @@ impl<'a> Parser<'a> {
         Err(ParseError::Unwritten(Box::new(unsafe { Binding::spelling(binding) })))
     }
 
-    /// The `=` over `target` fills a field when `v.f` noted one: the item the sibling rule reads.
-    pub(crate) fn note_field_write(&mut self, node: DyadPtr, target: DyadPtr) {
-        if let Some(fill) = self.field_targets.remove(&target) {
+    /// The `=` over a target `v.f` built with `fill` noted: the item the sibling rule reads.
+    pub(crate) fn note_field_write(&mut self, node: DyadPtr, fill: (DyadPtr, DyadPtr)) {
+        if !fill.0.is_null() {
             self.field_writes.insert(node, fill);
         }
     }
@@ -7705,7 +7741,7 @@ impl<'a> Parser<'a> {
     /// `logos` must be a type identity node from the store.
     unsafe fn share_member_read(&mut self, logos: DyadPtr, name: &str) -> Option<DyadPtr> {
         let (identity, binding) = self.share_member_of(logos, name)?;
-        self.paths.insert(identity, vec![binding]);
+        self.cx.member_path = vec![binding];
         Some(identity)
     }
 
