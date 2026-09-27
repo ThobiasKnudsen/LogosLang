@@ -34,6 +34,41 @@ pub struct Cell {
     pub start: usize,
     /// Byte length of that spelling.
     pub len: usize,
+    /// The bindings a field place was reached through, root first, an `array` node; null
+    /// for a cell reached no such way. What a write into the place must be granted by.
+    pub path: DyadPtr,
+    /// The run type's node a comptime value was folded from, whose fields `.` still reads.
+    pub origin: DyadPtr,
+    /// The name and the field a `v.f` built as a write's target fills, or nulls.
+    pub target: (DyadPtr, DyadPtr),
+    /// The valueless place `?` built, no declaration having taken it yet.
+    pub hole: bool,
+    /// A hole `own` marked over a type whose body fills `drop`: the name or field declared
+    /// with it owns the node written into it.
+    pub owning: bool,
+}
+
+impl Cell {
+    const NO_FACTS: (DyadPtr, DyadPtr, (DyadPtr, DyadPtr), bool, bool) = (
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        (std::ptr::null_mut(), std::ptr::null_mut()),
+        false,
+        false,
+    );
+
+    /// The cell placed over `dyad`, its facts cleared.
+    fn over(&mut self, dyad: DyadPtr) {
+        let (path, origin, target, hole, owning) = Self::NO_FACTS;
+        self.dyad = dyad;
+        self.constructed = true;
+        self.bracket = false;
+        self.path = path;
+        self.origin = origin;
+        self.target = target;
+        self.hole = hole;
+        self.owning = owning;
+    }
 }
 
 impl Cell {
@@ -41,6 +76,7 @@ impl Cell {
     /// `text` must outlive every read of the cell's spelling; `dyad` must be
     /// null or a dyad from the store.
     pub unsafe fn lexed(dyad: DyadPtr, text: &str, start: usize, len: usize) -> Self {
+        let (path, origin, target, hole, owning) = Self::NO_FACTS;
         Cell {
             dyad,
             constructed: false,
@@ -48,13 +84,31 @@ impl Cell {
             text: Some(std::ptr::NonNull::from(text)),
             start,
             len,
+            path,
+            origin,
+            target,
+            hole,
+            owning,
         }
     }
 
     /// # Safety
     /// `dyad` must be null or a dyad from the store.
     pub unsafe fn built(dyad: DyadPtr) -> Self {
-        Cell { dyad, constructed: true, bracket: false, text: None, start: 0, len: 0 }
+        let (path, origin, target, hole, owning) = Self::NO_FACTS;
+        Cell {
+            dyad,
+            constructed: true,
+            bracket: false,
+            text: None,
+            start: 0,
+            len: 0,
+            path,
+            origin,
+            target,
+            hole,
+            owning,
+        }
     }
 
     /// `tape.spelling[k]`: the empty text for a cell nothing lexed, so a
@@ -413,10 +467,7 @@ impl ParsingTape {
     /// The edit nearly every constructor ends with (`tape[0] = dyad (…)`);
     /// the span stays.
     pub fn place(&mut self, dyad: DyadPtr) {
-        let cell = self.at_mut(0).expect("the construct's cell is at the center");
-        cell.dyad = dyad;
-        cell.constructed = true;
-        cell.bracket = false;
+        self.at_mut(0).expect("the construct's cell is at the center").over(dyad);
         self.edits += 1;
     }
 
@@ -1918,7 +1969,7 @@ impl<'a> Parser<'a> {
         }
         tape.center = tape.head;
         tape.sealed = true;
-        self.construct_segment(&mut tape).and_then(|items| self.one_of(items))
+        self.construct_segment(&mut tape).and_then(|items| self.one_of(items)).map(|c| c.dyad)
     }
 
     /// A square bracket taken into a place of a type of node values: the node of the run
@@ -2745,7 +2796,7 @@ impl<'a> Parser<'a> {
     pub(crate) fn construct_left(
         &mut self,
         tape: &mut ParsingTape,
-    ) -> Result<Option<DyadPtr>, ParseError> {
+    ) -> Result<Option<Cell>, ParseError> {
         let n = tape.cursor();
         if n == 0 {
             return Ok(None);
@@ -2759,7 +2810,7 @@ impl<'a> Parser<'a> {
             [(one, _)] => *one,
             [] => return Ok(None),
             [(first, _), (_, start), ..] => {
-                let e = self.leftover_error(*first);
+                let e = self.leftover_error(first.dyad);
                 self.cx.pos = *start;
                 return Err(e);
             }
@@ -4392,7 +4443,7 @@ impl<'a> Parser<'a> {
         self.expect_arrow()?;
         let output = {
             let items = self.drive_until_open(RightSide::ReturnType);
-            let out = self.one_of(items?).map_err(|e| match e {
+            let out = self.one_of(items?).map(|c| c.dyad).map_err(|e| match e {
                 ParseError::Empty => ParseError::ExpectedReturnType,
                 e => e,
             })?;
@@ -4571,7 +4622,7 @@ impl<'a> Parser<'a> {
     /// `else` binds to the nearest `if`; `if` opens no scope.
     pub fn parse_if(&mut self, if_type: DyadPtr) -> Result<DyadPtr, ParseError> {
         let items = self.drive_until_open(RightSide::Condition)?;
-        let cond = self.one_of(items)?;
+        let cond = self.one_of(items)?.dyad;
         let types = self.types;
         // SAFETY: `cond` is the reduced dyad just parsed.
         if !unsafe { is_bool_result(types, cond) } {
@@ -4814,7 +4865,7 @@ impl<'a> Parser<'a> {
     /// leaves the enclosing function.
     pub fn parse_while(&mut self, while_id: DyadPtr) -> Result<DyadPtr, ParseError> {
         let items = self.drive_until_open(RightSide::Condition)?;
-        let cond = self.one_of(items)?;
+        let cond = self.one_of(items)?.dyad;
         let types = self.types;
         // SAFETY: `cond` is the reduced dyad just parsed.
         if !unsafe { is_bool_result(types, cond) } {
@@ -4843,7 +4894,11 @@ impl<'a> Parser<'a> {
         let name = self.loop_name()?;
         // The range, constructed by parse_rank, the `..` cells inert
         // delimiters read by position.
-        let parts = self.drive_until_open(RightSide::Range)?;
+        let parts: Vec<(DyadPtr, usize)> = self
+            .drive_until_open(RightSide::Range)?
+            .into_iter()
+            .map(|(c, s)| (c.dyad, s))
+            .collect();
         let dotdot = self.types.dotdot_;
         let types = self.types;
         // The `..` cells are uses of that identity: its binding, read through.
@@ -5726,7 +5781,7 @@ impl<'a> Parser<'a> {
         &mut self,
         tape: &mut ParsingTape,
         ends_name: bool,
-    ) -> Result<(DyadPtr, Option<Ended>), ParseError> {
+    ) -> Result<(Cell, Option<Ended>), ParseError> {
         let Some(&cell) = tape.at(1) else {
             return Err(ParseError::MissingOperand);
         };
@@ -5778,7 +5833,10 @@ impl<'a> Parser<'a> {
             self.check_capture(node)?;
         }
         tape.remove(1);
-        Ok((node, ended))
+        let mut reduced = cell;
+        reduced.dyad = node;
+        reduced.constructed = true;
+        Ok((reduced, ended))
     }
 
     /// The one read every prefix constructor makes (`return x`, `not x`, a
@@ -6569,11 +6627,11 @@ impl<'a> Parser<'a> {
             }
             if let Some(&(item, _)) = items.first() {
                 // SAFETY: `item` is a reduced dyad just constructed.
-                unsafe { self.fill_if_sibling_write(item) };
+                unsafe { self.fill_if_sibling_write(item.dyad) };
             }
             let mut ordered = std::mem::take(&mut self.cx.lifted);
             if let Some((item, start)) = items.pop() {
-                ordered.push((start, item));
+                ordered.push((start, item.dyad));
             }
             ordered.sort_by_key(|&(start, _)| start);
             self.cx.queued.extend(ordered.into_iter().map(|(_, n)| n));
@@ -8318,7 +8376,7 @@ impl<'a> Parser<'a> {
     fn construct_segment(
         &mut self,
         tape: &mut ParsingTape,
-    ) -> Result<Vec<(DyadPtr, usize)>, ParseError> {
+    ) -> Result<Vec<(Cell, usize)>, ParseError> {
         let comment_ = self.types.comment_;
         let prose: Vec<(usize, usize, DyadPtr)> = tape
             .iter()
@@ -8369,8 +8427,11 @@ impl<'a> Parser<'a> {
         let cells: Vec<Cell> = tape.iter().map(|(_, c)| *c).collect();
         let mut items = Vec::with_capacity(cells.len());
         for cell in cells {
-            let start = cell.start;
-            items.push((self.as_operand(cell)?, start));
+            // The cell leaves the tape as the operand it reduces to, its facts with it.
+            let mut reduced = cell;
+            reduced.dyad = self.as_operand(cell)?;
+            reduced.constructed = true;
+            items.push((reduced, cell.start));
         }
         Ok(items)
     }
@@ -8378,7 +8439,7 @@ impl<'a> Parser<'a> {
     /// The cells up to the next `(`, the right side an identity reads before
     /// its bracket: a condition, a range, a return type (DESIGN ›The scope's
     /// constructor is the driver‹). A `(` standing first is part of the read; a later one is the bracket.
-    fn drive_until_open(&mut self, mode: RightSide) -> Result<Vec<(DyadPtr, usize)>, ParseError> {
+    fn drive_until_open(&mut self, mode: RightSide) -> Result<Vec<(Cell, usize)>, ParseError> {
         let mut tape = ParsingTape::new();
         self.lex_segment_until(&mut tape, Some(mode))?;
         self.construct_segment(&mut tape)
@@ -8388,6 +8449,11 @@ impl<'a> Parser<'a> {
     /// unconsumed) and constructed to exactly one cell: what a discovery-time
     /// constructor drives, and the REPL's line.
     pub fn parse_expression(&mut self) -> Result<DyadPtr, ParseError> {
+        self.parse_expression_cell().map(|c| c.dyad)
+    }
+
+    /// [`Self::parse_expression`] with the cell's facts, for the reader that consumes them.
+    pub(crate) fn parse_expression_cell(&mut self) -> Result<Cell, ParseError> {
         let mut tape = ParsingTape::new();
         self.lex_segment(&mut tape)?;
         let items = self.construct_segment(&mut tape)?;
@@ -8396,13 +8462,13 @@ impl<'a> Parser<'a> {
 
     /// None is an empty expression, more than one the leftover cell, reported
     /// at the second.
-    fn one_of(&mut self, items: Vec<(DyadPtr, usize)>) -> Result<DyadPtr, ParseError> {
+    fn one_of(&mut self, items: Vec<(Cell, usize)>) -> Result<Cell, ParseError> {
         match items.len() {
             0 => Err(ParseError::Empty),
             1 => Ok(items[0].0),
             _ => {
                 self.cx.pos = items[1].1;
-                Err(self.leftover_error(items[0].0))
+                Err(self.leftover_error(items[0].0.dyad))
             }
         }
     }

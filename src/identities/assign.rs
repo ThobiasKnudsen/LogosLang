@@ -48,7 +48,7 @@ fn construct(
             binding
         }
         _ => match p.construct_left(tape)? {
-            Some(target) => target,
+            Some(target) => target.dyad,
             None => return Err(ParseError::MissingOperand),
         },
     };

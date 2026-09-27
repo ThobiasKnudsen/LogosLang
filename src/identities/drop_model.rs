@@ -86,6 +86,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     let own_ =
         keyword(cx, "own", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
             let (place, ended) = p.place_operand_cell(tape, true)?;
+            let place = place.dyad;
             // In a type position, `own @T ?`, the word makes the hole an owning one.
             if p.is_hole(place) {
                 own_hole(p, place)?;
@@ -125,6 +126,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     let drop_ =
         keyword(cx, "drop", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
             let (place, ended) = p.place_operand_cell(tape, true)?;
+            let place = place.dyad;
             let types = p.types();
             let node = if is_owning_place(place) {
                 build_teardown(p.store(), types, types.drop_, place, true)?
@@ -161,6 +163,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         keyword(cx, "free", meta::prec::PREFIX, &["place", "pointee", "op"], |p, _id, tape| {
             // The raw teardown verb leaves the name alive: only `own`/`drop` end it.
             let (place, _) = p.place_operand_cell(tape, false)?;
+            let place = place.dyad;
             let types = p.types();
             // SAFETY: `place` is a reduced dyad from the store.
             let node = match unsafe { owning_field_pointee(types, place) } {
