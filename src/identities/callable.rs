@@ -13,7 +13,7 @@ use crate::store::Store;
 
 use super::{meta, string, Cx};
 
-const ENTRY_OFF: usize = 0;
+pub(crate) const ENTRY_OFF: usize = 0;
 const CONVENTION_OFF: usize = 8;
 
 pub(crate) struct Callables {

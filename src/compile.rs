@@ -17,7 +17,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{default_libcall_names, FuncId, Linkage, Module};
 
-use crate::dyad::{frame_ref, DyadPtr, Global};
+use crate::dyad::{frame_ref, Dyad, DyadPtr, Global};
 use crate::identities::numtype::{is_void_type, of_type_node, ArithOp, CmpOp, NumType};
 use crate::identities::read::{read_kind, Dispatch, Read};
 use crate::identities::{by_copy, numtype_of, operands, Operand};
@@ -891,9 +891,10 @@ impl Lowerer<'_, '_> {
         self.branch(va, |s| Ok(s.const_i32(1)), |s| unsafe { s.lower(b) })
     }
 
-    /// A self-call is a direct `call` the JIT patches to this function; a
-    /// compiled callee is a `call_indirect` through its baked entry; an
-    /// uncompiled callee is a jump into the interpreter. The argument block is
+    /// A self-call is a direct `call` the JIT patches to this function; a callee
+    /// with a `bcode` leaf is a `call_indirect` through the entry read from that
+    /// leaf at the jump, or the interpreter when the entry is zero; a callee with
+    /// no leaf is a jump into the interpreter. The argument block is
     /// laid out as the interpreter's: a record copied at its width, anything else
     /// widened into its container; `dest` is the slot a record result is copied
     /// into. The result narrows per the callee's return type. Compile order
@@ -967,32 +968,45 @@ impl Lowerer<'_, '_> {
         };
         let argc = self.builder.ins().iconst(types::I64, words as i64);
         let ctx = self.ctx;
-        let inst = if callee == self.self_fn {
+        let r = if callee == self.self_fn {
             let fref = self.module.declare_func_in_func(self.func_id, &mut *self.builder.func);
-            self.builder.ins().call(fref, &[ctx, argv, argc])
+            let inst = self.builder.ins().call(fref, &[ctx, argv, argc]);
+            self.builder.inst_results(inst)[0]
         } else {
+            let fn_node = self.node_addr(callee);
+            let interpret = |s: &mut Self| -> Result<Value, CompileError> {
+                let entry = crate::run::interpret_call as *const () as usize;
+                Ok(s.call_seed(entry, &[fn_node, argc, argv]))
+            };
             let bcode = *fields.add(FN_BCODE);
             if bcode.is_null() {
-                let fn_node = self.node_addr(callee);
-                let entry = crate::run::interpret_call as *const () as usize;
-                let r = self.call_seed(entry, &[fn_node, argc, argv]);
-                return Ok(match ret {
-                    Some(nt) => narrow_from_i64(self.builder, r, nt),
-                    None => self.const_i32(0),
-                });
+                interpret(self)?
             } else {
-                let entry = crate::identities::callable::entry_of(bcode);
-                let mut sig = self.module.make_signature();
-                sig.params.push(AbiParam::new(self.ptr_ty));
-                sig.params.push(AbiParam::new(self.ptr_ty));
-                sig.params.push(AbiParam::new(types::I64));
-                sig.returns.push(AbiParam::new(types::I64));
-                let sigref = self.builder.import_signature(sig);
-                let addr = self.builder.ins().iconst(self.ptr_ty, entry as i64);
-                self.builder.ins().call_indirect(sigref, addr, &[ctx, argv, argc])
+                // Read at the jump, never baked: a recompile of the callee reaches
+                // this caller, and a nulled entry sends it to the body-walk.
+                let leaf = self.node_addr(bcode);
+                let blob =
+                    self.load_at(self.ptr_ty, leaf, std::mem::offset_of!(Dyad, value) as i64);
+                let entry_at = crate::identities::callable::ENTRY_OFF as i64;
+                let entry = self.load_at(self.ptr_ty, blob, entry_at);
+                let zero = self.builder.ins().iconst(self.ptr_ty, 0);
+                let has_code = self.icmp(IntCC::NotEqual, entry, zero);
+                self.branch(
+                    has_code,
+                    |s| {
+                        let mut sig = s.module.make_signature();
+                        sig.params.push(AbiParam::new(s.ptr_ty));
+                        sig.params.push(AbiParam::new(s.ptr_ty));
+                        sig.params.push(AbiParam::new(types::I64));
+                        sig.returns.push(AbiParam::new(types::I64));
+                        let sigref = s.builder.import_signature(sig);
+                        let inst = s.builder.ins().call_indirect(sigref, entry, &[ctx, argv, argc]);
+                        Ok(s.builder.inst_results(inst)[0])
+                    },
+                    interpret,
+                )?
             }
         };
-        let r = self.builder.inst_results(inst)[0];
         Ok(match ret {
             Some(nt) => narrow_from_i64(self.builder, r, nt),
             None => self.const_i32(0),
