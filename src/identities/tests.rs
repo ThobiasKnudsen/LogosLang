@@ -252,7 +252,7 @@ fn compiles_and_runs_a_fn_with_arguments() {
     let interp = unsafe { rt.run(call) }.unwrap();
 
     // SAFETY: `add` is the fn node just built and outlives the call.
-    let _compiled = unsafe { compile_fn(rt.store, &core.lower, &core, add) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, add) }.unwrap();
     let jit = unsafe { rt.run(call) }.unwrap();
 
     assert_eq!(interp, 42);
@@ -523,7 +523,7 @@ fn assign_to_a_wide_variable_stores_at_full_width_both_tiers() {
 
     unsafe { std::ptr::write_unaligned(a_val as *mut i64, 0) };
     // SAFETY: `func`/`a` live in `store`, which outlives the call.
-    let _c = unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
     let jit = unsafe { rt.run(call) }.unwrap();
     let jit_a = unsafe { std::ptr::read_unaligned(a_val as *const i64) };
 
@@ -556,7 +556,7 @@ fn milestone_2_fn_runs_interpreted_and_jit_identically() {
     }
 
     // SAFETY: `func` is the fn node just built and outlives the call.
-    let _compiled = unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
     unsafe {
         let bcode = *((*func).value as *const DyadPtr).add(FN_BCODE);
         assert!(!bcode.is_null());
@@ -671,7 +671,7 @@ fn plus_is_abstract_and_resolves_to_a_concrete_op() {
     // SAFETY: `call`/`func`/body are valid nodes just parsed.
     let interp = unsafe { rt.run(call) }.unwrap();
     // SAFETY: `func` is the fn node just built and outlives the call.
-    let _compiled = unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
     let jit = unsafe { rt.run(call) }.unwrap();
     assert_eq!(interp, 42);
     assert_eq!(jit, interp);
@@ -705,7 +705,7 @@ fn a_whole_file_runs_top_to_bottom_like_a_script() {
         declare::declared_of(ran::expr_of(&core, first))
     };
     // SAFETY: `func` is the fn node just parsed and outlives the calls.
-    let _fc = unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
     let compiled = unsafe { compile_nullary_i32(&core.lower, &core, root) }.unwrap();
     // SAFETY: the artifacts are alive; the baked storage outlives the call.
     assert_eq!(unsafe { compiled.call(&mut rt) }.unwrap(), 42);
@@ -750,7 +750,7 @@ fn diff_nullary_fn(src: &str, expect: i64) {
     // SAFETY: `call`/`func`/body are valid nodes just parsed.
     let interp = unsafe { rt.run(call) }.unwrap();
     // SAFETY: `func` is the fn node just built and outlives the call.
-    let _compiled = unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
     let jit = unsafe { rt.run(call) }.unwrap();
     assert_eq!(interp, expect, "interpreter: {src}");
     assert_eq!(jit, interp, "jit != interpreter: {src}");
@@ -1158,7 +1158,7 @@ fn if_over_a_parameter_matches_between_tiers() {
         // SAFETY: `call`/`func`/body are valid nodes just parsed.
         let interp = unsafe { rt.run(call) }.unwrap();
         // SAFETY: `func` is the fn node just built and outlives the call.
-        let _compiled = unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
+        unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
         let jit = unsafe { rt.run(call) }.unwrap();
         assert_eq!(interp, expect, "interpreter n={arg}");
         assert_eq!(jit, interp, "jit != interpreter n={arg}");
@@ -1209,7 +1209,7 @@ fn else_less_if_is_a_unit_statement_both_tiers() {
     assert_eq!(unsafe { std::ptr::read_unaligned(a_val as *const i32) }, 100);
     unsafe { std::ptr::write_unaligned(a_val as *mut i32, 41) };
     // SAFETY: `func`/`a` live in `store`, which outlives the call.
-    let _c = unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
     assert_eq!(unsafe { rt.run(call) }.unwrap(), 0, "unit (compiled)");
     assert_eq!(unsafe { std::ptr::read_unaligned(a_val as *const i32) }, 42);
     unsafe { std::ptr::write_unaligned(a_val as *mut i32, 100) };
@@ -1255,7 +1255,7 @@ fn the_else_binds_to_the_outer_if_across_a_bracketed_branch() {
     assert_eq!(unsafe { std::ptr::read_unaligned(a_val as *const i32) }, 7);
     unsafe { std::ptr::write_unaligned(a_val as *mut i32, 5) };
     // SAFETY: `func`/`a` live in `store`, which outlives the call.
-    let _c = unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
     assert_eq!(unsafe { rt.run(call) }.unwrap(), 0);
     assert_eq!(unsafe { std::ptr::read_unaligned(a_val as *const i32) }, 7);
 }
@@ -1301,12 +1301,12 @@ fn compiled_calls_between_compiled_functions_are_width_general() {
     let call = store.alloc_raw(outer, std::ptr::null_mut());
 
     // SAFETY: `mul` is the fn node just built and outlives every call.
-    let _c_mul = unsafe { compile_fn(&mut store, &core.lower, &core, mul) }.unwrap();
+    unsafe { compile_fn(&mut store, &core.lower, &core, mul) }.unwrap();
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `call`/`outer` are valid nodes; the callee's artifact is alive.
     let interp = unsafe { rt.run(call) }.unwrap();
     // SAFETY: `outer` is the fn node just built; both artifacts stay alive.
-    let _c_outer = unsafe { compile_fn(rt.store, &core.lower, &core, outer) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, outer) }.unwrap();
     let jit = unsafe { rt.run(call) }.unwrap();
 
     assert_eq!(interp, 6_000_000_000, "interpreter over compiled callee");
@@ -1337,12 +1337,12 @@ fn compiled_calls_pass_floats_across_the_boundary() {
     let call = store.alloc_raw(outer, std::ptr::null_mut());
 
     // SAFETY: `g` is the fn node just built and outlives every call.
-    let _c_g = unsafe { compile_fn(&mut store, &core.lower, &core, g) }.unwrap();
+    unsafe { compile_fn(&mut store, &core.lower, &core, g) }.unwrap();
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `call`/`outer`/`a` are valid nodes; the callee's artifact is alive.
     let interp = unsafe { rt.run(call) }.unwrap();
     // SAFETY: `outer` is the fn node just built; both artifacts stay alive.
-    let _c_outer = unsafe { compile_fn(rt.store, &core.lower, &core, outer) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, outer) }.unwrap();
     let jit = unsafe { rt.run(call) }.unwrap();
 
     assert_eq!(interp, 3.0f64.to_bits() as i64, "interpreter over compiled callee");
@@ -1378,7 +1378,7 @@ fn compiled_self_recursion_is_width_general() {
     // SAFETY: `call` applies the bound `s` to a literal.
     let interp = unsafe { rt.run(call) }.unwrap();
     // SAFETY: `s_fn` is the fn node just built and outlives every call.
-    let _c = unsafe { compile_fn(rt.store, &core.lower, &core, s_fn) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, s_fn) }.unwrap();
     let jit = unsafe { rt.run(call) }.unwrap();
     assert_eq!(interp, 4_000_000_000, "interpreter");
     assert_eq!(jit, interp, "compiled recursion != interpreter");
@@ -1401,7 +1401,7 @@ fn compiled_call_with_wrong_arity_refuses_to_compile() {
         p.parse_expression().unwrap()
     };
     // SAFETY: `add` is the fn node just built.
-    let _c_add = unsafe { compile_fn(&mut store, &core.lower, &core, add) }.unwrap();
+    unsafe { compile_fn(&mut store, &core.lower, &core, add) }.unwrap();
     let outer = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
@@ -1465,7 +1465,7 @@ fn recursive_i64_factorial_matches_between_tiers() {
     // SAFETY: `call` applies the bound `fact` to a literal.
     let interp = unsafe { rt.run(call) }.unwrap();
     // SAFETY: `fact` outlives every call; the artifact stays alive for the run.
-    let _c = unsafe { compile_fn(rt.store, &core.lower, &core, fact) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, fact) }.unwrap();
     let jit = unsafe { rt.run(call) }.unwrap();
     assert_eq!(interp, 2_432_902_008_176_640_000, "interpreter 20!");
     assert_eq!(jit, interp, "compiled 20! != interpreter");
@@ -1716,7 +1716,7 @@ fn comments_are_reflectable_nodes_invisible_to_value_flow() {
     // SAFETY: `call`/`func`/body are valid nodes just parsed.
     let interp = unsafe { rt.run(call) }.unwrap();
     // SAFETY: `func` outlives the call; the artifact stays alive.
-    let _c = unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
     let jit = unsafe { rt.run(call) }.unwrap();
     assert_eq!(interp, 42);
     assert_eq!(jit, interp);
@@ -1778,8 +1778,8 @@ fn pointers_mutate_caller_state_through_calls_both_tiers() {
     let interp = unsafe { rt.run(call) }.unwrap();
     // Compile the callee first (the caller's call bakes its address).
     // SAFETY: both fn nodes outlive the calls; the artifacts stay alive.
-    let _c_incr = unsafe { compile_fn(rt.store, &core.lower, &core, incr) }.unwrap();
-    let _c_func = unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, incr) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
     let jit = unsafe { rt.run(call) }.unwrap();
     assert_eq!(interp, 42);
     assert_eq!(jit, interp);
@@ -1817,7 +1817,7 @@ fn pointer_chains_and_field_pointers_work_both_tiers() {
     // SAFETY: `call`/`func` are valid nodes just parsed.
     let interp = unsafe { rt.run(call) }.unwrap();
     // SAFETY: `func` outlives the call; the artifact stays alive.
-    let _c = unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
     let jit = unsafe { rt.run(call) }.unwrap();
     assert_eq!(interp, 18);
     assert_eq!(jit, interp);
@@ -1849,7 +1849,7 @@ fn record_pointer_fields_hold_addresses_both_tiers() {
     // SAFETY: `call`/`func` are valid nodes just parsed.
     let interp = unsafe { rt.run(call) }.unwrap();
     // SAFETY: `func` outlives the call; the artifact stays alive.
-    let _c = unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
     let jit = unsafe { rt.run(call) }.unwrap();
     assert_eq!(interp, 8);
     assert_eq!(jit, interp);
@@ -2252,7 +2252,7 @@ fn a_run_hands_a_bare_share_call_its_own_value_in_both_tiers() {
     let mut rt = Runtime::new(&core, &mut store).with_compiler(&core.lower);
     // SAFETY: `call` and `spec` are valid nodes just parsed.
     let interp = unsafe { rt.run(call) }.unwrap();
-    let _compiled = unsafe { compile_fn(rt.store, &core.lower, &core, spec) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, spec) }.unwrap();
     let jit = unsafe { rt.run(call) }.unwrap();
     assert_eq!((interp, jit), (11, 11));
 }
@@ -2438,7 +2438,7 @@ fn record_instances_construct_read_and_write_fields_both_tiers() {
     // SAFETY: `call`/`func` are valid nodes just parsed.
     let interp = unsafe { rt.run(call) }.unwrap();
     // SAFETY: `func` outlives the call; the artifact stays alive.
-    let _c = unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
     let jit = unsafe { rt.run(call) }.unwrap();
     assert_eq!(interp, 45);
     assert_eq!(jit, interp);
@@ -2483,7 +2483,7 @@ fn record_fields_lay_out_mixed_widths() {
     // SAFETY: `call`/`func` are valid nodes just parsed.
     let interp = unsafe { rt.run(call) }.unwrap();
     // SAFETY: `func` outlives the call; the artifact stays alive.
-    let _c = unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
     let jit = unsafe { rt.run(call) }.unwrap();
     assert_eq!(interp, 5_000_000_207);
     assert_eq!(jit, interp);
@@ -3030,7 +3030,7 @@ fn compiled_recursive_factorial_matches_the_interpreter() {
     }
 
     // SAFETY: `fact` is the fn node just built and outlives every call.
-    let _compiled = unsafe { compile_fn(rt.store, &core.lower, &core, fact) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, fact) }.unwrap();
     // SAFETY: reading the installed bcode slot of the fn node.
     unsafe {
         let bcode = *((*fact).value as *const DyadPtr).add(FN_BCODE);
@@ -3082,7 +3082,7 @@ unsafe fn assert_recursion_both_tiers(defs: &[&str], name: &str, cases: &[(i64, 
         assert_eq!(rt.run(call).unwrap(), expect, "interpreter {name}({arg})");
     }
 
-    let _compiled = compile_fn(rt.store, &core.lower, &core, f).unwrap();
+    compile_fn(rt.store, &core.lower, &core, f).unwrap();
     for &(arg, expect) in cases {
         let call = parse_call(rt.store, &mut trie, arg);
         assert_eq!(rt.run(call).unwrap(), expect, "jit {name}({arg})");
@@ -3284,14 +3284,14 @@ fn compiled_function_calls_another_compiled_function() {
 
     // Compile `add` first so `outer`'s call has a machine address to bake.
     // SAFETY: `add` is the fn node just built and outlives every call.
-    let _compiled_add = unsafe { compile_fn(&mut store, &core.lower, &core, add) }.unwrap();
+    unsafe { compile_fn(&mut store, &core.lower, &core, add) }.unwrap();
 
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `call`/`outer`/`add` are valid nodes; `_compiled_add` is alive.
     let interp = unsafe { rt.run(call) }.unwrap();
 
     // SAFETY: `outer` is the fn node just built; both compiled artifacts are alive.
-    let _compiled_outer = unsafe { compile_fn(rt.store, &core.lower, &core, outer) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, outer) }.unwrap();
     let jit = unsafe { rt.run(call) }.unwrap();
 
     assert_eq!(interp, 42);
@@ -3318,7 +3318,7 @@ fn diff_typed_call(fn_src: &str, call_src: &str, expect: i64) {
     // SAFETY: `call`/`func` are valid nodes just parsed.
     let interp = unsafe { rt.run(call) }.unwrap();
     // SAFETY: `func` is the fn node just built; the artifact outlives the call.
-    let _c = unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
     let jit = unsafe { rt.run(call) }.unwrap();
     assert_eq!(interp, expect, "interpreter: {fn_src} / {call_src}");
     assert_eq!(jit, interp, "jit != interpreter: {fn_src} / {call_src}");
@@ -3371,7 +3371,7 @@ fn diff_var_fn(nt: NumType, init: i64, fn_src: &str, expect: i64) {
     // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
     let interp = unsafe { rt.run(call) }.unwrap();
     // SAFETY: `func`/`a` live in `store`, which outlives the call.
-    let _c = unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
     let jit = unsafe { rt.run(call) }.unwrap();
     assert_eq!(interp, expect, "interpreter: {fn_src}");
     assert_eq!(jit, interp, "jit != interpreter: {fn_src}");
@@ -3510,7 +3510,7 @@ fn void_function_runs_its_body_for_effect() {
     let interp_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
     unsafe { std::ptr::write_unaligned(a_val as *mut i32, 41) };
     // SAFETY: `func`/`a` live in `store`, which outlives the call.
-    let _c = unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
+    unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
     let jit = unsafe { rt.run(call) }.unwrap();
     let jit_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
     assert_eq!(interp, 0, "void yields unit (interpreted)");

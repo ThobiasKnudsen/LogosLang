@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 
 use crate::binding::Binding;
+use crate::compile::Artifact;
 use crate::dyad::{Dyad, DyadPtr};
 
 /// Each chunk is allocated to exactly this capacity and never grown, so its
@@ -70,6 +71,12 @@ pub struct Store {
     /// for the same reason as `bindings`.
     #[allow(clippy::vec_box)]
     tables: Vec<Box<HashMap<i64, i64>>>,
+    /// The compiled code each fn node owns (DESIGN ›The executing primitive has two paths‹).
+    artifacts: HashMap<DyadPtr, Artifact>,
+    /// Retired while a jump was live; freed when the last jump returns.
+    retired: Vec<Artifact>,
+    /// Jumps into machine code in flight: a compiled frame is live only under one.
+    live_jumps: u32,
 }
 
 /// The store's size, counted by hand: malloc's own per-block overhead is left out.
@@ -127,7 +134,43 @@ impl Store {
             blobs: Vec::new(),
             bindings: Vec::new(),
             tables: Vec::new(),
+            artifacts: HashMap::new(),
+            retired: Vec::new(),
+            live_jumps: 0,
         }
+    }
+
+    /// `fn_node` now owns `artifact`; the one it owned before is retired.
+    pub(crate) fn install_artifact(&mut self, fn_node: DyadPtr, artifact: Artifact) {
+        if let Some(old) = self.artifacts.insert(fn_node, artifact) {
+            self.retire(old);
+        }
+    }
+
+    /// Freed now, or once the last live jump returns: code is never pulled from
+    /// under a running frame.
+    fn retire(&mut self, artifact: Artifact) {
+        if self.live_jumps == 0 {
+            drop(artifact);
+        } else {
+            self.retired.push(artifact);
+        }
+    }
+
+    pub(crate) fn enter_jump(&mut self) {
+        self.live_jumps += 1;
+    }
+
+    pub(crate) fn leave_jump(&mut self) {
+        self.live_jumps -= 1;
+        if self.live_jumps == 0 {
+            self.retired.clear();
+        }
+    }
+
+    /// Owned, plus retired but not yet freed.
+    pub fn live_artifacts(&self) -> usize {
+        self.artifacts.len() + self.retired.len()
     }
 
     pub fn alloc(&mut self, dyad: Dyad) -> DyadPtr {

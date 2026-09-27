@@ -609,7 +609,7 @@ impl<'a> Runtime<'a> {
         if fields.is_null() {
             return Err(RunError::NotRunnable(fn_node));
         }
-        crate::compile::compile_into(lower, self.types, fn_node, code_leaf)
+        crate::compile::compile_into(self.store, lower, self.types, fn_node, code_leaf)
             .map_err(|e| RunError::CompileFailed(Box::new(crate::report::compile_message(&e))))
     }
 
@@ -752,7 +752,9 @@ impl<'a> Runtime<'a> {
         (*this).ctx.runtime = this;
         (*this).ctx.globals = (*this).store.arena_base();
         (*this).ctx.pending = None;
+        (*this).store.enter_jump();
         let r = call_machine(entry, std::ptr::addr_of_mut!((*this).ctx), args);
+        self.store.leave_jump();
         match self.ctx.pending.take() {
             Some(e) => Err(e),
             None => Ok(r),

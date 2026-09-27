@@ -1014,15 +1014,14 @@ impl Lowerer<'_, '_> {
     }
 }
 
-/// A JIT-compiled function and the module owning its executable memory.
-pub struct Compiled {
-    // Kept alive so the executable memory `ptr` points into stays mapped.
-    #[allow(dead_code)]
-    module: JITModule,
+/// A JIT-compiled function and the module owning its executable memory,
+/// given back when the artifact drops.
+pub struct Artifact {
+    module: Option<JITModule>,
     ptr: *const u8,
 }
 
-impl Compiled {
+impl Artifact {
     /// Call the compiled function with no arguments under `rt`; the raw `i64` container.
     ///
     /// # Safety
@@ -1033,30 +1032,41 @@ impl Compiled {
     }
 }
 
-/// Compile a function literal and install its machine code, as a `callable`
-/// under the `container-i64` convention, into the node's `bcode` slot. The
-/// returned [`Compiled`] owns the executable memory: the installed entry is
-/// valid only while it is alive.
+impl Drop for Artifact {
+    fn drop(&mut self) {
+        if let Some(module) = self.module.take() {
+            // SAFETY: the store drops an artifact only while no jump into machine
+            // code is live, a test drops a nullary one after its calls, and nothing
+            // jumps to `ptr` afterwards.
+            unsafe { module.free_memory() };
+        }
+    }
+}
+
+/// Compile a function literal, install its machine code as a `callable` under
+/// the `container-i64` convention into the node's `bcode` slot, and hand the
+/// store the artifact: the entry stays valid until the store retires it.
 ///
 /// # Safety
 /// `fn_node` must be a valid function node from the store, and any storage its
-/// body references must outlive every call to the returned [`Compiled`].
+/// body references must outlive every call of the installed code.
 pub unsafe fn compile_fn(
     store: &mut crate::store::Store,
     lower: &LowerTable,
     types: &Core,
     fn_node: DyadPtr,
-) -> Result<Compiled, CompileError> {
-    let compiled = compile_fn_body(lower, types, fn_node)?;
+) -> Result<(), CompileError> {
+    let artifact = compile_fn_body(lower, types, fn_node)?;
     let code = crate::identities::callable::mint(
         store,
         types.callable_,
-        compiled.ptr as usize,
+        artifact.ptr as usize,
         types.conv_container,
     );
     let bcode_slot = ((*fn_node).value as *mut DyadPtr).add(FN_BCODE);
     *bcode_slot = code;
-    Ok(compiled)
+    store.install_artifact(fn_node, artifact);
+    Ok(())
 }
 
 /// The shared work of [`compile_fn`] and [`compile_into`]: the body's machine
@@ -1068,7 +1078,7 @@ unsafe fn compile_fn_body(
     lower: &LowerTable,
     types: &Core,
     fn_node: DyadPtr,
-) -> Result<Compiled, CompileError> {
+) -> Result<Artifact, CompileError> {
     let fields = (*fn_node).value as *const DyadPtr;
     if fields.is_null() {
         return Err(CompileError::NotLowerable(fn_node));
@@ -1101,22 +1111,22 @@ unsafe fn return_kind(types: &Core, out: DyadPtr) -> Result<Option<NumType>, Com
 
 /// `f.compile()`'s run half: compile the body and install the entry into
 /// `code_leaf`, the callable the parser pre-minted, then that leaf into the
-/// `bcode` slot. The artifact is deliberately leaked: the entry must stay
-/// valid for every later call, and nothing in the graph owns artifacts yet.
+/// `bcode` slot; the store takes the artifact and retires the one before it.
 ///
 /// # Safety
 /// As [`compile_fn`]; `code_leaf` must be a callable value from the store.
 pub(crate) unsafe fn compile_into(
+    store: &mut crate::store::Store,
     lower: &LowerTable,
     types: &Core,
     fn_node: DyadPtr,
     code_leaf: DyadPtr,
 ) -> Result<(), CompileError> {
-    let compiled = compile_fn_body(lower, types, fn_node)?;
-    crate::identities::callable::install_entry(code_leaf, compiled.ptr as usize);
+    let artifact = compile_fn_body(lower, types, fn_node)?;
+    crate::identities::callable::install_entry(code_leaf, artifact.ptr as usize);
     let bcode_slot = ((*fn_node).value as *mut DyadPtr).add(FN_BCODE);
     *bcode_slot = code_leaf;
-    std::mem::forget(compiled);
+    store.install_artifact(fn_node, artifact);
     Ok(())
 }
 
@@ -1126,7 +1136,7 @@ pub unsafe fn compile_nullary_i32(
     lower: &LowerTable,
     types: &Core,
     root: DyadPtr,
-) -> Result<Compiled, CompileError> {
+) -> Result<Artifact, CompileError> {
     // No self to recurse into; v1 bare expressions are i32 (or bool, physically i32).
     compile_body(lower, types, std::ptr::null_mut(), root, Some(NumType::I32))
 }
@@ -1137,7 +1147,7 @@ pub unsafe fn compile_nullary_i32(
 ///
 /// # Safety
 /// `root` must be a valid dyad tree from the store, and any variable storage its
-/// leaves reference must outlive every call to the returned [`Compiled`] (the
+/// leaves reference must outlive every call to the returned [`Artifact`] (the
 /// addresses are baked into the code).
 pub(crate) unsafe fn compile_body(
     lower: &LowerTable,
@@ -1145,7 +1155,7 @@ pub(crate) unsafe fn compile_body(
     self_fn: DyadPtr,
     root: DyadPtr,
     ret: Option<NumType>,
-) -> Result<Compiled, CompileError> {
+) -> Result<Artifact, CompileError> {
     // Two passes: the first lowers into a discarded function, recording how
     // every frame place is used; the offsets used only as consistent scalars,
     // address never taken, promote to register variables on the real pass.
@@ -1172,7 +1182,7 @@ unsafe fn build_pass(
     mut collect: Option<&mut PlaceStats>,
     promote: &[(usize, types::Type)],
     finish: bool,
-) -> Result<Option<Compiled>, CompileError> {
+) -> Result<Option<Artifact>, CompileError> {
     let mut flags = settings::builder();
     flags.set("use_colocated_libcalls", "false").map_err(cl)?;
     flags.set("is_pic", "false").map_err(cl)?;
@@ -1354,6 +1364,8 @@ unsafe fn build_pass(
     }
 
     if !finish {
+        // SAFETY: nothing was defined in this module, so no code points into it.
+        unsafe { module.free_memory() };
         return Ok(None);
     }
     module.define_function(func_id, &mut ctx).map_err(cl)?;
@@ -1361,7 +1373,7 @@ unsafe fn build_pass(
     module.finalize_definitions().map_err(cl)?;
     let ptr = module.get_finalized_function(func_id);
 
-    Ok(Some(Compiled { module, ptr }))
+    Ok(Some(Artifact { module: Some(module), ptr }))
 }
 
 /// The inverse of [`widen_to_i64`]: integers reduce to their width; floats
