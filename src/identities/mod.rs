@@ -242,7 +242,7 @@ impl Core {
         let record = meta::record(cx.store, meta::TYPEREC_TAG, meta::prec::READER);
         // SAFETY: `type_` was minted above with a null value nothing has read.
         unsafe {
-            (*type_).value = record;
+            dyad::set_value(type_, record);
         }
         // The root's spelling and constructor come with `logos_mod::register_syntax` below.
         let record = meta::operand_record(
@@ -254,7 +254,7 @@ impl Core {
         );
         // SAFETY: `scope_` was minted above and nothing has read its value yet.
         unsafe {
-            (*scope_).value = record;
+            dyad::set_value(scope_, record);
         }
         let assign = assign::register(&mut cx);
         // No spelling: the parser builds conversions from the `T(value)` call surface.
@@ -515,7 +515,7 @@ pub unsafe fn run_deferred(
 /// # Safety
 /// `node.value` must point at an operand record of at least two `dyad@` fields.
 pub(crate) unsafe fn operands(node: DyadPtr) -> (DyadPtr, DyadPtr) {
-    let p = (*node).value as *const DyadPtr;
+    let p = dyad::value(node) as *const DyadPtr;
     (*p, *p.add(1))
 }
 
@@ -533,13 +533,13 @@ pub(crate) enum Operand {
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     let node = types.through(node);
-    let logos = (*node).ty;
+    let logos = dyad::ty(node);
     if logos == types.ran_ {
         return numtype_of(types, ran::expr_of(types, node));
     }
     if logos == types.rational {
         // A place of rational type holds a run-time rational, which no machine type takes silently.
-        return if crate::dyad::is_place((*node).value) {
+        return if crate::dyad::is_place(dyad::value(node)) {
             Operand::NonNumeric
         } else {
             Operand::Literal
@@ -553,7 +553,7 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
         || logos == types.div_
         || logos == types.rem_
     {
-        let lhs = *((*node).value as *const DyadPtr);
+        let lhs = *(dyad::value(node) as *const DyadPtr);
         return numtype_of(types, lhs);
     }
     // A comparison or logical result is `bool`, physically an i32.
@@ -594,7 +594,7 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     }
     if logos == types.this.load {
         // SAFETY: a load node's third operand is the field's declared type.
-        let ty = unsafe { *((*node).value as *const DyadPtr).add(2) };
+        let ty = unsafe { *(dyad::value(node) as *const DyadPtr).add(2) };
         // SAFETY: `ty` is a type node from the store.
         return match unsafe { read::place_layout(types, ty) } {
             Some((read::Read::Scalar(nt), _)) => Operand::Concrete(nt),
@@ -607,7 +607,7 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     }
     if logos == types.tape.cell_into {
         // SAFETY: the fourth operand is the type of the place the line is stored into.
-        let ty = unsafe { *((*node).value as *const DyadPtr).add(3) };
+        let ty = unsafe { *(dyad::value(node) as *const DyadPtr).add(3) };
         if !meta::is_node_valued(ty, types.fn_type) {
             return Operand::Concrete(numtype::of_type_node(ty));
         }
@@ -615,7 +615,7 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     if logos == types.tape.cell_number {
         // SAFETY: a checked number read's fourth operand is the number type it was checked against.
         return Operand::Concrete(unsafe {
-            numtype::of_type_node(*((*node).value as *const DyadPtr).add(3))
+            numtype::of_type_node(*(dyad::value(node) as *const DyadPtr).add(3))
         });
     }
     if logos == types.hashmap.get {
@@ -633,7 +633,7 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     }
     // An else-less `if` yields unit; with both branches, the bare i32 default.
     if logos == types.if_ {
-        if (*((*node).value as *const DyadPtr).add(2)).is_null() {
+        if (*(dyad::value(node) as *const DyadPtr).add(2)).is_null() {
             return Operand::NonNumeric;
         }
         return Operand::Concrete(NumType::I32);
@@ -652,21 +652,21 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     // `alloc`'s pointee sits at operand 0, `own`'s at 1; owning-ness rides the bound
     // place's type, not this result.
     if logos == types.alloc_ {
-        return Operand::Pointer(*((*node).value as *const DyadPtr));
+        return Operand::Pointer(*(dyad::value(node) as *const DyadPtr));
     }
     if logos == types.own_ {
-        return Operand::Pointer(*((*node).value as *const DyadPtr).add(1));
+        return Operand::Pointer(*(dyad::value(node) as *const DyadPtr).add(1));
     }
     if !logos.is_null() && numtype::is_pointer_type(logos) {
         return Operand::Pointer(numtype::pointee_of(logos));
     }
     // `&x` stores its pointee at operand 1; its node type is its own identity, not a pointer type.
     if logos == types.addr_ {
-        return Operand::Pointer(*((*node).value as *const DyadPtr).add(1));
+        return Operand::Pointer(*(dyad::value(node) as *const DyadPtr).add(1));
     }
     // Before the fn-typed fallback, which would misread these as i32-returning calls.
     if logos == types.deref_ || logos == types.storeptr_ {
-        let p = (*node).value as *const DyadPtr;
+        let p = dyad::value(node) as *const DyadPtr;
         let pointee = if logos == types.deref_ { *p.add(1) } else { *p.add(2) };
         if numtype::is_pointer_type(pointee) {
             return Operand::Pointer(numtype::pointee_of(pointee));
@@ -700,8 +700,8 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
         } else {
             logos
         };
-    if !logos.is_null() && (*logos).ty == types.fn_type {
-        let fields = (*logos).value as *const DyadPtr;
+    if !logos.is_null() && dyad::ty(logos) == types.fn_type {
+        let fields = dyad::value(logos) as *const DyadPtr;
         if !fields.is_null() {
             let out = *fields.add(FN_OUTPUT);
             if !out.is_null() && numtype::is_void_type(out) {
@@ -728,7 +728,7 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
 
 /// `I32` when the callee has no published signature.
 unsafe fn call_return_numtype(fn_node: DyadPtr) -> NumType {
-    let fields = (*fn_node).value as *const DyadPtr;
+    let fields = dyad::value(fn_node) as *const DyadPtr;
     if fields.is_null() {
         return NumType::I32;
     }
@@ -830,7 +830,7 @@ pub(crate) unsafe fn type_identity_of(types: &Core, node: DyadPtr) -> Option<Dya
 /// # Safety
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn yields_type(types: &Core, node: DyadPtr) -> bool {
-    let ty = (*types.through(node)).ty;
+    let ty = dyad::ty(types.through(node));
     if ty == types.held_type.held_type || ty == types.tape.cell_value {
         return true;
     }
@@ -838,8 +838,8 @@ pub(crate) unsafe fn yields_type(types: &Core, node: DyadPtr) -> bool {
         read::Read::Identity => true,
         read::Read::Container(c) => c == types.type_,
         read::Read::Executable(read::Dispatch::Call(f)) => {
-            let fields = (*f).value as *const DyadPtr;
-            (*f).ty == types.fn_type
+            let fields = dyad::value(f) as *const DyadPtr;
+            dyad::ty(f) == types.fn_type
                 && !fields.is_null()
                 && *fields.add(crate::parse::FN_OUTPUT) == types.type_
         }
@@ -854,37 +854,37 @@ pub(crate) unsafe fn yields_type(types: &Core, node: DyadPtr) -> bool {
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn node_type_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
     let node = types.through(node);
-    if (*node).ty == types.ran_ {
+    if dyad::ty(node) == types.ran_ {
         return node_type_of(types, ran::expr_of(types, node));
     }
     // A move of a node yields the node; its pointee slot carries the node's type.
-    if (*node).ty == types.own_ {
-        let ty = *((*node).value as *const DyadPtr).add(1);
+    if dyad::ty(node) == types.own_ {
+        let ty = *(dyad::value(node) as *const DyadPtr).add(1);
         return meta::is_node_valued(ty, types.fn_type).then_some(ty);
     }
-    if (*node).ty == types.this.copy {
-        let ty = (**((*node).value as *const DyadPtr)).ty;
+    if dyad::ty(node) == types.this.copy {
+        let ty = dyad::ty(*(dyad::value(node) as *const DyadPtr));
         return meta::is_node_valued(ty, types.fn_type).then_some(ty);
     }
     // A field read carries the field's declared type.
-    if (*node).ty == types.this.load {
-        let ty = *((*node).value as *const DyadPtr).add(2);
+    if dyad::ty(node) == types.this.load {
+        let ty = *(dyad::value(node) as *const DyadPtr).add(2);
         return meta::is_node_valued(ty, types.fn_type).then_some(ty);
     }
     // A dereference of a cell of such a type, or a line checked against it, yields its address.
-    if (*node).ty == types.deref_
-        || (*node).ty == types.tape.cell_node
-        || (*node).ty == types.tape.cell_into
+    if dyad::ty(node) == types.deref_
+        || dyad::ty(node) == types.tape.cell_node
+        || dyad::ty(node) == types.tape.cell_into
     {
-        let at = if (*node).ty == types.deref_ { 1 } else { 3 };
-        let ty = *((*node).value as *const DyadPtr).add(at);
+        let at = if dyad::ty(node) == types.deref_ { 1 } else { 3 };
+        let ty = *(dyad::value(node) as *const DyadPtr).add(at);
         return meta::is_node_valued(ty, types.fn_type).then_some(ty);
     }
     let ty = match read::read_kind(types, node) {
-        read::Read::Node => (*node).ty,
+        read::Read::Node => dyad::ty(node),
         read::Read::Container(t) => t,
-        read::Read::Executable(read::Dispatch::Call(f)) if (*f).ty == types.fn_type => {
-            let fields = (*f).value as *const DyadPtr;
+        read::Read::Executable(read::Dispatch::Call(f)) if dyad::ty(f) == types.fn_type => {
+            let fields = dyad::value(f) as *const DyadPtr;
             if fields.is_null() {
                 return None;
             }
@@ -1021,14 +1021,14 @@ pub unsafe fn display_value(types: &Core, node: DyadPtr, bits: i64) -> String {
         // running it, and display has no runtime, so it shows as `dyad`.
         read::Read::Container(_) => {
             let held = bits as usize as DyadPtr;
-            let ty = (*node).ty;
+            let ty = dyad::ty(node);
             if ty.is_null() {
                 bits.to_string()
             } else if held.is_null() || held == types.unknown {
                 if ty == types.type_ { "type ?" } else { "dyad ?" }.to_string()
             } else if type_identity_of(types, held).is_some() {
                 type_name(types, held)
-            } else if (*held).ty == types.string_ {
+            } else if dyad::ty(held) == types.string_ {
                 String::from_utf8_lossy(string::text(held)).into_owned()
             } else {
                 "dyad".to_string()
@@ -1050,7 +1050,7 @@ pub unsafe fn display_value(types: &Core, node: DyadPtr, bits: i64) -> String {
 /// # Safety
 /// `node` must be a valid dyad from the store.
 unsafe fn trailing_expr(types: &Core, mut node: DyadPtr) -> DyadPtr {
-    while !node.is_null() && (*node).ty == types.scope {
+    while !node.is_null() && dyad::ty(node) == types.scope {
         match crate::parse::last_sequence_expr(node) {
             Some(inner) if inner != node => node = inner,
             _ => break,
@@ -1135,10 +1135,10 @@ pub(crate) unsafe fn commit_call_args(
     callee: DyadPtr,
     args: &mut [DyadPtr],
 ) -> Result<(), ParseError> {
-    if (*callee).ty != types.fn_type {
+    if dyad::ty(callee) != types.fn_type {
         return Ok(());
     }
-    let fields = (*callee).value as *const DyadPtr;
+    let fields = dyad::value(callee) as *const DyadPtr;
     if fields.is_null() {
         return Ok(());
     }
@@ -1148,7 +1148,7 @@ pub(crate) unsafe fn commit_call_args(
         let Some(&param) = params.get(i) else {
             break;
         };
-        let pty = (*param).ty;
+        let pty = dyad::ty(param);
         // A bare `name` parameter accepts any dyad.
         if pty.is_null() {
             continue;
@@ -1169,8 +1169,8 @@ pub(crate) unsafe fn commit_call_args(
             Some((read::Read::Container(t), _)) if t == types.dyad_ => {
                 // A value made when the call runs, a run's own or a record's place, is a
                 // node's address too.
-                let ok = (**arg).ty == types.this.pack
-                    || (**arg).ty == types.this.on_record
+                let ok = dyad::ty(*arg) == types.this.pack
+                    || dyad::ty(*arg) == types.this.on_record
                     || match read::read_kind(types, *arg) {
                         read::Read::Identity | read::Read::Address => true,
                         read::Read::Container(c) => !c.is_null(),
@@ -1192,7 +1192,7 @@ pub(crate) unsafe fn commit_call_args(
                 }
             }
             Some((read::Read::Scalar(nt), _)) => {
-                if (*types.through(*arg)).ty == types.rational {
+                if dyad::ty(types.through(*arg)) == types.rational {
                     *arg = commit_if_literal(store, types, *arg, &Operand::Literal, pty, nt)?;
                 } else {
                     check_store_type(types, pty, *arg)?;
@@ -1230,11 +1230,11 @@ pub(crate) unsafe fn commit_fn_body(
     if by_copy::record_width(types, output).is_some() {
         // A record result is handed back as the address of its bytes, which the call copies.
         return walk_tail(types, body, &mut |leaf| {
-            if (*leaf).ty != types.construct_ {
+            if dyad::ty(leaf) != types.construct_ {
                 refuse_statement(types, leaf)?;
             }
             // `error «…»` never yields, and an `out` already hands back its bytes.
-            if (*leaf).ty == types.error.error || (*leaf).ty == types.by_copy.out {
+            if dyad::ty(leaf) == types.error.error || dyad::ty(leaf) == types.by_copy.out {
                 return Ok(leaf);
             }
             if by_copy::record_type_of(types, leaf) != Some(output) {
@@ -1259,14 +1259,14 @@ unsafe fn walk_tail(
     node: DyadPtr,
     leaf: &mut impl FnMut(DyadPtr) -> Result<DyadPtr, ParseError>,
 ) -> Result<DyadPtr, ParseError> {
-    if (*node).ty == types.return_ {
-        let ops = (*node).value as *mut DyadPtr;
+    if dyad::ty(node) == types.return_ {
+        let ops = dyad::value(node) as *mut DyadPtr;
         *ops = walk_tail(types, *ops, leaf)?;
         return Ok(node);
     }
     // An else-less `if` yields unit, so it cannot be a value function's tail.
-    if (*node).ty == types.if_ {
-        let ops = (*node).value as *mut DyadPtr;
+    if dyad::ty(node) == types.if_ {
+        let ops = dyad::value(node) as *mut DyadPtr;
         if (*ops.add(2)).is_null() {
             return Err(ParseError::MissingElse);
         }
@@ -1277,7 +1277,7 @@ unsafe fn walk_tail(
         return Ok(node);
     }
     // Trailing prose is invisible to value flow, so the tail is the last non-comment expression.
-    if (*node).ty == types.scope {
+    if dyad::ty(node) == types.scope {
         let arr = scope::exprs_array(node);
         if !arr.is_null() {
             let (len, data) = array::parts(arr);
@@ -1285,7 +1285,7 @@ unsafe fn walk_tail(
             let mut i = len;
             while i > 0 {
                 let cand = *data.add(i - 1);
-                if !numtype::is_comment_type((*cand).ty) {
+                if !numtype::is_comment_type(dyad::ty(cand)) {
                     *data.add(i - 1) = walk_tail(types, cand, leaf)?;
                     break;
                 }
@@ -1309,7 +1309,7 @@ unsafe fn commit_tail(
 ) -> Result<DyadPtr, ParseError> {
     walk_tail(types, node, &mut |leaf| {
         refuse_statement(types, leaf)?;
-        if (*leaf).ty == types.rational && !crate::dyad::is_place((*leaf).value) {
+        if dyad::ty(leaf) == types.rational && !crate::dyad::is_place(dyad::value(leaf)) {
             let nt = numtype::of_type_node(output);
             let bits = rational::mold_to(leaf, nt).ok_or(ParseError::UncomputableLiteral)?;
             let value = store.alloc_bytes(&bits.to_ne_bytes()[..nt.bytes()]);
@@ -1332,7 +1332,7 @@ unsafe fn commit_tail(
 /// # Safety
 /// `node` is a valid dyad from the store.
 unsafe fn refuse_statement(types: &Core, node: DyadPtr) -> Result<(), ParseError> {
-    let ty = (*node).ty;
+    let ty = dyad::ty(node);
     if ty == types.while_
         || ty == types.for_
         || ty == types.construct_
