@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The node store: an append-only arena of dyads whose addresses never move,
-//! since a node's address is its id. Nothing is freed individually.
-//! DESIGN ›The store is keyed by address‹.
+//! since a node's address is its id, and one byte arena for what hangs off them.
+//! Nothing but compiled code is freed individually. DESIGN ›The store is keyed by address‹.
 
 use std::collections::HashMap;
 
@@ -56,19 +56,14 @@ impl Default for Arena {
     }
 }
 
-/// Dyads in fixed-capacity chunks, the byte arena, plus boxed side blobs (operand runs,
-/// literal bytes, bindings, map tables); every address handed out stays valid for the store's life.
+/// Dyads in fixed-capacity chunks, the byte arena holding operand runs, literal bytes
+/// and bindings, plus boxed map tables; every address handed out stays valid for the store's life.
 #[derive(Default)]
 pub struct Store {
     chunks: Vec<Vec<Dyad>>,
     arena: Arena,
-    operands: Vec<Box<[DyadPtr]>>,
-    blobs: Vec<Box<[u8]>>,
-    /// Boxed: a binding's address is handed out and must survive the vector's growth.
-    #[allow(clippy::vec_box)]
-    bindings: Vec<Box<Binding>>,
     /// The `hashmap` native's tables, keyed and valued by `i64` bit-containers; boxed
-    /// for the same reason as `bindings`.
+    /// because a table owns heap of its own and its `Drop` must run.
     #[allow(clippy::vec_box)]
     tables: Vec<Box<HashMap<i64, i64>>>,
     /// The compiled code each fn node owns (DESIGN ›The executing primitive has two paths‹).
@@ -130,9 +125,6 @@ impl Store {
         Store {
             chunks: Vec::new(),
             arena: Arena::new(),
-            operands: Vec::new(),
-            blobs: Vec::new(),
-            bindings: Vec::new(),
             tables: Vec::new(),
             artifacts: HashMap::new(),
             retired: Vec::new(),
@@ -214,28 +206,31 @@ impl Store {
         self.alloc(Dyad { ty, value })
     }
 
-    /// An operand run (`dyad@` fields) as a `void@`. A write pointer: callers
-    /// patch it in place, so it is minted from `as_mut_ptr`, never `as_ptr`,
-    /// whose read-only provenance would make the later write UB.
+    /// An operand run (`dyad@` fields) as a `void@`, in the arena. A write pointer:
+    /// callers patch it in place.
     pub fn alloc_operands(&mut self, fields: &[DyadPtr]) -> *mut u8 {
-        let mut boxed: Box<[DyadPtr]> = fields.into();
-        let ptr = boxed.as_mut_ptr() as *mut u8;
-        self.operands.push(boxed);
-        ptr
+        let at = self.arena.bump(std::mem::size_of_val(fields));
+        let ptr = self.arena_at(at) as *mut DyadPtr;
+        // SAFETY: the run was just bumped, 8-aligned and `fields.len()` words long.
+        unsafe { std::ptr::copy_nonoverlapping(fields.as_ptr(), ptr, fields.len()) };
+        ptr as *mut u8
     }
 
     pub fn alloc_binding(&mut self, rec: Binding) -> *mut Binding {
-        let mut boxed = Box::new(rec);
-        let ptr: *mut Binding = &mut *boxed;
-        self.bindings.push(boxed);
+        debug_assert!(std::mem::align_of::<Binding>() <= 8, "the arena bumps to 8");
+        let at = self.arena.bump(std::mem::size_of::<Binding>());
+        let ptr = self.arena_at(at) as *mut Binding;
+        // SAFETY: just bumped at the record's size and alignment; `Binding` has no `Drop`.
+        unsafe { ptr.write(rec) };
         ptr
     }
 
-    /// A write pointer, minted as `alloc_operands`'s is: an `=` writes through it.
+    /// A write pointer, as `alloc_operands`'s is: an `=` writes through it.
     pub fn alloc_bytes(&mut self, bytes: &[u8]) -> *mut u8 {
-        let mut boxed: Box<[u8]> = bytes.into();
-        let ptr = boxed.as_mut_ptr();
-        self.blobs.push(boxed);
+        let at = self.arena.bump(bytes.len());
+        let ptr = self.arena_at(at);
+        // SAFETY: just bumped at `bytes.len()`.
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len()) };
         ptr
     }
 
@@ -279,13 +274,6 @@ impl Store {
         use std::mem::size_of;
         let cells = self.len();
         let mut boxed_bytes = 0;
-        for run in &self.operands {
-            boxed_bytes += size_of::<Box<[DyadPtr]>>() + run.len() * size_of::<DyadPtr>();
-        }
-        for blob in &self.blobs {
-            boxed_bytes += size_of::<Box<[u8]>>() + blob.len();
-        }
-        boxed_bytes += self.bindings.len() * (size_of::<Box<Binding>>() + size_of::<Binding>());
         for table in &self.tables {
             // hashbrown: a 16-byte entry and a control byte per bucket.
             boxed_bytes += size_of::<Box<HashMap<i64, i64>>>()
@@ -298,10 +286,7 @@ impl Store {
             arena_bytes: self.arena.used,
             arena_allocs: self.arena.allocs,
             boxed_bytes,
-            boxed_allocs: self.operands.len()
-                + self.blobs.len()
-                + self.bindings.len()
-                + self.tables.len(),
+            boxed_allocs: self.tables.len(),
         }
     }
 }
@@ -382,18 +367,19 @@ mod tests {
     }
 
     #[test]
-    fn stats_count_cells_and_boxed_side_blobs() {
+    fn stats_count_cells_the_arena_and_boxed_tables() {
         let mut s = Store::new();
         assert_eq!(s.stats(), StoreStats::default());
         s.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut());
         s.alloc_operands(&[tag(1) as DyadPtr, tag(2) as DyadPtr]);
         s.alloc_bytes(b"abc");
+        s.alloc_table();
         let st = s.stats();
         assert_eq!((st.cells, st.cell_bytes), (1, 16));
-        assert_eq!(st.boxed_allocs, 2);
-        // Two fat-pointer slots, a two-word run, three bytes.
-        assert_eq!(st.boxed_bytes, 16 + 16 + 16 + 3);
-        assert_eq!(st.total_bytes(), 16 + st.boxed_bytes);
+        // A two-word run, then three bytes rounded to a word.
+        assert_eq!((st.arena_allocs, st.arena_bytes), (2, 16 + 8));
+        assert_eq!(st.boxed_allocs, 1);
+        assert_eq!(st.total_bytes(), 16 + 24 + st.boxed_bytes);
         assert_eq!(st.since(&st), StoreStats::default());
     }
 
