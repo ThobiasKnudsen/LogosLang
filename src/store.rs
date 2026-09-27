@@ -147,6 +147,12 @@ impl Store {
         }
     }
 
+    pub(crate) fn retire_artifact(&mut self, fn_node: DyadPtr) {
+        if let Some(old) = self.artifacts.remove(&fn_node) {
+            self.retire(old);
+        }
+    }
+
     /// Freed now, or once the last live jump returns: code is never pulled from
     /// under a running frame.
     fn retire(&mut self, artifact: Artifact) {

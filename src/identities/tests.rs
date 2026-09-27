@@ -1992,11 +1992,14 @@ fn runaway_depth_is_a_checked_error_not_an_abort() {
             assert_eq!(run_script("(((((1)))))"), 1);
 
             let runaway = "f := fn (n := i32 ?) -> i32 ( f(n + 1) ), f(1)";
-            assert_eq!(run_script_result(runaway), Err(crate::run::RunError::CallDepth));
+            assert_eq!(run_script_depth(runaway), (Err(crate::run::RunError::CallDepth), 0));
             let ending = "f := fn (n := i32 ?) -> i32 ( if (n < 1) (0) else (f(n - 1)) ), f(9000)";
             assert_eq!(run_script(ending), 0);
             let runaway_compiled = "f := fn (n := i32 ?) -> i32 ( f(n + 1) ), f.compile(), f(1)";
-            assert_eq!(run_script_result(runaway_compiled), Err(crate::run::RunError::CallDepth));
+            assert_eq!(
+                run_script_depth(runaway_compiled),
+                (Err(crate::run::RunError::CallDepth), 0)
+            );
             let ending_compiled =
                 "f := fn (n := i32 ?) -> i32 ( if (n < 1) (0) else (f(n - 1)) ), f.compile(), f(9000)";
             assert_eq!(run_script(ending_compiled), 0);
@@ -2124,6 +2127,87 @@ fn script_parse_err(src: &str) -> ParseError {
 
 fn run_script(src: &str) -> i64 {
     run_script_result(src).unwrap()
+}
+
+/// [`run_script_result`] and the call depth the runtime is left at.
+fn run_script_depth(src: &str) -> (Result<i64, crate::run::RunError>, usize) {
+    let (mut store, mut trie, core) = new_core();
+    let mut scopes = ScopeStack::new();
+    scopes.push(core.root_scope);
+    let root = {
+        let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes).with_lower(&core.lower);
+        p.parse_sequence().unwrap()
+    };
+    let mut rt = Runtime::new(&core, &mut store).with_compiler(&core.lower);
+    // SAFETY: `root` is the sequence just parsed; its exprs are valid.
+    let r = unsafe { rt.run(root) };
+    (r, rt.ctx.depth)
+}
+
+#[test]
+fn a_deoptimized_or_recompiled_callee_is_reached_by_an_earlier_compiled_caller() {
+    let (mut store, mut trie, core) = new_core();
+    let mut scopes = ScopeStack::new();
+    scopes.push(core.root_scope);
+    let src = "g := fn () -> i32 ( 41 ),\nf := fn () -> i32 ( g() + 1 ),\ng.compile(),\nf.compile(),\nf()";
+    let root = {
+        let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes).with_lower(&core.lower);
+        p.parse_sequence().unwrap()
+    };
+    let mut rt = Runtime::new(&core, &mut store).with_compiler(&core.lower);
+    // SAFETY: `root` is the sequence just parsed; its first two lines declare `g` and `f`.
+    let (g, f) = unsafe {
+        assert_eq!(rt.run(root).unwrap(), 42);
+        let items = crate::identities::array::items(*((*root).value as *const DyadPtr));
+        let fn_of = |i: usize| declare::declared_of(ran::expr_of(&core, items[i]));
+        (fn_of(0), fn_of(1))
+    };
+    assert_eq!(rt.store.live_artifacts(), 2);
+    let call = rt.store.alloc_raw(f, std::ptr::null_mut());
+
+    // SAFETY: `call` applies the fn node `f`; `g` is a fn node; both from the store.
+    unsafe {
+        assert_eq!(rt.run(call).unwrap(), 42);
+        // f's code reads g's entry at the jump: zero sends it to the body-walk.
+        rt.deopt(g);
+        assert_eq!(rt.store.live_artifacts(), 1);
+        assert_eq!(rt.run(call).unwrap(), 42);
+        compile_fn(rt.store, &core.lower, &core, g).unwrap();
+        assert_eq!(rt.store.live_artifacts(), 2);
+        assert_eq!(rt.run(call).unwrap(), 42);
+        // A recompile with no jump live frees the old code at once.
+        compile_fn(rt.store, &core.lower, &core, g).unwrap();
+        assert_eq!(rt.store.live_artifacts(), 2);
+        rt.deopt(f);
+        assert_eq!(rt.store.live_artifacts(), 1);
+        assert_eq!(rt.run(call).unwrap(), 42);
+        rt.deopt(f);
+        assert_eq!(rt.store.live_artifacts(), 1);
+    }
+}
+
+#[test]
+fn code_retired_under_a_live_jump_is_freed_when_the_jump_returns() {
+    let (mut store, mut trie, core) = new_core();
+    let node = {
+        let mut s = ScopeStack::new();
+        s.push(core.root_scope);
+        let mut p = Parser::new("1 + 1", &mut store, &mut trie, &core, s);
+        p.parse_expression().unwrap()
+    };
+    // SAFETY: `node` is the expression just parsed.
+    let (first, second) = unsafe {
+        (
+            compile_nullary_i32(&core.lower, &core, node).unwrap(),
+            compile_nullary_i32(&core.lower, &core, node).unwrap(),
+        )
+    };
+    store.install_artifact(node, first);
+    store.enter_jump();
+    store.install_artifact(node, second);
+    assert_eq!(store.live_artifacts(), 2, "retired, not freed, while a jump is live");
+    store.leave_jump();
+    assert_eq!(store.live_artifacts(), 1);
 }
 
 #[test]

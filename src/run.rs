@@ -613,6 +613,25 @@ impl<'a> Runtime<'a> {
             .map_err(|e| RunError::CompileFailed(Box::new(crate::report::compile_message(&e))))
     }
 
+    /// Deoptimize `fn_node`: null its `bcode`, zero its leaf's entry so a compiled
+    /// caller takes the interpreter jump, and retire its artifact. The entry every
+    /// structural write of a compiled body must go through.
+    ///
+    /// # Safety
+    /// `fn_node` must be a valid `fn` node from the store.
+    pub unsafe fn deopt(&mut self, fn_node: DyadPtr) {
+        let fields = (*fn_node).value as *mut DyadPtr;
+        if !fields.is_null() {
+            let bcode_slot = fields.add(FN_BCODE);
+            let leaf = *bcode_slot;
+            if !leaf.is_null() {
+                crate::identities::callable::install_entry(leaf, 0);
+                *bcode_slot = std::ptr::null_mut();
+            }
+        }
+        self.store.retire_artifact(fn_node);
+    }
+
     /// The core handles, for a native's run to ask the reading rule as `run` does.
     pub(crate) fn types(&self) -> &crate::Core {
         self.types
