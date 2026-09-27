@@ -397,9 +397,9 @@ fn lower_copy(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
 }
 
 /// # Safety
-/// Called only by compiled code, with a template `build_copy` was handed.
-unsafe extern "C" fn compiled_copy(template: DyadPtr) -> i64 {
-    copy_of((*crate::run::standing_by()).store(), template) as i64
+/// Called only by compiled code, with its context and a template `build_copy` was handed.
+unsafe extern "C" fn compiled_copy(ctx: *mut crate::run::Context, template: DyadPtr) -> i64 {
+    copy_of((*crate::run::runtime_of(ctx)).store(), template) as i64
 }
 
 /// The slots are copied, never the nodes they hold: a field write replaces its slot.
@@ -496,10 +496,15 @@ fn lower_pack(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
 }
 
 /// # Safety
-/// Called only by compiled code, with the operands `lower_pack` baked and `argv` one value
-/// per place.
-unsafe extern "C" fn compiled_pack(ty: DyadPtr, places: DyadPtr, argv: *const i64) -> i64 {
-    let rt = &mut *crate::run::standing_by();
+/// Called only by compiled code, with its context, the operands `lower_pack` baked and
+/// `argv` one value per place.
+unsafe extern "C" fn compiled_pack(
+    ctx: *mut crate::run::Context,
+    ty: DyadPtr,
+    places: DyadPtr,
+    argv: *const i64,
+) -> i64 {
+    let rt = &mut *crate::run::runtime_of(ctx);
     let places = super::array::items(places);
     let bits = std::slice::from_raw_parts(argv, places.len());
     let types: *const Core = rt.types();
@@ -545,7 +550,12 @@ fn lower_on_record(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileErro
 }
 
 /// # Safety
-/// Called only by compiled code, with the type `lower_on_record` baked and its record's bytes.
-unsafe extern "C" fn compiled_on_record(ty: DyadPtr, bytes: *mut u8) -> i64 {
-    receiver((*crate::run::standing_by()).store(), ty, bytes) as i64
+/// Called only by compiled code, with its context, the type `lower_on_record` baked and
+/// its record's bytes.
+unsafe extern "C" fn compiled_on_record(
+    ctx: *mut crate::run::Context,
+    ty: DyadPtr,
+    bytes: *mut u8,
+) -> i64 {
+    receiver((*crate::run::runtime_of(ctx)).store(), ty, bytes) as i64
 }

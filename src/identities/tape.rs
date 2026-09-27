@@ -1123,10 +1123,14 @@ unsafe fn lower_bracket(lw: &mut Lowerer, bracket: DyadPtr) -> Result<Value, Com
 }
 
 /// # Safety
-/// Called only by compiled code, with a bracket node from the store and a block holding one
-/// container per line.
-unsafe extern "C" fn compiled_bracket(bracket: DyadPtr, values: *const i64) -> i64 {
-    let rt = &mut *crate::run::standing_by();
+/// Called only by compiled code, with its context, a bracket node from the store and a
+/// block holding one container per line.
+unsafe extern "C" fn compiled_bracket(
+    ctx: *mut crate::run::Context,
+    bracket: DyadPtr,
+    values: *const i64,
+) -> i64 {
+    let rt = &mut *crate::run::runtime_of(ctx);
     let n = super::scope::exprs_of(bracket).map_or(0, <[DyadPtr]>::len);
     let bits = if n == 0 { &[][..] } else { std::slice::from_raw_parts(values, n) };
     let types: *const Core = rt.types();

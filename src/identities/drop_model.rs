@@ -453,12 +453,17 @@ fn lower_drop(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
 }
 
 /// # Safety
-/// Called only by compiled code, with `drop` the instances' `drop` a node drop was built over.
-unsafe extern "C" fn compiled_instance_drop(this: i64, drop: DyadPtr) -> i64 {
+/// Called only by compiled code, with its context and `drop` the instances' `drop` a node
+/// drop was built over.
+unsafe extern "C" fn compiled_instance_drop(
+    ctx: *mut crate::run::Context,
+    this: i64,
+    drop: DyadPtr,
+) -> i64 {
     if this == 0 {
         return 0;
     }
-    crate::run::interpret_call(drop, 1, &this)
+    crate::run::interpret_call(ctx, drop, 1, &this)
 }
 
 /// The move reads the place and empties it, so the pending teardown over it finds nothing.

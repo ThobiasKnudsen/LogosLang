@@ -6,8 +6,6 @@
 //! jumps to the callable leaf in its op slot. Scalars ride an `i64` bit-container.
 //! DESIGN ›The callable ground is `@exec`‹.
 
-use std::cell::Cell;
-
 use crate::dyad::{frame_ref, Dyad, DyadPtr};
 use crate::identities::by_copy;
 use crate::identities::read::{read_kind, Dispatch, Read};
@@ -118,13 +116,6 @@ pub enum RunError {
     MintFailed(Box<String>),
 }
 
-thread_local! {
-    /// The runtime whose compiled code is running: set around every jump into
-    /// machine code so a call back into the interpreter finds it, null outside
-    /// one. Saved and restored per jump, so nested jumps each see their own.
-    static CURRENT: Cell<*mut Runtime<'static>> = const { Cell::new(std::ptr::null_mut()) };
-}
-
 /// What compiled code reaches the run through, its first argument. The fields
 /// machine code reads sit first, at the offsets the compiler takes with `offset_of!`.
 /// DESIGN ›The calling convention is not part of `@exec`‹.
@@ -137,12 +128,23 @@ pub struct Context {
     /// function cannot return it, so the runtime reads it back the moment the
     /// machine code returns.
     pending: Option<RunError>,
+    /// The runtime this context belongs to, for a step compiled code hands
+    /// back to the seed; set at every jump, since a runtime may move between them.
+    runtime: *mut Runtime<'static>,
 }
 
 impl Context {
     fn new() -> Self {
-        Context { depth: 0, pending: None }
+        Context { depth: 0, pending: None, runtime: std::ptr::null_mut() }
     }
+}
+
+/// The runtime whose machine code is running, for a step it hands back to the seed.
+///
+/// # Safety
+/// `ctx` must be the context a running artifact was called with.
+pub(crate) unsafe fn runtime_of(ctx: *mut Context) -> *mut Runtime<'static> {
+    (*ctx).runtime
 }
 
 /// Jump to compiled code of the one signature ([`MachineFn`]).
@@ -161,15 +163,21 @@ unsafe fn call_machine(p: *const u8, ctx: *mut Context, args: &[i64]) -> i64 {
 pub type MachineFn = unsafe extern "C" fn(*mut Context, *const i64, usize) -> i64;
 
 /// The jump a compiled caller makes into a callee that is not compiled: the
-/// runtime in [`CURRENT`] applies the callee by value. An error or a panic is
+/// context's runtime applies the callee by value. An error or a panic is
 /// parked in the context and 0 returned, since neither may cross into machine code.
 ///
 /// # Safety
-/// Called only by compiled code the seed emitted: `fn_node` a `fn` node from
-/// the store, `argv` its argument block of `argc` words.
-pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *const i64) -> i64 {
-    let rt = standing_by();
-    // SAFETY: `rt` was set by the runtime around this very jump and is live for its duration.
+/// Called only by compiled code the seed emitted, with the context it was
+/// called with: `fn_node` a `fn` node from the store, `argv` its argument
+/// block of `argc` words.
+pub unsafe extern "C" fn interpret_call(
+    ctx: *mut Context,
+    fn_node: *mut Dyad,
+    argc: usize,
+    argv: *const i64,
+) -> i64 {
+    let rt = runtime_of(ctx);
+    // SAFETY: `rt` is the runtime that made this very jump, live for its duration.
     let saved = unsafe { ((*rt).activations.len(), (*rt).stack.mark(), (*rt).constructing) };
     // SAFETY: as above.
     let depth = unsafe { (*rt).ctx.depth };
@@ -191,8 +199,6 @@ pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *
             (*rt).ctx.depth = depth;
         }
     };
-    // SAFETY: as above.
-    let ctx = unsafe { std::ptr::addr_of_mut!((*rt).ctx) };
     match outcome {
         Ok(Ok(v)) => v,
         Ok(Err(e)) => {
@@ -213,18 +219,6 @@ pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *
             0
         }
     }
-}
-
-/// The runtime in [`CURRENT`], for a step compiled code hands back to the seed; never null.
-pub(crate) fn standing_by() -> *mut Runtime<'static> {
-    let rt = CURRENT.get();
-    if rt.is_null() {
-        // Only machine code called with no runtime at all (the test-only
-        // `Compiled::call`) can get here; there is nowhere to report to.
-        eprintln!("logos: compiled code reached the seed with no runtime to run it");
-        std::process::abort();
-    }
-    rt
 }
 
 /// The fault a compiled read or write through a null pointer raises: parked
@@ -730,8 +724,8 @@ impl<'a> Runtime<'a> {
         }
     }
 
-    /// Jump to machine code with this runtime standing by in [`CURRENT`], and
-    /// read back any error parked in the context when it returns (0 is a value).
+    /// Jump to machine code with this runtime's context, and read back any
+    /// error parked in it when the code returns (0 is a value).
     ///
     /// # Safety
     /// `entry` must be live machine code of the one compiled signature
@@ -744,10 +738,9 @@ impl<'a> Runtime<'a> {
         // The lifetime is erased at the machine-code boundary and restored
         // below before the borrow it came from ends.
         let this: *mut Runtime<'static> = (self as *mut Runtime<'a>).cast();
-        let prev = CURRENT.replace(this);
-        self.ctx.pending = None;
+        (*this).ctx.runtime = this;
+        (*this).ctx.pending = None;
         let r = call_machine(entry, std::ptr::addr_of_mut!((*this).ctx), args);
-        CURRENT.set(prev);
         match self.ctx.pending.take() {
             Some(e) => Err(e),
             None => Ok(r),

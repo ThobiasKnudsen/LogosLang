@@ -416,17 +416,20 @@ impl Lowerer<'_, '_> {
         self.builder.ins().stack_addr(self.ptr_ty, slot, 0)
     }
 
-    /// A call to the seed's `extern "C"` function at `entry`, every argument and the
-    /// result an `i64`: a step whose work is the store's, which machine code cannot allocate in.
+    /// A call to the seed's `extern "C"` function at `entry`, the context first, then
+    /// every argument and the result an `i64`: a step whose work is the store's, which
+    /// machine code cannot allocate in.
     pub(crate) fn call_seed(&mut self, entry: usize, args: &[Value]) -> Value {
         let mut sig = self.module.make_signature();
+        sig.params.push(AbiParam::new(self.ptr_ty));
         for _ in args {
             sig.params.push(AbiParam::new(types::I64));
         }
         sig.returns.push(AbiParam::new(types::I64));
         let sigref = self.builder.import_signature(sig);
         let addr = self.builder.ins().iconst(self.ptr_ty, entry as i64);
-        let inst = self.builder.ins().call_indirect(sigref, addr, args);
+        let all: Vec<Value> = std::iter::once(self.ctx).chain(args.iter().copied()).collect();
+        let inst = self.builder.ins().call_indirect(sigref, addr, &all);
         self.builder.inst_results(inst)[0]
     }
 
@@ -956,15 +959,12 @@ impl Lowerer<'_, '_> {
             let bcode = *fields.add(FN_BCODE);
             if bcode.is_null() {
                 let fn_node = self.builder.ins().iconst(self.ptr_ty, callee as i64);
-                let mut sig = self.module.make_signature();
-                for _ in 0..3 {
-                    sig.params.push(AbiParam::new(types::I64));
-                }
-                sig.returns.push(AbiParam::new(types::I64));
-                let sigref = self.builder.import_signature(sig);
                 let entry = crate::run::interpret_call as *const () as usize;
-                let addr = self.builder.ins().iconst(self.ptr_ty, entry as i64);
-                self.builder.ins().call_indirect(sigref, addr, &[fn_node, argc, argv])
+                let r = self.call_seed(entry, &[fn_node, argc, argv]);
+                return Ok(match ret {
+                    Some(nt) => narrow_from_i64(self.builder, r, nt),
+                    None => self.const_i32(0),
+                });
             } else {
                 let entry = crate::identities::callable::entry_of(bcode);
                 let mut sig = self.module.make_signature();
