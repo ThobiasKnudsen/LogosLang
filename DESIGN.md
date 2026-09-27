@@ -25,7 +25,7 @@
 Kept in the old spelling because the current one is not written anywhere: `mk := fn (t := type ?) -> type ( type ( fields = ( shared e := t ) ) )` and `shared array_mints := hashmap type -> type` (l.217); the array.logos snippets with `this.size`, `this.at`, `this.element_type` in the narrowing rules (l.217); `a:dyad` "in the frame is the matched node" (l.69); `f:dyad.value.body[0].rhs` (l.241, legal again since `:dyad` is the long form, 27 September 2026); `self` in the refinement example (l.58).
 
 **Conflicts found by the rewrite, and how Thobias ruled them on 27 September 2026.** Each rule below carries its ruling; the paragraph form at e75bcdc holds the same rulings inline at the lines named.
-1. l.71 against l.69: dissolved. A conjecture states a boolean and a call yields the other side of a fact; the `->` mapper and the value/truth split are history (›A conjecture states a boolean…‹, first rule of ›The proof layer‹).
+1. l.71 against l.69: dissolved. A conjecture states a boolean and a call yields the other side of a fact; the `->` mapper and the value/truth split are history (›A conjecture states a boolean, and calling it yields the other side of a fact‹, first rule of ›The proof layer‹).
 2. l.99 against l.75: l.99 superseded; branches stand alone (DESIGN_HISTORY.md ›Branches and universes‹).
 3. l.108 against l.107: the 20 September removal covered the value slot only; a later gate line, `immut x` or `lock x`, is admitted from the declaring scope and below (›A gate is a node of the body‹).
 4. l.127 against l.135: on an unlocked name `mut` may return after `immut`; "the reverse flip" means un-freezing a locked set (›`immut x` removes `mut`; `lock` seals the gate set‹).
@@ -522,7 +522,7 @@ The coarse gate is the name index: a name the trie does not offer a scope cannot
 - **Ruled:** settled in discussion, August 2026.
 - **Source:** DESIGN.md l.108
 
-### Sections and the arche; kernel access is a position, not a mode
+### Sections, the arche, and effect identities: kernel access is a position, not a mode
 A **section** is a region of code defined by which names reach it. The **arche** is the root section: the scope a run starts in (command line or REPL), holding every primordial name. Kernel access is a position in the import and call tree: nothing asks "which mode am I in", there is only what a scope can name.
 - **Ruled:** settled in discussion, August 2026.
 - **Rejected (declined):** mode bits, and the name "user modes": sections divide code; extending them to users later means configuring which names a user's root starts with.
@@ -1106,7 +1106,7 @@ The seed interprets everything and compiles only on request: in v0.1.0 via `comp
 - **Ruled:** July 2026, in discussion.
 - **Source:** DESIGN.md l.182
 
-### Mutable code can be compiled; the reader-writer rule gates it, not `mut`
+### Mutable code is compilable; the reader-writer rule gates it, not `mut`
 Only a region with a *continuously live* structural writer is not compiled, because the next write would deopt it. A stable `mut` region runs native. "`mut` stays interpreted" is profitability, not a ban. A compiled artifact is a read reference to code, so a structural write needs exclusive access and drops every such reader first: that drop is the deopt. Until the borrow checker makes this static, the program keeps it as a discipline.
 - **Source:** DESIGN.md l.184
 
