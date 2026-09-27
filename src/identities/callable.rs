@@ -21,7 +21,7 @@ pub(crate) struct Callables {
     pub convention: DyadPtr,
     /// A Rust shim `fn(&mut Runtime, DyadPtr) -> Result<i64, RunError>`.
     pub seed_native: DyadPtr,
-    /// Compiled code taking `(argv, argc)` over i64 containers.
+    /// Compiled code taking `(context, argv, argc)` over i64 containers.
     pub container_i64: DyadPtr,
     /// The one constructor signature, `ConstructFn`.
     pub seed_parse: DyadPtr,

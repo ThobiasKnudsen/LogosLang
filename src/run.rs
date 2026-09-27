@@ -129,19 +129,29 @@ thread_local! {
     static PENDING: Cell<Option<RunError>> = const { Cell::new(None) };
 }
 
+/// What compiled code reaches the run through, its first argument. The fields
+/// machine code reads sit first, at the offsets the compiler takes with `offset_of!`.
+/// DESIGN ›The calling convention is not part of `@exec`‹.
+#[repr(C)]
+pub struct Context {
+    /// The calls in flight across both tiers: the interpreter and each compiled
+    /// prologue count in and out, and both refuse the frame past [`MAX_CALL_DEPTH`].
+    pub depth: usize,
+}
+
 /// Jump to compiled code of the one signature ([`MachineFn`]).
 ///
 /// # Safety
 /// `p` must point at live machine code of that signature.
-unsafe fn call_machine(p: *const u8, args: &[i64]) -> i64 {
+unsafe fn call_machine(p: *const u8, ctx: &mut Context, args: &[i64]) -> i64 {
     let f = std::mem::transmute::<*const u8, MachineFn>(p);
-    f(args.as_ptr(), args.len())
+    f(ctx, args.as_ptr(), args.len())
 }
 
-/// The one signature every compiled function has: the argument block the caller
-/// owns, its length in 8-byte words, and the result container; one shape for every
-/// arity. DESIGN ›Operands travel on the stack‹.
-pub type MachineFn = extern "C" fn(*const i64, usize) -> i64;
+/// The one signature every compiled function has: the run's context, the argument
+/// block the caller owns, its length in 8-byte words, and the result container; one
+/// shape for every arity. DESIGN ›Operands travel on the stack‹.
+pub type MachineFn = unsafe extern "C" fn(*mut Context, *const i64, usize) -> i64;
 
 /// The jump a compiled caller makes into a callee that is not compiled: the
 /// runtime in [`CURRENT`] applies the callee by value. An error or a panic is
@@ -154,7 +164,8 @@ pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *
     let rt = standing_by();
     // SAFETY: `rt` was set by the runtime around this very jump and is live for its duration.
     let saved = unsafe { ((*rt).activations.len(), (*rt).stack.mark(), (*rt).constructing) };
-    let depth = CALL_DEPTH.with(|d| d.get());
+    // SAFETY: as above.
+    let depth = unsafe { (*rt).ctx.depth };
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // SAFETY: as above; `argv` holds `argc` words; `fn_node` is the fn the caller baked.
         unsafe {
@@ -170,8 +181,8 @@ pub unsafe extern "C" fn interpret_call(fn_node: *mut Dyad, argc: usize, argv: *
             (*rt).activations.truncate(saved.0);
             (*rt).stack.release(saved.1);
             (*rt).constructing = saved.2;
+            (*rt).ctx.depth = depth;
         }
-        CALL_DEPTH.with(|d| d.set(depth));
     };
     match outcome {
         Ok(Ok(v)) => v,
@@ -231,19 +242,6 @@ fn park(e: RunError) {
 pub unsafe extern "C" fn park_call_depth() -> i64 {
     park(RunError::CallDepth);
     0
-}
-
-thread_local! {
-    /// The calls in flight across both tiers: the interpreter and each compiled
-    /// prologue count in and out, and both refuse the frame past
-    /// [`MAX_CALL_DEPTH`]. Per thread, because a run is a thread's.
-    pub static CALL_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-/// The address compiled code counts through: the compiling thread's counter,
-/// baked at compile time.
-pub fn call_depth_ptr() -> *mut usize {
-    CALL_DEPTH.with(|d| d.as_ptr())
 }
 
 /// How deep interpreted calls may nest before the run faults instead of the
@@ -346,6 +344,8 @@ pub struct Runtime<'a> {
     /// The fresh node a type's own `parse` is running over, whose placed calls take a copy
     /// of it made each time they run, and whether `tape[0]:type = T` has stamped it yet.
     fresh_this: Option<(DyadPtr, bool)>,
+    /// Handed to every jump into machine code.
+    pub(crate) ctx: Context,
 }
 
 /// What `lex «…»` lexes against. Raw, because the parser owns both and the
@@ -401,6 +401,7 @@ impl<'a> Runtime<'a> {
             constructing: 0,
             ctor_tape: None,
             fresh_this: None,
+            ctx: Context { depth: 0 },
         }
     }
 
@@ -683,7 +684,7 @@ impl<'a> Runtime<'a> {
             return Err(RunError::NotRunnable(f));
         }
         // Past the limit the run faults rather than the Rust stack overflowing.
-        if CALL_DEPTH.with(|d| d.get()) >= MAX_CALL_DEPTH {
+        if self.ctx.depth >= MAX_CALL_DEPTH {
             return Err(RunError::CallDepth);
         }
         let mark = self.stack.mark();
@@ -692,7 +693,7 @@ impl<'a> Runtime<'a> {
             self.stack.release(mark);
             return Err(e);
         }
-        CALL_DEPTH.with(|d| d.set(d.get() + 1));
+        self.ctx.depth += 1;
         self.activations.push(base);
         let mut result = match self.run(body) {
             Err(RunError::Return(v)) => Ok(v),
@@ -705,7 +706,7 @@ impl<'a> Runtime<'a> {
             result = Ok(dest);
         }
         self.activations.pop();
-        CALL_DEPTH.with(|d| d.set(d.get() - 1));
+        self.ctx.depth -= 1;
         self.stack.release(mark);
         // A `-> void` body yields unit, matching the compiled tier's `return 0`.
         if crate::identities::numtype::is_void_type(*fields.add(FN_OUTPUT)) {
@@ -721,15 +722,17 @@ impl<'a> Runtime<'a> {
     /// # Safety
     /// `entry` must be live machine code of the one compiled signature
     /// ([`MachineFn`]).
-    unsafe fn call_compiled(&mut self, entry: *const u8, args: &[i64]) -> Result<i64, RunError> {
+    pub(crate) unsafe fn call_compiled(
+        &mut self,
+        entry: *const u8,
+        args: &[i64],
+    ) -> Result<i64, RunError> {
         // The lifetime is erased at the machine-code boundary and restored
         // below before the borrow it came from ends.
         let this: *mut Runtime<'static> = (self as *mut Runtime<'a>).cast();
         let prev = CURRENT.replace(this);
-        // A park left by machine code that ran with no runtime to report to
-        // (the test-only `Compiled::call`) must not surface as this call's.
         PENDING.set(None);
-        let r = call_machine(entry, args);
+        let r = call_machine(entry, &mut self.ctx, args);
         CURRENT.set(prev);
         match PENDING.take() {
             Some(e) => Err(e),

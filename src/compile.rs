@@ -134,6 +134,8 @@ pub struct Lowerer<'a, 'f> {
     ret: Option<NumType>,
     /// A record result's slot address, from the argument block, and its width.
     ret_dest: Option<(Value, usize)>,
+    /// The run's context, this call's first argument, handed on to every call.
+    ctx: Value,
     /// The call-depth counter the epilogue counts this call out of.
     depth_addr: Value,
     /// Scopes being lowered whose exit runs teardowns, which a `return` would jump past.
@@ -945,9 +947,10 @@ impl Lowerer<'_, '_> {
             self.builder.ins().stack_addr(self.ptr_ty, block, 0)
         };
         let argc = self.builder.ins().iconst(types::I64, words as i64);
+        let ctx = self.ctx;
         let inst = if callee == self.self_fn {
             let fref = self.module.declare_func_in_func(self.func_id, &mut *self.builder.func);
-            self.builder.ins().call(fref, &[argv, argc])
+            self.builder.ins().call(fref, &[ctx, argv, argc])
         } else {
             let bcode = *fields.add(FN_BCODE);
             if bcode.is_null() {
@@ -965,11 +968,12 @@ impl Lowerer<'_, '_> {
                 let entry = crate::identities::callable::entry_of(bcode);
                 let mut sig = self.module.make_signature();
                 sig.params.push(AbiParam::new(self.ptr_ty));
+                sig.params.push(AbiParam::new(self.ptr_ty));
                 sig.params.push(AbiParam::new(types::I64));
                 sig.returns.push(AbiParam::new(types::I64));
                 let sigref = self.builder.import_signature(sig);
                 let addr = self.builder.ins().iconst(self.ptr_ty, entry as i64);
-                self.builder.ins().call_indirect(sigref, addr, &[argv, argc])
+                self.builder.ins().call_indirect(sigref, addr, &[ctx, argv, argc])
             }
         };
         let r = self.builder.inst_results(inst)[0];
@@ -989,14 +993,13 @@ pub struct Compiled {
 }
 
 impl Compiled {
-    /// Call the compiled function with no arguments and return the raw `i64` container.
+    /// Call the compiled function with no arguments under `rt`; the raw `i64` container.
     ///
     /// # Safety
     /// The compiled function must be nullary and any host addresses it baked
     /// in must still be valid.
-    pub unsafe fn call(&self) -> i64 {
-        let f: crate::run::MachineFn = std::mem::transmute(self.ptr);
-        f(std::ptr::null(), 0)
+    pub unsafe fn call(&self, rt: &mut crate::run::Runtime) -> Result<i64, crate::run::RunError> {
+        rt.call_compiled(self.ptr, &[])
     }
 }
 
@@ -1151,7 +1154,8 @@ unsafe fn build_pass(
 
     let mut module = JITModule::new(JITBuilder::with_isa(isa, default_libcall_names()));
     let mut ctx = module.make_context();
-    // The one compiled signature, `(argv, argc) -> i64` (`crate::run::MachineFn`).
+    // The one compiled signature, `(context, argv, argc) -> i64` (`crate::run::MachineFn`).
+    ctx.func.signature.params.push(AbiParam::new(ptr_ty));
     ctx.func.signature.params.push(AbiParam::new(ptr_ty));
     ctx.func.signature.params.push(AbiParam::new(types::I64));
     ctx.func.signature.returns.push(AbiParam::new(types::I64));
@@ -1170,7 +1174,9 @@ unsafe fn build_pass(
 
         // The depth guard's compiled half: count this call in, park the fault
         // past the limit instead of claiming a frame, and count out in the epilogue.
-        let depth_addr = builder.ins().iconst(ptr_ty, crate::run::call_depth_ptr() as usize as i64);
+        let run_ctx = builder.block_params(entry)[0];
+        let depth_off = std::mem::offset_of!(crate::run::Context, depth) as i64;
+        let depth_addr = builder.ins().iadd_imm(run_ctx, depth_off);
         let depth = builder.ins().load(types::I64, MemFlagsData::new(), depth_addr, 0);
         let deeper = builder.ins().iadd_imm(depth, 1);
         builder.ins().store(MemFlagsData::new(), deeper, depth_addr, 0);
@@ -1239,7 +1245,7 @@ unsafe fn build_pass(
         // Each argument loads from `argv` and narrows to its declared scalar
         // type; a bare or type-valued parameter keeps the full container, and a
         // record is copied at its width into a slot that stays in memory.
-        let argv = builder.block_params(entry)[0];
+        let argv = builder.block_params(entry)[1];
         let ret_dest = if self_fn.is_null() {
             None
         } else {
@@ -1295,6 +1301,7 @@ unsafe fn build_pass(
                 promoted: &promoted,
                 ret,
                 ret_dest,
+                ctx: run_ctx,
                 depth_addr,
                 teardowns: 0,
             };

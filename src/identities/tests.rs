@@ -484,7 +484,7 @@ fn jit_matches_the_interpreter() {
     unsafe { std::ptr::write_unaligned(a_val as *mut i32, 0) };
     // SAFETY: `root`/`a` live in `store`, which outlives the call.
     let compiled = unsafe { compile_nullary_i32(&core.lower, &core, root) }.unwrap();
-    let jit = unsafe { compiled.call() };
+    let jit = unsafe { compiled.call(&mut rt) }.unwrap();
     let jit_a = unsafe { std::ptr::read_unaligned(a_val as *const i32) };
 
     assert_eq!(interp, 1);
@@ -705,10 +705,10 @@ fn a_whole_file_runs_top_to_bottom_like_a_script() {
         declare::declared_of(ran::expr_of(&core, first))
     };
     // SAFETY: `func` is the fn node just parsed and outlives the calls.
-    let _fc = unsafe { compile_fn(&mut store, &core.lower, &core, func) }.unwrap();
+    let _fc = unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
     let compiled = unsafe { compile_nullary_i32(&core.lower, &core, root) }.unwrap();
     // SAFETY: the artifacts are alive; the baked storage outlives the call.
-    assert_eq!(unsafe { compiled.call() }, 42);
+    assert_eq!(unsafe { compiled.call(&mut rt) }.unwrap(), 42);
 }
 
 #[test]
@@ -731,7 +731,7 @@ fn parses_and_runs_bool_literals() {
         assert_eq!(unsafe { rt.run(node) }.unwrap(), expect);
         // SAFETY: same node; the `bool` lowering bakes its constant.
         let compiled = unsafe { compile_nullary_i32(&core.lower, &core, node) }.unwrap();
-        assert_eq!(unsafe { compiled.call() }, expect);
+        assert_eq!(unsafe { compiled.call(&mut rt) }.unwrap(), expect);
     }
 }
 
@@ -2548,7 +2548,7 @@ fn block_local_declarations_do_not_leak() {
     assert_eq!(unsafe { rt.run(node) }.unwrap(), 6);
     // SAFETY: same node; the sequence lowering yields its trailing value.
     let compiled = unsafe { compile_nullary_i32(&core.lower, &core, node) }.unwrap();
-    assert_eq!(unsafe { compiled.call() }, 6);
+    assert_eq!(unsafe { compiled.call(&mut rt) }.unwrap(), 6);
 
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
