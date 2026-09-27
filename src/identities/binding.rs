@@ -34,6 +34,9 @@ pub struct Binding {
     /// `0` by default; the two fresh-spelling patterns carry `-1`. Read by the lexer at every
     /// match.
     pub lex_rank: f64,
+    /// Declared outside any function in a body the pass does not run in parse order, a loop
+    /// or a branch: at parse the name holds no value yet.
+    pub unmade: bool,
 }
 
 impl Binding {
@@ -46,6 +49,7 @@ impl Binding {
             gate: std::ptr::null_mut(),
             name,
             lex_rank: 0.0,
+            unmade: false,
         }
     }
 

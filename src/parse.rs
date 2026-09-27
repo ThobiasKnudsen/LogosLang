@@ -1559,9 +1559,6 @@ pub struct Parser<'a> {
     /// import's runtime so `f.compile()` at an imported top level works as at
     /// the driver's own.
     lower: Option<&'a crate::compile::LowerTable>,
-    /// Names declared outside any function in a body the pass does not run
-    /// in parse order, a loop or a branch: at parse they hold no value yet.
-    unmade: HashSet<DyadPtr>,
 }
 
 /// Everything a sub-parse (a held `type (…)`, a run body, an `import`) sets aside and puts
@@ -1825,7 +1822,6 @@ impl<'a> Parser<'a> {
             field_targets: HashMap::new(),
             imports: Imports::default(),
             lower: None,
-            unmade: HashSet::new(),
         }
     }
 
@@ -2036,7 +2032,8 @@ impl<'a> Parser<'a> {
     /// A `share` initializer runs at parse, where a name of the loop or
     /// branch around it has no value yet.
     fn check_made(&self, binding: DyadPtr) -> Result<(), ParseError> {
-        if self.cx.share_init.is_some() && self.unmade.contains(&binding) {
+        // SAFETY: `binding` is the binding dyad the resolver returned for the name.
+        if self.cx.share_init.is_some() && unsafe { Binding::read(binding) }.unmade {
             return Err(ParseError::ShareInitReadsUnmade);
         }
         Ok(())
@@ -5882,12 +5879,9 @@ impl<'a> Parser<'a> {
     fn mint_binding(&mut self, identity: DyadPtr, scope: DyadPtr, spelling: &[u8]) -> DyadPtr {
         let name =
             crate::identities::string::build_text(self.rt.store, self.types.string_, spelling);
-        let binding =
-            Binding::alloc(self.rt.store, self.types.binding_, Binding::new(identity, scope, name));
-        if self.cx.runtime_depth > 0 && !self.in_fn_body() {
-            self.unmade.insert(binding);
-        }
-        binding
+        let mut rec = Binding::new(identity, scope, name);
+        rec.unmade = self.cx.runtime_depth > 0 && !self.in_fn_body();
+        Binding::alloc(self.rt.store, self.types.binding_, rec)
     }
 
     /// One binding per declared name, a dyad of type `binding` (DESIGN ›`mut` is
