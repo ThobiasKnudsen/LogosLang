@@ -409,7 +409,7 @@ impl<'a> Parser<'a> {
         if unwritten.is_null() {
             return Ok(None);
         }
-        let t = dyad::ty(lhs);
+        let t = self.types.type_of(lhs);
         let mut scope = ScopeStack::new();
         scope.push(crate::identities::meta::record_scope_of(t));
         let fields = crate::identities::array::items(crate::identities::meta::record_fields_of(t));
@@ -465,6 +465,30 @@ impl<'a> Parser<'a> {
     /// A function body's own lines, not a type's built inside it at run.
     fn in_fn_body(&self) -> bool {
         self.cx.frames.len() > self.cx.held_depth
+    }
+
+    /// The bytes a declaration lays out belong to the program frame: outside every
+    /// function, in a held `type (…)` body built at run, in a `share` initializer.
+    pub(super) fn in_program_frame(&self) -> bool {
+        !self.in_fn_body() || self.cx.share_init == Some(self.cx.frames.len())
+    }
+
+    /// The name's storage: `width` bytes of `ty` laid out in the program frame on the
+    /// binding itself, or a place in the open function's frame the binding names.
+    /// Returns what every reader of the name goes through.
+    ///
+    /// # Safety
+    /// `binding` must be a binding dyad from the store; `ty` null or a type node.
+    unsafe fn place_for(&mut self, binding: DyadPtr, ty: DyadPtr, width: usize) -> DyadPtr {
+        if self.in_program_frame() {
+            let offset = self.rt.store.arena_alloc(width);
+            Binding::lay_out(binding, ty, self.types.root_scope, offset);
+            binding
+        } else {
+            let place = self.alloc_local(ty, width);
+            self.cx.scopes.rebind(binding, place);
+            place
+        }
     }
 
     /// A type body's own lines, where a line fills a slot.
@@ -587,9 +611,8 @@ impl<'a> Parser<'a> {
                 let t = dyad::ty(value);
                 let template = crate::identities::this::empty_node(self.rt.store, t);
                 let node = crate::identities::this::build_copy(self.rt.store, self.types, template);
-                let place = self.alloc_local(t, 8);
+                let place = self.place_for(binding, t, 8);
                 let init = crate::identities::build_init(self.rt.store, self.types, place, node)?;
-                self.cx.scopes.rebind(binding, place);
                 let drop = crate::identities::meta::instances_drop_of(t);
                 if !drop.is_null() {
                     self.own_node(binding, place, drop);
@@ -598,23 +621,26 @@ impl<'a> Parser<'a> {
                 self.leave_fields_unwritten(binding, t, true);
                 init
             } else if cell.hole {
-                // `x := i32 ?`: the place `?` built is what the name binds to;
-                // nothing initializes it, and `?`'s entry refuses a read until
-                // a sibling write fills it. A hashmap's zeroed place is already
-                // its empty map, so nothing is unknown to refuse.
-                self.cx.scopes.rebind(binding, value);
+                // `x := i32 ?`: the name gets the hole's type at the type's width; nothing
+                // initializes it, and `?`'s entry refuses a read until a sibling write fills
+                // it. A hashmap's zeroed place is already its empty map, so nothing is
+                // unknown to refuse.
+                let t = dyad::ty(value);
+                let width = crate::identities::read::place_layout(self.types, t)
+                    .map_or(8, |(_, width)| width);
+                let place = self.place_for(binding, t, width);
                 // `a := own t ?`: the owner of whatever node is written into it later.
                 if cell.owning {
-                    let drop = crate::identities::meta::instances_drop_of(dyad::ty(value));
-                    self.own_node(binding, value, drop);
+                    let drop = crate::identities::meta::instances_drop_of(t);
+                    self.own_node(binding, place, drop);
                 }
                 // `a := own @T ?`: the owner of whatever block is written into it later.
-                if crate::identities::drop_model::is_owning_place(value) {
+                if crate::identities::drop_model::is_owning_place(self.types, place) {
                     let free_node = crate::identities::drop_model::build_teardown(
                         self.rt.store,
                         self.types,
                         self.types.free_,
-                        value,
+                        place,
                         true,
                     )?;
                     let defer_node = crate::identities::drop_model::build_defer(
@@ -625,7 +651,7 @@ impl<'a> Parser<'a> {
                     let scope = self.teardown_scope();
                     self.cx.open[scope].defers.push(defer_node);
                 }
-                if !crate::identities::hashmap::is_hashmap(self.types, dyad::ty(value)) {
+                if !crate::identities::hashmap::is_hashmap(self.types, t) {
                     Binding::add_gate(
                         self.rt.store,
                         self.types.array_,
@@ -634,11 +660,11 @@ impl<'a> Parser<'a> {
                     );
                     // `T ?` of a record leaves zeroed bytes, not the defaults, so every field
                     // waits for its write.
-                    if crate::identities::meta::is_record_type(dyad::ty(value)) {
-                        self.leave_fields_unwritten(binding, dyad::ty(value), false);
+                    if crate::identities::meta::is_record_type(t) {
+                        self.leave_fields_unwritten(binding, t, false);
                     }
                 }
-                value
+                place
             } else if dyad::ty(read) == self.types.construct_
                 || dyad::ty(read) == self.types.by_copy.result
             {
@@ -660,10 +686,8 @@ impl<'a> Parser<'a> {
                 // its own box and a copy of what `a` holds; a rational's is sixteen bytes.
                 let width = crate::identities::read::place_layout(self.types, t)
                     .map_or(8, |(_, width)| width);
-                let place = self.alloc_local(t, width);
-                let init = crate::identities::build_init(self.rt.store, self.types, place, read)?;
-                self.cx.scopes.rebind(binding, place);
-                init
+                let place = self.place_for(binding, t, width);
+                crate::identities::build_init(self.rt.store, self.types, place, read)?
             } else if let Some(t) =
                 crate::identities::node_type_of(self.types, value).filter(|_| {
                     crate::identities::read::read_kind(self.types, read)
@@ -672,9 +696,8 @@ impl<'a> Parser<'a> {
             {
                 // A node a Logos `parse` builds is held by its address: `b := a` borrows it,
                 // and a value just made or moved makes the name its owner.
-                let place = self.alloc_local(t, 8);
+                let place = self.place_for(binding, t, 8);
                 let init = crate::identities::build_init(self.rt.store, self.types, place, value)?;
-                self.cx.scopes.rebind(binding, place);
                 let drop = crate::identities::meta::instances_drop_of(t);
                 if !drop.is_null() && crate::identities::drop_model::moves_out(self.types, value) {
                     self.own_node(binding, place, drop);
@@ -693,9 +716,8 @@ impl<'a> Parser<'a> {
                     self.types.ops.teardown_,
                 );
                 // A pointer is 8 bytes (U64-wide), whatever it points at.
-                let place = self.alloc_local(owning_ty, 8);
+                let place = self.place_for(binding, owning_ty, 8);
                 let init = crate::identities::build_init(self.rt.store, self.types, place, value)?;
-                self.cx.scopes.rebind(binding, place);
                 // The owning check is kept on to guard a future caller
                 // inserting a free over a borrow.
                 let free_node = crate::identities::drop_model::build_teardown(
@@ -725,10 +747,14 @@ impl<'a> Parser<'a> {
                 // re-runnable initializer, so a read is a plain load and a loop-body local re-initializes on entry.
                 let (ty_node, width) =
                     crate::identities::scalar_binding_type(self.rt.store, self.types, value);
-                let place = self.alloc_local(ty_node, width);
-                let init = crate::identities::build_init(self.rt.store, self.types, place, value)?;
-                self.cx.scopes.rebind(binding, place);
-                init
+                let place = self.place_for(binding, ty_node, width);
+                crate::identities::build_init(self.rt.store, self.types, place, value)?
+            } else if self.types.frame_of(read).is_some() && dyad::ty(read) == self.types.binding_ {
+                // `x := y` over storage no rule above copies: the name is a second name for
+                // the same bytes, as it was for the marked place.
+                let b = Binding::read(read);
+                Binding::lay_out(binding, b.dyad, b.frame, b.offset);
+                read
             } else {
                 dyad::set_ty(placeholder, dyad::ty(read));
                 dyad::set_value(placeholder, dyad::value(read));

@@ -79,8 +79,32 @@ impl Binding {
         !self.end.is_null()
     }
 
-    /// The name's bytes are in a frame: the root scope's or a `fn` node's. A type as the
-    /// frame lays a field out inside each value, storage of its own only through the value.
+    /// The name's bytes are in a frame of its own: a type as the frame lays a field out
+    /// inside each value instead. A type identity is the one node typed by a self-typed node.
+    ///
+    /// # Safety
+    /// `frame` must be null or a dyad from the store.
+    pub unsafe fn is_storage(&self) -> bool {
+        if self.frame.is_null() {
+            return false;
+        }
+        let ty = dyad::ty(self.frame);
+        ty.is_null() || dyad::ty(ty) != ty
+    }
+
+    /// What a use of the name yields: the storage itself, or the dyad the name denotes.
+    ///
+    /// # Safety
+    /// As `is_storage`; `this` must be the binding dyad these fields were read from.
+    pub unsafe fn names(&self, this: DyadPtr) -> DyadPtr {
+        if self.is_storage() {
+            this
+        } else {
+            self.dyad
+        }
+    }
+
+    /// Which frame: the root scope's or a `fn` node's.
     ///
     /// # Safety
     /// `frame` must be null or a dyad from the store.
@@ -264,15 +288,15 @@ pub(super) fn register_type(
     let mut fields = Vec::with_capacity(9);
     // SAFETY: `dyad_ty` is the type node `Core::build` minted.
     let at_dyad = unsafe { super::pointer::make_pointer_type(cx.store, cx.type_, dyad_ty) };
-    // `name` is an `@dyad` place too: no place of type `string` exists, and the `:` read
-    // hands back the string node it holds.
+    // `name` is a place of type `string`: the eight-byte container every type without a
+    // layout of its own has, holding the string node, which `x:name` reads as the text.
     let typed = [
         ("dyad", at_dyad),
         ("scope", at_dyad),
         ("start", at_dyad),
         ("end", at_dyad),
         ("gate", at_dyad),
-        ("name", at_dyad),
+        ("name", cx.string_),
         ("lex_rank", f64_ty),
         ("frame", at_dyad),
         ("offset", u64_ty),

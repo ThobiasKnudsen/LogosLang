@@ -125,8 +125,9 @@ pub struct Context {
     /// The calls in flight across both tiers: the interpreter and each compiled
     /// prologue count in and out, and both refuse the frame past [`MAX_CALL_DEPTH`].
     pub depth: usize,
-    /// The store's arena base: a top-level or `share` place is an offset from it.
-    pub globals: *mut u8,
+    /// The program frame's base, the store's arena: a top-level or `share` place is an
+    /// offset from it.
+    pub root: *mut u8,
     /// The checked error a step under compiled code raised; an `extern "C"`
     /// function cannot return it, so the runtime reads it back the moment the
     /// machine code returns.
@@ -140,7 +141,7 @@ impl Context {
     fn new() -> Self {
         Context {
             depth: 0,
-            globals: std::ptr::null_mut(),
+            root: std::ptr::null_mut(),
             pending: None,
             runtime: std::ptr::null_mut(),
         }
@@ -326,6 +327,21 @@ impl FrameStack {
     }
 }
 
+/// One frame in flight: the program's, then each interpreted call's, innermost last.
+/// DESIGN ›The pass runs only as far as it must, in order, and never twice‹: the frame keeps
+/// the cursor of each scope it has started running.
+struct Activation {
+    /// The frame's base: a place reads `base + offset`.
+    base: *mut u8,
+    cursors: Vec<(DyadPtr, usize)>,
+}
+
+impl Activation {
+    fn new(base: *mut u8) -> Self {
+        Activation { base, cursors: Vec::new() }
+    }
+}
+
 /// A running evaluation. Operand computation rides the Rust call stack; the
 /// [`FrameStack`] holds each in-flight interpreted call's frame.
 pub struct Runtime<'a> {
@@ -335,9 +351,8 @@ pub struct Runtime<'a> {
     /// correctness mechanism.
     live_allocs: usize,
     stack: FrameStack,
-    /// The base address of each in-flight interpreted call's frame, innermost
-    /// last; a frame place reads `base + offset` in the top entry.
-    activations: Vec<*mut u8>,
+    /// The program frame first, then each in-flight interpreted call's, innermost last.
+    activations: Vec<Activation>,
     /// Absent at parse-time evaluation, so a compile node fails instead of
     /// installing code behind the open pass's back.
     compiler: Option<&'a crate::compile::LowerTable>,
@@ -362,9 +377,6 @@ pub struct Runtime<'a> {
     fresh_this: Option<(DyadPtr, bool)>,
     /// Handed to every jump into machine code.
     pub(crate) ctx: Context,
-    /// Stand-in for #168: the root frame's cursors, one per scope the pass has started
-    /// running (DESIGN ›The pass runs only as far as it must, in order, and never twice‹).
-    cursors: Vec<(DyadPtr, usize)>,
 }
 
 /// What `lex «…»` lexes against. Raw, because the parser owns both and the
@@ -412,7 +424,7 @@ impl<'a> Runtime<'a> {
             types,
             live_allocs: 0,
             stack: FrameStack::new(),
-            activations: Vec::new(),
+            activations: vec![Activation::new(store.arena_base())],
             compiler: None,
             store,
             lexer: None,
@@ -421,23 +433,29 @@ impl<'a> Runtime<'a> {
             ctor_tape: None,
             fresh_this: None,
             ctx: Context::new(),
-            cursors: Vec::new(),
         }
+    }
+
+    /// The innermost frame: the program's outside any call.
+    fn frame(&mut self) -> &mut Activation {
+        self.activations.last_mut().expect("the program frame is never popped")
     }
 
     /// The pass ran the scope's lines up to `k`; the scope's own run starts there.
     pub(crate) fn set_cursor(&mut self, scope: DyadPtr, k: usize) {
-        match self.cursors.iter_mut().find(|(s, _)| *s == scope) {
+        let cursors = &mut self.frame().cursors;
+        match cursors.iter_mut().find(|(s, _)| *s == scope) {
             Some(entry) => entry.1 = k,
-            None => self.cursors.push((scope, k)),
+            None => cursors.push((scope, k)),
         }
     }
 
-    /// Where the scope's run starts: 0 for a scope the pass never touched. Taken,
-    /// since a scope the pass started runs once.
+    /// Where the scope's run starts in this frame: 0 for a scope the pass never touched.
+    /// Taken, since a scope the pass started runs once.
     pub(crate) fn take_cursor(&mut self, scope: DyadPtr) -> usize {
-        match self.cursors.iter().position(|(s, _)| *s == scope) {
-            Some(i) => self.cursors.swap_remove(i).1,
+        let cursors = &mut self.frame().cursors;
+        match cursors.iter().position(|(s, _)| *s == scope) {
+            Some(i) => cursors.swap_remove(i).1,
             None => 0,
         }
     }
@@ -661,7 +679,7 @@ impl<'a> Runtime<'a> {
 
     /// Whether an interpreted call is in flight: what a `return` leaves.
     pub(crate) fn in_call(&self) -> bool {
-        !self.activations.is_empty()
+        self.activations.len() > 1
     }
 
     /// A binding operand yields the dyad it names. DESIGN ›The dyad's read surface‹.
@@ -672,21 +690,25 @@ impl<'a> Runtime<'a> {
         self.types.through(p)
     }
 
-    /// The machine address a place denotes: absolute for a global, `frame base
-    /// + offset` in the top frame for a parameter or local. The one place the
-    /// interpreter decodes the frame tag. `None`: a frame place with no call in
-    /// progress (parse-time evaluation), which callers map to [`RunError::NoActivation`].
+    /// The machine address a place denotes: its offset from the program frame's base or
+    /// from the innermost call's, for storage reached through a binding; a literal's own
+    /// bytes otherwise. `None`: a call-frame place with no call in progress (parse-time
+    /// evaluation), which callers map to [`RunError::NoActivation`].
     ///
     /// # Safety
     /// `node` must be a valid place node.
     pub(crate) unsafe fn place_addr(&self, node: DyadPtr) -> Option<*mut u8> {
         let node = self.through(node);
+        match self.types.frame_of(node) {
+            Some((crate::binding::Frame::Root, off)) => return Some(self.store.arena_at(off)),
+            Some((crate::binding::Frame::Call(_), off)) => {
+                return self.in_call().then(|| self.frame_base().add(off));
+            }
+            None => {}
+        }
         match frame_ref(dyad::value(node)) {
             // The depth is a parse-time capture guard; only the offset matters here.
-            Some((_, off)) => {
-                let base = *self.activations.last()?;
-                Some(base.add(off))
-            }
+            Some((_, off)) => self.in_call().then(|| self.frame_base().add(off)),
             // Global storage carries its own tag; an untagged value is a literal's blob.
             None => Some(match crate::dyad::global_ref(dyad::value(node)) {
                 Some(Global::Address(addr)) => addr,
@@ -694,6 +716,11 @@ impl<'a> Runtime<'a> {
                 None => dyad::value(node),
             }),
         }
+    }
+
+    /// The innermost frame's base.
+    fn frame_base(&self) -> *mut u8 {
+        self.activations.last().expect("the program frame is never popped").base
     }
 
     /// Apply `f` to the call node `node`, `{type: _, value: [args…, null]}`:
@@ -754,7 +781,7 @@ impl<'a> Runtime<'a> {
             return Err(e);
         }
         self.ctx.depth += 1;
-        self.activations.push(base);
+        self.activations.push(Activation::new(base));
         let mut result = match self.run(body) {
             Err(RunError::Return(v)) => Ok(v),
             other => other,
@@ -791,7 +818,7 @@ impl<'a> Runtime<'a> {
         // below before the borrow it came from ends.
         let this: *mut Runtime<'static> = (self as *mut Runtime<'a>).cast();
         (*this).ctx.runtime = this;
-        (*this).ctx.globals = (*this).store.arena_base();
+        (*this).ctx.root = (*this).store.arena_base();
         (*this).ctx.pending = None;
         (*this).store.enter_jump();
         let r = call_machine(entry, std::ptr::addr_of_mut!((*this).ctx), args);

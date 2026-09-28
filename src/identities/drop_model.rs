@@ -104,8 +104,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
                 (
                     ended.as_ref().is_some_and(|e| p.owns_node(e.binding))
                         || p.is_owning_read(place),
-                    meta::is_node_valued(dyad::ty(place), types.fn_type),
-                    super::node_type_of(types, place).unwrap_or(dyad::ty(place)),
+                    meta::is_node_valued(types.type_of(place), types.fn_type),
+                    super::node_type_of(types, place).unwrap_or(types.type_of(place)),
                 )
             };
             let node = if owner {
@@ -132,7 +132,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
             let (place, ended) = p.place_operand_cell(tape, true)?;
             let place = place.dyad;
             let types = p.types();
-            let node = if is_owning_place(place) {
+            let node = if is_owning_place(types, place) {
                 build_teardown(p.store(), types, types.drop_, place, true)?
             // SAFETY: `ended` holds the binding the resolver returned.
             } else if ended.as_ref().is_some_and(|e| unsafe { p.owns_node(e.binding) })
@@ -142,7 +142,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
                 // whose body fills `drop`.
                 let drop = unsafe {
                     meta::instances_drop_of(
-                        super::node_type_of(types, place).unwrap_or(dyad::ty(place)),
+                        super::node_type_of(types, place).unwrap_or(types.type_of(place)),
                     )
                 };
                 build_instance_drop(p.store(), types, place, drop)
@@ -304,7 +304,7 @@ pub(crate) fn build_teardown(
     require_owning: bool,
 ) -> Result<DyadPtr, ParseError> {
     // SAFETY: `place` is a reduced dyad; its type is a valid type node.
-    let logos = unsafe { dyad::ty(place) };
+    let logos = unsafe { types.type_of(place) };
     // SAFETY: `logos` is a type node from the store (above).
     if unsafe { !numtype::is_pointer_type(logos) } {
         return Err(ParseError::BadAssignTarget);
@@ -328,11 +328,11 @@ pub(crate) fn build_teardown(
 
 /// A pointer type whose `destructor` slot is set, as opposed to a borrow or a plain
 /// value. `place` must be a reduced dyad from the store.
-pub(crate) fn is_owning_place(place: DyadPtr) -> bool {
+pub(crate) fn is_owning_place(types: &Core, place: DyadPtr) -> bool {
     // SAFETY: `place` is a reduced dyad; its type is a valid type node.
     unsafe {
-        let logos = dyad::ty(place);
-        numtype::is_pointer_type(logos) && !meta::destructor_of(logos).is_null()
+        let logos = types.type_of(place);
+        !logos.is_null() && numtype::is_pointer_type(logos) && !meta::destructor_of(logos).is_null()
     }
 }
 
@@ -667,7 +667,7 @@ fn run_drop(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             return Ok(0);
         }
         let place = *slots.add(TEARDOWN_PLACE);
-        let dtor = meta::destructor_of(dyad::ty(place));
+        let dtor = meta::destructor_of(rt.types().type_of(place));
         if dtor.is_null() || !callable::is_callable(dtor) {
             return Err(RunError::NoDestructor(place));
         }
@@ -1099,9 +1099,9 @@ mod tests {
                 .find(|&&e| dyad::ty(e) == core.defer_)
                 .expect("the binding inserted a defer");
             let a = teardown_place_of(defer);
-            assert!(numtype::is_pointer_type(dyad::ty(a)), "a is a pointer place");
+            assert!(numtype::is_pointer_type(core.type_of(a)), "a is a pointer place");
             assert!(
-                !meta::destructor_of(dyad::ty(a)).is_null(),
+                !meta::destructor_of(core.type_of(a)).is_null(),
                 "an owning pointer's logos carries the destructor"
             );
         }

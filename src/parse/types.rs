@@ -91,6 +91,20 @@ unsafe fn field_width(logos: DyadPtr) -> u64 {
     }
 }
 
+/// Each field's offset inside a value of `ty`, packed in order by `field_width`, written
+/// onto the field's binding (DESIGN ›A scope lays out its declarations…‹).
+///
+/// # Safety
+/// `ty` must be a record node from the store, `fields` its field array and `bindings` the
+/// fields' bindings in the same order.
+unsafe fn lay_out_fields(ty: DyadPtr, fields: DyadPtr, bindings: &[DyadPtr]) {
+    let mut offset = 0u64;
+    for (&field, &binding) in crate::identities::array::items(fields).iter().zip(bindings) {
+        Binding::set_field_offset(binding, ty, offset as usize);
+        offset += field_width(dyad::ty(field));
+    }
+}
+
 impl<'a> Parser<'a> {
     /// `( field-list )` as a record node whose value is a `RECORD_TAG` record
     /// holding the scope, the `fields` array and the packed `size_bytes`. Fresh
@@ -105,7 +119,7 @@ impl<'a> Parser<'a> {
         leading: Option<DyadPtr>,
     ) -> Result<DyadPtr, ParseError> {
         let record_logos = self.types.type_;
-        let (scope, fields_arr, size_bytes) = self.parse_field_list(false, leading)?;
+        let (scope, fields_arr, size_bytes, bindings) = self.parse_field_list(false, leading)?;
         let record = crate::identities::meta::record_layout(
             self.rt.store,
             scope,
@@ -115,7 +129,10 @@ impl<'a> Parser<'a> {
             crate::identities::meta::prec::APPLY,
             Assoc::Left,
         );
-        Ok(self.rt.store.alloc_raw(record_logos, record.cast()))
+        let input = self.rt.store.alloc_raw(record_logos, record.cast());
+        // SAFETY: the bindings were just minted for these fields; `input` is the record node.
+        unsafe { lay_out_fields(input, fields_arr, &bindings) };
+        Ok(input)
     }
 
     /// A `fn`'s parameter list checks each name against every open scope, since
@@ -123,11 +140,13 @@ impl<'a> Parser<'a> {
     /// siblings alone (`relaxed`), where the list is the body itself, its
     /// slot fills, `share` members and prose among the fields (DESIGN ›A type
     /// body describes one level‹).
+    /// Also the fields' bindings in order, the leading one's spelling-less; their offsets
+    /// are the caller's to write once the record node exists.
     fn parse_field_list(
         &mut self,
         relaxed: bool,
         leading: Option<DyadPtr>,
-    ) -> Result<(DyadPtr, DyadPtr, u64), ParseError> {
+    ) -> Result<(DyadPtr, DyadPtr, u64, Vec<DyadPtr>), ParseError> {
         if !relaxed {
             self.expect_open()?;
         }
@@ -135,10 +154,13 @@ impl<'a> Parser<'a> {
         let scope = self.open_scope();
 
         let mut fields = Vec::new();
+        let mut bindings = Vec::new();
         if let Some(ty) = leading {
-            fields.push(self.rt.store.alloc_raw(ty, std::ptr::null_mut()));
+            let field = self.rt.store.alloc_raw(ty, std::ptr::null_mut());
+            fields.push(field);
+            bindings.push(self.mint_binding(field, scope, b""));
         }
-        let lines = self.field_lines(relaxed, scope, &mut fields);
+        let lines = self.field_lines(relaxed, scope, &mut fields, &mut bindings);
 
         self.cx.scopes.pop();
         lines?;
@@ -151,7 +173,7 @@ impl<'a> Parser<'a> {
         // SAFETY: each field is the dyad just built, its type null or a type node.
         let size_bytes: u64 = fields.iter().map(|&f| unsafe { field_width(dyad::ty(f)) }).sum();
         let fields_arr = crate::identities::array::build(self.rt.store, self.types.array_, &fields);
-        Ok((scope, fields_arr, size_bytes))
+        Ok((scope, fields_arr, size_bytes, bindings))
     }
 
     fn field_lines(
@@ -159,6 +181,7 @@ impl<'a> Parser<'a> {
         relaxed: bool,
         scope: DyadPtr,
         fields: &mut Vec<DyadPtr>,
+        bindings: &mut Vec<DyadPtr>,
     ) -> Result<(), ParseError> {
         loop {
             if self.at_close() {
@@ -266,7 +289,8 @@ impl<'a> Parser<'a> {
                             matches!(
                                 crate::identities::read::read_kind(self.types, held),
                                 crate::identities::read::Read::Scalar(_)
-                            ) && !crate::dyad::is_place(dyad::value(held))
+                            ) && !self.types.is_storage(held)
+                                && !crate::dyad::is_place(dyad::value(held))
                         }
                     {
                         // SAFETY: as above.
@@ -332,6 +356,7 @@ impl<'a> Parser<'a> {
                 }
             }
             fields.push(field);
+            bindings.push(binding);
             if !self.consume_separator() {
                 break;
             }
@@ -617,11 +642,13 @@ impl<'a> Parser<'a> {
         while self.cx.scopes.depth() > depth {
             self.cx.scopes.pop();
         }
-        let (field_scope, fields, size_bytes) = lines?;
+        let (field_scope, fields, size_bytes, bindings) = lines?;
         if !defers.is_empty() {
             return Err(ParseError::DeferInTypeBody);
         }
         self.expect_close()?;
+        // SAFETY: the bindings were just minted for these fields; `def.self_type` is the type node.
+        unsafe { lay_out_fields(def.self_type, fields, &bindings) };
         let layout = crate::identities::meta::record_layout(
             self.rt.store,
             field_scope,
@@ -798,7 +825,7 @@ impl<'a> Parser<'a> {
         // SAFETY: `target` is a reduced dyad from the store.
         unsafe {
             let id = if dyad::ty(target) == self.types.binding_ {
-                Binding::read(target).dyad
+                Binding::read(target).names(target)
             } else {
                 target
             };
@@ -1004,15 +1031,24 @@ impl<'a> Parser<'a> {
     ) -> Result<(DyadPtr, Vec<DyadPtr>), ParseError> {
         let scope = self.open_scope();
         let mut fields = Vec::with_capacity(params.len());
+        let mut bindings = Vec::with_capacity(params.len());
         let mut declared = Ok(());
         for &(name, ty) in params {
             let field = self.rt.store.alloc_raw(ty, std::ptr::null_mut());
             // A parameter with no name is a place the body reaches another
             // way: a receiver, or a run body's field of type `type`.
-            if let Some(name) = name {
-                declared = declared.and_then(|()| self.declare_name(name, field, at).map(|_| ()));
-            }
+            let binding = match name {
+                Some(name) => match self.declare_name(name, field, at) {
+                    Ok(binding) => binding,
+                    Err(e) => {
+                        declared = Err(e);
+                        std::ptr::null_mut()
+                    }
+                },
+                None => self.mint_binding(field, scope, b""),
+            };
             fields.push(field);
+            bindings.push(binding);
         }
         self.cx.scopes.pop();
         declared?;
@@ -1028,7 +1064,10 @@ impl<'a> Parser<'a> {
             crate::identities::meta::prec::APPLY,
             Assoc::Left,
         );
-        Ok((self.rt.store.alloc_raw(self.types.type_, record.cast()), fields))
+        let input = self.rt.store.alloc_raw(self.types.type_, record.cast());
+        // SAFETY: the bindings were just minted for these fields; `input` is the record node.
+        unsafe { lay_out_fields(input, fields_arr, &bindings) };
+        Ok((input, fields))
     }
 
     /// The run of a node whose type holds its `run` as a lexed body (DESIGN
@@ -1098,11 +1137,15 @@ impl<'a> Parser<'a> {
             let slot = types.through(*slots.add(i));
             let comptime = match read_kind(types, slot) {
                 Read::Literal => true,
-                Read::Scalar(_) => !crate::dyad::is_place(dyad::value(slot)),
+                Read::Scalar(_) => {
+                    !types.is_storage(slot) && !crate::dyad::is_place(dyad::value(slot))
+                }
                 // A literal handed on by `rational_number`, or into a rational field.
                 Read::Executable(_) if dyad::ty(slot) == types.by_copy.out => {
                     let expr = types.through(*(dyad::value(slot) as *const DyadPtr));
-                    dyad::ty(expr) == types.rational && !crate::dyad::is_place(dyad::value(expr))
+                    dyad::ty(expr) == types.rational
+                        && !types.is_storage(expr)
+                        && !crate::dyad::is_place(dyad::value(expr))
                 }
                 _ => false,
             };

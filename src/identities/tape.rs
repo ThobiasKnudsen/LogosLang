@@ -232,7 +232,9 @@ pub(crate) unsafe fn receiver_addr(
         }
         return None;
     }
-    if dyad::ty(lhs) == types.tape.parsing_tape && !dyad::value(lhs).is_null() {
+    if types.type_of(lhs) == types.tape.parsing_tape
+        && (types.is_storage(lhs) || !dyad::value(lhs).is_null())
+    {
         return Some(super::pointer::build_addr(store, types, lhs));
     }
     None
@@ -731,7 +733,7 @@ fn run_cell_type(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         }
         Ok(match numtype_of(types, target) {
             Operand::Concrete(nt) => types.numtypes[nt as usize],
-            _ => dyad::ty(target),
+            _ => types.type_of(target),
         } as i64)
     }
 }

@@ -100,10 +100,19 @@ pub enum Shape {
         /// Null on every identity but the owning pointer.
         destructor: DyadPtr,
     },
-    /// A name's binding: the dyad it names, its scope, its range, its gate set.
-    /// A use of a name stores one, so a walker follows `dyad` to the value.
+    /// A name's binding: the dyad it names, its scope, its range, its gate set, and for a
+    /// name laid out in a frame the frame and offset its bytes are at, `dyad` then the
+    /// declared type. A use of a name stores one, so a walker follows `dyad` to the value.
     /// DESIGN ›The dyad's read surface‹.
-    Binding { dyad: DyadPtr, scope: DyadPtr, start: DyadPtr, end: DyadPtr, gate: DyadPtr },
+    Binding {
+        dyad: DyadPtr,
+        scope: DyadPtr,
+        start: DyadPtr,
+        end: DyadPtr,
+        gate: DyadPtr,
+        frame: DyadPtr,
+        offset: usize,
+    },
     /// A place holding a node address, a `type ?` or `dyad ?` box: eight bytes
     /// known when the program runs.
     Container,
@@ -140,6 +149,8 @@ pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
             start: f.start,
             end: f.end,
             gate: f.gate,
+            frame: f.frame,
+            offset: f.offset,
         };
     }
     // Asked of the same rule execution uses, so reflection and the tiers never disagree.
@@ -266,15 +277,19 @@ mod tests {
             let Shape::Tuple { slots } = describe(types, roots[1]) else {
                 panic!("an application should be a tuple");
             };
-            let Shape::Binding { dyad, scope, start, end, gate } = describe(types, slots[0].node)
+            let Shape::Binding { dyad, scope, start, end, gate, frame, .. } =
+                describe(types, slots[0].node)
             else {
                 panic!("a named operand should be its binding");
             };
-            assert_eq!(describe(types, dyad), Shape::Scalar(NumType::I32));
+            // The name's bytes are `i32` in the program frame, the binding itself the storage.
+            assert_eq!(dyad, core.i32_);
+            assert_eq!(frame, core.root_scope);
             assert_eq!(scope, core.root_scope);
             // Top level has no body array, so `start` stays null; `end` null is alive.
             assert!(start.is_null() && end.is_null() && gate.is_null());
-            assert_eq!(types.through(slots[0].node), dyad);
+            assert_eq!(types.through(slots[0].node), slots[0].node);
+            assert_eq!(read_kind(types, slots[0].node), Read::Scalar(NumType::I32));
             let mut rt = crate::run::Runtime::new(types, &mut store);
             rt.run(roots[0]).unwrap();
             assert_eq!(rt.run(roots[1]).unwrap(), 42);
@@ -455,9 +470,16 @@ mod tests {
                     d
                 }
             };
-            assert_eq!(describe(types, place(0)), Shape::Container);
-            assert_eq!(describe(types, place(1)), Shape::Container);
-            assert_eq!(describe(types, place(2)), Shape::Scalar(NumType::I32));
+            // Each place is its name's binding, laid out in the program frame over its type.
+            for (i, ty) in [(0, core.type_), (1, core.dyad_), (2, core.i32_)] {
+                let Shape::Binding { dyad, frame, .. } = describe(types, place(i)) else {
+                    panic!("a declared name's place is its binding");
+                };
+                assert_eq!((dyad, frame), (ty, core.root_scope));
+            }
+            assert_eq!(read_kind(types, place(0)), Read::Container(core.type_));
+            assert_eq!(read_kind(types, place(1)), Read::Container(core.dyad_));
+            assert_eq!(read_kind(types, place(2)), Read::Scalar(NumType::I32));
         }
     }
 
@@ -566,7 +588,9 @@ mod tests {
                 panic!("a scalar binding's initializer should be a tuple");
             };
             assert_eq!(text_of(init[0].role), b"lhs");
-            assert_eq!(describe(types, init[0].node), Shape::Scalar(NumType::I32));
+            assert!(
+                matches!(describe(types, init[0].node), Shape::Binding { dyad, .. } if dyad == core.i32_)
+            );
 
             let Shape::Tuple { slots } = describe(types, roots[1]) else {
                 panic!("a declaration should be a tuple");

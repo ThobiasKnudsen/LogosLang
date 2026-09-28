@@ -19,12 +19,20 @@ use crate::parse::ParseError;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
 
-/// `construct` has no spelling: the parser builds it from a record-typed callee.
-/// Returns the `construct` identity, its leaf, `.`, `square_brackets`, `[`, `]`.
-pub(super) fn register(
-    cx: &mut Cx,
-    cs: &Callables,
-) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
+/// The handles: `construct` and its leaf, the `field` place, `.`, `square_brackets`, `[`, `]`.
+pub(super) struct InstanceIds {
+    pub construct: DyadPtr,
+    pub construct_leaf: DyadPtr,
+    pub field: DyadPtr,
+    pub dot: DyadPtr,
+    pub square_brackets: DyadPtr,
+    pub open_sq: DyadPtr,
+    pub close_sq: DyadPtr,
+}
+
+/// `construct` and `field` have no spelling: the parser builds the one from a record-typed
+/// callee and the other from `p.x` over a record's storage.
+pub(super) fn register(cx: &mut Cx, cs: &Callables) -> InstanceIds {
     let record = meta::operand_record(
         cx,
         meta::LIST_TAG,
@@ -35,6 +43,17 @@ pub(super) fn register(
     let construct = cx.store.alloc_raw(cx.type_, record);
     cx.lower.insert(construct, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
+
+    // A field of a record's storage: read through two bindings, the record's and the field's,
+    // its address the record's plus the field's offset; no leaf, since it is storage, not a step.
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        meta::prec::INERT,
+        crate::parse::Assoc::Left,
+        &["record", "field", "op"],
+    );
+    let field = cx.store.alloc_raw(cx.type_, record);
 
     // Escaped, because `.` is a regex metacharacter.
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::TIGHT);
@@ -63,7 +82,27 @@ pub(super) fn register(
     let square_brackets = cx.store.alloc_raw(cx.type_, record);
     cx.declare("square_brackets", square_brackets);
 
-    (construct, leaf, dot, square_brackets, open_sq, close_sq)
+    InstanceIds { construct, construct_leaf: leaf, field, dot, square_brackets, open_sq, close_sq }
+}
+
+/// `p.x`: the place of field `x` inside the record's storage `record`, `binding` the field's.
+pub(crate) fn build_field(
+    store: &mut Store,
+    types: &Core,
+    record: DyadPtr,
+    binding: DyadPtr,
+) -> DyadPtr {
+    let value = store.alloc_operands(&[record, binding, std::ptr::null_mut()]);
+    store.alloc_raw(types.field_, value)
+}
+
+/// The record's storage and the field's binding a `field` place was built over.
+///
+/// # Safety
+/// `node` must be a `field` node from `build_field`.
+pub(crate) unsafe fn field_parts(node: DyadPtr) -> (DyadPtr, DyadPtr) {
+    let p = dyad::value(node) as *const DyadPtr;
+    (*p, *p.add(1))
 }
 
 /// `(type node, width tag, byte offset)` per field, and the total size.

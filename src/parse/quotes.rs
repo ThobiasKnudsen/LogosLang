@@ -442,11 +442,27 @@ impl<'a> Parser<'a> {
         let at = self.cx.pos;
         for (name, identity) in pubs {
             if let Ok(r) = self.cx.scopes.resolve(self.trie, name) {
-                if r.identity == *identity {
+                // SAFETY: both are dyads from the store; a storage name is the same name when
+                // it is laid out over the same bytes.
+                let same = unsafe {
+                    r.identity == *identity
+                        || (self.types.frame_of(r.identity).is_some()
+                            && self.types.frame_of(r.identity) == self.types.frame_of(*identity))
+                };
+                if same {
                     continue;
                 }
             }
-            self.declare_name(name, *identity, at)?;
+            let binding = self.declare_name(name, *identity, at)?;
+            // SAFETY: `identity` is a dyad the file's pass built; a storage binding is aliased.
+            unsafe {
+                if self.types.frame_of(*identity).is_some()
+                    && dyad::ty(*identity) == self.types.binding_
+                {
+                    let b = Binding::read(*identity);
+                    Binding::lay_out(binding, b.dyad, b.frame, b.offset);
+                }
+            }
         }
         Ok(())
     }

@@ -213,18 +213,18 @@ impl Lowerer<'_, '_> {
         self.types.through(p)
     }
 
-    /// A place's address as an SSA pointer: the context's arena base plus the
-    /// offset for a global, `stack_addr(frame_slot, offset)` for a frame place. Taking the address
-    /// pins the place to memory, so the analysis pass marks it dirty here.
+    /// A place's address as an SSA pointer: the context's root base plus the offset for a
+    /// program-frame place, `stack_addr(frame_slot, offset)` for a call-frame place. Taking
+    /// the address pins the place to memory, so the analysis pass marks it dirty here.
     ///
     /// # Safety
     /// `node` must be a valid place node; a frame-relative one only appears in a
     /// function whose [`compile_body`] created a `frame_slot`.
     pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
         let node = self.through(node);
+        let (offset, logos) = (self.frame_offset(node), self.types.type_of(node));
         if let Some(stats) = self.collect.as_deref_mut() {
-            if let Some((_, off)) = frame_ref(dyad::value(node)) {
-                let logos = dyad::ty(node);
+            if let Some(off) = offset {
                 if crate::identities::numtype::is_scalar_type(logos) {
                     stats.dirty.push((off, of_type_node(logos).bytes()));
                 } else {
@@ -234,16 +234,43 @@ impl Lowerer<'_, '_> {
             }
         }
         debug_assert!(
-            frame_ref(dyad::value(node)).is_none_or(|(_, off)| !self.promoted.contains_key(&off)),
+            self.frame_offset(node).is_none_or(|off| !self.promoted.contains_key(&off)),
             "a promoted place's address must never be taken (the analysis pass keeps them apart)"
         );
         self.place_addr_raw(node)
     }
 
+    /// The offset of a call-frame place in this call's activation record, what promotion
+    /// keys on; `None` for a program-frame place and for a literal's bytes.
+    ///
+    /// # Safety
+    /// `node` must be a valid dyad from the store.
+    unsafe fn frame_offset(&self, node: DyadPtr) -> Option<usize> {
+        match self.types.frame_of(node) {
+            Some((crate::binding::Frame::Call(_), off)) => Some(off),
+            Some((crate::binding::Frame::Root, _)) => None,
+            None => frame_ref(dyad::value(node)).map(|(_, off)| off),
+        }
+    }
+
     /// [`Self::place_addr`] without the analysis bookkeeping; the one place the
-    /// compiler decodes the frame tag.
+    /// compiler decodes a place's frame.
     unsafe fn place_addr_raw(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
         let node = self.through(node);
+        match self.types.frame_of(node) {
+            Some((crate::binding::Frame::Root, off)) => {
+                let at = std::mem::offset_of!(crate::run::Context, root) as i64;
+                let base = self.load_at(self.ptr_ty, self.ctx, at);
+                return Ok(self.builder.ins().iadd_imm(base, off as i64));
+            }
+            Some((crate::binding::Frame::Call(_), off)) => {
+                let Some(slot) = self.frame_slot else {
+                    return Err(CompileError::NoActivation);
+                };
+                return Ok(self.builder.ins().stack_addr(self.ptr_ty, slot, off as i32));
+            }
+            None => {}
+        }
         match frame_ref(dyad::value(node)) {
             Some((_, off)) => {
                 // A frame place with no frame under it: the checked error the
@@ -259,7 +286,7 @@ impl Lowerer<'_, '_> {
                 let v = dyad::value(node);
                 Ok(match crate::dyad::global_ref(v) {
                     Some(Global::Arena(off)) => {
-                        let at = std::mem::offset_of!(crate::run::Context, globals) as i64;
+                        let at = std::mem::offset_of!(crate::run::Context, root) as i64;
                         let base = self.load_at(self.ptr_ty, self.ctx, at);
                         self.builder.ins().iadd_imm(base, off as i64)
                     }
@@ -283,7 +310,7 @@ impl Lowerer<'_, '_> {
         ct: types::Type,
     ) -> Result<Value, CompileError> {
         let node = self.through(node);
-        if let Some((_, off)) = frame_ref(dyad::value(node)) {
+        if let Some(off) = self.frame_offset(node) {
             if let Some(&(var, vct)) = self.promoted.get(&off) {
                 debug_assert_eq!(vct, ct, "a promoted place is used at one type");
                 return Ok(self.builder.use_var(var));
@@ -307,7 +334,7 @@ impl Lowerer<'_, '_> {
         v: Value,
     ) -> Result<(), CompileError> {
         let node = self.through(node);
-        if let Some((_, off)) = frame_ref(dyad::value(node)) {
+        if let Some(off) = self.frame_offset(node) {
             if let Some(&(var, vct)) = self.promoted.get(&off) {
                 debug_assert_eq!(vct, ct, "a promoted place is used at one type");
                 self.builder.def_var(var, v);

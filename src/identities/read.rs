@@ -324,7 +324,7 @@ mod tests {
                 }
             };
             assert_eq!(read_kind(types, declared(0)), Read::Scalar(NumType::I32));
-            assert!(is_place(dyad::value(declared(0))));
+            assert!(types.is_storage(declared(0)));
             assert_eq!(read_kind(types, declared(1)), Read::Pointer(core.i32_));
             assert_eq!(read_kind(types, declared(2)), Read::Container(core.type_));
             assert_eq!(read_kind(types, declared(3)), Read::Container(core.dyad_));

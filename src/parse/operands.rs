@@ -341,7 +341,8 @@ impl<'a> Parser<'a> {
             let (identity, binding, scope) = if woke {
                 // SAFETY: checked above to be a binding dyad.
                 let b = unsafe { Binding::read(cell.dyad) };
-                (b.dyad, cell.dyad, b.scope)
+                // SAFETY: as above.
+                (unsafe { b.names(cell.dyad) }, cell.dyad, b.scope)
             } else {
                 let r = match self.cx.scopes.resolve(self.trie, cell.spelling()) {
                     Ok(r) => r,

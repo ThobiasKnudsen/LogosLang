@@ -135,10 +135,23 @@ pub(super) fn build(
             }
         }
     }
+    build_store(store, types, op, lhs, rhs)
+}
+
+/// [`build`] past the gates: the declaration's own first write into the storage it laid out.
+pub(super) fn build_store(
+    store: &mut Store,
+    types: &Core,
+    op: DyadPtr,
+    lhs: DyadPtr,
+    rhs: DyadPtr,
+) -> Result<DyadPtr, ParseError> {
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let (lhs_d, rhs_d) = unsafe { (types.through(lhs), types.through(rhs)) };
-    // SAFETY: `through` hands back its argument or the dyad a binding names.
+    // SAFETY: `through` hands back its argument, the dyad a binding names, or the storage.
     let (lhs_ty, rhs_ty) = unsafe { (dyad::ty(lhs_d), dyad::ty(rhs_d)) };
+    // SAFETY: as above.
+    let lhs_type = unsafe { types.type_of(lhs_d) };
     // SAFETY: `lhs_d` is a reduced dyad from the store.
     if unsafe { super::tape::is_cell_read(types, lhs_d) } {
         // SAFETY: `lhs_d` is a tape cell read, `rhs` a reduced dyad.
@@ -242,7 +255,7 @@ pub(super) fn build(
     }
     // A literal into a pointer would become a wild address.
     // SAFETY: as above.
-    let lhs_pointer = unsafe { is_pointer_type(dyad::ty(lhs_d)) };
+    let lhs_pointer = unsafe { is_pointer_type(lhs_type) };
     if lhs_pointer && rhs_ty == types.rational {
         return Err(ParseError::TypeMismatch);
     }
@@ -253,21 +266,21 @@ pub(super) fn build(
     // SAFETY: as above.
     let rhs = unsafe {
         if dyad::ty(rhs_d) == types.rational && !crate::dyad::is_place(dyad::value(rhs_d)) {
-            let nt = of_type_node(dyad::ty(lhs_d));
-            commit_if_literal(store, types, rhs, &Operand::Literal, dyad::ty(lhs_d), nt)?
+            let nt = of_type_node(lhs_type);
+            commit_if_literal(store, types, rhs, &Operand::Literal, lhs_type, nt)?
         } else {
-            super::check_store_type(types, dyad::ty(lhs_d), rhs)?;
+            super::check_store_type(types, lhs_type, rhs)?;
             rhs
         }
     };
     // A non-owning value in an owning place ends in a double free at scope exit.
     // SAFETY: `rhs` is a reduced dyad from the store.
     let rhs_owning = unsafe { super::drop_model::is_owning_value(types, rhs) };
-    if super::drop_model::is_owning_place(lhs_d) && !rhs_owning {
+    if super::drop_model::is_owning_place(types, lhs_d) && !rhs_owning {
         return Err(ParseError::NonOwningIntoOwning);
     }
     // SAFETY: `lhs` is a typed variable checked assignable above.
-    let nt = unsafe { of_type_node(dyad::ty(lhs_d)) };
+    let nt = unsafe { of_type_node(lhs_type) };
     let value = store.alloc_operands(&[lhs, rhs, types.ops.store_leaf(nt)]);
     Ok(store.alloc_raw(op, value))
 }

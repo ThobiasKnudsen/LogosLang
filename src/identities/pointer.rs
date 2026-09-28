@@ -95,7 +95,7 @@ pub(super) fn register(
 /// # Safety
 /// `place` must be a storage-backed place node from the store.
 pub(crate) unsafe fn build_addr(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
-    let pointee = dyad::ty(place);
+    let pointee = types.type_of(place);
     let value = store.alloc_operands(&[place, pointee, types.ops.addr_]);
     store.alloc_raw(types.addr_, value)
 }

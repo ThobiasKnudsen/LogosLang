@@ -2104,6 +2104,17 @@ fn the_binding_read_answers_scope_range_and_gate() {
 }
 
 #[test]
+fn a_binding_reads_its_frame_and_offset() {
+    // A top-level name's bytes are in the program frame, the root scope, at an offset of its own.
+    let (echoes, stderr) = repl(
+        b"x := i32 5\ny := i64 6\nx:frame == here.scope.back\ny:frame == x:frame\n\
+          y:offset == x:offset\nx:offset < y:offset\nx:name\n",
+    );
+    assert_eq!(echoes, ["true", "true", "false", "true", "x"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
 fn a_field_the_binding_has_not_is_the_same_error_as_an_undeclared_dot_field() {
     // The message names the spelling, the one thing the two probes differ in, so it is blanked before comparing.
     fn message(stderr: &str) -> String {

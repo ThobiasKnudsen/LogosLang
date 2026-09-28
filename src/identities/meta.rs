@@ -305,15 +305,17 @@ pub(crate) unsafe fn install_pointer_type(id: DyadPtr, p: DyadPtr) {
     std::ptr::write_unaligned(dyad::value(id).add(POINTER_TYPE_OFF) as *mut DyadPtr, p);
 }
 
-/// `None` where there is no record to read: a null value (an unbound placeholder) or
-/// a tagged place. Every accessor below contracts on `Some`, so this is where a node
-/// that is not an identity is turned away.
+/// `None` where there is no record to read: a null value (an unbound placeholder), a
+/// node that is no type (a type is typed by the self-typed root), or a tagged place.
+/// Every accessor below contracts on `Some`, so this is where a node that is not an
+/// identity is turned away.
 ///
 /// # Safety
 /// `id` must be a valid dyad from the store.
 pub(crate) unsafe fn kind_of(id: DyadPtr) -> Option<u8> {
     let v = dyad::value(id);
-    if v.is_null() || crate::dyad::is_place(v) {
+    let t = dyad::ty(id);
+    if v.is_null() || t.is_null() || dyad::ty(t) != t || crate::dyad::is_place(v) {
         None
     } else {
         Some(*(v as *const u8))

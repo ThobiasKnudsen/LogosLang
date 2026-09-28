@@ -16,7 +16,8 @@ pub struct Resolved {
     pub matched: usize,
     /// What a use of the name points at (DESIGN ›The dyad's read surface‹).
     pub binding: DyadPtr,
-    /// The binding's dyad.
+    /// The dyad a use of the name yields: the binding's, or the binding itself where it is
+    /// the storage.
     pub identity: DyadPtr,
     /// The scope the winning declaration was made in: what a rebind that
     /// completes it must target.
@@ -284,7 +285,9 @@ impl ScopeStack {
                 Some((r, n, _)) => rank > *r || (rank == *r && matched > *n),
             };
             if better {
-                let r = Resolved { fresh, matched, binding, identity: f.dyad, scope: f.scope };
+                // SAFETY: `binding` is a binding dyad from the store.
+                let identity = unsafe { f.names(binding) };
+                let r = Resolved { fresh, matched, binding, identity, scope: f.scope };
                 best = Some((rank, matched, r));
                 tied = false;
             } else if matches!(&best, Some((r, n, _)) if rank == *r && matched == *n) {

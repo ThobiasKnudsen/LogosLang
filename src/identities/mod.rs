@@ -120,6 +120,8 @@ pub struct Core {
     /// The prose node a statement-level `#` builds; invisible to value flow.
     pub comment_: DyadPtr,
     pub construct_: DyadPtr,
+    /// `p.x` over a record's storage: a place read through two bindings.
+    pub field_: DyadPtr,
     pub deref_: DyadPtr,
     /// The store-through node `=` builds over a deref left side.
     pub storeptr_: DyadPtr,
@@ -291,8 +293,15 @@ impl Core {
         let unknown = hole::register(&mut cx);
         let (sep_, left_, right_) = logos_mod::register_syntax(&mut cx);
         fresh::register(&mut cx);
-        let (construct_, construct_leaf, dot_, square_brackets, open_sq_, close_sq_) =
-            instance::register(&mut cx, &callables);
+        let instance::InstanceIds {
+            construct: construct_,
+            construct_leaf,
+            field: field_,
+            dot: dot_,
+            square_brackets,
+            open_sq: open_sq_,
+            close_sq: close_sq_,
+        } = instance::register(&mut cx, &callables);
         op_leaves.construct_ = construct_leaf;
         let (deref_, storeptr_, addr_, deref_leaf, storeptr_leaf, addr_leaf, at_) =
             pointer::register(&mut cx, &callables);
@@ -385,6 +394,7 @@ impl Core {
             regex_,
             comment_,
             construct_,
+            field_,
             deref_,
             storeptr_,
             addr_,
@@ -453,7 +463,15 @@ impl Core {
     /// # Safety
     /// `p` must be null or a valid dyad from the store.
     pub(crate) unsafe fn frame_of(&self, p: DyadPtr) -> Option<(binding::Frame, usize)> {
-        if p.is_null() || dyad::ty(p) != self.binding_ {
+        if p.is_null() {
+            return None;
+        }
+        if dyad::ty(p) == self.field_ {
+            let (record, field) = instance::field_parts(p);
+            let (frame, base) = self.frame_of(self.through(record))?;
+            return Some((frame, base + Binding::read(field).offset));
+        }
+        if dyad::ty(p) != self.binding_ {
             return None;
         }
         let b = Binding::read(p);
@@ -474,7 +492,12 @@ impl Core {
     /// As `frame_of`.
     pub(crate) unsafe fn storage_type(&self, p: DyadPtr) -> Option<DyadPtr> {
         let p = self.through(p);
-        self.frame_of(p).map(|_| Binding::read(p).dyad)
+        self.frame_of(p)?;
+        Some(if dyad::ty(p) == self.field_ {
+            dyad::ty(Binding::read(instance::field_parts(p).1).dyad)
+        } else {
+            Binding::read(p).dyad
+        })
     }
 
     /// The type of what a reduced operand denotes: its storage's declared type, or the
@@ -482,15 +505,12 @@ impl Core {
     ///
     /// # Safety
     /// `p` must be null or a valid dyad from the store.
-    pub(crate) unsafe fn type_of(&self, p: DyadPtr) -> DyadPtr {
+    pub unsafe fn type_of(&self, p: DyadPtr) -> DyadPtr {
         let p = self.through(p);
         if p.is_null() {
             return p;
         }
-        match self.frame_of(p) {
-            Some(_) => Binding::read(p).dyad,
-            None => dyad::ty(p),
-        }
+        self.storage_type(p).unwrap_or_else(|| dyad::ty(p))
     }
 }
 
@@ -582,6 +602,19 @@ pub(crate) enum Operand {
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     let node = types.through(node);
+    // Storage reads as its declared type; a rational place holds a run-time rational, which
+    // no machine type takes silently, and a bare parameter's container is no number.
+    if let Some(t) = types.storage_type(node) {
+        return if t.is_null() || t == types.rational {
+            Operand::NonNumeric
+        } else if numtype::is_pointer_type(t) {
+            Operand::Pointer(numtype::pointee_of(t))
+        } else if is_numtype_node(types, t) {
+            Operand::Concrete(numtype::of_type_node(t))
+        } else {
+            Operand::NonNumeric
+        };
+    }
     let logos = dyad::ty(node);
     if logos == types.rational {
         // A place of rational type holds a run-time rational, which no machine type takes silently.
@@ -987,14 +1020,15 @@ pub(crate) unsafe fn scalar_binding_type(
     }
 }
 
-/// The initializing store of a declaration, the same node `=` builds.
+/// The initializing store of a declaration, the node `=` builds, past `=`'s gates: the
+/// declaration writes its own storage once, whatever the name's gates.
 pub(crate) fn build_init(
     store: &mut Store,
     types: &Core,
     place: DyadPtr,
     value: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
-    assign::build(store, types, types.assign, place, value)
+    assign::build_store(store, types, types.assign, place, value)
 }
 
 /// The no-coercion rule for `=`: a numeric target takes exactly its own type, a
@@ -1064,7 +1098,7 @@ pub unsafe fn display_value(types: &Core, node: DyadPtr, bits: i64) -> String {
         // running it, and display has no runtime, so it shows as `dyad`.
         read::Read::Container(_) => {
             let held = bits as usize as DyadPtr;
-            let ty = dyad::ty(node);
+            let ty = types.type_of(node);
             if ty.is_null() {
                 bits.to_string()
             } else if held.is_null() || held == types.unknown {

@@ -228,10 +228,10 @@ pub(crate) unsafe fn build_get(
     key: DyadPtr,
 ) -> Result<Option<DyadPtr>, ParseError> {
     let place = types.through(lhs);
-    if !crate::dyad::is_place(dyad::value(place)) {
+    if !types.is_storage(place) && !crate::dyad::is_place(dyad::value(place)) {
         return Ok(None);
     }
-    let Some((k, _)) = params_of(types, dyad::ty(place)) else {
+    let Some((k, _)) = params_of(types, types.type_of(place)) else {
         return Ok(None);
     };
     let key = accept(store, types, k, key)?;

@@ -136,7 +136,7 @@ pub const MAX_BRACKET_DEPTH: usize = 2_000;
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn is_bool_result(types: &Core, node: DyadPtr) -> bool {
     let node = types.through(node);
-    let logos = dyad::ty(node);
+    let logos = types.type_of(node);
     // A sequence's value is its trailing expression's.
     if logos == types.scope {
         return match last_sequence_expr(node) {
@@ -967,6 +967,7 @@ impl<'a> Parser<'a> {
                 // variable through, and reading its tagged offset as an address is the crash class the reading rule ends.
                 use crate::identities::read::{read_kind, Read};
                 if !matches!(read_kind(types, step), Read::Scalar(_))
+                    || types.is_storage(step)
                     || crate::dyad::is_place(dyad::value(step))
                 {
                     return Err(ParseError::BadStep);
@@ -1284,7 +1285,8 @@ impl<'a> Parser<'a> {
                     // SAFETY: `place` is a place this scope's binding site minted, and
                     // `tail` indexes the scope's own lines, which nothing else reads yet.
                     unsafe {
-                        let moved = if crate::identities::drop_model::is_owning_place(place) {
+                        let moved = if crate::identities::drop_model::is_owning_place(types, place)
+                        {
                             crate::identities::drop_model::build_teardown(
                                 self.rt.store,
                                 types,
@@ -1297,7 +1299,7 @@ impl<'a> Parser<'a> {
                                 self.rt.store,
                                 types,
                                 place,
-                                dyad::ty(place),
+                                types.type_of(place),
                             )
                         };
                         let (_, lines) = crate::identities::array::parts(

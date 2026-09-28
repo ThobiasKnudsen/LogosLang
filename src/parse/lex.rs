@@ -144,14 +144,19 @@ impl<'a> Parser<'a> {
                 crate::identities::read::Read::Container(t) if !t.is_null() => t,
                 _ => return id,
             };
-            let addr = match crate::dyad::global_ref(dyad::value(id)) {
-                Some(crate::dyad::Global::Address(addr)) => addr,
-                Some(crate::dyad::Global::Arena(off)) => self.rt.store.arena_at(off),
-                None if self.is_live_call_slot(id) => match self.rt.place_addr(id) {
-                    Some(addr) => addr,
+            use crate::binding::Frame;
+            let addr = match self.types.frame_of(id) {
+                Some((Frame::Root, off)) => self.rt.store.arena_at(off),
+                Some((Frame::Call(_), _)) => return id,
+                None => match crate::dyad::global_ref(dyad::value(id)) {
+                    Some(crate::dyad::Global::Address(addr)) => addr,
+                    Some(crate::dyad::Global::Arena(off)) => self.rt.store.arena_at(off),
+                    None if self.is_live_call_slot(id) => match self.rt.place_addr(id) {
+                        Some(addr) => addr,
+                        None => return id,
+                    },
                     None => return id,
                 },
-                None => return id,
             };
             let held = std::ptr::read_unaligned(addr as *const DyadPtr);
             if held.is_null() || !self.rt.store.contains(held) {

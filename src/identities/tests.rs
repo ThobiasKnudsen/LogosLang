@@ -17,18 +17,21 @@ fn new_core() -> (Store, RegexTrie, Core) {
     (store, trie, core)
 }
 
-/// A binding dyad naming `identity`, for a name a test declares by hand; leaked
-/// like every test-built dyad. A hand-minted variable must carry the storage
-/// mark (`crate::dyad::global_place`), or the reading rule takes it for a literal.
-fn test_binding(binding_ty: DyadPtr, identity: DyadPtr) -> DyadPtr {
-    let fields =
-        Box::into_raw(Box::new(Binding::new(identity, std::ptr::null_mut(), std::ptr::null_mut())));
-    Box::into_raw(Box::new(crate::dyad::Dyad::new(binding_ty, fields as *mut u8)))
+/// A binding dyad naming `identity`, for a name a test declares by hand, in the store
+/// like every binding, so its record is in the program frame. A hand-minted variable
+/// must carry the storage mark (`crate::dyad::global_place`), or the reading rule takes it
+/// for a literal.
+fn test_binding(store: &mut Store, binding_ty: DyadPtr, identity: DyadPtr) -> DyadPtr {
+    Binding::alloc(
+        store,
+        binding_ty,
+        Binding::new(identity, std::ptr::null_mut(), std::ptr::null_mut()),
+    )
 }
 
 /// A hand-built binding of a variable the test writes.
 fn mut_binding(store: &mut Store, core: &Core, identity: DyadPtr) -> DyadPtr {
-    let binding = test_binding(core.binding_, identity);
+    let binding = test_binding(store, core.binding_, identity);
     // SAFETY: `binding` was just built; its fields are a leaked `Binding`.
     unsafe { Binding::add_gate(store, core.array_, binding, core.mut_) };
     binding
@@ -243,7 +246,8 @@ fn compiles_and_runs_a_fn_with_arguments() {
     let call = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        unsafe { s.declare(&mut trie, "add", test_binding(core.binding_, add)) }.unwrap();
+        unsafe { s.declare(&mut trie, "add", test_binding(&mut store, core.binding_, add)) }
+            .unwrap();
         let mut p = Parser::new("add(40, 2)", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
@@ -290,7 +294,8 @@ fn calls_a_function_with_arguments() {
     let call = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        unsafe { s.declare(&mut trie, "add", test_binding(core.binding_, add)) }.unwrap();
+        unsafe { s.declare(&mut trie, "add", test_binding(&mut store, core.binding_, add)) }
+            .unwrap();
         let mut p = Parser::new("add(40, 2)", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
@@ -324,7 +329,8 @@ fn calling_with_the_wrong_arity_errors() {
     let call = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        unsafe { s.declare(&mut trie, "add", test_binding(core.binding_, add)) }.unwrap();
+        unsafe { s.declare(&mut trie, "add", test_binding(&mut store, core.binding_, add)) }
+            .unwrap();
         let mut p = Parser::new("add(40)", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
@@ -629,7 +635,7 @@ fn compiling_an_uninitialized_read_errors_instead_of_crashing() {
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
     let x = store.alloc_raw(core.i32_, std::ptr::null_mut());
-    unsafe { scopes.declare(&mut trie, "x", test_binding(core.binding_, x)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "x", test_binding(&mut store, core.binding_, x)) }.unwrap();
 
     let node = {
         let mut p = Parser::new("x", &mut store, &mut trie, &core, scopes);
@@ -1054,7 +1060,7 @@ fn logical_operators_short_circuit_on_the_interpreter() {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
         let y = store.alloc_raw(core.i32_, std::ptr::null_mut());
-        unsafe { s.declare(&mut trie, "y", test_binding(core.binding_, y)) }.unwrap();
+        unsafe { s.declare(&mut trie, "y", test_binding(&mut store, core.binding_, y)) }.unwrap();
     }
     let mut rt = Runtime::new(&core, &mut store);
 
@@ -1147,7 +1153,8 @@ fn if_over_a_parameter_matches_between_tiers() {
         let call = {
             let mut s = ScopeStack::new();
             s.push(core.root_scope);
-            unsafe { s.declare(&mut trie, "f", test_binding(core.binding_, func)) }.unwrap();
+            unsafe { s.declare(&mut trie, "f", test_binding(&mut store, core.binding_, func)) }
+                .unwrap();
             let src = format!("f({arg})");
             let mut p = Parser::new(&src, &mut store, &mut trie, &core, s);
             p.parse_expression().unwrap()
@@ -1291,7 +1298,8 @@ fn compiled_calls_between_compiled_functions_are_width_general() {
     let outer = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        unsafe { s.declare(&mut trie, "mul", test_binding(core.binding_, mul)) }.unwrap();
+        unsafe { s.declare(&mut trie, "mul", test_binding(&mut store, core.binding_, mul)) }
+            .unwrap();
         let mut p =
             Parser::new("fn () -> i64 ( mul(2000000000, 3) )", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
@@ -1327,7 +1335,7 @@ fn compiled_calls_pass_floats_across_the_boundary() {
             Parser::new("fn (x := f64 ?) -> f64 ( x + 0.5 )", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
-    unsafe { scopes.declare(&mut trie, "g", test_binding(core.binding_, g)) }.unwrap();
+    unsafe { scopes.declare(&mut trie, "g", test_binding(&mut store, core.binding_, g)) }.unwrap();
     let outer = {
         let mut p = Parser::new("fn () -> f64 ( g(a) )", &mut store, &mut trie, &core, scopes);
         p.parse_expression().unwrap()
@@ -1403,7 +1411,8 @@ fn compiled_call_with_wrong_arity_refuses_to_compile() {
     let outer = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        unsafe { s.declare(&mut trie, "add", test_binding(core.binding_, add)) }.unwrap();
+        unsafe { s.declare(&mut trie, "add", test_binding(&mut store, core.binding_, add)) }
+            .unwrap();
         let mut p = Parser::new("fn () -> i32 ( add(40) )", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
@@ -1429,7 +1438,7 @@ fn an_argument_that_does_not_fit_its_parameter_is_rejected() {
     };
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
-    unsafe { s.declare(&mut trie, "f", test_binding(core.binding_, func)) }.unwrap();
+    unsafe { s.declare(&mut trie, "f", test_binding(&mut store, core.binding_, func)) }.unwrap();
     let mut p = Parser::new("f(2.5)", &mut store, &mut trie, &core, s);
     assert_eq!(p.parse_expression(), Err(ParseError::UncomputableLiteral));
 }
@@ -2551,7 +2560,8 @@ fn record_fields_lay_out_mixed_widths() {
     let call = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        unsafe { s.declare(&mut trie, "f", test_binding(core.binding_, func)) }.unwrap();
+        unsafe { s.declare(&mut trie, "f", test_binding(&mut store, core.binding_, func)) }
+            .unwrap();
         let mut p = Parser::new("f(5000000000)", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
@@ -2742,7 +2752,7 @@ fn a_type_read_reaches_roles_at_the_graph_level() {
     s.push(core.root_scope);
     let x_val = store.alloc_bytes(&5i32.to_ne_bytes());
     let x = store.alloc_raw(core.i32_, crate::dyad::global_place(x_val));
-    unsafe { s.declare(&mut trie, "x", test_binding(core.binding_, x)) }.unwrap();
+    unsafe { s.declare(&mut trie, "x", test_binding(&mut store, core.binding_, x)) }.unwrap();
 
     let mut p = Parser::new("(x + x):type.roles[0]", &mut store, &mut trie, &core, s);
     let role = p.parse_expression().unwrap();
@@ -3352,7 +3362,8 @@ fn compiled_function_calls_another_compiled_function() {
     let outer = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        unsafe { s.declare(&mut trie, "add", test_binding(core.binding_, add)) }.unwrap();
+        unsafe { s.declare(&mut trie, "add", test_binding(&mut store, core.binding_, add)) }
+            .unwrap();
         let mut p = Parser::new("fn () -> i32 ( add(40, 2) )", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
@@ -3386,7 +3397,8 @@ fn diff_typed_call(fn_src: &str, call_src: &str, expect: i64) {
     let call = {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        unsafe { s.declare(&mut trie, "f", test_binding(core.binding_, func)) }.unwrap();
+        unsafe { s.declare(&mut trie, "f", test_binding(&mut store, core.binding_, func)) }
+            .unwrap();
         let mut p = Parser::new(call_src, &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };

@@ -84,10 +84,11 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid declare node; its declared slot is a valid dyad.
     unsafe {
         let declared = declared_of(node);
-        // A bare hole, `x := ?`, has nothing to run; declaring it is silent. Nor
-        // has the place `x := T ?` made, which a record place cannot be read as.
-        // Nor has a node with no run, which is data and was built whole at parse.
+        // A bare hole, `x := ?`, has nothing to run; declaring it is silent. Nor has the
+        // storage `x := T ?` laid out, which nothing initializes. Nor has a node with no
+        // run, which is data and was built whole at parse.
         if !dyad::ty(declared).is_null()
+            && !rt.types().is_storage(declared)
             && !crate::dyad::is_place(dyad::value(declared))
             && super::read::read_kind(rt.types(), declared) != super::read::Read::Aggregate
         {

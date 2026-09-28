@@ -388,9 +388,10 @@ impl<'a> Parser<'a> {
         // SAFETY: `first` is a constructed node from the store.
         let node_box = unsafe {
             let d = self.types.through(first);
+            let t = self.types.type_of(d);
             !d.is_null()
-                && ((dyad::ty(d) == self.types.type_ || dyad::ty(d) == self.types.dyad_)
-                    && crate::dyad::is_place(dyad::value(d))
+                && ((t == self.types.type_ || t == self.types.dyad_)
+                    && (self.types.is_storage(d) || crate::dyad::is_place(dyad::value(d)))
                     || !crate::identities::is_type_value(self.types, d)
                         && crate::identities::yields_type(self.types, d))
         };
@@ -551,8 +552,12 @@ impl<'a> Parser<'a> {
                 && unsafe { crate::identities::meta::is_record_type(dyad::ty(cell.dyad)) };
             // A node a parse placed, of any type, as opposed to a place or a call's result.
             // SAFETY: `record` saw a node from the store.
-            let built =
-                logos && record && unsafe { !crate::dyad::is_place(dyad::value(cell.dyad)) };
+            let built = logos
+                && record
+                && unsafe {
+                    !self.types.is_storage(cell.dyad)
+                        && !crate::dyad::is_place(dyad::value(cell.dyad))
+                };
             if logos && record && (instance || built) {
                 let spelling = cell.spelling().to_string();
                 // SAFETY: the node is the one `run_logos_ctor` minted for `id`, `[field…, null, spec]`.

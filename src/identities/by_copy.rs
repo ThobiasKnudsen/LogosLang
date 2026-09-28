@@ -92,7 +92,7 @@ pub(crate) unsafe fn record_type_of(types: &Core, node: DyadPtr) -> Option<DyadP
         return record_type_of(types, *(dyad::value(node) as *const DyadPtr));
     } else {
         match read_kind(types, node) {
-            Read::Aggregate | Read::Rational => ty,
+            Read::Aggregate | Read::Rational => types.type_of(node),
             // A literal's bytes are a rational value's.
             Read::Literal => types.rational,
             _ => return None,

@@ -57,7 +57,7 @@ unsafe fn tail_type(
     node: seed::dyad::DyadPtr,
 ) -> (seed::dyad::DyadPtr, seed::dyad::DyadPtr) {
     let named = core.through(node);
-    (named, dyad::ty(named))
+    (named, core.type_of(named))
 }
 
 /// The statement types with no value worth printing in any mode.
