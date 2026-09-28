@@ -788,6 +788,7 @@ Nothing moved from this section.
 
 ### The store is keyed by address
 - **History:** until 28 September 2026 the seed read "the address is an index" as a raw `*mut Dyad`, the cell two raw pointers; the 32-bit index handle behind store accessors superseded that reading (#165).
+- **History:** 28 September 2026, later the same day: the 32-bit index handle (address = base + index × 16, cell head a 32-bit type index) was withdrawn as a misconception, Thobias had asked whether the agent proposed it, it had not, and he never wanted it; the handle is the 64-bit address. Seed: #165 slice B's flip was cancelled before it was built; its accessor pass stays, being layout-neutral.
 
 ## Standard library and ecosystem strategy
 
