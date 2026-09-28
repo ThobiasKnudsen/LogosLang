@@ -10,9 +10,9 @@ use super::{meta, Cx};
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct Dyad {
-    pub ty: DyadPtr,
+    ty: DyadPtr,
     /// A type-erased address, read through `ty`.
-    pub value: *mut u8,
+    value: *mut u8,
 }
 
 impl Dyad {
@@ -23,6 +23,9 @@ impl Dyad {
 
 /// A node's handle; its address is its identity.
 pub type DyadPtr = *mut Dyad;
+
+/// Where the value word sits, for compiled code reading a cell.
+pub const VALUE_OFFSET: i64 = std::mem::offset_of!(Dyad, value) as i64;
 
 /// The four readers of the cell's layout; nothing outside this file spells it.
 ///

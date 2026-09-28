@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::compile::{compile_fn, compile_nullary_i32};
+use crate::dyad;
 use crate::parse::{Parser, ScopeStack, SlotKind, FN_BCODE, FN_BODY, FN_INPUT, FN_OUTPUT};
 use crate::run::Runtime;
 
@@ -49,16 +50,16 @@ fn parses_a_equals_a_plus_one() {
     };
 
     unsafe {
-        assert_eq!((*root).ty, core.assign);
-        let top = (*root).value as *const DyadPtr;
+        assert_eq!(dyad::ty(root), core.assign);
+        let top = dyad::value(root) as *const DyadPtr;
         assert_eq!(core.through(*top), a);
         let sum = *top.add(1);
-        assert_eq!((*sum).ty, core.plus);
-        let sops = (*sum).value as *const DyadPtr;
+        assert_eq!(dyad::ty(sum), core.plus);
+        let sops = dyad::value(sum) as *const DyadPtr;
         assert_eq!(core.through(*sops), a);
         let one = *sops.add(1);
-        assert_eq!((*one).ty, core.i32_);
-        assert_eq!(std::ptr::read_unaligned((*one).value as *const i32), 1);
+        assert_eq!(dyad::ty(one), core.i32_);
+        assert_eq!(std::ptr::read_unaligned(dyad::value(one) as *const i32), 1);
         assert_eq!(*sops.add(2), core.ops.arith_leaf(numtype::ArithOp::Add, NumType::I32));
     }
 }
@@ -176,10 +177,10 @@ fn parses_and_runs_a_fn() {
     };
 
     unsafe {
-        assert_eq!((*func).ty, core.fn_type);
-        let v = (*func).value as *const DyadPtr;
+        assert_eq!(dyad::ty(func), core.fn_type);
+        let v = dyad::value(func) as *const DyadPtr;
         let (input, output, body) = (*v.add(FN_INPUT), *v.add(FN_OUTPUT), *v.add(FN_BODY));
-        assert_eq!((*input).ty, core.type_);
+        assert_eq!(dyad::ty(input), core.type_);
         assert!(array::items(meta::record_fields_of(input)).is_empty());
         assert_eq!(output, core.i32_);
         assert!(!body.is_null());
@@ -211,13 +212,13 @@ fn parses_a_fn_with_a_param_visible_in_the_body() {
     };
 
     unsafe {
-        assert_eq!((*func).ty, core.fn_type);
-        let v = (*func).value as *const DyadPtr;
+        assert_eq!(dyad::ty(func), core.fn_type);
+        let v = dyad::value(func) as *const DyadPtr;
         let (input, output, body) = (*v.add(FN_INPUT), *v.add(FN_OUTPUT), *v.add(FN_BODY));
         assert_eq!(output, core.i32_);
         let x_field = array::items(meta::record_fields_of(input))[0];
-        assert_eq!((*x_field).ty, core.i32_);
-        let return_operand = *((*body).value as *const DyadPtr);
+        assert_eq!(dyad::ty(x_field), core.i32_);
+        let return_operand = *(dyad::value(body) as *const DyadPtr);
         assert_eq!(core.through(return_operand), x_field);
     }
 }
@@ -295,7 +296,7 @@ fn calls_a_function_with_arguments() {
     };
 
     unsafe {
-        assert_eq!((*call).ty, add);
+        assert_eq!(dyad::ty(call), add);
     }
 
     let mut rt = Runtime::new(&core, &mut store);
@@ -362,7 +363,7 @@ fn parses_an_empty_record() {
     };
 
     unsafe {
-        assert_eq!((*node).ty, core.type_);
+        assert_eq!(dyad::ty(node), core.type_);
         assert!(!meta::record_scope_of(node).is_null());
         assert!(array::items(meta::record_fields_of(node)).is_empty());
         assert_eq!(meta::record_size_of(node), 0);
@@ -382,17 +383,17 @@ fn parses_a_record_with_typed_fields() {
     };
 
     let (scope, fx, fy) = unsafe {
-        assert_eq!((*node).ty, core.type_);
+        assert_eq!(dyad::ty(node), core.type_);
         let fields = array::items(meta::record_fields_of(node));
         assert_eq!(fields.len(), 2);
         assert_eq!(meta::record_size_of(node), 8); // two i32s, packed
         (meta::record_scope_of(node), fields[0], fields[1])
     };
     unsafe {
-        assert_eq!((*fx).ty, core.i32_);
-        assert!((*fx).value.is_null());
-        assert_eq!((*fy).ty, core.i32_);
-        assert!((*fy).value.is_null());
+        assert_eq!(dyad::ty(fx), core.i32_);
+        assert!(dyad::value(fx).is_null());
+        assert_eq!(dyad::ty(fy), core.i32_);
+        assert!(dyad::value(fy).is_null());
     }
 
     let mut inner = ScopeStack::new();
@@ -420,8 +421,8 @@ fn parses_a_bare_name_field() {
         (meta::record_scope_of(node), fields[0])
     };
     unsafe {
-        assert!((*ft).ty.is_null());
-        assert!((*ft).value.is_null());
+        assert!(dyad::ty(ft).is_null());
+        assert!(dyad::value(ft).is_null());
     }
 
     let mut inner = ScopeStack::new();
@@ -445,8 +446,8 @@ fn scopes_are_typed_scope() {
     let (mut store, mut trie, core) = new_core();
 
     unsafe {
-        assert_eq!((*core.scope).ty, core.type_);
-        assert_eq!((*core.root_scope).ty, core.scope);
+        assert_eq!(dyad::ty(core.scope), core.type_);
+        assert_eq!(dyad::ty(core.root_scope), core.scope);
     }
 
     let mut scopes = ScopeStack::new();
@@ -457,7 +458,7 @@ fn scopes_are_typed_scope() {
     };
     unsafe {
         let scope = meta::record_scope_of(node);
-        assert_eq!((*scope).ty, core.scope);
+        assert_eq!(dyad::ty(scope), core.scope);
     }
 }
 
@@ -551,14 +552,14 @@ fn milestone_2_fn_runs_interpreted_and_jit_identically() {
 
     let interp = unsafe { rt.run(call) }.unwrap();
     unsafe {
-        let bcode = *((*func).value as *const DyadPtr).add(FN_BCODE);
+        let bcode = *(dyad::value(func) as *const DyadPtr).add(FN_BCODE);
         assert!(bcode.is_null());
     }
 
     // SAFETY: `func` is the fn node just built and outlives the call.
     unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
     unsafe {
-        let bcode = *((*func).value as *const DyadPtr).add(FN_BCODE);
+        let bcode = *(dyad::value(func) as *const DyadPtr).add(FN_BCODE);
         assert!(!bcode.is_null());
     }
 
@@ -579,7 +580,7 @@ fn rational_decimal_parses_but_is_uncomputable_as_i32() {
         p.parse_expression().unwrap()
     };
     unsafe {
-        assert_eq!((*node).ty, core.rational);
+        assert_eq!(dyad::ty(node), core.rational);
         assert_eq!(rational::mold(node), None);
     }
 
@@ -658,10 +659,10 @@ fn plus_is_abstract_and_resolves_to_a_concrete_op() {
         p.parse_expression().unwrap()
     };
     unsafe {
-        let body = *((*func).value as *const DyadPtr).add(FN_BODY);
-        assert_eq!((*body).ty, core.plus);
+        let body = *(dyad::value(func) as *const DyadPtr).add(FN_BODY);
+        assert_eq!(dyad::ty(body), core.plus);
         assert_eq!(
-            *((*body).value as *const DyadPtr).add(2),
+            *(dyad::value(body) as *const DyadPtr).add(2),
             core.ops.arith_leaf(numtype::ArithOp::Add, NumType::I32)
         );
     }
@@ -700,7 +701,7 @@ fn a_whole_file_runs_top_to_bottom_like_a_script() {
     // SAFETY: the sequence's first expression is the fn declaration.
     // The type body after the declaration ran what stood before it, so the declaration stands as its ran form.
     let func = unsafe {
-        let arr = *((*root).value as *const DyadPtr);
+        let arr = *(dyad::value(root) as *const DyadPtr);
         let first = crate::identities::array::items(arr)[0];
         declare::declared_of(ran::expr_of(&core, first))
     };
@@ -724,7 +725,7 @@ fn parses_and_runs_bool_literals() {
         };
         // SAFETY: `node` is the literal just parsed, a use of `true`'s binding.
         unsafe {
-            assert_eq!((*core.through(node)).ty, core.bool_);
+            assert_eq!(dyad::ty(core.through(node)), core.bool_);
         }
         let mut rt = Runtime::new(&core, &mut store);
         // SAFETY: `node` is a valid `bool` literal.
@@ -777,14 +778,14 @@ fn minus_and_times_resolve_to_concrete_ops() {
         p.parse_expression().unwrap()
     };
     unsafe {
-        let body = *((*func).value as *const DyadPtr).add(FN_BODY);
-        assert_eq!((*body).ty, core.minus);
-        let bops = (*body).value as *const DyadPtr;
+        let body = *(dyad::value(func) as *const DyadPtr).add(FN_BODY);
+        assert_eq!(dyad::ty(body), core.minus);
+        let bops = dyad::value(body) as *const DyadPtr;
         assert_eq!(*bops.add(2), core.ops.arith_leaf(numtype::ArithOp::Sub, NumType::I32));
         let rhs = *bops.add(1);
-        assert_eq!((*rhs).ty, core.times);
+        assert_eq!(dyad::ty(rhs), core.times);
         assert_eq!(
-            *((*rhs).value as *const DyadPtr).add(2),
+            *(dyad::value(rhs) as *const DyadPtr).add(2),
             core.ops.arith_leaf(numtype::ArithOp::Mul, NumType::I32)
         );
     }
@@ -818,10 +819,10 @@ fn less_than_is_abstract_and_resolves_to_lt_i32() {
         p.parse_expression().unwrap()
     };
     unsafe {
-        let body = *((*func).value as *const DyadPtr).add(FN_BODY);
-        assert_eq!((*body).ty, core.lt);
+        let body = *(dyad::value(func) as *const DyadPtr).add(FN_BODY);
+        assert_eq!(dyad::ty(body), core.lt);
         assert_eq!(
-            *((*body).value as *const DyadPtr).add(2),
+            *(dyad::value(body) as *const DyadPtr).add(2),
             core.ops.cmp_leaf(numtype::CmpOp::Lt, NumType::I32)
         );
     }
@@ -1015,10 +1016,10 @@ fn comparison_siblings_resolve_to_their_concrete_ops() {
         };
         // SAFETY: `func` is the fn node just parsed.
         unsafe {
-            let body = *((*func).value as *const DyadPtr).add(FN_BODY);
-            assert_eq!((*body).ty, abstract_op, "abstract op for `{src}`");
+            let body = *(dyad::value(func) as *const DyadPtr).add(FN_BODY);
+            assert_eq!(dyad::ty(body), abstract_op, "abstract op for `{src}`");
             assert_eq!(
-                *((*body).value as *const DyadPtr).add(2),
+                *(dyad::value(body) as *const DyadPtr).add(2),
                 concrete,
                 "concrete op for `{src}`"
             );
@@ -1671,7 +1672,7 @@ fn string_literals_parse_and_are_inert() {
     };
     // SAFETY: `node` is the string literal just parsed.
     unsafe {
-        assert_eq!((*node).ty, core.string_);
+        assert_eq!(dyad::ty(node), core.string_);
         assert_eq!(crate::identities::string::text(node), b"hello world");
     }
     let mut rt = Runtime::new(&core, &mut store);
@@ -1696,20 +1697,20 @@ fn comments_are_reflectable_nodes_invisible_to_value_flow() {
         p.parse_expression().unwrap()
     };
     unsafe {
-        let body = *((*func).value as *const DyadPtr).add(FN_BODY);
-        assert_eq!((*body).ty, core.scope);
-        let arr = *((*body).value as *const DyadPtr);
-        assert_eq!((*arr).ty, core.array_);
+        let body = *(dyad::value(func) as *const DyadPtr).add(FN_BODY);
+        assert_eq!(dyad::ty(body), core.scope);
+        let arr = *(dyad::value(body) as *const DyadPtr);
+        assert_eq!(dyad::ty(arr), core.array_);
         let exprs = crate::identities::array::items(arr);
         let [c1, mid, c2] = exprs else {
             panic!("the sequence should hold exactly three expressions");
         };
         let (c1, mid, c2) = (*c1, *mid, *c2);
-        assert_eq!((*c1).ty, core.comment_);
-        assert_eq!(crate::identities::string::text((*c1).value.cast()), b"the answer");
-        assert_eq!((*mid).ty, core.i32_);
-        assert_eq!((*c2).ty, core.comment_);
-        assert_eq!(crate::identities::string::text((*c2).value.cast()), b"checked twice");
+        assert_eq!(dyad::ty(c1), core.comment_);
+        assert_eq!(crate::identities::string::text(dyad::value(c1).cast()), b"the answer");
+        assert_eq!(dyad::ty(mid), core.i32_);
+        assert_eq!(dyad::ty(c2), core.comment_);
+        assert_eq!(crate::identities::string::text(dyad::value(c2).cast()), b"checked twice");
     }
     let call = store.alloc_raw(func, std::ptr::null_mut());
     let mut rt = Runtime::new(&core, &mut store);
@@ -1731,11 +1732,11 @@ fn a_scope_of_only_prose_has_no_value() {
     let node = p.parse_expression().unwrap();
     // SAFETY: `node` is the scope just parsed; its value is `[exprs, op]`.
     unsafe {
-        assert_eq!((*node).ty, core.scope);
-        let arr = *((*node).value as *const DyadPtr);
+        assert_eq!(dyad::ty(node), core.scope);
+        let arr = *(dyad::value(node) as *const DyadPtr);
         let exprs = crate::identities::array::items(arr);
         assert_eq!(exprs.len(), 1, "the prose alone");
-        assert!(numtype::is_comment_type((*exprs[0]).ty));
+        assert!(numtype::is_comment_type(dyad::ty(exprs[0])));
     }
 }
 
@@ -2158,7 +2159,7 @@ fn a_deoptimized_or_recompiled_callee_is_reached_by_an_earlier_compiled_caller()
     // SAFETY: `root` is the sequence just parsed; its first two lines declare `g` and `f`.
     let (g, f) = unsafe {
         assert_eq!(rt.run(root).unwrap(), 42);
-        let items = crate::identities::array::items(*((*root).value as *const DyadPtr));
+        let items = crate::identities::array::items(*(dyad::value(root) as *const DyadPtr));
         let fn_of = |i: usize| declare::declared_of(ran::expr_of(&core, items[i]));
         (fn_of(0), fn_of(1))
     };
@@ -2319,13 +2320,13 @@ fn a_run_hands_a_bare_share_call_its_own_value_in_both_tiers() {
     };
     // SAFETY: a sequence node's first slot is its expression array; `f`'s body is its one line.
     let (call, spec) = unsafe {
-        let exprs = array::items(*((*seq).value as *const DyadPtr));
+        let exprs = array::items(*(dyad::value(seq) as *const DyadPtr));
         let call = ran::expr_of(&core, exprs[2]);
         let read::Read::Executable(read::Dispatch::Call(f)) = read::read_kind(&core, call) else {
             panic!("`f(5)` is a call");
         };
-        let body = *((*f).value as *const DyadPtr).add(FN_BODY);
-        let node = if (*body).ty == core.scope {
+        let body = *(dyad::value(f) as *const DyadPtr).add(FN_BODY);
+        let node = if dyad::ty(body) == core.scope {
             *scope::exprs_of(body).unwrap().last().unwrap()
         } else {
             body
@@ -2709,9 +2710,9 @@ fn declaration_binds_a_name_to_a_value() {
     };
     let bound = unsafe { declare::declared_of(decl) };
     unsafe {
-        assert_eq!((*decl).ty, core.declare_);
+        assert_eq!(dyad::ty(decl), core.declare_);
         assert_eq!(crate::binding::Binding::spelling(declare::binding_of(decl)), "x");
-        assert_eq!((*bound).ty, core.rational);
+        assert_eq!(dyad::ty(bound), core.rational);
         assert_eq!(rational::mold(bound), Some(5));
     }
 
@@ -2772,9 +2773,9 @@ fn pub_marks_the_names_binding() {
     };
     // SAFETY: `decl` is the declare node just parsed.
     unsafe {
-        assert_eq!((*decl).ty, core.declare_);
+        assert_eq!(dyad::ty(decl), core.declare_);
         let bound = declare::declared_of(decl);
-        assert_eq!((*bound).ty, core.rational);
+        assert_eq!(dyad::ty(bound), core.rational);
         assert_eq!(rational::mold(bound), Some(5));
     }
     let x_ref = {
@@ -2808,7 +2809,7 @@ fn pub_gates_a_typed_declaration() {
     };
     // SAFETY: `decl` is the declare node just parsed.
     unsafe {
-        assert_eq!((*decl).ty, core.declare_);
+        assert_eq!(dyad::ty(decl), core.declare_);
     }
     let x = use_of(&mut store, &mut trie, &core, "x");
     // SAFETY: `x` is the binding of `x`.
@@ -2835,9 +2836,9 @@ fn pub_gates_a_fn_declaration() {
     };
     // SAFETY: `decl` is the declare node just parsed; its binding is the fn.
     unsafe {
-        assert_eq!((*decl).ty, core.declare_);
+        assert_eq!(dyad::ty(decl), core.declare_);
         let f = declare::declared_of(decl);
-        assert_eq!((*f).ty, core.fn_type);
+        assert_eq!(dyad::ty(f), core.fn_type);
     }
     let double = use_of(&mut store, &mut trie, &core, "double");
     // SAFETY: `double` is the binding of `double`.
@@ -3117,7 +3118,7 @@ fn compiled_recursive_factorial_matches_the_interpreter() {
     unsafe { compile_fn(rt.store, &core.lower, &core, fact) }.unwrap();
     // SAFETY: reading the installed bcode slot of the fn node.
     unsafe {
-        let bcode = *((*fact).value as *const DyadPtr).add(FN_BCODE);
+        let bcode = *(dyad::value(fact) as *const DyadPtr).add(FN_BCODE);
         assert!(!bcode.is_null(), "bcode installed");
     }
 
@@ -3635,7 +3636,7 @@ fn both_literal_arithmetic_stays_rational() {
         p.parse_expression().unwrap()
     };
     // SAFETY: `node` is the folded literal just parsed.
-    unsafe { assert_eq!((*node).ty, core.rational, "1 + 2 stays a rational literal") };
+    unsafe { assert_eq!(dyad::ty(node), core.rational, "1 + 2 stays a rational literal") };
 }
 
 #[test]

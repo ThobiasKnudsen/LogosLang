@@ -18,7 +18,7 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{default_libcall_names, FuncId, Linkage, Module};
 
 use crate::dyad;
-use crate::dyad::{frame_ref, Dyad, DyadPtr, Global};
+use crate::dyad::{frame_ref, DyadPtr, Global};
 use crate::identities::numtype::{is_void_type, of_type_node, ArithOp, CmpOp, NumType};
 use crate::identities::read::{read_kind, Dispatch, Read};
 use crate::identities::{by_copy, numtype_of, operands, Operand};
@@ -988,8 +988,7 @@ impl Lowerer<'_, '_> {
                 // Read at the jump, never baked: a recompile of the callee reaches
                 // this caller, and a nulled entry sends it to the body-walk.
                 let leaf = self.node_addr(bcode);
-                let blob =
-                    self.load_at(self.ptr_ty, leaf, std::mem::offset_of!(Dyad, value) as i64);
+                let blob = self.load_at(self.ptr_ty, leaf, crate::dyad::VALUE_OFFSET);
                 let entry_at = crate::identities::callable::ENTRY_OFF as i64;
                 let entry = self.load_at(self.ptr_ty, blob, entry_at);
                 let zero = self.builder.ins().iconst(self.ptr_ty, 0);

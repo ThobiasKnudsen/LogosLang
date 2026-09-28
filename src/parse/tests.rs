@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use crate::dyad;
 
 /// A binding dyad for `identity`, leaked like the dyads below.
 fn rec(identity: DyadPtr) -> DyadPtr {
@@ -151,9 +152,9 @@ fn a_scope_carries_its_enclosing_scope() {
     // SAFETY: the nodes were just parsed into the store.
     unsafe {
         use crate::identities::scope::{exprs_of, parent_of};
-        assert_eq!((*outer).ty, types.scope);
+        assert_eq!(dyad::ty(outer), types.scope);
         let inner = exprs_of(outer).expect("a sequence")[2];
-        assert_eq!((*inner).ty, types.scope);
+        assert_eq!(dyad::ty(inner), types.scope);
         assert_eq!(parent_of(inner), outer);
         assert_eq!(parent_of(outer), core.root_scope);
         assert!(parent_of(core.root_scope).is_null(), "the arche encloses nothing");
@@ -465,7 +466,7 @@ fn the_tape_affordances_are_reachable_from_logos() {
         let (_, s) = go("t[0] = dyad (i32, 7)", &mut store, &mut trie, types, s);
         let c0 = *(*tape).at(0).unwrap();
         assert!(!c0.constructed, "a write replaces the pointer and nothing more");
-        assert_eq!((*c0.dyad).ty, core.i32_);
+        assert_eq!(dyad::ty(c0.dyad), core.i32_);
         let (v, s) = go("t[0]", &mut store, &mut trie, types, s);
         assert_eq!(v as DyadPtr, c0.dyad, "the element read yields the cell");
         let (_, s) = go("t.is_constructed[0] = true", &mut store, &mut trie, types, s);
@@ -485,7 +486,7 @@ fn the_tape_affordances_are_reachable_from_logos() {
         let (v, s) = go("t.is_constructed[0]", &mut store, &mut trie, types, s);
         assert_eq!(v, 0, "a spliced cell is unconstructed");
         let (v, s) = go("t[0]", &mut store, &mut trie, types, s);
-        assert_eq!((*(v as DyadPtr)).ty, core.binding_, "the spliced cell is a binding");
+        assert_eq!(dyad::ty(v as DyadPtr), core.binding_, "the spliced cell is a binding");
         assert_eq!(types.through(v as DyadPtr), core.rational, "the number pattern's");
         let (v, s) = go("t.spelling[0]", &mut store, &mut trie, types, s);
         assert_eq!(
@@ -495,7 +496,7 @@ fn the_tape_affordances_are_reachable_from_logos() {
         );
         let (_, s) = go("t[0] = dyad (i32, 9)", &mut store, &mut trie, types, s);
         let (v, s) = go("t[0]", &mut store, &mut trie, types, s);
-        assert_eq!((*(v as DyadPtr)).ty, core.i32_, "the written cell, now the center");
+        assert_eq!(dyad::ty(v as DyadPtr), core.i32_, "the written cell, now the center");
         assert_ne!(v as DyadPtr, c0.dyad);
         let (v, s) = go("t.spelling[0]", &mut store, &mut trie, types, s);
         assert_eq!(crate::identities::string::text(v as DyadPtr), b"9");
