@@ -1,0 +1,5 @@
+# `pub mut` names an importer may write; a plain `pub` name it may only read.
+pub pt := type (mut a := i32 ?, share bump := fn () -> void ( a = a + 1 )),
+pub mut q := pt(1),
+pub mut r := i32 1,
+pub s := i32 2,

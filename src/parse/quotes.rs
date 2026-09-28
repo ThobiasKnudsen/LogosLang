@@ -25,6 +25,7 @@ enum ImportState {
     Loading,
     /// The `pub` names in declaration order, each with the identity it
     /// resolves to inside the file.
+    /// `pubs`: each `pub` name's spelling and its binding in the file's scope.
     Loaded { pubs: Vec<(String, DyadPtr)>, text: &'static str },
 }
 
@@ -403,7 +404,7 @@ impl<'a> Parser<'a> {
     }
 
     /// The nested pass over an imported file: each statement pending, the
-    /// file run at its end, collecting the `pub` (name, identity) pairs. On
+    /// file run at its end, collecting the `pub` (name, binding) pairs. On
     /// failure the message is returned with `offset` at the stuck point.
     fn run_imported(&mut self) -> Result<Vec<(String, DyadPtr)>, String> {
         let mut pubs = Vec::new();
@@ -421,7 +422,7 @@ impl<'a> Parser<'a> {
                         .resolve(self.trie, &name)
                         .map_err(|_| format!("name `{name}` did not stay resolvable"))?;
                     if Binding::has_gate(resolved.binding, self.types.pub_) {
-                        pubs.push((name, resolved.identity));
+                        pubs.push((name, resolved.binding));
                     }
                 }
             }
@@ -436,30 +437,35 @@ impl<'a> Parser<'a> {
 
     /// Pub-only exposure, the ordinary visibility rule: a collision with a
     /// live name is the ordinary shadowing error. Idempotent where the name
-    /// already resolves to the same identity.
+    /// already resolves to the same identity. The importer's name is the file's
+    /// binding again: the same storage and the same gates (DESIGN ›Importing is
+    /// dropping the text there, wrapped in its own scope‹).
     fn publish(&mut self, pubs: &[(String, DyadPtr)]) -> Result<(), ParseError> {
         // A collision is the import's: reported where the import stands.
         let at = self.cx.pos;
-        for (name, identity) in pubs {
+        for (name, exported) in pubs {
+            // SAFETY: `exported` is a binding dyad the file's pass built.
+            let (b, identity) = unsafe {
+                let b = Binding::read(*exported);
+                (b, b.names(*exported))
+            };
             if let Ok(r) = self.cx.scopes.resolve(self.trie, name) {
                 // SAFETY: both are dyads from the store; a storage name is the same name when
                 // it is laid out over the same bytes.
                 let same = unsafe {
-                    r.identity == *identity
+                    r.identity == identity
                         || (self.types.frame_of(r.identity).is_some()
-                            && self.types.frame_of(r.identity) == self.types.frame_of(*identity))
+                            && self.types.frame_of(r.identity) == self.types.frame_of(identity))
                 };
                 if same {
                     continue;
                 }
             }
-            let binding = self.declare_name(name, *identity, at)?;
-            // SAFETY: `identity` is a dyad the file's pass built; a storage binding is aliased.
+            let binding = self.declare_name(name, identity, at)?;
+            // SAFETY: `binding` was just declared; `exported` as above.
             unsafe {
-                if self.types.frame_of(*identity).is_some()
-                    && dyad::ty(*identity) == self.types.binding_
-                {
-                    let b = Binding::read(*identity);
+                Binding::copy_gates(binding, *exported);
+                if b.is_storage() {
                     Binding::lay_out(binding, b.dyad, b.frame, b.offset);
                 }
             }

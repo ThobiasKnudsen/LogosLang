@@ -227,6 +227,15 @@ impl Binding {
         (*Self::fields(dyad)).gate = super::array::build(store, array_ty, &items);
     }
 
+    /// The gate set of another binding, the array shared: no gate is added after a
+    /// declaration closes, and every edit builds a new array.
+    ///
+    /// # Safety
+    /// As `Binding::read`, for both.
+    pub unsafe fn copy_gates(dyad: DyadPtr, from: DyadPtr) {
+        (*Self::fields(dyad)).gate = (*Self::fields(from)).gate;
+    }
+
     /// # Safety
     /// As `add_gate`.
     pub unsafe fn remove_gate(store: &mut Store, array_ty: DyadPtr, dyad: DyadPtr, gate: DyadPtr) {

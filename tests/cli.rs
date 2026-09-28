@@ -2366,6 +2366,16 @@ fn line(src: &str) -> String {
 }
 
 #[test]
+fn an_imported_pub_name_keeps_its_gates() {
+    // The importer's name is the file's binding again, gates included.
+    assert_eq!(line("import ./tests/fixtures/gated.logos, r = 9, r"), "9");
+    assert_eq!(line("import ./tests/fixtures/gated.logos, q.bump(), q.a"), "2");
+    let (code, _, stderr) = run_line("import ./tests/fixtures/gated.logos, s = 3, s");
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("`s` is not `mut`"), "stderr: {stderr}");
+}
+
+#[test]
 fn an_import_tail_runs_once() {
     assert_eq!(line("import ./tests/fixtures/counter.logos, c@"), "1");
     // An import is a statement: nothing echoes, and the second import runs nothing.
