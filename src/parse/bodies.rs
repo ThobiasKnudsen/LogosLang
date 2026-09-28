@@ -1376,6 +1376,64 @@ impl<'a> Parser<'a> {
         Ok(last)
     }
 
+    /// `immediate x` (DESIGN ›`immediate x` runs the expression to its right as soon as
+    /// it is parsed, and stands as its value‹): the operand is read as a `share` value is,
+    /// once at the definition, runs after everything before it, and its value is the cell.
+    pub(crate) fn construct_immediate(
+        &mut self,
+        tape: &mut ParsingTape,
+    ) -> Result<Constructed, ParseError> {
+        let saved_once = self.cx.once_at.replace(self.cx.frames.len());
+        let saved_depth = std::mem::replace(&mut self.cx.runtime_depth, 0);
+        let operand = self.parse_expression();
+        self.cx.once_at = saved_once;
+        self.cx.runtime_depth = saved_depth;
+        // SAFETY: the operand was just parsed into this parser's store.
+        let value = unsafe { self.immediate_value(operand?) }?;
+        tape.place(value);
+        Ok(Constructed::Placed)
+    }
+
+    /// What an `immediate` operand stands as: itself when nothing runs, else what the
+    /// graph can hold of its result: a number, a bool, a type or a node.
+    ///
+    /// # Safety
+    /// `node` must be a reduced dyad this parser built into its store.
+    unsafe fn immediate_value(&mut self, node: DyadPtr) -> Result<DyadPtr, ParseError> {
+        use crate::identities::numtype::NumType;
+        use crate::identities::read::{read_kind, Dispatch, Read};
+        use crate::identities::{numtype_of, Operand};
+        let types = self.types;
+        let kind = read_kind(types, node);
+        let place = types.is_storage(node);
+        if !matches!(kind, Read::Executable(_)) && !place {
+            return Ok(node);
+        }
+        if let Read::Executable(Dispatch::Call(f)) = kind {
+            if self.returns_type(f) {
+                return self.eval_type_call(node);
+            }
+        }
+        let bool_ = is_bool_result(types, node);
+        let nt = match numtype_of(types, node) {
+            Operand::Concrete(nt) => nt,
+            Operand::Literal => NumType::I32,
+            _ if bool_ => NumType::I32,
+            _ => return Err(ParseError::ImmediateNotHeld),
+        };
+        self.drain()?;
+        let bits = self.run_on_pass(node).map_err(ParseError::Run)?;
+        if bool_ {
+            let bool_ty = types.bool_;
+            return Ok(crate::identities::bool_mod::literal_node(
+                self.rt.store,
+                bool_ty,
+                bits != 0,
+            ));
+        }
+        Ok(self.scalar_value(nt, bits))
+    }
+
     /// The end of the program: the root scope's own run (DESIGN ›The scope's
     /// constructor is the driver‹), yielding the tail it ran.
     pub fn finish(&mut self) -> Result<Option<(DyadPtr, i64)>, ParseError> {

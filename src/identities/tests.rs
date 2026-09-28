@@ -2931,17 +2931,14 @@ fn a_shared_name_at_top_level_is_one_place_for_the_run() {
         ),
         24
     );
-    assert_eq!(
-        script_parse_err("for i in 0..3 ( share k := i, k )"),
-        ParseError::ShareInitReadsUnmade
-    );
+    assert_eq!(script_parse_err("for i in 0..3 ( share k := i, k )"), ParseError::OnceReadsUnmade);
     assert_eq!(
         script_parse_err("for i in 0..3 ( x := i32 1, share k := x, k )"),
-        ParseError::ShareInitReadsUnmade
+        ParseError::OnceReadsUnmade
     );
     assert_eq!(
         script_parse_err("mut c := i32 1,\nif c == 1 ( x := i32 5, share k := x, k )"),
-        ParseError::ShareInitReadsUnmade
+        ParseError::OnceReadsUnmade
     );
 }
 
@@ -2981,11 +2978,11 @@ fn a_shared_name_in_a_function_is_one_place_across_its_calls() {
     ));
     assert_eq!(
         script_parse_err("f := fn (k := i32 ?) -> i32 ( share n := k, n )"),
-        ParseError::ShareInitReadsUnmade
+        ParseError::OnceReadsUnmade
     );
     assert_eq!(
         script_parse_err("f := fn () -> i32 ( x := i32 1, share n := x, n )"),
-        ParseError::ShareInitReadsUnmade
+        ParseError::OnceReadsUnmade
     );
 }
 

@@ -48,6 +48,7 @@ pub mod here;
 mod hole;
 #[path = "if.rs"]
 mod if_mod;
+mod immediate;
 pub mod import;
 pub(crate) mod instance;
 pub mod lex;
@@ -325,6 +326,7 @@ impl Core {
         let this = this::register(&mut cx, &callables);
         let lex = lex::register(&mut cx, &callables);
         let print = print::register(&mut cx, &callables);
+        immediate::register(&mut cx);
         let error = error::register(&mut cx, &callables);
         let run_body = run_body::register(&mut cx);
         let by_copy = by_copy::register(&mut cx, &callables);

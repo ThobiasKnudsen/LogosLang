@@ -409,9 +409,9 @@ impl<'a> Parser<'a> {
     pub(super) unsafe fn check_capture(&self, node: DyadPtr) -> Result<(), ParseError> {
         let node = self.types.through(node);
         if let Some((crate::binding::Frame::Call(f), _)) = self.types.frame_of(node) {
-            if let Some(at) = self.cx.share_init {
+            if let Some(at) = self.cx.once_at {
                 if self.cx.frames[..at].iter().any(|open| open.frame == f) {
-                    return Err(ParseError::ShareInitReadsUnmade);
+                    return Err(ParseError::OnceReadsUnmade);
                 }
             }
             if self.cx.frames.last().is_none_or(|open| open.frame != f) {
@@ -421,12 +421,12 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// A `share` initializer runs at parse, where a name of the loop or
-    /// branch around it has no value yet.
+    /// A value made once (`share`, `immediate`) runs at parse, where a name of the
+    /// loop or branch around it has no value yet.
     fn check_made(&self, binding: DyadPtr) -> Result<(), ParseError> {
         // SAFETY: `binding` is the binding dyad the resolver returned for the name.
-        if self.cx.share_init.is_some() && unsafe { Binding::read(binding) }.unmade {
-            return Err(ParseError::ShareInitReadsUnmade);
+        if self.cx.once_at.is_some() && unsafe { Binding::read(binding) }.unmade {
+            return Err(ParseError::OnceReadsUnmade);
         }
         Ok(())
     }
