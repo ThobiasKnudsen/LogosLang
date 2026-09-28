@@ -763,8 +763,7 @@ pub(crate) unsafe fn constant_number(types: &Core, cell: DyadPtr, ty: DyadPtr) -
         return super::rational::mold_to(cell, nt);
     }
     let v = dyad::value(cell);
-    (dyad::ty(cell) == ty && !v.is_null() && !crate::dyad::is_place(v))
-        .then(|| super::numtype::read_scalar(ty, v as *const u8))
+    (dyad::ty(cell) == ty && !v.is_null()).then(|| super::numtype::read_scalar(ty, v as *const u8))
 }
 
 /// Checked again here, as `run_cell_value` is.

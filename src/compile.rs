@@ -18,7 +18,7 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{default_libcall_names, FuncId, Linkage, Module};
 
 use crate::dyad;
-use crate::dyad::{frame_ref, DyadPtr, Global};
+use crate::dyad::DyadPtr;
 use crate::identities::numtype::{is_void_type, of_type_node, ArithOp, CmpOp, NumType};
 use crate::identities::read::{read_kind, Dispatch, Read};
 use crate::identities::{by_copy, numtype_of, operands, Operand};
@@ -248,8 +248,7 @@ impl Lowerer<'_, '_> {
     unsafe fn frame_offset(&self, node: DyadPtr) -> Option<usize> {
         match self.types.frame_of(node) {
             Some((crate::binding::Frame::Call(_), off)) => Some(off),
-            Some((crate::binding::Frame::Root, _)) => None,
-            None => frame_ref(dyad::value(node)).map(|(_, off)| off),
+            Some((crate::binding::Frame::Root, _)) | None => None,
         }
     }
 
@@ -261,41 +260,18 @@ impl Lowerer<'_, '_> {
             Some((crate::binding::Frame::Root, off)) => {
                 let at = std::mem::offset_of!(crate::run::Context, root) as i64;
                 let base = self.load_at(self.ptr_ty, self.ctx, at);
-                return Ok(self.builder.ins().iadd_imm(base, off as i64));
+                Ok(self.builder.ins().iadd_imm(base, off as i64))
             }
+            // A call-frame place with no frame under it: the checked error the interpreter
+            // gives for the same shape, not a panic.
             Some((crate::binding::Frame::Call(_), off)) => {
-                let Some(slot) = self.frame_slot else {
-                    return Err(CompileError::NoActivation);
-                };
-                return Ok(self.builder.ins().stack_addr(self.ptr_ty, slot, off as i32));
-            }
-            None => {}
-        }
-        match frame_ref(dyad::value(node)) {
-            Some((_, off)) => {
-                // A frame place with no frame under it: the checked error the
-                // interpreter gives for the same shape, not a panic.
                 let Some(slot) = self.frame_slot else {
                     return Err(CompileError::NoActivation);
                 };
                 Ok(self.builder.ins().stack_addr(self.ptr_ty, slot, off as i32))
             }
-            // An arena place is reached through the context; an absolute place and
-            // a literal's blob are immediates.
-            None => {
-                let v = dyad::value(node);
-                Ok(match crate::dyad::global_ref(v) {
-                    Some(Global::Arena(off)) => {
-                        let at = std::mem::offset_of!(crate::run::Context, root) as i64;
-                        let base = self.load_at(self.ptr_ty, self.ctx, at);
-                        self.builder.ins().iadd_imm(base, off as i64)
-                    }
-                    Some(Global::Address(addr)) => {
-                        self.builder.ins().iconst(self.ptr_ty, addr as usize as i64)
-                    }
-                    None => self.builder.ins().iconst(self.ptr_ty, v as usize as i64),
-                })
-            }
+            // A literal's own bytes: an immediate, since literals and the code are both per-run.
+            None => Ok(self.builder.ins().iconst(self.ptr_ty, dyad::value(node) as usize as i64)),
         }
     }
 

@@ -7,7 +7,7 @@
 //! DESIGN ›The callable ground is `@exec`‹.
 
 use crate::dyad;
-use crate::dyad::{frame_ref, Dyad, DyadPtr, Global};
+use crate::dyad::{Dyad, DyadPtr};
 use crate::identities::by_copy;
 use crate::identities::read::{read_kind, Dispatch, Read};
 use crate::parse::{fn_frame_size, FN_BCODE, FN_BODY, FN_OUTPUT};
@@ -698,21 +698,12 @@ impl<'a> Runtime<'a> {
     pub(crate) unsafe fn place_addr(&self, node: DyadPtr) -> Option<*mut u8> {
         let node = self.through(node);
         match self.types.frame_of(node) {
-            Some((crate::binding::Frame::Root, off)) => return Some(self.store.arena_at(off)),
+            Some((crate::binding::Frame::Root, off)) => Some(self.store.arena_at(off)),
             Some((crate::binding::Frame::Call(_), off)) => {
-                return self.in_call().then(|| self.frame_base().add(off));
+                self.in_call().then(|| self.frame_base().add(off))
             }
-            None => {}
-        }
-        match frame_ref(dyad::value(node)) {
-            // The depth is a parse-time capture guard; only the offset matters here.
-            Some((_, off)) => self.in_call().then(|| self.frame_base().add(off)),
-            // Global storage carries its own tag; an untagged value is a literal's blob.
-            None => Some(match crate::dyad::global_ref(dyad::value(node)) {
-                Some(Global::Address(addr)) => addr,
-                Some(Global::Arena(off)) => self.store.arena_at(off),
-                None => dyad::value(node),
-            }),
+            // A literal's own bytes.
+            None => Some(dyad::value(node)),
         }
     }
 

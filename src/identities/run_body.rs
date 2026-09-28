@@ -167,7 +167,6 @@ pub(crate) unsafe fn unfilled_field(node: DyadPtr) -> Option<usize> {
     if meta::kind_of(ty) != Some(meta::RECORD_TAG)
         || meta::run_body_of(ty).is_null()
         || slots.is_null()
-        || crate::dyad::is_place(dyad::value(node))
     {
         return None;
     }

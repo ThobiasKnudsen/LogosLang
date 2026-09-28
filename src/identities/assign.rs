@@ -187,12 +187,7 @@ pub(super) fn build_store(
     }
     // A number into a node box would be followed as an address by every later reader.
     // SAFETY: `lhs_d`/`rhs` are reduced dyads from the store.
-    let (target, marked) = unsafe {
-        (
-            read_kind(types, lhs_d),
-            types.is_storage(lhs_d) || crate::dyad::is_place(dyad::value(lhs_d)),
-        )
-    };
+    let (target, marked) = unsafe { (read_kind(types, lhs_d), types.is_storage(lhs_d)) };
     match target {
         Read::Container(t) if t == types.type_ || t == types.dyad_ => {
             // SAFETY: as above.
@@ -265,7 +260,7 @@ pub(super) fn build_store(
     }
     // SAFETY: as above.
     let rhs = unsafe {
-        if dyad::ty(rhs_d) == types.rational && !crate::dyad::is_place(dyad::value(rhs_d)) {
+        if dyad::ty(rhs_d) == types.rational {
             let nt = of_type_node(lhs_type);
             commit_if_literal(store, types, rhs, &Operand::Literal, lhs_type, nt)?
         } else {

@@ -89,7 +89,6 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         // run, which is data and was built whole at parse.
         if !dyad::ty(declared).is_null()
             && !rt.types().is_storage(declared)
-            && !crate::dyad::is_place(dyad::value(declared))
             && super::read::read_kind(rt.types(), declared) != super::read::Read::Aggregate
         {
             rt.run(declared)?;

@@ -954,13 +954,9 @@ impl<'a> Parser<'a> {
             use crate::identities::numtype;
             // SAFETY: `step` is the committed literal just built; `logos` a numtype node.
             let (bits, nt) = unsafe {
-                // A marked place here would mean the literal check above let a
-                // variable through, and reading its tagged offset as an address is the crash class the reading rule ends.
+                // Storage here would mean the literal check above let a variable through.
                 use crate::identities::read::{read_kind, Read};
-                if !matches!(read_kind(types, step), Read::Scalar(_))
-                    || types.is_storage(step)
-                    || crate::dyad::is_place(dyad::value(step))
-                {
+                if !matches!(read_kind(types, step), Read::Scalar(_)) || types.is_storage(step) {
                     return Err(ParseError::BadStep);
                 }
                 (

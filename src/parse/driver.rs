@@ -390,8 +390,7 @@ impl<'a> Parser<'a> {
             let d = self.types.through(first);
             let t = self.types.type_of(d);
             !d.is_null()
-                && ((t == self.types.type_ || t == self.types.dyad_)
-                    && (self.types.is_storage(d) || crate::dyad::is_place(dyad::value(d)))
+                && ((t == self.types.type_ || t == self.types.dyad_) && self.types.is_storage(d)
                     || !crate::identities::is_type_value(self.types, d)
                         && crate::identities::yields_type(self.types, d))
         };
@@ -459,11 +458,7 @@ impl<'a> Parser<'a> {
             let value = dyad::value(id);
             let wakes = |t: DyadPtr| meta::is_record_type(t) && !meta::constructor_of(t).is_null();
             // A node of a type with a run stands for the value its run yields.
-            if wakes(ty)
-                && meta::run_body_of(ty).is_null()
-                && !value.is_null()
-                && (!crate::dyad::is_place(value) || meta::is_node_valued(ty, self.types.fn_type))
-            {
+            if wakes(ty) && meta::run_body_of(ty).is_null() && !value.is_null() {
                 return Some(ty);
             }
             if ty == self.types.fn_type || ty == self.types.type_ {
@@ -550,14 +545,9 @@ impl<'a> Parser<'a> {
             // SAFETY: a constructed cell's dyad is null or a node from the store.
             let record = !cell.dyad.is_null()
                 && unsafe { crate::identities::meta::is_record_type(dyad::ty(cell.dyad)) };
-            // A node a parse placed, of any type, as opposed to a place or a call's result.
+            // A node a parse placed, of any type, as opposed to a name or a call's result.
             // SAFETY: `record` saw a node from the store.
-            let built = logos
-                && record
-                && unsafe {
-                    !self.types.is_storage(cell.dyad)
-                        && !crate::dyad::is_place(dyad::value(cell.dyad))
-                };
+            let built = logos && record && unsafe { !self.types.is_storage(cell.dyad) };
             if logos && record && (instance || built) {
                 let spelling = cell.spelling().to_string();
                 // SAFETY: the node is the one `run_logos_ctor` minted for `id`, `[field…, null, spec]`.

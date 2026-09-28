@@ -232,11 +232,7 @@ impl<'a> Parser<'a> {
         use crate::identities::{array, meta};
         let ty = dyad::ty(node);
         let value = dyad::value(node);
-        if ty.is_null()
-            || value.is_null()
-            || self.types.is_storage(node)
-            || crate::dyad::is_place(value)
-        {
+        if ty.is_null() || value.is_null() || self.types.is_storage(node) {
             return Ok(None);
         }
         let slot = match meta::kind_of(ty) {
@@ -425,8 +421,7 @@ impl<'a> Parser<'a> {
                 }
                 // A bare parameter holding a bracket a call was handed: its lines, read as a
                 // tape cell's are, when the body runs.
-                let bare = self.types.storage_type(lhs) == Some(std::ptr::null_mut())
-                    || (dyad::ty(lhs).is_null() && crate::dyad::is_place(dyad::value(lhs)));
+                let bare = self.types.storage_type(lhs) == Some(std::ptr::null_mut());
                 if bare && name == "dyads" {
                     let Some(i) = key else {
                         return Ok((tape::build_bracket_dyads(store, types, lhs), 0));
@@ -601,9 +596,8 @@ impl<'a> Parser<'a> {
                 0,
             ));
         }
-        // The access is a place: the field's offset inside the record's storage, read through
-        // the record's binding and the field's; on a marked place the offset is folded into
-        // the place now, `wrapping_add` keeping a frame-tagged value a valid tagged offset.
+        // A `share` member of the record's type, or a field: the field's offset inside the
+        // record's storage, read through the record's binding and the field's.
         let storage = self.types.is_storage(lhs);
         let record_logos = self.types.type_of(lhs);
         if record_logos.is_null()
@@ -612,7 +606,7 @@ impl<'a> Parser<'a> {
         {
             return Err(ParseError::UnsupportedOperands);
         }
-        let (field, offset, binding) = match self.resolve_field(record_logos, nstart, nlen) {
+        let (_, _, binding) = match self.resolve_field(record_logos, nstart, nlen) {
             Ok(found) => found,
             Err(e) => {
                 let name = &self.cx.source[nstart..nstart + nlen];
@@ -624,7 +618,7 @@ impl<'a> Parser<'a> {
                         self.check_receiver_write(&left, member)?;
                         // A record laid out in bytes is handed on as the address of its bytes,
                         // any other value by a `dyad` view, as a `dyad ?` parameter takes a node.
-                        let view = if storage || crate::dyad::is_place(dyad::value(lhs)) {
+                        let view = if storage {
                             crate::identities::instance::layout(record_logos)?;
                             let types = self.types;
                             crate::identities::by_copy::build_out(self.rt.store, types, lhs)
@@ -640,12 +634,12 @@ impl<'a> Parser<'a> {
                 return Ok((member, 0));
             }
         };
-        let node = if storage {
-            crate::identities::instance::build_field(self.rt.store, self.types, lhs, binding)
-        } else {
-            let addr = dyad::value(lhs).wrapping_add(offset);
-            self.rt.store.alloc_raw(dyad::ty(field), addr)
-        };
+        // A field is bytes inside storage; a node's fields are read above, through its slots.
+        if !storage {
+            return Err(ParseError::UnsupportedOperands);
+        }
+        let node =
+            crate::identities::instance::build_field(self.rt.store, self.types, lhs, binding);
         // Every binding along the path grants a write into the place: the
         // name the path starts at, then each field.
         let mut path = self.path_of(&left);
@@ -967,8 +961,7 @@ impl<'a> Parser<'a> {
             let placed = matches!(
                 read_kind(self.types, node),
                 Read::Scalar(_) | Read::Pointer(_) | Read::Aggregate
-            ) && (self.types.is_storage(node)
-                || crate::dyad::is_place(dyad::value(node)));
+            ) && self.types.is_storage(node);
             if !placed {
                 return Err(ParseError::BadAddressOf);
             }
@@ -1220,7 +1213,6 @@ impl<'a> Parser<'a> {
         let stored = dyad::value(value);
         if stored.is_null()
             || types.is_storage(value)
-            || crate::dyad::is_place(stored)
             || !matches!(read::read_kind(types, value), read::Read::Pointer(p) if p == types.dyad_)
         {
             return None;

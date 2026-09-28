@@ -2,21 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The reading rule: how a node's value is read, decided once in `read_kind`, which
-//! every reader asks. What decides it: the record hop, then `fn` (the one identity no
-//! record can carry), then the type's record kind byte, then the node's place mark.
-//! DESIGN ›The dyad's read surface‹.
+//! every reader asks. What decides it: the binding hop, storage by its declared type,
+//! then `fn` (the one identity no record can carry), then the type's record kind byte.
+//! DESIGN ›The dyad's read surface‹, ›A scope lays out its declarations…‹.
 
 use super::callable;
 use super::meta;
 use super::numtype::{self, NumType, ADDR_TAG, COMMENT_TAG, STRING_TAG, VOID_TAG};
 use crate::dyad;
-use crate::dyad::{is_place, DyadPtr};
+use crate::dyad::DyadPtr;
 use crate::Core;
 
 /// `Copy` and register-sized: it is asked on every interpreted value read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Read {
-    /// Load at the type's width; the place mark does not matter, every case holds storage.
+    /// Load at the type's width.
     Scalar(NumType),
     /// Eight bytes holding an address; the pointee is here for `@` and `=` to consult.
     Pointer(DyadPtr),
@@ -71,10 +71,9 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
     }
     let op = dyad::ty(node);
     let value = dyad::value(node);
-    let place = is_place(value);
-    // A bare parameter's slot holds the container its call bound; a hole or marker holds nothing.
+    // A hole or a fresh spelling holds nothing.
     if op.is_null() {
-        return if place { Read::Container(op) } else { Read::Undefined };
+        return Read::Undefined;
     }
     // Before any record read: a function node's value is an operand array, not a record.
     if dyad::ty(op) == types.fn_type {
@@ -88,30 +87,18 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
         // The roots are back-filled in `Core::build`, and holes never stand in a type
         // slot, so no reachable node is classified by a type with no record.
         debug_assert!(!dyad::value(op).is_null(), "a type with no record stands in a type slot");
-        return if place { Read::Container(op) } else { Read::Undefined };
+        return Read::Undefined;
     };
     match kind {
         k if k < VOID_TAG => Read::Scalar(numtype::of_type_node(op)),
         ADDR_TAG => Read::Pointer(numtype::pointee_of(op)),
-        meta::TYPEREC_TAG => {
-            if place {
-                Read::Container(op)
-            } else {
-                Read::Identity
-            }
-        }
-        meta::DYAD_TAG => {
-            if place {
-                Read::Container(op)
-            } else {
-                Read::Address
-            }
-        }
+        meta::TYPEREC_TAG => Read::Identity,
+        meta::DYAD_TAG => Read::Address,
         meta::RECORD_TAG => {
             if meta::is_node_valued(op, types.fn_type) {
-                return if place { Read::Container(op) } else { Read::Node };
+                return Read::Node;
             }
-            if !place && !meta::run_body_of(op).is_null() {
+            if !meta::run_body_of(op).is_null() {
                 // The node runs as the function built for its field-type set,
                 // and not at all until one exists.
                 let spec = super::run_body::spec_of(node);
@@ -125,9 +112,6 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
             }
         }
         meta::TUPLE_TAG | meta::LIST_TAG => {
-            if place {
-                return Read::Container(op);
-            }
             let Some(idx) = meta::op_slot_of(op) else {
                 return Read::Executable(Dispatch::None);
             };
@@ -142,21 +126,9 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
                 Read::Executable(Dispatch::None)
             }
         }
-        meta::FRACTION_TAG => {
-            if place {
-                Read::Rational
-            } else {
-                Read::Literal
-            }
-        }
-        COMMENT_TAG | VOID_TAG => {
-            if place {
-                Read::Container(op)
-            } else {
-                Read::Unit
-            }
-        }
-        // The rest have no whole-value read; a place of one holds a container.
+        meta::FRACTION_TAG => Read::Literal,
+        COMMENT_TAG | VOID_TAG => Read::Unit,
+        // The rest have no whole-value read.
         _ => {
             debug_assert!(matches!(
                 kind,
@@ -166,11 +138,7 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
                     | meta::CONVENTION_TAG
                     | meta::TOKEN_TAG
             ));
-            if place {
-                Read::Container(op)
-            } else {
-                Read::Opaque
-            }
+            Read::Opaque
         }
     }
 }
@@ -340,7 +308,7 @@ mod tests {
             assert_eq!(read_kind(types, param("b")), Read::Container(std::ptr::null_mut()));
             assert_eq!(types.frame_of(param("b")), Some((crate::binding::Frame::Call(f), 4)));
             assert_eq!(read_kind(types, exprs[7]), Read::Scalar(NumType::I32));
-            assert!(!is_place(dyad::value(exprs[7])), "a literal's storage carries no mark");
+            assert!(!types.is_storage(exprs[7]), "a literal is no storage");
             assert_eq!(read_kind(types, exprs[8]), Read::Literal);
             assert_eq!(read_kind(types, exprs[9]), Read::Opaque);
             assert_eq!(read_kind(types, exprs[10]), Read::Unit);
@@ -444,6 +412,28 @@ mod tests {
                 assert_eq!(Binding::read(r.binding).offset, at, "{name}");
                 assert_eq!(Binding::read(r.binding).frame, core.binding_, "{name}");
             }
+        }
+    }
+
+    #[test]
+    fn a_value_word_is_never_read_for_a_mark() {
+        // Bits 63, 62 and 47 once marked a frame, a global and an arena place; a node whose
+        // value word carries them is read by its type alone, so the word is never followed.
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let bits: *mut u8 = std::ptr::without_provenance_mut((1 << 63) | (1 << 62) | (1 << 47));
+        let i64_ = core.numtypes[NumType::I64 as usize];
+        let mut marked = |ty: DyadPtr| store.alloc_raw(ty, bits);
+        let (n, t, d, r) =
+            (marked(i64_), marked(core.type_), marked(core.dyad_), marked(core.rational));
+        // SAFETY: the nodes were just minted; `read_kind` reads only their type slots.
+        unsafe {
+            assert_eq!(read_kind(&core, n), Read::Scalar(NumType::I64));
+            assert_eq!(read_kind(&core, t), Read::Identity);
+            assert_eq!(read_kind(&core, d), Read::Address);
+            assert_eq!(read_kind(&core, r), Read::Literal);
+            assert!(!core.is_storage(n) && !core.is_storage(t));
         }
     }
 

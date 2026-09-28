@@ -617,12 +617,7 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     }
     let logos = dyad::ty(node);
     if logos == types.rational {
-        // A place of rational type holds a run-time rational, which no machine type takes silently.
-        return if crate::dyad::is_place(dyad::value(node)) {
-            Operand::NonNumeric
-        } else {
-            Operand::Literal
-        };
+        return Operand::Literal;
     }
     // An arithmetic result has its left operand's type; the op slot holds the concrete op, not
     // a type.
@@ -1386,7 +1381,7 @@ unsafe fn commit_tail(
 ) -> Result<DyadPtr, ParseError> {
     walk_tail(types, node, &mut |leaf| {
         refuse_statement(types, leaf)?;
-        if dyad::ty(leaf) == types.rational && !crate::dyad::is_place(dyad::value(leaf)) {
+        if dyad::ty(leaf) == types.rational {
             let nt = numtype::of_type_node(output);
             let bits = rational::mold_to(leaf, nt).ok_or(ParseError::UncomputableLiteral)?;
             let value = store.alloc_bytes(&bits.to_ne_bytes()[..nt.bytes()]);

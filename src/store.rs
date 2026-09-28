@@ -234,7 +234,7 @@ impl Store {
         ptr
     }
 
-    /// `width` zeroed bytes in the arena: the offset a place carries (`dyad::arena_place`).
+    /// `width` zeroed bytes in the arena: the offset a program-frame name is laid out at.
     pub fn arena_alloc(&mut self, width: usize) -> usize {
         self.arena.bump(width)
     }

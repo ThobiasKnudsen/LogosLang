@@ -5,7 +5,6 @@
 //! cursor the constructors read with.
 
 use super::*;
-use crate::dyad;
 
 /// The lex step the driver and `lex «…»` share: a fresh spelling mints its
 /// dyad with both slots null into `store`, the pattern's construction done at
@@ -156,12 +155,7 @@ impl<'a> Parser<'a> {
                         None => return id,
                     }
                 }
-                Some((Frame::Call(_), _)) => return id,
-                None => match crate::dyad::global_ref(dyad::value(id)) {
-                    Some(crate::dyad::Global::Address(addr)) => addr,
-                    Some(crate::dyad::Global::Arena(off)) => self.rt.store.arena_at(off),
-                    None => return id,
-                },
+                Some((Frame::Call(_), _)) | None => return id,
             };
             let held = std::ptr::read_unaligned(addr as *const DyadPtr);
             if held.is_null() || !self.rt.store.contains(held) {

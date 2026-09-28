@@ -5,6 +5,22 @@ use super::*;
 use crate::dyad;
 
 /// A binding dyad for `identity`, leaked like the dyads below.
+/// A name of the program frame holding the tape's handle, as the parser lays a
+/// `parsing_tape` place out.
+fn tape_name(store: &mut Store, core: &Core, tape: *mut ParsingTape) -> DyadPtr {
+    let offset = store.arena_alloc(8);
+    // SAFETY: the eight arena bytes were just taken.
+    unsafe { std::ptr::write_unaligned(store.arena_at(offset) as *mut u64, tape as usize as u64) };
+    let rec = Binding::alloc(
+        store,
+        core.binding_,
+        Binding::new(std::ptr::null_mut(), core.root_scope, std::ptr::null_mut()),
+    );
+    // SAFETY: `rec` was just built into the store.
+    unsafe { Binding::lay_out(rec, core.tape.parsing_tape, core.root_scope, offset) };
+    rec
+}
+
 fn rec(identity: DyadPtr) -> DyadPtr {
     rec_in(identity, std::ptr::null_mut())
 }
@@ -335,7 +351,6 @@ fn a_logos_constructor_runs_when_its_identity_appears() {
 #[test]
 fn a_constructor_writes_a_cell_from_logos() {
     // The write and the flag are two lines: `t[0] = g` repoints, `t.is_constructed[0] = true` marks.
-    use crate::binding::Binding;
     use crate::identities::Core;
     use crate::regex_trie::RegexTrie;
     use crate::store::Store;
@@ -358,14 +373,7 @@ fn a_constructor_writes_a_cell_from_logos() {
     // SAFETY: `tape` is a live box the natives write through.
     unsafe {
         let plus = (*tape).at(0).unwrap().dyad;
-        let storage = store.alloc_bytes(&(tape as usize as u64).to_ne_bytes());
-        // Marked as storage, as the parser marks every place it allocates.
-        let t = store.alloc_raw(core.tape.parsing_tape, crate::dyad::global_place(storage));
-        let rec = Binding::alloc(
-            &mut store,
-            core.binding_,
-            Binding::new(t, core.root_scope, std::ptr::null_mut()),
-        );
+        let rec = tape_name(&mut store, &core, tape);
         scopes.declare(&mut trie, "t", rec).unwrap();
 
         let (v, s) = go("t[0]:type", &mut store, &mut trie, types, scopes);
@@ -404,7 +412,6 @@ fn a_constructor_writes_a_cell_from_logos() {
 
 #[test]
 fn the_tape_affordances_are_reachable_from_logos() {
-    use crate::binding::Binding;
     use crate::identities::Core;
     use crate::regex_trie::RegexTrie;
     use crate::store::Store;
@@ -430,14 +437,7 @@ fn the_tape_affordances_are_reachable_from_logos() {
         let plus = (*tape).at(1).unwrap().dyad;
         assert!(!(*tape).at(1).unwrap().constructed, "a lexed cell is unconstructed");
 
-        let storage = store.alloc_bytes(&(tape as usize as u64).to_ne_bytes());
-        // Marked as storage, as the parser marks every place it allocates.
-        let t = store.alloc_raw(core.tape.parsing_tape, crate::dyad::global_place(storage));
-        let rec = Binding::alloc(
-            &mut store,
-            core.binding_,
-            Binding::new(t, core.root_scope, std::ptr::null_mut()),
-        );
+        let rec = tape_name(&mut store, &core, tape);
         scopes.declare(&mut trie, "t", rec).unwrap();
 
         let (v, s) = go("t.is_constructed[1]", &mut store, &mut trie, types, scopes);

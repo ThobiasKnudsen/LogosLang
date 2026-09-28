@@ -291,7 +291,6 @@ impl<'a> Parser<'a> {
                                 crate::identities::read::read_kind(self.types, held),
                                 crate::identities::read::Read::Scalar(_)
                             ) && !self.types.is_storage(held)
-                                && !crate::dyad::is_place(dyad::value(held))
                         }
                     {
                         // SAFETY: as above.
@@ -1153,15 +1152,11 @@ impl<'a> Parser<'a> {
             let slot = types.through(*slots.add(i));
             let comptime = match read_kind(types, slot) {
                 Read::Literal => true,
-                Read::Scalar(_) => {
-                    !types.is_storage(slot) && !crate::dyad::is_place(dyad::value(slot))
-                }
+                Read::Scalar(_) => !types.is_storage(slot),
                 // A literal handed on by `rational_number`, or into a rational field.
                 Read::Executable(_) if dyad::ty(slot) == types.by_copy.out => {
                     let expr = types.through(*(dyad::value(slot) as *const DyadPtr));
-                    dyad::ty(expr) == types.rational
-                        && !types.is_storage(expr)
-                        && !crate::dyad::is_place(dyad::value(expr))
+                    dyad::ty(expr) == types.rational && !types.is_storage(expr)
                 }
                 _ => false,
             };
