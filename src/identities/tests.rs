@@ -683,17 +683,15 @@ fn a_whole_file_runs_top_to_bottom_like_a_script() {
     let (mut store, mut trie, core) = new_core();
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
-    let root = {
-        let mut p = Parser::new(
-            "double := fn (x := i32 ?) -> i32 ( x + x ),\npoint := logos (a := i32 ?),\ndouble(21)",
-            &mut store,
-            &mut trie,
-            &core,
-            scopes,
-        );
-        p.parse_sequence().unwrap()
-    };
-    let mut rt = Runtime::new(&core, &mut store);
+    let mut p = Parser::new(
+        "double := fn (x := i32 ?) -> i32 ( x + x ),\npoint := logos (a := i32 ?),\ndouble(21)",
+        &mut store,
+        &mut trie,
+        &core,
+        scopes,
+    );
+    let root = p.parse_sequence().unwrap();
+    let mut rt = p.into_runtime();
     // SAFETY: `root` is the sequence just parsed; its exprs are valid.
     let interp = unsafe { rt.run(root) }.unwrap();
     assert_eq!(interp, 42);
@@ -2109,11 +2107,9 @@ fn run_script_result(src: &str) -> Result<i64, crate::run::RunError> {
     let (mut store, mut trie, core) = new_core();
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
-    let root = {
-        let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes).with_lower(&core.lower);
-        p.parse_sequence().unwrap()
-    };
-    let mut rt = Runtime::new(&core, &mut store).with_compiler(&core.lower);
+    let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes).with_lower(&core.lower);
+    let root = p.parse_sequence().unwrap();
+    let mut rt = p.into_runtime();
     // SAFETY: `root` is the sequence just parsed; its exprs are valid.
     unsafe { rt.run(root) }
 }
@@ -2135,11 +2131,9 @@ fn run_script_depth(src: &str) -> (Result<i64, crate::run::RunError>, usize) {
     let (mut store, mut trie, core) = new_core();
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
-    let root = {
-        let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes).with_lower(&core.lower);
-        p.parse_sequence().unwrap()
-    };
-    let mut rt = Runtime::new(&core, &mut store).with_compiler(&core.lower);
+    let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes).with_lower(&core.lower);
+    let root = p.parse_sequence().unwrap();
+    let mut rt = p.into_runtime();
     // SAFETY: `root` is the sequence just parsed; its exprs are valid.
     let r = unsafe { rt.run(root) };
     (r, rt.ctx.depth)
@@ -2151,11 +2145,9 @@ fn a_deoptimized_or_recompiled_callee_is_reached_by_an_earlier_compiled_caller()
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
     let src = "g := fn () -> i32 ( 41 ),\nf := fn () -> i32 ( g() + 1 ),\ng.compile(),\nf.compile(),\nf()";
-    let root = {
-        let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes).with_lower(&core.lower);
-        p.parse_sequence().unwrap()
-    };
-    let mut rt = Runtime::new(&core, &mut store).with_compiler(&core.lower);
+    let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes).with_lower(&core.lower);
+    let root = p.parse_sequence().unwrap();
+    let mut rt = p.into_runtime();
     // SAFETY: `root` is the sequence just parsed; its first two lines declare `g` and `f`.
     let (g, f) = unsafe {
         assert_eq!(rt.run(root).unwrap(), 42);
@@ -3611,12 +3603,10 @@ fn a_run_time_rational_operation_makes_no_node() {
     scopes.push(core.root_scope);
     let src = "a := rational_number 1,\nb := rational_number 3,\nmut acc := rational_number 0,\n\
                for 0..100 ( acc = acc + a / b ),\nacc";
-    let root = {
-        let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes).with_lower(&core.lower);
-        p.parse_sequence().unwrap()
-    };
-    let before = store.len();
-    let mut rt = Runtime::new(&core, &mut store).with_compiler(&core.lower);
+    let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes).with_lower(&core.lower);
+    let root = p.parse_sequence().unwrap();
+    let mut rt = p.into_runtime();
+    let before = rt.store.len();
     // SAFETY: `root` is the sequence just parsed; a rational value is the address of its bytes.
     let (num, den) = unsafe {
         let bits = rt.run(root).unwrap();

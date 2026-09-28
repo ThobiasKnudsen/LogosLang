@@ -299,6 +299,12 @@ impl<'a> Parser<'a> {
     pub fn into_scopes(self) -> ScopeStack {
         self.cx.scopes
     }
+
+    /// The pass's runtime, to run what was parsed: a fresh one would run the
+    /// scope from its start.
+    pub fn into_runtime(self) -> crate::run::Runtime<'a> {
+        self.rt
+    }
 }
 
 impl<'a> Parser<'a> {}
