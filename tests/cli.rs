@@ -15,7 +15,7 @@ fn logos() -> Command {
 }
 
 #[test]
-fn an_import_runs_the_file_and_prints_its_tail() {
+fn an_import_runs_the_file_which_prints() {
     let out = logos().args(["import", "examples/answer.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
@@ -2309,9 +2309,10 @@ fn line(src: &str) -> String {
 #[test]
 fn an_import_tail_runs_once() {
     assert_eq!(line("import ./tests/fixtures/counter.logos, c@"), "1");
+    // An import is a statement: nothing echoes, and the second import runs nothing.
     let (echoes, stderr) =
         repl(b"import ./tests/fixtures/counter.logos\nimport ./tests/fixtures/counter.logos\nc@\n");
-    assert_eq!(echoes, ["1", "1", "1"], "stderr: {stderr}");
+    assert_eq!(echoes, ["1"], "stderr: {stderr}");
 }
 
 #[test]

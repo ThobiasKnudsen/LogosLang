@@ -73,4 +73,4 @@ import exp.logos,
 
 f := fn (x := i32 ?) -> i32 ( x ^ 3 + 1 ),
 f.compile(),
-f(2)
+print «{f(2)}»

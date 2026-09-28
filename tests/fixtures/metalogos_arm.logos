@@ -12,4 +12,4 @@ mut a := metalogos(3) ?,
 a = if (a:type == i32) (9)
     else if (a:type == f32 or a:type == f64) (9.9)
     else (i32),
-a
+print «{a}»

@@ -24,9 +24,8 @@ enum ImportState {
     /// Importing it again now is a cycle.
     Loading,
     /// The `pub` names in declaration order, each with the identity it
-    /// resolves to inside the file, and the file's tail node (null for a
-    /// declaration-only file).
-    Loaded { pubs: Vec<(String, DyadPtr)>, tail: DyadPtr, text: &'static str },
+    /// resolves to inside the file.
+    Loaded { pubs: Vec<(String, DyadPtr)>, text: &'static str },
 }
 
 impl Imports {
@@ -84,8 +83,8 @@ impl<'a> Parser<'a> {
     }
 
     /// Consume the path token (raw text up to whitespace or `,`, or a `«…»`
-    /// string), load the file, and place `{type: import, value: [path, tail,
-    /// op]}`. The load happens here, once per run; the node's run only re-yields the tail.
+    /// string), load the file, and place `{type: import, value: [path, op]}`.
+    /// The load happens here, once per run; the node's run does nothing.
     pub(crate) fn construct_import(
         &mut self,
         tape: &mut ParsingTape,
@@ -124,14 +123,14 @@ impl<'a> Parser<'a> {
             self.cx.pos = start;
             return Err(ParseError::ExpectedPath);
         }
-        let tail = self.import_file(&path_text)?;
+        self.import_file(&path_text)?;
         let types = self.types;
         let path_node = crate::identities::string::build_text(
             self.rt.store,
             types.string_,
             path_text.as_bytes(),
         );
-        let value = self.rt.store.alloc_operands(&[path_node, tail, types.ops.import_]);
+        let value = self.rt.store.alloc_operands(&[path_node, types.ops.import_]);
         let node = self.rt.store.alloc_raw(types.import_, value);
         tape.place(node);
         Ok(Constructed::Placed)
@@ -339,7 +338,7 @@ impl<'a> Parser<'a> {
     /// On a first load the file runs in its own section, a fresh stack of the
     /// root plus a section scope, so it sees ambient names and its own imports
     /// only (DESIGN ›Importing is dropping the text there‹); its `pub` names then land here.
-    fn import_file(&mut self, path_text: &str) -> Result<DyadPtr, ParseError> {
+    fn import_file(&mut self, path_text: &str) -> Result<(), ParseError> {
         let joined = self.cx.dir.join(path_text);
         let canon = joined
             .canonicalize()
@@ -348,10 +347,10 @@ impl<'a> Parser<'a> {
             Some(ImportState::Loading) => {
                 return Err(ParseError::ImportCycle(path_text.to_string()))
             }
-            Some(ImportState::Loaded { pubs, tail, .. }) => {
-                let (pubs, tail) = (pubs.clone(), *tail);
+            Some(ImportState::Loaded { pubs, .. }) => {
+                let pubs = pubs.clone();
                 self.publish(&pubs)?;
-                return Ok(tail);
+                return Ok(());
             }
             None => {}
         }
@@ -393,31 +392,27 @@ impl<'a> Parser<'a> {
                     rendered: crate::report::render(path_text, text, inner_pos, &message),
                 })
             }
-            Ok((pubs, tail)) => {
+            Ok(pubs) => {
                 self.imports
                     .entries
-                    .insert(canon, ImportState::Loaded { pubs: pubs.clone(), tail, text });
+                    .insert(canon, ImportState::Loaded { pubs: pubs.clone(), text });
                 self.publish(&pubs)?;
-                Ok(tail)
+                Ok(())
             }
         }
     }
 
     /// The nested pass over an imported file: each statement pending, the
-    /// file run at its end, collecting the `pub` (name, identity) pairs and
-    /// the tail node. On failure the message is returned with `offset` at the stuck point.
-    fn run_imported(&mut self) -> Result<(Vec<(String, DyadPtr)>, DyadPtr), String> {
+    /// file run at its end, collecting the `pub` (name, identity) pairs. On
+    /// failure the message is returned with `offset` at the stuck point.
+    fn run_imported(&mut self) -> Result<Vec<(String, DyadPtr)>, String> {
         let mut pubs = Vec::new();
-        let mut tail = std::ptr::null_mut();
         while let Some(item) = self.parse_next() {
             let node = item.map_err(|e| crate::report::parse_message(&e))?;
             // SAFETY: `node` is the line `parse_next` just returned.
             unsafe { self.close_item(node) };
             // SAFETY: `node` was just parsed into the store, which outlives the pass.
             unsafe {
-                if dyad::ty(node) != self.types.comment_ {
-                    tail = node;
-                }
                 if dyad::ty(node) == self.types.declare_ {
                     let name = Binding::spelling(crate::identities::declare::binding_of(node));
                     let resolved = self
@@ -436,7 +431,7 @@ impl<'a> Parser<'a> {
             return Err("unexpected `)` — no scope is open here".to_string());
         }
         self.drain().map_err(|e| crate::report::parse_message(&e))?;
-        Ok((pubs, tail))
+        Ok(pubs)
     }
 
     /// Pub-only exposure, the ordinary visibility rule: a collision with a

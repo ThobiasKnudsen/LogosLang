@@ -38,4 +38,4 @@ plus2 := type (
 x := i32 5,
 f := fn (y := i32 ?) -> i32 ( y squared + 1 ),
 sq.compile(), f.compile(),
-x squared + f(3) + (3 plus2 4) + 2 * x squared    # 25 + 10 + 7 + 50
+print «{x squared + f(3) + (3 plus2 4) + 2 * x squared}»    # 25 + 10 + 7 + 50

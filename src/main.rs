@@ -72,8 +72,8 @@ fn is_silent_type(core: &Core, logos: seed::dyad::DyadPtr) -> bool {
         || logos == core.hashmap.put
 }
 
-/// Whether an imported file's tail prints nothing. Narrower than the REPL's
-/// rule: a bare type tail still prints its spelling.
+/// Whether a line prints nothing. Narrower than the REPL's rule: a bare type
+/// tail still prints its spelling.
 ///
 /// # Safety
 /// `node` must be a valid dyad.
@@ -125,7 +125,7 @@ fn help() -> String {
 }
 
 /// Run the command line as one line of Logos source; its tail value prints at
-/// the end (an import's: the imported file's tail). Parse errors render with a
+/// the end. Parse errors render with a
 /// caret; run errors are message-only, nodes carrying no positions.
 fn run_line(source: &str) -> ExitCode {
     let path = "<command line>";
@@ -169,16 +169,8 @@ fn run_line(source: &str) -> ExitCode {
         };
         // SAFETY: `node` is the valid dyad just parsed.
         unsafe {
-            if dyad::ty(node) == engine.core.import_ {
+            if dyad::ty(node) != types.comment_ {
                 ran_something = true;
-                let tail = seed::identities::import::tail_of(node);
-                if !tail.is_null() && !is_silent_tail(&engine.core, tail) {
-                    last = Some(tail);
-                }
-            } else if dyad::ty(node) != types.comment_ {
-                ran_something = true;
-                // The same silence test an import's tail takes, so the command
-                // line and the REPL agree.
                 if !is_silent_tail(&engine.core, node) {
                     last = Some(node);
                 }
@@ -358,23 +350,9 @@ fn repl() -> ExitCode {
             continue;
         }
 
-        // Echo rule: statements are silent, value expressions echo. An import
-        // echoes through its file's tail, so a declaration-tailed import stays silent.
+        // Echo rule: statements are silent, value expressions echo.
         // SAFETY: `node` is the valid dyad just parsed.
-        let display_node = unsafe {
-            if dyad::ty(node) == engine.core.import_ {
-                let tail = seed::identities::import::tail_of(node);
-                if tail.is_null() {
-                    node
-                } else {
-                    tail
-                }
-            } else {
-                node
-            }
-        };
-        // SAFETY: `display_node` is a valid dyad (the node or its import tail).
-        let is_statement = unsafe { is_statement_node(&engine.core, display_node) };
+        let is_statement = unsafe { is_statement_node(&engine.core, node) };
 
         // Kept even for a binding that never ran: its teardown sees a null
         // place and no-ops, the fail-closed side.
@@ -382,10 +360,8 @@ fn repl() -> ExitCode {
 
         match value {
             Some(Ok(bits)) if !is_statement => {
-                // SAFETY: `display_node` is a valid dyad whose value `bits` is.
-                println!("{}", unsafe {
-                    seed::identities::display_value(types, display_node, bits)
-                })
+                // SAFETY: `node` is a valid dyad whose value `bits` is.
+                println!("{}", unsafe { seed::identities::display_value(types, node, bits) })
             }
             Some(Ok(_)) => {}
             Some(Err(e)) => {
