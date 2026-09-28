@@ -22,10 +22,10 @@ pub enum ParseError {
     ShareMisplaced,
     /// `parse = (…)` without `share`: a slot is stored once per type.
     SlotFillNeedsShare,
-    /// A `share` name's initializer read a name that holds no value where it
-    /// runs, once at the definition: a parameter or local of the function
-    /// around it, or a name declared in the loop or branch around it.
-    ShareInitReadsUnmade,
+    /// A value made once at the definition (`share`, `immediate`) read a name that
+    /// holds no value there: a parameter or local of the function around it, or a
+    /// name declared in the loop or branch around it.
+    OnceReadsUnmade,
     /// `share` not followed by a `name := value` declaration or a slot fill.
     ShareNeedsDeclaration,
     /// A field named bare inside a parse, where it goes through `tape[0]`.
@@ -209,6 +209,9 @@ pub enum ParseError {
     /// A `-> logos` call could not be resolved at parse time: its arguments
     /// were not comptime-known, or it did not yield a type.
     NonComptimeTypeCall,
+    /// An `immediate` whose value the graph cannot hold: a record or a run-time
+    /// rational, which live in the run's frame, or a pointer.
+    ImmediateNotHeld,
     /// A nested function reached a local or parameter of an enclosing
     /// function: a closure capture, which v1 does not support; it would read
     /// the wrong frame at run time.

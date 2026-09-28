@@ -139,10 +139,10 @@ struct Context<'a> {
     /// While a `share` line of a type body is read, the frame depth a
     /// `fn` written as the member's value opens at: that `fn` takes the value first.
     member_fn_depth: Option<usize>,
-    /// While the initializer of a `share` name parses: the frame depth it
-    /// stands at. It runs once, at the definition, so its places are global
+    /// While a `share` name's value or an `immediate` operand parses: the frame depth
+    /// it stands at. It runs once, at the definition, so its places are global
     /// and no call's slot is in reach (DESIGN ›Two muts, and the storage partition‹).
-    share_init: Option<usize>,
+    once_at: Option<usize>,
     /// While a type body's field declaration reads its type: a hole there names the
     /// field's type and needs no place, so a type without one, `square_brackets ?`, may stand.
     field_hole: bool,
@@ -178,7 +178,7 @@ impl<'a> Context<'a> {
             held_depth: 0,
             narrow_next: None,
             member_fn_depth: None,
-            share_init: None,
+            once_at: None,
             field_hole: false,
         }
     }

@@ -2358,6 +2358,32 @@ fn the_pass_runs_only_as_far_as_it_must_in_order_and_never_twice() {
 }
 
 #[test]
+fn immediate_runs_its_expression_as_it_parses_and_stands_as_the_value() {
+    let array = "import ./identities/array.logos";
+    assert_eq!(line(&format!("{array}, n := immediate ( 2 + 3 ), a := array i32 [n], a[0]")), "5");
+    assert_eq!(line("x := immediate 2 + 3, x"), "5");
+    let bump = "mut c := i32 0, bump := fn () -> i32 ( c = c + 1, c )";
+    // It reads to the comma, and runs after what stands before it.
+    assert_eq!(line(&format!("{bump}, y := immediate bump() + 10, y * 10 + c")), "111");
+    // A body holds the value: `bump` ran once, while the body parsed.
+    assert_eq!(
+        line(&format!("{bump}, f := fn () -> i32 ( immediate bump() ), f() * 100 + f() * 10 + c")),
+        "111"
+    );
+    assert_eq!(line("b := immediate ( 2 < 3 ), b"), "true");
+    assert_eq!(
+        line("g := fn (t := type ?) -> type ( t ), u := immediate g(i64), v := u 7, v"),
+        "7"
+    );
+    // A name of the body has no value while the body parses.
+    let (_echoes, stderr) = repl(b"h := fn (x := i32 ?) -> i32 ( immediate x + 1 )\n");
+    assert!(stderr.contains("made once"), "stderr: {stderr}");
+    let (echoes, stderr) = repl(b"immediate 2 + 3\nimmediate\n");
+    assert_eq!(echoes, ["5"], "stderr: {stderr}");
+    assert!(stderr.contains("nothing to evaluate here"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_name_error_names_the_name_and_points_at_it() {
     // `x` is the tenth character of the line.
     let (echoes, stderr) = repl(b"x := i32 1\nf := fn (x:=i32 ?, y:=i32 ?) -> i32 ( x + y )\n");

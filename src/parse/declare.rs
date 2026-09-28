@@ -240,7 +240,7 @@ impl<'a> Parser<'a> {
     /// Where a binding's teardown goes: its own scope, or the root for a `share` place,
     /// which lives as long as the program.
     fn teardown_scope(&self) -> usize {
-        if self.cx.share_init == Some(self.cx.frames.len()) {
+        if self.cx.once_at == Some(self.cx.frames.len()) {
             0
         } else {
             self.cx.open.len() - 1
@@ -443,10 +443,10 @@ impl<'a> Parser<'a> {
         if !self.marked_share(tape) {
             return self.declare_here(tape);
         }
-        let saved_init = self.cx.share_init.replace(self.cx.frames.len());
+        let saved_init = self.cx.once_at.replace(self.cx.frames.len());
         let saved_runtime_depth = std::mem::replace(&mut self.cx.runtime_depth, 0);
         let built = self.declare_here(tape);
-        self.cx.share_init = saved_init;
+        self.cx.once_at = saved_init;
         self.cx.runtime_depth = saved_runtime_depth;
         if !matches!(built?, Constructed::Placed) {
             return Ok(Constructed::Decline);

@@ -175,8 +175,8 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::SlotFillNeedsShare => {
             "a slot is stored once per type, so its fill says so: `share parse = (…)`".into()
         }
-        ParseError::ShareInitReadsUnmade => {
-            "a `share` name's value is made once, where it is defined, so it cannot use a name that has no value there yet: a parameter or local of the function around it, or a name of the loop or branch around it".into()
+        ParseError::OnceReadsUnmade => {
+            "a value made once, where it is written (`share`, `immediate`), cannot use a name that has no value there yet: a parameter or local of the function around it, or a name of the loop or branch around it".into()
         }
         ParseError::ShareNeedsDeclaration => {
             "`share` must be followed by a declaration or a slot fill, `share name := value`".into()
@@ -256,6 +256,11 @@ pub fn parse_message(e: &ParseError) -> String {
             format!("this identity's constructor failed while parsing: {msg}")
         }
         ParseError::Run(e) => format!("run error: {}", run_message(e)),
+        ParseError::ImmediateNotHeld => {
+            "`immediate` stands as a number, a bool, a type or a node; this expression's value \
+             is none of those (a record, a run-time rational or a pointer lives in the run's frame)"
+                .into()
+        }
         ParseError::NonComptimeTypeCall => {
             "a `-> logos` call must be evaluable at parse time; \
              its arguments must be comptime-known"

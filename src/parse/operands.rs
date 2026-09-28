@@ -407,8 +407,8 @@ impl<'a> Parser<'a> {
     pub(super) unsafe fn check_capture(&self, node: DyadPtr) -> Result<(), ParseError> {
         let node = self.types.through(node);
         if let Some((depth, _)) = crate::dyad::frame_ref(dyad::value(node)) {
-            if self.cx.share_init.is_some_and(|at| depth <= at) {
-                return Err(ParseError::ShareInitReadsUnmade);
+            if self.cx.once_at.is_some_and(|at| depth <= at) {
+                return Err(ParseError::OnceReadsUnmade);
             }
             if depth != self.cx.frames.len() {
                 return Err(ParseError::CapturedLocal);
@@ -417,12 +417,12 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// A `share` initializer runs at parse, where a name of the loop or
-    /// branch around it has no value yet.
+    /// A value made once (`share`, `immediate`) runs at parse, where a name of the
+    /// loop or branch around it has no value yet.
     fn check_made(&self, binding: DyadPtr) -> Result<(), ParseError> {
         // SAFETY: `binding` is the binding dyad the resolver returned for the name.
-        if self.cx.share_init.is_some() && unsafe { Binding::read(binding) }.unmade {
-            return Err(ParseError::ShareInitReadsUnmade);
+        if self.cx.once_at.is_some() && unsafe { Binding::read(binding) }.unmade {
+            return Err(ParseError::OnceReadsUnmade);
         }
         Ok(())
     }
