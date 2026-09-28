@@ -9,7 +9,7 @@
 use crate::dyad::DyadPtr;
 use crate::store::Store;
 
-use super::Cx;
+use super::{Core, Cx};
 use crate::dyad;
 
 /// One per name, never per identity: `x := i32` binds a second name to i32's own
@@ -35,12 +35,27 @@ pub struct Binding {
     /// `0` by default; the two fresh-spelling patterns carry `-1`. Read by the lexer at every
     /// match.
     pub lex_rank: f64,
-    /// Declared outside any function in a body the pass does not run in parse order, a loop
-    /// or a branch: at parse the name holds no value yet.
-    pub unmade: bool,
+    /// The closed-off identity whose instance holds the name's bytes: the root scope for
+    /// the program frame, a `fn` node for its call frame, a type for a field's offset in
+    /// each value; null for a name that denotes `dyad` itself.
+    /// DESIGN ›A scope lays out its declarations; a use reaches the offset through its binding‹.
+    pub frame: DyadPtr,
+    pub offset: usize,
     /// The fields of a `T ?` name not yet written, an `array` node of the record's field
     /// dyads; null while none wait.
     pub unwritten: DyadPtr,
+    /// Declared outside any function in a body the pass does not run in parse order, a loop
+    /// or a branch: at parse the name holds no value yet.
+    pub unmade: bool,
+}
+
+/// Where a storage binding's bytes lie, with the offset into it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Frame {
+    /// The program's one frame, based at the store's arena.
+    Root,
+    /// A call of the `fn` node, based at the activation.
+    Call(DyadPtr),
 }
 
 impl Binding {
@@ -53,13 +68,53 @@ impl Binding {
             gate: std::ptr::null_mut(),
             name,
             lex_rank: 0.0,
-            unmade: false,
+            frame: std::ptr::null_mut(),
+            offset: 0,
             unwritten: std::ptr::null_mut(),
+            unmade: false,
         }
     }
 
     pub fn is_dead(&self) -> bool {
         !self.end.is_null()
+    }
+
+    /// The name's bytes are in a frame: the root scope's or a `fn` node's. A type as the
+    /// frame lays a field out inside each value, storage of its own only through the value.
+    ///
+    /// # Safety
+    /// `frame` must be null or a dyad from the store.
+    pub unsafe fn storage(&self, types: &Core) -> Option<Frame> {
+        if self.frame.is_null() {
+            None
+        } else if self.frame == types.root_scope {
+            Some(Frame::Root)
+        } else if dyad::ty(self.frame) == types.fn_type {
+            Some(Frame::Call(self.frame))
+        } else {
+            None
+        }
+    }
+
+    /// Lay the name out: its bytes are `T` at `offset` in `frame`.
+    ///
+    /// # Safety
+    /// As `Binding::read`; `ty` null or a type node, `frame` a scope, `fn` or type node.
+    pub unsafe fn lay_out(dyad: DyadPtr, ty: DyadPtr, frame: DyadPtr, offset: usize) {
+        let fields = Self::fields(dyad);
+        (*fields).dyad = ty;
+        (*fields).frame = frame;
+        (*fields).offset = offset;
+    }
+
+    /// A field's offset inside each value of `ty`; the binding's `dyad` stays the field node.
+    ///
+    /// # Safety
+    /// As `Binding::read`; `ty` a type node.
+    pub unsafe fn set_field_offset(dyad: DyadPtr, ty: DyadPtr, offset: usize) {
+        let fields = Self::fields(dyad);
+        (*fields).frame = ty;
+        (*fields).offset = offset;
     }
 
     /// Store `rec` and return its dyad, the value every trie entry is and every use of the name
@@ -176,16 +231,21 @@ impl Binding {
     }
 }
 
-/// A binding read as a value yields what the dyad it names yields; anything else passes
-/// unchanged. `:` is the one read that does not hop.
+/// A binding read as a value yields what the dyad it names yields, and a binding laid out
+/// in a frame is the storage itself, so it stands; anything else passes unchanged. `:` is
+/// the one read that does not hop.
 ///
 /// # Safety
-/// `p` must be null or a valid dyad from the store; `binding_ty` the `binding` identity.
-pub unsafe fn through(binding_ty: DyadPtr, p: DyadPtr) -> DyadPtr {
-    if !p.is_null() && dyad::ty(p) == binding_ty {
-        (*Binding::fields(p)).dyad
-    } else {
+/// `p` must be null or a valid dyad from the store.
+pub unsafe fn through(types: &Core, p: DyadPtr) -> DyadPtr {
+    if p.is_null() || dyad::ty(p) != types.binding_ {
+        return p;
+    }
+    let b = Binding::read(p);
+    if b.storage(types).is_some() {
         p
+    } else {
+        b.dyad
     }
 }
 
@@ -197,26 +257,35 @@ pub(super) fn register_type(
     array_ty: DyadPtr,
     dyad_ty: DyadPtr,
     f64_ty: DyadPtr,
+    u64_ty: DyadPtr,
 ) {
     let binding_ = cx.binding_;
     let scope = cx.store.alloc_raw(scope_ty, std::ptr::null_mut());
-    let mut fields = Vec::with_capacity(7);
+    let mut fields = Vec::with_capacity(9);
     // SAFETY: `dyad_ty` is the type node `Core::build` minted.
     let at_dyad = unsafe { super::pointer::make_pointer_type(cx.store, cx.type_, dyad_ty) };
-    for name in ["dyad", "scope", "start", "end", "gate"] {
-        let field = cx.store.alloc_raw(at_dyad, std::ptr::null_mut());
-        cx.declare_in(scope, name, field);
-        fields.push(field);
-    }
     // `name` is an `@dyad` place too: no place of type `string` exists, and the `:` read
     // hands back the string node it holds.
-    let name_field = cx.store.alloc_raw(at_dyad, std::ptr::null_mut());
-    cx.declare_in(scope, "name", name_field);
-    fields.push(name_field);
-    let rank_field = cx.store.alloc_raw(f64_ty, std::ptr::null_mut());
-    cx.declare_in(scope, "lex_rank", rank_field);
-    fields.push(rank_field);
-    debug_assert_eq!(fields.len() * 8, std::mem::size_of::<Binding>());
+    let typed = [
+        ("dyad", at_dyad),
+        ("scope", at_dyad),
+        ("start", at_dyad),
+        ("end", at_dyad),
+        ("gate", at_dyad),
+        ("name", at_dyad),
+        ("lex_rank", f64_ty),
+        ("frame", at_dyad),
+        ("offset", u64_ty),
+    ];
+    for (i, (name, ty)) in typed.into_iter().enumerate() {
+        let field = cx.store.alloc_raw(ty, std::ptr::null_mut());
+        let binding = cx.declare_in(scope, name, field);
+        // SAFETY: `binding` was just minted by `declare_in`; `binding_` is the type node.
+        unsafe { Binding::set_field_offset(binding, binding_, i * 8) };
+        fields.push(field);
+    }
+    // The Logos-visible fields come first and are each one word; the rest is the seed's.
+    debug_assert_eq!(fields.len() * 8, std::mem::offset_of!(Binding, unwritten));
     let fields_arr = super::array::build(cx.store, array_ty, &fields);
     let layout = super::meta::record_layout(
         cx.store,

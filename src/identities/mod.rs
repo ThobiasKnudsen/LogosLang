@@ -321,7 +321,14 @@ impl Core {
         let by_copy = by_copy::register(&mut cx, &callables);
         let here = here::register(&mut cx, &callables);
         // Last: the `binding` type's fields are `@dyad` places, so it waits for `dyad` and `@`.
-        binding::register_type(&mut cx, scope_, array_, dyad_, numtypes[NumType::F64 as usize]);
+        binding::register_type(
+            &mut cx,
+            scope_,
+            array_,
+            dyad_,
+            numtypes[NumType::F64 as usize],
+            numtypes[NumType::U64 as usize],
+        );
         op_leaves.scope_ = scope::register_exec(&mut cx, scope_, &callables);
 
         // Every constructor moves onto a callable leaf in its record; the table drops
@@ -436,7 +443,54 @@ impl Core {
     /// # Safety
     /// `p` must be null or a valid dyad from the store.
     pub unsafe fn through(&self, p: DyadPtr) -> DyadPtr {
-        binding::through(self.binding_, p)
+        binding::through(self, p)
+    }
+
+    /// The frame a storage node's bytes lie in, with its offset: a binding laid out in
+    /// the program frame or a call frame. `None` for a definition, a field's binding, a
+    /// literal, a node.
+    ///
+    /// # Safety
+    /// `p` must be null or a valid dyad from the store.
+    pub(crate) unsafe fn frame_of(&self, p: DyadPtr) -> Option<(binding::Frame, usize)> {
+        if p.is_null() || dyad::ty(p) != self.binding_ {
+            return None;
+        }
+        let b = Binding::read(p);
+        b.storage(self).map(|frame| (frame, b.offset))
+    }
+
+    /// Whether `p` is storage: bytes reached through a binding, never a value word.
+    ///
+    /// # Safety
+    /// As `frame_of`.
+    pub(crate) unsafe fn is_storage(&self, p: DyadPtr) -> bool {
+        self.frame_of(self.through(p)).is_some()
+    }
+
+    /// The type a storage node's bytes are read by; `None` for what is not storage.
+    ///
+    /// # Safety
+    /// As `frame_of`.
+    pub(crate) unsafe fn storage_type(&self, p: DyadPtr) -> Option<DyadPtr> {
+        let p = self.through(p);
+        self.frame_of(p).map(|_| Binding::read(p).dyad)
+    }
+
+    /// The type of what a reduced operand denotes: its storage's declared type, or the
+    /// type slot of the dyad it names or is.
+    ///
+    /// # Safety
+    /// `p` must be null or a valid dyad from the store.
+    pub(crate) unsafe fn type_of(&self, p: DyadPtr) -> DyadPtr {
+        let p = self.through(p);
+        if p.is_null() {
+            return p;
+        }
+        match self.frame_of(p) {
+            Some(_) => Binding::read(p).dyad,
+            None => dyad::ty(p),
+        }
     }
 }
 

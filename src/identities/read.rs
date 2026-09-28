@@ -65,6 +65,10 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
     if node.is_null() {
         return Read::Undefined;
     }
+    // Storage is known by having come through a binding, never by a mark on the value word.
+    if let Some(t) = types.storage_type(node) {
+        return place_kind(types, t);
+    }
     let op = dyad::ty(node);
     let value = dyad::value(node);
     let place = is_place(value);
@@ -168,6 +172,18 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
                 Read::Opaque
             }
         }
+    }
+}
+
+/// How storage declared `t` reads: at the type's own layout, or as the eight-byte
+/// container every other type's place holds (a node's address, a bare parameter's operand).
+///
+/// # Safety
+/// `t` must be null or a valid dyad from the store.
+pub unsafe fn place_kind(types: &Core, t: DyadPtr) -> Read {
+    match place_layout(types, t) {
+        Some((read, _)) => read,
+        None => Read::Container(t),
     }
 }
 
@@ -366,6 +382,65 @@ mod tests {
             let value = store.alloc_operands(&[exprs[2], exprs[2], std::ptr::null_mut()]);
             let leafless = store.alloc_raw(core.plus, value);
             assert_eq!(read_kind(types, leafless), Read::Executable(Dispatch::None));
+        }
+    }
+
+    #[test]
+    fn a_binding_laid_out_in_a_frame_is_the_storage_and_reads_by_its_type() {
+        use crate::binding::{Binding, Frame};
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let name = crate::identities::string::build_text(&mut store, core.string_, b"n");
+        let mut bind = |dyad: DyadPtr| {
+            Binding::alloc(&mut store, core.binding_, Binding::new(dyad, core.root_scope, name))
+        };
+        let (top, alias, local, bare, boxed, field) = (
+            bind(std::ptr::null_mut()),
+            bind(core.i32_),
+            bind(std::ptr::null_mut()),
+            bind(std::ptr::null_mut()),
+            bind(std::ptr::null_mut()),
+            bind(std::ptr::null_mut()),
+        );
+        let f = store.alloc_raw(core.fn_type, std::ptr::null_mut());
+        let field_node = store.alloc_raw(core.i32_, std::ptr::null_mut());
+        let off = store.arena_alloc(4);
+        // SAFETY: every handle was just minted into `store`, which outlives the reads.
+        unsafe {
+            Binding::lay_out(top, core.i32_, core.root_scope, off);
+            Binding::lay_out(local, core.i32_, f, 8);
+            Binding::lay_out(bare, std::ptr::null_mut(), f, 16);
+            Binding::lay_out(boxed, core.type_, core.root_scope, 8);
+            Binding::set_dyad(field, field_node);
+            Binding::set_field_offset(field, core.i32_, 4);
+            // Storage stands as itself, its type the declared one, its bytes in its frame.
+            assert_eq!(core.through(top), top);
+            assert_eq!(core.type_of(top), core.i32_);
+            assert!(core.is_storage(top));
+            assert_eq!(core.frame_of(top), Some((Frame::Root, off)));
+            assert_eq!(read_kind(&core, top), Read::Scalar(NumType::I32));
+            assert_eq!(core.frame_of(local), Some((Frame::Call(f), 8)));
+            assert_eq!(read_kind(&core, local), Read::Scalar(NumType::I32));
+            assert_eq!(read_kind(&core, bare), Read::Container(std::ptr::null_mut()));
+            assert_eq!(read_kind(&core, boxed), Read::Container(core.type_));
+            // A name for an identity hops to it; a field's binding is no storage of its own.
+            assert_eq!(core.through(alias), core.i32_);
+            assert!(!core.is_storage(alias));
+            assert_eq!(read_kind(&core, alias), Read::Identity);
+            assert_eq!(core.through(field), field_node);
+            assert_eq!(core.frame_of(field), None);
+            assert_eq!(core.type_of(field), core.i32_);
+            // The binding type lays its own fields out, `frame` and `offset` among them.
+            let fields = array::items(meta::record_fields_of(core.binding_));
+            assert_eq!(fields.len(), 9);
+            let mut scope = ScopeStack::new();
+            scope.push(meta::record_scope_of(core.binding_));
+            for (name, at) in [("dyad", 0), ("lex_rank", 48), ("frame", 56), ("offset", 64)] {
+                let r = scope.resolve(&trie, name).unwrap();
+                assert_eq!(Binding::read(r.binding).offset, at, "{name}");
+                assert_eq!(Binding::read(r.binding).frame, core.binding_, "{name}");
+            }
         }
     }
 

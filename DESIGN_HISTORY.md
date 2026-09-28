@@ -651,6 +651,9 @@ Nothing moved from this section.
 - **History:** written `a:dyad.type == type` until the 23 September 2026 respelling.
 - **History:** 12 to 28 September 2026: the box's mark sat on the value word (the seed's bits 63 frame, 62 global, 47 arena). Superseded 28 September 2026 by ›A scope lays out its declarations; a use reaches the offset through its binding‹, because the frame is per call, the offset per name, and a node's value word should be the value.
 
+### A scope lays out its declarations; a use reaches the offset through its binding
+- **History:** before 28 September 2026 the seed kept a name's storage as a place node the binding pointed at, its value word marked (bit 63 a frame offset with the lexical depth beside it for the capture guard, bit 62 an absolute address, bit 47 an arena offset); a nameless result (an instance, a call's record result, a rational step, the receiver of a `share` call) got a marked place of its own at parse; between #167 and #168 the program frame's cursors stood on the runtime. Superseded 28 September 2026 by the rule and its five points, because a frame is per call, an offset per name, a result nobody named is nobody's, and a node's value word is the value.
+
 ### A tape cell checked to be a `type` passes as a `type`
 - **History:** the text said "Only a check against `type` narrows: what a read narrowed to a number type would yield is not ruled"; superseded the same day by the next rule.
 

@@ -669,7 +669,7 @@ impl<'a> Runtime<'a> {
     /// # Safety
     /// `p` must be null or a valid dyad from the store.
     pub(crate) unsafe fn through(&self, p: DyadPtr) -> DyadPtr {
-        crate::binding::through(self.types.binding_, p)
+        self.types.through(p)
     }
 
     /// The machine address a place denotes: absolute for a global, `frame base
@@ -841,7 +841,7 @@ impl<'a> Runtime<'a> {
                 if slot.is_null() {
                     return Err(RunError::Uninitialized);
                 }
-                Ok(crate::identities::numtype::read_scalar(dyad::ty(node), slot))
+                Ok(crate::identities::numtype::read_scalar(self.types.type_of(node), slot))
             }
             Read::Aggregate | Read::Opaque | Read::Undefined => Err(RunError::NoWholeRead),
         }

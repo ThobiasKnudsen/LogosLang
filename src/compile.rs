@@ -210,7 +210,7 @@ impl Lowerer<'_, '_> {
     /// # Safety
     /// `p` must be null or a valid dyad from the store.
     pub(crate) unsafe fn through(&self, p: DyadPtr) -> DyadPtr {
-        crate::binding::through(self.types.binding_, p)
+        self.types.through(p)
     }
 
     /// A place's address as an SSA pointer: the context's arena base plus the

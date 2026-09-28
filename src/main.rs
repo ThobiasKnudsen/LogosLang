@@ -56,7 +56,7 @@ unsafe fn tail_type(
     core: &Core,
     node: seed::dyad::DyadPtr,
 ) -> (seed::dyad::DyadPtr, seed::dyad::DyadPtr) {
-    let named = seed::binding::through(core.binding_, node);
+    let named = core.through(node);
     (named, dyad::ty(named))
 }
 
