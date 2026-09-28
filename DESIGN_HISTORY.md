@@ -646,6 +646,10 @@ Nothing moved from this section.
 
 ### The pass runs only as far as it must, in order, and never twice
 - **History:** 13 to 28 September 2026: what ran stayed in the graph as `{type: ran, value: [expr, value]}`, rewritten in place over the item (the seed's `ran::rewrite`, R3, #88). Superseded 28 September 2026 by the frame's cursor and the result on the stack, because a run must not rewrite the shared graph and a scope's "how far" is per call. Seed: the `ran` rewrite is to be deleted (#167).
+- **History:** until the evening of 28 September 2026 the deferred-scope sentence ended "nothing in it runs in the pass", with no exception; amended when `immediate x` was ruled to run inside a deferred body too.
+
+### `immediate x` runs the expression to its right as soon as it is parsed, and stands as its value (spelled `run x` earlier on 28 September 2026)
+- **History:** spelled `run x` from the morning of 28 September 2026 to the evening, as a second word beside the slot word; respelled `immediate` because one spelling for two words made `run := 5` at the root an error and would have needed every reader to sleep before `:=`. Thobias asked for "some other name for run x", a word "for saying something should be done right now in the moment"; `immediate` was chosen over `now`, `settle` and `once`.
 
 ### `dyad ?` is the general box, `type ?` the narrow case
 - **History:** written `a:dyad.type == type` until the 23 September 2026 respelling.
@@ -759,6 +763,7 @@ Nothing moved from this section.
 
 ### Slot words are known only inside a type body
 - **History:** 19 to 28 September 2026: `run := 5` at the root was an ordinary declaration. Since 28 September 2026 `run` is also a word of the language start (›`run x` runs the expression to its right as soon as it is parsed, and stands as its value‹), so it is the no-shadowing error there; the slot still wins inside a type body.
+- **History:** later on 28 September 2026 that word was respelled `immediate` (›`immediate x` runs the expression to its right as soon as it is parsed, and stands as its value‹), so `run := 5` at the root is an ordinary declaration again. Reason: one spelling for two words made `run := 5` an error and would have needed every reader to sleep before `:=`.
 
 ### Importing is dropping the text there, wrapped in its own scope
 - **History:** until 28 September 2026 the seed gave an `import` line the imported file's tail value (the command line and the REPL echoed it, held in a `ran` node). Ruled valueless 28 September 2026: a file is its own graph, the importer gets its `pub` names, and no result is kept outside the stack.
