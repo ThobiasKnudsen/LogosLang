@@ -6,14 +6,14 @@
 5. **Automate:** Only automate the process after the first four steps are done.
 
 # Faithfulness protocol (spec-governed code):
-- DESIGN.md is the ruling document. language_sketch.logos illustrates it; issues, plans, memories, old comments, and existing code are downstream and may be stale. Never implement from a downstream source alone.
+- DESIGN.md is the ruling document.  issues, plans, memories, old comments, and existing code are downstream and may be stale. Never implement from a downstream source alone.
 - Before implementing anything spec-governed, quote the exact DESIGN.md passage(s) that license it, in the plan or the commit message. No quote → stop and ask.
 - If any two sources disagree — DESIGN vs sketch, DESIGN vs an issue, one DESIGN section vs another — STOP and surface the conflict as a blocking question, with both quotes. Never silently pick a side, even if one side is newer or was written by Thobias: staleness is invisible from inside a session.
 - When a conflict is ruled on, or a design is rejected in conversation, record it in the same session: in DESIGN.md, at the rule it touches (a **Ruled** line with date, who and reason; a **Rejected, to stay rejected** line; or a new `###` rule), and what it supersedes as a **History** line in DESIGN_HISTORY.md under the same heading or, if spec wording must wait, as an explicit pending-spec-edit in the session log AND auto-memory. An unrecorded decision is a future bug.
-- DESIGN.md is one rule per `###` heading (since 27 September 2026). Point at a rule by its heading, ›like this‹, never by line number; a `DESIGN.md l.N` in a Source bullet, an issue or a memory means line N of the paragraph form at git e75bcdc.
-- Before starting work in a spec area not touched recently, run /faithfulness-audit.
-- All rulings MUST have a good reason for existing otherwise i will forget later why i choose what i choose and change the rule
-- ALLWAYS EXPLAIN WITH SIMPLE WORDS
+- DESIGN.md is one rule per `###` heading (since 27 September 2026). Point at a rule by its heading, `«### like this»`, never by line number; a `DESIGN.md l.N` in a Source bullet, an issue or a memory means line N of the paragraph form at git e75bcdc.
+- Before starting work in a spec area, run /faithfulness-audit.
+- All rulings MUST have a good reason for existing otherwise i will forget later why i choose what i choose and change the rule. And when something is superseeded it also MUST say why.
+- ALLWAYS respond to the user with simple and easily digestible text and use logos code example where ever possible. Logos code examples makes it much easier to understand for the user 
 
 # Comment rules (as few comments as possible; only what is actually important):
 - A comment says what the code cannot: a one-line WHY at a spot a reader would not guess, an invariant (the SAFETY line on an unsafe block, a byte layout, what a slot holds), a bare pointer to the DESIGN.md rule by its heading, or a two-to-four-line module header saying what the file is. Nothing else.
@@ -40,10 +40,3 @@ Before pushing any version tag:
 6. Rehearse the archive: build the seed, stage `bin/logos` with LICENSE, NOTICE, TRADEMARK.md and examples, pack it, unpack it, and run it. What ships must have been run.
 
 Never tag speculatively "to see if CI passes". There is no undo.
-
-# Follow logging rules faithfully:
-- At session start create a file under CLAUDE_LOG folder with the name Session_YYYY-MM-DD_HH:mm:ss.md. 
-- What should be said in the start of the file is the session id so that Claude can find the actual session later for more details. Format like this «# Session id: [session id]»
-- At the end of each response for the user request you always append to the file, starting with a heading on this format «## response time: YYYY-MM-DD_HH:mm:ss | LLM: [LLM model responding] | user: [user name]». So you would need to ask for the user name if you don't know what it is. You can set "unknown" for that response but also ask for name so that you can set the name later.
-- Under the heading you must write a summary of everything important in the last request and response.
-- You can when ever you want search through previous logs
