@@ -1352,12 +1352,15 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Run everything parsed and not yet run, outermost scope first (DESIGN
-    /// ›Build and run are one self-directing pass‹): an executable item becomes
-    /// its ran form in place. The lists are taken first, so a nested drain finds nothing.
-    pub fn drain(&mut self) -> Result<(), ParseError> {
+    /// Run everything parsed and not yet run, outermost scope first, and hand
+    /// back the last item run with its value: the tail, on the stack (DESIGN ›The
+    /// pass runs only as far as it must, in order, and never twice‹). An executable
+    /// item becomes its ran form in place. The lists are taken first, so a nested
+    /// drain finds nothing.
+    pub fn drain(&mut self) -> Result<Option<(DyadPtr, i64)>, ParseError> {
         let lists: Vec<Vec<DyadPtr>> =
             self.cx.open.iter_mut().map(|s| std::mem::take(&mut s.unrun)).collect();
+        let mut last = None;
         for node in lists.into_iter().flatten() {
             // SAFETY: every pending item is a dyad this parser built into its store, which outlives the pass.
             unsafe {
@@ -1377,14 +1380,15 @@ impl<'a> Parser<'a> {
                 ) {
                     crate::identities::ran::rewrite(self.rt.store, self.types, node, bits);
                 }
+                last = Some((node, bits));
             }
         }
-        Ok(())
+        Ok(last)
     }
 
     /// The end of the program: the root scope's own run (DESIGN ›The scope's
-    /// constructor is the driver‹).
-    pub fn finish(&mut self) -> Result<(), ParseError> {
+    /// constructor is the driver‹), yielding the tail it ran.
+    pub fn finish(&mut self) -> Result<Option<(DyadPtr, i64)>, ParseError> {
         self.drain()
     }
 

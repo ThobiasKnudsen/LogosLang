@@ -2400,7 +2400,8 @@ fn print_writes_its_quote_each_time_it_runs_and_is_a_statement() {
         .output()
         .unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "a\nin f\nin f\n\n7\n");
+    // The program's tail is its last line, a statement, so nothing echoes after the prints.
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "a\nin f\nin f\n\n");
 
     let (echoes, stderr) = repl("print «hi»\n1 + 1\n".as_bytes());
     assert_eq!(echoes, ["hi", "2"], "stderr: {stderr}");

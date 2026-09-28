@@ -602,8 +602,8 @@ impl<'a> Parser<'a> {
         let outer = self.drain();
         self.cx.open.push(OpenScope::default());
         let saved_depth = std::mem::replace(&mut self.cx.runtime_depth, 0);
-        let lines = outer.and_then(|()| self.parse_field_list(true, None)).and_then(|layout| {
-            self.drain().map(|()| layout).map_err(|e| match e {
+        let lines = outer.and_then(|_| self.parse_field_list(true, None)).and_then(|layout| {
+            self.drain().map(|_| layout).map_err(|e| match e {
                 ParseError::Run(r) => {
                     ParseError::TypeBodyFailed(Box::new(crate::report::run_message(&r)))
                 }

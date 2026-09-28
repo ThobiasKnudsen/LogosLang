@@ -167,14 +167,11 @@ fn run_line(source: &str) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
+        // The tail is the last line, prose read through; a statement there prints nothing.
         // SAFETY: `node` is the valid dyad just parsed.
-        unsafe {
-            if dyad::ty(node) != types.comment_ {
-                ran_something = true;
-                if !is_silent_tail(&engine.core, node) {
-                    last = Some(node);
-                }
-            }
+        if unsafe { dyad::ty(node) } != types.comment_ {
+            ran_something = true;
+            last = Some(node);
         }
     }
     // A stray `)` ends the item loop without being consumed.
@@ -188,19 +185,31 @@ fn run_line(source: &str) -> ExitCode {
     }
     // The tail is read after the root's own run and before the teardowns,
     // which may free what it points at.
-    if let Err(e) = p.finish() {
-        eprintln!("{path}: {}", report::parse_message(&e));
-        return ExitCode::FAILURE;
-    }
+    let ran = match p.finish() {
+        Ok(ran) => ran,
+        Err(e) => {
+            eprintln!("{path}: {}", report::parse_message(&e));
+            return ExitCode::FAILURE;
+        }
+    };
     let last = match last {
         // SAFETY: `node` is a valid dyad the parser built.
-        Some(node) => match unsafe { p.value_of(node) } {
-            Ok(bits) => Some((node, bits)),
-            Err(e) => {
-                eprintln!("{path}: {}", report::parse_message(&e));
-                return ExitCode::FAILURE;
+        Some(node) if unsafe { is_silent_tail(&engine.core, node) } => None,
+        Some(node) => {
+            let bits = match ran {
+                Some((tail, bits)) if tail == node => Ok(bits),
+                // A tail the pass never ran, a `[…]` line, runs now.
+                // SAFETY: as above.
+                _ => unsafe { p.value_of(node) },
+            };
+            match bits {
+                Ok(bits) => Some((node, bits)),
+                Err(e) => {
+                    eprintln!("{path}: {}", report::parse_message(&e));
+                    return ExitCode::FAILURE;
+                }
             }
-        },
+        }
         None => None,
     };
 
