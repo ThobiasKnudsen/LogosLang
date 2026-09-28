@@ -40,3 +40,10 @@ Before pushing any version tag:
 6. Rehearse the archive: build the seed, stage `bin/logos` with LICENSE, NOTICE, TRADEMARK.md and examples, pack it, unpack it, and run it. What ships must have been run.
 
 Never tag speculatively "to see if CI passes". There is no undo.
+
+# Branch rules (dev is the working branch; a branch lives only while its work is unmerged):
+- Work on `dev` directly. A branch exists only when a second agent or a worktree needs isolation from `dev`, and then it is one branch per issue, named `issue-N-slug`, never one per slice.
+- A branch stays local unless another machine or agent must read it. Pushing it to GitHub is not a backup and not a habit.
+- Whoever merges a branch deletes it in the same command, local and on origin, and removes its worktree: `git merge --no-ff X && git branch -d X && git push origin --delete X && git worktree remove ../LogosLang-N`. A merged branch left behind is a bug, like an unrecorded ruling.
+- Before creating a branch and at the end of every session: `git branch -r | grep -v 'origin/dev$\|origin/main$'` must list only branches with unmerged work, and the session log names each one and what it waits for.
+- Reason: on 29 September 2026 GitHub held 43 branches, all but two merged into `dev` days or weeks earlier and never deleted (one per #137 slice, one per parallel agent). Thobias: "there are dozens of branches on github and i dont understand why. i dont like that."
