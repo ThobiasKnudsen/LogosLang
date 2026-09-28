@@ -647,6 +647,7 @@ Nothing moved from this section.
 
 ### `dyad ?` is the general box, `type ?` the narrow case
 - **History:** written `a:dyad.type == type` until the 23 September 2026 respelling.
+- **History:** 12 to 28 September 2026: the box's mark sat on the value word (the seed's bits 63 frame, 62 global, 47 arena). Superseded 28 September 2026 by ›A scope lays out its declarations; a use reaches the offset through its binding‹, because the frame is per call, the offset per name, and a node's value word should be the value.
 
 ### A tape cell checked to be a `type` passes as a `type`
 - **History:** the text said "Only a check against `type` narrows: what a read narrowed to a number type would yield is not ruled"; superseded the same day by the next rule.
@@ -753,6 +754,10 @@ Nothing moved from this section.
 ### The seed's tape shape (#60, #121) and its remaining stand-ins
 - ›Seed tape shape (#60, #121)‹ merged into ›The seed's tape shape (#60, #121) and its remaining stand-ins‹ on 27 September 2026
 - ›Seed stand-ins that remain‹ merged into ›The seed's tape shape (#60, #121) and its remaining stand-ins‹ on 27 September 2026
+
+### Slot words are known only inside a type body
+- **History:** 19 to 28 September 2026: `run := 5` at the root was an ordinary declaration. Since 28 September 2026 `run` is also a word of the language start (›`run x` runs the expression to its right as soon as it is parsed, and stands as its value‹), so it is the no-shadowing error there; the slot still wins inside a type body.
+
 
 ## Identity recognition
 

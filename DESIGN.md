@@ -1382,6 +1382,7 @@ In a type body, `b = 3` is the checked error whatever `b` names, an alias of a s
 - **Rejected:** filling a slot through an alias.
 - **Ruled:** 19 September 2026, Thobias.
 - **Seed:** done 20 September 2026 (#133 slice 4 undone).
+- **Ruled (28 September 2026, Thobias):** `run` is also a word of the language start (›`run x` runs the expression to its right as soon as it is parsed, and stands as its value‹), so `run := 5` at the root is now the no-shadowing error; inside a type body the slot still wins, being innermost. **Why:** the explicit word was wanted more than a free `run` spelling at the root.
 - **Source:** DESIGN.md l.201
 
 ### `drop` is one word
@@ -1954,6 +1955,12 @@ A deferred scope (a function body, a loop body and its condition, a branch that 
 - **Rejected, to stay rejected:** running a bracket's items the moment they parse (it would run the bracket in `bump() + ( x = 10, x )` before `bump`); a whole-program parse followed by a run (it cannot serve `x := a 5` over a box).
 - **Source:** DESIGN.md l.215
 
+### `run x` runs the expression to its right as soon as it is parsed, and stands as its value
+`run` reads the one expression to its right, as `compile f` does, runs it the moment it is parsed, and stands as the value it produced: `n := run ( 2 + 3 ), a := array i32 [n]` knows `n` while parsing. What it ran is runtime graph (›Two graphs, one source of truth‹): freed with the line, apart from the value that leaves it; how a node leaves is the Open node-frame question there. `run` is a word of the language start beside the slot word of the same spelling: inside a type body a lookup finds the slot (›Slot words are known only inside a type body‹).
+- **Why:** Thobias: "when run is explicitly written ... it is run right after what comes after run is parsed, and in such case the LG is not needed". The need points of the rule above run early because they must; this word runs early because the author says so, and says it in the source.
+- **Ruled:** 28 September 2026, Thobias.
+- **Seed:** not yet (#169).
+
 ### A type is a comptime value, resolved in the pass; what the pass decides is the elaboration, not the value
 A function may return `type`. A type value is a node address like any other: it can be passed to a function, held in a place, compared. What the pass decides is the work that needs the identity in hand: the layout a declaration claims, an `==` that folds, an `if` on a type that drops its untaken branch unparsed. That work gets no runtime answer.
 **The line falls at `compile`, not at the language.** Under interpretation the graph can change as it runs, so a type reached at runtime can still be followed to its fields (*Metareflection from within the language*). Compiled code has already baked the decisions those fields would drive, so there a type value is an opaque eight bytes that passes and compares and nothing more. A place holding a type is an ordinary place; a place whose layout waits on a runtime type stays refused.
@@ -1973,6 +1980,13 @@ Both hold a node address. What the general one holds is asked the ordinary way, 
 - **Why the box needs a mark:** the type slot separates a value from a place only where the value is not itself an address. For `type` and `dyad` it is: a logos node standing as a value carries its identity as its value, so a definition and a box of one are both a `type` over an address. Pointers box every value instead (which is why `&x` allocates); types cannot, because the inline form is what lets a `-> type` function compile. So the mark is the cost of the ruling, and it covers both.
 - **Ruled:** 12 September 2026, on the reading that the type slot should carry the distinction.
 - **Source:** DESIGN.md l.217
+- **Superseded (28 September 2026, Thobias):** the mark on the value word ("the mark is the cost of the ruling"): a box is known by being reached through its binding, see ›A scope lays out its declarations; a use reaches the offset through its binding‹. **Why:** "i dont really want any of these bits to be used because gates are used for this purpose instead": what a name is and may do lives on its binding, and a node's value word is the value.
+
+### A scope lays out its declarations; a use reaches the offset through its binding
+Every declaration of a scope, shared or not, has an offset in the scope's own storage, and every unshared one has a second offset in each instance of the scope: a value of the type for a type body, a call's frame for a function body, the enclosing function's frame for a block. The first is fixed when the scope is parsed; the base of the second is the value's or the call's. A use reaches the offset through its binding, the scope's entry for the name; a node's value word carries no mark, so "is this storage" is answered by having come through a binding. The top level is the program's one frame.
+- **Why:** Thobias: "all the shared and non shared fields inside type all have offsets inside the type scope but the non shared fields also has another set of offset in instances". The frame is per call, the offset per name; one layout mechanism serves types and frames, and the seed kept these numbers only as bits in a node's value word.
+- **Ruled:** 28 September 2026, Thobias.
+- **Seed:** not yet (#168): frames get a layout like records, the three tag bits go.
 
 ### A block settles its boxes as the top level does
 Reading a box during the pass is honest only if the answer does not depend on where the box sits. Lexing the box's cell runs what stands before it, once (*The pass runs only as far as it must*). Inside a deferred body (a function, a loop, a runtime branch), parse order is not run order, and a box used where an identity is needed is the checked error.
