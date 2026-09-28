@@ -417,8 +417,8 @@ mod tests {
 
     #[test]
     fn a_value_word_is_never_read_for_a_mark() {
-        // Bits 63, 62 and 47 once marked a frame, a global and an arena place; a node whose
-        // value word carries them is read by its type alone, so the word is never followed.
+        // A node whose value word carries bits 63, 62 and 47 is read by its type alone: the
+        // word is never followed.
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);

@@ -760,7 +760,7 @@ impl<'a> Parser<'a> {
                 crate::identities::build_init(self.rt.store, self.types, place, value)?
             } else if self.types.frame_of(read).is_some() && dyad::ty(read) == self.types.binding_ {
                 // `x := y` over storage no rule above copies: the name is a second name for
-                // the same bytes, as it was for the marked place.
+                // the same bytes.
                 let b = Binding::read(read);
                 Binding::lay_out(binding, b.dyad, b.frame, b.offset);
                 read

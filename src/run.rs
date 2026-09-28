@@ -713,8 +713,7 @@ impl<'a> Runtime<'a> {
     }
 
     /// `width` zeroed bytes for a result nobody named, live until the line that made it
-    /// is released (DESIGN ›A scope lays out its declarations…‹: an unnamed result has no
-    /// offset and no home in the graph).
+    /// is released (DESIGN ›A scope lays out its declarations…‹).
     pub(crate) fn scratch(&mut self, width: usize) -> *mut u8 {
         self.stack.alloc(width)
     }
