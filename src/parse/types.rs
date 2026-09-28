@@ -1115,13 +1115,19 @@ impl<'a> Parser<'a> {
         if let Some(folded) = self.fold_comptime_node(ty, node, spec)? {
             return Ok(Some(folded));
         }
-        // A run whose result is copied out gets the slot it is copied into.
+        // A run whose result is copied out is copied where it runs: into the name that
+        // takes it, else scratch.
         let out = *(dyad::value(spec) as *const DyadPtr).add(FN_OUTPUT);
-        let Some(width) = crate::identities::by_copy::record_width(self.types, out) else {
+        if crate::identities::by_copy::record_width(self.types, out).is_none() {
             return Ok(None);
-        };
-        let slot = self.alloc_local(out, width);
-        Ok(Some(crate::identities::by_copy::build_result(self.rt.store, self.types, slot, node)))
+        }
+        Ok(Some(crate::identities::by_copy::build_result(
+            self.rt.store,
+            self.types,
+            std::ptr::null_mut(),
+            node,
+            out,
+        )))
     }
 
     /// A node every value field of which is a literal is comptime, its

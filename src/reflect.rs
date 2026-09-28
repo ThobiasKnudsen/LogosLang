@@ -514,7 +514,7 @@ mod tests {
                 (core.storeptr_, meta::TUPLE_TAG, 5),
                 (core.return_, meta::TUPLE_TAG, 2),
                 (core.not_, meta::TUPLE_TAG, 2),
-                (core.construct_, meta::LIST_TAG, 2),
+                (core.construct_, meta::LIST_TAG, 3),
             ] {
                 assert_eq!(meta::kind_of(id), Some(kind));
                 assert_eq!(meta::arity_of(id), arity);
@@ -609,14 +609,16 @@ mod tests {
             let Shape::List { head, tail } = describe(types, slots[1].node) else {
                 panic!("construction should be a list");
             };
-            assert_eq!(text_of(head[0].role), b"instance");
+            assert_eq!(text_of(head[0].role), b"target");
+            assert_eq!(text_of(head[1].role), b"type");
             assert_eq!(tail.len(), 2);
-            let Shape::Instance { fields, size } = describe(types, head[0].node) else {
-                panic!("the constructed value should be an instance");
+            // The value is made into the name that takes it: the target is `pt`'s binding.
+            assert_eq!(head[0].node, slots[0].node);
+            assert!(matches!(describe(types, head[0].node), Shape::Binding { .. }));
+            let Shape::RecordLogos { size_bytes, .. } = describe(types, head[1].node) else {
+                panic!("the constructed value's type should read its layout");
             };
-            assert_eq!(size, 12);
-            assert_eq!((fields[0].1, fields[0].2), (NumType::I32, 0));
-            assert_eq!((fields[1].1, fields[1].2), (NumType::I64, 4));
+            assert_eq!(size_bytes, 12);
 
             let Shape::Tuple { slots } = describe(types, roots[3]) else {
                 panic!("assignment should be a tuple");
@@ -741,8 +743,9 @@ mod tests {
             };
             *counts.entry(name).or_insert(0usize) += 1;
         }
+        // `pt`'s bytes are its binding's: an instance is a name's storage, never a node of its own.
         for expected in [
-            "scalar", "text", "prose", "fraction", "pointer", "tuple", "list", "call", "instance",
+            "scalar", "text", "prose", "fraction", "pointer", "tuple", "list", "call", "binding",
             "logos",
         ] {
             assert!(counts.get(expected).copied().unwrap_or(0) > 0, "no {expected} described");

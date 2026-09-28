@@ -289,7 +289,10 @@ pub(super) fn build_alloc(
                 .ok_or(ParseError::UnsupportedOperands)?,
         },
     };
-    let init = init.unwrap_or(std::ptr::null_mut());
+    // `T ?`, the valueless marker, names the cells' type and fills them with nothing.
+    // SAFETY: `init` is a reduced dyad just parsed.
+    let init =
+        init.filter(|&i| unsafe { !dyad::value(i).is_null() }).unwrap_or(std::ptr::null_mut());
     let value = store.alloc_operands(&[pointee, count, init, types.ops.alloc_]);
     Ok(store.alloc_raw(types.alloc_, value))
 }

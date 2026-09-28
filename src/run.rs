@@ -278,9 +278,9 @@ struct FrameStack {
     cursor: usize,
 }
 
-/// The (chunk, cursor) to restore when a call returns; held on the Rust stack
+/// The (chunk, cursor) to restore when a call or a line is done; held on the Rust stack
 /// across the body walk.
-type StackMark = (usize, usize);
+pub(crate) type StackMark = (usize, usize);
 
 impl FrameStack {
     fn new() -> Self {
@@ -719,6 +719,22 @@ impl<'a> Runtime<'a> {
     /// The innermost frame's base.
     fn frame_base(&self) -> *mut u8 {
         self.activations.last().expect("the program frame is never popped").base
+    }
+
+    /// `width` zeroed bytes for a result nobody named, live until the line that made it
+    /// is released (DESIGN ›A scope lays out its declarations…‹: an unnamed result has no
+    /// offset and no home in the graph).
+    pub(crate) fn scratch(&mut self, width: usize) -> *mut u8 {
+        self.stack.alloc(width)
+    }
+
+    /// The point a line's scratch is given back to.
+    pub(crate) fn stack_mark(&self) -> StackMark {
+        self.stack.mark()
+    }
+
+    pub(crate) fn stack_release(&mut self, mark: StackMark) {
+        self.stack.release(mark);
     }
 
     /// Apply `f` to the call node `node`, `{type: _, value: [args…, null]}`:

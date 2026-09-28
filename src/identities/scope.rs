@@ -154,6 +154,9 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let start = rt.take_cursor(node);
         let mut last = 0i64;
         let mut defers: Vec<DyadPtr> = Vec::new();
+        let tail = exprs.iter().rposition(|&e| {
+            !super::numtype::is_comment_type(dyad::ty(e)) && dyad::ty(e) != defer_ty
+        });
         for (i, &expr) in exprs.iter().enumerate() {
             let logos = dyad::ty(expr);
             // Prose: never run, never the tail.
@@ -168,8 +171,15 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             if i < start {
                 continue;
             }
+            // A line's scratch is freed with the line; the tail's is the value handed on.
+            let mark = rt.stack_mark();
             match rt.run(expr) {
-                Ok(v) => last = v,
+                Ok(v) => {
+                    last = v;
+                    if tail != Some(i) {
+                        rt.stack_release(mark);
+                    }
+                }
                 // A `return` leaves through this scope, so the teardowns held so far run.
                 Err(RunError::Return(v)) => {
                     run_teardowns(rt, &defers)?;

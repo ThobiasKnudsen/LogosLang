@@ -21,7 +21,8 @@ use crate::Core;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ByCopyIds {
-    /// `[slot, call, op]`: a call whose record result is copied into `slot`.
+    /// `[target, call, type, op]`: a call whose record result, of `type`, is copied into the
+    /// name `target`, or into scratch when no name takes it (`target` null).
     pub result: DyadPtr,
     pub result_leaf: DyadPtr,
     /// `[expr, op]`: the address of a record value's bytes, what a record function hands back.
@@ -36,7 +37,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ByCopyIds {
         meta::TUPLE_TAG,
         meta::prec::INERT,
         Assoc::Left,
-        &["slot", "call", "op"],
+        &["target", "call", "type", "op"],
     );
     let result = cx.store.alloc_raw(cx.type_, record);
     cx.lower.insert(result, lower_result);
@@ -52,11 +53,50 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ByCopyIds {
 pub(crate) fn build_result(
     store: &mut Store,
     types: &Core,
-    slot: DyadPtr,
+    target: DyadPtr,
     call: DyadPtr,
+    ty: DyadPtr,
 ) -> DyadPtr {
-    let value = store.alloc_operands(&[slot, call, types.by_copy.result_leaf]);
+    let value = store.alloc_operands(&[target, call, ty, types.by_copy.result_leaf]);
     store.alloc_raw(types.by_copy.result, value)
+}
+
+/// The record type a `construct` or `result` node yields.
+///
+/// # Safety
+/// `node` must be a `construct` node from `instance::build_ctor` or a `result` node.
+pub(crate) unsafe fn made_type(types: &Core, node: DyadPtr) -> DyadPtr {
+    let ops = dyad::value(node) as *const DyadPtr;
+    *ops.add(if dyad::ty(node) == types.construct_ { 1 } else { 2 })
+}
+
+/// Where a `construct` or `result` node puts its value: the name's storage, or scratch
+/// of the value's width taken now.
+///
+/// # Safety
+/// `node` must be a `construct` or `result` node from the store.
+pub(crate) unsafe fn dest_of(rt: &mut Runtime, node: DyadPtr) -> Result<*mut u8, RunError> {
+    let target = *(dyad::value(node) as *const DyadPtr);
+    if target.is_null() {
+        let ty = made_type(rt.types(), node);
+        let width = place_layout(rt.types(), ty).map_or(8, |(_, w)| w).max(1);
+        return Ok(rt.scratch(width));
+    }
+    rt.place_addr(target).ok_or(RunError::NoActivation)
+}
+
+/// [`dest_of`]'s compiled half: a stack slot of this function for scratch.
+///
+/// # Safety
+/// As [`dest_of`].
+pub(crate) unsafe fn lower_dest_of(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
+    let target = *(dyad::value(node) as *const DyadPtr);
+    if target.is_null() {
+        let ty = made_type(lw.types(), node);
+        let width = place_layout(lw.types(), ty).map_or(8, |(_, w)| w).max(1);
+        return Ok(lw.scratch_slot(width));
+    }
+    lw.place_addr(target)
 }
 
 pub(crate) fn build_out(store: &mut Store, types: &Core, expr: DyadPtr) -> DyadPtr {
@@ -87,7 +127,7 @@ pub(crate) unsafe fn record_type_of(types: &Core, node: DyadPtr) -> Option<DyadP
     let node = types.through(node);
     let ty = dyad::ty(node);
     let t = if ty == types.construct_ || ty == types.by_copy.result {
-        dyad::ty(*(dyad::value(node) as *const DyadPtr))
+        made_type(types, node)
     } else if ty == types.by_copy.out {
         return record_type_of(types, *(dyad::value(node) as *const DyadPtr));
     } else {
@@ -176,19 +216,15 @@ pub(crate) unsafe fn record_addr(rt: &mut Runtime, node: DyadPtr) -> Result<*mut
     let types = rt.types();
     let (result, out, construct) = (types.by_copy.result, types.by_copy.out, types.construct_);
     let kind = read_kind(types, node);
-    if ty == result || ty == out {
+    // Each yields the address of the bytes it made.
+    if ty == result || ty == out || ty == construct {
         return rt.run(node).map(|addr| addr as usize as *mut u8);
     }
-    let place = if ty == construct {
-        rt.run(node)?;
-        *(dyad::value(node) as *const DyadPtr)
-    } else {
-        match kind {
-            Read::Aggregate | Read::Rational => node,
-            // A literal's bytes are a rational value's.
-            Read::Literal => return Ok(dyad::value(node)),
-            _ => return Err(RunError::NoWholeRead),
-        }
+    let place = match kind {
+        Read::Aggregate | Read::Rational => node,
+        // A literal's bytes are a rational value's.
+        Read::Literal => return Ok(dyad::value(node)),
+        _ => return Err(RunError::NoWholeRead),
     };
     let addr = rt.place_addr(place).ok_or(RunError::NoActivation)?;
     if addr.is_null() {
@@ -210,12 +246,8 @@ pub(crate) unsafe fn lower_record_addr(
     let types = lw.types();
     let (result, out, construct) = (types.by_copy.result, types.by_copy.out, types.construct_);
     let kind = read_kind(types, node);
-    if ty == result || ty == out {
+    if ty == result || ty == out || ty == construct {
         return lw.lower(node);
-    }
-    if ty == construct {
-        lw.lower(node)?;
-        return lw.place_addr(*(dyad::value(node) as *const DyadPtr));
     }
     match kind {
         Read::Aggregate | Read::Rational => lw.place_addr(node),
@@ -227,10 +259,10 @@ pub(crate) unsafe fn lower_record_addr(
 
 fn run_result(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a result node from `build_result`: a call of a `fn`, a rational
-    // arithmetic node, or a literal, run into the slot.
+    // arithmetic node, or a literal, run into the name's storage or scratch.
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
-        let dest = rt.place_addr(*ops).ok_or(RunError::NoActivation)?;
+        let dest = dest_of(rt, node)?;
         let call = *ops.add(1);
         match read_kind(rt.types(), call) {
             Read::Executable(Dispatch::Call(f)) => rt.apply_into(f, call, Some(dest)),
@@ -251,7 +283,7 @@ fn lower_result(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> 
     // SAFETY: as [`run_result`]; a rational step is interpreted only.
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
-        let dest = lw.place_addr(*ops)?;
+        let dest = lower_dest_of(lw, node)?;
         let call = *ops.add(1);
         match read_kind(lw.types(), call) {
             Read::Executable(Dispatch::Call(f)) => lw.lower_call_into(f, call, Some(dest)),

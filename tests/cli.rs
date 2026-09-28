@@ -2128,6 +2128,20 @@ fn a_parameter_and_a_local_are_names_of_the_call_s_frame() {
 }
 
 #[test]
+fn a_share_function_writes_a_field_of_a_frame_local_record() {
+    // The value a `share` function is called through is the record's own bytes, in the
+    // caller's frame, so the write lands in the local it was called on.
+    let (echoes, stderr) = repl(
+        b"pt := type (mut a := i32 ?, b := i32 ?, share bump := fn () -> void ( a = a + b ))\n\
+          f := fn () -> i32 ( mut p := pt(1, 2), p.bump(), p.bump(), p.a )\nf()\n\
+          mut q := pt(10, 5)\nq.bump()\nq.a\n",
+    );
+    // A `-> void` call echoes its unit.
+    assert_eq!(echoes, ["5", "0", "15"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
 fn a_field_the_binding_has_not_is_the_same_error_as_an_undeclared_dot_field() {
     // The message names the spelling, the one thing the two probes differ in, so it is blanked before comparing.
     fn message(stderr: &str) -> String {

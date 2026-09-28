@@ -268,6 +268,7 @@ pub(crate) fn cell_arg(store: &mut Store, types: &Core, cell: DyadPtr) -> DyadPt
                 *ops.add(1),
                 *ops.add(3),
                 *ops.add(4),
+                *ops.add(5),
             );
         }
     }

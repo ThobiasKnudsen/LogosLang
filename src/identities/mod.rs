@@ -1247,7 +1247,7 @@ pub(crate) unsafe fn commit_call_args(
                 // A value made when the call runs, a run's own or a record's place, is a
                 // node's address too.
                 let ok = dyad::ty(*arg) == types.this.pack
-                    || dyad::ty(*arg) == types.this.on_record
+                    || dyad::ty(*arg) == types.by_copy.out
                     || match read::read_kind(types, *arg) {
                         read::Read::Identity | read::Read::Address => true,
                         read::Read::Container(c) => !c.is_null(),

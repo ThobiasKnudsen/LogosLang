@@ -182,8 +182,9 @@ fn run_line(source: &str) -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
-    // The tail is read after the root's own run and before the teardowns,
-    // which may free what it points at.
+    // The tail is read after the root's own run and before the teardowns, which may free
+    // what it points at, and rendered before the pass's runtime goes: an unnamed result
+    // lives in that runtime's scratch.
     let ran = match p.finish() {
         Ok(ran) => ran,
         Err(e) => {
@@ -202,7 +203,8 @@ fn run_line(source: &str) -> ExitCode {
                 _ => unsafe { p.value_of(node) },
             };
             match bits {
-                Ok(bits) => Some((node, bits)),
+                // SAFETY: `node` is the parsed dyad whose value `bits` is.
+                Ok(bits) => Some(unsafe { seed::identities::display_value(types, node, bits) }),
                 Err(e) => {
                     eprintln!("{path}: {}", report::parse_message(&e));
                     return ExitCode::FAILURE;
@@ -226,9 +228,8 @@ fn run_line(source: &str) -> ExitCode {
     }
 
     match last {
-        Some((node, bits)) => {
-            // SAFETY: `node` is the parsed dyad whose value `bits` is.
-            println!("{}", unsafe { seed::identities::display_value(types, node, bits) });
+        Some(shown) => {
+            println!("{shown}");
             ExitCode::SUCCESS
         }
         // Real work with nothing to show exits clean; a genuinely empty line is an error.
@@ -311,7 +312,8 @@ fn repl() -> ExitCode {
         }
 
         let types = &engine.core;
-        // The value is read while the parser is alive, and only for a line that parsed whole.
+        // The value is read and rendered while the parser is alive, since an unnamed result
+        // lives in its runtime's scratch, and only for a line that parsed whole.
         let (parsed, end, value, line_defers, scopes_back, imports_back) = {
             let mut p = Parser::new(&line, &mut engine.store, &mut engine.trie, types, scopes)
                 .with_imports(std::mem::take(&mut imports))
@@ -322,8 +324,11 @@ fn repl() -> ExitCode {
                 Ok(node) if line[end..].trim_start().is_empty() => {
                     // SAFETY: `node` was just parsed into the engine's store.
                     unsafe { p.fill_if_sibling_write(node) };
-                    // SAFETY: as above.
-                    Some(unsafe { p.value_of(node) })
+                    // SAFETY: as above; `bits` is the value `node` yielded.
+                    Some(unsafe {
+                        p.value_of(node)
+                            .map(|bits| seed::identities::display_value(types, node, bits))
+                    })
                 }
                 _ => None,
             };
@@ -367,10 +372,7 @@ fn repl() -> ExitCode {
         session_defers.extend(line_defers);
 
         match value {
-            Some(Ok(bits)) if !is_statement => {
-                // SAFETY: `node` is a valid dyad whose value `bits` is.
-                println!("{}", unsafe { seed::identities::display_value(types, node, bits) })
-            }
+            Some(Ok(shown)) if !is_statement => println!("{shown}"),
             Some(Ok(_)) => {}
             Some(Err(e)) => {
                 eprintln!("{}", report::parse_message(&e));

@@ -175,7 +175,10 @@ pub(crate) fn compare_pair(op: CmpOp, (n1, d1): (i64, i64), (n2, d2): (i64, i64)
 /// # Safety
 /// `node` must be null or a valid dyad from the store.
 unsafe fn is_literal(rational: DyadPtr, node: DyadPtr) -> bool {
-    !node.is_null() && dyad::ty(node) == rational && !crate::dyad::is_place(dyad::value(node))
+    !node.is_null()
+        && dyad::ty(node) == rational
+        && !dyad::value(node).is_null()
+        && !crate::dyad::is_place(dyad::value(node))
 }
 
 fn reduce(mut num: i128, mut den: i128) -> (i128, i128) {
@@ -414,8 +417,7 @@ pub(crate) unsafe fn slotted(p: &mut Parser, node: DyadPtr) -> DyadPtr {
     if !arith {
         return node;
     }
-    let slot = p.alloc_local(types.rational, 16);
-    super::by_copy::build_result(p.store(), types, slot, node)
+    super::by_copy::build_result(p.store(), types, std::ptr::null_mut(), node, types.rational)
 }
 
 /// A place of the type, an arithmetic node or a call whose output is the type (each in
@@ -435,7 +437,7 @@ pub(crate) unsafe fn is_rational_value(types: &Core, node: DyadPtr) -> bool {
             .is_some_and(|last| is_rational_value(types, last));
     }
     if ty == types.by_copy.result {
-        return dyad::ty(*(dyad::value(node) as *const DyadPtr)) == types.rational;
+        return super::by_copy::made_type(types, node) == types.rational;
     }
     if ty == types.by_copy.out {
         let expr = types.through(*(dyad::value(node) as *const DyadPtr));

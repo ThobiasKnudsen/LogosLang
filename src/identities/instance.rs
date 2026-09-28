@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Record instances: construction (`point(3, 4)`, the type applied to its field values)
-//! and field resolution (`p.x`). An instance is parse-allocated storage laid out from
-//! the field declarations in order; a field resolves to a place at its byte offset, so
-//! every scalar read, write and lowering path serves it unchanged.
+//! and field resolution (`p.x`). An instance is bytes laid out from the field declarations
+//! in order, made into the name that takes it or into scratch; a field is a place at its
+//! byte offset inside the record's storage, so every scalar read, write and lowering path
+//! serves it unchanged.
 
 use crate::Core;
 use cranelift_codegen::ir::Value;
@@ -38,7 +39,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> InstanceIds {
         meta::LIST_TAG,
         meta::prec::INERT,
         crate::parse::Assoc::Left,
-        &["instance", "op"],
+        &["target", "type", "op"],
     );
     let construct = cx.store.alloc_raw(cx.type_, record);
     cx.lower.insert(construct, lower);
@@ -136,26 +137,25 @@ pub(crate) unsafe fn layout(record_logos: DyadPtr) -> Result<FieldLayout, ParseE
     Ok((fields, offset))
 }
 
-/// The caller mints `instance` sized by `layout`, frame-relative inside a function or
-/// absolute at top level; it rides at operand 0 and the construct is a re-run initializer.
+/// `[target, type, op, args…, null]`: the value is made into the name `target` when one
+/// takes it (`:=` writes its binding there), else into scratch; the node yields its address.
 ///
 /// # Safety
-/// `record_logos` must be a record type node, `instance` a place of that type sized to
-/// `layout`, and `args` reduced dyads, all from the store.
+/// `record_logos` must be a record type node and `args` reduced dyads, all from the store.
 pub(crate) unsafe fn build_ctor(
     store: &mut Store,
     types: &Core,
     construct: DyadPtr,
     record_logos: DyadPtr,
-    instance: DyadPtr,
     args: &[DyadPtr],
 ) -> Result<DyadPtr, ParseError> {
     let (fields, _) = layout(record_logos)?;
     if args.len() != fields.len() {
         return Err(ParseError::CtorArity);
     }
-    let mut ops = Vec::with_capacity(args.len() + 3);
-    ops.push(instance);
+    let mut ops = Vec::with_capacity(args.len() + 4);
+    ops.push(std::ptr::null_mut());
+    ops.push(record_logos);
     ops.push(types.ops.construct_);
     for (&arg, &(field, nt, _)) in args.iter().zip(&fields) {
         let fty = dyad::ty(field);
@@ -188,20 +188,24 @@ pub(crate) unsafe fn build_ctor(
     Ok(store.alloc_raw(construct, value))
 }
 
+/// The arguments run first, then the bytes are taken and filled, so an argument's own
+/// scratch never sits inside them; yields the instance's address.
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a construct node from `build_ctor`.
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
-        let instance = *ops;
-        let (fields, _) =
-            layout(dyad::ty(instance)).map_err(|_| RunError::NoLayout(dyad::ty(instance)))?;
-        // The arguments follow the two fixed head slots (instance, op).
-        for (i, &(field, _, offset)) in fields.iter().enumerate() {
-            let bits = rt.run(*ops.add(i + 2))?;
-            let blob = rt.place_addr(instance).ok_or(RunError::NoActivation)?;
-            numtype::write_scalar(dyad::ty(field), blob.add(offset), bits);
+        let ty = *ops.add(1);
+        let (fields, _) = layout(ty).map_err(|_| RunError::NoLayout(ty))?;
+        // The arguments follow the three fixed head slots (target, type, op).
+        let mut bits = Vec::with_capacity(fields.len());
+        for i in 0..fields.len() {
+            bits.push(rt.run(*ops.add(i + 3))?);
         }
-        Ok(0)
+        let blob = super::by_copy::dest_of(rt, node)?;
+        for (&(field, _, offset), &b) in fields.iter().zip(&bits) {
+            numtype::write_scalar(dyad::ty(field), blob.add(offset), b);
+        }
+        Ok(blob as i64)
     }
 }
 
@@ -209,15 +213,14 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a construct node from `build_ctor`.
     unsafe {
         let ops = dyad::value(node) as *const DyadPtr;
-        let instance = *ops;
-        let (fields, _) =
-            layout(dyad::ty(instance)).map_err(|_| CompileError::NoLayout(dyad::ty(instance)))?;
-        let base = lw.place_addr(instance)?;
-        // The arguments follow the two fixed head slots (instance, op).
+        let ty = *ops.add(1);
+        let (fields, _) = layout(ty).map_err(|_| CompileError::NoLayout(ty))?;
+        let base = super::by_copy::lower_dest_of(lw, node)?;
+        // The arguments follow the three fixed head slots (target, type, op).
         for (i, &(_, nt, offset)) in fields.iter().enumerate() {
-            let v = lw.lower(*ops.add(i + 2))?;
+            let v = lw.lower(*ops.add(i + 3))?;
             lw.store_at(nt.cranelift_type(), base, offset as i64, v);
         }
-        Ok(lw.const_i32(0))
+        Ok(base)
     }
 }

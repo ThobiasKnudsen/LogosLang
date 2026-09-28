@@ -74,8 +74,14 @@ fn construct(p: &mut Parser, tape: &mut ParsingTape) -> Result<Constructed, Pars
     let ty = unsafe { mint(p.store(), types, key, value) };
     let hole_follows =
         p.cell_at(tape, 1)?.is_some_and(|c| !c.constructed && c.identity(types) == types.unknown);
-    let node = if hole_follows { ty } else { p.alloc_local(ty, 8) };
-    tape.place(node);
+    if hole_follows {
+        tape.place(ty);
+        return Ok(Constructed::Placed);
+    }
+    // A fresh empty map: the marker `T ?` leaves, for the name that takes it to lay out.
+    let marker = p.store().alloc_raw(ty, std::ptr::null_mut());
+    tape.place(marker);
+    tape.at_mut(0).expect("placed above").hole = true;
     Ok(Constructed::Placed)
 }
 

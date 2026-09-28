@@ -47,8 +47,10 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid `while` node with `[cond, body]` operands.
     unsafe {
         let (cond, body) = parts(node);
+        let mark = rt.stack_mark();
         while rt.run(cond)? != 0 {
             rt.run(body)?;
+            rt.stack_release(mark);
         }
         Ok(0)
     }

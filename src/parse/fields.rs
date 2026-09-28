@@ -162,6 +162,7 @@ impl<'a> Parser<'a> {
         // Only the type's own parse fills a field through its default entry.
         let in_parse = self.cx.definitions.last().is_some_and(|d| d.in_parse);
         let fill = if in_parse { self.types.this.fill } else { std::ptr::null_mut() };
+        let owner = self.cx.definitions.last().expect("read inside a definition").self_type;
         // SAFETY: the field is a declaration dyad, its type null or a type node.
         let node = unsafe {
             crate::identities::this::build_field_read(
@@ -172,6 +173,7 @@ impl<'a> Parser<'a> {
                 dyad::ty(items[index]),
                 binding,
                 fill,
+                owner,
             )
         };
         Ok(node)
@@ -311,6 +313,7 @@ impl<'a> Parser<'a> {
                 ty,
                 binding,
                 std::ptr::null_mut(),
+                t,
             );
             return Ok(Some((node, 0)));
         }
@@ -619,17 +622,12 @@ impl<'a> Parser<'a> {
                 if let Some(args) = call {
                     if self.takes_this(member) {
                         self.check_receiver_write(&left, member)?;
-                        // A record laid out in bytes is handed on as its own place, any
-                        // other value by a `dyad` view, as a `dyad ?` parameter takes a node.
+                        // A record laid out in bytes is handed on as the address of its bytes,
+                        // any other value by a `dyad` view, as a `dyad ?` parameter takes a node.
                         let view = if storage || crate::dyad::is_place(dyad::value(lhs)) {
                             crate::identities::instance::layout(record_logos)?;
                             let types = self.types;
-                            crate::identities::this::build_on_record(
-                                self.rt.store,
-                                types,
-                                record_logos,
-                                lhs,
-                            )
+                            crate::identities::by_copy::build_out(self.rt.store, types, lhs)
                         } else {
                             self.rt.store.alloc_raw(self.types.dyad_, lhs.cast())
                         };

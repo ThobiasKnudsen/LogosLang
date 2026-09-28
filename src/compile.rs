@@ -445,6 +445,17 @@ impl Lowerer<'_, '_> {
         widen_to_i64(self.builder, v, nt)
     }
 
+    /// `width` bytes of this function's frame for a result nobody named: the compiled
+    /// form of the interpreter's scratch, picked at compile time.
+    pub(crate) fn scratch_slot(&mut self, width: usize) -> Value {
+        let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            (width as u32).next_multiple_of(8),
+            3,
+        ));
+        self.builder.ins().stack_addr(self.ptr_ty, slot, 0)
+    }
+
     /// The containers in a block on this frame, its address; null for none.
     pub(crate) fn spill(&mut self, containers: &[Value]) -> Value {
         if containers.is_empty() {

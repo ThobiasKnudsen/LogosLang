@@ -453,12 +453,14 @@ impl<'a> Parser<'a> {
         }
         let node = tape.at(0).expect("the declaration was just placed").dyad;
         self.drain()?;
+        let mark = self.rt.stack_mark();
         // SAFETY: `node` is the declare node just built; its binding is a binding dyad from the store.
         unsafe {
             self.run_on_pass(node).map_err(ParseError::Run)?;
             let named = self.types.through(crate::identities::declare::binding_of(node));
             crate::identities::declare::set_declared(node, named);
         }
+        self.rt.stack_release(mark);
         Ok(Constructed::Placed)
     }
 
@@ -674,12 +676,13 @@ impl<'a> Parser<'a> {
             } else if dyad::ty(read) == self.types.construct_
                 || dyad::ty(read) == self.types.by_copy.result
             {
-                // Both fill the place at operand 0, which becomes the name's own.
-                let ops = dyad::value(read) as *mut DyadPtr;
-                let instance = *ops;
-                dyad::set_ty(placeholder, dyad::ty(instance));
-                dyad::set_value(placeholder, dyad::value(instance));
-                *ops = placeholder;
+                // Both make their value into the name's own bytes: the target slot.
+                let t = crate::identities::by_copy::made_type(self.types, read);
+                let width = crate::identities::read::place_layout(self.types, t)
+                    .map_or(8, |(_, width)| width)
+                    .max(1);
+                let place = self.place_for(binding, t, width);
+                *(dyad::value(read) as *mut DyadPtr) = place;
                 value
             } else if crate::identities::read::read_kind(self.types, read)
                 == crate::identities::read::Read::Identity
@@ -899,23 +902,22 @@ impl<'a> Parser<'a> {
                 unsafe { crate::identities::this::empty_node(self.rt.store, t) }
             }
             Some(t) => {
-                // The width comes from the same reading rule a read of the
-                // place consults, so allocation and read cannot disagree; a
-                // `bool` place is refused since its literals cannot yet be stored into one.
+                // The valueless marker `[T][null]`: the name `:=` gives it is laid out at
+                // the type's width by the reading rule, so allocation and read cannot
+                // disagree; a `bool` place is refused since its literals cannot yet be stored into one.
                 // SAFETY: `t` is a type node from the store.
-                let place = unsafe {
-                    if t == types.bool_ {
-                        return Err(ParseError::NonNumericDeclaredType);
-                    }
-                    match crate::identities::read::place_layout(types, t) {
-                        Some((_, width)) => self.alloc_local(t, width),
-                        None if self.cx.field_hole => self.rt.store.alloc_raw(t, std::ptr::null_mut()),
-                        None => return Err(ParseError::NonNumericDeclaredType),
-                    }
-                };
+                if t == types.bool_ {
+                    return Err(ParseError::NonNumericDeclaredType);
+                }
+                // SAFETY: `t` is a type node from the store.
+                if unsafe { crate::identities::read::place_layout(types, t) }.is_none()
+                    && !self.cx.field_hole
+                {
+                    return Err(ParseError::NonNumericDeclaredType);
+                }
                 tape.remove(-1);
                 hole = true;
-                place
+                self.rt.store.alloc_raw(t, std::ptr::null_mut())
             }
         };
         tape.place(node);

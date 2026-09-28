@@ -1081,16 +1081,11 @@ impl<'a> Parser<'a> {
             let types = self.types;
             // SAFETY: `callee` is a record type node; `args` are reduced dyads from the store.
             unsafe {
-                // A per-call local sized from the record layout, so a recursive
-                // call fills its own copy.
-                let (_, size) = crate::identities::instance::layout(callee)?;
-                let instance = self.alloc_local(callee, size.max(1));
                 crate::identities::instance::build_ctor(
                     self.rt.store,
                     types,
                     types.construct_,
                     callee,
-                    instance,
                     &args,
                 )
             }
@@ -1113,14 +1108,15 @@ impl<'a> Parser<'a> {
                     None
                 }
             };
-            if let Some((out, width)) = record_out {
-                // The caller provides the slot the record result is copied into.
-                let slot = self.alloc_local(out, width);
+            if let Some((out, _)) = record_out {
+                // The record result is copied out where the call runs: into the name that
+                // takes it, else scratch.
                 return Ok(crate::identities::by_copy::build_result(
                     self.rt.store,
                     types,
-                    slot,
+                    std::ptr::null_mut(),
                     call,
+                    out,
                 ));
             }
             // A type-returning call resolves now, at comptime, so the result
@@ -1315,26 +1311,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Inside a function the place is frame-relative, the next offset after
-    /// the parameters, its storage per call; at top level an offset into the
-    /// store's arena. The value is a `FRAME_TAG` offset or an arena place respectively.
-    pub(crate) fn alloc_local(&mut self, ty_node: DyadPtr, width: usize) -> DyadPtr {
-        let place = if self.cx.frames.len() <= self.cx.held_depth
-            || self.cx.share_init == Some(self.cx.frames.len())
-        {
-            // Tagged as storage, so a place and a definition's record are
-            // told apart everywhere, not only where a frame exists.
-            crate::dyad::arena_place(self.rt.store.arena_alloc(width))
-        } else {
-            let depth = self.cx.frames.len();
-            let frame = self.cx.frames.last_mut().unwrap();
-            let offset = frame.size;
-            frame.size += width;
-            crate::dyad::frame_place(depth, offset)
-        };
-        self.rt.store.alloc_raw(ty_node, place)
-    }
-
     /// A driver's top-level line is complete: see [`ScopeStack::close_item`].
     ///
     /// # Safety
@@ -1361,7 +1337,7 @@ impl<'a> Parser<'a> {
     pub fn drain(&mut self) -> Result<Option<(DyadPtr, i64)>, ParseError> {
         let lists: Vec<(Option<DyadPtr>, Vec<DyadPtr>)> =
             self.cx.open.iter_mut().map(|s| (s.scope, std::mem::take(&mut s.unrun))).collect();
-        let mut last = None;
+        let mut items = Vec::new();
         for (scope, list) in lists {
             if list.is_empty() {
                 continue;
@@ -1374,21 +1350,32 @@ impl<'a> Parser<'a> {
                 self.rt.set_cursor(scope, lines);
             }
             for node in list {
-                // SAFETY: every pending item is a dyad this parser built into its store, which outlives the pass.
-                unsafe {
+                // A `[…]` line is a list that goes whole to the call that takes it, which
+                // evaluates its lines when it runs (DESIGN ›A bracket goes to the call whole‹).
+                // SAFETY: every pending item is a dyad this parser built into its store.
+                let skip = unsafe {
                     let ty = dyad::ty(node);
-                    // A `[…]` line is a list that goes whole to the call that takes it, which
-                    // evaluates its lines when it runs (DESIGN ›A bracket goes to the call whole‹).
-                    if crate::identities::numtype::is_comment_type(ty)
+                    crate::identities::numtype::is_comment_type(ty)
                         || ty == self.types.defer_
                         || ty == self.types.square_brackets
-                    {
-                        continue;
-                    }
-                    let bits = self.run_on_pass(node).map_err(ParseError::Run)?;
-                    last = Some((node, bits));
+                };
+                if skip {
+                    continue;
                 }
+                items.push(node);
             }
+        }
+        let mut last = None;
+        let n = items.len();
+        for (i, node) in items.into_iter().enumerate() {
+            // A line's scratch goes with the line; the last item's is the value handed on.
+            let mark = self.rt.stack_mark();
+            // SAFETY: every pending item is a dyad this parser built into its store, which outlives the pass.
+            let bits = unsafe { self.run_on_pass(node) }.map_err(ParseError::Run)?;
+            if i + 1 < n {
+                self.rt.stack_release(mark);
+            }
+            last = Some((node, bits));
         }
         Ok(last)
     }

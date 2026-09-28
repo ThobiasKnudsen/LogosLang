@@ -87,6 +87,7 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         if numtype::apply_compare(CmpOp::Gt, nt, d, 0) == 0 {
             return Ok(0);
         }
+        let mark = rt.stack_mark();
         loop {
             if named {
                 v = numtype::read_scalar_nt(nt, counter(rt)?);
@@ -95,6 +96,7 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
                 break;
             }
             rt.run(body)?;
+            rt.stack_release(mark);
             // A wrapped counter would satisfy `var < end` again.
             let Some(next) = numtype::checked_add(nt, v, d) else {
                 break;

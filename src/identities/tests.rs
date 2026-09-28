@@ -230,6 +230,25 @@ fn parses_a_fn_with_a_param_visible_in_the_body() {
 }
 
 #[test]
+fn an_unnamed_result_is_scratch_freed_with_its_line() {
+    // `pt(i, 1)` handed to a call has no name: its bytes are taken when the node runs and
+    // given back with the line, so a loop of them leaves the stack where it found it.
+    let (mut store, mut trie, core) = new_core();
+    let mut scopes = ScopeStack::new();
+    scopes.push(core.root_scope);
+    let src = "pt := type (a := i32 ?, b := i32 ?), f := fn (p := pt ?) -> i32 ( p.a + p.b ), \
+               mut s := i32 0, for i in 0..200 ( s = s + f(pt(i, 1)) ), s";
+    let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes);
+    let root = p.parse_sequence().unwrap();
+    let mut rt = p.into_runtime();
+    let before = rt.stack_mark();
+    // SAFETY: `root` is the sequence just parsed into `store`, which outlives `rt`.
+    let v = unsafe { rt.run(root) }.unwrap();
+    assert_eq!(v, (0..200).sum::<i64>() + 200);
+    assert_eq!(rt.stack_mark(), before, "no line's scratch outlives the line");
+}
+
+#[test]
 fn compiles_and_runs_a_fn_with_arguments() {
     let (mut store, mut trie, core) = new_core();
 
