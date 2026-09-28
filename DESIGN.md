@@ -1939,6 +1939,12 @@ Parse behaviour is not a third level. It is content of a value: a type identity'
 - **Seed:** since 14 September 2026 (#120).
 - **Source:** DESIGN.md l.213
 
+### A binding's fields are read at elaboration, at the line of the read; running code never reads a binding
+`a:gate`, `a:scope`, `a:type`, `a:name`, `a:lex_rank`, `a:start` and `a:end` are read when the node holding the read is built, from the binding as it stands at that line, and the node keeps what it read. A body that runs later, a `fn` body at a call or a loop body on its next pass, gives the same answer. The binding is consulted at every elaboration (parse, graph mutation, reflection) and by nothing else. A program that wants such a fact while running reads the graph at the cursor, by the walk of ›A binding is live while its scope is open and it is not dead; it carries a range‹.
+- **Why:** a binding's fields are positional facts: a gate stands in text order, the `?` entry lasts until the first sibling write, the range ends at an item. A reader at an earlier line must not see a later state, so the answer is fixed where the read is built. And running code checks nothing (the drop-flag reason of ›`drop` and `own` end a name; the teardown is removed or moved at parse; no drop flag‹): a binding read at run would be a lookup the graph should already have settled.
+- **Ruled:** 28 September 2026, Thobias ("never runtime").
+- **Seed:** divergence: `a:type` is read at build; every other field is built as a place over the binding's memory and read when the node runs, so a body built early and run late sees the binding's final state.
+
 ### Build and run are one self-directing pass
 Lexing, parsing and running interleave. A construct can `compile` and then `run` a function during the same pass, at once. There is no promotion scheduler in the seed: execution is directed explicitly where wanted; adaptive hot/cold promotion is a later layer over the same boundary. A `run` over a scope that compiles and runs on the spot is comptime metaprogramming in full: the whole language at parse time, working on real Logic Graph, not a macro sublanguage.
 Comptime runs without the I/O capability, the same boundary that separates compile-time from run-time effects. Exception: `print` may write output at comptime (see the `print` rule below).
