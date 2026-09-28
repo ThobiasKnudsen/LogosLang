@@ -10,14 +10,12 @@ use crate::Core;
 use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
-use super::numtype::NumType;
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
-use crate::store::Store;
 
 const EXPR: usize = 0;
 const VALUE: usize = 1;
@@ -35,26 +33,6 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     cx.lower.insert(id, lower);
     (id, leaf)
-}
-
-pub fn build(store: &mut Store, types: &Core, expr: DyadPtr, bits: i64) -> DyadPtr {
-    let storage = store.alloc_bytes(&bits.to_ne_bytes());
-    let cell = store.alloc_raw(types.numtypes[NumType::I64 as usize], storage);
-    let value = store.alloc_operands(&[expr, cell, types.ops.ran_]);
-    store.alloc_raw(types.ran_, value)
-}
-
-/// The item's type and value move to a fresh node, which becomes the ran
-/// node's `expr`; every pointer to `node` now points at the ran form.
-///
-/// # Safety
-/// `node` must be a valid dyad from the store that nothing is reading while
-/// this runs.
-pub unsafe fn rewrite(store: &mut Store, types: &Core, node: DyadPtr, bits: i64) {
-    let copy = store.alloc_raw(dyad::ty(node), dyad::value(node));
-    let ran = build(store, types, copy, bits);
-    dyad::set_ty(node, dyad::ty(ran));
-    dyad::set_value(node, dyad::value(ran));
 }
 
 /// The item a ran node holds, or `node` itself for anything else: the hop for
@@ -91,52 +69,5 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     unsafe {
         let cell = *(dyad::value(node) as *const DyadPtr).add(VALUE);
         lw.lower(cell)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::identities::read::{read_kind, Dispatch, Read};
-    use crate::identities::{display_value, numtype_of, Core, Operand};
-    use crate::parse::{is_bool_result, Parser, ScopeStack};
-    use crate::regex_trie::RegexTrie;
-
-    #[test]
-    fn a_ran_item_reads_as_its_result_and_answers_as_its_expression() {
-        let mut store = Store::new();
-        let mut trie = RegexTrie::new();
-        let core = Core::build(&mut store, &mut trie);
-        let types = &core;
-        let mut scopes = ScopeStack::new();
-        scopes.push(core.root_scope);
-        let (decl, cmp) = {
-            let mut p = Parser::new("x := i32 1", &mut store, &mut trie, types, scopes);
-            let decl = p.parse_expression().unwrap();
-            let scopes = p.into_scopes();
-            let mut p = Parser::new("x == 1", &mut store, &mut trie, types, scopes);
-            (decl, p.parse_expression().unwrap())
-        };
-        let mut rt = Runtime::new(types, &mut store);
-        // SAFETY: both nodes were just parsed into `store`, which outlives `rt`.
-        unsafe {
-            rt.run(decl).unwrap();
-            let bits = rt.run(cmp).unwrap();
-            assert_eq!(bits, 1);
-            let ran = build(rt.store, types, cmp, bits);
-            assert_eq!(read_kind(types, ran), Read::Executable(Dispatch::Leaf(types.ops.ran_)));
-            assert_eq!(rt.run(ran).unwrap(), 1);
-            assert_eq!(value_of(ran), 1);
-            assert_eq!(expr_of(types, ran), cmp);
-            assert_eq!(expr_of(types, cmp), cmp);
-            assert!(is_bool_result(types, ran));
-            assert!(matches!(numtype_of(types, ran), Operand::Concrete(NumType::I32)));
-            assert_eq!(display_value(types, ran, 1), "true");
-            rewrite(rt.store, types, cmp, 1);
-            assert_eq!(dyad::ty(cmp), types.ran_);
-            assert_eq!(dyad::ty(expr_of(types, cmp)), types.eq);
-            assert_eq!(rt.run(cmp).unwrap(), 1);
-            assert_eq!(display_value(types, cmp, 1), "true");
-        }
     }
 }

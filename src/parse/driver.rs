@@ -675,9 +675,13 @@ impl<'a> Parser<'a> {
             // lifted out of it, goes out first.
             if let Some(item) = self.cx.queued.pop_front() {
                 // Where parse order is run order the item is pending: it runs
-                // when the pass needs a value or when its scope runs.
+                // when the pass needs a value or when its scope runs. A list's
+                // items go whole to the call that takes them.
                 if self.cx.runtime_depth == 0 {
-                    self.cx.open.last_mut().expect("the root scope is open").unrun.push(item.dyad);
+                    let open = self.cx.open.last_mut().expect("the root scope is open");
+                    if !open.list {
+                        open.unrun.push(item.dyad);
+                    }
                 }
                 return Some(Ok(item));
             }

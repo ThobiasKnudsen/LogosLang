@@ -362,6 +362,9 @@ pub struct Runtime<'a> {
     fresh_this: Option<(DyadPtr, bool)>,
     /// Handed to every jump into machine code.
     pub(crate) ctx: Context,
+    /// Stand-in for #168: the root frame's cursors, one per scope the pass has started
+    /// running (DESIGN ›The pass runs only as far as it must, in order, and never twice‹).
+    cursors: Vec<(DyadPtr, usize)>,
 }
 
 /// What `lex «…»` lexes against. Raw, because the parser owns both and the
@@ -418,6 +421,24 @@ impl<'a> Runtime<'a> {
             ctor_tape: None,
             fresh_this: None,
             ctx: Context::new(),
+            cursors: Vec::new(),
+        }
+    }
+
+    /// The pass ran the scope's lines up to `k`; the scope's own run starts there.
+    pub(crate) fn set_cursor(&mut self, scope: DyadPtr, k: usize) {
+        match self.cursors.iter_mut().find(|(s, _)| *s == scope) {
+            Some(entry) => entry.1 = k,
+            None => self.cursors.push((scope, k)),
+        }
+    }
+
+    /// Where the scope's run starts: 0 for a scope the pass never touched. Taken,
+    /// since a scope the pass started runs once.
+    pub(crate) fn take_cursor(&mut self, scope: DyadPtr) -> usize {
+        match self.cursors.iter().position(|(s, _)| *s == scope) {
+            Some(i) => self.cursors.swap_remove(i).1,
+            None => 0,
         }
     }
 

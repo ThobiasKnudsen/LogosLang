@@ -151,9 +151,10 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             return Err(RunError::EmptyScope);
         };
         let defer_ty = rt.types().defer_;
+        let start = rt.take_cursor(node);
         let mut last = 0i64;
         let mut defers: Vec<DyadPtr> = Vec::new();
-        for &expr in exprs {
+        for (i, &expr) in exprs.iter().enumerate() {
             let logos = dyad::ty(expr);
             // Prose: never run, never the tail.
             if super::numtype::is_comment_type(logos) {
@@ -161,6 +162,10 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             }
             if logos == defer_ty {
                 defers.push(expr);
+                continue;
+            }
+            // Before the cursor: the pass ran it in this frame already.
+            if i < start {
                 continue;
             }
             match rt.run(expr) {

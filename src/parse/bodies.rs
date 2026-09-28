@@ -36,6 +36,12 @@ pub(super) struct OpenScope {
     /// Items parsed at depth 0 and not yet run: `drain` runs them when the
     /// pass needs a value, the scope's own run otherwise.
     pub(super) unrun: Vec<DyadPtr>,
+    /// The block node whose `dyads` hold the items, when the scope runs as one
+    /// later: a drain leaves its cursor on the frame. None at the top level and in a type body.
+    scope: Option<DyadPtr>,
+    /// A `[…]`: its items go whole to the call that takes them, never pending
+    /// (DESIGN ›A bracket goes to the call whole‹).
+    pub(super) list: bool,
     /// The tape cells and lines a check in this scope has narrowed, each with the type
     /// its read yields.
     pub(super) narrowed: Vec<(CellKey, DyadPtr)>,
@@ -1165,12 +1171,12 @@ impl<'a> Parser<'a> {
 
     /// [`Self::parse_sequence`] as the cell, its facts with it.
     pub(crate) fn parse_sequence_cell(&mut self) -> Result<Cell, ParseError> {
-        self.parse_block().map(|(_, value)| value)
+        self.parse_block(false).map(|(_, value)| value)
     }
 
     /// [`Parser::parse_sequence`], with the scope the block opened, whose `dyads` hold
     /// every line whatever the value collapsed to.
-    pub(super) fn parse_block(&mut self) -> Result<(DyadPtr, Cell), ParseError> {
+    pub(super) fn parse_block(&mut self, list: bool) -> Result<(DyadPtr, Cell), ParseError> {
         // `open` has one entry per open scope, so its length is the nesting
         // depth; past the limit the parse is the checked error, not a Rust stack overflow.
         if self.cx.open.len() >= MAX_BRACKET_DEPTH {
@@ -1178,7 +1184,7 @@ impl<'a> Parser<'a> {
         }
         let scope = self.open_scope();
         let narrowed = self.cx.narrow_next.take().into_iter().collect();
-        self.cx.open.push(OpenScope { narrowed, ..OpenScope::default() });
+        self.cx.open.push(OpenScope { narrowed, scope: Some(scope), list, ..OpenScope::default() });
         let array_ = self.types.array_;
         // SAFETY: null is a legal cell dyad.
         let mut last = unsafe { Cell::built(std::ptr::null_mut()) };
@@ -1354,33 +1360,39 @@ impl<'a> Parser<'a> {
 
     /// Run everything parsed and not yet run, outermost scope first, and hand
     /// back the last item run with its value: the tail, on the stack (DESIGN ›The
-    /// pass runs only as far as it must, in order, and never twice‹). An executable
-    /// item becomes its ran form in place. The lists are taken first, so a nested
-    /// drain finds nothing.
+    /// pass runs only as far as it must, in order, and never twice‹). A block's
+    /// cursor moves to its last line, so its own run starts after it. The lists
+    /// are taken first, so a nested drain finds nothing.
     pub fn drain(&mut self) -> Result<Option<(DyadPtr, i64)>, ParseError> {
-        let lists: Vec<Vec<DyadPtr>> =
-            self.cx.open.iter_mut().map(|s| std::mem::take(&mut s.unrun)).collect();
+        let lists: Vec<(Option<DyadPtr>, Vec<DyadPtr>)> =
+            self.cx.open.iter_mut().map(|s| (s.scope, std::mem::take(&mut s.unrun))).collect();
         let mut last = None;
-        for node in lists.into_iter().flatten() {
-            // SAFETY: every pending item is a dyad this parser built into its store, which outlives the pass.
-            unsafe {
-                let ty = dyad::ty(node);
-                // A `[…]` line is a list that goes whole to the call that takes it, which
-                // evaluates its lines when it runs (DESIGN ›A bracket goes to the call whole‹).
-                if crate::identities::numtype::is_comment_type(ty)
-                    || ty == self.types.defer_
-                    || ty == self.types.square_brackets
-                {
-                    continue;
+        for (scope, list) in lists {
+            if list.is_empty() {
+                continue;
+            }
+            if let Some(scope) = scope {
+                // SAFETY: `scope` is the block `open_scope` minted; the pending items are the
+                // last of its `dyads`, the item being parsed not yet among them.
+                let lines =
+                    unsafe { crate::identities::scope::exprs_of(scope) }.map_or(0, <[_]>::len);
+                self.rt.set_cursor(scope, lines);
+            }
+            for node in list {
+                // SAFETY: every pending item is a dyad this parser built into its store, which outlives the pass.
+                unsafe {
+                    let ty = dyad::ty(node);
+                    // A `[…]` line is a list that goes whole to the call that takes it, which
+                    // evaluates its lines when it runs (DESIGN ›A bracket goes to the call whole‹).
+                    if crate::identities::numtype::is_comment_type(ty)
+                        || ty == self.types.defer_
+                        || ty == self.types.square_brackets
+                    {
+                        continue;
+                    }
+                    let bits = self.run_on_pass(node).map_err(ParseError::Run)?;
+                    last = Some((node, bits));
                 }
-                let bits = self.run_on_pass(node).map_err(ParseError::Run)?;
-                if matches!(
-                    crate::identities::read::read_kind(self.types, node),
-                    crate::identities::read::Read::Executable(_)
-                ) {
-                    crate::identities::ran::rewrite(self.rt.store, self.types, node, bits);
-                }
-                last = Some((node, bits));
             }
         }
         Ok(last)
