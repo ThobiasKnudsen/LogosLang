@@ -137,10 +137,6 @@ pub const MAX_BRACKET_DEPTH: usize = 2_000;
 pub(crate) unsafe fn is_bool_result(types: &Core, node: DyadPtr) -> bool {
     let node = types.through(node);
     let logos = dyad::ty(node);
-    // An item that ran in the pass is what its expression is.
-    if logos == types.ran_ {
-        return is_bool_result(types, crate::identities::ran::expr_of(types, node));
-    }
     // A sequence's value is its trailing expression's.
     if logos == types.scope {
         return match last_sequence_expr(node) {

@@ -519,9 +519,6 @@ pub(crate) unsafe fn owning_pointee_of(types: &Core, node: DyadPtr) -> Option<Dy
     } else if logos == types.scope {
         // A block that yields an owning value moves ownership to the binder.
         crate::parse::last_sequence_expr(node).and_then(|tail| owning_pointee_of(types, tail))
-    } else if logos == types.ran_ {
-        // An item that ran in the pass owns what its expression owns.
-        owning_pointee_of(types, super::ran::expr_of(types, node))
     } else {
         None
     }
@@ -573,9 +570,6 @@ unsafe fn moves_out_within(types: &Core, node: DyadPtr, depth: usize) -> bool {
     if logos == types.scope {
         return crate::parse::last_sequence_expr(node)
             .is_some_and(|tail| moves_out_within(types, tail, depth + 1));
-    }
-    if logos == types.ran_ {
-        return moves_out_within(types, super::ran::expr_of(types, node), depth + 1);
     }
     if let super::read::Read::Executable(super::read::Dispatch::Call(f)) =
         super::read::read_kind(types, node)

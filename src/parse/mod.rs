@@ -10,7 +10,6 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::binding::Binding;
-use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::regex_trie::{RegexTrie, RegexTrieError};
 use crate::store::Store;
@@ -262,15 +261,12 @@ impl<'a> Parser<'a> {
         self
     }
 
-    /// An item that ran in the pass has its value at hand; anything else runs
-    /// now. The drivers' one read of an item's value.
+    /// Run an item now, a REPL line or a tail the pass never ran: the drivers'
+    /// one read of an item's value.
     ///
     /// # Safety
     /// `node` must be a valid dyad this parser built into its store.
     pub unsafe fn value_of(&mut self, node: DyadPtr) -> Result<i64, ParseError> {
-        if dyad::ty(node) == self.types.ran_ {
-            return Ok(crate::identities::ran::value_of(node));
-        }
         self.run_on_pass(node).map_err(ParseError::Run)
     }
 

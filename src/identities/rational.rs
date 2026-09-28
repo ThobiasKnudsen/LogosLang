@@ -401,7 +401,7 @@ fn convert(p: &mut Parser, tape: &mut ParsingTape) -> Result<Constructed, ParseE
 pub(crate) unsafe fn slotted(p: &mut Parser, node: DyadPtr) -> DyadPtr {
     let types = p.types();
     if let Some((_, a, b)) = super::group::members(types, node) {
-        let group = super::ran::expr_of(types, types.through(node));
+        let group = types.through(node);
         let ops = dyad::value(group) as *mut DyadPtr;
         *ops = slotted(p, a);
         *ops.add(1) = slotted(p, b);
@@ -430,9 +430,6 @@ pub(crate) unsafe fn is_rational_value(types: &Core, node: DyadPtr) -> bool {
         return false;
     }
     let ty = dyad::ty(node);
-    if ty == types.ran_ {
-        return is_rational_value(types, super::ran::expr_of(types, node));
-    }
     if ty == types.scope {
         return crate::parse::last_sequence_expr(node)
             .is_some_and(|last| is_rational_value(types, last));

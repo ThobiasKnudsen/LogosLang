@@ -505,7 +505,6 @@ mod tests {
             assert_eq!(meta::kind_of(core.rational), Some(meta::FRACTION_TAG));
             assert_eq!(meta::kind_of(core.type_), Some(meta::TYPEREC_TAG));
             assert_eq!(meta::kind_of(core.scope), Some(meta::TUPLE_TAG));
-            assert_eq!(meta::kind_of(core.ran_), Some(meta::TUPLE_TAG));
             assert_eq!(meta::kind_of(core.array_), Some(meta::ARRAY_TAG));
             assert_eq!(meta::kind_of(core.fn_type), Some(meta::TUPLE_TAG));
             assert_eq!(meta::arity_of(core.fn_type), crate::parse::FN_RECEIVER + 1);

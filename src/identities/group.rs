@@ -6,7 +6,7 @@
 //! which collapses to a boolean once the members are booleans.
 //! DESIGN ›The proof layer‹
 
-use super::{and, or, ran};
+use super::{and, or};
 use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::ParseError;
@@ -21,7 +21,7 @@ pub(crate) type BuildFn =
 /// # Safety
 /// `node` must be null or a valid dyad from the store.
 pub(crate) unsafe fn members(types: &Core, node: DyadPtr) -> Option<(DyadPtr, DyadPtr, DyadPtr)> {
-    let node = ran::expr_of(types, types.through(node));
+    let node = types.through(node);
     if node.is_null() || (dyad::ty(node) != types.and_ && dyad::ty(node) != types.or_) {
         return None;
     }

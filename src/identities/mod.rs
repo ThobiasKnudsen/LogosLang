@@ -61,7 +61,6 @@ mod or;
 mod paren;
 pub(crate) mod pointer;
 pub mod print;
-pub mod ran;
 pub(crate) mod rational;
 mod regex_mod;
 #[path = "return.rs"]
@@ -80,7 +79,6 @@ pub struct Core {
     pub type_: DyadPtr,
     pub scope: DyadPtr,
     /// The type of an item that ran in the pass and carries its result; never spelled.
-    pub ran_: DyadPtr,
     pub root_scope: DyadPtr,
     pub fn_type: DyadPtr,
     /// The same node as `numtypes[I32]`.
@@ -325,8 +323,6 @@ impl Core {
         // Last: the `binding` type's fields are `@dyad` places, so it waits for `dyad` and `@`.
         binding::register_type(&mut cx, scope_, array_, dyad_, numtypes[NumType::F64 as usize]);
         op_leaves.scope_ = scope::register_exec(&mut cx, scope_, &callables);
-        let (ran_, ran_leaf) = ran::register(&mut cx, &callables);
-        op_leaves.ran_ = ran_leaf;
 
         // Every constructor moves onto a callable leaf in its record; the table drops
         // before any parsing runs.
@@ -347,7 +343,6 @@ impl Core {
         Core {
             type_,
             scope: scope_,
-            ran_,
             array_,
             root_scope,
             fn_type,
@@ -534,9 +529,6 @@ pub(crate) enum Operand {
 pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     let node = types.through(node);
     let logos = dyad::ty(node);
-    if logos == types.ran_ {
-        return numtype_of(types, ran::expr_of(types, node));
-    }
     if logos == types.rational {
         // A place of rational type holds a run-time rational, which no machine type takes silently.
         return if crate::dyad::is_place(dyad::value(node)) {
@@ -854,9 +846,6 @@ pub(crate) unsafe fn yields_type(types: &Core, node: DyadPtr) -> bool {
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn node_type_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
     let node = types.through(node);
-    if dyad::ty(node) == types.ran_ {
-        return node_type_of(types, ran::expr_of(types, node));
-    }
     // A move of a node yields the node; its pointee slot carries the node's type.
     if dyad::ty(node) == types.own_ {
         let ty = *(dyad::value(node) as *const DyadPtr).add(1);

@@ -237,14 +237,8 @@ mod tests {
             let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes);
             p.parse_sequence().unwrap()
         };
-        let types = &core;
         // SAFETY: a sequence node's first slot is its expression array.
-        let exprs = unsafe {
-            array::items(*(dyad::value(seq) as *const DyadPtr))
-                .iter()
-                .map(|&e| crate::identities::ran::expr_of(types, e))
-                .collect()
-        };
+        let exprs = unsafe { array::items(*(dyad::value(seq) as *const DyadPtr)).to_vec() };
         (store, core, exprs)
     }
 
@@ -261,7 +255,6 @@ mod tests {
                 core.type_,
                 core.fn_type,
                 core.scope,
-                core.ran_,
                 core.binding_,
                 core.i32_,
                 core.bool_,

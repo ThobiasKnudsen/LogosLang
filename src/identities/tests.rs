@@ -697,11 +697,10 @@ fn a_whole_file_runs_top_to_bottom_like_a_script() {
     assert_eq!(interp, 42);
 
     // SAFETY: the sequence's first expression is the fn declaration.
-    // The type body after the declaration ran what stood before it, so the declaration stands as its ran form.
     let func = unsafe {
         let arr = *(dyad::value(root) as *const DyadPtr);
         let first = crate::identities::array::items(arr)[0];
-        declare::declared_of(ran::expr_of(&core, first))
+        declare::declared_of(first)
     };
     // SAFETY: `func` is the fn node just parsed and outlives the calls.
     unsafe { compile_fn(rt.store, &core.lower, &core, func) }.unwrap();
@@ -2152,7 +2151,7 @@ fn a_deoptimized_or_recompiled_callee_is_reached_by_an_earlier_compiled_caller()
     let (g, f) = unsafe {
         assert_eq!(rt.run(root).unwrap(), 42);
         let items = crate::identities::array::items(*(dyad::value(root) as *const DyadPtr));
-        let fn_of = |i: usize| declare::declared_of(ran::expr_of(&core, items[i]));
+        let fn_of = |i: usize| declare::declared_of(items[i]);
         (fn_of(0), fn_of(1))
     };
     assert_eq!(rt.store.live_artifacts(), 2);
@@ -2313,7 +2312,7 @@ fn a_run_hands_a_bare_share_call_its_own_value_in_both_tiers() {
     // SAFETY: a sequence node's first slot is its expression array; `f`'s body is its one line.
     let (call, spec) = unsafe {
         let exprs = array::items(*(dyad::value(seq) as *const DyadPtr));
-        let call = ran::expr_of(&core, exprs[2]);
+        let call = exprs[2];
         let read::Read::Executable(read::Dispatch::Call(f)) = read::read_kind(&core, call) else {
             panic!("`f(5)` is a call");
         };
