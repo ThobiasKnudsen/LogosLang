@@ -3692,3 +3692,35 @@ fn plus_over_non_numeric_operands_is_unresolved() {
     let mut p = Parser::new("logos () + 1", &mut store, &mut trie, &core, scopes);
     assert_eq!(p.parse_expression(), Err(crate::parse::ParseError::UnsupportedOperands));
 }
+
+#[test]
+fn a_line_the_pass_ran_keeps_its_node_and_is_not_run_again() {
+    let (mut store, mut trie, core) = new_core();
+    let mut scopes = ScopeStack::new();
+    scopes.push(core.root_scope);
+    // The box read at `t 5` runs the block's first three lines while it is still being parsed.
+    let src = "mut x := i32 0, bump := fn () -> i32 ( x = x + 1, x ), \
+               y := ( mut t := type ?, t = i32, bump(), z := t 5, z + x ), y + x";
+    let mut p = Parser::new(src, &mut store, &mut trie, &core, scopes);
+    let root = p.parse_sequence().unwrap();
+    // SAFETY: `root` is the sequence just parsed; its third line declares `y` over the block.
+    let call = unsafe {
+        let items = crate::identities::array::items(*(dyad::value(root) as *const DyadPtr));
+        let block = declare::rhs_of(items[2]);
+        crate::identities::scope::exprs_of(block).unwrap()[2]
+    };
+    // SAFETY: `call` is the block's `bump()` line, a node in the store.
+    let (ty, value) = unsafe {
+        assert!(
+            matches!(read::read_kind(&core, call), read::Read::Executable(read::Dispatch::Call(_))),
+            "the line the pass ran is still the call as written"
+        );
+        (dyad::ty(call), dyad::value(call))
+    };
+    let mut rt = p.into_runtime();
+    // SAFETY: `root` and `call` are nodes in the store the runtime owns.
+    unsafe {
+        assert_eq!(rt.run(root).unwrap(), 7, "bump() ran once");
+        assert_eq!((dyad::ty(call), dyad::value(call)), (ty, value), "running changed nothing");
+    }
+}

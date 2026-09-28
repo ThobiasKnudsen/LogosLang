@@ -1499,6 +1499,7 @@ At top level, where a later need point runs the lines before it, a list line tha
 - **Rejected:** none recorded.
 - **Open:** Claude's readings, open to Thobias: the parameter is a bare name (a typed `scope` parameter would refuse a `square_brackets`; *A function's surface*: "a bare `name` that accepts any dyad"); lines are evaluated in the frame the call stands in, when it runs, into a new bracket of the same kind holding their values (a number line as its value, a literal as itself), since the callee's frame holds none of the caller's names, so in `fn (x := i32 ?) -> i32 ( c := array i32 [x, x + 1], c[1] )` the lines read that call's `x`.
 - **Seed:** since 25 September 2026 (#137); the seed's `[` still folds `t[k]` in its own constructor.
+- **Open (28 September 2026):** the items of a `[…]` are never pending in the pass: every item's value goes to the call that takes the list, and an unnamed result the pass ran is dropped (›The pass runs only as far as it must‹), so running one early would lose it. The seed does this since #167 (`[bag (), bag ()]` builds each element once, when the array is built); a sentence here awaits Thobias's wording.
 - **Source:** DESIGN.md l.201, l.211
 
 **Inclusion between types is `⊆`**
@@ -1952,6 +1953,7 @@ A deferred scope (a function body, a loop body and its condition, a branch that 
 - **Why:** (1) a program that never needs a value during its parse runs exactly as written, left to right, and can be parsed whole before anything runs or compiles. (2) The same text means the same in a block, at top level, in a REPL line and in an imported file, since one mechanism serves all four. (3) Each such point is where running had to come before parsing, the one thing that keeps source from being compiled whole, so it is visible and countable, and absent from every function body (the parse refuses such reads there, so compiled code never contains one).
 - **Ruled:** 13 September 2026.
 - **Ruled (28 September 2026, Thobias):** the cursor and the result live on the frame and the graph is untouched, superseding the `ran` form of 13 September. **Why:** "overwriting the + node sounds really bad": the graph is code shared by every thread and every call of the scope, the stack is each call's own data (›Operands travel on the stack‹), so the cursor is the frame's, not the scope's ("the scope may be called recursively or from multiple threads"); and rewriting a node per line allocated four things for every line that ran.
+- **Seed:** since 28 September 2026 (#167): the root frame's cursors live on the runtime until the top level is a frame (#168); a program's tail prints when its last line is not a statement.
 - **Rejected, to stay rejected:** running a bracket's items the moment they parse (it would run the bracket in `bump() + ( x = 10, x )` before `bump`); a whole-program parse followed by a run (it cannot serve `x := a 5` over a box).
 - **Source:** DESIGN.md l.215
 
