@@ -13,6 +13,7 @@ use super::callable::{self, Callables};
 use super::numtype::{self, NumType};
 use super::{commit_if_literal, meta, numtype_of, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::ParseError;
 use crate::run::{RunError, Runtime};
@@ -76,12 +77,12 @@ pub(crate) type FieldLayout = (Vec<(DyadPtr, NumType, usize)>, usize);
 pub(crate) unsafe fn layout(record_logos: DyadPtr) -> Result<FieldLayout, ParseError> {
     // A field's type must be a type node: that excludes a nested record definition and a
     // value node standing in type position, whose bytes would be misread as a width tag.
-    let type_root = (*(*record_logos).ty).ty;
+    let type_root = dyad::ty(dyad::ty(record_logos));
     let mut fields = Vec::new();
     let mut offset = 0usize;
     for &field in super::array::items(meta::record_fields_of(record_logos)) {
-        let fty = (*field).ty;
-        if fty.is_null() || (*fty).ty != type_root || !numtype::is_scalar_type(fty) {
+        let fty = dyad::ty(field);
+        if fty.is_null() || dyad::ty(fty) != type_root || !numtype::is_scalar_type(fty) {
             return Err(ParseError::UnsupportedOperands);
         }
         let nt = numtype::of_type_node(fty);
@@ -118,7 +119,7 @@ pub(crate) unsafe fn build_ctor(
     ops.push(instance);
     ops.push(types.ops.construct_);
     for (&arg, &(field, nt, _)) in args.iter().zip(&fields) {
-        let fty = (*field).ty;
+        let fty = dyad::ty(field);
         let field_read = super::read::place_layout(types, fty);
         let field_ptr = matches!(field_read, Some((super::read::Read::Pointer(_), _)));
         let arg = match numtype_of(types, arg) {
@@ -151,14 +152,15 @@ pub(crate) unsafe fn build_ctor(
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a construct node from `build_ctor`.
     unsafe {
-        let ops = (*node).value as *const DyadPtr;
+        let ops = dyad::value(node) as *const DyadPtr;
         let instance = *ops;
-        let (fields, _) = layout((*instance).ty).map_err(|_| RunError::NoLayout((*instance).ty))?;
+        let (fields, _) =
+            layout(dyad::ty(instance)).map_err(|_| RunError::NoLayout(dyad::ty(instance)))?;
         // The arguments follow the two fixed head slots (instance, op).
         for (i, &(field, _, offset)) in fields.iter().enumerate() {
             let bits = rt.run(*ops.add(i + 2))?;
             let blob = rt.place_addr(instance).ok_or(RunError::NoActivation)?;
-            numtype::write_scalar((*field).ty, blob.add(offset), bits);
+            numtype::write_scalar(dyad::ty(field), blob.add(offset), bits);
         }
         Ok(0)
     }
@@ -167,10 +169,10 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a construct node from `build_ctor`.
     unsafe {
-        let ops = (*node).value as *const DyadPtr;
+        let ops = dyad::value(node) as *const DyadPtr;
         let instance = *ops;
         let (fields, _) =
-            layout((*instance).ty).map_err(|_| CompileError::NoLayout((*instance).ty))?;
+            layout(dyad::ty(instance)).map_err(|_| CompileError::NoLayout(dyad::ty(instance)))?;
         let base = lw.place_addr(instance)?;
         // The arguments follow the two fixed head slots (instance, op).
         for (i, &(_, nt, offset)) in fields.iter().enumerate() {

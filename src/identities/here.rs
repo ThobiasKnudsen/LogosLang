@@ -9,6 +9,7 @@
 
 use super::callable::{self, Callables};
 use super::{meta, scope, Cx};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
@@ -88,7 +89,7 @@ pub(crate) fn build_back(store: &mut Store, types: &Core, of: DyadPtr) -> DyadPt
 /// # Safety
 /// `node` must be a `here` node from the store.
 pub(crate) unsafe fn scope_of_here(node: DyadPtr) -> DyadPtr {
-    *((*node).value as *const DyadPtr)
+    *(dyad::value(node) as *const DyadPtr)
 }
 
 /// Whether `.back` on `node` reads a parent link: an `@dyad` value, or a
@@ -102,7 +103,7 @@ pub(crate) unsafe fn yields_scope_address(types: &Core, node: DyadPtr) -> bool {
         return false;
     }
     let h = types.here;
-    if (*d).ty == h.caller_scope || (*d).ty == h.back {
+    if dyad::ty(d) == h.caller_scope || dyad::ty(d) == h.back {
         return true;
     }
     matches!(super::read::read_kind(types, d), super::read::Read::Pointer(p) if p == types.dyad_)
@@ -127,7 +128,7 @@ fn run_caller_scope(rt: &mut Runtime, _node: DyadPtr) -> Result<i64, RunError> {
 fn run_back(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `back` node from the store; its operand is a reduced dyad.
     unsafe {
-        let of = *((*node).value as *const DyadPtr);
+        let of = *(dyad::value(node) as *const DyadPtr);
         let addr = rt.run(of)?;
         if addr == 0 {
             return Err(RunError::NullPointer);
@@ -137,10 +138,10 @@ fn run_back(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             return Err(RunError::NotANode(addr as usize));
         }
         let types = rt.types();
-        if (*s).ty == types.here.here {
+        if dyad::ty(s) == types.here.here {
             return Ok(scope_of_here(s) as usize as i64);
         }
-        if (*s).ty != types.scope {
+        if dyad::ty(s) != types.scope {
             return Err(RunError::NotAScope(s));
         }
         Ok(scope::parent_of(s) as usize as i64)

@@ -8,6 +8,7 @@
 
 use super::callable::{self, Callables};
 use super::{meta, Cx};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
@@ -54,7 +55,7 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
     );
     // SAFETY: `fn_type` was allocated by [`register`] and nothing has read its value slot.
     unsafe {
-        (*cx.fn_type).value = record;
+        dyad::set_value(cx.fn_type, record);
     }
 
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
@@ -82,7 +83,7 @@ pub(super) fn register_compile(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr
 /// # Safety
 /// `node` must be a compile node `[function, code, op]`.
 unsafe fn parts(node: DyadPtr) -> (DyadPtr, DyadPtr) {
-    let p = (*node).value as *const DyadPtr;
+    let p = dyad::value(node) as *const DyadPtr;
     (*p, *p.add(1))
 }
 

@@ -10,6 +10,7 @@
 use super::numtype::{ArithOp, CmpOp, NumType};
 use super::read::{read_kind, Dispatch, Read};
 use super::{meta, Cx};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::{Constructed, ParseError, Parser, ParsingTape};
 use crate::run::{RunError, Runtime};
@@ -174,7 +175,7 @@ pub(crate) fn compare_pair(op: CmpOp, (n1, d1): (i64, i64), (n2, d2): (i64, i64)
 /// # Safety
 /// `node` must be null or a valid dyad from the store.
 unsafe fn is_literal(rational: DyadPtr, node: DyadPtr) -> bool {
-    !node.is_null() && (*node).ty == rational && !crate::dyad::is_place((*node).value)
+    !node.is_null() && dyad::ty(node) == rational && !crate::dyad::is_place(dyad::value(node))
 }
 
 fn reduce(mut num: i128, mut den: i128) -> (i128, i128) {
@@ -269,7 +270,7 @@ fn spell_pair((num, den): (i64, i64)) -> String {
 /// `node` must be a rational literal from `build`: its `value` points at the 16-byte
 /// `[num, den]` blob.
 unsafe fn read_fraction(node: DyadPtr) -> (i64, i64) {
-    read_at((*node).value)
+    read_at(dyad::value(node))
 }
 
 /// # Safety
@@ -291,7 +292,7 @@ pub(crate) unsafe fn write_at(p: *mut u8, num: i64, den: i64) {
 /// `None` where there is no exact value.
 pub(crate) fn mold_to(node: DyadPtr, nt: NumType) -> Option<i64> {
     // SAFETY: called only on rational-typed nodes, whose value is the [num, den] blob.
-    let p = unsafe { (*node).value };
+    let p = unsafe { dyad::value(node) };
     if p.is_null() {
         return None;
     }
@@ -335,7 +336,7 @@ pub(crate) fn mold(node: DyadPtr) -> Option<i32> {
 /// integer part then wraps to width; `None` for a malformed rational.
 pub(crate) fn cast_to(node: DyadPtr, nt: NumType) -> Option<i64> {
     // SAFETY: called only on rational-typed nodes, whose value is the [num, den] blob.
-    let p = unsafe { (*node).value };
+    let p = unsafe { dyad::value(node) };
     if p.is_null() {
         return None;
     }
@@ -401,7 +402,7 @@ pub(crate) unsafe fn slotted(p: &mut Parser, node: DyadPtr) -> DyadPtr {
     let types = p.types();
     if let Some((_, a, b)) = super::group::members(types, node) {
         let group = super::ran::expr_of(types, types.through(node));
-        let ops = (*group).value as *mut DyadPtr;
+        let ops = dyad::value(group) as *mut DyadPtr;
         *ops = slotted(p, a);
         *ops.add(1) = slotted(p, b);
         return node;
@@ -428,7 +429,7 @@ pub(crate) unsafe fn is_rational_value(types: &Core, node: DyadPtr) -> bool {
     if node.is_null() {
         return false;
     }
-    let ty = (*node).ty;
+    let ty = dyad::ty(node);
     if ty == types.ran_ {
         return is_rational_value(types, super::ran::expr_of(types, node));
     }
@@ -437,16 +438,16 @@ pub(crate) unsafe fn is_rational_value(types: &Core, node: DyadPtr) -> bool {
             .is_some_and(|last| is_rational_value(types, last));
     }
     if ty == types.by_copy.result {
-        return (**((*node).value as *const DyadPtr)).ty == types.rational;
+        return dyad::ty(*(dyad::value(node) as *const DyadPtr)) == types.rational;
     }
     if ty == types.by_copy.out {
-        let expr = types.through(*((*node).value as *const DyadPtr));
+        let expr = types.through(*(dyad::value(node) as *const DyadPtr));
         return is_literal(types.rational, expr) || is_rational_value(types, expr);
     }
     match read_kind(types, node) {
         Read::Rational => true,
         Read::Executable(Dispatch::Call(f)) => {
-            let fields = (*f).value as *const DyadPtr;
+            let fields = dyad::value(f) as *const DyadPtr;
             !fields.is_null() && *fields.add(crate::parse::FN_OUTPUT) == types.rational
         }
         Read::Executable(Dispatch::Leaf(leaf)) => types.ops.rational_arith_op_of(leaf).is_some(),
@@ -485,7 +486,7 @@ pub(crate) unsafe fn run_into(
     node: DyadPtr,
     dest: *mut u8,
 ) -> Result<(), RunError> {
-    let ops = (*node).value as *const DyadPtr;
+    let ops = dyad::value(node) as *const DyadPtr;
     let op = rt.types().ops.rational_arith_op_of(*ops.add(2)).ok_or(RunError::NoLeaf)?;
     let l = value_of(rt, *ops)?;
     let r = value_of(rt, *ops.add(1))?;
@@ -498,7 +499,7 @@ pub(crate) unsafe fn run_into(
 fn run_store(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a store node `assign::build` made over a rational place.
     unsafe {
-        let ops = (*node).value as *const DyadPtr;
+        let ops = dyad::value(node) as *const DyadPtr;
         let dest = rt.place_addr(*ops).ok_or(RunError::NoActivation)?;
         let (num, den) = value_of(rt, *ops.add(1))?;
         write_at(dest, num, den);
@@ -514,7 +515,7 @@ fn run_arith_unslotted(_rt: &mut Runtime, _node: DyadPtr) -> Result<i64, RunErro
 /// # Safety
 /// `node` must be a binary operator node whose first two slots are its operands.
 unsafe fn compare_at_run(rt: &mut Runtime, node: DyadPtr, op: CmpOp) -> Result<i64, RunError> {
-    let ops = (*node).value as *const DyadPtr;
+    let ops = dyad::value(node) as *const DyadPtr;
     let l = value_of(rt, *ops)?;
     let r = value_of(rt, *ops.add(1))?;
     Ok(i64::from(compare_pair(op, l, r)))

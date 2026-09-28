@@ -12,6 +12,7 @@ use super::callable::{self, Callables};
 use super::read::{place_layout, read_kind, Dispatch, Read};
 use super::{array, meta, Cx};
 use crate::compile::{CompileError, Lowerer};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::{Assoc, FN_INPUT, FN_OUTPUT};
 use crate::run::{RunError, Runtime};
@@ -84,11 +85,11 @@ pub(crate) unsafe fn record_width(types: &Core, t: DyadPtr) -> Option<usize> {
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn record_type_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
     let node = types.through(node);
-    let ty = (*node).ty;
+    let ty = dyad::ty(node);
     let t = if ty == types.construct_ || ty == types.by_copy.result {
-        (**((*node).value as *const DyadPtr)).ty
+        dyad::ty(*(dyad::value(node) as *const DyadPtr))
     } else if ty == types.by_copy.out {
-        return record_type_of(types, *((*node).value as *const DyadPtr));
+        return record_type_of(types, *(dyad::value(node) as *const DyadPtr));
     } else {
         match read_kind(types, node) {
             Read::Aggregate | Read::Rational => ty,
@@ -105,7 +106,7 @@ pub(crate) unsafe fn record_type_of(types: &Core, node: DyadPtr) -> Option<DyadP
 /// # Safety
 /// `f` must be a `fn` node from the store.
 pub(crate) unsafe fn result_width(types: &Core, f: DyadPtr) -> Option<usize> {
-    let fields = (*f).value as *const DyadPtr;
+    let fields = dyad::value(f) as *const DyadPtr;
     if fields.is_null() {
         return None;
     }
@@ -126,12 +127,12 @@ pub(crate) struct Slot {
 /// # Safety
 /// `f` must be a `fn` node from the store whose value is its field record.
 pub(crate) unsafe fn slots<'a>(types: &'a Core, f: DyadPtr) -> impl Iterator<Item = Slot> + 'a {
-    let fields = (*f).value as *const DyadPtr;
+    let fields = dyad::value(f) as *const DyadPtr;
     let params = array::items(meta::record_fields_of(*fields.add(FN_INPUT)));
     let mut word = usize::from(result_width(types, f).is_some());
     params.iter().map(move |&param| {
         // SAFETY: each parameter is a dyad from the store.
-        let width = unsafe { record_width(types, (*param).ty) };
+        let width = unsafe { record_width(types, dyad::ty(param)) };
         let slot = Slot { param, word, width };
         word += width.map_or(1, |w| w.div_ceil(8));
         slot
@@ -153,7 +154,7 @@ pub(crate) unsafe fn words(types: &Core, f: DyadPtr) -> usize {
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn record_addr(rt: &mut Runtime, node: DyadPtr) -> Result<*mut u8, RunError> {
     let node = rt.through(node);
-    let ty = (*node).ty;
+    let ty = dyad::ty(node);
     let types = rt.types();
     let (result, out, construct) = (types.by_copy.result, types.by_copy.out, types.construct_);
     let kind = read_kind(types, node);
@@ -162,12 +163,12 @@ pub(crate) unsafe fn record_addr(rt: &mut Runtime, node: DyadPtr) -> Result<*mut
     }
     let place = if ty == construct {
         rt.run(node)?;
-        *((*node).value as *const DyadPtr)
+        *(dyad::value(node) as *const DyadPtr)
     } else {
         match kind {
             Read::Aggregate | Read::Rational => node,
             // A literal's bytes are a rational value's.
-            Read::Literal => return Ok((*node).value),
+            Read::Literal => return Ok(dyad::value(node)),
             _ => return Err(RunError::NoWholeRead),
         }
     };
@@ -187,7 +188,7 @@ pub(crate) unsafe fn lower_record_addr(
     node: DyadPtr,
 ) -> Result<Value, CompileError> {
     let node = lw.through(node);
-    let ty = (*node).ty;
+    let ty = dyad::ty(node);
     let types = lw.types();
     let (result, out, construct) = (types.by_copy.result, types.by_copy.out, types.construct_);
     let kind = read_kind(types, node);
@@ -196,12 +197,12 @@ pub(crate) unsafe fn lower_record_addr(
     }
     if ty == construct {
         lw.lower(node)?;
-        return lw.place_addr(*((*node).value as *const DyadPtr));
+        return lw.place_addr(*(dyad::value(node) as *const DyadPtr));
     }
     match kind {
         Read::Aggregate | Read::Rational => lw.place_addr(node),
         // A literal is source: its bytes' address is a constant.
-        Read::Literal => Ok(lw.const_i64((*node).value as usize as i64)),
+        Read::Literal => Ok(lw.const_i64(dyad::value(node) as usize as i64)),
         _ => Err(CompileError::NotLowerable(node)),
     }
 }
@@ -210,7 +211,7 @@ fn run_result(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a result node from `build_result`: a call of a `fn`, a rational
     // arithmetic node, or a literal, run into the slot.
     unsafe {
-        let ops = (*node).value as *const DyadPtr;
+        let ops = dyad::value(node) as *const DyadPtr;
         let dest = rt.place_addr(*ops).ok_or(RunError::NoActivation)?;
         let call = *ops.add(1);
         match read_kind(rt.types(), call) {
@@ -220,7 +221,7 @@ fn run_result(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
                 Ok(dest as i64)
             }
             Read::Literal => {
-                std::ptr::copy_nonoverlapping((*call).value, dest, 16);
+                std::ptr::copy_nonoverlapping(dyad::value(call), dest, 16);
                 Ok(dest as i64)
             }
             _ => Err(RunError::NoWholeRead),
@@ -231,7 +232,7 @@ fn run_result(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 fn lower_result(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: as [`run_result`]; a rational step is interpreted only.
     unsafe {
-        let ops = (*node).value as *const DyadPtr;
+        let ops = dyad::value(node) as *const DyadPtr;
         let dest = lw.place_addr(*ops)?;
         let call = *ops.add(1);
         match read_kind(lw.types(), call) {
@@ -243,10 +244,10 @@ fn lower_result(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> 
 
 fn run_out(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an out node from `build_out`.
-    unsafe { record_addr(rt, *((*node).value as *const DyadPtr)).map(|addr| addr as i64) }
+    unsafe { record_addr(rt, *(dyad::value(node) as *const DyadPtr)).map(|addr| addr as i64) }
 }
 
 fn lower_out(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: as [`run_out`].
-    unsafe { lower_record_addr(lw, *((*node).value as *const DyadPtr)) }
+    unsafe { lower_record_addr(lw, *(dyad::value(node) as *const DyadPtr)) }
 }

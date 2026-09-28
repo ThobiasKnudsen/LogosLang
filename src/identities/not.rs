@@ -9,6 +9,7 @@ use cranelift_codegen::ir::Value;
 use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
@@ -39,7 +40,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
 /// # Safety
 /// `node` must be a `not` node `[operand, op]`.
 unsafe fn operand(node: DyadPtr) -> DyadPtr {
-    *((*node).value as *const DyadPtr)
+    *(dyad::value(node) as *const DyadPtr)
 }
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {

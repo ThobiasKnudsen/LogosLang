@@ -12,6 +12,7 @@ use super::numtype::{ArithOp, CmpOp, NumType};
 use super::read::Read;
 use super::{bool_mod, group, meta, rational, resolve_binary, Cx};
 use crate::compile::{CompileError, LowerFn, Lowerer};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::{Assoc, ConstructFn, ParseError};
 use crate::store::Store;
@@ -271,7 +272,7 @@ fn build_identity_compare(
     // A tape cell compares as the identity it names, read at run as its `:type` is.
     // SAFETY: as above.
     let mut cell = |n: DyadPtr| unsafe {
-        if (*types.through(n)).ty == types.tape.slot {
+        if dyad::ty(types.through(n)) == types.tape.slot {
             super::tape::build_cell_identity(store, types, types.through(n))
         } else {
             n
@@ -283,7 +284,7 @@ fn build_identity_compare(
             // SAFETY: as above.
             // A type whose body is still open, named in its own parse, has no record yet.
             || unsafe {
-                let ty = (*types.through(n)).ty;
+                let ty = dyad::ty(types.through(n));
                 ty == types.tape.cell_type || ty == types.tape.cell_identity || ty == types.type_
             }
             // SAFETY: as above.

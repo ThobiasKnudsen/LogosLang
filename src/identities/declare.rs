@@ -12,6 +12,7 @@ use cranelift_codegen::ir::Value;
 use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
@@ -58,25 +59,25 @@ pub(crate) fn build(
 /// # Safety
 /// `node` must be a declare node as [`build`] lays it out.
 pub(crate) unsafe fn binding_of(node: DyadPtr) -> DyadPtr {
-    *((*node).value as *const DyadPtr).add(DECL_LHS)
+    *(dyad::value(node) as *const DyadPtr).add(DECL_LHS)
 }
 
 /// # Safety
 /// `node` must be a declare node as [`build`] lays it out.
 pub(crate) unsafe fn rhs_of(node: DyadPtr) -> DyadPtr {
-    *((*node).value as *const DyadPtr).add(DECL_RHS)
+    *(dyad::value(node) as *const DyadPtr).add(DECL_RHS)
 }
 
 /// # Safety
 /// `node` must be a declare node as [`build`] lays it out.
 pub(crate) unsafe fn declared_of(node: DyadPtr) -> DyadPtr {
-    *((*node).value as *const DyadPtr).add(DECL_DECLARED)
+    *(dyad::value(node) as *const DyadPtr).add(DECL_DECLARED)
 }
 
 /// # Safety
 /// `node` must be a declare node as [`build`] lays it out.
 pub(crate) unsafe fn set_declared(node: DyadPtr, declared: DyadPtr) {
-    *((*node).value as *mut DyadPtr).add(DECL_DECLARED) = declared;
+    *(dyad::value(node) as *mut DyadPtr).add(DECL_DECLARED) = declared;
 }
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
@@ -86,8 +87,8 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         // A bare hole, `x := ?`, has nothing to run; declaring it is silent. Nor
         // has the place `x := T ?` made, which a record place cannot be read as.
         // Nor has a node with no run, which is data and was built whole at parse.
-        if !(*declared).ty.is_null()
-            && !crate::dyad::is_place((*declared).value)
+        if !dyad::ty(declared).is_null()
+            && !crate::dyad::is_place(dyad::value(declared))
             && super::read::read_kind(rt.types(), declared) != super::read::Read::Aggregate
         {
             rt.run(declared)?;

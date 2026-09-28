@@ -11,6 +11,7 @@
 use super::callable::{self, Callables};
 use super::read::{read_kind, Read};
 use super::{array, meta, numtype_of, Cx, Operand};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::{Constructed, ParseError, Parser, ParsingTape};
 use crate::run::{RunError, Runtime};
@@ -154,12 +155,12 @@ pub(crate) unsafe fn is_hashmap(types: &Core, t: DyadPtr) -> bool {
 /// `node` must be null or a dyad from the store.
 pub(crate) unsafe fn value_type_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
     let node = types.through(node);
-    if node.is_null() || (*node).ty != types.hashmap.get {
+    if node.is_null() || dyad::ty(node) != types.hashmap.get {
         return None;
     }
     // The map operand is the `&place` node `build_addr` made, its pointee the mint.
-    let addr = *((*node).value as *const DyadPtr);
-    let mint = *((*addr).value as *const DyadPtr).add(1);
+    let addr = *(dyad::value(node) as *const DyadPtr);
+    let mint = *(dyad::value(addr) as *const DyadPtr).add(1);
     params_of(types, mint).map(|(_, v)| v)
 }
 
@@ -227,10 +228,10 @@ pub(crate) unsafe fn build_get(
     key: DyadPtr,
 ) -> Result<Option<DyadPtr>, ParseError> {
     let place = types.through(lhs);
-    if !crate::dyad::is_place((*place).value) {
+    if !crate::dyad::is_place(dyad::value(place)) {
         return Ok(None);
     }
-    let Some((k, _)) = params_of(types, (*place).ty) else {
+    let Some((k, _)) = params_of(types, dyad::ty(place)) else {
         return Ok(None);
     };
     let key = accept(store, types, k, key)?;
@@ -249,7 +250,7 @@ pub(crate) unsafe fn build_put(
 ) -> Result<DyadPtr, ParseError> {
     let v = value_type_of(types, get).expect("a get node's map is a hashmap place");
     let value = accept(store, types, v, value)?;
-    let ops = (*get).value as *const DyadPtr;
+    let ops = dyad::value(get) as *const DyadPtr;
     let operands = store.alloc_operands(&[*ops, *ops.add(1), value, types.hashmap.put_leaf]);
     Ok(store.alloc_raw(types.hashmap.put, operands))
 }
@@ -270,7 +271,7 @@ fn run_get(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a get node `build_get` built; the slot is an instance's eight
     // bytes, null or a table `run_put` allocated in the store.
     unsafe {
-        let ops = (*node).value as *const DyadPtr;
+        let ops = dyad::value(node) as *const DyadPtr;
         let key = rt.run(*ops.add(1))?;
         let table = std::ptr::read_unaligned(table_slot(rt, *ops)?);
         if let Some(&v) = table.as_ref().and_then(|t| t.get(&key)) {
@@ -288,7 +289,7 @@ fn run_get(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 fn run_put(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: as `run_get`; a null table is replaced by a fresh one before the insert.
     unsafe {
-        let ops = (*node).value as *const DyadPtr;
+        let ops = dyad::value(node) as *const DyadPtr;
         let key = rt.run(*ops.add(1))?;
         let value = rt.run(*ops.add(2))?;
         let slot = table_slot(rt, *ops)?;

@@ -13,6 +13,7 @@ use super::callable::{self, Callables};
 use super::numtype::{apply_cast, of_type_node, NumType};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
@@ -48,7 +49,7 @@ pub(crate) fn build_convert(
 /// # Safety
 /// `node` must be a conversion node `[operand, from, to, op]`.
 unsafe fn parts(node: DyadPtr) -> (DyadPtr, DyadPtr, NumType) {
-    let p = (*node).value as *const DyadPtr;
+    let p = dyad::value(node) as *const DyadPtr;
     (*p, *p.add(1), of_type_node(*p.add(2)))
 }
 

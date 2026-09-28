@@ -9,6 +9,7 @@
 use super::callable::{self, Callables};
 use super::numtype::NumType;
 use super::{meta, Cx};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::ParsingTape;
 use crate::run::{RunError, Runtime};
@@ -60,8 +61,8 @@ pub(crate) fn build(
 /// # Safety
 /// `node` must be a node from `build`.
 pub(crate) unsafe fn parts(node: DyadPtr) -> (DyadPtr, *mut ParsingTape, DyadPtr, usize) {
-    let ops = (*node).value as *const DyadPtr;
-    let word = |p: DyadPtr| std::ptr::read_unaligned((*p).value as *const u64);
+    let ops = dyad::value(node) as *const DyadPtr;
+    let word = |p: DyadPtr| std::ptr::read_unaligned(dyad::value(p) as *const u64);
     (*ops, word(*ops.add(1)) as usize as *mut ParsingTape, *ops.add(2), word(*ops.add(3)) as usize)
 }
 

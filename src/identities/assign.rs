@@ -13,6 +13,7 @@ use super::numtype::{is_pointer_type, of_type_node, NumType};
 use super::read::{read_kind, Dispatch, Read};
 use super::{commit_if_literal, meta, operands, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::{Assoc, ParseError, FN_BCODE, FN_BODY, FN_OUTPUT, FN_RECEIVER};
 use crate::store::Store;
@@ -76,7 +77,7 @@ fn construct(
     }
     let value = p.parse_expression()?;
     // SAFETY: `target` is the reduced dyad of the cell to the left.
-    if unsafe { (*target).ty } == types.tape.cell_type {
+    if unsafe { dyad::ty(target) } == types.tape.cell_type {
         // SAFETY: `target` is a cell type read, `value` a reduced dyad.
         let node = unsafe { p.stamp(target, value) }?;
         tape.place(node);
@@ -93,7 +94,7 @@ fn construct(
         // torn down by two owners.
         // SAFETY: `target` and `value` are reduced dyads from the store.
         if unsafe {
-            ((*target).ty == types.binding_ && p.owns_node(target) || p.is_owning_read(target))
+            (dyad::ty(target) == types.binding_ && p.owns_node(target) || p.is_owning_read(target))
                 && !super::drop_model::moves_out(types, value)
         } {
             return Err(ParseError::NonOwningIntoOwning);
@@ -121,7 +122,7 @@ pub(super) fn build(
     // A name is written only if its binding carries `mut` and no `immut`.
     // SAFETY: `lhs` is a reduced dyad from the store; one of the `binding` type is a binding.
     unsafe {
-        if (*lhs).ty == types.binding_ {
+        if dyad::ty(lhs) == types.binding_ {
             if crate::binding::Binding::has_gate(lhs, types.immut_) {
                 return Err(ParseError::Immutable(Box::new(crate::binding::Binding::spelling(
                     lhs,
@@ -137,7 +138,7 @@ pub(super) fn build(
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
     let (lhs_d, rhs_d) = unsafe { (types.through(lhs), types.through(rhs)) };
     // SAFETY: `through` hands back its argument or the dyad a binding names.
-    let (lhs_ty, rhs_ty) = unsafe { ((*lhs_d).ty, (*rhs_d).ty) };
+    let (lhs_ty, rhs_ty) = unsafe { (dyad::ty(lhs_d), dyad::ty(rhs_d)) };
     // SAFETY: `lhs_d` is a reduced dyad from the store.
     if unsafe { super::tape::is_cell_read(types, lhs_d) } {
         // SAFETY: `lhs_d` is a tape cell read, `rhs` a reduced dyad.
@@ -174,7 +175,7 @@ pub(super) fn build(
     // A number into a node box would be followed as an address by every later reader.
     // SAFETY: `lhs_d`/`rhs` are reduced dyads from the store.
     let (target, marked) =
-        unsafe { (read_kind(types, lhs_d), crate::dyad::is_place((*lhs_d).value)) };
+        unsafe { (read_kind(types, lhs_d), crate::dyad::is_place(dyad::value(lhs_d))) };
     match target {
         Read::Container(t) if t == types.type_ || t == types.dyad_ => {
             // SAFETY: as above.
@@ -237,7 +238,7 @@ pub(super) fn build(
     }
     // A literal into a pointer would become a wild address.
     // SAFETY: as above.
-    let lhs_pointer = unsafe { is_pointer_type((*lhs_d).ty) };
+    let lhs_pointer = unsafe { is_pointer_type(dyad::ty(lhs_d)) };
     if lhs_pointer && rhs_ty == types.rational {
         return Err(ParseError::TypeMismatch);
     }
@@ -247,11 +248,11 @@ pub(super) fn build(
     }
     // SAFETY: as above.
     let rhs = unsafe {
-        if (*rhs_d).ty == types.rational && !crate::dyad::is_place((*rhs_d).value) {
-            let nt = of_type_node((*lhs_d).ty);
-            commit_if_literal(store, types, rhs, &Operand::Literal, (*lhs_d).ty, nt)?
+        if dyad::ty(rhs_d) == types.rational && !crate::dyad::is_place(dyad::value(rhs_d)) {
+            let nt = of_type_node(dyad::ty(lhs_d));
+            commit_if_literal(store, types, rhs, &Operand::Literal, dyad::ty(lhs_d), nt)?
         } else {
-            super::check_store_type(types, (*lhs_d).ty, rhs)?;
+            super::check_store_type(types, dyad::ty(lhs_d), rhs)?;
             rhs
         }
     };
@@ -262,7 +263,7 @@ pub(super) fn build(
         return Err(ParseError::NonOwningIntoOwning);
     }
     // SAFETY: `lhs` is a typed variable checked assignable above.
-    let nt = unsafe { of_type_node((*lhs_d).ty) };
+    let nt = unsafe { of_type_node(dyad::ty(lhs_d)) };
     let value = store.alloc_operands(&[lhs, rhs, types.ops.store_leaf(nt)]);
     Ok(store.alloc_raw(op, value))
 }
@@ -281,8 +282,8 @@ unsafe fn build_call_write(
     f: DyadPtr,
     rhs: DyadPtr,
 ) -> Result<Option<DyadPtr>, ParseError> {
-    let fields = (*f).value as *const DyadPtr;
-    if (*f).ty != types.fn_type || fields.is_null() {
+    let fields = dyad::value(f) as *const DyadPtr;
+    if dyad::ty(f) != types.fn_type || fields.is_null() {
         return Ok(None);
     }
     let body = *fields.add(FN_BODY);
@@ -298,8 +299,8 @@ unsafe fn build_call_write(
     record[FN_BODY] = body;
     record[FN_BCODE] = std::ptr::null_mut();
     let record = store.alloc_operands(&record);
-    let finder = store.alloc_raw((*f).ty, record);
-    let found = store.alloc_raw(finder, (*call).value);
+    let finder = store.alloc_raw(dyad::ty(f), record);
+    let found = store.alloc_raw(finder, dyad::value(call));
     let place = super::pointer::build_deref(store, types, found, pointee, offset as usize);
     super::pointer::build_storeptr(store, types, place, rhs).map(Some)
 }
@@ -315,20 +316,20 @@ unsafe fn address_tail(
     body: DyadPtr,
 ) -> Option<(DyadPtr, DyadPtr)> {
     let body = types.through(body);
-    if (*body).ty == types.deref_ {
+    if dyad::ty(body) == types.deref_ {
         return Some((body, super::pointer::deref_parts(body).0));
     }
-    if (*body).ty != types.scope {
+    if dyad::ty(body) != types.scope {
         return None;
     }
     let lines = super::scope::exprs_of(body)?;
     // A teardown runs as the body leaves, so the address would outlive what it frees.
-    if lines.iter().any(|&e| (*e).ty == types.defer_) {
+    if lines.iter().any(|&e| dyad::ty(e) == types.defer_) {
         return None;
     }
-    let i = lines.iter().rposition(|&e| !super::numtype::is_comment_type((*e).ty))?;
+    let i = lines.iter().rposition(|&e| !super::numtype::is_comment_type(dyad::ty(e)))?;
     let tail = types.through(lines[i]);
-    if (*tail).ty != types.deref_ {
+    if dyad::ty(tail) != types.deref_ {
         return None;
     }
     let mut lines = lines.to_vec();
@@ -342,12 +343,12 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a valid `=` application `[lhs, rhs, store leaf]`.
     unsafe {
         let (lhs, rhs) = operands(node);
-        let leaf = *((*node).value as *const DyadPtr).add(2);
+        let leaf = *(dyad::value(node) as *const DyadPtr).add(2);
         let Some(nt) = lw.types().ops.store_nt_of(leaf) else {
             return Err(CompileError::Internal("a store node holds a store leaf"));
         };
         let lhs = lw.through(lhs);
-        if (*lhs).value.is_null() {
+        if dyad::value(lhs).is_null() {
             return Err(CompileError::Uninitialized);
         }
         let v = lw.lower(rhs)?;

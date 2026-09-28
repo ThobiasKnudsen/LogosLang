@@ -12,6 +12,7 @@
 //! DESIGN ›Read and write are one mechanism across the system‹
 
 use super::{meta, Cx};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::{Constructed, ParseError};
 
@@ -65,12 +66,12 @@ fn construct(
     // `mut alloc …` gives a pointer that may be written through; it carries no mark, since
     // no write through `@` is checked yet: stand-in for #33.
     // SAFETY: `inner` is a reduced dyad just parsed.
-    if id == types.mut_ && unsafe { (*inner).ty } == types.alloc_ {
+    if id == types.mut_ && unsafe { dyad::ty(inner) } == types.alloc_ {
         tape.place(inner);
         return Ok(Constructed::Placed);
     }
     // SAFETY: `inner` is a reduced dyad just parsed.
-    if unsafe { (*inner).ty } != types.declare_ {
+    if unsafe { dyad::ty(inner) } != types.declare_ {
         return Err(ParseError::GateNeedsDeclaration);
     }
     p.gate_declared(id)?;

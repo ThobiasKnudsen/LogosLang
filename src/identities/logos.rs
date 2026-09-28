@@ -7,6 +7,7 @@
 //! DESIGN ›Substrate vocabulary‹
 
 use super::{meta, Cx};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::store::Store;
 
@@ -14,7 +15,7 @@ pub(super) fn register_root(store: &mut Store) -> DyadPtr {
     let logos_ = store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut());
     // SAFETY: `logos_` was just allocated; make it its own logos.
     unsafe {
-        (*logos_).ty = logos_;
+        dyad::set_ty(logos_, logos_);
     }
     logos_
 }

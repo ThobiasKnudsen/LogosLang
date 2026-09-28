@@ -10,6 +10,7 @@ use std::io::Write;
 
 use super::callable::{self, Callables};
 use super::{meta, Cx};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
@@ -61,10 +62,10 @@ pub(crate) fn render(rt: &mut Runtime, node: DyadPtr) -> Result<Vec<u8>, RunErro
     // SAFETY: `node` is a `print` or `error` node from the store; its parts
     // operand is the array its `build` made, of string nodes and parsed expressions.
     unsafe {
-        let parts = *((*node).value as *const DyadPtr);
+        let parts = *(dyad::value(node) as *const DyadPtr);
         for &part in super::array::items(parts) {
             // A `{…}` that yields a string, `{a:name}`, is a read, not a text run.
-            if (*part).ty == rt.types().string_
+            if dyad::ty(part) == rt.types().string_
                 && super::read::read_kind(rt.types(), part) == super::read::Read::Opaque
             {
                 line.extend_from_slice(super::string::text(part));

@@ -8,6 +8,7 @@
 
 use super::numtype::NumType;
 use super::{array, meta, Cx};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::ParsingTape;
 use crate::store::Store;
@@ -54,7 +55,7 @@ pub(crate) fn build(
 /// # Safety
 /// `node` must be a node from `build`.
 pub(crate) unsafe fn text_of<'a>(node: DyadPtr) -> &'a str {
-    let ops = (*node).value as *const DyadPtr;
+    let ops = dyad::value(node) as *const DyadPtr;
     let bytes = super::string::text(*ops.add(TEXT));
     // The bytes were copied from a `&str` by `build_text`.
     std::str::from_utf8(bytes).unwrap_or("")
@@ -63,9 +64,9 @@ pub(crate) unsafe fn text_of<'a>(node: DyadPtr) -> &'a str {
 /// # Safety
 /// As `text_of`.
 pub(crate) unsafe fn cells_of(node: DyadPtr) -> *mut ParsingTape {
-    let ops = (*node).value as *const DyadPtr;
+    let ops = dyad::value(node) as *const DyadPtr;
     let handle = *ops.add(CELLS);
-    std::ptr::read_unaligned((*handle).value as *const u64) as usize as *mut ParsingTape
+    std::ptr::read_unaligned(dyad::value(handle) as *const u64) as usize as *mut ParsingTape
 }
 
 /// The `[key, fn]` pairs constructed so far.
@@ -73,7 +74,7 @@ pub(crate) unsafe fn cells_of(node: DyadPtr) -> *mut ParsingTape {
 /// # Safety
 /// As `text_of`.
 unsafe fn pairs(node: DyadPtr) -> Vec<DyadPtr> {
-    let ops = (*node).value as *const DyadPtr;
+    let ops = dyad::value(node) as *const DyadPtr;
     let specs = *ops.add(SPECS);
     if specs.is_null() {
         Vec::new()
@@ -109,7 +110,7 @@ pub(crate) unsafe fn insert(
     let pair = array::build(store, types.array_, &[key_arr, f]);
     let mut all = pairs(node);
     all.push(pair);
-    let ops = (*node).value as *mut DyadPtr;
+    let ops = dyad::value(node) as *mut DyadPtr;
     *ops.add(SPECS) = array::build(store, types.array_, &all);
 }
 
@@ -125,7 +126,7 @@ pub(crate) unsafe fn remove(store: &mut Store, types: &Core, node: DyadPtr, key:
             !(items.len() == 2 && array::items(items[0]) == key)
         })
         .collect();
-    let ops = (*node).value as *mut DyadPtr;
+    let ops = dyad::value(node) as *mut DyadPtr;
     *ops.add(SPECS) = if kept.is_empty() {
         std::ptr::null_mut()
     } else {
@@ -140,8 +141,8 @@ pub(crate) unsafe fn remove(store: &mut Store, types: &Core, node: DyadPtr, key:
 /// `[field…, null, spec]`.
 unsafe fn spec_slot(node: DyadPtr) -> *mut DyadPtr {
     // Counted by the type, not scanned to the first null: an unwritten field is null too.
-    let n_fields = array::items(meta::record_fields_of((*node).ty)).len();
-    ((*node).value as *mut DyadPtr).add(n_fields + 1)
+    let n_fields = array::items(meta::record_fields_of(dyad::ty(node))).len();
+    (dyad::value(node) as *mut DyadPtr).add(n_fields + 1)
 }
 
 /// Null while no set has been resolved for the node.
@@ -149,7 +150,7 @@ unsafe fn spec_slot(node: DyadPtr) -> *mut DyadPtr {
 /// # Safety
 /// As `spec_slot`.
 pub(crate) unsafe fn spec_of(node: DyadPtr) -> DyadPtr {
-    if (*node).value.is_null() {
+    if dyad::value(node).is_null() {
         return std::ptr::null_mut();
     }
     *spec_slot(node)
@@ -161,12 +162,12 @@ pub(crate) unsafe fn spec_of(node: DyadPtr) -> DyadPtr {
 /// # Safety
 /// `node` must be a valid dyad from the store with a non-null type.
 pub(crate) unsafe fn unfilled_field(node: DyadPtr) -> Option<usize> {
-    let ty = (*node).ty;
-    let slots = (*node).value as *const DyadPtr;
+    let ty = dyad::ty(node);
+    let slots = dyad::value(node) as *const DyadPtr;
     if meta::kind_of(ty) != Some(meta::RECORD_TAG)
         || meta::run_body_of(ty).is_null()
         || slots.is_null()
-        || crate::dyad::is_place((*node).value)
+        || crate::dyad::is_place(dyad::value(node))
     {
         return None;
     }

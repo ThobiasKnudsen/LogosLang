@@ -8,6 +8,7 @@
 
 use super::callable::{self, Callables};
 use super::{meta, Cx};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::run::{RunError, Runtime};
 use crate::store::Store;
@@ -47,7 +48,7 @@ pub(crate) fn build(store: &mut Store, types: &Core, text: DyadPtr) -> DyadPtr {
 /// `node` must be null or a valid dyad from the store.
 pub(crate) unsafe fn is_fragment(types: &Core, node: DyadPtr) -> bool {
     let d = types.through(node);
-    !d.is_null() && (*d).ty == types.lex.lex
+    !d.is_null() && dyad::ty(d) == types.lex.lex
 }
 
 /// The text operand is the quote's string node, or a node that runs to one
@@ -55,16 +56,16 @@ pub(crate) unsafe fn is_fragment(types: &Core, node: DyadPtr) -> bool {
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `lex` node from the store; its text operand is a reduced dyad.
     unsafe {
-        let ops = (*node).value as *const DyadPtr;
+        let ops = dyad::value(node) as *const DyadPtr;
         let string_ty = rt.types().string_;
         let mut text = rt.through(*ops);
         if text.is_null() {
             return Err(RunError::NotText);
         }
-        if (*text).ty != string_ty {
+        if dyad::ty(text) != string_ty {
             text = rt.run(*ops)? as DyadPtr;
         }
-        if text.is_null() || (*text).ty != string_ty || (*text).value.is_null() {
+        if text.is_null() || dyad::ty(text) != string_ty || dyad::value(text).is_null() {
             return Err(RunError::NotText);
         }
         let bytes = super::string::text(text);

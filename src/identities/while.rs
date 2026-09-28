@@ -10,6 +10,7 @@ use cranelift_codegen::ir::Value;
 use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
@@ -38,7 +39,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
 /// # Safety
 /// `node` must be a `while` node `[cond, body]`.
 unsafe fn parts(node: DyadPtr) -> (DyadPtr, DyadPtr) {
-    let p = (*node).value as *const DyadPtr;
+    let p = dyad::value(node) as *const DyadPtr;
     (*p, *p.add(1))
 }
 

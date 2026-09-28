@@ -13,6 +13,7 @@ use super::callable::{self, Callables};
 use super::numtype::{self, NumType};
 use super::{commit_if_literal, meta, Cx, Operand};
 use crate::compile::{CompileError, Lowerer};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::{Assoc, ParseError};
 use crate::run::{RunError, Runtime};
@@ -94,7 +95,7 @@ pub(super) fn register(
 /// # Safety
 /// `place` must be a storage-backed place node from the store.
 pub(crate) unsafe fn build_addr(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
-    let pointee = (*place).ty;
+    let pointee = dyad::ty(place);
     let value = store.alloc_operands(&[place, pointee, types.ops.addr_]);
     store.alloc_raw(types.addr_, value)
 }
@@ -102,7 +103,7 @@ pub(crate) unsafe fn build_addr(store: &mut Store, types: &Core, place: DyadPtr)
 fn run_addr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an addr node; its first operand is a place.
     unsafe {
-        let place = *((*node).value as *const DyadPtr);
+        let place = *(dyad::value(node) as *const DyadPtr);
         Ok(rt.place_addr(place).ok_or(RunError::NoActivation)? as i64)
     }
 }
@@ -110,7 +111,7 @@ fn run_addr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 fn lower_addr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is an addr node; its first operand is a place.
     unsafe {
-        let place = *((*node).value as *const DyadPtr);
+        let place = *(dyad::value(node) as *const DyadPtr);
         lw.place_addr(place)
     }
 }
@@ -190,8 +191,8 @@ pub(crate) fn build_deref(
 /// # Safety
 /// `node` must be a deref node from `build_deref`.
 pub(crate) unsafe fn deref_parts(node: DyadPtr) -> (DyadPtr, DyadPtr, u64) {
-    let p = (*node).value as *const DyadPtr;
-    let off = std::ptr::read_unaligned((**p.add(2)).value as *const u64);
+    let p = dyad::value(node) as *const DyadPtr;
+    let off = std::ptr::read_unaligned(dyad::value(*p.add(2)) as *const u64);
     (*p, *p.add(1), off)
 }
 
@@ -208,20 +209,20 @@ pub(crate) unsafe fn build_storeptr(
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
     let (ptr_expr, pointee, _) = deref_parts(deref);
-    let off_node = *(((*deref).value as *const DyadPtr).add(2));
+    let off_node = *((dyad::value(deref) as *const DyadPtr).add(2));
     // SAFETY: `pointee` is the deref node's pointee type, a node from the store.
     let scalar_pointee = unsafe { super::read::place_layout(types, pointee) }
         .is_some_and(|(read, _)| matches!(read, super::read::Read::Scalar(_)));
     if super::read::cell_numtype(types, pointee).is_none() {
         return Err(ParseError::BadAssignTarget);
     }
-    let rhs = if (*types.through(rhs)).ty == types.rational {
+    let rhs = if dyad::ty(types.through(rhs)) == types.rational {
         if !scalar_pointee {
             return Err(ParseError::TypeMismatch);
         }
         let nt = numtype::of_type_node(pointee);
         commit_if_literal(store, types, rhs, &Operand::Literal, pointee, nt)?
-    } else if (*types.through(rhs)).ty == types.tape.cell_dyad_at {
+    } else if dyad::ty(types.through(rhs)) == types.tape.cell_dyad_at {
         // A line no check narrowed: what it holds is known only when the store runs.
         super::tape::build_cell_into(store, types, types.through(rhs), pointee)
     } else {
@@ -265,9 +266,9 @@ fn run_deref(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 fn run_storeptr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a storeptr node from `build_storeptr`.
     unsafe {
-        let p = (*node).value as *const DyadPtr;
+        let p = dyad::value(node) as *const DyadPtr;
         let (ptr_expr, rhs, pointee) = (*p, *p.add(1), *p.add(2));
-        let off = std::ptr::read_unaligned((**p.add(3)).value as *const u64);
+        let off = std::ptr::read_unaligned(dyad::value(*p.add(3)) as *const u64);
         let nt = super::read::cell_numtype(rt.types(), pointee).ok_or(RunError::NotDerefable)?;
         let bits = rt.run(rhs)?;
         // Same guard as `run_deref`.
@@ -297,9 +298,9 @@ fn lower_deref(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
 fn lower_storeptr(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a storeptr node from `build_storeptr`.
     unsafe {
-        let p = (*node).value as *const DyadPtr;
+        let p = dyad::value(node) as *const DyadPtr;
         let (ptr_expr, rhs, pointee) = (*p, *p.add(1), *p.add(2));
-        let off = std::ptr::read_unaligned((**p.add(3)).value as *const u64);
+        let off = std::ptr::read_unaligned(dyad::value(*p.add(3)) as *const u64);
         let ct = super::read::cell_numtype(lw.types(), pointee)
             .ok_or(CompileError::NotDerefable)?
             .cranelift_type();

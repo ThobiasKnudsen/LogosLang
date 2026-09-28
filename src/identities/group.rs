@@ -7,6 +7,7 @@
 //! DESIGN ›The proof layer‹
 
 use super::{and, or, ran};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::ParseError;
 use crate::store::Store;
@@ -21,11 +22,11 @@ pub(crate) type BuildFn =
 /// `node` must be null or a valid dyad from the store.
 pub(crate) unsafe fn members(types: &Core, node: DyadPtr) -> Option<(DyadPtr, DyadPtr, DyadPtr)> {
     let node = ran::expr_of(types, types.through(node));
-    if node.is_null() || ((*node).ty != types.and_ && (*node).ty != types.or_) {
+    if node.is_null() || (dyad::ty(node) != types.and_ && dyad::ty(node) != types.or_) {
         return None;
     }
-    let p = (*node).value as *const DyadPtr;
-    (*p.add(2)).is_null().then(|| ((*node).ty, *p, *p.add(1)))
+    let p = dyad::value(node) as *const DyadPtr;
+    (*p.add(2)).is_null().then(|| (dyad::ty(node), *p, *p.add(1)))
 }
 
 /// The connective joins; any other operator over a group applies to each member.

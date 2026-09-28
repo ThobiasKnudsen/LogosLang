@@ -11,6 +11,7 @@ use cranelift_codegen::ir::Value;
 use super::callable::{self, Callables};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
@@ -49,7 +50,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
 /// # Safety
 /// `node` must be an `if` node `[cond, then, else]`.
 unsafe fn branches(node: DyadPtr) -> (DyadPtr, DyadPtr, DyadPtr) {
-    let p = (*node).value as *const DyadPtr;
+    let p = dyad::value(node) as *const DyadPtr;
     (*p.add(IF_COND), *p.add(IF_THEN), *p.add(IF_ELSE))
 }
 

@@ -12,6 +12,7 @@ use super::callable::{self, Callables};
 use super::numtype::{self, CmpOp};
 use super::{meta, Cx};
 use crate::compile::{CompileError, Lowerer};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::Assoc;
 use crate::run::{RunError, Runtime};
@@ -52,7 +53,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
 /// # Safety
 /// `node` must be a `for` node built by [`crate::parse::Parser::parse_for`].
 unsafe fn parts(node: DyadPtr) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
-    let p = (*node).value as *const DyadPtr;
+    let p = dyad::value(node) as *const DyadPtr;
     (*p, *p.add(1), *p.add(2), *p.add(3), *p.add(4))
 }
 
@@ -70,9 +71,9 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid `for` node; its parts are valid dyads.
     unsafe {
         let (var, start, end, step, body) = parts(node);
-        let nt = numtype::of_type_node((*var).ty);
+        let nt = numtype::of_type_node(dyad::ty(var));
         let s = rt.run(start)?;
-        let var_ty = (*var).ty;
+        let var_ty = dyad::ty(var);
         numtype::write_scalar(var_ty, rt.place_addr(var).ok_or(RunError::NoActivation)?, s);
         let e = rt.run(end)?;
         let d = if step.is_null() { one_bits(nt) } else { rt.run(step)? };

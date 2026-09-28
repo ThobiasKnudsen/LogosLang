@@ -8,6 +8,7 @@
 use super::callable::{self, Callables};
 use super::read::Read;
 use super::{bool_mod, meta, Cx, NumType};
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::{Assoc, ParseError};
 use crate::run::{RunError, Runtime};
@@ -62,7 +63,7 @@ fn build(
 unsafe fn type_valued(types: &Core, n: DyadPtr, k: Read) -> bool {
     matches!(k, Read::Identity)
         || k == Read::Container(types.type_)
-        || (*types.through(n)).ty == types.tape.cell_type
+        || dyad::ty(types.through(n)) == types.tape.cell_type
 }
 
 /// `None` where DESIGN leaves the answer open: two different types unless both are integers,
@@ -71,7 +72,7 @@ unsafe fn type_valued(types: &Core, n: DyadPtr, k: Read) -> bool {
 /// # Safety
 /// `a` and `b` are null or dyads from the store.
 unsafe fn includes(types: &Core, a: DyadPtr, b: DyadPtr) -> Option<bool> {
-    let is_type = |t: DyadPtr| !t.is_null() && (*t).ty == types.type_;
+    let is_type = |t: DyadPtr| !t.is_null() && dyad::ty(t) == types.type_;
     if !is_type(a) || !is_type(b) {
         return None;
     }
@@ -102,13 +103,13 @@ unsafe fn includes(types: &Core, a: DyadPtr, b: DyadPtr) -> Option<bool> {
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `⊆` node `[lhs, rhs, op]`; each operand runs to a type's address.
     unsafe {
-        let ops = (*node).value as *const DyadPtr;
+        let ops = dyad::value(node) as *const DyadPtr;
         let read = rt.through(*ops);
         let b = rt.run(*ops.add(1))? as DyadPtr;
         let types = rt.types();
-        if (*read).ty == types.tape.cell_type && super::is_numtype_node(types, b) {
-            let cell = super::tape::read_target(rt, (*read).value as *const DyadPtr)?;
-            if (*cell).ty == rt.types().rational {
+        if dyad::ty(read) == types.tape.cell_type && super::is_numtype_node(types, b) {
+            let cell = super::tape::read_target(rt, dyad::value(read) as *const DyadPtr)?;
+            if dyad::ty(cell) == rt.types().rational {
                 let nt = super::numtype::of_type_node(b);
                 return Ok(i64::from(super::rational::mold_to(cell, nt).is_some()));
             }
