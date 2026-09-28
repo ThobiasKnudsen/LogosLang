@@ -67,21 +67,30 @@ fn one_bits(nt: numtype::NumType) -> i64 {
     }
 }
 
+/// A named counter lives in its binding's place, read back each pass since the body may
+/// write it; a nameless one is this run's own.
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid `for` node; its parts are valid dyads.
     unsafe {
         let (var, start, end, step, body) = parts(node);
-        let nt = numtype::of_type_node(dyad::ty(var));
-        let s = rt.run(start)?;
-        let var_ty = dyad::ty(var);
-        numtype::write_scalar(var_ty, rt.place_addr(var).ok_or(RunError::NoActivation)?, s);
+        let super::Operand::Concrete(nt) = super::numtype_of(rt.types(), start) else {
+            return Err(RunError::NoWholeRead);
+        };
+        let counter = |rt: &mut Runtime| rt.place_addr(var).ok_or(RunError::NoActivation);
+        let named = !var.is_null();
+        let mut v = rt.run(start)?;
+        if named {
+            numtype::write_scalar_nt(nt, counter(rt)?, v);
+        }
         let e = rt.run(end)?;
         let d = if step.is_null() { one_bits(nt) } else { rt.run(step)? };
         if numtype::apply_compare(CmpOp::Gt, nt, d, 0) == 0 {
             return Ok(0);
         }
         loop {
-            let v = numtype::read_scalar(var_ty, rt.place_addr(var).ok_or(RunError::NoActivation)?);
+            if named {
+                v = numtype::read_scalar_nt(nt, counter(rt)?);
+            }
             if numtype::apply_compare(CmpOp::Lt, nt, v, e) == 0 {
                 break;
             }
@@ -90,7 +99,10 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             let Some(next) = numtype::checked_add(nt, v, d) else {
                 break;
             };
-            numtype::write_scalar(var_ty, rt.place_addr(var).ok_or(RunError::NoActivation)?, next);
+            v = next;
+            if named {
+                numtype::write_scalar_nt(nt, counter(rt)?, next);
+            }
         }
         Ok(0)
     }

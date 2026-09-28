@@ -117,12 +117,15 @@ impl<'a> Parser<'a> {
         Ok(Some((cell, cell.start)))
     }
 
-    /// A slot of the call a held `type (…)` is being built in, which is live.
+    /// A slot of the call a held `type (…)` is being built in, which is live: a name of the
+    /// innermost function open where the body was written, with no function opened since.
     fn is_live_call_slot(&self, id: DyadPtr) -> bool {
         // SAFETY: `id` is null or a resolved dyad from the store.
-        !id.is_null()
-            && matches!(crate::dyad::frame_ref(unsafe { dyad::value(id) }),
-                Some((depth, _)) if depth > 0 && depth == self.cx.held_depth && self.cx.frames.len() == depth)
+        matches!(unsafe { self.types.frame_of(id) },
+            Some((crate::binding::Frame::Call(f), _))
+                if self.cx.held_depth > 0
+                    && self.cx.frames.len() == self.cx.held_depth
+                    && self.cx.frames.last().is_some_and(|open| open.frame == f))
     }
 
     /// A place holding a type denotes the type it holds, since lexing a box's
@@ -147,14 +150,16 @@ impl<'a> Parser<'a> {
             use crate::binding::Frame;
             let addr = match self.types.frame_of(id) {
                 Some((Frame::Root, off)) => self.rt.store.arena_at(off),
+                Some((Frame::Call(_), _)) if self.is_live_call_slot(id) => {
+                    match self.rt.place_addr(id) {
+                        Some(addr) => addr,
+                        None => return id,
+                    }
+                }
                 Some((Frame::Call(_), _)) => return id,
                 None => match crate::dyad::global_ref(dyad::value(id)) {
                     Some(crate::dyad::Global::Address(addr)) => addr,
                     Some(crate::dyad::Global::Arena(off)) => self.rt.store.arena_at(off),
-                    None if self.is_live_call_slot(id) => match self.rt.place_addr(id) {
-                        Some(addr) => addr,
-                        None => return id,
-                    },
                     None => return id,
                 },
             };

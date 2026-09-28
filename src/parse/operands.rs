@@ -399,19 +399,22 @@ impl<'a> Parser<'a> {
         tape.at(1).is_some_and(|cell| !cell.constructed && self.cell_identity(cell) == id)
     }
 
-    /// Reject a capture: a frame-relative place of an enclosing function's
-    /// frame. v1 has no closures; reading one would resolve against the wrong
-    /// activation record at run time.
+    /// Reject a capture: a name of an enclosing function's frame, not the innermost open
+    /// one. v1 has no closures; reading one would resolve against the wrong activation
+    /// record at run time. A `share` initializer runs at the definition, where no call of
+    /// the functions open around it is live.
     ///
     /// # Safety
     /// `node` must be a resolved dyad from the store.
     pub(super) unsafe fn check_capture(&self, node: DyadPtr) -> Result<(), ParseError> {
         let node = self.types.through(node);
-        if let Some((depth, _)) = crate::dyad::frame_ref(dyad::value(node)) {
-            if self.cx.share_init.is_some_and(|at| depth <= at) {
-                return Err(ParseError::ShareInitReadsUnmade);
+        if let Some((crate::binding::Frame::Call(f), _)) = self.types.frame_of(node) {
+            if let Some(at) = self.cx.share_init {
+                if self.cx.frames[..at].iter().any(|open| open.frame == f) {
+                    return Err(ParseError::ShareInitReadsUnmade);
+                }
             }
-            if depth != self.cx.frames.len() {
+            if self.cx.frames.last().is_none_or(|open| open.frame != f) {
                 return Err(ParseError::CapturedLocal);
             }
         }

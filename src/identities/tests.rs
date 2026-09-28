@@ -221,8 +221,11 @@ fn parses_a_fn_with_a_param_visible_in_the_body() {
         assert_eq!(output, core.i32_);
         let x_field = array::items(meta::record_fields_of(input))[0];
         assert_eq!(dyad::ty(x_field), core.i32_);
+        // The use of `x` is its binding, laid out first in the function's frame.
         let return_operand = *(dyad::value(body) as *const DyadPtr);
-        assert_eq!(core.through(return_operand), x_field);
+        assert_eq!(core.through(return_operand), return_operand);
+        assert_eq!(core.type_of(return_operand), core.i32_);
+        assert_eq!(core.frame_of(return_operand), Some((crate::binding::Frame::Call(func), 0)));
     }
 }
 

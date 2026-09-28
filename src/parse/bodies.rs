@@ -11,6 +11,8 @@ use crate::dyad;
 /// first offsets, the body's locals continue after them (DESIGN ›Resolution
 /// is one rule‹).
 pub(super) struct OpenFn {
+    /// The `fn` node whose call frame this is: what a local's binding names as its frame.
+    pub(super) frame: DyadPtr,
     /// Bytes claimed so far by parameters and frame-relative locals.
     pub(super) size: usize,
     /// The scope depth the function's barrier begins at: a name declared
@@ -322,15 +324,12 @@ impl<'a> Parser<'a> {
             ..Context::nested(&self.cx, text, nested)
         };
         let g = self.enter(cx);
-        let inner = g.0.construct_run_body_in(ty, key);
+        let inner = g.0.construct_run_body_in(ty, key, spec);
         let inner_pos = g.0.cx.pos;
         drop(g);
 
         match inner {
-            Ok(f) => {
-                dyad::set_value(spec, dyad::value(f));
-                Ok(spec)
-            }
+            Ok(f) => Ok(f),
             Err(e) => {
                 crate::identities::run_body::remove(self.rt.store, types, held, key);
                 self.cx.pos = at;
@@ -349,14 +348,15 @@ impl<'a> Parser<'a> {
 
     /// Over the swapped-in state: the hidden parameter record, the return
     /// type (the type the set holds in the field named `output_type`, or `void`),
-    /// and the body read as a function's.
+    /// and the body read as a function's, filling `spec`.
     ///
     /// # Safety
-    /// As `construct_run_body`.
+    /// As `construct_run_body`; `spec` the `fn` node minted for the set.
     unsafe fn construct_run_body_in(
         &mut self,
         ty: DyadPtr,
         key: &[DyadPtr],
+        spec: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
         let field_scope = crate::identities::meta::record_scope_of(ty);
@@ -397,14 +397,14 @@ impl<'a> Parser<'a> {
             .filter(|&i| dyad::ty(fields[i]) == types.type_)
             .map_or(types.void_, |i| key[i]);
         let (input, places) = self.hidden_param_record(&params, 0)?;
-        self.cx.run_fields = Some((ty, places));
+        self.cx.run_fields = Some((ty, places.clone()));
         let param_scope = crate::identities::meta::record_scope_of(input);
         self.cx.scopes.push(param_scope);
         let declared =
             type_fields.iter().try_for_each(|&(n, t)| self.declare_name(n, t, 0).map(|_| ()));
         self.cx.scopes.pop();
         declared?;
-        self.fn_over_body(types.fn_type, input, output, std::ptr::null_mut())
+        self.fn_over_body(types.fn_type, input, &places, output, spec)
     }
 
     /// `(start, len)` of the text inside the `( … )` at the cursor, consumed
@@ -472,7 +472,7 @@ impl<'a> Parser<'a> {
         let member = !declared.is_null()
             && self.cx.member_fn_depth == Some(self.cx.frames.len())
             && self.cx.definitions.last().is_some_and(|d| d.this_param.is_null());
-        let input = self.parse_record_taking(member.then_some(self.types.dyad_))?;
+        let (input, params) = self.parse_record_taking(member.then_some(self.types.dyad_))?;
         self.expect_arrow()?;
         let output = {
             let items = self.drive_until_open(RightSide::ReturnType);
@@ -487,18 +487,16 @@ impl<'a> Parser<'a> {
         };
         if !member {
             // SAFETY: `input` was just built by `parse_record`; `declared` is the caller's placeholder.
-            return unsafe { self.fn_over_body(fn_type, input, output, declared) };
+            return unsafe { self.fn_over_body(fn_type, input, &params, output, declared) };
         }
-        // SAFETY: `input` is the record just built, the value its first field.
-        let this = unsafe {
-            crate::identities::array::items(crate::identities::meta::record_fields_of(input))[0]
-        };
+        // The value is the first parameter, the one no name declares.
+        let this = params[0];
         let def = self.cx.definitions.last_mut().expect("checked above");
         def.this_param = this;
         def.read_receiver = false;
         def.wrote_receiver = false;
         // SAFETY: as above.
-        let f = unsafe { self.fn_over_body(fn_type, input, output, declared) };
+        let f = unsafe { self.fn_over_body(fn_type, input, &params, output, declared) };
         let def = self.cx.definitions.last_mut().expect("still open");
         def.this_param = std::ptr::null_mut();
         let receiver = (u64::from(def.read_receiver) * RECEIVER_READS)
@@ -513,65 +511,60 @@ impl<'a> Parser<'a> {
         f
     }
 
-    /// The half of `parse_fn` after the signature, shared with a slot body
-    /// read bare: the frame opened and the parameters placed in it, the body
-    /// parsed deferred with the parameter scope reopened.
+    /// The half of `parse_fn` after the signature, shared with a slot body read bare: the
+    /// frame opened on the `fn` node, the parameters laid out in it on their bindings, the
+    /// body parsed deferred with the parameter scope reopened. The node is `declared`, the
+    /// declaration's placeholder or a run body's `spec`, or a fresh cell; its signature is
+    /// on it before the body parses, so a recursive self-call resolves its types.
     ///
     /// # Safety
-    /// `input` must be a record node whose parameters' value slots are still
-    /// null; `declared` as for `parse_fn`.
+    /// `input` must be a record node and `params` its fields' bindings in order; `declared`
+    /// null or a `fn`-typed dyad from the store that nothing has read a value from yet.
     pub(super) unsafe fn fn_over_body(
         &mut self,
         fn_type: DyadPtr,
         input: DyadPtr,
+        params: &[DyadPtr],
         output: DyadPtr,
         declared: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
+        let node = if declared.is_null() {
+            self.rt.store.alloc_raw(fn_type, std::ptr::null_mut())
+        } else {
+            declared
+        };
+        let early = self.rt.store.alloc_operands(&[
+            input,
+            output,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        ]);
+        // SAFETY: `node` is the placeholder or a fresh cell; nothing has read a value from it.
+        unsafe { dyad::set_value(node, early) };
         // A call frame is an instance of its function, so a parameter resolves
         // to a frame slot as a local does (DESIGN ›Resolution is one rule‹). The
         // barrier begins at the current depth, so a lesser depth is outside the function.
         self.cx.frames.push(OpenFn {
+            frame: node,
             size: 0,
             below: self.cx.scopes.depth(),
             outer: Vec::new(),
             open_below: self.cx.open.len(),
             returns: Vec::new(),
         });
-        let depth = self.cx.frames.len();
-        // SAFETY: `input` is the record just built; each parameter's value slot is still the null `parse_record` left there.
+        // SAFETY: `input` is the record just built, `params` its bindings.
         unsafe {
             let fields = crate::identities::meta::record_fields_of(input);
-            for &param in crate::identities::array::items(fields) {
+            for (&param, &binding) in crate::identities::array::items(fields).iter().zip(params) {
+                // Sized by the rule the argument block lays them out by (`by_copy::slots`).
                 let logos = dyad::ty(param);
-                // A parameter's slot is sized by the rule that sizes a local; a
-                // bare one holds the 8-byte container.
-                let width = if logos.is_null() {
-                    8
-                } else {
-                    crate::identities::read::place_layout(self.types, logos)
-                        .map(|(_, w)| w)
-                        .unwrap_or(8)
-                };
-                let frame = self.cx.frames.last_mut().expect("parse_fn just pushed a frame");
-                let offset = frame.size;
+                let width = crate::identities::by_copy::param_width(self.types, logos);
+                let frame = self.cx.frames.last_mut().expect("pushed above");
+                Binding::lay_out(binding, logos, node, frame.size);
                 frame.size += width;
-                dyad::set_value(param, crate::dyad::frame_place(depth, offset));
-            }
-        }
-
-        if !declared.is_null() {
-            let early = self.rt.store.alloc_operands(&[
-                input,
-                output,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            ]);
-            // SAFETY: `declared` is the just-declared placeholder; nothing has read it, and the fixpoint overwrites it.
-            unsafe {
-                dyad::set_value(declared, early);
             }
         }
 
@@ -614,16 +607,14 @@ impl<'a> Parser<'a> {
         } else {
             crate::identities::array::build(self.rt.store, self.types.array_, &outer)
         };
-        let value = self.rt.store.alloc_operands(&[
-            input,
-            output,
-            body,
-            std::ptr::null_mut(),
-            frame,
-            outer,
-            std::ptr::null_mut(),
-        ]);
-        Ok(self.rt.store.alloc_raw(fn_type, value))
+        // SAFETY: `node`'s value is the seven-slot record written above, nothing else's.
+        unsafe {
+            let slots = dyad::value(node) as *mut DyadPtr;
+            *slots.add(FN_BODY) = body;
+            *slots.add(FN_FRAME) = frame;
+            *slots.add(FN_OUTER) = outer;
+        }
+        Ok(node)
     }
 
     /// A `return` just built: inside a function it leaves every scope open
@@ -984,7 +975,6 @@ impl<'a> Parser<'a> {
 
         // SAFETY: `logos` is a numtype node from resolve_loop_parts.
         let width = unsafe { crate::identities::numtype::of_type_node(logos) }.bytes();
-        let var = self.alloc_local(logos, width);
         let parent = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
         let scope = crate::identities::scope::mint(self.rt.store, types.scope, parent);
         // A repeated body: a name declared outside may not be moved or dropped
@@ -993,11 +983,18 @@ impl<'a> Parser<'a> {
         self.cx.scopes.push(scope);
         // Parse-time rebinding is off inside a repeated body, the counter's name included.
         self.cx.runtime_depth += 1;
+        // A named counter is a name of the enclosing frame; a nameless one is the run's own.
+        let mut var = std::ptr::null_mut();
         let body = match name {
             Some((nstart, nlen)) => {
                 let source = self.cx.source;
-                self.declare_name(&source[nstart..nstart + nlen], var, nstart)
-                    .and_then(|_| self.bracketed_body())
+                self.declare_name(&source[nstart..nstart + nlen], logos, nstart).and_then(
+                    |binding| {
+                        // SAFETY: `binding` was just declared; `logos` is a type node.
+                        var = unsafe { self.place_for(binding, logos, width) };
+                        self.bracketed_body()
+                    },
+                )
             }
             None => self.bracketed_body(),
         };

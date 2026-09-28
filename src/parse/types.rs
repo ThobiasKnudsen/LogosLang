@@ -110,14 +110,15 @@ impl<'a> Parser<'a> {
     /// holding the scope, the `fields` array and the packed `size_bytes`. Fresh
     /// field names are read raw, which is why the list has its own sub-parse.
     pub fn parse_record(&mut self) -> Result<DyadPtr, ParseError> {
-        self.parse_record_taking(None)
+        self.parse_record_taking(None).map(|(input, _)| input)
     }
 
-    /// `parse_record` with an unnamed field of type `leading` first.
+    /// `parse_record` with an unnamed field of type `leading` first, and the fields'
+    /// bindings in order.
     pub(super) fn parse_record_taking(
         &mut self,
         leading: Option<DyadPtr>,
-    ) -> Result<DyadPtr, ParseError> {
+    ) -> Result<(DyadPtr, Vec<DyadPtr>), ParseError> {
         let record_logos = self.types.type_;
         let (scope, fields_arr, size_bytes, bindings) = self.parse_field_list(false, leading)?;
         let record = crate::identities::meta::record_layout(
@@ -132,7 +133,7 @@ impl<'a> Parser<'a> {
         let input = self.rt.store.alloc_raw(record_logos, record.cast());
         // SAFETY: the bindings were just minted for these fields; `input` is the record node.
         unsafe { lay_out_fields(input, fields_arr, &bindings) };
-        Ok(input)
+        Ok((input, bindings))
     }
 
     /// A `fn`'s parameter list checks each name against every open scope, since
@@ -725,14 +726,8 @@ impl<'a> Parser<'a> {
         }
         let cells = Box::into_raw(Box::new(fragment));
         let scope = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
-        Ok(crate::identities::held_type::build(
-            self.rt.store,
-            types,
-            text,
-            cells,
-            scope,
-            self.cx.frames.len(),
-        ))
+        let frames: Vec<DyadPtr> = self.cx.frames.iter().map(|f| f.frame).collect();
+        Ok(crate::identities::held_type::build(self.rt.store, types, text, cells, scope, &frames))
     }
 
     /// Build the held `type (…)` `node` now, inside the run that reached it: its
@@ -747,7 +742,7 @@ impl<'a> Parser<'a> {
         &mut self,
         node: DyadPtr,
     ) -> Result<DyadPtr, crate::run::RunError> {
-        let (text, cells, scope, depth) = crate::identities::held_type::parts(node);
+        let (text, cells, scope, open_fns) = crate::identities::held_type::parts(node);
         let bytes = crate::identities::string::text(text);
         let text: &'a str = std::str::from_utf8(bytes).expect("copied from the source text");
         let mut cells = (*cells).cells();
@@ -769,8 +764,11 @@ impl<'a> Parser<'a> {
         let base_depth = nested.depth();
         // One frame per function open where the body was written, so a read of
         // that function's names is no capture; nothing is claimed in them.
-        let frames = (0..depth)
-            .map(|_| OpenFn {
+        let depth = open_fns.len();
+        let frames = open_fns
+            .iter()
+            .map(|&f| OpenFn {
+                frame: f,
                 size: 0,
                 below: 0,
                 outer: Vec::new(),
@@ -970,9 +968,15 @@ impl<'a> Parser<'a> {
                 def.this_param = params[1];
                 def.tape_param = params[0];
                 def.in_parse = true;
-                // SAFETY: `input` was just built, its parameters unplaced; no declaration's placeholder is being filled.
+                // SAFETY: `input` was just built, `params` its bindings; no declaration's placeholder is being filled.
                 let f = unsafe {
-                    self.fn_over_body(types.fn_type, input, types.void_, std::ptr::null_mut())
+                    self.fn_over_body(
+                        types.fn_type,
+                        input,
+                        &params,
+                        types.void_,
+                        std::ptr::null_mut(),
+                    )
                 };
                 let def = self.cx.definitions.last_mut().expect("checked above");
                 def.this_param = std::ptr::null_mut();
@@ -1007,9 +1011,15 @@ impl<'a> Parser<'a> {
                 let (input, params) = self.hidden_param_record(&[(None, types.dyad_)], at)?;
                 let def = self.cx.definitions.last_mut().expect("checked above");
                 def.this_param = params[0];
-                // SAFETY: `input` was just built, its parameter unplaced; no declaration's placeholder is being filled.
+                // SAFETY: `input` was just built, `params` its bindings; no declaration's placeholder is being filled.
                 let f = unsafe {
-                    self.fn_over_body(types.fn_type, input, types.void_, std::ptr::null_mut())
+                    self.fn_over_body(
+                        types.fn_type,
+                        input,
+                        &params,
+                        types.void_,
+                        std::ptr::null_mut(),
+                    )
                 };
                 let def = self.cx.definitions.last_mut().expect("checked above");
                 def.this_param = std::ptr::null_mut();
@@ -1021,9 +1031,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// A parameter record no text spelled: each name declared in its own
-    /// scope and checked against every open scope, since the body reopens it;
-    /// value slots left null for `fn_over_body` to place. `at` is the error position.
+    /// A parameter record no text spelled: each name declared in its own scope and checked
+    /// against every open scope, since the body reopens it; the bindings, one per field,
+    /// spelling-less for an unnamed one, for `fn_over_body` to lay out. `at` is the error position.
     pub(super) fn hidden_param_record(
         &mut self,
         params: &[(Option<&str>, DyadPtr)],
@@ -1067,7 +1077,7 @@ impl<'a> Parser<'a> {
         let input = self.rt.store.alloc_raw(self.types.type_, record.cast());
         // SAFETY: the bindings were just minted for these fields; `input` is the record node.
         unsafe { lay_out_fields(input, fields_arr, &bindings) };
-        Ok((input, fields))
+        Ok((input, bindings))
     }
 
     /// The run of a node whose type holds its `run` as a lexed body (DESIGN

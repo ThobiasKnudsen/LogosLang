@@ -644,7 +644,11 @@ mod tests {
             assert_eq!(slots.len(), 6);
             assert_eq!(text_of(slots[3].role), b"step");
             assert!(slots[3].node.is_null());
-            assert_eq!(describe(types, slots[0].node), Shape::Scalar(NumType::I32));
+            // The named counter is a name of the program frame, `i32` at its offset.
+            assert!(matches!(
+                describe(types, slots[0].node),
+                Shape::Binding { dyad, frame, .. } if dyad == core.i32_ && frame == core.root_scope
+            ));
 
             let Shape::Tuple { slots } = describe(types, roots[6]) else {
                 panic!("a sequence should be a tuple");

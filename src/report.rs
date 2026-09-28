@@ -339,7 +339,6 @@ pub fn run_message(e: &RunError) -> String {
             "a record, text or hole is not read as one value; read a field or take its address"
                 .into()
         }
-        RunError::MalformedFn(_) => "a parameter of this function has no frame slot".into(),
         RunError::NotText => "`lex` takes a string".into(),
         RunError::Output(why) => format!("print could not write to stdout: {why}"),
         RunError::Raised(message) => message.to_string(),

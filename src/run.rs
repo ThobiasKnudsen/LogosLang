@@ -30,8 +30,6 @@ pub enum RunError {
     Uninitialized,
     /// A record instance, text or hole read as one value.
     NoWholeRead,
-    /// A parameter with no frame slot.
-    MalformedFn(DyadPtr),
     /// `lex` handed something other than a string.
     NotText,
     /// `print` failed to write stdout; the I/O error's sentence.
@@ -945,10 +943,7 @@ impl<'a> Runtime<'a> {
             return Err(RunError::ArityMismatch);
         }
         for slot in by_copy::slots(self.types, fn_node) {
-            let Some((_, off)) = frame_ref(dyad::value(slot.param)) else {
-                return Err(RunError::MalformedFn(fn_node));
-            };
-            let dst = base.add(off);
+            let dst = base.add(slot.offset);
             let ty = dyad::ty(slot.param);
             let at = values.as_ptr().add(slot.word);
             match slot.width {

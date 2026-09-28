@@ -446,7 +446,7 @@ unsafe fn pack_of(
         .iter()
         .zip(bits)
         .map(|(&place, &b)| {
-            let pty = dyad::ty(place);
+            let pty = types.type_of(place);
             match (!pty.is_null()).then(|| place_layout(types, pty)).flatten() {
                 Some((Read::Scalar(_) | Read::Pointer(_), width)) => {
                     let storage = store.alloc_bytes(&b.to_ne_bytes()[..width]);
@@ -481,7 +481,7 @@ fn lower_pack(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         let (ty, arr) = (*ops, *ops.add(1));
         let mut values = Vec::new();
         for &place in super::array::items(arr) {
-            let pty = dyad::ty(place);
+            let pty = lw.types().type_of(place);
             values.push(if super::numtype::is_scalar_type(pty) {
                 let nt = super::numtype::of_type_node(pty);
                 let v = lw.read_place(place, nt.cranelift_type())?;

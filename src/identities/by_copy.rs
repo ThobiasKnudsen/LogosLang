@@ -113,16 +113,31 @@ pub(crate) unsafe fn result_width(types: &Core, f: DyadPtr) -> Option<usize> {
     record_width(types, *fields.add(FN_OUTPUT))
 }
 
-/// One parameter's place in the argument block: its first 8-byte word, and the record
-/// width it is copied at, `None` for a one-word container.
+/// One parameter's place in the argument block: its first 8-byte word, the record width
+/// it is copied at, `None` for a one-word container, and its offset in the call's frame.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Slot {
     pub(crate) param: DyadPtr,
     pub(crate) word: usize,
     pub(crate) width: Option<usize>,
+    pub(crate) offset: usize,
 }
 
-/// `f`'s parameters in order, each at its word in the argument block.
+/// The bytes a parameter or local of `t` takes in a call's frame: its type's own layout,
+/// or the eight-byte container every other value travels in; a bare parameter's too.
+///
+/// # Safety
+/// `t` must be null or a valid dyad from the store.
+pub(crate) unsafe fn param_width(types: &Core, t: DyadPtr) -> usize {
+    if t.is_null() {
+        8
+    } else {
+        place_layout(types, t).map_or(8, |(_, width)| width)
+    }
+}
+
+/// `f`'s parameters in order, each at its word in the argument block and its offset in the
+/// frame: the parameters come first, packed by `param_width`, as the parser laid them out.
 ///
 /// # Safety
 /// `f` must be a `fn` node from the store whose value is its field record.
@@ -130,11 +145,14 @@ pub(crate) unsafe fn slots<'a>(types: &'a Core, f: DyadPtr) -> impl Iterator<Ite
     let fields = dyad::value(f) as *const DyadPtr;
     let params = array::items(meta::record_fields_of(*fields.add(FN_INPUT)));
     let mut word = usize::from(result_width(types, f).is_some());
+    let mut offset = 0;
     params.iter().map(move |&param| {
         // SAFETY: each parameter is a dyad from the store.
-        let width = unsafe { record_width(types, dyad::ty(param)) };
-        let slot = Slot { param, word, width };
+        let (width, own) =
+            unsafe { (record_width(types, dyad::ty(param)), param_width(types, dyad::ty(param))) };
+        let slot = Slot { param, word, width, offset };
         word += width.map_or(1, |w| w.div_ceil(8));
+        offset += own;
         slot
     })
 }

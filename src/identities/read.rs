@@ -242,8 +242,8 @@ mod tests {
     use crate::regex_trie::RegexTrie;
     use crate::store::Store;
 
-    /// Parse `src` in a fresh core and return the sequence's items, looked through their ran form.
-    fn parse_seq(src: &str) -> (Store, Core, Vec<DyadPtr>) {
+    /// Parse `src` in a fresh core and return the sequence's items, with the index they resolve in.
+    fn parse_seq(src: &str) -> (Store, RegexTrie, Core, Vec<DyadPtr>) {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
@@ -255,7 +255,7 @@ mod tests {
         };
         // SAFETY: a sequence node's first slot is its expression array.
         let exprs = unsafe { array::items(*(dyad::value(seq) as *const DyadPtr)).to_vec() };
-        (store, core, exprs)
+        (store, trie, core, exprs)
     }
 
     #[test]
@@ -292,7 +292,7 @@ mod tests {
 
     #[test]
     fn places_read_by_their_type_and_values_by_their_kind() {
-        let (_store, core, exprs) = parse_seq(
+        let (_store, _trie, core, exprs) = parse_seq(
             "x := i32 5,\n\
              p := &x,\n\
              a := type ?,\n\
@@ -333,9 +333,12 @@ mod tests {
             let f = declared(6);
             assert_eq!(read_kind(types, f), Read::Unit);
             let input = *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_INPUT);
-            let params = array::items(meta::record_fields_of(input));
-            assert_eq!(read_kind(types, params[0]), Read::Scalar(NumType::I32));
-            assert_eq!(read_kind(types, params[1]), Read::Container(std::ptr::null_mut()));
+            let mut params = ScopeStack::new();
+            params.push(meta::record_scope_of(input));
+            let param = |name: &str| params.resolve(&_trie, name).unwrap().binding;
+            assert_eq!(read_kind(types, param("n")), Read::Scalar(NumType::I32));
+            assert_eq!(read_kind(types, param("b")), Read::Container(std::ptr::null_mut()));
+            assert_eq!(types.frame_of(param("b")), Some((crate::binding::Frame::Call(f), 4)));
             assert_eq!(read_kind(types, exprs[7]), Read::Scalar(NumType::I32));
             assert!(!is_place(dyad::value(exprs[7])), "a literal's storage carries no mark");
             assert_eq!(read_kind(types, exprs[8]), Read::Literal);
@@ -353,7 +356,7 @@ mod tests {
 
     #[test]
     fn a_node_of_a_run_type_is_a_call_of_its_function_and_a_leafless_record_is_named() {
-        let (mut store, core, exprs) = parse_seq(
+        let (mut store, _trie, core, exprs) = parse_seq(
             "pw := type (\n\
                  a := ?, b := i32 ?, output_type := type ?, share run = ( a ),\n\
                  share parse_rank = *.parse_rank + 1,\n\
@@ -466,7 +469,7 @@ mod tests {
             }
             assert_eq!(place_layout(types, std::ptr::null_mut()), None);
         }
-        let (_store, core, exprs) = parse_seq(
+        let (_store, _trie, core, exprs) = parse_seq(
             "w := type ( x := i64 ?, y := i64 ? ),\n\
              c := type ( a := i32 ?, share run = ( a ) )",
         );

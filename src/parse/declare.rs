@@ -473,22 +473,28 @@ impl<'a> Parser<'a> {
         !self.in_fn_body() || self.cx.share_init == Some(self.cx.frames.len())
     }
 
-    /// The name's storage: `width` bytes of `ty` laid out in the program frame on the
-    /// binding itself, or a place in the open function's frame the binding names.
-    /// Returns what every reader of the name goes through.
+    /// The name's storage, laid out on the binding itself: `width` bytes of `ty` in the
+    /// program frame, or the next bytes of the open function's frame. Returns the binding,
+    /// what every reader of the name goes through.
     ///
     /// # Safety
     /// `binding` must be a binding dyad from the store; `ty` null or a type node.
-    unsafe fn place_for(&mut self, binding: DyadPtr, ty: DyadPtr, width: usize) -> DyadPtr {
-        if self.in_program_frame() {
-            let offset = self.rt.store.arena_alloc(width);
-            Binding::lay_out(binding, ty, self.types.root_scope, offset);
-            binding
+    pub(super) unsafe fn place_for(
+        &mut self,
+        binding: DyadPtr,
+        ty: DyadPtr,
+        width: usize,
+    ) -> DyadPtr {
+        let (frame, offset) = if self.in_program_frame() {
+            (self.types.root_scope, self.rt.store.arena_alloc(width))
         } else {
-            let place = self.alloc_local(ty, width);
-            self.cx.scopes.rebind(binding, place);
-            place
-        }
+            let frame = self.cx.frames.last_mut().expect("in_program_frame saw an open function");
+            let offset = frame.size;
+            frame.size += width;
+            (frame.frame, offset)
+        };
+        Binding::lay_out(binding, ty, frame, offset);
+        binding
     }
 
     /// A type body's own lines, where a line fills a slot.

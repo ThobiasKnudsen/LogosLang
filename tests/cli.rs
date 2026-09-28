@@ -2115,6 +2115,19 @@ fn a_binding_reads_its_frame_and_offset() {
 }
 
 #[test]
+fn a_parameter_and_a_local_are_names_of_the_call_s_frame() {
+    // Parameters first, then the locals, packed at their widths: `a` at 0, `b` at 4, `c` at 12;
+    // their frame is the function, not the program's.
+    let (echoes, stderr) = repl(
+        b"x := i32 5\nf := fn (a := i32 ?, b := i64 ?) -> u64 ( c := i64 3, a:offset + b:offset + c:offset )\n\
+          f(1, 2)\ng := fn (a := i32 ?, b := i64 ?) -> bool ( a:frame == b:frame and a:frame != x:frame )\n\
+          g(1, 2)\nh := fn () -> i64 ( n := i64 0 - 1, n )\nh()\nh.compile()\nh()\nu := u64 0 - 1\nu\n",
+    );
+    assert_eq!(echoes, ["16", "true", "-1", "-1", "18446744073709551615"], "stderr: {stderr}");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
 fn a_field_the_binding_has_not_is_the_same_error_as_an_undeclared_dot_field() {
     // The message names the spelling, the one thing the two probes differ in, so it is blanked before comparing.
     fn message(stderr: &str) -> String {

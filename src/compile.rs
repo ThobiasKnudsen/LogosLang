@@ -758,9 +758,10 @@ impl Lowerer<'_, '_> {
         Ok(self.const_i32(0))
     }
 
-    /// The start goes into the loop variable's place, the end and step (default 1)
-    /// are hoisted as SSA, a `step > 0` guard runs zero iterations otherwise, as
-    /// interpreted; then read, compare `< end`, body, increment. Yields unit.
+    /// The start goes into the counter, the end and step (default 1) are hoisted as SSA, a
+    /// `step > 0` guard runs zero iterations otherwise, as interpreted; then read, compare
+    /// `< end`, body, increment. A named counter is its binding's place; a nameless one
+    /// (`var` null) is an SSA variable of this function. Yields unit.
     ///
     /// # Safety
     /// The parts must be valid dyads from the store; `step` may be null for the default.
@@ -772,11 +773,14 @@ impl Lowerer<'_, '_> {
         step: DyadPtr,
         body: DyadPtr,
     ) -> Result<Value, CompileError> {
-        let nt = of_type_node(dyad::ty(var));
+        let Operand::Concrete(nt) = numtype_of(self.types, start) else {
+            return Err(CompileError::Internal("a loop's range is committed to one number type"));
+        };
         let ct = nt.cranelift_type();
+        let nameless = var.is_null().then(|| self.builder.declare_var(ct));
 
         let s = self.lower(start)?;
-        self.write_place(var, ct, s)?;
+        self.write_counter(var, nameless, ct, s)?;
         let e = self.lower(end)?;
         let d = if !step.is_null() {
             self.lower(step)?
@@ -811,7 +815,7 @@ impl Lowerer<'_, '_> {
         self.builder.ins().brif(pos, header, &[], exit, &[]);
 
         self.builder.switch_to_block(header);
-        let v = self.read_place(var, ct)?;
+        let v = self.read_counter(var, nameless, ct)?;
         let cond = if nt.is_float() {
             self.fcmp(FloatCC::LessThan, v, e)
         } else {
@@ -824,7 +828,7 @@ impl Lowerer<'_, '_> {
         self.builder.switch_to_block(body_b);
         self.builder.seal_block(body_b);
         self.lower(body)?;
-        let v2 = self.read_place(var, ct)?;
+        let v2 = self.read_counter(var, nameless, ct)?;
         let inc = if nt.is_float() {
             self.builder.ins().fadd(v2, d)
         } else {
@@ -841,12 +845,44 @@ impl Lowerer<'_, '_> {
             self.builder.seal_block(step_b);
             sum
         };
-        self.write_place(var, ct, inc)?;
+        self.write_counter(var, nameless, ct, inc)?;
         self.builder.ins().jump(header, &[]);
         self.builder.seal_block(header);
         self.builder.switch_to_block(exit);
         self.builder.seal_block(exit);
         Ok(self.const_i32(0))
+    }
+
+    /// # Safety
+    /// `var` must be null or a valid place node.
+    unsafe fn read_counter(
+        &mut self,
+        var: DyadPtr,
+        nameless: Option<Variable>,
+        ct: types::Type,
+    ) -> Result<Value, CompileError> {
+        match nameless {
+            Some(v) => Ok(self.builder.use_var(v)),
+            None => self.read_place(var, ct),
+        }
+    }
+
+    /// # Safety
+    /// As [`Self::read_counter`].
+    unsafe fn write_counter(
+        &mut self,
+        var: DyadPtr,
+        nameless: Option<Variable>,
+        ct: types::Type,
+        value: Value,
+    ) -> Result<(), CompileError> {
+        match nameless {
+            Some(v) => {
+                self.builder.def_var(v, value);
+                Ok(())
+            }
+            None => self.write_place(var, ct, value),
+        }
     }
 
     /// A statement: both arms yield unit, so the merge always agrees.
@@ -1306,13 +1342,11 @@ unsafe fn build_pass(
         // the zeroed frame; promoted parameters are defined from their arguments below.
         let slots: Vec<by_copy::Slot> =
             if self_fn.is_null() { Vec::new() } else { by_copy::slots(types, self_fn).collect() };
-        let param_offs: Vec<Option<usize>> =
-            slots.iter().map(|s| frame_ref(dyad::value(s.param)).map(|(_, off)| off)).collect();
         let mut promoted: HashMap<usize, (Variable, types::Type)> = HashMap::new();
         for &(off, ct) in promote {
             let var = builder.declare_var(ct);
             promoted.insert(off, (var, ct));
-            if param_offs.iter().flatten().any(|&poff| poff == off) {
+            if slots.iter().any(|s| s.offset == off) {
                 continue;
             }
             let zero = match ct {
@@ -1334,10 +1368,7 @@ unsafe fn build_pass(
                 .map(|width| (builder.ins().load(types::I64, MemFlagsData::new(), argv, 0), width))
         };
         for s in &slots {
-            let p = s.param;
-            let Some((_, off)) = frame_ref(dyad::value(p)) else {
-                return Err(CompileError::NotLowerable(p));
-            };
+            let (p, off) = (s.param, s.offset);
             let at = (s.word * 8) as i32;
             if let Some(width) = s.width {
                 if let Some(stats) = collect.as_deref_mut() {
