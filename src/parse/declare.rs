@@ -218,7 +218,7 @@ impl<'a> Parser<'a> {
 
     /// The binding site of a node whose type fills the instances' `drop`: the name owns
     /// it, and `defer drop <place>` goes into the scope where the ownership lands (DESIGN
-    /// ›Explicit heap, and no implicit destruction‹).
+    /// ›Holding is decided at the binding site‹; the inserted defer is a stand-in).
     ///
     /// # Safety
     /// `binding` must be the binding dyad being declared, `place` its node place, `drop`

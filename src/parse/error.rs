@@ -214,7 +214,7 @@ pub enum ParseError {
     /// the wrong frame at run time.
     CapturedLocal,
     /// An owning value stood where no name binds it: the teardown attaches at
-    /// the binding site (DESIGN ›Explicit heap, and no implicit destruction‹),
+    /// the binding site (DESIGN ›Holding is decided at the binding site‹),
     /// so it would leak. Fail-closed until ownership-gated parameters.
     UnboundOwningValue,
     /// A `return` hands out a place a scope it leaves owns: the teardowns run on

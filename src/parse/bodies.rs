@@ -58,7 +58,7 @@ pub const FN_BCODE: usize = 3;
 pub const FN_FRAME: usize = 4;
 
 /// An `array` of the bindings of the outer names the body reads, in
-/// first-read order, or null; read at every call (DESIGN ›`own` and `drop`
+/// first-read order, or null; read at every call (DESIGN ›`move` and `free`
 /// are static‹).
 pub const FN_OUTER: usize = 5;
 
