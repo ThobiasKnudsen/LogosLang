@@ -146,7 +146,7 @@ xor := ?
 not := ?
 
 
-mut a := i32 32       # mut gates a's binding, never the type (5 September 2026), standing beside the name (15 September 2026); the dyad is two pointers, no phase, no mutability bit
+mut a := i32 32       # mut gates a's binding, never the type (5 September 2026), standing beside the name (15 September 2026); the dyad is one block, type word first (29 September 2026), no phase, no mutability bit
 binding of a {        # the trie entry (id_context renamed record 7 September 2026, binding 24 September 2026): one per declared name, itself a dyad of type binding
     dyad -> a
     scope -> (the scope a was declared in)

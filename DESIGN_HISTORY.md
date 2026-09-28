@@ -791,6 +791,14 @@ Nothing moved from this section.
 ### Importing is dropping the text there, wrapped in its own scope
 - **History:** until 28 September 2026 the seed gave an `import` line the imported file's tail value (the command line and the REPL echoed it, held in a `ran` node). Ruled valueless 28 September 2026: a file is its own graph, the importer gets its `pub` names, and no result is kept outside the stack.
 
+### A dyad is a type and a value: one block, the type word first, and its identity is its address
+- **History:** until 29 September 2026 the heading read "two pointers, and its identity is its address" and the rule opened "Sixteen bytes. Any allocator can hold it (no arena needed; the address is the id)": a node was a 16-byte cell of two pointers, type and value, the value's bytes behind the second. Superseded by the one-word node, Thobias, 29 September 2026 (#166): a node is one thing, and the seed loses the typeless node, the placeholder copy and the second space; the measured gain was only about 1.2×, so bytes were not the reason.
+
+### Operands sit inline after the type word; a growing list stays behind a pointer
+- **History:** until 29 September 2026 the heading read ›Operands are reached through `value`, never stored inline‹: "A binary `+` is one 16-byte cell pointing at its operands", `value` pointing at a separately allocated operand record, and "A list is never inline: a sequence's expression array sits behind one pointer, an `array` value the scope dyad's value points at"; the reason was the fixed cell. Superseded by the one-word node (#166): fixed-arity operands inline, growing lists still behind a pointer.
+
+### An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value
+- **History:** until 29 September 2026 the heading read ›An unknown spelling lexes to a fresh dyad with both slots `undefined`‹ (ruled 2 September 2026): "The cell holds a pointer to the fresh dyad; the spelling is kept tape-side. `:=` fills that dyad and enters the spelling into the trie at declaration (`key := ?` of *Declarations are immutable by default* binds exactly such a dyad)." It was the one rule that made a node before its type. Superseded by the one-word node (#166), which cannot fill a node born without its size; the binding is the early home instead. Seed at the ruling: the fresh null node in src/parse/lex.rs and the placeholder copy in declare_here (src/parse/declare.rs, the first half of #179) were what this rule licensed.
 
 ## Identity recognition
 
@@ -823,6 +831,7 @@ Nothing moved from this section.
 
 ### Metadata has three homes, by frequency and origin
 - **History:** home (1) was four construction-phase tag bits per node, superseded 7 September 2026 (`undefined` is a null slot, writability a gate). A derived id → metadata index superseded 8 September 2026: no address-keyed index; facts come from name or path. Gates: separate identity binding 5 September, one binding 7 September.
+- **History:** "node stays 16 bytes" until 29 September 2026 (the one-word node, #166).
 
 ### Lookup rides the scoped walk; the index only speeds things up
 - **History:** derived id → metadata index for that case, superseded 8 September 2026.
@@ -830,6 +839,10 @@ Nothing moved from this section.
 ### The store is keyed by address
 - **History:** until 28 September 2026 the seed read "the address is an index" as a raw `*mut Dyad`, the cell two raw pointers; the 32-bit index handle behind store accessors superseded that reading (#165).
 - **History:** 28 September 2026, later the same day: the 32-bit index handle (address = base + index × 16, cell head a 32-bit type index) was withdrawn as a misconception, Thobias had asked whether the agent proposed it, it had not, and he never wanted it; the handle is the 64-bit address, and the cell head's 32-bit type index went with it the same day, no reason for it being his either: the cell is two full pointers again. Seed: #165 slice B's flip was cancelled before it was built; its accessor pass stays, being layout-neutral.
+- **History:** until 29 September 2026: "Nodes are fixed two-pointer (16-byte) cells, so the address is an index: no key, no hash", and an Open line of 28 September holding the one-word node back "while a fresh cell is stamped (`tape[0]:type = T`) after it exists, since a block cannot be allocated before its type is known". The blocker was stale (›How a Logos constructor builds its node‹ replaces the cell with a fresh node of the assigned type, and the seed births it typed) and the layout was adopted the next day (#166). Superseded record: the seed's `Store::contains` grid check, five sites, guarded what the types refuse.
+
+### A uniform model is not uniform storage
+- **History:** "(16 bytes; handle = address)" until 29 September 2026 (the one-word node, #166).
 
 ## Standard library and ecosystem strategy
 
