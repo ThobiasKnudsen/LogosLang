@@ -642,6 +642,9 @@ Nothing moved from this section.
 ### A `type ?` place is a box, written any number of times
 - **History:** before 12 September 2026 the first `a = i32` rebound the name to the type, making it define-once; a second assignment said a type is not an assignable place, because the name by then *was* the type.
 
+### The pass runs only as far as it must, in order, and never twice
+- **History:** 13 to 28 September 2026: what ran stayed in the graph as `{type: ran, value: [expr, value]}`, rewritten in place over the item (the seed's `ran::rewrite`, R3, #88). Superseded 28 September 2026 by the frame's cursor and the result on the stack, because a run must not rewrite the shared graph and a scope's "how far" is per call. Seed: the `ran` rewrite is to be deleted (#167).
+
 ### `dyad ?` is the general box, `type ?` the narrow case
 - **History:** written `a:dyad.type == type` until the 23 September 2026 respelling.
 
