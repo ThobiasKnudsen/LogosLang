@@ -679,7 +679,7 @@ impl<'a> Parser<'a> {
             unsafe { crate::identities::meta::install_run_body(node, def.run_body) };
         }
         // A type whose fields own what they point to writes the teardown that frees it
-        // (DESIGN ›Explicit heap, and no implicit destruction‹).
+        // (DESIGN ›A type whose fields carry teardowns must write its own destructor‹).
         // SAFETY: `fields` is the block's array node, its items field dyads typed null or by a type node.
         let owning_field = unsafe {
             crate::identities::array::items(fields).iter().any(|&f| {

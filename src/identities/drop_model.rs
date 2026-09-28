@@ -6,8 +6,10 @@
 //! with a non-null destructor), `alloc n` an `@u8` over n bytes; binding it inserts
 //! `defer free <place>`, and `own`/`drop` empty the place to null so
 //! a pending teardown no-ops. `own`, `drop` and a scope's `defer`s lower; `alloc` and
-//! `free` keep a function interpreted. DESIGN ›Explicit heap, and no implicit
-//! destruction‹.
+//! `free` keep a function interpreted. DESIGN ›Explicit heap‹. The inserted
+//! `defer` and the `own`/`drop` spellings are a stand-in: DESIGN ›A value's
+//! teardown runs where its life ends‹ and ›`move` is the act, `own` the gate
+//! word, `free` the end‹.
 
 use crate::Core;
 use cranelift_codegen::ir::{types, Value};
@@ -390,8 +392,8 @@ pub(crate) fn build_instance_drop(
 }
 
 /// The instances' `drop` of the node a dereference `p@` reads, when its type fills one: the
-/// cell holds that node's address, and dropping the cell drops the node. DESIGN ›Explicit
-/// heap, and no implicit destruction‹.
+/// cell holds that node's address, and dropping the cell drops the node. DESIGN ›A value
+/// owns what its elements hold and frees it‹.
 ///
 /// # Safety
 /// `place` must be a reduced dyad from the store.

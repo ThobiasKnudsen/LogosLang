@@ -13,9 +13,9 @@
 - **Source:** the DESIGN.md line(s) the rule comes from. DESIGN.md's `##` sections stand here in the same order, so a section is found by its old name.
 - **CONFLICT:** two passages of DESIGN.md that both read as live and disagree; both are quoted. These are questions for Thobias, not rulings.
 
-**Spellings.** Live rules use the spellings ruled by 26 September 2026: `a:type` (the short form of `a:dyad.type`; both legal since 27 September 2026), `share` (not `shared`), no `this`, no `fields = (…)` block, `run`/`parse`/`drop` as the slot names, `binding` (not `record`). Old spellings appear only in History lines and dated quotes. Some examples were rewritten into today's spelling where DESIGN.md never wrote them that way; those rewrites are the editors' reading and not rulings:
+**Spellings.** Live rules use the spellings ruled by 26 September 2026: `a:type` (the short form of `a:dyad.type`; both legal since 27 September 2026), `share` (not `shared`), no `this`, no `fields = (…)` block, `run`/`parse`/`free` as the slot names (`free` for `drop`, `move` for the act and `own` the gate word only, since 28 September 2026), `binding` (not `record`). Old spellings appear only in History lines and dated quotes. Some examples were rewritten into today's spelling where DESIGN.md never wrote them that way; those rewrites are the editors' reading and not rulings:
 - `a:type is number`, `a:type == i32`, `(a and b and c):type == i32` in the conjecture and `fn` examples (l.69 wrote `:dyad.type`); `share array_mints` (l.34 wrote `shared`).
-- `f.run` for `f.code` in the `call` access kind (l.107, l.108); bare `free ptr`, `drop items`, `items = …` and `tape[0].items = …` for `this.items` and `free this.ptr` (l.104); `x:type` for `x:dyad` (l.107, l.108).
+- `f.run` for `f.code` in the `call` access kind (l.107, l.108); bare `free ptr`, `free items`, `items = …` and `tape[0].items = …` for `this.items` and `free this.ptr` (l.104); `x:type` for `x:dyad` (l.107, l.108).
 - `share` for `shared` in the l.121 and l.131 examples; `p:type` for `p:dyad.type` (l.123); `mut &a` and "write-through permission" for `&mut` (l.123); `tape[0].f = …` for `this.lhs = tape[-1]` (l.129); `point.dims` for `point.fields.dims` (l.133).
 - `tape[0]:type = ^` then `tape[0].lhs = tape[-1]`, and `tape[0].output_type = tape[-1]:type` (l.189 wrote `tape[0]:dyad.value.lhs = …`, `this.lhs = tape[-1]`, `tape[0]:dyad.value.output = tape[-1]:dyad.type`); `share parse_rank = mul.parse_rank - 1`, `share run = (…)`, `share parse = (…)` (l.176 and l.189 wrote them bare or with `shared`).
 - `(ptr + i)@ = elements.dyads[i]` for `(this.ptr + i)@` (l.203); `if.parse` for `if.constructor` (l.209); `share parse_rank = *.parse_rank + 1`, `share associativity = right`, `share element_type := t` (l.201 wrote them bare or with `shared`).
@@ -41,7 +41,7 @@ Kept in the old spelling because the current one is not written anywhere: `mk :=
 14. l.211 against l.203: `a[k] = v` writes; the open note is closed (›A call that ends in a dereference is a place‹).
 15. l.221 against l.375: l.375 wins; an importer reaches only `pub` names in v0.1.0, the view stays readable (›`import` is the one identity that loads a file‹).
 16. l.241: the sentence making `a:type` an error was superseded on 23 September; `:dyad` is the long form again since 27 September, so the example stands (›A constructed node answers `:` from the path it was reached by‹).
-Also ruled the same day, outside the sixteen: `a:type` and `a:value` are short forms of `a:dyad.type` and `a:dyad.value`, `:dyad` and `:value` not retired (›`a:type` reads the type of the value a name stands for‹); `alloc` returns `@T!` (›Explicit heap, and no implicit destruction‹); and the error model (›Error handling‹).
+Also ruled the same day, outside the sixteen: `a:type` and `a:value` are short forms of `a:dyad.type` and `a:dyad.value`, `:dyad` and `:value` not retired (›`a:type` reads the type of the value a name stands for‹); `alloc` returns `@T!` (›Explicit heap: `alloc n` and `alloc n of T v`‹); and the error model (›Error handling‹).
 Noted without a CONFLICT mark: `share` now names both the co-owning reference word (`share @T`) and the placement mark; `immut` both removes an entry and is a veto; `?` is a run-time value (l.119) and also "inert, making any build that reaches it incomplete" (l.135); l.34 calls `hashmap` pending where its seed note says it works; l.207 says "Seed: not yet (#153)" where dev b2b854c has it; l.375 places `exp` and `ln` in power.logos where d9a78cd moved them to their own files.
 
 **Size.** The paragraph form was 470 KB in 383 lines; this form is about 335 KB in 345 rules, with 90 KB more in DESIGN_HISTORY.md. The rules are the same rules. The saving is in finding them, not in their number; a real cut needs decisions on what may leave (dated quotes, per-rule seed status).
@@ -251,7 +251,7 @@ The behavioural merge with `fn`. The argument is the shape, holes bind by matchi
 - **Source:** DESIGN.md l.69
 
 ### A fact about two distant nodes uses two holes
-`where` relates them by navigation; or the relation is first made a node or binding entry and proved locally (as the drop model's constructor-inserted `defer` links an allocation to its teardown, and the identity binding's `start`/`end` link a declaration to its `own` or `drop`). E-matching matches across known-equal nodes. Not covered: state between two points ("x is 5 when line 40 runs"); it needs the operational model as a rule set and stays the flagged hard part.
+`where` relates them by navigation; or the relation is first made a node or binding entry and proved locally (as a type's `free` slot links a value to its teardown, run by the identity that ends its life, and the identity binding's `start`/`end` link a declaration to its `own` or `drop`). E-matching matches across known-equal nodes. Not covered: state between two points ("x is 5 when line 40 runs"); it needs the operational model as a rule set and stays the flagged hard part.
 - **Open:** the navigation words `where` needs for this (a graph range `w..r` in program order, `in`, `for x in w..r` over a boolean body), as the first meta-access vocabulary (›Meta-navigation‹).
 - **Source:** DESIGN.md l.69
 
@@ -350,10 +350,10 @@ Backward search reduces a goal to the sub-statements that would establish it, re
 ## Memory and concurrency
 
 ### Locals live on the stack; there is no garbage collector
-Locals belong to their scope, and their memory comes back with the frame in one bulk step with no side effects. Giving memory back and tearing a value down are different: giving back memory that needs no teardown is implicit; running teardown never is, it is always visible `defer` structure.
+Locals belong to their scope, and their memory comes back with the frame in one bulk step with no side effects. Giving memory back and tearing a value down are different: giving back memory that needs no teardown is implicit; running teardown is the type's `free` slot run by the identity that ends the value's life, or an authored `defer`, both graph structure (›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹).
 - **Source:** DESIGN.md l.103
 
-### Explicit heap, and no implicit destruction: `alloc n` and `alloc n of T v`
+### Explicit heap: `alloc n` and `alloc n of T v`
 `alloc n` allocates n bytes and returns `@u8`. `alloc n of T v` allocates n cells of `T` in one unbroken span, each built from the constructed value `T v` (`T ?` leaves them unfilled), and returns `@T` to the first cell. The count is always written: one value is `alloc 1 of i32 5`; there is no form without a count. Cell k is `(p + k)@`.
 - **Why:** Thobias: "one spelling, no hidden default; the count is the caller's business".
 - **Ruled:** 8 September 2026, Thobias; recorded 23 September 2026.
@@ -361,40 +361,45 @@ Locals belong to their scope, and their memory comes back with the frame in one 
 - **Seed:** since 23 September 2026.
 - **Source:** DESIGN.md l.104
 
-### Nothing is destroyed implicitly: the constructor writes the teardown as `defer`
-No hidden end-of-scope rule frees anything. The constructor writes the teardown and inserts it as `defer` structure that reflection can read. `alloc` inserts `defer free a`, naming the *specific allocator*, into the scope where ownership of the result lands. Any constructor may do the same (a file-opening constructor inserts `defer close`). `defer` runs last-in-first-out at scope exit, so teardown reverses construction order. Since teardown is ordinary graph structure, not hidden "drop glue", "every alloc reaches a paired free on every path" can be proved over the graph by the proof layer: RAII as checkable structure, not a trusted builtin.
-- **Why:** only the construction site knows how a value was built: which allocator, whether ownership was taken, which invariants hold. An `@T`'s type cannot carry that, since ownership does not always follow the name holder (sometimes the pointee must outlive the name). Naming the allocator in the call is what lets many allocators coexist safely. Teardown has too many shapes for one mechanism; each constructor knows its own.
-- **Ruled:** settled in discussion, July 2026.
-- **Rejected, to stay rejected:** implicit scope-end destruction in any form; `:=` inserting `defer drop` on every declaration. A declaration stays neutral; only constructors write teardown.
-- **Source:** DESIGN.md l.104
+### A value's teardown runs where its life ends; the ending identity reads the type's `free` slot
+No teardown node is inserted at a declaration, and no `defer` is written for a value. The identities that end a value's life read the `free` slot of the value's type and run it there: a scope at its exit, for each value a place of the scope still holds, last declared first, in one last-in-first-out order with the scope's authored `defer`s; `=` for the value it displaces, after the right side is built and before the write (›`=` sits beside `:=`, and returns nothing‹); `free x` now; an `if` at its close, for a value an arm moved out of an outer name, at the end of every arm that did not move it (an `if` without `else` gains that arm). `move` transfers holding and runs nothing. A value whose type fills no `free` has nothing to run. This is implicit exactly as `run` is: nobody writes the call, the driver reads the slot, and reflection derives where a teardown runs from the type's slot and the ending identity, as it derives where a body's items run; "every alloc reaches a paired free on every path" stays a property provable over the graph. What is site-specific, the allocator, is written into the value at construction (the block header) or its minted type, and `free` reads it there. `defer` stays the authored word: any expression, run at scope exit, last in first out, inserted by nothing.
+- **Why:** Thobias: "making drop implicit would be the same way parse and run is made implicit. it's not really implicit because some other identity uses those fields". The shape of a teardown is per type, in its `free` body; the trigger is one, the last holder lets go. The July 2026 rule put both on the constructor, so every life that ended anywhere but scope exit, a move, an `=`, an arm, became a patch on a node inserted earlier, and the `=` patch was never written (#170). Of the July reasons, "an `@T`'s type cannot carry whether ownership was taken" no longer holds: an owning `@T` is its own type since 25 September 2026 and a plain `@T` a borrow; and the allocator lives on the value. What stands is that nothing runs which the graph cannot show, and this keeps it.
+- **Ruled:** 28 September 2026, Thobias. Supersedes the July 2026 rule ›Nothing is destroyed implicitly: the constructor writes the teardown as `defer`‹, whose "Rejected, to stay rejected: implicit scope-end destruction in any form" is overturned on the reason above.
+- **Seed:** not yet: `defer free`/`defer drop` inserted at the binding site and moved or removed at `own`/`drop`; nothing at `=` (#170).
+
+### `move` is the act, `own` the gate word, `free` the end
+`b := move a` moves the value from `a` to `b`, `f(move a)` into a parameter, `move p.f` out of a field path; the source is dead from that line. `own` stands only in a type position and names a state: `mut items := own t ?`, `fn (p := own @i32 ?)` and `-> own @T` say that the field, parameter or result owns what is put into it. `free x` runs the teardown of the value `x` holds and ends `x`; `free p@` does the same for a cell; inside a type's own `free` body, `free ptr` tears a field down, the value being ended. The slot is `share free = (…)`, named for the moment it runs, beside `parse` and `run`. `free` on a name whose type fills no `free` ends the name and runs nothing.
+- **Why:** Thobias: "own should be renamed to move and drop should be renamed to free". `move` names the act, which is what the line does, and keeping `own` for the state puts two meanings on two words. `free` is one word for "end this value's life now", a block and a node alike, and reads as plain English in a teardown body: free the cells, free the pointer. Accepted with it: `free n` on an `i32` ends the name and frees nothing, as Rust's `drop` on an integer does; an allocator's release is reached through `free` by the value's type, never by a second word.
+- **Ruled:** 28 September 2026, Thobias (`own` stays the gate word: "yes own can stay as the gate name").
+- **Seed:** not yet: spelled `own` and `drop`; its `free` is the raw block teardown that leaves the name alive.
 
 ### A type whose fields carry teardowns must write its own destructor
-Defining such a type without a destructor is a checked error at the type definition, pointing at the fields. There is no derived last-in-first-out fallback: the order is written per type, and the destructor's lines are the per-field teardown items (which a partial move can make the scope exit skip, see ›`own` and `drop` take a field path too‹). A destructor gets its value by **mutable reference**, never by `own`, and tears fields down in place: `free` and `close` on each resource, and a nested field's destructor called as the ordinary function it is.
-- **Why (mutable reference):** an `own` parameter is a binding site, and the binding-site rule would attach to it the very teardown the destructor is.
+Defining such a type without a destructor is a checked error at the type definition, pointing at the fields. There is no derived last-in-first-out fallback: the order is written per type, and the destructor's lines are the per-field teardown items (which a partial move can make the scope exit skip, see ›`move` and `free` take a field path too‹). A destructor gets its value by **mutable reference**, never by `own`, and tears fields down in place: `free` and `close` on each resource, and a nested field's destructor called as the ordinary function it is.
+- **Why (mutable reference):** an `own` parameter would make the callee the holder, and the value's `free` would run a second time at the callee's exit: the very teardown the destructor is.
 - **Ruled:** 30 August 2026 (order per type). Mutable reference: from the 3 September 2026 ruling, still standing.
 - **Seed:** not yet.
 - **Source:** DESIGN.md l.104
 
-### `drop` and `own` end a name; the teardown is removed or moved at parse; no drop flag
-`drop x` runs an identity's destructor. `drop` and `own` both read the value and end the name, leaving the source `undefined`. The inserted teardown is then **removed or moved at parse**: an early `drop` already did it; `own` moves it to the taker's binding site (and removes the source identity); a move inside an `if` moves it into the arms that do not move. So no teardown runs over an emptied place, there is no run-time drop flag, and compiled code checks nothing (Rust keeps a flag for the conditional case).
+### `free` and `move` end a name; no drop flag
+`free x` runs the value's teardown. `free` and `move` both read the value and end the name, leaving the source `undefined`. Nothing is moved or removed at parse, since no teardown node stood at the declaration (›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹): after a `move` the scope has nothing to run for the source, after a `free` neither, and a move inside an `if` is answered at the `if`'s close, in the arms that did not move. So no teardown runs over an emptied place, there is no run-time drop flag, and compiled code checks nothing (Rust keeps a flag for the conditional case).
 - **Why:** with the tag bits gone the flag had no clean home, and a lifetime should be a fact the graph states, not a byte the run looks up.
-- **Ruled:** 7 September 2026.
+- **Ruled:** 7 September 2026; the moving of inserted teardown nodes retired with the insertion, 28 September 2026.
 - **Seed:** stand-in (a null pointer empties the place), removal pending.
 - **Source:** DESIGN.md l.104
 
-### Teardown attaches at the binding site, parameters included
-`a := alloc …` and `b := own a` insert `defer free <place>` into that place's scope. A constructor result passed straight as an argument, `f(alloc 1 of i32 5)`, is bound to the parameter in the callee's frame, and its teardown attaches there; no `own` gate is needed, since no caller place is emptied. A value that reaches no name at all is a checked error.
-- **Ruled:** binding site, July 2026; parameters, 30 August 2026.
+### Holding is decided at the binding site, parameters included
+`a := alloc …` and `b := move a` make the bound name the holder of the value, in that place's scope, whose exit runs the value's `free` (›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹). A constructor result passed straight as an argument, `f(alloc 1 of i32 5)`, is bound to the parameter in the callee's frame, which holds it; no `own` gate is needed, since no caller place is emptied. A value that reaches no name at all is a checked error.
+- **Ruled:** binding site, July 2026; parameters, 30 August 2026; respelled 28 September 2026, when the inserted `defer` went.
 - **Seed:** named bindings only; the parameter case is a bug against the ruling.
 - **Source:** DESIGN.md l.104
 
 ### Three fail-closed ownership rules, and `-> own @T`
 Each guards a place where ownership would escape the machinery that frees it:
-1. An owning value must be bound to a name (else nothing carries its teardown).
-2. A scope's value may not be a place the scope owns: the teardown would free it on the way out and hand back freed memory; `own` is how ownership leaves a scope.
+1. An owning value must be bound to a name (else no place holds it and nothing runs its `free`).
+2. A scope's value may not be a place the scope owns: the teardown would free it on the way out and hand back freed memory; `move` is how ownership leaves a scope.
 3. Ownership may not cross a function return: a block hands ownership to its binder in plain view of the parse, but a call hides its body behind a return type that cannot yet say it transfers ownership, so the caller would not know it owes a `free`.
 
-Rules 2 and 3 no longer apply to a *last* value since 25 September 2026 (›A last value moves out‹). `-> own @T` hands ownership to the caller, whose binding site attaches the teardown (`own`/`drop` as gates on a reference, the same primitive as `pub`/`mut`).
+Rules 2 and 3 no longer apply to a *last* value since 25 September 2026 (›A last value moves out‹). `-> own @T` hands ownership to the caller, whose bound name holds the value (`own` as a gate on a reference, the same primitive as `pub`/`mut`).
 - **Ruled:** rules, July 2026; `-> own @T`, 30 August 2026.
 - **Source:** DESIGN.md l.104
 
@@ -410,11 +415,11 @@ Many shared OR one exclusive, with lexical lifetimes to keep the model predictab
 - **Seed:** since 25 September 2026 (#137); `k + p`, `p - q` and every other pointer operator stay refused.
 - **Source:** DESIGN.md l.104
 
-### A filled `share drop` is the constructor's teardown; one name owns each value
-Binding a value just made by a type whose body fills `share drop = (…)`, e.g. `a := array i32 (1, 2)`, makes the name its **owner** and inserts `defer drop a` where the ownership lands (where `alloc` inserts `defer free a`). The drop body names the instance's fields directly (›There is no `this`‹, l.207). `b := a` and `f(a)` **borrow**: no teardown for `b` or the parameter, so nothing is freed twice. `own a` moves ownership. `=` into an owner takes only a value just made or moved, as an owning `@T` place does. `drop a` runs the drop now and ends `a`.
+### A filled `share free` is the value's teardown; one name owns each value
+Binding a value just made by a type whose body fills `share free = (…)`, e.g. `a := array i32 (1, 2)`, makes the name its **owner**: the scope runs the value's `free` at its exit, as it runs an owning `@T`'s. The free body names the instance's fields directly (›There is no `this`‹, l.207). `b := a` and `f(a)` **borrow**: nothing runs for `b` or the parameter, so nothing is freed twice. `move a` moves ownership. `=` into an owner takes only a value just made or moved, as an owning `@T` place does, and frees the value it displaces. `free a` runs the free now and ends `a`.
 - **Why:** an array is then freed with nothing written for it; existing code keeps working; and it is `alloc`'s model plus one rule (the last value moves out), which a block handing its value to its binder already follows.
 - **Ruled:** 25 September 2026, Thobias (second of three options).
-- **Open:** known hole, not fixed: until the borrow checker (#35) a borrow can outlive its owner: `b := a` then `a`'s scope ends; or `p := alloc 1 of i32 5, q := p, drop p, q@` reads freed memory.
+- **Open:** known hole, not fixed: until the borrow checker (#35) a borrow can outlive its owner: `b := a` then `a`'s scope ends; or `p := alloc 1 of i32 5, q := p, free p, q@` reads freed memory.
 - **Seed:** since 25 September 2026; the owner's binding carries `own` in its gate set, read by `a:gate` (Claude's choice, open to Thobias); not yet: a value that reaches no name, a value just made passed straight to a call, `own` on a parameter.
 - **Source:** DESIGN.md l.104
 
@@ -425,36 +430,37 @@ A function's or block's last value, when it is a place that scope owns, moves to
 - **Source:** DESIGN.md l.104
 
 ### A field may be `own @T ?`
-The field owns what it points to, so `free ptr` in the type's `share drop` is the owner's free. An `own` field with no `share drop` is the checked error of ›A type whose fields carry teardowns must write its own destructor‹.
-- **Why:** the instance owns its elements' memory, and its drop frees it.
+The field owns what it points to, so `free ptr` in the type's `share free` is the owner's free. An `own` field with no `share free` is the checked error of ›A type whose fields carry teardowns must write its own destructor‹.
+- **Why:** the instance owns its elements' memory, and its free frees it.
 - **Ruled:** 25 September 2026, Thobias.
 - **Seed:** done; on a name too, `mut a := own @i32 ?` frees what is written into it.
 - **Source:** DESIGN.md l.104
 
-### A field may be `own t ?`, `t` a type whose body fills `share drop`
-`mut items := own t ?` with `t := array i32` makes the field own the node written into it; `own` is a gate on the field's binding, as on an owning name's. `items = array i32 [1, 2]` or `items = own x` fills it (in a parse, through the cell: `tape[0].items = …`). A bare name is refused, "what is assigned must own too", since field and name would both drop one array. `drop items` in `share drop` runs `t`'s drop and empties the field, so a later drop finds nothing. `own b.items` moves the node out and leaves the null, so the bag's drop skips it. Such a field with no `share drop` is the same checked error as for `own @T ?`. Without `own`, a field of such a type borrows: nothing drops it with the instance. A name works alike: `mut a := own t ?` owns what is written into it, `defer drop a` inserted at the declaration. `own` on a hole of any other non-pointer type, `own i32 ?`, stays the checked error. In an array each value is freed once: `array bag […]`'s drop drops each cell (`drop p@` runs the element's drop), each `bag` drops its field, the field's array frees its block.
+### A field may be `own t ?`, `t` a type whose body fills `share free`
+`mut items := own t ?` with `t := array i32` makes the field own the node written into it; `own` is a gate on the field's binding, as on an owning name's. `items = array i32 [1, 2]` or `items = move x` fills it (in a parse, through the cell: `tape[0].items = …`), and frees the node it displaces. A bare name is refused, "what is assigned must own too", since field and name would both free one array. `free items` in `share free` runs `t`'s free and empties the field, so a later free finds nothing. `move b.items` moves the node out, so the bag's free skips it (›`move` and `free` take a field path too‹). Such a field with no `share free` is the same checked error as for `own @T ?`. Without `own`, a field of such a type borrows: nothing frees it with the instance. A name works alike: `mut a := own t ?` owns what is written into it, freed at its scope's exit. `own` on a hole of any other non-pointer type, `own i32 ?`, stays the checked error. In an array each value is freed once: `array bag […]`'s free frees each cell (`free p@` runs the element's free), each `bag` frees its field, the field's array frees its block.
 - **Why:** the instance owns the node its field holds just as it owns the block behind `own @T ?`, so the same word and destructor rule apply. A type with no teardown gives an owner nothing to run.
 - **Ruled:** Claude's reading 25 September 2026, asked by Thobias to "fix this"; open to Thobias. Derived from "one name owns each value" and "`=` into an owner takes only a value just made or moved".
-- **Open (for Thobias):** `=` into an owning field that already holds a node does not drop the displaced node, so it leaks (as with a filled `own @T` place: "the displaced block is not freed yet"). A value just made written into a borrowing field reaches no owner and is not freed; the 30 August 2026 rule "a value that reaches no name at all stays the checked error" would refuse it once a field counts as no name.
+- **Ruled (28 September 2026, Thobias):** `=` into an owning field that holds a node frees the displaced node before the write (›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹, #170).
+- **Open (for Thobias):** a value just made written into a borrowing field reaches no owner and is not freed; the 30 August 2026 rule "a value that reaches no name at all stays the checked error" would refuse it once a field counts as no name.
 - **Seed:** since 25 September 2026.
 - **Source:** DESIGN.md l.104
 
 ### Shared ownership through `share` (direction)
-A `share` operator co-owns *without* emptying the source; the owning type's destructor lowers a reference count and frees at zero. Same destructor-slot plus inserted-`defer` machinery, so `own` (move) and `share` (co-own) coexist like a move and an `Rc`/`Arc` clone. Flavors: a cheap non-atomic count, whose gate denies crossing a thread boundary, and an atomic count that crosses freely; the user picks per case, so neither cost is forced.
+A `share` operator co-owns *without* emptying the source; the owning type's destructor lowers a reference count and frees at zero. The same `free` slot, run when the count reaches zero, so `move` and `share` (co-own) coexist like a move and an `Rc`/`Arc` clone. Flavors: a cheap non-atomic count, whose gate denies crossing a thread boundary, and an atomic count that crosses freely; the user picks per case, so neither cost is forced.
 - **Ruled:** direction, not built (July 2026); flavors settled in discussion, August 2026.
 - **Source:** DESIGN.md l.104
 
-### `own` and `drop` are static: the parse marks the name dead
+### `move` and `free` are static: the parse marks the name dead
 Three rules, needing nothing the parse has not already seen:
-1. *Same level:* `own x` / `drop x` beside `x`'s declaration makes `x` dead from that line. A move in an `if` condition runs on every path and counts here.
-2. *Nested block:* `own x` inside an `if` body or inner scope, `x` from the outer scope, ends `x`'s life **at that item, on every path**. The moving arm moves it; every other path gets `x`'s pending teardown at its end (an `if` without `else` gains a hidden arm holding only the teardown: the defer node is relocated, ›Metadata has three homes‹). After the item `x` is dead, so a later `x := …` gets a fresh place. There is no "maybe moved"; nothing is looked up at scope exit.
-3. *Bodies that run again or later:* `own x` / `drop x` on an outer name inside a loop or `fn` body is a checked error: the loop would read a dead name next pass, and a function may own only what it got through its parameters.
-- **Ruled:** 3 September 2026; "every path" 7 September 2026; `drop` added to rule 3 the same day (it empties the place as `own` does).
+1. *Same level:* `move x` / `free x` beside `x`'s declaration makes `x` dead from that line. A move in an `if` condition runs on every path and counts here.
+2. *Nested block:* `move x` inside an `if` body or inner scope, `x` from the outer scope, ends `x`'s life **at that item, on every path**. The moving arm moves it; at the `if`'s close every other arm runs `x`'s `free` at its end (an `if` without `else` gains that arm; ›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹). After the item `x` is dead, so a later `x := …` gets a fresh place. There is no "maybe moved"; nothing is looked up at scope exit.
+3. *Bodies that run again or later:* `move x` / `free x` on an outer name inside a loop or `fn` body is a checked error: the loop would read a dead name next pass, and a function may own only what it got through its parameters.
+- **Ruled:** 3 September 2026; "every path" 7 September 2026; `free` added to rule 3 the same day (it empties the place as `move` does); respelled 28 September 2026.
 - **Source:** DESIGN.md l.104
 
 ### A call is a use of every outer name the callee's body reads
-A body resolves outside names when parsed, so the function knows which outer names it reads, and calling it uses each of them there. `climb()` after `drop n`, where `climb` reads `n`, is the dead-name error at the call, even after `n := …` redeclares the spelling: the body's `n` is the old, ended name. To read the new name, declare the function again after it. Calls count too: `g()`, whose body calls `climb()`, is refused as `climb()` is. This assumes what the seed does: a top-level name read in a body is the shared place itself, not a copy taken at declaration.
-- **Why:** Thobias: a dropped name's place may hold anything, so a body that reads it must not run. The list is the function's own, filled by the parse it already makes, so no per-name list of users (declined in ›Meta-navigation‹). The check is a range lookup per outer name per call, at elaboration; running code checks nothing.
+A body resolves outside names when parsed, so the function knows which outer names it reads, and calling it uses each of them there. `climb()` after `free n`, where `climb` reads `n`, is the dead-name error at the call, even after `n := …` redeclares the spelling: the body's `n` is the old, ended name. To read the new name, declare the function again after it. Calls count too: `g()`, whose body calls `climb()`, is refused as `climb()` is. This assumes what the seed does: a top-level name read in a body is the shared place itself, not a copy taken at declaration.
+- **Why:** Thobias: an ended name's place may hold anything, so a body that reads it must not run. The list is the function's own, filled by the parse it already makes, so no per-name list of users (declined in ›Meta-navigation‹). The check is a range lookup per outer name per call, at elaboration; running code checks nothing.
 - **Ruled:** 15 September 2026.
 - **Open:** the 8 September 2026 capture rule (inner function reading an outer function's locals) still lacks wording.
 - **Seed:** since 15 September 2026 (#125); a name from a section on no caller's stack counts as live, and a scope the code asking for a body stands in counts as open while that body is built (Claude's fix 25 September 2026, open to Thobias).
@@ -465,21 +471,21 @@ No read, write or pass (›Name resolution is scope-filtered‹).
 - **Rejected, to stay rejected:** refilling a moved-from `mut` place with `=`. Rust re-initializes such a binding; Logos redeclares.
 - **Source:** DESIGN.md l.104
 
-### `drop x` works on any identity
-Runs the destructor where one is set, empties the place either way: one verb releases a name whatever its type.
-- **Ruled:** inside the 3 September 2026 passage (no separate date).
+### `free x` works on any identity
+Runs the type's `free` where one is filled, ends the name either way: one verb releases a name whatever its type.
+- **Ruled:** inside the 3 September 2026 passage (no separate date); respelled 28 September 2026.
 - **Seed:** done, the same day.
 - **Source:** DESIGN.md l.104
 
-### An `own` argument is consumed at the call; a callee that does not take it hands it back in its error value
+### A `move` argument is consumed at the call; a callee that does not take it hands it back in its error value
 The caller binds the returned value to a new name (›Case study‹).
 - **Source:** DESIGN.md l.104, l.113
 
-### `own` and `drop` take a field path too
-`own p.f` ends the life of the path `p.f` at that line, as `own x` ends `x`'s: a **sub-range under p's entry** in the name index, made only when a partial move happens, so it costs nothing otherwise. `drop p.f` runs f's destructor and ends the path the same way. Sibling paths stay live (`p.g` reads on), but **p is dead as a whole**: `g(p)`, `own p` and reading p whole are parse errors until scope end, because a callee holds no record that f is gone. At scope exit p's teardown **skips f**: the destructor's lines are per-field items in the type's written order; an item whose field ended in the scope is skipped, and if it ended inside an `if`, the item moves into the non-moving arms as a bare name's teardown does. So the destructor looks nothing up and no type writes an "empty" value. The three static rules apply to paths as to names.
+### `move` and `free` take a field path too
+`move p.f` ends the life of the path `p.f` at that line, as `move x` ends `x`'s: a **sub-range under p's entry** in the name index, made only when a partial move happens, so it costs nothing otherwise. `free p.f` runs f's free and ends the path the same way. Sibling paths stay live (`p.g` reads on), but **p is dead as a whole**: `g(p)`, `move p` and reading p whole are parse errors until scope end, because a callee holds no record that f is gone. At scope exit p's free **skips f**: the free body's lines are per-field items in the type's written order; an item whose field ended in the scope is skipped, and if it ended inside an `if`, it is skipped on the moving path and run at the end of the arms that did not move, as a bare name's free is. So the free looks nothing up and no type writes an "empty" value. The three static rules apply to paths as to names.
 - **Why:** lifetimes and gates live on the binding, so a field's end is one more entry of a kind the binding already holds; the 3 September 2026 cost (a per-field record of moves, a flag in the bytes) becomes a sub-range made on deviation and nothing at run time. Pulling one resource out of a value so it outlives the value was the swap door's job; this makes it ordinary.
 - **Ruled:** 5 September 2026; relocation in `if` 7 September 2026.
-- **Seed:** partial: `own p.f` accepted; sub-range, dead-as-whole mark and relocation pending.
+- **Seed:** partial: the move of a path accepted (spelled `own p.f`); sub-range and dead-as-whole mark pending.
 - **Source:** DESIGN.md l.104
 
 ### Place-granular borrows
@@ -489,6 +495,20 @@ Borrows are tracked per *place* (a field, an element, a predicate-defined set of
 ### Reference-granular permissions (after v1.0.0; v1.0.0 must not block them)
 A borrow's fine extent rides on the *reference identity itself* (a borrow is already a node), as a total, pure predicate over places. Its obligations (disjointness between coexisting references, containment of each access) discharge statically through the tiered ladder; predicates and proofs erase before codegen like all of `Prop`, so a discharged reference compiles to a bare address. A runtime check is only an explicit opt-in fallback, never silently inserted. v1.0.0 owes this future: references are graph identities at check time and raw addresses in codegen; the extent descriptor is deviation storage (the default whole-place reference stores nothing); the checker is built around the one overlap/containment query, so later tiers plug into its *unknown* bucket; places are graph values a predicate can mention; the optimizer keys aliasing and immutability on a reference's extent, never implicitly on whole objects; extent predicates face the same obligations as recognizers: total, pure, terminating.
 - **Source:** DESIGN.md l.106
+
+### The checker reads a fact base the graph provides; the rules over it are user-definable
+Safety is decided by rules over a small set of facts, every one a graph value or derived from graph values, so a new case is a new rule, never new checker code (Rust's checker as Polonius states it: facts and rules, and the facts never changed when the rules did). The facts:
+- **Points and edges.** A body's items in order are points. Each control identity (`if`, `for`, `while`, `return`, a call) names its successors, so the edges are read off the nodes and stored nowhere: `if c (A) else (B)` goes from c to A's first and B's first, from each last to the item after; a loop's last item goes back to its head; a call goes into the callee's first item, since the parse sees the body.
+- **Places.** A name, a field path, a dereference, a cell. An anonymous node is a place by path from whatever holds it.
+- **Holds.** Which place holds which value from which point. The binding site decides it (›Holding is decided at the binding site, parameters included‹), `move` transfers it.
+- **Loans.** A borrow of a place taken at a point, and its origin: the set of points at which the reference is still used or held. A stored address is data, not a loan; the loan is taken at the dereference that uses it.
+- **Kills.** A write or `move` out of a place ends what it held and every loan of it, and of every place reached through it: a write to an array's `ptr` kills the loans of its cells.
+- **Liveness.** Whether a place is used again after a point.
+- **Capabilities held.** Which effect values (a lock guard, a read-side guard) a live place holds at a point: `holds` over a type, so no fact of its own.
+
+Errors are derived relations: a loan live at a point that ends, writes or moves its place; a write while another loan of an overlapping place is live; a use after a kill; a call that requires a capability no live place holds, or forbids one that is held. Where a rule cannot decide, a cell chosen at run, two addresses that may be one, the answer is `?`, a standing obligation: proved by the solver or the proof layer, checked at run by explicit opt-in, or left as the checked error (›Gates are fail-closed predicates returning `true | false | ?`‹). A borrow never extends its owner's life: the owner ends where the author wrote it, and the checker refuses that end while a loan of it is still live.
+- **Why:** Thobias: "make a system where you can define new rules along the way on user side to prove new edge cases are safe or not safe … what is hard is to know exactly what the fundamental building blocks should be which allows for all types of extensibility later". The building blocks are the facts, not the rules: every checker that stayed extensible exposes these and lets the rules move. Liveness is the one fact the one pass cannot know at a line, which is why "dead after last use" is declined; it is computable once a body closes.
+- **Status:** direction, 28 September 2026, Thobias ("write the fact base in DESIGN.md"); post-preview, with the borrow checker (#35). The seed has points, places, holds and kills as nodes; a loan's origin and liveness are not graph values yet. Until they are, lexical lifetimes stand in for origins (a loan lasts to the reference's scope end) and the fail-closed reading of ›Reading a place before its first write is refused at parse‹ covers `if` and loops (a loan taken in an arm counts on every path): bindings suffice, some safe programs are refused, and no unsafe one is accepted.
 
 ### Read and write are one mechanism across the system
 Visibility (`pub`), mutability and borrowing (`&` / `&mut`), and graph access (reflection, `graph_mut`) are one primitive: a read or write *capability over a place, for a lifetime, granted to a scope*. Visibility is the `'static` read of a name; a borrow is the region-lifetime read or write of a value or sub-place; reflection and graph mutation are the read and write of a node. Many shared XOR one exclusive is the reader-writer rule, and it governs all of them, across threads too. The scope tree gives the default grants (a declaration is reachable in its scope and below), so the common case needs no annotation and `pub`/`mut` are sugar. Two timings: static checking for *reading* fixed structure, incremental re-validation for *changing* it, since writing the graph changes what the checker reads. The checker has a privileged read of the whole graph (it must see every node to check what is built on it), so visibility limits *peer* access only: a private field is hidden from other code, not from the checker.
@@ -532,7 +552,7 @@ Each operator declares an **effect signature** marking operand slots read or wri
 
 ### Gate spelling: words left of `:=`; ownership in the reference type
 A gate's spelling belongs to its constructor; there is no global gate syntax. Gates are prefix words left of `:=`: `pub x := 5`, `pub mut x := 5`; `immut x` and `lock x` edit and seal later (›`immut x` removes `mut`, and `lock` seals the gate set‹). Ownership is a word in a reference's type: `a := own @T ?` consumes (callee owns, source empties), `a := @T ?` borrows, `a := share @T ?` co-owns; `-> own @T` hands ownership to the caller. Unmarked is fail-closed: private, immutable, borrow-only. `own` is one word for the kind and the act: `own @T` says the reference owns (a fact about the value, like its type); `own a` reads `a` and ends the name, legal where read is granted and the static rules allow the end.
-- **Ruled:** surface settled in discussion, August 2026; `own` as one word, 30 August 2026.
+- **Ruled:** surface settled in discussion, August 2026; `own` as one word, 30 August 2026; `move` the act and `own` the gate word only, 28 September 2026 (›`move` is the act, `own` the gate word, `free` the end‹).
 - **Rejected, to stay rejected:** `take` as a separate gate word (30 August 2026).
 - **Source:** DESIGN.md l.107
 
@@ -604,9 +624,9 @@ Two rulings bound the dial:
 
 ### Case study: an RCU library's comment-only rules become machine-checked
 [TSM](https://github.com/ThobiasKnudsen/LogosMath/blob/gd_to_tsm_and_gtsm/include/tsm.h) is a lock-free, RCU-protected, type-generic hash table in C (userspace-RCU LFHT; every node's type node carries its `fn_free_callback` and `fn_is_valid`: a C forerunner of the dyad). It states every caller safety rule only in doc comments. Each class maps to a Logos mechanism:
-- *Conditional ownership transfer* ("take ownership … so you should not free … if successful"): `own`. The caller's place empties at the call, its inserted `defer free` leaves with the value to the callee's binding site (removed from the caller at parse), and a callee that fails hands the value back in its error value, bound by the caller to a new name. Leak and double free become unreachable.
-- *"Free only via `call_rcu`"*: the node constructor inserts the RCU-deferred free as the only teardown; RCU-deferred freeing is just another allocator behind the one interface.
-- *Forgotten `rcu_read_unlock`*: the read guard's constructor inserts `defer unlock`.
+- *Conditional ownership transfer* ("take ownership … so you should not free … if successful"): `move`. The caller's place empties at the call, the callee's parameter holds the value and its scope frees it, and a callee that fails hands the value back in its error value, bound by the caller to a new name. Leak and double free become unreachable.
+- *"Free only via `call_rcu`"*: the node type's `free` is the RCU-deferred free; RCU-deferred freeing is just another allocator behind the one interface.
+- *Forgotten `rcu_read_unlock`*: the read guard's type fills `free` with the unlock, run where the guard's life ends.
 - *Use after grace period* ("a pointer obtained inside the read section must not be used after it"): a lexical lifetime bounded by the guard's scope, ordinary borrow-checker ground. The hardest rule happens to be lexically shaped.
 - *"Never `synchronize_rcu`/`rcu_barrier` inside a read section"* (and defer-free must run outside one): effect rules, enforced by capability tracking; those operations need a capability the guard's scope revokes.
 - *A type node must outlive the nodes it types*: an ordinary lifetime relation.
@@ -655,7 +675,7 @@ Since `:=` accepts any dyad as its value, a type included, the valueless form ne
 ### Reading a place before its first write is refused at parse
 The refusal is a gate entry on the binding. From the declaration to the place's first write the entry says `false` to a read; after it, nothing. The run never checks a byte to learn whether a place is filled. The entry belongs to the `?` constructor: the declaration that left the value `undefined` puts it on the binding. It is a distinct entry in the ordered gate set, not a word the author writes.
 Which write ends the range: a sibling write in text order fills the name from that line. A write inside a nested block, loop or `fn` body does not, so a read after only such writes is refused.
-- **Why:** a "parse time gate is the correct option" (Thobias); no run-time byte, the drop-flag reason of *Explicit heap*. The declaration that leaves a value unwritten is the one that knows it, so nothing is spelled twice and no place can be declared empty and lose the veto. Text position is decided from what the pass has already seen: no path analysis, and fail-closed where a branch might not run.
+- **Why:** a "parse time gate is the correct option" (Thobias); no run-time byte, the drop-flag reason of ›`free` and `move` end a name; no drop flag‹. The declaration that leaves a value unwritten is the one that knows it, so nothing is spelled twice and no place can be declared empty and lose the veto. Text position is decided from what the pass has already seen: no path analysis, and fail-closed where a branch might not run.
 - **Ruled:** 23 September 2026, Thobias (the same evening, on his own question).
 - **Seed:** done (#137); the target of `x = …` and the binding read `x:…` pass.
 - **Source:** DESIGN.md l.119
@@ -830,7 +850,7 @@ In a type body, `share x := …` is one place stored with the type, reached thro
 
 The partition stands: layout is the unmarked members (the per-instance layout is derived, like C++'s struct), namespace is the `share` members (stored once, like C++'s namespace). A type whose members are all shared is a pure namespace, which is what a language is; the merge of `type` and `struct` into the one identity `type` is this partition read to its end (›Substrate vocabulary‹).
 - **Why:** (placement by a word) deriving placement from mutability left shared-and-mutable state unspeakable, so a generic's memo needed a sibling identity (18 September); a reader had to apply a rule to know where a line lived instead of reading a word on it; and the derivation already had an exception, a per-instance constructor being immutable yet per instance (*The constructor is a field*). (a gate) Thobias: "shared is a gate, put it on the record". One family of words left of `:=`, one home, one reader. (one meaning) Thobias: "it just means that this value is the same at the same time across all contexts". One word, one meaning: a reader never has to ask where a `share` line stands to know what it does. A call frame is an instance of its function (›Resolution is one rule‹), so a `share` name in a body is what `share` already is in a type. A cache a type keeps for itself lives with it: since 26 September 2026 `array`'s memo is `array`'s own `share` member, not a top-level name (it sat inside `get_mint` on 25 September; 26 September wins, Thobias, 27 September 2026). On files, Thobias: "maybe you want the same shared value across all imports?" (the spelling, and the mark on slot fills) "i want to rename shared to share. one letter less. also run and parse_rank and associativity and parse and others such which is shared should also be named as shared so that no confusion arrizes"; "share is fine" (Thobias). `share` is the plain word for what happens.
-- **Ruled:** July 2026 (the partition; a type stores its `parse_rank`, `associativity`, `parse`, `run` and `drop` once and shares them with every value, the per-value bytes being the per-value fields), respelled 4 September 2026; 19 September 2026, Thobias (placement by the word); 20 September 2026, later, Thobias (it is a gate); 25 September 2026, Thobias (function bodies: "it can be used on names inside functions to get some persistent storage across runs of the same function"; later that day, Thobias: "shared should be available everywhere"; the initializer at definition: Claude's choice, agreed by Thobias the same day, "agree"); 26 September 2026, Thobias (the mark spelled `share`, slot fills carry it); 27 September 2026, Thobias (the type-body half of the open point below is superseded by the slot-fill rule: every slot fill carries `share`, `share parse = (…)`, and an unmarked fill is the checked error).
+- **Ruled:** July 2026 (the partition; a type stores its `parse_rank`, `associativity`, `parse`, `run` and `free` once and shares them with every value, the per-value bytes being the per-value fields), respelled 4 September 2026; 19 September 2026, Thobias (placement by the word); 20 September 2026, later, Thobias (it is a gate); 25 September 2026, Thobias (function bodies: "it can be used on names inside functions to get some persistent storage across runs of the same function"; later that day, Thobias: "shared should be available everywhere"; the initializer at definition: Claude's choice, agreed by Thobias the same day, "agree"); 26 September 2026, Thobias (the mark spelled `share`, slot fills carry it); 27 September 2026, Thobias (the type-body half of the open point below is superseded by the slot-fill rule: every slot fill carries `share`, `share parse = (…)`, and an unmarked fill is the checked error).
 - **Rejected:** `one`, `all`, `same`.
 - **Open (Claude's choice, open to Thobias):** `share` stays refused on a parameter, whose value each call supplies (*A function's surface*).
 - **Seed:** `share` on the binding since 20 September 2026; read through a node since 24 September 2026 (#141); one place per `share` line since 25 September 2026; the spelling `share` and the mark on slot fills not yet (#153).
@@ -945,7 +965,7 @@ The constructor builds the error with `error «…»`. The driver (the enclosing
 ### A raise is `error.X «message»`; the error value is an array with one element per hop
 Each element holds its category, its message (`{…}` read as `print` reads it), the exact Logic Graph location of the raise, and one optional value the raise writes, `?` when none, so a handler reads the bad index or the path as a value, `e[0].data`, never out of the message text. Every `try` that passes the error up adds its own element with its own location, so the array is the whole path from the raise to the handler (Zig's error return trace, as graph locations); a scope that raises over an error it received stacks its element on top.
 - **Ruled:** 27 September 2026, Thobias.
-- **Open:** whether the array is read as a chain (each element caused by the next) or a bag (a parse's several mistakes); what a fault becomes at a task boundary for whoever awaits the task; an error inside a `drop` or `defer` body, with nobody to return to (a fault, Claude's reading); how an `extern` declaration turns C return codes and `errno` into elements; the name of the category for a raise with none, `error.undefined` or `error.any`.
+- **Open:** whether the array is read as a chain (each element caused by the next) or a bag (a parse's several mistakes); what a fault becomes at a task boundary for whoever awaits the task; an error inside a `free` or `defer` body, with nobody to return to (a fault, Claude's reading); how an `extern` declaration turns C return codes and `errno` into elements; the name of the category for a raise with none, `error.undefined` or `error.any`.
 - **Source:** DESIGN.md l.145
 
 ### There is no bare `error «…»`; `abort «…»` stops the program; `alloc` returns `@T!`
@@ -1278,7 +1298,7 @@ A member given a value at definition is not an argument; arity is the hole count
 - **Source:** DESIGN.md l.191
 
 ### A parameter is on the same level as the body's top lines
-The body resolves in the parameter scope: `own x` on a parameter kills it from that line (›Memory and concurrency‹); a later `x := …` gets a fresh frame slot.
+The body resolves in the parameter scope: `move x` on a parameter ends it from that line (›Memory and concurrency‹); a later `x := …` gets a fresh frame slot.
 - **Ruled:** 3 September 2026.
 - **Source:** DESIGN.md l.191
 
@@ -1320,16 +1340,16 @@ A type may carry a *declarative consumption signature*. It stays the optional fa
 - **Seed:** done; the core `parse` is `native`.
 - **Source:** DESIGN.md l.197
 
-### `drop` runs a value's destructor; only the owning heap pointer has one in core
-`drop` is the undefined null on every core identity except the owning heap pointer, the first one the seed fills. `drop x` runs `x`'s destructor. Teardown is constructor-inserted `defer`; there is no implicit destruction at scope end (see *Memory and concurrency*).
-- **Ruled:** July 2026.
+### `free` runs a value's teardown; only the owning heap pointer has one in core
+`free` is the undefined null on every core identity except the owning heap pointer, the first one the seed fills. `free x` runs `x`'s teardown, and so does every identity that ends the value's life (›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹, *Memory and concurrency*).
+- **Ruled:** July 2026; respelled 28 September 2026.
 - **Source:** DESIGN.md l.197
 
-### Slots are named for the moment they run: `parse`, `run`, `drop`
-`parse` runs when the spelling appears on the tape, `run` when the node is evaluated, `drop` when `drop x` ends the value. `parse` stands beside `parse_rank` and `lex_rank`. The prose keeps "constructor" and "destructor" as plain English for the `parse` and `drop` slots.
+### Slots are named for the moment they run: `parse`, `run`, `free`
+`parse` runs when the spelling appears on the tape, `run` when the node is evaluated, `free` when the value's life ends: `free x`, the holder's scope exit, an `=` over the holder. `parse` stands beside `parse_rank` and `lex_rank`. The prose keeps "constructor" and "destructor" as plain English for the `parse` and `free` slots.
 - **Why:** the same naming rule that named `run` the same day.
 - **Rejected:** the name *poiesis* (bringing forth from concealment into presence) for the slot. Plain words win.
-- **Ruled:** 17 September 2026 (slot names); poiesis declined August 2026.
+- **Ruled:** 17 September 2026 (slot names); poiesis declined August 2026; `drop` respelled `free` 28 September 2026.
 - **Seed:** done (#130).
 - **Source:** DESIGN.md l.199
 
@@ -1369,7 +1389,7 @@ Dispatch is one lookup with no climbing. A type without a constructor leaves its
 - **Source:** DESIGN.md l.201
 
 ### A slot is filled with `=`; `:=` declares a member of your own
-`parse_rank`, `associativity`, `parse`, `run` and `drop` are places `type` declares for every type it builds. A type body fills them with `=`. So inside `^ := type (…)` the body writes `share parse_rank = *.parse_rank + 1`, `share associativity = right`, `share parse = (…)`. A `:=` on a slot name is the ordinary no-shadowing error.
+`parse_rank`, `associativity`, `parse`, `run` and `free` are places `type` declares for every type it builds. A type body fills them with `=`. So inside `^ := type (…)` the body writes `share parse_rank = *.parse_rank + 1`, `share associativity = right`, `share parse = (…)`. A `:=` on a slot name is the ordinary no-shadowing error.
 - **Why:** the two operators keep one meaning each: `=` writes what exists, `:=` introduces what does not.
 - **Ruled:** 4 September 2026. `run` joined 16 September 2026. `share` on slot fills: 26 September 2026 (l.207).
 - **Source:** DESIGN.md l.201, l.203, l.207
@@ -1385,10 +1405,10 @@ In a type body, `b = 3` is the checked error whatever `b` names, an alias of a s
 - **Ruled (28 September 2026, Thobias):** the rule stands as written: the language-start word that runs an expression at parse is spelled `immediate` (›`immediate x` runs the expression to its right as soon as it is parsed, and stands as its value‹), so no root word shares a slot word's spelling and `run := 5` at the root is the ordinary declaration. **Why:** for some hours that word was `run`, which made `run := 5` the no-shadowing error and would have needed every reader to sleep before `:=`; the respelling removed both.
 - **Source:** DESIGN.md l.201
 
-### `drop` is one word
-`drop`'s parse looks to its right. If `=` stands there, it is the slot being filled; anything else, and it drops what follows. So `drop x` works in every scope, a collection's own drop body included.
-- **Why:** "when it is not assigned something it is rather dropping RHS … its still only one drop word" (Thobias).
-- **Ruled:** 19 September 2026, Thobias.
+### `free` is one word
+`free`'s parse looks to its right. If `=` stands there, it is the slot being filled; anything else, and it frees what follows. So `free x` works in every scope, a collection's own free body included.
+- **Why:** "when it is not assigned something it is rather dropping RHS … its still only one drop word" (Thobias, of `drop`, the word's spelling until 28 September 2026).
+- **Ruled:** 19 September 2026, Thobias; respelled 28 September 2026.
 - **Seed:** done with a divergence (#130 closed into #132).
 - **Source:** DESIGN.md l.199, l.201
 
@@ -1399,7 +1419,7 @@ A type body holds its slots and its values' fields together. `mut size := u64 0`
 
 A value never has its own parse; the only parse is written in a type body. A type standing on the tape (`array`, `if`) runs the parse in its own body. Any other value runs the parse in its type's body. Every type is made by `type (…)`, so `x:type:type == type` for any identity `x`: one type level for everything. A constructor makes a node a value of a type by stamping it (`tape[0]:type = T`, below); being a type is an act, not a property granted in advance.
 
-There is no `this`. Inside a type's `run`, `drop` and `share` functions a field is named bare: `(ptr + index)@`, `for i in 0..size ( … )` (as *The `run` is a body over the node's own fields* first had it, "the instance fields in scope by name"). Inside a `parse` the node is `tape[0]`, and a field is always written through its cell, `tape[0].f`; a bare field name there is the checked error. While the cell holds a value of the type, `tape[0]` is that value: `tape[0].at(k)`. While it holds the type itself, **`tape[0]:type = T` makes it a new node of `T`**, and its fields are then written by name, `tape[0].element_type = t`, so nothing is left to place. Reading or writing `tape[0].f` before the stamp is the checked error, unless `f` belongs to the type the cell holds then.
+There is no `this`. Inside a type's `run`, `free` and `share` functions a field is named bare: `(ptr + index)@`, `for i in 0..size ( … )` (as *The `run` is a body over the node's own fields* first had it, "the instance fields in scope by name"). Inside a `parse` the node is `tape[0]`, and a field is always written through its cell, `tape[0].f`; a bare field name there is the checked error. While the cell holds a value of the type, `tape[0]` is that value: `tape[0].at(k)`. While it holds the type itself, **`tape[0]:type = T` makes it a new node of `T`**, and its fields are then written by name, `tape[0].element_type = t`, so nothing is left to place. Reading or writing `tape[0].f` before the stamp is the checked error, unless `f` belongs to the type the cell holds then.
 
 A bare field name means one thing because Logos has no shadowing: a type body written inside another must not reuse the outer one's names. So in array.logos `get_mint`, with the mint's body inside it, is declared before `array`'s own `element_type`.
 - **Why:** (one level) the type's own lines and the fields block held the same slots (`parse_rank`, `associativity`, `parse`, `drop`), so every type described two levels in one body, while a type needs only one `parse`. (one parse) parse code lives in one place per type, and no value carries any. (no `this`) "could this be completely removed? i would say so"; "just simply write the fields directly in tape[0]"; "logos already uses non shadowing though so people should get used to creating expressive names to avoid name conflicts … remember logos uses non shadowing like zig" (Thobias). The mark said nothing structure did not already say (the reason `self.` and `child.` were declined). One spelling for the node, `tape[0]`, in every parse. On the stamp: "what about just writing tape[0]:type = array ? that should initialize it. if something tries to read or write before that … it should be an error unless the read or write matches the type tape[0] already has". (through the cell) the cell may hold the type or a value, and its neighbours are cells too.
@@ -1456,11 +1476,11 @@ A field of such a type holds the node's address: a field `items := t ?` with `t 
 - **Seed:** since 25 September 2026 (#137); a function holding a field read of such a type stays interpreted.
 - **Source:** DESIGN.md l.211
 
-### A value owns what its elements hold and drops it
-The outer's `share drop` drops each element whose type fills a `share drop`, then frees its own memory (array.logos: `for i in 0..size ( drop (ptr + i)@ )` before `free ptr`). `drop p@`, over a cell holding a node whose type fills `share drop`, runs that drop and empties the cell, as `drop a` does for an owner; over any other cell it stays the inert drop.
+### A value owns what its elements hold and frees it
+The outer's `share free` frees each element whose type fills a `share free`, then frees its own memory (array.logos: `for i in 0..size ( free (ptr + i)@ )` before `free ptr`). `free p@`, over a cell holding a node whose type fills `share free`, runs that free and empties the cell, as `free a` does for an owner; over any other cell it stays the inert free.
 
-A line that names a value whose type fills a `share drop` is refused: "write `own x` to move it in". `own x` moves it, `x` dead from that line. A value made in the list (`array i32 [1, 2]`, `box (1, 2)`, `mk()`) belongs to the new value from the start.
-- **Why:** Thobias: "the outer array owns its inner arrays". One name owns each value, and for an inner array that name is the outer one, so the outer's drop frees the inner ones: nothing leaks and nothing is freed twice. (lines move in) from DESIGN: "`=` into an owner takes only a value just made or moved" and "`b := a` and passing `f(a)` borrow". A line is an operand, which borrows, and the element is owned, so a bare name would give one value two owners and two drops. Moving it silently would end a name nobody wrote `own` on, where *Explicit heap, and no implicit destruction* ends nothing behind your back.
+A line that names a value whose type fills a `share free` is refused: "write `move x` to move it in". `move x` moves it, `x` dead from that line. A value made in the list (`array i32 [1, 2]`, `box (1, 2)`, `mk()`) belongs to the new value from the start.
+- **Why:** Thobias: "the outer array owns its inner arrays". One name owns each value, and for an inner array that name is the outer one, so the outer's free frees the inner ones: nothing leaks and nothing is freed twice. (lines move in) from DESIGN: "`=` into an owner takes only a value just made or moved" and "`b := a` and passing `f(a)` borrow". A line is an operand, which borrows, and the element is owned, so a bare name would give one value two owners and two frees. Moving it silently would end a name nobody wrote `move` on, where a name ends only where it is written (›`move` and `free` are static: the parse marks the name dead‹).
 - **Ruled:** 25 September 2026, Thobias (a value owns its elements); 25 September 2026, Claude's decision (asked by Thobias to decide from DESIGN), open to Thobias (lines move in).
 - **Rejected:** none recorded.
 - **Open:** a parameter that says it consumes its argument (`own` on a parameter, not in the seed) is the precise form, recorded open.
@@ -1560,7 +1580,7 @@ Stand-ins that remain:
 - A type body's constructor, written in Logos, runs for every appearance with the driver's own tape as argument and the parser's store attached (#61, 9 September 2026).
 - The `parse_rank` expression runs at the definition and must be known there, since deferral to first use needs the deferral machinery.
 - A Logos constructor at or above `(`'s `parse_rank` runs at discovery; its reads lex on demand (since 25 September 2026).
-- `drop = fn …` is the checked error rather than a slot `drop x` would never run. The `fn` wrapper went 17 September; the slot moved into the type body with the mark (#132, 19 September 2026); an owner's teardown runs it since 25 September 2026 (*Explicit heap, and no implicit destruction*). A type's own `drop = (…)` on a bare line is the checked error.
+- `free = fn …` is the checked error rather than a slot `free x` would never run. The `fn` wrapper went 17 September; the slot moved into the type body with the mark (#132, 19 September 2026); an owner's scope exit runs it since 25 September 2026 (›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹). A type's own `free = (…)` on a bare line is the checked error.
 - A literal appended into a call node is not committed to the callee's parameter type, the same divergence as the op slot (#69).
 - `[` folds `t[k]` in its own constructor, a tape value having no constructor of its own yet.
 - **Why:** none recorded; the rule records what the seed does.
@@ -1583,9 +1603,9 @@ A field is never a bare name in surrounding code; outside its scope it is reache
 - **Source:** DESIGN.md l.201, l.207
 
 ### Still to be written in type.logos; reflection of fields is open
-Direction (23 September 2026, Thobias): type.logos is not done. Every field under the `type` scope must be expressed there, and the definition of `type` must define what `run` and `drop` do, much as `parse` is, or the language is not self-contained.
+Direction (23 September 2026, Thobias): type.logos is not done. Every field under the `type` scope must be expressed there, and the definition of `type` must define what `run` and `free` do, much as `parse` is, or the language is not self-contained.
 - **Open:** what a type exposes to reflection about its fields (spelled then `^.fields.length`, walking `^.fields` with `for`, a field's binding as the walked item). The website's arity loop (content/showcase, power reflection) is his intent, not yet a ruling.
-- **Open:** the type's own `drop`. On 23 September the question was asked for `run` and `drop` and the answer named `run` alone, so the type's own `drop` was left open. DESIGN does not say whether the one-level ruling (25 September) settled it.
+- **Open:** the type's own `free`. On 23 September the question was asked for `run` and `drop` (now `free`) and the answer named `run` alone, so the type's own `free` was left open. DESIGN does not say whether the one-level ruling (25 September) settled it.
 - **Source:** DESIGN.md l.201
 
 ### Sketches for type bodies
@@ -1600,14 +1620,14 @@ identities/array.logos, identities/power.logos, identities/fn.logos. fn.logos fi
 - **Source:** DESIGN.md l.203
 
 ### A bare call of a `share` function works on the value the calling body is about
-From a `run`, a `drop` or another `share` function, a bare call works on that same value. From a parse it works on no value, so only a function that reads no per-value field is called bare there (`get_mint(t)`); per-value work goes through the cell, `tape[0].at(k)`.
+From a `run`, a `free` or another `share` function, a bare call works on that same value. From a parse it works on no value, so only a function that reads no per-value field is called bare there (`get_mint(t)`); per-value work goes through the cell, `tape[0].at(k)`.
 - **Why:** "lets just go with the bare names for now" (Thobias).
 - **Ruled:** 26 September 2026, Thobias.
 - **Source:** DESIGN.md l.207
 
 ### A `share` function writes the value it is called on, and respects `mut`
 In `mut m := p (1, 2), m.bump()`, a field write inside `bump` reaches `m`, whether `m` is a node a parse built or a record built by applying the type. The receiver is not a copy the way an argument is.
-A `share` function that writes a field is refused on a value that is not `mut`, as `m.x = …` is. A bare field write inside a `share`, `run` or `drop` function needs `mut` on the field itself, as `m.x = …` does. Only the type's own parse fills a field through its default entry.
+A `share` function that writes a field is refused on a value that is not `mut`, as `m.x = …` is. A bare field write inside a `share`, `run` or `free` function needs `mut` on the field itself, as `m.x = …` does. Only the type's own parse fills a field through its default entry.
 - **Why:** "the write should reach the caller's record so that m.x becomes 11" (Thobias). The function belongs to the value and acts on it, and the two storage shapes must behave the same, a node being written through already. A function must not get around the gate a direct write meets ("require mut").
 - **Ruled:** 26 September 2026, Thobias.
 - **Source:** DESIGN.md l.207
@@ -1830,7 +1850,7 @@ The built cells in order are the scope's expressions, an array the scope's value
 - **Source:** DESIGN.md l.211
 
 ### A scope's `dyads` fill as its lines complete, and hold everything
-A read inside a scope still being parsed sees the lines above it: `( a := i32 1, here.scope.dyads.size )` is 1. Nothing is filtered out: prose and the `defer` teardowns a binding site adds are included.
+A read inside a scope still being parsed sees the lines above it: `( a := i32 1, here.scope.dyads.size )` is 1. Nothing is filtered out: prose and `defer` lines are included.
 - **Why:** every read here folds at parse, and at parse an open scope has exactly its lines so far. A filtered array would be a second list to keep in step with the first.
 - **Ruled:** 24 September 2026, Thobias.
 - **Source:** DESIGN.md l.211
@@ -1862,10 +1882,10 @@ Thobias: "you dont change scopes by inserting in the end. you rather mutate the 
 - **Source:** DESIGN.md l.211
 
 ### `=` sits beside `:=`, and returns nothing
-`=` is built at discovery beside `:=`, reading the place to its left (the cells since the boundary, built to one) and driving its right side to the boundary. An assignment is an act, not a value: `a = b = c` is the error of assigning nothing, and an `=` in a value position is the statement-as-value error.
-- **Why:** as recorded: the two are the one dyad's two writers, and drive alike (Thobias's own wording pending).
-- **Ruled:** 8 September 2026.
-- **Seed:** since 9 September 2026 (#60).
+`=` is built at discovery beside `:=`, reading the place to its left (the cells since the boundary, built to one) and driving its right side to the boundary. An assignment is an act, not a value: `a = b = c` is the error of assigning nothing, and an `=` in a value position is the statement-as-value error. Over a place holding a value whose type fills `free`, `=` runs that free on the displaced value after building its right side and before the write (›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹).
+- **Why:** as recorded: the two are the one dyad's two writers, and drive alike (Thobias's own wording pending). The right side first, because it may read the value being displaced: `x = array i32 [x[0] + 1]`.
+- **Ruled:** 8 September 2026; the displaced value freed, 28 September 2026, Thobias (#170).
+- **Seed:** since 9 September 2026 (#60); the displaced value is not freed (#170).
 - **Source:** DESIGN.md l.211
 
 **Lazy tape reads**
@@ -1939,6 +1959,12 @@ Parse behaviour is not a third level. It is content of a value: a type identity'
 - **Ruled:** 14 September 2026.
 - **Seed:** since 14 September 2026 (#120).
 - **Source:** DESIGN.md l.213
+
+### A binding's fields are read at elaboration, at the line of the read; running code never reads a binding
+`a:gate`, `a:scope`, `a:type`, `a:name`, `a:lex_rank`, `a:start` and `a:end` are read when the node holding the read is built, from the binding as it stands at that line, and the node keeps what it read. A body that runs later, a `fn` body at a call or a loop body on its next pass, gives the same answer. The binding is consulted at every elaboration (parse, graph mutation, reflection) and by nothing else. A program that wants such a fact while running reads the graph at the cursor, by the walk of ›A binding is live while its scope is open and it is not dead; it carries a range‹.
+- **Why:** a binding's fields are positional facts: a gate stands in text order, the `?` entry lasts until the first sibling write, the range ends at an item. A reader at an earlier line must not see a later state, so the answer is fixed where the read is built. And running code checks nothing (the drop-flag reason of ›`free` and `move` end a name; no drop flag‹): a binding read at run would be a lookup the graph should already have settled.
+- **Ruled:** 28 September 2026, Thobias ("never runtime").
+- **Seed:** divergence: `a:type` is read at build; every other field is built as a place over the binding's memory and read when the node runs, so a body built early and run late sees the binding's final state.
 
 ### Build and run are one self-directing pass
 Lexing, parsing and running interleave. A construct can `compile` and then `run` a function during the same pass, at once. There is no promotion scheduler in the seed: execution is directed explicitly where wanted; adaptive hot/cold promotion is a later layer over the same boundary. A `run` over a scope that compiles and runs on the spot is comptime metaprogramming in full: the whole language at parse time, working on real Logic Graph, not a macro sublanguage.
@@ -2246,7 +2272,7 @@ A **binding** pairs an identity with its declaring scope and holds its own spell
 A use keeps candidates whose scope is open (ancestor on the scope stack) *and* whose range covers the point. A name may not be redeclared while another declaration of it is live (one check at declaration time). So one survivor, or none: an out-of-scope use, which still lexes as the name and fails resolution with a precise error, not an unknown-token one.
 - Two survivors is impossible, so it is a cheap internal check: two entries for one spelling never overlap on one scope stack; two survivors = corrupt index.
 - A use written before its declaration is outside every range; later resolution from any context stays exact (the point decides, not the scope alone).
-- A call is a use, at the call's point, of every outer name the callee's body reads (15 September 2026, *`own` and `drop` are static*).
+- A call is a use, at the call's point, of every outer name the callee's body reads (15 September 2026, *`move` and `free` are static*).
 - The walk runs over the scope spine, with an O(1) open-scope set during elaboration. The binding list lives for the whole run; entries go only when their declaration is deleted from source.
 - The `drop` case of #130 dissolved 19 September 2026: slot names are the core words, one candidate (*The constructor is a field*).
 - **Source:** DESIGN.md l.265
@@ -2258,18 +2284,18 @@ Outside its declaring scope a member is reached only by `.`, which probes exactl
 - **Source:** DESIGN.md l.265
 
 ### A binding is live while its scope is open and it is not dead; it carries a range
-`own` or `drop` make a name dead. A binding carries a **range** in its scope's body order: from the declaring node to the **item of that body** holding the killing `own`/`drop` (the line itself at the same level; the whole `if` when inside its body), else to the scope's end. While that item is being parsed the slot holds the `own`/`drop` node, so a later read in the same line already fails.
-- Reflection reads the graph, not the index: the declare and killing nodes are body items and a teardown node stores the place it empties, so birth and death are a walk over the body; the index's two pointers are the derived fast path. Deleting a killing node resets the end to null, as deleting a declaration removes the entry.
+`move` or `free` make a name dead. A binding carries a **range** in its scope's body order: from the declaring node to the **item of that body** holding the ending `move`/`free` (the line itself at the same level; the whole `if` when inside its body), else to the scope's end. While that item is being parsed the slot holds the `move`/`free` node, so a later read in the same line already fails.
+- Reflection reads the graph, not the index: the declare and ending nodes are body items, so birth and death are a walk over the body; the index's two pointers are the derived fast path. Deleting an ending node resets the end to null, as deleting a declaration removes the entry.
 - **Ruled:** 3 September 2026 (containing-item choice the same day).
 - **Source:** DESIGN.md l.265
 
 ### The binding carries the name's gates; a partial move adds a sub-range
-Gates sit beside the range: one lookup answers open, live and permitted (*`mut` is a gate on the binding*). `own p.f` adds a **sub-range**: it ends path `p.f` at that line (created only then) and marks `p` dead as a whole, sibling paths live (*Memory and concurrency*, 5 September 2026). Consulted at every elaboration (parse, graph mutation, reflection), never by running code.
+Gates sit beside the range: one lookup answers open, live and permitted (*`mut` is a gate on the binding*). `move p.f` adds a **sub-range**: it ends path `p.f` at that line (created only then) and marks `p` dead as a whole, sibling paths live (*Memory and concurrency*, 5 September 2026). Consulted at every elaboration (parse, graph mutation, reflection), never by running code.
 - **Source:** DESIGN.md l.265
 
 ### A dead name takes nothing; only `:=` may follow
-The dead mark is static, set by the parser at the `own`/`drop` (three rules of *Memory and concurrency*). A read, write or pass after it is a parse-time error. Only `:=` may follow, redeclaring into a **fresh** place (the old place's teardown still runs at scope exit and finds the null it expects). That is the whole relaxation: reuse after an explicit end. Redeclaring while live stays an error. Legal: `y := own x` then `x := …`; the REPL's `drop x` then `x := …` (session body ordered like any other).
-- **Rejected, to stay declined:** one-line `x := f(own x)`. **Why:** `:=` declares its name before parsing its value (self-reference needs it), so the right `x` is the new placeholder and the check already fired.
+The dead mark is static, set by the parser at the `move`/`free` (three rules of *Memory and concurrency*). A read, write or pass after it is a parse-time error. Only `:=` may follow, redeclaring into a **fresh** place (nothing runs for the old place at scope exit: its value left with the `move` or ended with the `free`). That is the whole relaxation: reuse after an explicit end. Redeclaring while live stays an error. Legal: `y := move x` then `x := …`; the REPL's `free x` then `x := …` (session body ordered like any other).
+- **Rejected, to stay declined:** one-line `x := f(move x)`. **Why:** `:=` declares its name before parsing its value (self-reference needs it), so the right `x` is the new placeholder and the check already fired.
 - **Rejected, to stay declined:** dead after last use. **Why:** needs the rest of the scope in view, which the eager one-pass parse forbids.
 - **Ruled:** 3 September 2026.
 - **Source:** DESIGN.md l.265

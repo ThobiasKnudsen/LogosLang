@@ -105,19 +105,28 @@ Nothing moved from this section.
 
 ## Memory and concurrency
 
-### Explicit heap, and no implicit destruction: `alloc n` and `alloc n of T v`
+### Explicit heap: `alloc n` and `alloc n of T v`
+- **History:** heading ›Explicit heap, and no implicit destruction: `alloc n` and `alloc n of T v`‹ until 28 September 2026, when ›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹ made the type's `free` run by the identity that ends a value's life.
 - **History:** first spelled `alloc T v`, returning an owning `@T`.
 - **Seed detail (27 September 2026):** since 23 September 2026 the span's byte count sits in a header before the first cell, and `free` reads it back.
+
+### A value's teardown runs where its life ends; the ending identity reads the type's `free` slot
+- **History:** supersedes ›Nothing is destroyed implicitly: the constructor writes the teardown as `defer`‹ (settled July 2026): the constructor wrote the teardown and inserted it as `defer` structure at the binding site, `alloc` inserting `defer free a` naming the specific allocator, any constructor likewise (`defer close`), last-in-first-out at scope exit. Its Why: only the construction site knows how a value was built, which allocator, whether ownership was taken; an `@T`'s type could not carry that. Its "Rejected, to stay rejected: implicit scope-end destruction in any form; `:=` inserting `defer drop` on every declaration". Overturned 28 September 2026 by Thobias: implicit as `run` is implicit, the ending identity reads the slot; the owning `@T` is its own type since 25 September 2026 and the allocator lives on the value, and every end away from scope exit had become a patch on the inserted node (#170 the patch never written).
+
+### `move` is the act, `own` the gate word, `free` the end
+- **History:** the act was `take` until 30 August 2026, then `own` for act and gate alike until 28 September 2026; the end was `drop` from July 2026 until 28 September 2026. Each rule whose heading carried the old words keeps the old heading in a History line here.
 
 ### A type whose fields carry teardowns must write its own destructor
 - **History:** at first a record type's auto-derived constructor composed its fields' teardowns; per-type order 30 August 2026.
 - **Seed detail (27 September 2026):** composing field teardowns waits on the destructor-authoring check.
 
-### `drop` and `own` end a name; the teardown is removed or moved at parse; no drop flag
+### `free` and `move` end a name; no drop flag
+- **History:** heading ›`drop` and `own` end a name; the teardown is removed or moved at parse; no drop flag‹ until 28 September 2026; the moving and removing of an inserted teardown node at parse retired with the insertion itself (›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹), nothing standing at the declaration to move.
 - **History:** first a sanctioned no-op over a null drop flag, "all with no graph edit"; replaced 7 September 2026. `own` as an access kind: gone 7 September 2026. The null stand-in, binding-site attachment and the `share` direction: settled in discussion, July 2026.
 - **Seed detail (27 September 2026):** stand-in: a place is emptied by writing a **null pointer**, and the scope-exit teardown does nothing on null, a run-time check the ruled model lacks; removing it is pending. `alloc`/`own`/`drop`/`free`/`defer` exist; the teardown runs last-in-first-out at scope exit as body structure. The owning heap pointer is the first identity with a non-null `drop` slot; a `&x` borrow mints the same `@T` with a null destructor, so owning-ness rides on the node `alloc` built, not on `@T`.
 
-### Teardown attaches at the binding site, parameters included
+### Holding is decided at the binding site, parameters included
+- **History:** heading ›Teardown attaches at the binding site, parameters included‹ until 28 September 2026, when `defer free <place>` stopped being inserted; the binding site still decides who holds.
 - **Seed detail (27 September 2026):** covers only *named* owning bindings. A bare owning temporary passed as an argument is rejected: a bug against the ruling.
 
 ### Three fail-closed ownership rules, and `-> own @T`
@@ -126,30 +135,36 @@ Nothing moved from this section.
 ### A pointer steps by whole cells
 - **Seed detail (27 September 2026):** since 25 September 2026 (#137): pointer on the left, integer on the right, k scaled to bytes as an `i64` product in the graph, both tiers. `k + p`, `p - q` and every other pointer operator stay refused.
 
-### A filled `share drop` is the constructor's teardown; one name owns each value
+### A filled `share free` is the value's teardown; one name owns each value
+- **History:** heading ›A filled `share drop` is the constructor's teardown; one name owns each value‹ until 28 September 2026; `defer drop a` was inserted where ownership landed, now the holder's scope runs the value's `free`.
 - **History:** text spells the mark `shared drop`: renamed `share` 26 September 2026 (l.207). Text says "fields block fills": the fields block was removed 25 September 2026 (l.203); members stand in the type body. Text uses `this.ptr` and "`this` bound to the instance": `this` removed 26 September 2026 (l.207).
 - **Seed detail (27 September 2026):** since 25 September 2026. The owner's binding carries `own` in its gate set, read by `a:gate` and consulted by `own a` and `drop a` (Claude's choice, open to Thobias: the gate set is where a name's other facts live, and it outlasts one REPL line). A move writes the null stand-in, and `free ptr` in the drop empties the field; so a borrow's `b[0]` after the owner's drop is the checked null-pointer error, while `b[1]` steps a cell past the null and faults (the hole in full). Not freed yet: a value that moves out and reaches no name (`mk()` as a statement); a value just made passed straight to a call (`f(array i32 (1, 2))`). A value a type's own `parse` places as the node itself, not a call on it, gets no owner (text: "places as `this` itself"). `own` on a parameter, which would consume the argument, is not built: checked error meanwhile.
 
 ### A field may be `own @T ?`
 - **Seed detail (27 September 2026):** `own` in a type takes a pointer hole on a field or a name: `mut a := own @i32 ?` frees what is written into it.
 
-### A field may be `own t ?`, `t` a type whose body fills `share drop`
+### A field may be `own t ?`, `t` a type whose body fills `share free`
+- **History:** heading spelled `share drop` until 28 September 2026. Open until then: `=` into an owning field leaked the displaced node (the seed still does, #170); ruled 28 September 2026 that the displaced node is freed before the write.
 - **History:** text writes `this.items` and "fields block"; see renames above.
 - **Seed detail (27 September 2026):** since 25 September 2026, no array-specific code; `drop items` and `own b.items` run interpreted like every field read. Closed the note "`own array i32 ?` is not in the seed yet".
 
-### `own` and `drop` are static: the parse marks the name dead
+### `move` and `free` are static: the parse marks the name dead
+- **History:** heading ›`own` and `drop` are static: the parse marks the name dead‹ until 28 September 2026 (›`move` is the act, `own` the gate word, `free` the end‹); rule 2 relocated an inserted defer node into the non-moving arms, now the `if` runs the `free` there.
 - **History:** maybe-moved reading ("the phase bit still decides at run time whether the teardown fires"): superseded 7 September 2026, since every legal `own` ends a lifetime at a point the parse can name.
 
 ### A call is a use of every outer name the callee's body reads
 - **Seed detail (27 September 2026):** since 15 September 2026 (#125): the list is the fn value's trailing `outer` slot, filled by the body's parse (identities it dispatches, operands it takes, once each), read wherever a node that runs a body comes to exist: a call, a node of a `run`-carrying type (applied or built by its constructor), a Logos-written constructor's run. A name from a section on no caller's stack counts as live: an imported `pub` function reads its private siblings after the section's parse ended, and importers share the one loaded scope (›Importing is dropping the text there‹). A scope that the code asking for a body stands in (a held `type (…)` built when its function runs, a run body built for a field-type set) counts as open while that body is built, since that code runs inside it: Claude's fix 25 September 2026, open to Thobias (`array bag` built the mint's held body in array.logos's scopes alone, so `bag`, whose `parse` calls a `fill` reading the command line's `array`, was refused "`array` is not in scope here"). Callee outer names join the caller's list.
 
-### `drop x` works on any identity
+### `free x` works on any identity
+- **History:** ›`drop x` works on any identity‹ until 28 September 2026.
 - **Seed detail (27 September 2026):** realized the same day.
 
-### An `own` argument is consumed at the call; a callee that does not take it hands it back in its error value
+### A `move` argument is consumed at the call; a callee that does not take it hands it back in its error value
+- **History:** ›An `own` argument is consumed at the call; a callee that does not take it hands it back in its error value‹ until 28 September 2026.
 - **History:** "on failure ownership stays with the caller": superseded 3 September 2026, since `own` is static and the name is dead from the call. In v0.1.0 a failed call is a fault, so the case does not arise.
 
-### `own` and `drop` take a field path too
+### `move` and `free` take a field path too
+- **History:** ›`own` and `drop` take a field path too‹ until 28 September 2026.
 - **History:** 3 September 2026: bare names only (a value owned whole or not at all; `own p.x` a parse error), because a field is bytes at an offset, not a dyad, with no phase bits for a moved flag. Superseded 5 September 2026, and the swap door with it. "Guarded by the field's phase bit where it does not": superseded 7 September 2026. Closed 7 September 2026: how a non-pointer field carries a phase bit (none does; the teardown moves instead).
 - **Seed detail (27 September 2026):** accepts `own p.f` and writes the null; lacks the sub-range, the dead-as-whole mark and the relocation: pending work, no longer a bug.
 
@@ -409,7 +424,8 @@ Nothing moved from this section.
 - **History:** a schedule byte stood in until the constructors drove the tape; retired July 2026. The seed's NaN / finite / +infinity three-way classification of `parse_rank` was superseded 30 August 2026 by "every identity has a `parse_rank`".
 - **Seed detail (27 September 2026):** stores the metadata head in full as each identity's metadata head (not on the name's binding of *Name resolution*). The core `parse` is a `native` callable leaf (called, never read into, per the reflection boundary) under one entry signature that self-hosting will replace with Logos source.
 
-### Slots are named for the moment they run: `parse`, `run`, `drop`
+### Slots are named for the moment they run: `parse`, `run`, `free`
+- **History:** `drop` until 28 September 2026 (›`move` is the act, `own` the gate word, `free` the end‹).
 - **History:** the slots were `constructor` and `destructor` until 17 September 2026. The 17 September text also said the building of an instance was `this`'s job; `this` is gone since 26 September 2026 (see *There is no `this`*).
 - **Seed detail (27 September 2026):** #130 renamed the slots, README with it.
 
@@ -427,7 +443,8 @@ Nothing moved from this section.
 - **History:** earlier 19 September 2026: the slot names were the core words, known everywhere, `=` with one on its left filled the innermost definition's slot, and outside any definition it was the checked error. Superseded the same day.
 - **Seed detail (27 September 2026):** the root identities of #133 slice 4 were undone 20 September 2026: a type body declares the six slot words into a scope of its own around the body, closed with it.
 
-### `drop` is one word
+### `free` is one word
+- **History:** ›`drop` is one word‹ until 28 September 2026.
 - **History:** 17 September 2026: a bare `drop = ( … )` in a type body named the slot, the fields-block binding being "the innermost `drop`" the lookup meets, never the `drop x` statement (#130 ambiguity). Superseded 19 September 2026: there is no second `drop` to be innermost.
 - **Seed detail (27 September 2026):** `=`'s constructor, not `drop`'s, takes a lone `drop` to its left as the slot's name, since `=` constructs at discovery before a prefix keyword's turn (divergence). #130 closed into #132.
 
@@ -598,6 +615,7 @@ Nothing moved from this section.
 - **History:** spelled `self` from the 2 September sketch until 24 September 2026, no reason recorded.
 
 ### `=` sits beside `:=`, and returns nothing
+- **History:** until 28 September 2026 the rule said nothing of a displaced value, and the seed leaks it (#170).
 - **Seed detail (27 September 2026):** 9 September 2026 (#60): `:`, `.`, `@` build at discovery with their right cell lexed on demand; a reader followed by a tight read is put to sleep before it drives; the seed's right-side drives lex onto a fresh tape; `=` drives at discovery. Application and juxtaposition also build at discovery, reading their bracket or literal lazily in source order (seed rank 91, above `(`'s 90), since a tight read above them would otherwise take the bracket first: `f(2).x` and `dyad (i32, 7):dyad` read the call.
 
 ### A cell a constructor reads from the tape arrives unbuilt
@@ -721,7 +739,8 @@ Nothing moved from this section.
 - ›`alloc n of T`, for such a `T`, gives n cells of its address‹ merged into ›A value of a type built by a Logos `parse` travels as a pointer‹ on 27 September 2026
 - **Seed detail (27 September 2026):** since 25 September 2026, no array-specific code: a function holding the field read stays interpreted, as every field read does (only the per-run copy lowers), and a compiled callee handed `b.items` runs compiled; one test in `read.rs` for which cells load whole (`cell_numtype`); pointer stepping since 25 September 2026 (#137), pointer on the left, integer on the right, k scaled to bytes as an `i64` product in the graph, both tiers, with `k + p`, `p - q` and every other pointer operator refused.
 
-### A value owns what its elements hold and drops it
+### A value owns what its elements hold and frees it
+- **History:** ›A value owns what its elements hold and drops it‹ until 28 September 2026.
 - ›A value owns what its elements hold, and drops it‹ merged into ›A value owns what its elements hold and drops it‹ on 27 September 2026
 - ›A list's lines move into the value built from it‹ merged into ›A value owns what its elements hold and drops it‹ on 27 September 2026
 - **Seed detail (27 September 2026):** the refusal stands where a type's parse hands a bracket to the call it places, for every type written in Logos; a callee that only reads its list is refused alike.
