@@ -532,6 +532,7 @@ Nothing moved from this section.
 
 ### A bracket goes to the call whole
 - **History:** 25 September: the mint's parse placed `tape[0] = this.fill(tape[1])` with `fill := fn (elements) -> this:type (…)`. Since 26 September 2026 (l.205) `fill` is gone: `array T [ … ]` is a node of `array` whose `elements` field holds the bracket and whose run does the work.
+- **History:** 30 August to 28 September 2026 the sentence read "At top level, where lines run as they are parsed": the eager top level, which ›The pass runs only as far as it must‹ superseded on 13 September without this sentence being updated. Reworded 28 September 2026.
 
 ### The array's list is written in square brackets
 - **History:** `t := array i32, x := t [4, 5]` was also valid on 25 September; since 26 September a mint is not written before a bracket but assigned one, `x = [4, 5]` (l.205).
@@ -563,6 +564,7 @@ Nothing moved from this section.
 ### Every identity has a `parse_rank`, and `(` works in two steps
 - **History:** superseded 30 August 2026: the incremental shift/reduce-with-holding form first recorded here; the one-token lookahead of *Elaboration*; the threefold applied/holding/declined answer; the NaN/finite/+infinity classification of *A type's metadata*; the zero-or-one-cell wording.
 - **Seed detail (27 September 2026):** converged September 2026 (#59): the loop lives in the scope's constructor, every identity has a finite `parse_rank`, a leftover cell is the error, the `,` is required.
+- **History:** 30 August to 28 September 2026 step 2 ended "At top level it runs them": the eager top level, superseded 13 September by ›The pass runs only as far as it must‹ without this sentence being updated. Reworded 28 September 2026.
 
 ### A constructor's outcome is read off its own cell; no holding, no re-invocation
 - **Seed detail (27 September 2026):** #81, 15 September 2026: the outcome is read off the construct's cell by handle, whatever the center is after the call. Built, removed, or rewritten to another token is progress; an untouched frontier is the decline; a cell left unconstructed after an edit is the checked error. Nothing runs twice.
@@ -757,6 +759,9 @@ Nothing moved from this section.
 
 ### Slot words are known only inside a type body
 - **History:** 19 to 28 September 2026: `run := 5` at the root was an ordinary declaration. Since 28 September 2026 `run` is also a word of the language start (›`run x` runs the expression to its right as soon as it is parsed, and stands as its value‹), so it is the no-shadowing error there; the slot still wins inside a type body.
+
+### Importing is dropping the text there, wrapped in its own scope
+- **History:** until 28 September 2026 the seed gave an `import` line the imported file's tail value (the command line and the REPL echoed it, held in a `ran` node). Ruled valueless 28 September 2026: a file is its own graph, the importer gets its `pub` names, and no result is kept outside the stack.
 
 
 ## Identity recognition
