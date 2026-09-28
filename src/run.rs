@@ -6,6 +6,7 @@
 //! jumps to the callable leaf in its op slot. Scalars ride an `i64` bit-container.
 //! DESIGN ›The callable ground is `@exec`‹.
 
+use crate::dyad;
 use crate::dyad::{frame_ref, Dyad, DyadPtr, Global};
 use crate::identities::by_copy;
 use crate::identities::read::{read_kind, Dispatch, Read};
@@ -602,10 +603,10 @@ impl<'a> Runtime<'a> {
         let Some(lower) = self.compiler else {
             return Err(RunError::CompilerUnavailable);
         };
-        if (*fn_node).ty != self.types.fn_type {
+        if dyad::ty(fn_node) != self.types.fn_type {
             return Err(RunError::NotAFunction(fn_node));
         }
-        let fields = (*fn_node).value as *const DyadPtr;
+        let fields = dyad::value(fn_node) as *const DyadPtr;
         if fields.is_null() {
             return Err(RunError::NotRunnable(fn_node));
         }
@@ -620,7 +621,7 @@ impl<'a> Runtime<'a> {
     /// # Safety
     /// `fn_node` must be a valid `fn` node from the store.
     pub unsafe fn deopt(&mut self, fn_node: DyadPtr) {
-        let fields = (*fn_node).value as *mut DyadPtr;
+        let fields = dyad::value(fn_node) as *mut DyadPtr;
         if !fields.is_null() {
             let bcode_slot = fields.add(FN_BCODE);
             let leaf = *bcode_slot;
@@ -659,17 +660,17 @@ impl<'a> Runtime<'a> {
     /// `node` must be a valid place node.
     pub(crate) unsafe fn place_addr(&self, node: DyadPtr) -> Option<*mut u8> {
         let node = self.through(node);
-        match frame_ref((*node).value) {
+        match frame_ref(dyad::value(node)) {
             // The depth is a parse-time capture guard; only the offset matters here.
             Some((_, off)) => {
                 let base = *self.activations.last()?;
                 Some(base.add(off))
             }
             // Global storage carries its own tag; an untagged value is a literal's blob.
-            None => Some(match crate::dyad::global_ref((*node).value) {
+            None => Some(match crate::dyad::global_ref(dyad::value(node)) {
                 Some(Global::Address(addr)) => addr,
                 Some(Global::Arena(off)) => self.store.arena_at(off),
-                None => (*node).value,
+                None => dyad::value(node),
             }),
         }
     }
@@ -708,7 +709,7 @@ impl<'a> Runtime<'a> {
     /// `f` must be a `fn` node from the store; `values` its argument block, whose first
     /// word is a live result slot's address when the result is a record.
     pub unsafe fn apply_values(&mut self, f: DyadPtr, values: &[i64]) -> Result<i64, RunError> {
-        let fields = (*f).value as *const DyadPtr;
+        let fields = dyad::value(f) as *const DyadPtr;
         if fields.is_null() {
             return Err(RunError::NotRunnable(f));
         }
@@ -807,7 +808,7 @@ impl<'a> Runtime<'a> {
             // An identity's value is its own address.
             Read::Identity | Read::Node => Ok(node as i64),
             // A view's value is the viewed node's address.
-            Read::Address => Ok((*node).value as i64),
+            Read::Address => Ok(dyad::value(node) as i64),
             // A rational value travels as the address of its sixteen bytes.
             Read::Rational => Ok(self.place_addr(node).ok_or(RunError::NoActivation)? as i64),
             Read::Container(_) => self.read_container(node),
@@ -819,7 +820,7 @@ impl<'a> Runtime<'a> {
                 if slot.is_null() {
                     return Err(RunError::Uninitialized);
                 }
-                Ok(crate::identities::numtype::read_scalar((*node).ty, slot))
+                Ok(crate::identities::numtype::read_scalar(dyad::ty(node), slot))
             }
             Read::Aggregate | Read::Opaque | Read::Undefined => Err(RunError::NoWholeRead),
         }
@@ -849,10 +850,10 @@ impl<'a> Runtime<'a> {
         call_node: DyadPtr,
         dest: Option<*mut u8>,
     ) -> Result<Vec<i64>, RunError> {
-        if (*fn_node).value.is_null() {
+        if dyad::value(fn_node).is_null() {
             return Err(RunError::NotRunnable(fn_node));
         }
-        let args = (*call_node).value as *const DyadPtr; // [arg0 …, null] or null
+        let args = dyad::value(call_node) as *const DyadPtr; // [arg0 …, null] or null
         let arg_count = if args.is_null() {
             0
         } else {
@@ -896,11 +897,11 @@ impl<'a> Runtime<'a> {
             return Err(RunError::ArityMismatch);
         }
         for slot in by_copy::slots(self.types, fn_node) {
-            let Some((_, off)) = frame_ref((*slot.param).value) else {
+            let Some((_, off)) = frame_ref(dyad::value(slot.param)) else {
                 return Err(RunError::MalformedFn(fn_node));
             };
             let dst = base.add(off);
-            let ty = (*slot.param).ty;
+            let ty = dyad::ty(slot.param);
             let at = values.as_ptr().add(slot.word);
             match slot.width {
                 Some(width) => std::ptr::copy_nonoverlapping(at.cast(), dst, width),

@@ -6,6 +6,7 @@
 //! the node's type and its record. Machine code is the reflection boundary.
 
 use crate::binding::Binding;
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::identities::instance;
 use crate::identities::meta;
@@ -118,7 +119,7 @@ pub enum Shape {
 /// `node` must be a valid dyad from the store, in the shapes the parser and
 /// `Core::build` produce.
 pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
-    let logos = (*node).ty;
+    let logos = dyad::ty(node);
     if logos.is_null() {
         return Shape::Undefined;
     }
@@ -151,8 +152,8 @@ pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
             Err(_) => Shape::Undefined,
         };
     }
-    if (*logos).ty == types.fn_type {
-        return Shape::Call { callee: logos, args: scan_null_terminated((*node).value) };
+    if dyad::ty(logos) == types.fn_type {
+        return Shape::Call { callee: logos, args: scan_null_terminated(dyad::value(node)) };
     }
     let Some(kind) = meta::kind_of(logos) else {
         return Shape::Undefined; // an unbound placeholder standing as a logos
@@ -161,13 +162,13 @@ pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
         k if k < VOID_TAG => Shape::Scalar(numtype::of_type_node(logos)),
         VOID_TAG => Shape::Unit,
         STRING_TAG => Shape::Text,
-        COMMENT_TAG => Shape::Prose { text: (*node).value.cast() },
+        COMMENT_TAG => Shape::Prose { text: dyad::value(node).cast() },
         ADDR_TAG => Shape::Pointer { pointee: numtype::pointee_of(logos) },
         meta::ARRAY_TAG => Shape::Array { items: crate::identities::array::items(node).to_vec() },
         meta::CALLABLE_TAG => {
             Shape::Callable { convention: crate::identities::callable::convention_of(node) }
         }
-        meta::CONVENTION_TAG => Shape::Convention { name: (*node).value.cast() },
+        meta::CONVENTION_TAG => Shape::Convention { name: dyad::value(node).cast() },
         meta::FRACTION_TAG => Shape::Fraction,
         meta::TYPEREC_TAG => Shape::LogosNode {
             kind: meta::kind_of(node).unwrap_or(meta::TOKEN_TAG),
@@ -186,7 +187,7 @@ pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
 /// # Safety
 /// `logos` carries an operand record; `node.value` has the shape it declares.
 unsafe fn operands_of(logos: DyadPtr, node: DyadPtr) -> Shape {
-    let value = (*node).value as *const DyadPtr;
+    let value = dyad::value(node) as *const DyadPtr;
     if value.is_null() {
         return Shape::Undefined; // declared, no operands yet
     }
@@ -198,7 +199,9 @@ unsafe fn operands_of(logos: DyadPtr, node: DyadPtr) -> Shape {
         meta::TUPLE_TAG => Shape::Tuple { slots },
         meta::LIST_TAG => Shape::List {
             head: slots,
-            tail: scan_null_terminated((*node).value.add(arity * std::mem::size_of::<DyadPtr>())),
+            tail: scan_null_terminated(
+                dyad::value(node).add(arity * std::mem::size_of::<DyadPtr>()),
+            ),
         },
         _ => unreachable!("operand records are tuple or list"),
     }
@@ -446,7 +449,7 @@ mod tests {
         unsafe {
             let place = |i: usize| {
                 let d = crate::identities::declare::declared_of(roots[i]);
-                if (*d).ty == core.assign {
+                if dyad::ty(d) == core.assign {
                     types.through(crate::identities::operands(d).0)
                 } else {
                     d

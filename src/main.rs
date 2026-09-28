@@ -9,6 +9,7 @@
 use std::io::{BufRead, Write};
 use std::process::ExitCode;
 
+use seed::dyad;
 use seed::identities::Core;
 use seed::parse::{Imports, ParseError, Parser, ScopeStack};
 use seed::regex_trie::RegexTrie;
@@ -57,7 +58,7 @@ unsafe fn tail_type(
 ) -> (seed::dyad::DyadPtr, seed::dyad::DyadPtr) {
     let node = seed::identities::ran::expr_of(core, node);
     let named = seed::binding::through(core.binding_, node);
-    (named, (*named).ty)
+    (named, dyad::ty(named))
 }
 
 /// The statement types with no value worth printing in any mode.
@@ -168,13 +169,13 @@ fn run_line(source: &str) -> ExitCode {
         };
         // SAFETY: `node` is the valid dyad just parsed.
         unsafe {
-            if (*node).ty == engine.core.import_ {
+            if dyad::ty(node) == engine.core.import_ {
                 ran_something = true;
                 let tail = seed::identities::import::tail_of(node);
                 if !tail.is_null() && !is_silent_tail(&engine.core, tail) {
                     last = Some(tail);
                 }
-            } else if (*node).ty != types.comment_ {
+            } else if dyad::ty(node) != types.comment_ {
                 ran_something = true;
                 // The same silence test an import's tail takes, so the command
                 // line and the REPL agree.
@@ -361,7 +362,7 @@ fn repl() -> ExitCode {
         // echoes through its file's tail, so a declaration-tailed import stays silent.
         // SAFETY: `node` is the valid dyad just parsed.
         let display_node = unsafe {
-            if (*node).ty == engine.core.import_ {
+            if dyad::ty(node) == engine.core.import_ {
                 let tail = seed::identities::import::tail_of(node);
                 if tail.is_null() {
                     node

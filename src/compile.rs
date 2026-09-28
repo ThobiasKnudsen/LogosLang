@@ -17,6 +17,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{default_libcall_names, FuncId, Linkage, Module};
 
+use crate::dyad;
 use crate::dyad::{frame_ref, Dyad, DyadPtr, Global};
 use crate::identities::numtype::{is_void_type, of_type_node, ArithOp, CmpOp, NumType};
 use crate::identities::read::{read_kind, Dispatch, Read};
@@ -150,7 +151,7 @@ impl Lowerer<'_, '_> {
     /// `node` must be a valid dyad from the store.
     pub unsafe fn lower(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
         let node = self.through(node);
-        let op = (*node).ty;
+        let op = dyad::ty(node);
         match read_kind(self.types, node) {
             Read::Executable(Dispatch::Call(f)) => self.lower_call_into(f, node, None),
             // Rational operations and places are interpreted only.
@@ -165,7 +166,7 @@ impl Lowerer<'_, '_> {
             Read::Unit => Ok(self.const_i32(0)),
             Read::Identity | Read::Node => Ok(self.node_addr(node)),
             // A view's value is the viewed node.
-            Read::Address => Ok(self.node_addr((*node).value.cast())),
+            Read::Address => Ok(self.node_addr(dyad::value(node).cast())),
             Read::Container(_) => self.read_place(node, types::I64),
             // A rational travels as the address of its sixteen bytes; only its steps refuse.
             Read::Rational => self.place_addr(node),
@@ -175,13 +176,13 @@ impl Lowerer<'_, '_> {
             },
             // A null value slot is a comptime binding with no storage.
             Read::Scalar(nt) => {
-                if (*node).value.is_null() {
+                if dyad::value(node).is_null() {
                     return Err(CompileError::Uninitialized);
                 }
                 self.read_place(node, nt.cranelift_type())
             }
             Read::Pointer(_) => {
-                if (*node).value.is_null() {
+                if dyad::value(node).is_null() {
                     return Err(CompileError::Uninitialized);
                 }
                 self.read_place(node, NumType::U64.cranelift_type())
@@ -222,8 +223,8 @@ impl Lowerer<'_, '_> {
     pub(crate) unsafe fn place_addr(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
         let node = self.through(node);
         if let Some(stats) = self.collect.as_deref_mut() {
-            if let Some((_, off)) = frame_ref((*node).value) {
-                let logos = (*node).ty;
+            if let Some((_, off)) = frame_ref(dyad::value(node)) {
+                let logos = dyad::ty(node);
                 if crate::identities::numtype::is_scalar_type(logos) {
                     stats.dirty.push((off, of_type_node(logos).bytes()));
                 } else {
@@ -233,7 +234,7 @@ impl Lowerer<'_, '_> {
             }
         }
         debug_assert!(
-            frame_ref((*node).value).is_none_or(|(_, off)| !self.promoted.contains_key(&off)),
+            frame_ref(dyad::value(node)).is_none_or(|(_, off)| !self.promoted.contains_key(&off)),
             "a promoted place's address must never be taken (the analysis pass keeps them apart)"
         );
         self.place_addr_raw(node)
@@ -243,7 +244,7 @@ impl Lowerer<'_, '_> {
     /// compiler decodes the frame tag.
     unsafe fn place_addr_raw(&mut self, node: DyadPtr) -> Result<Value, CompileError> {
         let node = self.through(node);
-        match frame_ref((*node).value) {
+        match frame_ref(dyad::value(node)) {
             Some((_, off)) => {
                 // A frame place with no frame under it: the checked error the
                 // interpreter gives for the same shape, not a panic.
@@ -255,7 +256,7 @@ impl Lowerer<'_, '_> {
             // An arena place is reached through the context; an absolute place and
             // a literal's blob are immediates.
             None => {
-                let v = (*node).value;
+                let v = dyad::value(node);
                 Ok(match crate::dyad::global_ref(v) {
                     Some(Global::Arena(off)) => {
                         let at = std::mem::offset_of!(crate::run::Context, globals) as i64;
@@ -282,7 +283,7 @@ impl Lowerer<'_, '_> {
         ct: types::Type,
     ) -> Result<Value, CompileError> {
         let node = self.through(node);
-        if let Some((_, off)) = frame_ref((*node).value) {
+        if let Some((_, off)) = frame_ref(dyad::value(node)) {
             if let Some(&(var, vct)) = self.promoted.get(&off) {
                 debug_assert_eq!(vct, ct, "a promoted place is used at one type");
                 return Ok(self.builder.use_var(var));
@@ -306,7 +307,7 @@ impl Lowerer<'_, '_> {
         v: Value,
     ) -> Result<(), CompileError> {
         let node = self.through(node);
-        if let Some((_, off)) = frame_ref((*node).value) {
+        if let Some((_, off)) = frame_ref(dyad::value(node)) {
             if let Some(&(var, vct)) = self.promoted.get(&off) {
                 debug_assert_eq!(vct, ct, "a promoted place is used at one type");
                 self.builder.def_var(var, v);
@@ -331,11 +332,12 @@ impl Lowerer<'_, '_> {
         lines: &[DyadPtr],
     ) -> Result<Option<Value>, CompileError> {
         let defer_ = self.types.defer_;
-        let defers: Vec<DyadPtr> = lines.iter().copied().filter(|&e| (*e).ty == defer_).collect();
+        let defers: Vec<DyadPtr> =
+            lines.iter().copied().filter(|&e| dyad::ty(e) == defer_).collect();
         let held = usize::from(!defers.is_empty());
         self.teardowns += held;
         let mut last = Ok(None);
-        for &line in lines.iter().filter(|&&e| (*e).ty != defer_) {
+        for &line in lines.iter().filter(|&&e| dyad::ty(e) != defer_) {
             last = self.lower(line).map(Some);
             if last.is_err() {
                 break;
@@ -574,7 +576,7 @@ impl Lowerer<'_, '_> {
         let (lhs, rhs) = operands(node);
         // The width is in the node: the builder chose a leaf for the resolved
         // operand types, so they are not classified a second time here.
-        let leaf = *((*node).value as *const DyadPtr).add(2);
+        let leaf = *(dyad::value(node) as *const DyadPtr).add(2);
         let Some(logos) = self.types.ops.cmp_nt_of(leaf) else {
             return Err(CompileError::Internal(
                 "a resolved comparison node holds a comparison leaf",
@@ -743,7 +745,7 @@ impl Lowerer<'_, '_> {
         step: DyadPtr,
         body: DyadPtr,
     ) -> Result<Value, CompileError> {
-        let nt = of_type_node((*var).ty);
+        let nt = of_type_node(dyad::ty(var));
         let ct = nt.cranelift_type();
 
         let s = self.lower(start)?;
@@ -910,14 +912,14 @@ impl Lowerer<'_, '_> {
         node: DyadPtr,
         dest: Option<Value>,
     ) -> Result<Value, CompileError> {
-        let fields = (*callee).value as *const DyadPtr;
+        let fields = dyad::value(callee) as *const DyadPtr;
         if fields.is_null() {
             // No signature to size the call by: an unbound placeholder.
             return Err(CompileError::NotLowerable(callee));
         }
         let ret = return_kind(self.types, *fields.add(FN_OUTPUT))?;
         let core = self.types;
-        let args = (*node).value as *const DyadPtr; // [arg0 …, null] or null
+        let args = dyad::value(node) as *const DyadPtr; // [arg0 …, null] or null
         let arg_count = if args.is_null() {
             0
         } else {
@@ -1058,7 +1060,7 @@ pub unsafe fn compile_fn(
     fn_node: DyadPtr,
 ) -> Result<(), CompileError> {
     let artifact = compile_fn_body(lower, types, fn_node)?;
-    let bcode_slot = ((*fn_node).value as *mut DyadPtr).add(FN_BCODE);
+    let bcode_slot = (dyad::value(fn_node) as *mut DyadPtr).add(FN_BCODE);
     if (*bcode_slot).is_null() {
         *bcode_slot =
             crate::identities::callable::mint(store, types.callable_, 0, types.conv_container);
@@ -1074,7 +1076,7 @@ pub unsafe fn compile_fn(
 /// # Safety
 /// `fn_node` must be a fn node whose `bcode` slot holds a callable leaf.
 unsafe fn install(fn_node: DyadPtr, entry: usize) {
-    let leaf = *((*fn_node).value as *const DyadPtr).add(FN_BCODE);
+    let leaf = *(dyad::value(fn_node) as *const DyadPtr).add(FN_BCODE);
     crate::identities::callable::install_entry(leaf, entry);
 }
 
@@ -1088,7 +1090,7 @@ unsafe fn compile_fn_body(
     types: &Core,
     fn_node: DyadPtr,
 ) -> Result<Artifact, CompileError> {
-    let fields = (*fn_node).value as *const DyadPtr;
+    let fields = dyad::value(fn_node) as *const DyadPtr;
     if fields.is_null() {
         return Err(CompileError::NotLowerable(fn_node));
     }
@@ -1133,7 +1135,7 @@ pub(crate) unsafe fn compile_into(
     code_leaf: DyadPtr,
 ) -> Result<(), CompileError> {
     let artifact = compile_fn_body(lower, types, fn_node)?;
-    let bcode_slot = ((*fn_node).value as *mut DyadPtr).add(FN_BCODE);
+    let bcode_slot = (dyad::value(fn_node) as *mut DyadPtr).add(FN_BCODE);
     if (*bcode_slot).is_null() {
         *bcode_slot = code_leaf;
     }
@@ -1279,7 +1281,7 @@ unsafe fn build_pass(
         let slots: Vec<by_copy::Slot> =
             if self_fn.is_null() { Vec::new() } else { by_copy::slots(types, self_fn).collect() };
         let param_offs: Vec<Option<usize>> =
-            slots.iter().map(|s| frame_ref((*s.param).value).map(|(_, off)| off)).collect();
+            slots.iter().map(|s| frame_ref(dyad::value(s.param)).map(|(_, off)| off)).collect();
         let mut promoted: HashMap<usize, (Variable, types::Type)> = HashMap::new();
         for &(off, ct) in promote {
             let var = builder.declare_var(ct);
@@ -1307,7 +1309,7 @@ unsafe fn build_pass(
         };
         for s in &slots {
             let p = s.param;
-            let Some((_, off)) = frame_ref((*p).value) else {
+            let Some((_, off)) = frame_ref(dyad::value(p)) else {
                 return Err(CompileError::NotLowerable(p));
             };
             let at = (s.word * 8) as i32;
@@ -1322,7 +1324,7 @@ unsafe fn build_pass(
                 continue;
             }
             let v = builder.ins().load(types::I64, MemFlagsData::new(), argv, at);
-            let logos = (*p).ty;
+            let logos = dyad::ty(p);
             let scalar = crate::identities::numtype::is_scalar_type(logos);
             if let Some(&(var, _)) = promoted.get(&off) {
                 let vn =
