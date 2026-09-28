@@ -119,6 +119,15 @@ pub(super) fn build(
     lhs: DyadPtr,
     rhs: DyadPtr,
 ) -> Result<DyadPtr, ParseError> {
+    // A binding's fields are read; `lex_rank` is the one a program sets after the declaration
+    // (DESIGN ›`lex_rank` belongs to the binding, not the type‹).
+    // SAFETY: `lhs` is a reduced dyad from the store.
+    if let Some(field) = unsafe { types.binding_field_of(lhs) } {
+        // SAFETY: `field` is a binding dyad from the store.
+        if unsafe { crate::binding::Binding::spelling(field) } != "lex_rank" {
+            return Err(ParseError::BadAssignTarget);
+        }
+    }
     // A name is written only if its binding carries `mut` and no `immut`.
     // SAFETY: `lhs` is a reduced dyad from the store; one of the `binding` type is a binding.
     unsafe {

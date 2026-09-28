@@ -962,7 +962,12 @@ impl<'a> Parser<'a> {
                 read_kind(self.types, node),
                 Read::Scalar(_) | Read::Pointer(_) | Read::Aggregate
             ) && self.types.is_storage(node);
-            if !placed {
+            // A binding's fields are read; `lex_rank` alone is a place a program writes.
+            let binding_field = self
+                .types
+                .binding_field_of(node)
+                .is_some_and(|f| Binding::spelling(f) != "lex_rank");
+            if !placed || binding_field {
                 return Err(ParseError::BadAddressOf);
             }
             self.check_capture(node)?;

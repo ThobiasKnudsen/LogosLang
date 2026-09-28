@@ -2115,6 +2115,27 @@ fn a_binding_reads_its_frame_and_offset() {
 }
 
 #[test]
+fn a_binding_s_fields_are_read_and_only_lex_rank_is_written() {
+    // A write into `frame` or `offset` would move where `s` reads; `lex_rank` is the one
+    // field a program sets after the declaration.
+    let (echoes, stderr) = repl(
+        b"s := i32 5
+s:offset = 7
+s:frame = s:scope
+s:scope = s:scope
+s:end = s:scope
+          p := &s:offset
+s:lex_rank = 7
+s:lex_rank
+s
+",
+    );
+    assert_eq!(echoes, ["7.0", "5"], "stderr: {stderr}");
+    assert_eq!(stderr.matches("not an assignable place").count(), 4, "stderr: {stderr}");
+    assert_eq!(stderr.matches("`&` needs a variable").count(), 1, "stderr: {stderr}");
+}
+
+#[test]
 fn a_parameter_and_a_local_are_names_of_the_call_s_frame() {
     // Parameters first, then the locals, packed at their widths: `a` at 0, `b` at 4, `c` at 12;
     // their frame is the function, not the program's.

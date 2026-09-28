@@ -500,6 +500,19 @@ impl Core {
         })
     }
 
+    /// The field's binding when `p` is a `field` place over a binding's own record, the
+    /// `x:f` read; `None` for any other node.
+    ///
+    /// # Safety
+    /// As `frame_of`.
+    pub(crate) unsafe fn binding_field_of(&self, p: DyadPtr) -> Option<DyadPtr> {
+        if p.is_null() || dyad::ty(p) != self.field_ {
+            return None;
+        }
+        let (record, field) = instance::field_parts(p);
+        (self.type_of(record) == self.binding_).then_some(field)
+    }
+
     /// The type of what a reduced operand denotes: its storage's declared type, or the
     /// type slot of the dyad it names or is.
     ///
