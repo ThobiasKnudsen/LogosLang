@@ -5,6 +5,7 @@
 //! cursor the constructors read with.
 
 use super::*;
+use crate::dyad;
 
 /// The lex step the driver and `lex «…»` share: a fresh spelling mints its
 /// dyad with both slots null into `store`, the pattern's construction done at
@@ -120,7 +121,7 @@ impl<'a> Parser<'a> {
     fn is_live_call_slot(&self, id: DyadPtr) -> bool {
         // SAFETY: `id` is null or a resolved dyad from the store.
         !id.is_null()
-            && matches!(crate::dyad::frame_ref(unsafe { (*id).value }),
+            && matches!(crate::dyad::frame_ref(unsafe { dyad::value(id) }),
                 Some((depth, _)) if depth > 0 && depth == self.cx.held_depth && self.cx.frames.len() == depth)
     }
 
@@ -143,7 +144,7 @@ impl<'a> Parser<'a> {
                 crate::identities::read::Read::Container(t) if !t.is_null() => t,
                 _ => return id,
             };
-            let addr = match crate::dyad::global_ref((*id).value) {
+            let addr = match crate::dyad::global_ref(dyad::value(id)) {
                 Some(crate::dyad::Global::Address(addr)) => addr,
                 Some(crate::dyad::Global::Arena(off)) => self.rt.store.arena_at(off),
                 None if self.is_live_call_slot(id) => match self.rt.place_addr(id) {

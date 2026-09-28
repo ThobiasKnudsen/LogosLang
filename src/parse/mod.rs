@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::binding::Binding;
+use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::regex_trie::{RegexTrie, RegexTrieError};
 use crate::store::Store;
@@ -267,7 +268,7 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `node` must be a valid dyad this parser built into its store.
     pub unsafe fn value_of(&mut self, node: DyadPtr) -> Result<i64, ParseError> {
-        if (*node).ty == self.types.ran_ {
+        if dyad::ty(node) == self.types.ran_ {
             return Ok(crate::identities::ran::value_of(node));
         }
         self.run_on_pass(node).map_err(ParseError::Run)

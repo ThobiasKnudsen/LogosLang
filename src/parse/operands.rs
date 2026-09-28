@@ -5,6 +5,7 @@
 //! `=`, a prefix word's operand, and the capture and liveness checks on a name's use.
 
 use super::*;
+use crate::dyad;
 
 impl<'a> Parser<'a> {
     /// `fn`'s constructor claims it so a recursive self-call inside the body
@@ -41,7 +42,7 @@ impl<'a> Parser<'a> {
         // SAFETY: `id` is null or a resolved identity from the store.
         unsafe {
             !id.is_null()
-                && (*id).ty == self.types.type_
+                && dyad::ty(id) == self.types.type_
                 && crate::identities::meta::kind_of(id) == Some(crate::identities::meta::TOKEN_TAG)
         }
     }
@@ -96,7 +97,7 @@ impl<'a> Parser<'a> {
         // SAFETY: `id` is null or a resolved identity from the store.
         !cell.constructed
             && !id.is_null()
-            && unsafe { (*id).ty } != self.types.type_
+            && unsafe { dyad::ty(id) } != self.types.type_
             && self.ctor_of(id).is_some()
     }
 
@@ -328,7 +329,7 @@ impl<'a> Parser<'a> {
         // SAFETY: a cell's dyad is null or a dyad from the store.
         let woke = cell.constructed
             && !cell.dyad.is_null()
-            && unsafe { (*cell.dyad).ty } == self.types.binding_;
+            && unsafe { dyad::ty(cell.dyad) } == self.types.binding_;
         // A field named bare reaches its place as a path does.
         // SAFETY: as above.
         let field = !cell.constructed
@@ -405,7 +406,7 @@ impl<'a> Parser<'a> {
     /// `node` must be a resolved dyad from the store.
     pub(super) unsafe fn check_capture(&self, node: DyadPtr) -> Result<(), ParseError> {
         let node = self.types.through(node);
-        if let Some((depth, _)) = crate::dyad::frame_ref((*node).value) {
+        if let Some((depth, _)) = crate::dyad::frame_ref(dyad::value(node)) {
             if self.cx.share_init.is_some_and(|at| depth <= at) {
                 return Err(ParseError::ShareInitReadsUnmade);
             }
@@ -454,7 +455,7 @@ impl<'a> Parser<'a> {
             return Ok(());
         }
         // SAFETY: `callee` is a dyad from the store.
-        if unsafe { (*callee).ty } != self.types.fn_type {
+        if unsafe { dyad::ty(callee) } != self.types.fn_type {
             return Ok(());
         }
         // SAFETY: `callee` is a function node; its list holds binding dyads.

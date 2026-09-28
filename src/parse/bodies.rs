@@ -5,6 +5,7 @@
 //! control flow that reads a body; the fn record's slots and the analysis over a body.
 
 use super::*;
+use crate::dyad;
 
 /// One enclosing function body being parsed: parameters claim the frame's
 /// first offsets, the body's locals continue after them (DESIGN ›Resolution
@@ -75,11 +76,11 @@ pub const RECEIVER_WRITES: u64 = 2;
 /// `fn_node` must be a function node whose value is the seven-slot record
 /// `parse_fn` builds.
 pub unsafe fn fn_frame_size(fn_node: DyadPtr) -> usize {
-    let frame = *((*fn_node).value as *const DyadPtr).add(FN_FRAME);
+    let frame = *(dyad::value(fn_node) as *const DyadPtr).add(FN_FRAME);
     if frame.is_null() {
         0
     } else {
-        std::ptr::read_unaligned((*frame).value as *const u64) as usize
+        std::ptr::read_unaligned(dyad::value(frame) as *const u64) as usize
     }
 }
 
@@ -90,7 +91,7 @@ pub unsafe fn fn_frame_size(fn_node: DyadPtr) -> usize {
 /// `fn_node` must be a function node: its value null, or the operands
 /// `parse_fn` builds (the early signature included).
 pub unsafe fn fn_outer<'a>(fn_node: DyadPtr) -> &'a [DyadPtr] {
-    let fields = (*fn_node).value as *const DyadPtr;
+    let fields = dyad::value(fn_node) as *const DyadPtr;
     if fields.is_null() {
         return &[];
     }
@@ -107,14 +108,14 @@ pub unsafe fn fn_outer<'a>(fn_node: DyadPtr) -> &'a [DyadPtr] {
 /// # Safety
 /// `f` must be a resolved dyad from the store.
 pub(crate) unsafe fn fn_receiver(types: &Core, f: DyadPtr) -> u64 {
-    if f.is_null() || (*f).ty != types.fn_type || (*f).value.is_null() {
+    if f.is_null() || dyad::ty(f) != types.fn_type || dyad::value(f).is_null() {
         return 0;
     }
-    let leaf = *((*f).value as *const DyadPtr).add(FN_RECEIVER);
+    let leaf = *(dyad::value(f) as *const DyadPtr).add(FN_RECEIVER);
     if leaf.is_null() {
         0
     } else {
-        std::ptr::read_unaligned((*leaf).value as *const u64)
+        std::ptr::read_unaligned(dyad::value(leaf) as *const u64)
     }
 }
 
@@ -129,7 +130,7 @@ pub const MAX_BRACKET_DEPTH: usize = 2_000;
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn is_bool_result(types: &Core, node: DyadPtr) -> bool {
     let node = types.through(node);
-    let logos = (*node).ty;
+    let logos = dyad::ty(node);
     // An item that ran in the pass is what its expression is.
     if logos == types.ran_ {
         return is_bool_result(types, crate::identities::ran::expr_of(types, node));
@@ -154,8 +155,8 @@ pub(crate) unsafe fn is_bool_result(types: &Core, node: DyadPtr) -> bool {
     } else {
         logos
     };
-    if !f.is_null() && (*f).ty == types.fn_type && !(*f).value.is_null() {
-        return *((*f).value as *const DyadPtr).add(FN_OUTPUT) == types.bool_;
+    if !f.is_null() && dyad::ty(f) == types.fn_type && !dyad::value(f).is_null() {
+        return *(dyad::value(f) as *const DyadPtr).add(FN_OUTPUT) == types.bool_;
     }
     logos == types.bool_
         || logos == types.lt
@@ -176,10 +177,10 @@ pub(crate) unsafe fn is_bool_result(types: &Core, node: DyadPtr) -> bool {
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn bool_literal_value(types: &Core, node: DyadPtr) -> Option<bool> {
     let node = types.through(node);
-    if (*node).ty != types.bool_ || (*node).value.is_null() {
+    if dyad::ty(node) != types.bool_ || dyad::value(node).is_null() {
         return None;
     }
-    Some(std::ptr::read_unaligned((*node).value as *const i32) != 0)
+    Some(std::ptr::read_unaligned(dyad::value(node) as *const i32) != 0)
 }
 
 /// A cell or line of the tape, by the tape's place, a literal index and the line.
@@ -193,18 +194,18 @@ pub(crate) type CellKey = (DyadPtr, i32, crate::identities::tape::Line);
 /// `cond` must be a reduced dyad from the store.
 unsafe fn type_check_of(types: &Core, cond: DyadPtr) -> Option<(CellKey, DyadPtr, bool)> {
     let cond = types.through(cond);
-    if (*cond).ty == types.not_ {
-        let (key, ty, holds) = type_check_of(types, *((*cond).value as *const DyadPtr))?;
+    if dyad::ty(cond) == types.not_ {
+        let (key, ty, holds) = type_check_of(types, *(dyad::value(cond) as *const DyadPtr))?;
         return Some((key, ty, !holds));
     }
-    let subset = (*cond).ty == types.subset;
-    let eq = subset || (*cond).ty == types.eq;
-    if !eq && (*cond).ty != types.ne {
+    let subset = dyad::ty(cond) == types.subset;
+    let eq = subset || dyad::ty(cond) == types.eq;
+    if !eq && dyad::ty(cond) != types.ne {
         return None;
     }
-    let ops = (*cond).value as *const DyadPtr;
+    let ops = dyad::value(cond) as *const DyadPtr;
     let (l, r) = (types.through(*ops), types.through(*ops.add(1)));
-    let is_read = |n: DyadPtr| (*n).ty == types.tape.cell_type;
+    let is_read = |n: DyadPtr| dyad::ty(n) == types.tape.cell_type;
     let (read, ty) = if is_read(l) {
         (l, r)
     } else if is_read(r) && !subset {
@@ -230,7 +231,7 @@ pub(crate) unsafe fn last_sequence_expr(node: DyadPtr) -> Option<DyadPtr> {
     crate::identities::scope::exprs_of(node)?
         .iter()
         .rev()
-        .find(|&&e| !crate::identities::numtype::is_comment_type((*e).ty))
+        .find(|&&e| !crate::identities::numtype::is_comment_type(dyad::ty(e)))
         .copied()
 }
 
@@ -241,20 +242,20 @@ pub(crate) unsafe fn last_sequence_expr(node: DyadPtr) -> Option<DyadPtr> {
 /// `node` must be a valid dyad from the store, with the value shapes its
 /// type implies.
 pub(crate) unsafe fn contains_return(types: &Core, node: DyadPtr) -> bool {
-    let logos = (*node).ty;
+    let logos = dyad::ty(node);
     if logos == types.return_ {
         return true;
     }
     if logos == types.if_ {
-        let p = (*node).value as *const DyadPtr;
+        let p = dyad::value(node) as *const DyadPtr;
         let (then, els) = (*p.add(1), *p.add(2));
         return contains_return(types, then) || (!els.is_null() && contains_return(types, els));
     }
     if logos == types.scope {
-        if (*node).value.is_null() {
+        if dyad::value(node).is_null() {
             return false;
         }
-        let arr = *((*node).value as *const DyadPtr);
+        let arr = *(dyad::value(node) as *const DyadPtr);
         return crate::identities::array::items(arr).iter().any(|&e| contains_return(types, e));
     }
     false
@@ -325,7 +326,7 @@ impl<'a> Parser<'a> {
 
         match inner {
             Ok(f) => {
-                (*spec).value = (*f).value;
+                dyad::set_value(spec, dyad::value(f));
                 Ok(spec)
             }
             Err(e) => {
@@ -371,7 +372,7 @@ impl<'a> Parser<'a> {
         let mut type_fields = Vec::new();
         for (i, &field) in fields.iter().enumerate() {
             let name = names.get(&field).map(String::as_str);
-            let ty = if (*field).ty == types.type_ {
+            let ty = if dyad::ty(field) == types.type_ {
                 // A field of type `type` names the type this set holds in it, so
                 // `output_type 1` reads `i32 1`; its parameter place goes unnamed.
                 type_fields.extend(name.map(|n| (n, key[i])));
@@ -391,7 +392,7 @@ impl<'a> Parser<'a> {
             .resolve(self.trie, "output_type")
             .ok()
             .and_then(|r| fields.iter().position(|&f| f == r.identity))
-            .filter(|&i| (*fields[i]).ty == types.type_)
+            .filter(|&i| dyad::ty(fields[i]) == types.type_)
             .map_or(types.void_, |i| key[i]);
         let (input, places) = self.hidden_param_record(&params, 0)?;
         self.cx.run_fields = Some((ty, places));
@@ -505,7 +506,7 @@ impl<'a> Parser<'a> {
             let u64_ty = self.types.numtypes[crate::identities::NumType::U64 as usize];
             let leaf = self.rt.store.alloc_raw(u64_ty, bytes);
             // SAFETY: `f` is the node `fn_over_body` just built over its seven-slot record.
-            unsafe { *((*f).value as *mut DyadPtr).add(FN_RECEIVER) = leaf };
+            unsafe { *(dyad::value(f) as *mut DyadPtr).add(FN_RECEIVER) = leaf };
         }
         f
     }
@@ -539,7 +540,7 @@ impl<'a> Parser<'a> {
         unsafe {
             let fields = crate::identities::meta::record_fields_of(input);
             for &param in crate::identities::array::items(fields) {
-                let logos = (*param).ty;
+                let logos = dyad::ty(param);
                 // A parameter's slot is sized by the rule that sizes a local; a
                 // bare one holds the 8-byte container.
                 let width = if logos.is_null() {
@@ -552,7 +553,7 @@ impl<'a> Parser<'a> {
                 let frame = self.cx.frames.last_mut().expect("parse_fn just pushed a frame");
                 let offset = frame.size;
                 frame.size += width;
-                (*param).value = crate::dyad::frame_place(depth, offset);
+                dyad::set_value(param, crate::dyad::frame_place(depth, offset));
             }
         }
 
@@ -568,7 +569,7 @@ impl<'a> Parser<'a> {
             ]);
             // SAFETY: `declared` is the just-declared placeholder; nothing has read it, and the fixpoint overwrites it.
             unsafe {
-                (*declared).value = early;
+                dyad::set_value(declared, early);
             }
         }
 
@@ -634,7 +635,7 @@ impl<'a> Parser<'a> {
             return Ok(());
         };
         let types = self.types;
-        let value = *((*node).value as *const DyadPtr);
+        let value = *(dyad::value(node) as *const DyadPtr);
         let place = types.through(value);
         if self.cx.open[frame.open_below..].iter().any(|s| s.owned.contains(&place)) {
             return Err(ParseError::OwningEscape);
@@ -700,7 +701,7 @@ impl<'a> Parser<'a> {
         // A `!=` check whose branch raises leaves the cell checked for the rest of the scope.
         if let Some((key, ty, false)) = check {
             // SAFETY: `then` is the reduced dyad just parsed.
-            if els.is_null() && unsafe { (*types.through(then)).ty } == types.error.error {
+            if els.is_null() && unsafe { dyad::ty(types.through(then)) } == types.error.error {
                 let scope = self.cx.open.last_mut().expect("the `if` stands in an open scope");
                 scope.narrowed.push((key, ty));
             }
@@ -946,7 +947,7 @@ impl<'a> Parser<'a> {
         let types = self.types;
         // SAFETY: `step` is the reduced dyad just parsed.
         let step_was_literal =
-            step.is_some_and(|s| unsafe { (*types.through(s)).ty } == types.rational);
+            step.is_some_and(|s| unsafe { dyad::ty(types.through(s)) } == types.rational);
         let mut parts = vec![start, end];
         if let Some(s) = step {
             parts.push(s);
@@ -964,11 +965,14 @@ impl<'a> Parser<'a> {
                 // variable through, and reading its tagged offset as an address is the crash class the reading rule ends.
                 use crate::identities::read::{read_kind, Read};
                 if !matches!(read_kind(types, step), Read::Scalar(_))
-                    || crate::dyad::is_place((*step).value)
+                    || crate::dyad::is_place(dyad::value(step))
                 {
                     return Err(ParseError::BadStep);
                 }
-                (numtype::read_scalar((*step).ty, (*step).value), numtype::of_type_node(logos))
+                (
+                    numtype::read_scalar(dyad::ty(step), dyad::value(step)),
+                    numtype::of_type_node(logos),
+                )
             };
             if numtype::apply_compare(numtype::CmpOp::Gt, nt, bits, 0) == 0 {
                 return Err(ParseError::BadStep);
@@ -1102,8 +1106,8 @@ impl<'a> Parser<'a> {
             let call = build_call(self.rt.store, callee, &args);
             // SAFETY: `callee` is a reduced dyad; a `fn` callee's value is its field record or null.
             let record_out = unsafe {
-                if (*callee).ty == types.fn_type && !(*callee).value.is_null() {
-                    let out = *((*callee).value as *const DyadPtr).add(FN_OUTPUT);
+                if dyad::ty(callee) == types.fn_type && !dyad::value(callee).is_null() {
+                    let out = *(dyad::value(callee) as *const DyadPtr).add(FN_OUTPUT);
                     crate::identities::by_copy::record_width(types, out).map(|w| (out, w))
                 } else {
                     None
@@ -1223,7 +1227,7 @@ impl<'a> Parser<'a> {
         let defer_ = self.types.defer_;
         // SAFETY: `exprs` are reduced dyads just parsed/built.
         let is_value = |e: DyadPtr| unsafe {
-            !crate::identities::numtype::is_comment_type((*e).ty) && (*e).ty != defer_
+            !crate::identities::numtype::is_comment_type(dyad::ty(e)) && dyad::ty(e) != defer_
         };
         let values = exprs.iter().filter(|&&e| is_value(e)).count();
         match (values, exprs.len()) {
@@ -1263,8 +1267,8 @@ impl<'a> Parser<'a> {
                 let (tail_value, returned) = unsafe {
                     let t = exprs[tail];
                     // `return x` yields `x`, so the escape rides its operand.
-                    if (*t).ty == types.return_ && !(*t).value.is_null() {
-                        (*((*t).value as *const DyadPtr), true)
+                    if dyad::ty(t) == types.return_ && !dyad::value(t).is_null() {
+                        (*(dyad::value(t) as *const DyadPtr), true)
                     } else {
                         (t, false)
                     }
@@ -1291,7 +1295,7 @@ impl<'a> Parser<'a> {
                                 self.rt.store,
                                 types,
                                 place,
-                                (*place).ty,
+                                dyad::ty(place),
                             )
                         };
                         let (_, lines) = crate::identities::array::parts(
@@ -1357,7 +1361,7 @@ impl<'a> Parser<'a> {
         for node in lists.into_iter().flatten() {
             // SAFETY: every pending item is a dyad this parser built into its store, which outlives the pass.
             unsafe {
-                let ty = (*node).ty;
+                let ty = dyad::ty(node);
                 // A `[…]` line is a list that goes whole to the call that takes it, which
                 // evaluates its lines when it runs (DESIGN ›A bracket goes to the call whole‹).
                 if crate::identities::numtype::is_comment_type(ty)

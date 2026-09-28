@@ -5,6 +5,7 @@
 //! dyad plus the facts of its appearance (DESIGN ›The scope's constructor is the driver‹).
 
 use super::*;
+use crate::dyad;
 
 /// One cell of the tape: a dyad pointer (a binding, a fresh dyad, or the built
 /// node) plus the tape's own two facts, the flag and the lexed spelling
@@ -135,8 +136,8 @@ impl Cell {
     /// identity, a constructed node).
     pub fn binding(&self, types: &Core) -> DyadPtr {
         // SAFETY: a cell's dyad is null or a dyad from the store.
-        if !self.constructed && !self.dyad.is_null() && unsafe { (*self.dyad).ty } == types.binding_
-        {
+        let bound = !self.dyad.is_null() && unsafe { dyad::ty(self.dyad) } == types.binding_;
+        if !self.constructed && bound {
             self.dyad
         } else {
             std::ptr::null_mut()
@@ -146,7 +147,7 @@ impl Cell {
     /// An unconstructed cell whose fresh dyad has both slots null.
     pub fn is_fresh(&self) -> bool {
         // SAFETY: a cell's dyad is null or a dyad from the store.
-        !self.constructed && !self.dyad.is_null() && unsafe { (*self.dyad).ty }.is_null()
+        !self.constructed && !self.dyad.is_null() && unsafe { dyad::ty(self.dyad) }.is_null()
     }
 
     /// The finished group `(` leaves, which the identity to its left may

@@ -5,6 +5,7 @@
 //! `caller`) and `import`, which reads a file as text dropped in place.
 
 use super::*;
+use crate::dyad;
 
 /// The once-per-run import registry: a file loads once per run, every
 /// importer sharing the one loaded section, and a path met again while its
@@ -414,10 +415,10 @@ impl<'a> Parser<'a> {
             unsafe { self.close_item(node) };
             // SAFETY: `node` was just parsed into the store, which outlives the pass.
             unsafe {
-                if (*node).ty != self.types.comment_ {
+                if dyad::ty(node) != self.types.comment_ {
                     tail = node;
                 }
-                if (*node).ty == self.types.declare_ {
+                if dyad::ty(node) == self.types.declare_ {
                     let name = Binding::spelling(crate::identities::declare::binding_of(node));
                     let resolved = self
                         .cx

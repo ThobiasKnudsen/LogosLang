@@ -5,6 +5,7 @@
 //! granted by, ownership marks, and the unwritten-fields rule.
 
 use super::*;
+use crate::dyad;
 
 impl<'a> Parser<'a> {
     /// A gate word marks the declaration that just reduced to its right.
@@ -108,7 +109,7 @@ impl<'a> Parser<'a> {
         if !crate::identities::this::is_field_read(self.types, target) {
             return;
         }
-        let this = *((*target).value as *const DyadPtr);
+        let this = *(dyad::value(target) as *const DyadPtr);
         if let Some(def) = self.cx.definitions.last_mut() {
             def.wrote_receiver |= !def.in_parse && !this.is_null() && this == def.this_param;
         }
@@ -282,7 +283,7 @@ impl<'a> Parser<'a> {
     /// unwritten-fields rule noted one: the item the sibling rule reads.
     pub(crate) fn note_write(&mut self, node: DyadPtr, fill: (DyadPtr, DyadPtr)) {
         // SAFETY: `node` is the `=` node just built.
-        if unsafe { (*node).ty } == self.types.tape.write {
+        if unsafe { dyad::ty(node) } == self.types.tape.write {
             self.forget_narrowed();
         }
         let scope = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
@@ -358,9 +359,9 @@ impl<'a> Parser<'a> {
             }
             return;
         }
-        let target = *((*item).value as *const DyadPtr);
+        let target = *(dyad::value(item) as *const DyadPtr);
         if target.is_null()
-            || (*target).ty != self.types.binding_
+            || dyad::ty(target) != self.types.binding_
             || !Binding::has_gate(target, self.types.unknown)
             || Binding::read(target).scope != scope
         {
@@ -378,7 +379,7 @@ impl<'a> Parser<'a> {
     unsafe fn leave_fields_unwritten(&mut self, binding: DyadPtr, t: DyadPtr, defaults: bool) {
         let fields = crate::identities::array::items(crate::identities::meta::record_fields_of(t));
         let unwritten: Vec<DyadPtr> =
-            fields.iter().copied().filter(|&f| !defaults || (*f).value.is_null()).collect();
+            fields.iter().copied().filter(|&f| !defaults || dyad::value(f).is_null()).collect();
         if unwritten.is_empty() {
             return;
         }
@@ -408,7 +409,7 @@ impl<'a> Parser<'a> {
         if unwritten.is_null() {
             return Ok(None);
         }
-        let t = (*lhs).ty;
+        let t = dyad::ty(lhs);
         let mut scope = ScopeStack::new();
         scope.push(crate::identities::meta::record_scope_of(t));
         let fields = crate::identities::array::items(crate::identities::meta::record_fields_of(t));
@@ -502,7 +503,7 @@ impl<'a> Parser<'a> {
         };
         let pattern: Option<Vec<u8>> = if tok.constructed {
             // SAFETY: a constructed cell holds a node from the store.
-            if unsafe { (*tok.dyad).ty } == self.types.regex_ {
+            if unsafe { dyad::ty(tok.dyad) } == self.types.regex_ {
                 // SAFETY: a `regex` node's value is a text blob.
                 Some(unsafe { crate::identities::string::text(tok.dyad) }.to_vec())
             } else {
@@ -523,7 +524,7 @@ impl<'a> Parser<'a> {
         // spelling. `fn`-typed so a recursive self-call sees a function-typed callee.
         let placeholder = if tok.is_fresh() {
             // SAFETY: a fresh cell's dyad is a dyad from the store.
-            unsafe { (*tok.dyad).ty = self.types.fn_type };
+            unsafe { dyad::set_ty(tok.dyad, self.types.fn_type) };
             tok.dyad
         } else {
             self.rt.store.alloc_raw(self.types.fn_type, std::ptr::null_mut())
@@ -571,7 +572,7 @@ impl<'a> Parser<'a> {
                 Some(t)
             }
             // SAFETY: as above.
-            _ if unsafe { (*read).ty } == self.types.tape.cell_value => Some(self.types.type_),
+            _ if unsafe { dyad::ty(read) } == self.types.tape.cell_value => Some(self.types.type_),
             // SAFETY: as above.
             _ => unsafe { crate::identities::hashmap::box_of(self.types, read) },
         };
@@ -579,11 +580,11 @@ impl<'a> Parser<'a> {
         let declared = unsafe {
             let empty_node = cell.hole
                 && !cell.owning
-                && crate::identities::meta::is_node_valued((*value).ty, self.types.fn_type);
+                && crate::identities::meta::is_node_valued(dyad::ty(value), self.types.fn_type);
             if empty_node {
                 // `v := T ?` of a type whose values are nodes: a new empty node each time the
                 // declaration runs, its fields filled one by one as a parse fills `tape[0]`.
-                let t = (*value).ty;
+                let t = dyad::ty(value);
                 let template = crate::identities::this::empty_node(self.rt.store, t);
                 let node = crate::identities::this::build_copy(self.rt.store, self.types, template);
                 let place = self.alloc_local(t, 8);
@@ -604,7 +605,7 @@ impl<'a> Parser<'a> {
                 self.cx.scopes.rebind(binding, value);
                 // `a := own t ?`: the owner of whatever node is written into it later.
                 if cell.owning {
-                    let drop = crate::identities::meta::instances_drop_of((*value).ty);
+                    let drop = crate::identities::meta::instances_drop_of(dyad::ty(value));
                     self.own_node(binding, value, drop);
                 }
                 // `a := own @T ?`: the owner of whatever block is written into it later.
@@ -624,7 +625,7 @@ impl<'a> Parser<'a> {
                     let scope = self.teardown_scope();
                     self.cx.open[scope].defers.push(defer_node);
                 }
-                if !crate::identities::hashmap::is_hashmap(self.types, (*value).ty) {
+                if !crate::identities::hashmap::is_hashmap(self.types, dyad::ty(value)) {
                     Binding::add_gate(
                         self.rt.store,
                         self.types.array_,
@@ -633,18 +634,19 @@ impl<'a> Parser<'a> {
                     );
                     // `T ?` of a record leaves zeroed bytes, not the defaults, so every field
                     // waits for its write.
-                    if crate::identities::meta::is_record_type((*value).ty) {
-                        self.leave_fields_unwritten(binding, (*value).ty, false);
+                    if crate::identities::meta::is_record_type(dyad::ty(value)) {
+                        self.leave_fields_unwritten(binding, dyad::ty(value), false);
                     }
                 }
                 value
-            } else if (*read).ty == self.types.construct_ || (*read).ty == self.types.by_copy.result
+            } else if dyad::ty(read) == self.types.construct_
+                || dyad::ty(read) == self.types.by_copy.result
             {
                 // Both fill the place at operand 0, which becomes the name's own.
-                let ops = (*read).value as *mut DyadPtr;
+                let ops = dyad::value(read) as *mut DyadPtr;
                 let instance = *ops;
-                (*placeholder).ty = (*instance).ty;
-                (*placeholder).value = (*instance).value;
+                dyad::set_ty(placeholder, dyad::ty(instance));
+                dyad::set_value(placeholder, dyad::value(instance));
                 *ops = placeholder;
                 value
             } else if crate::identities::read::read_kind(self.types, read)
@@ -711,7 +713,7 @@ impl<'a> Parser<'a> {
                 let scope = self.teardown_scope();
                 self.cx.open[scope].defers.push(defer_node);
                 init
-            } else if (*read).ty != self.types.rational
+            } else if dyad::ty(read) != self.types.rational
                 && matches!(
                     crate::identities::numtype_of(self.types, value),
                     crate::identities::Operand::Concrete(_)
@@ -728,8 +730,8 @@ impl<'a> Parser<'a> {
                 self.cx.scopes.rebind(binding, place);
                 init
             } else {
-                (*placeholder).ty = (*read).ty;
-                (*placeholder).value = (*read).value;
+                dyad::set_ty(placeholder, dyad::ty(read));
+                dyad::set_value(placeholder, dyad::value(read));
                 placeholder
             }
         };
@@ -778,17 +780,17 @@ impl<'a> Parser<'a> {
                 Some((crate::identities::read::Read::Scalar(_), _))
             );
             if scalar && ty != types.bool_ {
-                if (*read).ty != types.rational {
+                if dyad::ty(read) != types.rational {
                     return Err(ParseError::UnsupportedOperands);
                 }
                 crate::identities::commit_literal_to(self.rt.store, types, read, ty)?
             } else if scalar {
                 // `bool` is physically an i32 0/1 in storage; only `true` and
                 // `false` have bits at parse.
-                if (*read).ty != types.bool_ || (*read).value.is_null() {
+                if dyad::ty(read) != types.bool_ || dyad::value(read).is_null() {
                     return Err(ParseError::UnsupportedOperands);
                 }
-                let bits = std::ptr::read_unaligned((*read).value as *const i32);
+                let bits = std::ptr::read_unaligned(dyad::value(read) as *const i32);
                 let storage = self.rt.store.alloc_bytes(&bits.to_ne_bytes());
                 self.rt.store.alloc_raw(types.bool_, storage)
             } else {

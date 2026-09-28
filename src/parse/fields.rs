@@ -5,6 +5,7 @@
 //! `:` reads of the lex level.
 
 use super::*;
+use crate::dyad;
 
 /// The member right of `.`: the name's span in the source, and the `[i]` or `(…)` cell
 /// some reads take after it.
@@ -71,7 +72,7 @@ impl<'a> Parser<'a> {
         value: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
-        let ops = (*target).value as *const DyadPtr;
+        let ops = dyad::value(target) as *const DyadPtr;
         let cell = crate::identities::tape::build_slot(self.rt.store, types, *ops, *ops.add(1));
         if !self.is_node_cell(cell) || !(*ops.add(2)).is_null() {
             return Err(ParseError::StampOutsideParse);
@@ -101,7 +102,7 @@ impl<'a> Parser<'a> {
             return Ok(args);
         }
         let name = || {
-            let spelled = if (*callee).ty == self.types.binding_ {
+            let spelled = if dyad::ty(callee) == self.types.binding_ {
                 Binding::spelling(callee)
             } else {
                 String::new()
@@ -168,7 +169,7 @@ impl<'a> Parser<'a> {
                 self.types,
                 this,
                 k,
-                (*items[index]).ty,
+                dyad::ty(items[index]),
                 binding,
                 fill,
             )
@@ -192,7 +193,7 @@ impl<'a> Parser<'a> {
     ) -> Result<Option<(DyadPtr, usize)>, ParseError> {
         use crate::identities::{array, numtype::NumType, scope};
         let types = self.types;
-        let ty = (*node).ty;
+        let ty = dyad::ty(node);
         if ty == types.scope && name == "dyads" {
             let arr = scope::dyads(self.rt.store, types.array_, node);
             if arr.is_null() {
@@ -227,8 +228,8 @@ impl<'a> Parser<'a> {
         name: &str,
     ) -> Result<Option<DyadPtr>, ParseError> {
         use crate::identities::{array, meta};
-        let ty = (*node).ty;
-        let value = (*node).value;
+        let ty = dyad::ty(node);
+        let value = dyad::value(node);
         if ty.is_null() || value.is_null() || crate::dyad::is_place(value) {
             return Ok(None);
         }
@@ -268,7 +269,7 @@ impl<'a> Parser<'a> {
         fields.push(meta::record_scope_of(t));
         fields.resolve(self.trie, name).ok().is_some_and(|r| {
             array::items(meta::record_fields_of(t)).contains(&r.identity)
-                && meta::is_node_valued((*r.identity).ty, self.types.fn_type)
+                && meta::is_node_valued(dyad::ty(r.identity), self.types.fn_type)
         })
     }
 
@@ -297,7 +298,7 @@ impl<'a> Parser<'a> {
             .and_then(|r| Some((items.iter().position(|&f| f == r.identity)?, r.binding)));
         if let Some((i, binding)) = found {
             let k = self.scalar_value(crate::identities::numtype::NumType::U64, i as i64);
-            let ty = (*items[i]).ty;
+            let ty = dyad::ty(items[i]);
             let node = this::build_field_read(
                 self.rt.store,
                 types,
@@ -334,8 +335,9 @@ impl<'a> Parser<'a> {
     unsafe fn path_operand(&mut self, node: DyadPtr) -> DyadPtr {
         use crate::identities::read::{read_kind, Read};
         let types = self.types;
-        let runs = (*node).ty != types.binding_
-            && ((*node).ty == types.scope || matches!(read_kind(types, node), Read::Executable(_)));
+        let runs = dyad::ty(node) != types.binding_
+            && (dyad::ty(node) == types.scope
+                || matches!(read_kind(types, node), Read::Executable(_)));
         if runs {
             self.reach(node)
         } else {
@@ -404,19 +406,22 @@ impl<'a> Parser<'a> {
             {
                 use crate::identities::tape;
                 let (types, store) = (self.types, &mut *self.rt.store);
-                if (*lhs).ty == types.tape.slot && name == "dyads" {
+                if dyad::ty(lhs) == types.tape.slot && name == "dyads" {
                     let Some(i) = key else {
                         return Ok((tape::build_cell_dyads(store, types, lhs), 0));
                     };
                     let line = tape::build_cell_dyad_at(store, types, lhs, i);
                     return Ok((self.narrowed_read(line), 1));
                 }
-                if (*lhs).ty == types.tape.cell_dyads && name == "size" {
+                if dyad::ty(lhs) == types.tape.cell_dyads && name == "size" {
                     return Ok((tape::build_cell_dyads_size(store, types, lhs), 0));
                 }
                 // A bare parameter holding a bracket a call was handed: its lines, read as a
                 // tape cell's are, when the body runs.
-                if (*lhs).ty.is_null() && crate::dyad::is_place((*lhs).value) && name == "dyads" {
+                if dyad::ty(lhs).is_null()
+                    && crate::dyad::is_place(dyad::value(lhs))
+                    && name == "dyads"
+                {
                     let Some(i) = key else {
                         return Ok((tape::build_bracket_dyads(store, types, lhs), 0));
                     };
@@ -449,18 +454,18 @@ impl<'a> Parser<'a> {
             }
             // `(2 ^ 3).lhs`: the node a comptime value was folded from keeps its fields.
             let lhs = if left.origin.is_null() { lhs } else { left.origin };
-            if (*lhs).ty == self.types.dyad_ {
+            if dyad::ty(lhs) == self.types.dyad_ {
                 return self.view_member(lhs, name).map(|n| (n, 0));
             }
             // `here.scope`, `caller.scope` (DESIGN ›Meta-navigation‹): `here`
             // knows its scope at the appearance, so the read folds; `caller`
             // reads the pass, so its `.scope` is a node run inside a constructor.
             let h = self.types.here;
-            if (*lhs).ty == h.here || (*lhs).ty == h.caller {
+            if dyad::ty(lhs) == h.here || dyad::ty(lhs) == h.caller {
                 if name != "scope" {
                     return Err(ParseError::BadReflectRead);
                 }
-                let node = if (*lhs).ty == h.here {
+                let node = if dyad::ty(lhs) == h.here {
                     self.reach(crate::identities::here::scope_of_here(lhs))
                 } else {
                     crate::identities::here::build_caller_scope(self.rt.store, self.types)
@@ -491,17 +496,19 @@ impl<'a> Parser<'a> {
             // An operator node's slots are the fields its own type defines:
             // `.operands[i]` fetches one, no view involved; a null slot is the checked error until `?`.
             if name == "operands"
-                && !(*lhs).ty.is_null()
+                && !dyad::ty(lhs).is_null()
                 && matches!(
-                    crate::identities::meta::kind_of((*lhs).ty),
+                    crate::identities::meta::kind_of(dyad::ty(lhs)),
                     Some(crate::identities::meta::TUPLE_TAG | crate::identities::meta::LIST_TAG)
                 )
             {
                 let i = index.ok_or(ParseError::ExpectedIndexBracket)?;
-                if i >= crate::identities::meta::arity_of((*lhs).ty) || (*lhs).value.is_null() {
+                if i >= crate::identities::meta::arity_of(dyad::ty(lhs))
+                    || dyad::value(lhs).is_null()
+                {
                     return Err(ParseError::BadReflectRead);
                 }
-                let ops = (*lhs).value as *const DyadPtr;
+                let ops = dyad::value(lhs) as *const DyadPtr;
                 let operand = *ops.add(i);
                 if operand.is_null() {
                     return Err(ParseError::BadReflectRead);
@@ -515,7 +522,7 @@ impl<'a> Parser<'a> {
             // function application‹); the name-compare stands in for resolution
             // through the type's scope. The leaf is minted now, entry zero; the run patches it in.
             if &self.cx.source[nstart..nstart + nlen] == "compile"
-                && (*lhs).ty == self.types.fn_type
+                && dyad::ty(lhs) == self.types.fn_type
             {
                 if !unit_call {
                     return Err(ParseError::ExpectedOpen);
@@ -564,7 +571,7 @@ impl<'a> Parser<'a> {
             }
         }
         // Through a record pointer, `p@.x` folds the field offset into the deref.
-        if (*lhs).ty == self.types.deref_ {
+        if dyad::ty(lhs) == self.types.deref_ {
             let (ptr_expr, pointee, base_off) = crate::identities::pointer::deref_parts(lhs);
             if pointee.is_null() || !crate::identities::meta::is_record_type(pointee) {
                 return Err(ParseError::UnsupportedOperands);
@@ -582,7 +589,7 @@ impl<'a> Parser<'a> {
                     self.rt.store,
                     types,
                     ptr_expr,
-                    (*field).ty,
+                    dyad::ty(field),
                     base_off as usize + offset,
                 ),
                 0,
@@ -590,10 +597,10 @@ impl<'a> Parser<'a> {
         }
         // The access is a place, its offset folded into the instance's own
         // place now; `wrapping_add` keeps a frame-tagged value a valid tagged offset.
-        let record_logos = (*lhs).ty;
+        let record_logos = dyad::ty(lhs);
         if record_logos.is_null()
             || !crate::identities::meta::is_record_type(record_logos)
-            || (*lhs).value.is_null()
+            || dyad::value(lhs).is_null()
         {
             return Err(ParseError::UnsupportedOperands);
         }
@@ -609,7 +616,7 @@ impl<'a> Parser<'a> {
                         self.check_receiver_write(&left, member)?;
                         // A record laid out in bytes is handed on as its own place, any
                         // other value by a `dyad` view, as a `dyad ?` parameter takes a node.
-                        let view = if crate::dyad::is_place((*lhs).value) {
+                        let view = if crate::dyad::is_place(dyad::value(lhs)) {
                             crate::identities::instance::layout(record_logos)?;
                             let types = self.types;
                             crate::identities::this::build_on_record(
@@ -630,8 +637,8 @@ impl<'a> Parser<'a> {
                 return Ok((member, 0));
             }
         };
-        let addr = (*lhs).value.wrapping_add(offset);
-        let node = self.rt.store.alloc_raw((*field).ty, addr);
+        let addr = dyad::value(lhs).wrapping_add(offset);
+        let node = self.rt.store.alloc_raw(dyad::ty(field), addr);
         // Every binding along the path grants a write into the place: the
         // name the path starts at, then each field.
         let mut path = self.path_of(&left);
@@ -692,7 +699,7 @@ impl<'a> Parser<'a> {
         // A name its value's parse woke stands constructed and still holds its binding.
         let woke = tape.at(-1).filter(|c| c.constructed && !c.dyad.is_null()).map(|c| c.dyad);
         // SAFETY: a constructed cell's dyad is a dyad from the store.
-        let named = woke.filter(|&d| unsafe { (*d).ty } == self.types.binding_).unwrap_or(root);
+        let named = woke.filter(|&d| unsafe { dyad::ty(d) } == self.types.binding_).unwrap_or(root);
         // SAFETY: `named` is null or a binding dyad; `lhs` a reduced dyad off the tape.
         let fills = unsafe {
             self.check_field_unwritten(named, lhs, &source[nstart..nstart + nlen], writes)
@@ -718,7 +725,8 @@ impl<'a> Parser<'a> {
         // SAFETY: `node` is a node from the store.
         let folded_type = this_read
             && unsafe {
-                (*node).ty == self.types.type_ && crate::identities::meta::kind_of(node).is_some()
+                dyad::ty(node) == self.types.type_
+                    && crate::identities::meta::kind_of(node).is_some()
             };
         if folded_type {
             tape.set_dyad(0, node);
@@ -744,7 +752,7 @@ impl<'a> Parser<'a> {
         let key = self.index_node_at(tape, offset)?;
         // SAFETY: the interior is a node from the store.
         unsafe {
-            if (*key).ty != self.types.rational {
+            if dyad::ty(key) != self.types.rational {
                 return None;
             }
             let i = crate::identities::rational::mold(key)?;
@@ -767,12 +775,12 @@ impl<'a> Parser<'a> {
         // SAFETY: a dyad cell is a node from the store; a `square_brackets` node's value
         // holds its `dyads` first, as a scope's does.
         unsafe {
-            if (*d).ty != self.types.square_brackets {
+            if dyad::ty(d) != self.types.square_brackets {
                 return None;
             }
             let defer_ = self.types.defer_;
             let mut values = crate::identities::scope::exprs_of(d)?.iter().copied().filter(|&e| {
-                !crate::identities::numtype::is_comment_type((*e).ty) && (*e).ty != defer_
+                !crate::identities::numtype::is_comment_type(dyad::ty(e)) && dyad::ty(e) != defer_
             });
             let key = values.next()?;
             values.next().is_none().then_some(key)
@@ -860,10 +868,10 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `callee` must be a resolved dyad from the store.
     pub(super) unsafe fn returns_type(&self, callee: DyadPtr) -> bool {
-        if callee.is_null() || (*callee).ty != self.types.fn_type {
+        if callee.is_null() || dyad::ty(callee) != self.types.fn_type {
             return false;
         }
-        let fields = (*callee).value as *const DyadPtr;
+        let fields = dyad::value(callee) as *const DyadPtr;
         !fields.is_null() && *fields.add(FN_OUTPUT) == self.types.type_
     }
 
@@ -902,10 +910,10 @@ impl<'a> Parser<'a> {
         // The pointer expression is stored as it stands (a use of a name is
         // its binding); its type is read through the reading rule.
         let read = self.types.through(lhs);
-        let ptr_ty = if (*read).ty == self.types.deref_ {
+        let ptr_ty = if dyad::ty(read) == self.types.deref_ {
             crate::identities::pointer::deref_parts(read).1
         } else {
-            (*read).ty
+            dyad::ty(read)
         };
         let pointee = if ptr_ty == self.types.plus || ptr_ty == self.types.minus {
             // A pointer step, `(p + k)@`: its pointee is the stepped pointer's.
@@ -952,7 +960,7 @@ impl<'a> Parser<'a> {
             let placed = matches!(
                 read_kind(self.types, node),
                 Read::Scalar(_) | Read::Pointer(_) | Read::Aggregate
-            ) && crate::dyad::is_place((*node).value);
+            ) && crate::dyad::is_place(dyad::value(node));
             if !placed {
                 return Err(ParseError::BadAddressOf);
             }
@@ -1040,7 +1048,7 @@ impl<'a> Parser<'a> {
         nstart: usize,
         nlen: usize,
     ) -> Result<DyadPtr, ParseError> {
-        let group = if (*lhs).ty == self.types.binding_ {
+        let group = if dyad::ty(lhs) == self.types.binding_ {
             None
         } else {
             crate::identities::group::members(self.types, lhs)
@@ -1075,13 +1083,13 @@ impl<'a> Parser<'a> {
             return Err(ParseError::CellNotReachable);
         }
         // A name answers from its own binding; a node reached by path from itself.
-        let lhs = if (*lhs).ty == types.binding_ {
+        let lhs = if dyad::ty(lhs) == types.binding_ {
             lhs
         } else {
             self.known_node(lhs, std::ptr::null_mut()).unwrap_or(lhs)
         };
         // Read when the constructor runs.
-        if (*lhs).ty == types.tape.cell_dyad_at && name == "type" {
+        if dyad::ty(lhs) == types.tape.cell_dyad_at && name == "type" {
             return Ok(crate::identities::tape::build_cell_type(self.rt.store, types, lhs));
         }
         if crate::identities::tape::is_cell_read(types, lhs) {
@@ -1094,14 +1102,14 @@ impl<'a> Parser<'a> {
             }
             return Err(ParseError::ExpectedField);
         }
-        if (*lhs).ty == types.binding_ {
+        if dyad::ty(lhs) == types.binding_ {
             if name == "type" {
                 // Through a settled box: the type of what the name holds.
                 let cell = self.settled_type(Binding::read(lhs).dyad);
                 if cell.is_null() {
                     return Err(ParseError::BadReflectRead);
                 }
-                return Ok((*cell).ty);
+                return Ok(dyad::ty(cell));
             }
             // `b:start`: the declaring line, once it is complete, is a node
             // like any other (DESIGN ›The dyad's read surface‹).
@@ -1110,7 +1118,7 @@ impl<'a> Parser<'a> {
                 return Ok(self.path_operand(start));
             }
             let (field, offset, _) = self.resolve_field(types.binding_, nstart, nlen)?;
-            let addr = (*lhs).value.wrapping_add(offset);
+            let addr = dyad::value(lhs).wrapping_add(offset);
             // `a:name`: a `string`-typed place over the slot, marked as one so
             // the reading rule sees the container it is (no place of type `string` exists in a layout).
             if name == "name" {
@@ -1121,15 +1129,15 @@ impl<'a> Parser<'a> {
             // place mark `=` asks for.
             if name == "lex_rank" {
                 let place = crate::dyad::global_place(addr);
-                return Ok(self.rt.store.alloc_raw((*field).ty, place));
+                return Ok(self.rt.store.alloc_raw(dyad::ty(field), place));
             }
-            return Ok(self.rt.store.alloc_raw((*field).ty, addr));
+            return Ok(self.rt.store.alloc_raw(dyad::ty(field), addr));
         }
         // `tape[0].f:type` is the field's declared type, not the type of the read that reaches it;
         // an untyped field's type is the written value's, unknown until the constructor runs.
         if crate::identities::this::is_field_read(types, lhs) && name == "type" {
             let declared = if crate::identities::this::is_fill(types, lhs) {
-                (*Binding::read(crate::identities::this::field_binding_of(types, lhs)).dyad).ty
+                dyad::ty(Binding::read(crate::identities::this::field_binding_of(types, lhs)).dyad)
             } else {
                 std::ptr::null_mut()
             };
@@ -1139,7 +1147,7 @@ impl<'a> Parser<'a> {
             return Ok(declared);
         }
         let value = match name {
-            "type" => return Ok((*lhs).ty),
+            "type" => return Ok(dyad::ty(lhs)),
             "scope" => self.cx.scopes.current().unwrap_or(std::ptr::null_mut()),
             "start" | "end" | "gate" => std::ptr::null_mut(),
             _ => {
@@ -1179,16 +1187,16 @@ impl<'a> Parser<'a> {
             }
             let start = Binding::read(root).start;
             if start.is_null()
-                || (*start).ty != types.declare_
+                || dyad::ty(start) != types.declare_
                 || declare::binding_of(start) != root
             {
                 return None;
             }
             let rhs = declare::rhs_of(start);
-            let next = if (*rhs).ty == types.binding_ { rhs } else { std::ptr::null_mut() };
+            let next = if dyad::ty(rhs) == types.binding_ { rhs } else { std::ptr::null_mut() };
             return self.known_node(types.through(rhs), next);
         }
-        let stored = (*value).value;
+        let stored = dyad::value(value);
         if stored.is_null()
             || crate::dyad::is_place(stored)
             || !matches!(read::read_kind(types, value), read::Read::Pointer(p) if p == types.dyad_)
@@ -1205,16 +1213,16 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `view` must be a node of type `dyad`.
     unsafe fn view_member(&mut self, view: DyadPtr, name: &str) -> Result<DyadPtr, ParseError> {
-        let viewed = (*view).value as DyadPtr;
+        let viewed = dyad::value(view) as DyadPtr;
         if viewed.is_null() {
             return Err(ParseError::BadReflectRead);
         }
         match name {
-            "type" => Ok((*viewed).ty),
+            "type" => Ok(dyad::ty(viewed)),
             // The raw address as a u64; the `@void` spelling waits for pointer-value plumbing.
             "value" => Ok(self.scalar_value(
                 crate::identities::numtype::NumType::U64,
-                (*viewed).value as usize as i64,
+                dyad::value(viewed) as usize as i64,
             )),
             _ => Err(ParseError::BadReflectRead),
         }
@@ -1264,7 +1272,7 @@ impl<'a> Parser<'a> {
                 if c.is_null() {
                     return Err(ParseError::BadReflectRead);
                 }
-                if (*c).ty == self.types.fn_type {
+                if dyad::ty(c) == self.types.fn_type {
                     return Ok(c);
                 }
                 Ok(self.rt.store.alloc_raw(self.types.dyad_, c as *mut u8))

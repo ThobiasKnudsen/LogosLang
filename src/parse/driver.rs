@@ -5,6 +5,7 @@
 //! hand out the items; which constructor a cell wakes and how a Logos constructor runs.
 
 use super::*;
+use crate::dyad;
 
 /// Where a segment stopped, none consumed by the lexing step.
 pub(crate) enum Boundary {
@@ -285,7 +286,7 @@ impl<'a> Parser<'a> {
         let prose: Vec<(usize, usize, DyadPtr)> = tape
             .iter()
             // SAFETY: a constructed cell holds a node from the store.
-            .filter(|(_, c)| c.constructed && unsafe { (*c.dyad).ty } == comment_)
+            .filter(|(_, c)| c.constructed && unsafe { dyad::ty(c.dyad) } == comment_)
             .map(|(n, c)| (n, c.start, c.dyad))
             .collect();
         for (n, start, d) in prose {
@@ -388,8 +389,8 @@ impl<'a> Parser<'a> {
         let node_box = unsafe {
             let d = self.types.through(first);
             !d.is_null()
-                && (((*d).ty == self.types.type_ || (*d).ty == self.types.dyad_)
-                    && crate::dyad::is_place((*d).value)
+                && ((dyad::ty(d) == self.types.type_ || dyad::ty(d) == self.types.dyad_)
+                    && crate::dyad::is_place(dyad::value(d))
                     || !crate::identities::is_type_value(self.types, d)
                         && crate::identities::yields_type(self.types, d))
         };
@@ -406,7 +407,7 @@ impl<'a> Parser<'a> {
     pub(super) fn ctor_of(&self, id: DyadPtr) -> Option<ConstructFn> {
         // SAFETY: `id` is a resolved dyad from the store.
         unsafe {
-            if !id.is_null() && (*id).ty == self.types.fn_type {
+            if !id.is_null() && dyad::ty(id) == self.types.fn_type {
                 return Some(application);
             }
             if self.is_awake_instance(id) {
@@ -429,7 +430,7 @@ impl<'a> Parser<'a> {
     /// `id` must be null or a dyad from the store.
     pub(super) unsafe fn identity_head(&self, id: DyadPtr) -> Option<DyadPtr> {
         if id.is_null()
-            || (*id).ty != self.types.type_
+            || dyad::ty(id) != self.types.type_
             || crate::identities::meta::kind_of(id).is_none()
         {
             None
@@ -453,8 +454,8 @@ impl<'a> Parser<'a> {
             if id.is_null() {
                 return None;
             }
-            let ty = (*id).ty;
-            let value = (*id).value;
+            let ty = dyad::ty(id);
+            let value = dyad::value(id);
             let wakes = |t: DyadPtr| meta::is_record_type(t) && !meta::constructor_of(t).is_null();
             // A node of a type with a run stands for the value its run yields.
             if wakes(ty)
@@ -547,10 +548,11 @@ impl<'a> Parser<'a> {
             // parse let it stand: the node's run is the function built for its field-type set.
             // SAFETY: a constructed cell's dyad is null or a node from the store.
             let record = !cell.dyad.is_null()
-                && unsafe { crate::identities::meta::is_record_type((*cell.dyad).ty) };
+                && unsafe { crate::identities::meta::is_record_type(dyad::ty(cell.dyad)) };
             // A node a parse placed, of any type, as opposed to a place or a call's result.
             // SAFETY: `record` saw a node from the store.
-            let built = logos && record && unsafe { !crate::dyad::is_place((*cell.dyad).value) };
+            let built =
+                logos && record && unsafe { !crate::dyad::is_place(dyad::value(cell.dyad)) };
             if logos && record && (instance || built) {
                 let spelling = cell.spelling().to_string();
                 // SAFETY: the node is the one `run_logos_ctor` minted for `id`, `[field…, null, spec]`.
@@ -570,7 +572,7 @@ impl<'a> Parser<'a> {
             // constructor built it; the error points at the construct's own token.
             if !cell.dyad.is_null() {
                 // SAFETY: a constructed cell holds a node from the store.
-                let callee = unsafe { (*cell.dyad).ty };
+                let callee = unsafe { dyad::ty(cell.dyad) };
                 // SAFETY: `callee` is the resolved identity of the cell.
                 if let Err(e) = unsafe { self.check_call_reads(callee) } {
                     self.cx.pos = cell.start;
@@ -581,7 +583,8 @@ impl<'a> Parser<'a> {
             // in the driver's next turn; a node a parse built runs, and is never parsed again,
             // though the value its run yields is read by its own type's parse.
             // SAFETY: `built` saw a node from the store.
-            let reparsed = built && self.awake_type(cell.dyad) == Some(unsafe { (*cell.dyad).ty });
+            let reparsed =
+                built && self.awake_type(cell.dyad) == Some(unsafe { dyad::ty(cell.dyad) });
             if !same && !reparsed && !cell.bracket && self.is_awake_instance(cell.dyad) {
                 tape.set_constructed(0, false);
             }
@@ -614,10 +617,10 @@ impl<'a> Parser<'a> {
     /// `f` must be a resolved dyad from the store.
     pub(super) unsafe fn takes_this(&self, f: DyadPtr) -> bool {
         use crate::identities::{array, meta};
-        if f.is_null() || (*f).ty != self.types.fn_type || (*f).value.is_null() {
+        if f.is_null() || dyad::ty(f) != self.types.fn_type || dyad::value(f).is_null() {
             return false;
         }
-        let input = *((*f).value as *const DyadPtr);
+        let input = *(dyad::value(f) as *const DyadPtr);
         if input.is_null() || !meta::is_record_type(input) {
             return false;
         }
@@ -626,7 +629,7 @@ impl<'a> Parser<'a> {
         };
         // The receiver is the one parameter no name declares.
         let scope = meta::record_scope_of(input);
-        (*first).ty == self.types.dyad_
+        dyad::ty(first) == self.types.dyad_
             && !self.trie.bindings_in(scope).iter().any(|&b| Binding::read(b).dyad == first)
     }
 
@@ -636,12 +639,12 @@ impl<'a> Parser<'a> {
         self.is_awake_instance(id)
             || unsafe {
                 !id.is_null()
-                    && (*id).ty == self.types.type_
+                    && dyad::ty(id) == self.types.type_
                     && crate::identities::meta::kind_of(id).is_some()
                     && crate::identities::meta::is_record_type(id)
                     && {
                         let leaf = crate::identities::meta::constructor_of(id);
-                        !leaf.is_null() && (*leaf).ty == self.types.fn_type
+                        !leaf.is_null() && dyad::ty(leaf) == self.types.fn_type
                     }
             }
     }
@@ -652,8 +655,8 @@ impl<'a> Parser<'a> {
         // SAFETY: `d` is null or a resolved dyad from the store.
         unsafe {
             !d.is_null()
-                && ((*d).ty == self.types.fn_type
-                    || ((*d).ty == self.types.type_
+                && (dyad::ty(d) == self.types.fn_type
+                    || (dyad::ty(d) == self.types.type_
                         && crate::identities::meta::kind_of(d).is_some()))
         }
     }
@@ -763,7 +766,7 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `scope` must be a node from the store.
     pub(crate) unsafe fn args_of(&self, scope: DyadPtr) -> Vec<DyadPtr> {
-        if (*scope).ty != self.types.scope {
+        if dyad::ty(scope) != self.types.scope {
             return vec![scope];
         }
         let Some(items) = crate::identities::scope::exprs_of(scope) else {
@@ -773,7 +776,9 @@ impl<'a> Parser<'a> {
         items
             .iter()
             .copied()
-            .filter(|&e| !crate::identities::numtype::is_comment_type((*e).ty) && (*e).ty != defer_)
+            .filter(|&e| {
+                !crate::identities::numtype::is_comment_type(dyad::ty(e)) && dyad::ty(e) != defer_
+            })
             .collect()
     }
 
@@ -807,7 +812,7 @@ impl<'a> Parser<'a> {
             if leaf.is_null() {
                 return None;
             }
-            if (*leaf).ty == self.types.fn_type {
+            if dyad::ty(leaf) == self.types.fn_type {
                 return Some(logos_constructor);
             }
             // A leaf under another convention would be jumped to with the wrong signature.
@@ -962,7 +967,7 @@ impl<'a> Parser<'a> {
     ) -> Result<i64, crate::run::RunError> {
         let p = &mut *parser.cast::<Self>();
         let types = p.types;
-        let bracket = (*value).ty == types.scope || (*value).ty == types.square_brackets;
+        let bracket = dyad::ty(value) == types.scope || dyad::ty(value) == types.square_brackets;
         let builds = bracket
             && crate::identities::meta::is_record_type(ty)
             && !crate::identities::meta::bracket_builder_of(ty).is_null();
@@ -1001,7 +1006,7 @@ impl<'a> Parser<'a> {
     ) -> Result<DyadPtr, ParseError> {
         use crate::identities::read::{read_kind, Read};
         let types = self.types;
-        if (*types.through(value)).ty != types.square_brackets {
+        if dyad::ty(types.through(value)) != types.square_brackets {
             return Ok(value);
         }
         match read_kind(types, types.through(target)) {
