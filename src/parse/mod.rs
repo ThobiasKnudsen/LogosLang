@@ -30,6 +30,7 @@ mod types;
 pub use bodies::*;
 pub use driver::*;
 pub use error::*;
+pub use lex::lex_fragment;
 pub(crate) use lex::*;
 pub use quotes::*;
 pub use scopes::*;

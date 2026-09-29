@@ -1072,6 +1072,7 @@ A string is never a comment by position. Prose is marked: `#` takes a following 
 ### Strings nest by depth; only five escapes; `«…»` is the only spelling
 The `«` constructor counts `«`/`»` and `{`/`}`, so a string in an interpolation in a string needs no escape. Escapes: backslash before a character the string scope lexes, or before backslash: `\{`, `\}`, `\«`, `\»`, `\\`. All else is raw. No ASCII `"…"` anywhere (files, REPL, command line); typing `«»` is a keyboard matter.
 - **Ruled:** nesting and escapes 30 August 2026.
+- **Seed:** since 30 September 2026 (#220).
 - **Source:** DESIGN.md l.168
 
 ### Pointer types are prefix `@T`; dereference is postfix `x@`; `&x` is address-of
@@ -1751,7 +1752,7 @@ The cell holds the spelling and no node. `:=` enters the spelling into the trie 
 ### Unknown spellings are two pattern identities
 The trie holds patterns beside literals. The two fresh-spelling patterns are identities of the language start, beside the five names: a word, `[A-Za-z_][A-Za-z0-9_]*`, and a symbol run, `[^A-Za-z0-9_\s()\[\],«»#]+`. Each leaves the cell holding its spelling and no node (›An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value‹). Numbers keep their own pattern, since `1.05` split at the dot loses its zero. `«` and `#` read their own extent and need no pattern.
 - **Ruled:** 10 September 2026.
-- **Seed:** divergences (#110).
+- **Seed:** the fresh-spelling patterns since 10 September 2026 (#110). `«` and `#` read their own extent since 30 September 2026 (#220): the record of each carries an extent reader, and every lexer asks the token for it through one door, building or not.
 - **Source:** DESIGN.md l.211
 
 ### Every spelling has a `lex_rank`; rank first, then length

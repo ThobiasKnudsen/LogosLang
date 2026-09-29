@@ -1754,6 +1754,37 @@ fn comments_are_reflectable_nodes_invisible_to_value_flow() {
 }
 
 #[test]
+fn a_fragment_holds_a_quote_and_a_comment_each_as_one_cell() {
+    let (mut store, mut trie, core) = new_core();
+    let mut s = ScopeStack::new();
+    s.push(core.root_scope);
+    let spellings = |text: &str| -> Vec<String> {
+        let tape = crate::parse::lex_fragment(&s, &trie, text).unwrap();
+        tape.cells().iter().map(|c| c.spelling().to_string()).collect()
+    };
+    assert_eq!(spellings("* 2 # note"), ["*", "2", "# note"]);
+    assert_eq!(spellings("print «a «b» c»"), ["print", "«a «b» c»"]);
+    assert_eq!(spellings("# «a «b» ) c» x\n#\ty ( z\n)"), ["# «a «b» ) c»", "x", "#\ty ( z", ")"]);
+    // A quote's scopes are lexed with it, beside the frontier: a held body reads them by position.
+    let text = "print «a {x + «{y}»} b»";
+    let tape = crate::parse::lex_fragment(&s, &trie, text).unwrap();
+    let held: Vec<String> = tape.held_cells().iter().map(|c| c.spelling().to_string()).collect();
+    assert_eq!(spellings(text), ["print", "«a {x + «{y}»} b»"]);
+    assert_eq!(held, ["print", "«a {x + «{y}»} b»", "x", "+", "«{y}»", "y"]);
+
+    let mut p = Parser::new("# «a \\» {x} «c» b»", &mut store, &mut trie, &core, s);
+    let node = p.parse_next().unwrap().unwrap();
+    // SAFETY: `node` is the comment node just parsed, its value a string node.
+    unsafe {
+        assert_eq!(dyad::ty(node), core.comment_);
+        assert_eq!(
+            crate::identities::string::text(dyad::head(node).cast()),
+            "a » {x} «c» b".as_bytes()
+        );
+    }
+}
+
+#[test]
 fn a_scope_of_only_prose_has_no_value() {
     let (mut store, mut trie, core) = new_core();
     let mut s = ScopeStack::new();

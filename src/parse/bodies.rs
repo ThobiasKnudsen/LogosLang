@@ -298,7 +298,7 @@ impl<'a> Parser<'a> {
     ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
         let text = crate::identities::run_body::text_of(held);
-        let cells = (*crate::identities::run_body::cells_of(held)).cells();
+        let cells = (*crate::identities::run_body::cells_of(held)).held_cells();
         let mut chain = Vec::new();
         let mut scope =
             crate::identities::scope::parent_of(crate::identities::meta::record_scope_of(ty));
@@ -403,38 +403,21 @@ impl<'a> Parser<'a> {
     }
 
     /// `(start, len)` of the text inside the `( … )` at the cursor, consumed
-    /// with its brackets and constructed by nothing; the closer is found by
-    /// lexing token by token, so a bracket inside a quote or a `#` comment is text.
+    /// with its brackets and constructed by nothing: an untaken branch dropped unlexed, a
+    /// body held to be lexed later. The closer is found token by token, so a bracket
+    /// inside a quote or a `#` comment is text.
     pub(super) fn body_text_extent(&mut self) -> Result<(usize, usize), ParseError> {
         self.expect_open()?;
         let source = self.cx.source;
-        let bytes = source.as_bytes();
         let start = self.cx.pos;
         let mut depth = 0usize;
         loop {
             self.skip_whitespace();
-            if self.cx.pos >= bytes.len() {
+            let at = self.cx.pos;
+            if at >= source.len() {
                 return Err(ParseError::UnclosedBracket);
             }
-            if bytes[self.cx.pos] == b'#' {
-                self.cx.pos += 1;
-                while self.cx.pos < bytes.len() && matches!(bytes[self.cx.pos], b' ' | b'\t') {
-                    self.cx.pos += 1;
-                }
-                // The line form ends at the newline; the string form, `# «…»`,
-                // is the quote token the lexer reads next.
-                if !source[self.cx.pos..].starts_with('«') {
-                    while self.cx.pos < bytes.len() && bytes[self.cx.pos] != b'\n' {
-                        self.cx.pos += 1;
-                    }
-                    continue;
-                }
-            }
-            let r = self
-                .cx
-                .scopes
-                .lex(self.trie, &source[self.cx.pos..])
-                .map_err(ParseError::Resolve)?;
+            let r = self.token_at(at, true)?;
             let id = if r.fresh { std::ptr::null_mut() } else { r.identity };
             if id == self.types.open_ || id == self.types.open_sq_ {
                 depth += 1;
@@ -732,7 +715,7 @@ impl<'a> Parser<'a> {
     /// and dropped, since only constructing it finds where it ends.
     fn skip_branch(&mut self) -> Result<(), ParseError> {
         if self.at_open() {
-            return self.skip_group();
+            return self.body_text_extent().map(|_| ());
         }
         self.cx.runtime_depth += 1;
         let dead = self.parse_branch();
@@ -773,65 +756,6 @@ impl<'a> Parser<'a> {
             .alloc_words(if_type, &[cond, cond, std::ptr::null_mut(), self.types.ops.if_]))
     }
 
-    /// Drop a balanced `( … )` group without parsing it (DESIGN ›a constructor
-    /// may splice tokens in or drop upcoming ones before they lex‹): `«…»` text
-    /// and `#` prose are skipped opaquely, their parentheses being text.
-    fn skip_group(&mut self) -> Result<(), ParseError> {
-        /// `pos` must point at `«`; `None` if unterminated.
-        fn skip_text(bytes: &[u8], mut pos: usize) -> Option<usize> {
-            pos += 2; // the «
-            while pos + 1 < bytes.len() {
-                if bytes[pos] == 0xC2 && bytes[pos + 1] == 0xBB {
-                    return Some(pos + 2);
-                }
-                pos += 1;
-            }
-            None
-        }
-        self.expect_open()?;
-        let bytes = self.cx.source.as_bytes();
-        let mut depth = 1usize;
-        while self.cx.pos < bytes.len() {
-            match bytes[self.cx.pos] {
-                b'(' => {
-                    depth += 1;
-                    self.cx.pos += 1;
-                }
-                b')' => {
-                    depth -= 1;
-                    self.cx.pos += 1;
-                    if depth == 0 {
-                        return Ok(());
-                    }
-                }
-                0xC2 if bytes.get(self.cx.pos + 1) == Some(&0xAB) => {
-                    self.cx.pos =
-                        skip_text(bytes, self.cx.pos).ok_or(ParseError::UnclosedBracket)?;
-                }
-                b'#' => {
-                    // `#` takes a following «…» string or the rest of the line,
-                    // as the comment constructor reads it.
-                    self.cx.pos += 1;
-                    while self.cx.pos < bytes.len() && matches!(bytes[self.cx.pos], b' ' | b'\t') {
-                        self.cx.pos += 1;
-                    }
-                    if bytes.get(self.cx.pos) == Some(&0xC2)
-                        && bytes.get(self.cx.pos + 1) == Some(&0xAB)
-                    {
-                        self.cx.pos =
-                            skip_text(bytes, self.cx.pos).ok_or(ParseError::UnclosedBracket)?;
-                    } else {
-                        while self.cx.pos < bytes.len() && bytes[self.cx.pos] != b'\n' {
-                            self.cx.pos += 1;
-                        }
-                    }
-                }
-                _ => self.cx.pos += 1,
-            }
-        }
-        Err(ParseError::UnclosedBracket)
-    }
-
     /// Drop the dead tail after a taken `else`: `if ( cond ) then` links
     /// while further `else`s follow, or the final branch. A bare condition's
     /// end is found only by constructing it, so that link is parsed and dropped.
@@ -846,7 +770,7 @@ impl<'a> Parser<'a> {
                 self.cx.runtime_depth -= 1;
                 return dead.map(|_| ());
             }
-            self.skip_group()?; // ( cond )
+            self.body_text_extent()?; // ( cond )
             self.skip_branch()?;
             if !self.consume_else() {
                 return Ok(());

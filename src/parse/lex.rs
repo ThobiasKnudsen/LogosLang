@@ -4,17 +4,51 @@
 //! Lexing: one token at a time from the source or a held body's feed, and the token
 //! cursor the constructors read with.
 
+use std::ops::Range;
+
 use super::*;
 
+/// The `{…}` scopes a token opened, each the byte range of an interior.
+pub type Opened = Vec<Range<usize>>;
+
+/// What a token that reads its own extent read: its byte length, its spelling first, and
+/// the scopes it opened, both from the token's start.
+pub struct Extent {
+    pub len: usize,
+    pub scopes: Opened,
+}
+
+pub type ExtentFn = fn(&str) -> Result<Extent, ResolveError>;
+
+/// The one door every lexer takes to the token at the start of `text`: the selection
+/// rule's winner, its extent the trie's match unless its record says it reads its own
+/// (DESIGN ›Unknown spellings are two pattern identities‹), with the scopes such a token
+/// opened. With `fresh` the fresh-spelling patterns compete too.
+pub(crate) fn token(
+    scopes: &ScopeStack,
+    trie: &RegexTrie,
+    text: &str,
+    fresh: bool,
+) -> Result<(Resolved, Opened), ResolveError> {
+    let mut r = if fresh { scopes.lex(trie, text)? } else { scopes.resolve(trie, text)? };
+    // SAFETY: a resolved identity is null or a dyad from the store.
+    let Some(read) = (unsafe { crate::identities::meta::extent_reader(r.identity) }) else {
+        return Ok((r, Vec::new()));
+    };
+    let extent = read(text)?;
+    r.matched = extent.len;
+    Ok((r, extent.scopes))
+}
+
 /// The lex step the driver and `lex «…»` share: a fresh spelling is a cell with no node,
-/// the pattern's construction done at the lex. `None` at the end of the text; `text` must
-/// outlive the cell.
+/// the pattern's construction done at the lex. The cell comes with the `{…}` scopes it
+/// opened, as ranges of `text`. `None` at the end of the text; `text` must outlive the cell.
 pub(crate) fn lex_token(
     scopes: &ScopeStack,
     trie: &RegexTrie,
     text: &str,
     pos: usize,
-) -> Result<Option<(Cell, usize)>, ResolveError> {
+) -> Result<Option<(Cell, Opened)>, ResolveError> {
     let bytes = text.as_bytes();
     let mut start = pos;
     while start < bytes.len() && bytes[start].is_ascii_whitespace() {
@@ -23,31 +57,53 @@ pub(crate) fn lex_token(
     if start >= bytes.len() {
         return Ok(None);
     }
-    let r = scopes.lex(trie, &text[start..])?;
+    let (r, opened) = token(scopes, trie, &text[start..], true)?;
     // DESIGN ›An unknown spelling stays text on the tape; `:=` makes the binding, and the
     // node comes with the value‹.
     let dyad = if r.fresh { std::ptr::null_mut() } else { r.binding };
     // SAFETY: `text` outlives the cell (the caller's contract); `dyad` is null or the index's binding.
     let cell = unsafe { Cell::lexed(dyad, text, start, r.matched) };
-    Ok(Some((cell, start + r.matched)))
+    Ok(Some((cell, opened.into_iter().map(|s| start + s.start..start + s.end).collect())))
 }
 
 /// Every token of `text` as an unconstructed cell on a fresh tape centered on
-/// its first cell: the fragment `insert` splices (DESIGN ›Text is the quote‹).
-/// `text` must outlive the fragment's reads.
-pub(crate) fn lex_fragment(
+/// its first cell: the fragment `insert` splices (DESIGN ›Text is the quote‹), and a
+/// held body lexed once. The cells of the `{…}` scopes its quotes opened are lexed with
+/// them, beside the frontier. `text` must outlive the fragment's reads.
+pub fn lex_fragment(
     scopes: &ScopeStack,
     trie: &RegexTrie,
     text: &str,
 ) -> Result<ParsingTape, ResolveError> {
     let mut tape = ParsingTape::new();
     let mut pos = 0;
-    while let Some((cell, next)) = lex_token(scopes, trie, text, pos)? {
+    while let Some((cell, opened)) = lex_token(scopes, trie, text, pos)? {
         tape.push(cell);
-        pos = next;
+        pos = cell.end();
+        lex_scopes(scopes, trie, text, opened, &mut tape.inner)?;
     }
     tape.set_cursor(0);
     Ok(tape)
+}
+
+/// The cells of each scope, a scope inside one included; `text` is cut at the scope's end,
+/// so its lexing stops there.
+fn lex_scopes(
+    scopes: &ScopeStack,
+    trie: &RegexTrie,
+    text: &str,
+    opened: Opened,
+    into: &mut Vec<Cell>,
+) -> Result<(), ResolveError> {
+    for scope in opened {
+        let mut pos = scope.start;
+        while let Some((cell, deeper)) = lex_token(scopes, trie, &text[..scope.end], pos)? {
+            into.push(cell);
+            pos = cell.end();
+            lex_scopes(scopes, trie, text, deeper, into)?;
+        }
+    }
+    Ok(())
 }
 
 /// The cells of a held run body being constructed, served by the cursor's
@@ -76,12 +132,14 @@ impl<'a> Parser<'a> {
         } else {
             self.skip_whitespace();
             let source = self.cx.source;
-            let Some((cell, next)) = lex_token(&self.cx.scopes, self.trie, source, self.cx.pos)
-                .map_err(ParseError::Resolve)?
+            let start = self.cx.pos;
+            // The scopes a quote opened are lexed by whoever builds them, from the source.
+            let Some((cell, _)) = lex_token(&self.cx.scopes, self.trie, source, start)
+                .map_err(|e| self.lex_error(start, e))?
             else {
                 return Ok(None);
             };
-            self.cx.pos = next;
+            self.cx.pos = cell.end();
             if self.unbuilt(&cell) {
                 self.cx.pos = cell.start;
                 return Err(ParseError::Resolve(ResolveError::Unbuilt(
@@ -251,35 +309,21 @@ impl<'a> Parser<'a> {
         Some((cell.identity(self.types), cell.len))
     }
 
-    /// Lex a held run body's text once, at the definition: every token an
-    /// unconstructed cell, brackets included; a `#` comment's text is passed
-    /// over as its constructor will read it. `text` must live for the run.
-    pub(super) fn lex_body_fragment(
-        &mut self,
-        text: &'static str,
-    ) -> Result<ParsingTape, ParseError> {
-        let mut tape = ParsingTape::new();
-        let mut pos = 0;
-        while let Some((cell, next)) =
-            lex_token(&self.cx.scopes, self.trie, text, pos).map_err(ParseError::Resolve)?
-        {
-            pos = next;
-            let is_hash = cell.spelling() == "#";
-            tape.push(cell);
-            if is_hash {
-                let bytes = text.as_bytes();
-                while pos < bytes.len() && matches!(bytes[pos], b' ' | b'\t') {
-                    pos += 1;
-                }
-                if !text[pos..].starts_with('«') {
-                    while pos < bytes.len() && bytes[pos] != b'\n' {
-                        pos += 1;
-                    }
-                }
-            }
+    /// [`token`] at `pos` in the source.
+    pub(super) fn token_at(&mut self, pos: usize, fresh: bool) -> Result<Resolved, ParseError> {
+        let source = self.cx.source;
+        token(&self.cx.scopes, self.trie, &source[pos..], fresh)
+            .map(|(r, _)| r)
+            .map_err(|e| self.lex_error(pos, e))
+    }
+
+    /// A token that did not lex: an unclosed `«` or `{` is reported where it stands, `base`
+    /// being where the failed lookup's text began.
+    pub(super) fn lex_error(&mut self, base: usize, e: ResolveError) -> ParseError {
+        if let ResolveError::Unmatched { at, .. } = e {
+            self.cx.pos = base + at;
         }
-        tape.set_cursor(0);
-        Ok(tape)
+        ParseError::Resolve(e)
     }
 
     /// Never past a `#`: the sequence parser peeks at a statement-level `#`
@@ -308,7 +352,7 @@ impl<'a> Parser<'a> {
         if self.cx.pos >= source.len() {
             return None;
         }
-        let r = self.cx.scopes.resolve(self.trie, &source[self.cx.pos..]).ok()?;
+        let (r, _) = token(&self.cx.scopes, self.trie, &source[self.cx.pos..], false).ok()?;
         Some((r.identity, r.matched))
     }
 
@@ -381,7 +425,7 @@ impl<'a> Parser<'a> {
         {
             return None;
         }
-        let r = self.cx.scopes.lex(self.trie, rest).ok()?;
+        let (r, _) = token(&self.cx.scopes, self.trie, rest, true).ok()?;
         self.cx.pos = start + r.matched;
         Some((start, r.matched, r.fresh))
     }
@@ -400,7 +444,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::UnclosedBracket);
         }
         let start = self.cx.pos;
-        let r = self.cx.scopes.resolve(self.trie, &source[start..]).map_err(ParseError::Resolve)?;
+        let r = self.token_at(start, false)?;
         if r.identity == self.types.close_ {
             self.cx.pos = start + r.matched;
             Ok(())
