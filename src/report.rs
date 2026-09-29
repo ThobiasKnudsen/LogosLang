@@ -295,7 +295,9 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::OwnOutsideType => {
-            "`own` stands only in a type, `own @T ?` or `own t ?`; `move x` moves a value".into()
+            "`own` marks a hole, `own @T ?` or `own t ?`, and `-> own @T` is not in the seed yet; \
+             `move x` moves a value"
+                .into()
         }
         ParseError::NoSuchSlot(name) => format!(
             "`{name}` names no slot: a type body fills `share parse = (…)`, `share run = (…)`, \

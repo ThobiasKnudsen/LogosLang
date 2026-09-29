@@ -3131,7 +3131,8 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
         ("g := bag (), x := array i32 [1], g.items = x", "what is assigned must own too"),
         ("g := bag (), x := array i32 [1], y := x, g.items = move y", "only its owner can"),
         ("nd := type ( mut items := own t ? )", "must be freed by the type's `share free = (…)`"),
-        ("g := bag (), x := array i32 [1], g.items = own x", "`own` stands only in a type"),
+        ("g := bag (), x := array i32 [1], g.items = own x", "`move x` moves a value"),
+        ("mk := fn () -> own @i32 ( alloc 1 of i32 7 ), 1", "`-> own @T` is not in the seed"),
         ("nd := type ( mut n := own i32 ? )", "or a hole of a type"),
         ("f := fn (p := own t ?) -> i32 ( 1 )", "an `own` parameter"),
     ] {
