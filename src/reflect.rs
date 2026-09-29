@@ -202,9 +202,6 @@ pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
 /// `logos` carries an operand record; `node.value` has the shape it declares.
 unsafe fn operands_of(logos: DyadPtr, node: DyadPtr) -> Shape {
     let value = dyad::value(node) as *const DyadPtr;
-    if value.is_null() {
-        return Shape::Undefined; // declared, no operands yet
-    }
     let kind = meta::kind_of(logos).expect("operand records have a kind");
     let arity = meta::arity_of(logos);
     let slots =
