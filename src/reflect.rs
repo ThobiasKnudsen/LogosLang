@@ -164,7 +164,10 @@ pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
         };
     }
     if dyad::ty(logos) == types.fn_type {
-        return Shape::Call { callee: logos, args: scan_null_terminated(dyad::value(node)) };
+        return Shape::Call {
+            callee: logos,
+            args: crate::parse::null_terminated(dyad::value(node) as *const DyadPtr).to_vec(),
+        };
     }
     let Some(kind) = meta::kind_of(logos) else {
         return Shape::Undefined; // a type with no record yet, standing as a logos
@@ -210,30 +213,11 @@ unsafe fn operands_of(logos: DyadPtr, node: DyadPtr) -> Shape {
         meta::TUPLE_TAG => Shape::Tuple { slots },
         meta::LIST_TAG => Shape::List {
             head: slots,
-            tail: scan_null_terminated(
-                dyad::value(node).add(arity * std::mem::size_of::<DyadPtr>()),
-            ),
+            tail: crate::parse::null_terminated((dyad::value(node) as *const DyadPtr).add(arity))
+                .to_vec(),
         },
         _ => unreachable!("operand records are tuple or list"),
     }
-}
-
-/// The nodes of a null-terminated `dyad@` array (empty for a null array).
-///
-/// # Safety
-/// A non-null `value` must point at a null-terminated `dyad@` array.
-unsafe fn scan_null_terminated(value: *mut u8) -> Vec<DyadPtr> {
-    let p = value as *const DyadPtr;
-    let mut out = Vec::new();
-    if p.is_null() {
-        return out;
-    }
-    let mut i = 0;
-    while !(*p.add(i)).is_null() {
-        out.push(*p.add(i));
-        i += 1;
-    }
-    out
 }
 
 /// The text of a string node.

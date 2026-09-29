@@ -954,9 +954,8 @@ impl Lowerer<'_, '_> {
         let fields = dyad::value(callee) as *const DyadPtr;
         let ret = return_kind(self.types, *fields.add(FN_OUTPUT))?;
         let core = self.types;
-        let args = dyad::value(node) as *const DyadPtr; // [arg0 …, null]
-        let arg_count = (0..).take_while(|&i| !(*args.add(i)).is_null()).count();
-        if arg_count != by_copy::slots(core, callee).count() {
+        let args = crate::parse::null_terminated(dyad::value(node) as *const DyadPtr);
+        if args.len() != by_copy::slots(core, callee).count() {
             return Err(CompileError::ArityMismatch);
         }
         let words = by_copy::words(core, callee);
@@ -973,7 +972,7 @@ impl Lowerer<'_, '_> {
                 self.builder.ins().stack_store(dest, block, 0);
             }
             for (i, slot) in by_copy::slots(core, callee).enumerate() {
-                let arg = *args.add(i);
+                let arg = args[i];
                 let at = (slot.word * 8) as i32;
                 if let Some(width) = slot.width {
                     let src = by_copy::lower_record_addr(self, arg)?;

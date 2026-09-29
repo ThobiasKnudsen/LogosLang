@@ -890,10 +890,9 @@ impl<'a> Runtime<'a> {
         call_node: DyadPtr,
         dest: Option<*mut u8>,
     ) -> Result<Vec<i64>, RunError> {
-        let args = dyad::value(call_node) as *const DyadPtr; // [arg0 …, null]
-        let arg_count = (0..).take_while(|&i| !(*args.add(i)).is_null()).count();
+        let args = crate::parse::null_terminated(dyad::value(call_node) as *const DyadPtr);
         let types = self.types;
-        if arg_count != by_copy::slots(types, fn_node).count() {
+        if args.len() != by_copy::slots(types, fn_node).count() {
             return Err(RunError::ArityMismatch);
         }
         let mut values = vec![0i64; by_copy::words(types, fn_node)];
@@ -901,7 +900,7 @@ impl<'a> Runtime<'a> {
             values[0] = dest.ok_or(RunError::NoWholeRead)? as i64;
         }
         for (i, slot) in by_copy::slots(types, fn_node).enumerate() {
-            let arg = *args.add(i);
+            let arg = args[i];
             match slot.width {
                 Some(width) => {
                     let src = by_copy::record_addr(self, arg)?;

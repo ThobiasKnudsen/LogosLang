@@ -261,13 +261,23 @@ pub(crate) unsafe fn contains_return(types: &Core, node: DyadPtr) -> bool {
 
 /// `{type: callee, value: [args…, null]}`: null-terminated so `run` can count
 /// the arguments; a nullary call is a leaf, its one zero word the terminator.
-pub(super) fn build_call(store: &mut Store, callee: DyadPtr, args: &[DyadPtr]) -> DyadPtr {
+pub(crate) fn build_call(store: &mut Store, callee: DyadPtr, args: &[DyadPtr]) -> DyadPtr {
     if args.is_empty() {
         return store.alloc_leaf(callee);
     }
     let mut ops = args.to_vec();
     ops.push(std::ptr::null_mut());
     store.alloc_words(callee, &ops)
+}
+
+/// The words of a null-terminated run, the terminator left out: a call's arguments as
+/// `build_call` laid them, a list operand's tail.
+///
+/// # Safety
+/// `p` must point at a null-terminated run of node words.
+pub unsafe fn null_terminated<'a>(p: *const DyadPtr) -> &'a [DyadPtr] {
+    let n = (0..).take_while(|&i| !(*p.add(i)).is_null()).count();
+    std::slice::from_raw_parts(p, n)
 }
 
 impl<'a> Parser<'a> {

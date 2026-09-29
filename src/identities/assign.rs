@@ -316,17 +316,8 @@ unsafe fn build_call_write(
     record[FN_BODY] = body;
     record[FN_BCODE] = std::ptr::null_mut();
     let finder = store.alloc_words(dyad::ty(f), &record);
-    // The call's argument words, null-terminated, copied under the finder.
-    let args = dyad::value(call) as *const DyadPtr;
-    let mut words = Vec::new();
-    loop {
-        let w = *args.add(words.len());
-        words.push(w);
-        if w.is_null() {
-            break;
-        }
-    }
-    let found = store.alloc_words(finder, &words);
+    let args = crate::parse::null_terminated(dyad::value(call) as *const DyadPtr);
+    let found = crate::parse::build_call(store, finder, args);
     let place = super::pointer::build_deref(store, types, found, pointee, offset as usize);
     super::pointer::build_storeptr(store, types, place, rhs).map(Some)
 }
