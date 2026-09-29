@@ -2089,7 +2089,7 @@ A number shows as a number only because its type says how; no value is a special
 - **Ruled:** 29 September 2026, Thobias (#174), in place of the five displays put to him (the type's name, `pt(3, 4)`, `(3, 4)`, `dyad`, the address); the same day, the four points that ruling left: a slot like `free` and `parse`, text given back, an error by default, and "yes" to `void` showing nothing and to #182 being `@dyad`'s answer.
 - **Ruled (29 September 2026, Thobias):** the echo, `print «{…}»` and `error.X «{…}»` share the one slot "for now. but when building the error system more precicely this willl maybe change".
 - **Ruled (29 September 2026, Thobias):** the slot is named `print`, one word with the output word, over `show`, `text`, `display` and `spell`. **Why:** asked "maybe there is a better name tjen print then?", he answered "print because i guess print could also mean print text in a string and return the string".
-- **Open:** what the slots of `type`, `fn`, a scope and `@dyad` give back (#182).
+- **Open:** what the slots of `type`, `fn`, a scope and `@dyad` give back (#182), and those of the other pointer types, such as `@i32`, which `&x` makes when `x` is an `i32`.
 - **Seed:** divergence: `display_value` decides in Rust, by case; a record prints the address of its scratch bytes when unnamed and is a run error when named (#174). A fill written in Logos waits for text as a run-time value: the seed reads no text whole, not even `«hi»`, and has no `{…}` outside `print` and `error`.
 
 ### Importing is dropping the text there, wrapped in its own scope
