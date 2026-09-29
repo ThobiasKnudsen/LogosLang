@@ -95,6 +95,9 @@ Nothing moved from this section.
 ### The proof layer ships in v1.0.0's standard library, not in the seed
 - **History:** ›Feasibility‹'s "not needed for an initial release", superseded 5 September 2026.
 
+### The signature is a pattern: an unknown spelling in it is a hole
+- **History:** until 29 September 2026: "the spelling enters the trie pointing at a fresh null-slotted dyad". The fresh dyad went with the one-word node (#166, ›An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value‹): the spelling enters as a binding with no node yet; the sentence followed on 29 September 2026 (review round 2 of #166).
+
 ## The ecumenical proof system
 
 ### Branches and universes (superseded record)
@@ -499,6 +502,7 @@ Nothing moved from this section.
 
 ### What `lex` returns: a `parsing_tape` fragment
 - **History:** 2 September 2026: the fragment was an `array @dyad`. Superseded 14 September 2026 by `parsing_tape`.
+- **History:** until 29 September 2026: "Text that names nothing lexes to a fresh dyad with both slots `undefined`". The fresh dyad went with the one-word node (#166, ›An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value‹); the sentence followed on 29 September 2026 (review round 2 of #166).
 
 ### `lex` runs whenever it runs: no comptime/runtime split
 - **Seed detail (27 September 2026):** since 15 September 2026 (#62): an identity at the rank of the raw-text consumers that reads its quote at discovery (as `regex` does) and lexes it when its node *runs*, against the scopes open at that moment (the appearance's, for a constructor: the seed's reading of "the lex site"). The runtime carries the lexer only while the parser runs something. Each run lexes afresh, so an undeclared spelling gets its own fresh dyad per run. The spelling rides on the cell, so a spliced cell keeps its text and the number pattern's constructor builds `2` from `lex «* 2»`. `insert` takes a tape; the single-cell insert is gone. Stand-ins left: `lex` reads only its quote (a string value has no storage to read yet); a `tape[k]` read past the frontier at run time stays the checked error; a spliced cell's error caret falls where the fragment's offset lands in the source, the derived source map being unbuilt.
@@ -518,6 +522,7 @@ Nothing moved from this section.
 ### Unknown spellings are two pattern identities
 - **History:** 9 September 2026 (superseded 10 September): a fresh spelling reached from where the trie stops matching to the next whitespace, bracket, `,`, or start of a known spelling. So `^ := …` declared `^`, `a:=1` lexed `a` then `:=`, `x^2` with `x` declared lexed `x`, fresh `^`, `2`; a first appearance wanted spaces. Reason then: the lexer must bound an unknown spelling before it sees the `:=`; whitespace, brackets and `,` are the only structure; stopping at a known spelling keeps `a:=1` and `f(x)` readable.
 - **Seed detail (27 September 2026):** the letters-and-digits identifier scanner and the word-boundary check are divergences (#110).
+- **History:** until 29 September 2026: "Each builds the fresh null-slotted dyad." The fresh dyad went with the one-word node (#166, ›An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value‹); the sentence followed on 29 September 2026 (review round 2 of #166).
 
 ### Every spelling has a `lex_rank`; rank first, then length
 - **History:** first form, 10 September 2026, same day: only patterns ranked, and a literal met a pattern by length. First wording also claimed the boundary rule fell out of longest match; corrected the same day (under rank-before-length it does not).
@@ -783,6 +788,7 @@ Nothing moved from this section.
 ### The seed's tape shape (#60, #121) and its remaining stand-ins
 - ›Seed tape shape (#60, #121)‹ merged into ›The seed's tape shape (#60, #121) and its remaining stand-ins‹ on 27 September 2026
 - ›Seed stand-ins that remain‹ merged into ›The seed's tape shape (#60, #121) and its remaining stand-ins‹ on 27 September 2026
+- **History:** until 29 September 2026: "a fresh dyad for an unknown spelling" among what a cell may be. The fresh dyad went with the one-word node (#166, ›An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value‹); the sentence followed on 29 September 2026 (review round 2 of #166).
 
 ### Slot words are known only inside a type body
 - **History:** 19 to 28 September 2026: `run := 5` at the root was an ordinary declaration. Since 28 September 2026 `run` is also a word of the language start (›`run x` runs the expression to its right as soon as it is parsed, and stands as its value‹), so it is the no-shadowing error there; the slot still wins inside a type body.
@@ -843,6 +849,9 @@ Nothing moved from this section.
 
 ### A uniform model is not uniform storage
 - **History:** "(16 bytes; handle = address)" until 29 September 2026 (the one-word node, #166).
+
+### A dead name takes nothing; only `:=` may follow
+- **History:** until 29 September 2026: the Rejected line's reason read "the right `x` is the new placeholder". The placeholder went with the one-word node (#166, ›An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value‹): the right `x` is the new binding with no node yet; the wording followed on 29 September 2026 (review round 2 of #166).
 
 ## Standard library and ecosystem strategy
 

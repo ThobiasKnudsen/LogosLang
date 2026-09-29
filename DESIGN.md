@@ -217,7 +217,7 @@ A derivation is a chain of relations, each step citing its conjecture where it a
 ### The signature is a pattern: an unknown spelling in it is a hole
 The same spelling is the same hole. This is the one place an unknown spelling may stand anywhere but left of `:=` (›A language is a section with an authored start‹): the regex capture group lifted to the graph.
 - `conjecture` reads its own bracket, joining `fn` and `type` in the discovery-time set of ›The scope's constructor is the driver‹, because inside, an unknown spelling means a hole and names resolve in the conjecture's own scope.
-- The first lex of an unknown spelling declares it: the spelling enters the trie pointing at a fresh null-slotted dyad, as `key := ?` does. Later same spellings resolve to it; nothing is unified afterwards.
+- The first lex of an unknown spelling declares it: the spelling enters the trie as a binding with no node yet, as `key := ?` does (›An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value‹). Later same spellings resolve to it; nothing is unified afterwards.
 - An operator over holes constructs with its op slot unresolved, the generic-fn shape (›Deferral is authored‹). `where` is stored as residual code and runs per match.
 - A match is a frame whose parameters are the holes (›A function's surface‹: a call frame is an instance of its function). The holes are the conjecture's `input`, reflected like a parameter list; `a:dyad` in the frame is the matched node.
 - A known spelling is a reference (a constant of the pattern), never a hole, and no error fires when an outer name shares a hole's spelling. Accepted consequence: `a := 5` before `conjecture ( a + a -> 2 * a )` leaves no holes; it recognizes `5 + 5` alone.
@@ -1572,7 +1572,7 @@ Past the end of the source, past a boundary the tape does not cross for this con
 - **Source:** DESIGN.md l.211
 
 ### The seed's tape shape (#60, #121) and its remaining stand-ins
-A cell is the binding the trie resolved, a fresh dyad for an unknown spelling, or the node; `is_constructed` and the span are the tape's own facts. `parsing_tape` is a spelled type whose value holds the tape's handle. Its natives: `tape[k]`, `tape[k] = …`, `tape.is_constructed[k]`, `tape.insert(k, cells)`, `tape.remove(k)`, `tape.recenter(k)`, and `tape.spelling[k]` (#121). A Logos function reaches them through a `@parsing_tape` parameter. `tape.spelling[k]` hands back a string node built into the parser's store, the seed's form of a string value until strings are live: a string still has no storage to read, so a constructor may write the text into a cell, but nothing may yet run that cell.
+A cell is the binding the trie resolved, the spelling alone for an unknown one, or the node; `is_constructed` and the span are the tape's own facts. `parsing_tape` is a spelled type whose value holds the tape's handle. Its natives: `tape[k]`, `tape[k] = …`, `tape.is_constructed[k]`, `tape.insert(k, cells)`, `tape.remove(k)`, `tape.recenter(k)`, and `tape.spelling[k]` (#121). A Logos function reaches them through a `@parsing_tape` parameter. `tape.spelling[k]` hands back a string node built into the parser's store, the seed's form of a string value until strings are live: a string still has no storage to read, so a constructor may write the text into a cell, but nothing may yet run that cell.
 
 Stand-ins that remain:
 - A one-expression bracket is unwrapped to its expression, so the bracket a `(` landed is marked on the cell rather than read off the scope type.
@@ -1650,9 +1650,9 @@ Two things never needed a quote: reading an identity's fields and its binding (`
 
 ### What `lex` returns: a `parsing_tape` fragment
 `lex` returns a tape fragment, a `parsing_tape` value: the cells the lexer would have put on the frontier, with their flags and their spellings. Each cell points to the binding the trie resolved at the lex site (a dyad of type `binding`, which is why cells are `@dyad`; positions live in the derived source map, not in the cell). The cells are unconstructed; no constructor wakes. A single token is a one-cell fragment; a group is what a macro splices, `tape.insert(i, lex «(a, b)»)`. `insert` splices a tape into a tape.
-Text that names nothing lexes to a fresh dyad with both slots `undefined`, its spelling kept tape-side in `tape.spelling[k]` (*The scope's constructor is the driver*). Not an error: it is how a constructor spells a name that does not exist yet; constructing it later is the ordinary unknown-name error.
+Text that names nothing lexes to a cell with no node, its spelling kept tape-side in `tape.spelling[k]` (*The scope's constructor is the driver*; ›An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value‹). Not an error: it is how a constructor spells a name that does not exist yet; constructing it later is the ordinary unknown-name error.
 - **Why (for `parsing_tape`):** a bare array of pointers has no tape side, so no place for the text a cell was lexed from. `lex «5»` hands back the number pattern's binding and must hand back «5» beside it, or the constructor reading `tape.spelling[0]` finds nothing; and `lex «foo»` would lose the very spelling `:=` is to declare.
-- **Ruled:** stated as consequence in the August session; tape fragment ruled 2 September 2026; `parsing_tape` 14 September 2026; cells as bindings 8 September 2026; fresh dyad ruled 2 September 2026, read spelled 14 September 2026.
+- **Ruled:** stated as consequence in the August session; tape fragment ruled 2 September 2026; `parsing_tape` 14 September 2026; cells as bindings 8 September 2026; fresh dyad ruled 2 September 2026, read spelled 14 September 2026, the node-less cell 29 September 2026 (#166).
 - **Source:** DESIGN.md l.209
 
 ### `lex` runs whenever it runs: no comptime/runtime split
@@ -1716,7 +1716,7 @@ The cell holds the spelling and no node. `:=` enters the spelling into the trie 
 - **Source:** DESIGN.md l.211
 
 ### Unknown spellings are two pattern identities
-The trie holds patterns beside literals. The two fresh-spelling patterns are identities of the language start, beside the five names: a word, `[A-Za-z_][A-Za-z0-9_]*`, and a symbol run, `[^A-Za-z0-9_\s()\[\],«»#]+`. Each builds the fresh null-slotted dyad. Numbers keep their own pattern, since `1.05` split at the dot loses its zero. `«` and `#` read their own extent and need no pattern.
+The trie holds patterns beside literals. The two fresh-spelling patterns are identities of the language start, beside the five names: a word, `[A-Za-z_][A-Za-z0-9_]*`, and a symbol run, `[^A-Za-z0-9_\s()\[\],«»#]+`. Each leaves the cell holding its spelling and no node (›An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value‹). Numbers keep their own pattern, since `1.05` split at the dot loses its zero. `«` and `#` read their own extent and need no pattern.
 - **Ruled:** 10 September 2026.
 - **Seed:** divergences (#110).
 - **Source:** DESIGN.md l.211
@@ -2298,7 +2298,7 @@ Gates sit beside the range: one lookup answers open, live and permitted (*`mut` 
 
 ### A dead name takes nothing; only `:=` may follow
 The dead mark is static, set by the parser at the `move`/`free` (three rules of *Memory and concurrency*). A read, write or pass after it is a parse-time error. Only `:=` may follow, redeclaring into a **fresh** place (nothing runs for the old place at scope exit: its value left with the `move` or ended with the `free`). That is the whole relaxation: reuse after an explicit end. Redeclaring while live stays an error. Legal: `y := move x` then `x := …`; the REPL's `free x` then `x := …` (session body ordered like any other).
-- **Rejected, to stay declined:** one-line `x := f(move x)`. **Why:** `:=` declares its name before parsing its value (self-reference needs it), so the right `x` is the new placeholder and the check already fired.
+- **Rejected, to stay declined:** one-line `x := f(move x)`. **Why:** `:=` declares its name before parsing its value (self-reference needs it), so the right `x` is the new binding, its node not built yet, and the check already fired.
 - **Rejected, to stay declined:** dead after last use. **Why:** needs the rest of the scope in view, which the eager one-pass parse forbids.
 - **Ruled:** 3 September 2026.
 - **Source:** DESIGN.md l.265
