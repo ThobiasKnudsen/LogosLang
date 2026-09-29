@@ -232,7 +232,7 @@ impl<'a> Parser<'a> {
         use crate::identities::{array, meta};
         let ty = dyad::ty(node);
         let value = dyad::value(node);
-        if ty.is_null() || value.is_null() || self.types.is_storage(node) {
+        if self.types.is_storage(node) {
             return Ok(None);
         }
         let slot = match meta::kind_of(ty) {
