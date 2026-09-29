@@ -2547,13 +2547,6 @@ fn print_interpolates_braces_as_echo_shows_them_and_escapes_them_with_a_backslas
     }
 }
 
-/// The program's stdout, stderr and exit code, run as the command line.
-fn run(src: &str) -> (String, String, Option<i32>) {
-    let out = logos().arg(src).output().unwrap();
-    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-    (stdout, String::from_utf8_lossy(&out.stderr).into_owned(), out.status.code())
-}
-
 #[test]
 fn a_quote_counts_its_pairs_by_depth_and_reads_five_escapes() {
     for (src, printed) in [
@@ -2571,21 +2564,21 @@ fn a_quote_counts_its_pairs_by_depth_and_reads_five_escapes() {
         ("regex «a\\»» := type (), 5", "5\n"),
         ("regex «[0-9]+\\\\.k» := type (), (5.k):type == type", "true\n"),
     ] {
-        let (stdout, stderr, code) = run(src);
+        let (code, stdout, stderr) = run_line(src);
         assert_eq!(code, Some(0), "{src}: {stderr}");
         assert_eq!(stdout, printed, "{src}: {stderr}");
     }
-    let (stdout, _, _) = run("f := fn () -> void ( print «{«a»}» ), f()");
+    let (_, stdout, _) = run_line("f := fn () -> void ( print «{«a»}» ), f()");
     assert!(stdout.starts_with("a\n"), "{stdout}");
     // The escapes are applied before the pattern is read, so `5\.k` is no longer its spelling.
-    let (_, stderr, _) = run("regex «[0-9]+\\\\.k» := type (), (5\\.k):type == type");
+    let (_, _, stderr) = run_line("regex «[0-9]+\\\\.k» := type (), (5\\.k):type == type");
     assert!(stderr.contains("1:34: error: unknown name `\\`"), "{stderr}");
-    let (_, stderr, _) = run("error «{«a»}»");
+    let (_, _, stderr) = run_line("error «{«a»}»");
     assert!(stderr.contains("run error: a"), "{stderr}");
     // The quote holds `a «b» c` whole; the text value's read is still missing.
-    let (_, stderr, _) = run("s := «a «b» c», print «{s}»");
+    let (_, _, stderr) = run_line("s := «a «b» c», print «{s}»");
     assert!(stderr.contains("run error: a record, text or hole is not read"), "{stderr}");
-    let (_, stderr, _) = run("import «tests/fixtures/a«b».logos»");
+    let (_, _, stderr) = run_line("import «tests/fixtures/a«b».logos»");
     assert!(stderr.contains("cannot read ./tests/fixtures/a«b».logos"), "{stderr}");
 
     let (echoes, stderr) = repl("print «{«a»}»\nprint «a «b» c»\n".as_bytes());
@@ -2617,7 +2610,7 @@ fn a_bracket_inside_a_nested_quote_or_its_comment_is_text_in_every_body() {
             "4\n",
         ),
     ] {
-        let (stdout, stderr, code) = run(&src);
+        let (code, stdout, stderr) = run_line(&src);
         assert_eq!(code, Some(0), "{src}: {stderr}");
         assert!(stdout.starts_with(printed), "{src}: {stdout} {stderr}");
     }
@@ -2632,14 +2625,14 @@ fn a_hash_is_one_token_with_its_text_wherever_it_is_lexed() {
         )
     };
     // A spliced `#` reads its own cell, never the rest of the outer line.
-    let (stdout, stderr, _) = run(&format!("{}, h, print «after»", splice("#")));
+    let (_, stdout, stderr) = run_line(&format!("{}, h, print «after»", splice("#")));
     assert_eq!(stdout, "after\n", "{stderr}");
-    let (stdout, stderr, _) =
-        run(&format!("{},\nh, print «same line»,\nprint «next line»", splice("#")));
+    let (_, stdout, stderr) =
+        run_line(&format!("{},\nh, print «same line»,\nprint «next line»", splice("#")));
     assert_eq!(stdout, "same line\nnext line\n", "{stderr}");
     // The comment in a fragment is one cell, no code; built at the splice it stays an operand.
     for fragment in ["* 2 # note", "+ 1 # + 1", "* 2 # «a «b» ) c»"] {
-        let (_, stderr, _) = run(&format!("{}, 5 h", splice(fragment)));
+        let (_, _, stderr) = run_line(&format!("{}, 5 h", splice(fragment)));
         assert!(stderr.contains("expected one expression, found more"), "{fragment}: {stderr}");
     }
 }
@@ -2663,11 +2656,11 @@ fn a_body_lexed_once_holds_the_scopes_of_its_quotes() {
             "v 1\n1\n",
         ),
     ] {
-        let (stdout, stderr, code) = run(&src);
+        let (code, stdout, stderr) = run_line(&src);
         assert_eq!(code, Some(0), "{src}: {stderr}");
         assert!(stdout.starts_with(printed), "{src}: {stdout} {stderr}");
     }
-    let (_, stderr, _) = run(&run_body("error «a is {a}»"));
+    let (_, _, stderr) = run_line(&run_body("error «a is {a}»"));
     assert!(stderr.contains("run error: a is 3"), "{stderr}");
 }
 
@@ -2685,12 +2678,12 @@ fn an_unclosed_quote_or_brace_is_reported_at_its_opener() {
         ("f := fn () -> void ( # «x {»} y»\n1 ), 5", "1:28: error: this `»` closes no `«`"),
         ("t := type (a := i32 ?, share run = ( # «x {»} y»\n1 )), 5", "1:44: error: this `»`"),
     ] {
-        let (_, stderr, code) = run(src);
+        let (code, _, stderr) = run_line(src);
         assert_eq!(code, Some(1), "{src}: {stderr}");
         assert!(stderr.contains(message), "{src}: {stderr}");
     }
     // A `lex` quote lexes its text when it runs, the escapes applied first.
-    let (_, stderr, _) = run("t := lex «x \\«», 5");
+    let (_, _, stderr) = run_line("t := lex «x \\«», 5");
     assert!(stderr.contains("this `«` has no `»`"), "{stderr}");
 }
 
