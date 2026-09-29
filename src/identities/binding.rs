@@ -89,7 +89,7 @@ impl Binding {
             return false;
         }
         let ty = dyad::ty(self.frame);
-        ty.is_null() || dyad::ty(ty) != ty
+        dyad::ty(ty) != ty
     }
 
     /// What a use of the name yields: the storage itself, or the dyad the name denotes.

@@ -314,7 +314,7 @@ pub(crate) unsafe fn install_pointer_type(id: DyadPtr, p: DyadPtr) {
 pub(crate) unsafe fn kind_of(id: DyadPtr) -> Option<u8> {
     let v = dyad::head(id);
     let t = dyad::ty(id);
-    if v.is_null() || t.is_null() || dyad::ty(t) != t {
+    if v.is_null() || dyad::ty(t) != t {
         None
     } else {
         Some(*(v as *const u8))

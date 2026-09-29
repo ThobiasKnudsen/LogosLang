@@ -71,9 +71,6 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
     }
     let op = dyad::ty(node);
     let value = dyad::value(node);
-    if op.is_null() {
-        return Read::Undefined;
-    }
     // A hole or a field node holds nothing.
     if op == types.unknown {
         return Read::Undefined;
