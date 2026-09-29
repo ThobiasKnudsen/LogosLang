@@ -1069,6 +1069,7 @@ A string is never a comment by position. Prose is marked: `#` takes a following 
 ### Strings nest by depth; only five escapes; `«…»` is the only spelling
 The `«` constructor counts `«`/`»` and `{`/`}`, so a string in an interpolation in a string needs no escape. Escapes: backslash before a character the string scope lexes, or before backslash: `\{`, `\}`, `\«`, `\»`, `\\`. All else is raw. No ASCII `"…"` anywhere (files, REPL, command line); typing `«»` is a keyboard matter.
 - **Ruled:** nesting and escapes 30 August 2026.
+- **Seed:** since 30 September 2026 (#220).
 - **Source:** DESIGN.md l.168
 
 ### Pointer types are prefix `@T`; dereference is postfix `x@`; `&x` is address-of
