@@ -58,7 +58,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     let teardown_leaf = callable::mint_native(cx.store, cs.callable, run_teardown, cs.seed_native);
 
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
-    let of_ = cx.store.alloc_raw(cx.type_, record);
+    let of_ = cx.store.alloc_head(cx.type_, record);
     cx.declare("of", of_);
 
     let alloc_ = keyword(
@@ -220,7 +220,7 @@ fn keyword(
     construct: crate::parse::ConstructFn,
 ) -> DyadPtr {
     let record = meta::operand_record(cx, meta::TUPLE_TAG, parse_rank, Assoc::Right, roles);
-    let id = cx.store.alloc_raw(cx.type_, record);
+    let id = cx.store.alloc_head(cx.type_, record);
     cx.declare(spelling, id);
     cx.metas.insert(id, construct);
     id
@@ -295,8 +295,8 @@ pub(super) fn build_alloc(
     // SAFETY: `init` is a reduced dyad just parsed.
     let init =
         init.filter(|&i| unsafe { !dyad::value(i).is_null() }).unwrap_or(std::ptr::null_mut());
-    let value = store.alloc_operands(&[pointee, count, init, types.ops.alloc_]);
-    Ok(store.alloc_raw(types.alloc_, value))
+
+    Ok(store.alloc_words(types.alloc_, &[pointee, count, init, types.ops.alloc_]))
 }
 
 /// When `require_owning`, the place must carry a non-null destructor: a borrow or a
@@ -327,8 +327,8 @@ pub(crate) fn build_teardown(
     } else {
         types.ops.teardown_
     };
-    let value = store.alloc_operands(&[place, pointee, leaf]);
-    Ok(store.alloc_raw(op_id, value))
+
+    Ok(store.alloc_words(op_id, &[place, pointee, leaf]))
 }
 
 /// A pointer type whose `destructor` slot is set, as opposed to a borrow or a plain
@@ -375,8 +375,7 @@ pub(crate) fn build_instance_own(
     place: DyadPtr,
     ty: DyadPtr,
 ) -> DyadPtr {
-    let value = store.alloc_operands(&[place, ty, types.ops.own_]);
-    store.alloc_raw(types.own_, value)
+    store.alloc_words(types.own_, &[place, ty, types.ops.own_])
 }
 
 /// `drop a` where `a` owns a node: `[place, drop, op]`, the instances' `drop` run over the
@@ -387,8 +386,7 @@ pub(crate) fn build_instance_drop(
     place: DyadPtr,
     drop: DyadPtr,
 ) -> DyadPtr {
-    let value = store.alloc_operands(&[place, drop, types.ops.instance_drop_]);
-    store.alloc_raw(types.drop_, value)
+    store.alloc_words(types.drop_, &[place, drop, types.ops.instance_drop_])
 }
 
 /// The instances' `drop` of the node a dereference `p@` reads, when its type fills one: the
@@ -422,15 +420,13 @@ unsafe fn owning_field_pointee(types: &Core, place: DyadPtr) -> Option<DyadPtr> 
 
 /// `free` of an owning field: `[field read, pointee, op]`.
 fn build_field_free(store: &mut Store, types: &Core, read: DyadPtr, pointee: DyadPtr) -> DyadPtr {
-    let value = store.alloc_operands(&[read, pointee, types.ops.field_free_]);
-    store.alloc_raw(types.free_, value)
+    store.alloc_words(types.free_, &[read, pointee, types.ops.field_free_])
 }
 
 /// `[place, null, op]`: the null pointee marks nothing to run or free. Its work was done
 /// at parse, where the name became dead; it stands in the body for reflection.
 fn build_inert_drop(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
-    let value = store.alloc_operands(&[place, std::ptr::null_mut(), types.ops.drop_]);
-    store.alloc_raw(types.drop_, value)
+    store.alloc_words(types.drop_, &[place, std::ptr::null_mut(), types.ops.drop_])
 }
 
 /// The inert form is unit; a node's drop empties the place and hands the node to the seed,
@@ -485,8 +481,7 @@ fn lower_own(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
 }
 
 pub(crate) fn build_defer(store: &mut Store, types: &Core, inner: DyadPtr) -> DyadPtr {
-    let value = store.alloc_operands(&[inner, types.ops.defer_]);
-    store.alloc_raw(types.defer_, value)
+    store.alloc_words(types.defer_, &[inner, types.ops.defer_])
 }
 
 /// # Safety

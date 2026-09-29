@@ -96,10 +96,10 @@ pub(super) fn register(
     array_ty: DyadPtr,
     void_ty: DyadPtr,
 ) -> TapeIds {
-    let scope = cx.store.alloc_raw(scope_ty, std::ptr::null_mut());
+    let scope = cx.store.alloc_leaf(scope_ty);
     // SAFETY: `void_ty` is the type node `Core::build` minted.
     let at_void = unsafe { super::pointer::make_pointer_type(cx.store, cx.type_, void_ty) };
-    let cells = cx.store.alloc_raw(at_void, std::ptr::null_mut());
+    let cells = cx.store.alloc_leaf(at_void);
     cx.declare_in(scope, "cells", cells);
     let fields = super::array::build(cx.store, array_ty, &[cells]);
     let layout = meta::record_layout(
@@ -111,7 +111,7 @@ pub(super) fn register(
         meta::prec::APPLY,
         crate::parse::Assoc::Left,
     );
-    let parsing_tape = cx.store.alloc_raw(cx.type_, layout);
+    let parsing_tape = cx.store.alloc_head(cx.type_, layout);
     cx.declare("parsing_tape", parsing_tape);
 
     let op = |cx: &mut Cx, roles: &[&str], run: crate::run::RunFn| {
@@ -122,7 +122,7 @@ pub(super) fn register(
             crate::parse::Assoc::Left,
             roles,
         );
-        let id = cx.store.alloc_raw(cx.type_, record);
+        let id = cx.store.alloc_head(cx.type_, record);
         let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
         (id, leaf)
     };
@@ -148,7 +148,7 @@ pub(super) fn register(
     let (cell_into, cell_into_leaf) = op(cx, &["tape", "k", "i", "type", "op"], run_cell_into);
     let (cell_identity, cell_identity_leaf) = op(cx, &["tape", "k", "op"], run_cell_identity);
     cx.lower.insert(bracket_arg, lower_bracket_arg);
-    let nothing = cx.store.alloc_raw(void_ty, std::ptr::null_mut());
+    let nothing = cx.store.alloc_leaf(void_ty);
     for (name, id) in [
         ("is_constructed", is_constructed),
         ("spelling", spelling),
@@ -243,8 +243,8 @@ pub(crate) unsafe fn receiver_addr(
 fn node(store: &mut Store, op: DyadPtr, leaf: DyadPtr, operands: &[DyadPtr]) -> DyadPtr {
     let mut v = operands.to_vec();
     v.push(leaf);
-    let value = store.alloc_operands(&v);
-    store.alloc_raw(op, value)
+
+    store.alloc_words(op, &v)
 }
 
 /// `t[k]`: read, the cell's pointer; as `=`'s target, the write (`build_write`).
@@ -979,20 +979,17 @@ fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             args.push(if scalar {
                 let width = super::numtype::of_type_node(ty).bytes();
                 let store = rt.store();
-                let storage = store.alloc_bytes(&bits.to_ne_bytes()[..width]);
-                store.alloc_raw(ty, storage)
+                store.alloc_blob(ty, &bits.to_ne_bytes()[..width])
             } else {
                 node_operand(rt, bits as usize as DyadPtr)
             });
         }
         let store = rt.store();
-        let value = if args.is_empty() {
-            std::ptr::null_mut()
-        } else {
-            args.push(std::ptr::null_mut());
-            store.alloc_operands(&args)
-        };
-        Ok(store.alloc_raw(f, value) as i64)
+        if args.is_empty() {
+            return Ok(store.alloc_leaf(f) as i64);
+        }
+        args.push(std::ptr::null_mut());
+        Ok(store.alloc_words(f, &args) as i64)
     }
 }
 
@@ -1036,7 +1033,7 @@ unsafe fn node_operand(rt: &mut Runtime, d: DyadPtr) -> DyadPtr {
     {
         return d;
     }
-    store.alloc_raw((*types).dyad_, d.cast())
+    store.alloc_head((*types).dyad_, d.cast())
 }
 
 /// A bracket a node holds in a field: its lines are evaluated each time the node runs, in the
@@ -1160,16 +1157,15 @@ unsafe fn bracket_holding(
         values.push(match numtype_of(types, line) {
             _ if is_bracket(types, types.through(line)) => b as usize as DyadPtr,
             Operand::Concrete(nt) => {
-                let storage = store.alloc_bytes(&b.to_ne_bytes()[..nt.bytes()]);
-                store.alloc_raw(types.numtypes[nt as usize], storage)
+                store.alloc_blob(types.numtypes[nt as usize], &b.to_ne_bytes()[..nt.bytes()])
             }
             _ if super::node_type_of(types, line).is_some() => b as usize as DyadPtr,
             _ => line,
         });
     }
     let dyads = super::array::build(store, types.array_, &values);
-    let value = store.alloc_operands(&[dyads, std::ptr::null_mut(), std::ptr::null_mut()]);
-    store.alloc_raw(dyad::ty(bracket), value)
+
+    store.alloc_words(dyad::ty(bracket), &[dyads, std::ptr::null_mut(), std::ptr::null_mut()])
 }
 
 fn run_cell_dyad_at(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {

@@ -28,7 +28,7 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> ErrorIds {
         crate::parse::Assoc::Left,
         &["parts", "op"],
     );
-    let error = cx.store.alloc_raw(cx.type_, record);
+    let error = cx.store.alloc_head(cx.type_, record);
     cx.declare("error", error);
     cx.metas.insert(error, |p, _id, tape| p.construct_error(tape));
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
@@ -37,8 +37,7 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> ErrorIds {
 
 pub(crate) fn build(store: &mut Store, types: &Core, parts: &[DyadPtr]) -> DyadPtr {
     let parts = super::array::build(store, types.array_, parts);
-    let value = store.alloc_operands(&[parts, types.error.leaf]);
-    store.alloc_raw(types.error.error, value)
+    store.alloc_words(types.error.error, &[parts, types.error.leaf])
 }
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {

@@ -30,7 +30,7 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> LexIds {
         crate::parse::Assoc::Left,
         &["text", "op"],
     );
-    let lex = cx.store.alloc_raw(cx.type_, record);
+    let lex = cx.store.alloc_head(cx.type_, record);
     cx.declare("lex", lex);
     cx.metas.insert(lex, |p, _id, tape| p.construct_lex(tape));
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
@@ -38,8 +38,7 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> LexIds {
 }
 
 pub(crate) fn build(store: &mut Store, types: &Core, text: DyadPtr) -> DyadPtr {
-    let value = store.alloc_operands(&[text, types.lex.leaf]);
-    store.alloc_raw(types.lex.lex, value)
+    store.alloc_words(types.lex.lex, &[text, types.lex.leaf])
 }
 
 /// A `lex «…»` node is the one value a tape fragment has in the seed.

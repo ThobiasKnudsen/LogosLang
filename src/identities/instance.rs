@@ -41,7 +41,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> InstanceIds {
         crate::parse::Assoc::Left,
         &["target", "type", "op"],
     );
-    let construct = cx.store.alloc_raw(cx.type_, record);
+    let construct = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(construct, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
 
@@ -54,11 +54,11 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> InstanceIds {
         crate::parse::Assoc::Left,
         &["record", "field", "op"],
     );
-    let field = cx.store.alloc_raw(cx.type_, record);
+    let field = cx.store.alloc_head(cx.type_, record);
 
     // Escaped, because `.` is a regex metacharacter.
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::TIGHT);
-    let dot = cx.store.alloc_raw(cx.type_, record);
+    let dot = cx.store.alloc_head(cx.type_, record);
     cx.declare(r"\.", dot);
     // `.` reads its member's spelling off the cell to its right, and a `[i]` or `()` cell after
     // that where the read takes one.
@@ -67,11 +67,11 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> InstanceIds {
     // `[` is `(` in square brackets: it parses its interior as any bracket's into a
     // `square_brackets` cell the reads after `.` consume, or, after a tape, into the element read.
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::OPEN);
-    let open_sq = cx.store.alloc_raw(cx.type_, record);
+    let open_sq = cx.store.alloc_head(cx.type_, record);
     cx.declare(r"\[", open_sq);
     cx.metas.insert(open_sq, |p, _id, tape| p.construct_index(tape));
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
-    let close_sq = cx.store.alloc_raw(cx.type_, record);
+    let close_sq = cx.store.alloc_head(cx.type_, record);
     cx.declare(r"\]", close_sq);
     let record = meta::operand_record(
         cx,
@@ -80,7 +80,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> InstanceIds {
         crate::parse::Assoc::Left,
         &["dyads", "op"],
     );
-    let square_brackets = cx.store.alloc_raw(cx.type_, record);
+    let square_brackets = cx.store.alloc_head(cx.type_, record);
     cx.declare("square_brackets", square_brackets);
 
     InstanceIds { construct, construct_leaf: leaf, field, dot, square_brackets, open_sq, close_sq }
@@ -93,8 +93,7 @@ pub(crate) fn build_field(
     record: DyadPtr,
     binding: DyadPtr,
 ) -> DyadPtr {
-    let value = store.alloc_operands(&[record, binding, std::ptr::null_mut()]);
-    store.alloc_raw(types.field_, value)
+    store.alloc_words(types.field_, &[record, binding, std::ptr::null_mut()])
 }
 
 /// The record's storage and the field's binding a `field` place was built over.
@@ -184,8 +183,8 @@ pub(crate) unsafe fn build_ctor(
         ops.push(arg);
     }
     ops.push(std::ptr::null_mut());
-    let value = store.alloc_operands(&ops);
-    Ok(store.alloc_raw(construct, value))
+
+    Ok(store.alloc_words(construct, &ops))
 }
 
 /// The arguments run first, then the bytes are taken and filled, so an argument's own

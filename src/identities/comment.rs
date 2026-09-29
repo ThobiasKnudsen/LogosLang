@@ -14,10 +14,10 @@ use crate::dyad::DyadPtr;
 /// path yields unit for it off its tag. `#` is the constructor.
 pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, COMMENT_TAG, meta::prec::INERT);
-    let id = cx.store.alloc_raw(cx.type_, record);
+    let id = cx.store.alloc_head(cx.type_, record);
 
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::LITERAL);
-    let hash = cx.store.alloc_raw(cx.type_, record);
+    let hash = cx.store.alloc_head(cx.type_, record);
     cx.declare("#", hash);
     cx.metas.insert(hash, |p, _id, tape| p.construct_comment(tape));
     id

@@ -80,7 +80,7 @@ impl<'a> Parser<'a> {
                 text.as_bytes(),
             )
         };
-        Ok(self.rt.store.alloc_raw(self.types.comment_, text_node.cast()))
+        Ok(self.rt.store.alloc_head(self.types.comment_, text_node.cast()))
     }
 
     /// Consume the path token (raw text up to whitespace or `,`, or a `«…»`
@@ -131,8 +131,7 @@ impl<'a> Parser<'a> {
             types.string_,
             path_text.as_bytes(),
         );
-        let value = self.rt.store.alloc_operands(&[path_node, types.ops.import_]);
-        let node = self.rt.store.alloc_raw(types.import_, value);
+        let node = self.rt.store.alloc_words(types.import_, &[path_node, types.ops.import_]);
         tape.place(node);
         Ok(Constructed::Placed)
     }

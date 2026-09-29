@@ -818,8 +818,7 @@ impl<'a> Parser<'a> {
                     return Err(ParseError::UnsupportedOperands);
                 }
                 let bits = std::ptr::read_unaligned(dyad::value(read) as *const i32);
-                let storage = self.rt.store.alloc_bytes(&bits.to_ne_bytes());
-                self.rt.store.alloc_raw(types.bool_, storage)
+                self.rt.store.alloc_blob(types.bool_, &bits.to_ne_bytes())
             } else {
                 // No other type has a whole value a cell can hold from a
                 // node: refused rather than guessed.
@@ -909,7 +908,7 @@ impl<'a> Parser<'a> {
                 }
                 tape.remove(-1);
                 hole = true;
-                self.rt.store.alloc_raw(t, std::ptr::null_mut())
+                self.rt.store.alloc_leaf(t)
             }
         };
         tape.place(node);

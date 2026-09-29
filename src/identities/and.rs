@@ -25,7 +25,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         Assoc::Left,
         &["lhs", "rhs", "op"],
     );
-    let id = cx.store.alloc_raw(cx.type_, record);
+    let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("and", id);
     cx.metas.insert(id, super::infix_construct!(build));
     cx.lower.insert(id, lower);
@@ -47,8 +47,7 @@ pub(super) fn build(
         return Err(ParseError::NonBoolOperands);
     }
     if !lb {
-        let value = store.alloc_operands(&[lhs, rhs, std::ptr::null_mut()]);
-        return Ok(store.alloc_raw(and, value));
+        return Ok(store.alloc_words(and, &[lhs, rhs, std::ptr::null_mut()]));
     }
     // Two literals fold now: what keeps a comptime chain comptime.
     // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
@@ -56,8 +55,7 @@ pub(super) fn build(
     if let (Some(a), Some(b)) = literals {
         return Ok(bool_mod::literal_node(store, types.bool_, a && b));
     }
-    let value = store.alloc_operands(&[lhs, rhs, types.ops.and_]);
-    Ok(store.alloc_raw(and, value))
+    Ok(store.alloc_words(and, &[lhs, rhs, types.ops.and_]))
 }
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {

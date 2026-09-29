@@ -32,10 +32,10 @@ pub(crate) struct Callables {
 /// never written in source.
 pub(super) fn register(cx: &mut Cx) -> Callables {
     let record = meta::record(cx.store, meta::CALLABLE_TAG, meta::prec::INERT);
-    let callable = cx.store.alloc_raw(cx.type_, record);
+    let callable = cx.store.alloc_head(cx.type_, record);
 
     let record = meta::record(cx.store, meta::CONVENTION_TAG, meta::prec::INERT);
-    let convention = cx.store.alloc_raw(cx.type_, record);
+    let convention = cx.store.alloc_head(cx.type_, record);
 
     let seed_native = mint_convention(cx, convention, b"seed-native");
     let container_i64 = mint_convention(cx, convention, b"container-i64");
@@ -47,7 +47,7 @@ pub(super) fn register(cx: &mut Cx) -> Callables {
 /// `{type: convention, value -> name string node}`.
 fn mint_convention(cx: &mut Cx, convention: DyadPtr, name: &[u8]) -> DyadPtr {
     let text = string::build_text(cx.store, cx.string_, name);
-    cx.store.alloc_raw(convention, text.cast())
+    cx.store.alloc_head(convention, text.cast())
 }
 
 /// The one licensed mint: `entry` must be the address of code the convention can jump to.
@@ -60,8 +60,8 @@ pub(crate) fn mint(
     let mut bytes = [0u8; 16];
     bytes[ENTRY_OFF..CONVENTION_OFF].copy_from_slice(&entry.to_ne_bytes());
     bytes[CONVENTION_OFF..].copy_from_slice(&(convention as usize).to_ne_bytes());
-    let value = store.alloc_bytes(&bytes);
-    store.alloc_raw(callable, value)
+
+    store.alloc_blob(callable, &bytes)
 }
 
 /// The fn-pointer-to-address cast, done once where addresses enter the graph.
@@ -136,11 +136,11 @@ mod tests {
             assert_eq!(dyad::ty(core.conv_seed_native), core.convention_);
             assert_eq!(dyad::ty(core.conv_container), core.convention_);
             assert_eq!(
-                crate::reflect::text_of(dyad::value(core.conv_seed_native).cast()),
+                crate::reflect::text_of(dyad::head(core.conv_seed_native).cast()),
                 b"seed-native"
             );
             assert_eq!(
-                crate::reflect::text_of(dyad::value(core.conv_container).cast()),
+                crate::reflect::text_of(dyad::head(core.conv_container).cast()),
                 b"container-i64"
             );
             assert_eq!(meta::kind_of(core.callable_), Some(meta::CALLABLE_TAG));

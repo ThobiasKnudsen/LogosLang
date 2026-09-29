@@ -128,7 +128,7 @@ impl<'a> Parser<'a> {
             crate::identities::meta::prec::APPLY,
             Assoc::Left,
         );
-        let input = self.rt.store.alloc_raw(record_logos, record.cast());
+        let input = self.rt.store.alloc_head(record_logos, record.cast());
         // SAFETY: the bindings were just minted for these fields; `input` is the record node.
         unsafe { lay_out_fields(input, fields_arr, &bindings) };
         Ok((input, bindings))
@@ -155,7 +155,7 @@ impl<'a> Parser<'a> {
         let mut fields = Vec::new();
         let mut bindings = Vec::new();
         if let Some(ty) = leading {
-            let field = self.rt.store.alloc_raw(ty, std::ptr::null_mut());
+            let field = self.rt.store.alloc_leaf(ty);
             fields.push(field);
             bindings.push(self.mint_binding(field, scope, b""));
         }
@@ -328,7 +328,7 @@ impl<'a> Parser<'a> {
                 self.cx.pos = start;
                 return Err(ParseError::OwnParameterNotInSeed);
             }
-            let field = self.rt.store.alloc_raw(logos, default);
+            let field = self.rt.store.alloc_head(logos, default);
             // The field's name is not stored on the record: declaring it puts
             // a binding in the one name index (DESIGN ›Name resolution is scope-filtered‹).
             let binding = if relaxed {
@@ -578,7 +578,7 @@ impl<'a> Parser<'a> {
                 crate::identities::meta::TYPEREC_TAG,
                 crate::identities::meta::prec::INERT,
             );
-            self.rt.store.alloc_raw(self.types.type_, head)
+            self.rt.store.alloc_head(self.types.type_, head)
         });
         for (name, &marker) in SLOT_NAMES.iter().zip(&slots) {
             let binding = self.mint_binding(marker, words, name.as_bytes());
@@ -593,8 +593,8 @@ impl<'a> Parser<'a> {
             crate::identities::meta::TYPEREC_TAG,
             crate::identities::meta::prec::INERT,
         );
-        let drop_marker = self.rt.store.alloc_raw(self.types.type_, head);
-        let self_type = self.rt.store.alloc_raw(id, std::ptr::null_mut());
+        let drop_marker = self.rt.store.alloc_head(self.types.type_, head);
+        let self_type = self.rt.store.alloc_leaf(id);
         if !own_name.is_null() {
             // The body's lines name the type they are building (DESIGN ›An unknown spelling
             // stays text on the tape; `:=` makes the binding, and the node comes with the value‹).
@@ -663,7 +663,7 @@ impl<'a> Parser<'a> {
         );
         let node = def.self_type;
         // SAFETY: `node` was minted at the open with no record; nothing reads one until now.
-        unsafe { dyad::set_value(node, layout.cast()) };
+        unsafe { dyad::set_head(node, layout.cast()) };
         if let Some(rank) = def.lex_rank {
             // The rank is the name's, not the type's: it goes on the binding of
             // the declaration this body is the value of.
@@ -1042,7 +1042,7 @@ impl<'a> Parser<'a> {
         let mut bindings = Vec::with_capacity(params.len());
         let mut declared = Ok(());
         for &(name, ty) in params {
-            let field = self.rt.store.alloc_raw(ty, std::ptr::null_mut());
+            let field = self.rt.store.alloc_leaf(ty);
             // A parameter with no name is a place the body reaches another
             // way: a receiver, or a run body's field of type `type`.
             let binding = match name {
@@ -1072,7 +1072,7 @@ impl<'a> Parser<'a> {
             crate::identities::meta::prec::APPLY,
             Assoc::Left,
         );
-        let input = self.rt.store.alloc_raw(self.types.type_, record.cast());
+        let input = self.rt.store.alloc_head(self.types.type_, record.cast());
         // SAFETY: the bindings were just minted for these fields; `input` is the record node.
         unsafe { lay_out_fields(input, fields_arr, &bindings) };
         Ok((input, bindings))

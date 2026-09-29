@@ -28,7 +28,7 @@ pub(super) fn register(cx: &mut Cx) -> RunBodyIds {
         crate::parse::Assoc::Left,
         &["text", "cells", "specs", "op"],
     );
-    let run_body = cx.store.alloc_raw(cx.type_, record);
+    let run_body = cx.store.alloc_head(cx.type_, record);
     RunBodyIds { run_body }
 }
 
@@ -44,10 +44,12 @@ pub(crate) fn build(
     cells: *mut ParsingTape,
 ) -> DyadPtr {
     let u64_ty = types.numtypes[NumType::U64 as usize];
-    let storage = store.alloc_bytes(&(cells as usize as u64).to_ne_bytes());
-    let handle = store.alloc_raw(u64_ty, storage);
-    let value = store.alloc_operands(&[text, handle, std::ptr::null_mut(), std::ptr::null_mut()]);
-    store.alloc_raw(types.run_body.run_body, value)
+    let handle = store.alloc_blob(u64_ty, &(cells as usize as u64).to_ne_bytes());
+
+    store.alloc_words(
+        types.run_body.run_body,
+        &[text, handle, std::ptr::null_mut(), std::ptr::null_mut()],
+    )
 }
 
 /// The body's text, brackets included.

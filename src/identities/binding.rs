@@ -144,8 +144,7 @@ impl Binding {
     /// Store `rec` and return its dyad, the value every trie entry is and every use of the name
     /// points at.
     pub fn alloc(store: &mut Store, binding_ty: DyadPtr, rec: Binding) -> DyadPtr {
-        let fields = store.alloc_binding(rec);
-        store.alloc_raw(binding_ty, fields as *mut u8)
+        store.alloc_binding(binding_ty, rec)
     }
 
     /// A copy, never a reference: a reference minted from the raw pointer would alias
@@ -293,7 +292,7 @@ pub(super) fn register_type(
     u64_ty: DyadPtr,
 ) {
     let binding_ = cx.binding_;
-    let scope = cx.store.alloc_raw(scope_ty, std::ptr::null_mut());
+    let scope = cx.store.alloc_leaf(scope_ty);
     let mut fields = Vec::with_capacity(9);
     // SAFETY: `dyad_ty` is the type node `Core::build` minted.
     let at_dyad = unsafe { super::pointer::make_pointer_type(cx.store, cx.type_, dyad_ty) };
@@ -311,7 +310,7 @@ pub(super) fn register_type(
         ("offset", u64_ty),
     ];
     for (i, (name, ty)) in typed.into_iter().enumerate() {
-        let field = cx.store.alloc_raw(ty, std::ptr::null_mut());
+        let field = cx.store.alloc_leaf(ty);
         let binding = cx.declare_in(scope, name, field);
         // SAFETY: `binding` was just minted by `declare_in`; `binding_` is the type node.
         unsafe { Binding::set_field_offset(binding, binding_, i * 8) };
@@ -330,6 +329,6 @@ pub(super) fn register_type(
         crate::parse::Assoc::Left,
     );
     // SAFETY: `binding_` is the type node minted at the head of the build.
-    unsafe { dyad::set_value(binding_, layout) };
+    unsafe { dyad::set_head(binding_, layout) };
     cx.declare("binding", binding_);
 }

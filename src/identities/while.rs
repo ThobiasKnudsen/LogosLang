@@ -24,7 +24,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         Assoc::Left,
         &["condition", "body", "op"],
     );
-    let while_ = cx.store.alloc_raw(cx.type_, record);
+    let while_ = cx.store.alloc_head(cx.type_, record);
     cx.declare("while", while_);
     cx.metas.insert(while_, |p, id, tape| {
         let node = p.parse_while(id)?;

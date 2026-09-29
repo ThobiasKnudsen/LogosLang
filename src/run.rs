@@ -860,7 +860,7 @@ impl<'a> Runtime<'a> {
             // An identity's value is its own address.
             Read::Identity | Read::Node => Ok(node as i64),
             // A view's value is the viewed node's address.
-            Read::Address => Ok(dyad::value(node) as i64),
+            Read::Address => Ok(dyad::head(node) as i64),
             // A rational value travels as the address of its sixteen bytes.
             Read::Rational => Ok(self.place_addr(node).ok_or(RunError::NoActivation)? as i64),
             Read::Container(_) => self.read_container(node),

@@ -41,22 +41,30 @@ pub unsafe fn value(p: DyadPtr) -> *mut u8 {
     (*p).value
 }
 
+/// The one address a head node holds: a type's record, another node, a table.
+///
+/// # Safety
+/// As [`ty`]; `p` must be a node built by `Store::alloc_head`.
+pub unsafe fn head(p: DyadPtr) -> *mut u8 {
+    (*p).value
+}
+
+/// # Safety
+/// As [`head`].
+pub unsafe fn set_head(p: DyadPtr, v: *mut u8) {
+    (*p).value = v;
+}
+
 /// # Safety
 /// As [`ty`].
 pub unsafe fn set_ty(p: DyadPtr, t: DyadPtr) {
     (*p).ty = t;
 }
 
-/// # Safety
-/// As [`ty`].
-pub unsafe fn set_value(p: DyadPtr, v: *mut u8) {
-    (*p).value = v;
-}
-
 /// At application rank, so `dyad (…)` reads the bracket to its right and `dyad` alone is the type.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, meta::DYAD_TAG, meta::prec::APPLY);
-    let id = cx.store.alloc_raw(cx.type_, record);
+    let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("dyad", id);
     cx.metas.insert(id, |p, id, tape| p.construct_dyad(id, tape));
     id

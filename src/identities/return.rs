@@ -26,7 +26,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         Assoc::Right,
         &["value", "op"],
     );
-    let id = cx.store.alloc_raw(cx.type_, record);
+    let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("return", id);
     cx.metas.insert(id, construct);
     cx.lower.insert(id, lower);
@@ -41,8 +41,8 @@ fn construct(
 ) -> Result<crate::parse::Constructed, ParseError> {
     let operand = p.take_right(tape)?;
     let types = p.types();
-    let value = p.store().alloc_operands(&[operand, types.ops.return_]);
-    let node = p.store().alloc_raw(id, value);
+
+    let node = p.store().alloc_words(id, &[operand, types.ops.return_]);
     // SAFETY: `node` is the `return` node just built.
     unsafe { p.note_return(node) }?;
     tape.place(node);

@@ -12,7 +12,7 @@ use crate::dyad::DyadPtr;
 /// Escaped: `(` and `)` are regex metacharacters.
 pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::OPEN);
-    let open = cx.store.alloc_raw(cx.type_, record);
+    let open = cx.store.alloc_head(cx.type_, record);
     cx.declare(r"\(", open);
     cx.metas.insert(open, |p, _id, tape| {
         let body = p.parse_sequence_cell()?;
@@ -22,7 +22,7 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
     });
 
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
-    let close = cx.store.alloc_raw(cx.type_, record);
+    let close = cx.store.alloc_head(cx.type_, record);
     cx.declare(r"\)", close);
 
     (open, close)

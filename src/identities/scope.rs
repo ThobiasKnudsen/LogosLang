@@ -20,7 +20,7 @@ use crate::store::Store;
 
 /// Called before the build context exists, since the root scope is itself typed `scope`.
 pub(super) fn register(store: &mut Store, type_: DyadPtr) -> DyadPtr {
-    store.alloc_raw(type_, std::ptr::null_mut())
+    store.alloc_leaf(type_)
 }
 
 /// Returns the sequence leaf a sequence node references from its op slot.
@@ -52,8 +52,7 @@ const PARENT: usize = 2;
 /// The block's membership key while it parses, and the sequence node once
 /// [`fill`] gives it its expressions; `parent` is null at the arche.
 pub(crate) fn mint(store: &mut Store, scope_ty: DyadPtr, parent: DyadPtr) -> DyadPtr {
-    let value = store.alloc_operands(&[std::ptr::null_mut(), std::ptr::null_mut(), parent]);
-    store.alloc_raw(scope_ty, value)
+    store.alloc_words(scope_ty, &[std::ptr::null_mut(), std::ptr::null_mut(), parent])
 }
 
 /// The block closed: it runs as a sequence over its `dyads`.
@@ -128,8 +127,8 @@ pub(crate) unsafe fn with_exprs(
 ) -> DyadPtr {
     let slots = dyad::value(node) as *const DyadPtr;
     let lines = array::build(store, array_ty, exprs);
-    let value = store.alloc_operands(&[lines, *slots.add(OP), *slots.add(PARENT)]);
-    store.alloc_raw(dyad::ty(node), value)
+
+    store.alloc_words(dyad::ty(node), &[lines, *slots.add(OP), *slots.add(PARENT)])
 }
 
 /// Null at the arche, and on a scope minted with no value (the root, a type's

@@ -23,7 +23,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         Assoc::Right,
         &["operand", "op"],
     );
-    let id = cx.store.alloc_raw(cx.type_, record);
+    let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("not", id);
     cx.metas.insert(id, |p, id, tape| {
         let operand = p.take_right(tape)?;

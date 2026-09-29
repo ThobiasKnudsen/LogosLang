@@ -12,7 +12,7 @@ use crate::dyad::DyadPtr;
 use crate::store::Store;
 
 pub(super) fn register_root(store: &mut Store) -> DyadPtr {
-    let logos_ = store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut());
+    let logos_ = store.alloc_leaf(std::ptr::null_mut());
     // SAFETY: `logos_` was just allocated; make it its own logos.
     unsafe {
         dyad::set_ty(logos_, logos_);
@@ -43,7 +43,7 @@ pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr) {
     // stands as an operand.
     let side = |cx: &mut Cx, name: &str| {
         let record = meta::record(cx.store, meta::TYPEREC_TAG, meta::prec::INERT);
-        let id = cx.store.alloc_raw(cx.type_, record);
+        let id = cx.store.alloc_head(cx.type_, record);
         cx.declare(name, id);
         id
     };
@@ -51,7 +51,7 @@ pub(super) fn register_syntax(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr) {
     let right_ = side(cx, "right");
 
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::COMMA);
-    let comma = cx.store.alloc_raw(cx.type_, record);
+    let comma = cx.store.alloc_head(cx.type_, record);
     cx.declare(",", comma);
 
     (comma, left_, right_)

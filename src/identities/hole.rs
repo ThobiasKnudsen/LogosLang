@@ -11,7 +11,7 @@ use crate::dyad::DyadPtr;
 /// Escaped: `?` is a regex metacharacter.
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::HOLE);
-    let id = cx.store.alloc_raw(cx.type_, record);
+    let id = cx.store.alloc_head(cx.type_, record);
     cx.declare(r"\?", id);
     cx.metas.insert(id, |p, id, tape| p.construct_hole(id, tape));
     id

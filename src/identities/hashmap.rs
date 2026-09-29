@@ -35,7 +35,7 @@ pub struct HashmapIds {
 
 pub(super) fn register(cx: &mut Cx, cs: &Callables, array_ty: DyadPtr) -> HashmapIds {
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::TIGHT);
-    let hashmap = cx.store.alloc_raw(cx.type_, record);
+    let hashmap = cx.store.alloc_head(cx.type_, record);
     cx.declare("hashmap", hashmap);
     cx.metas.insert(hashmap, |p, _id, tape| construct(p, tape));
     let mints = array::build(cx.store, array_ty, &[]);
@@ -47,7 +47,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables, array_ty: DyadPtr) -> Hashma
             crate::parse::Assoc::Left,
             roles,
         );
-        let id = cx.store.alloc_raw(cx.type_, record);
+        let id = cx.store.alloc_head(cx.type_, record);
         let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
         (id, leaf)
     };
@@ -79,7 +79,7 @@ fn construct(p: &mut Parser, tape: &mut ParsingTape) -> Result<Constructed, Pars
         return Ok(Constructed::Placed);
     }
     // A fresh empty map: the marker `T ?` leaves, for the name that takes it to lay out.
-    let marker = p.store().alloc_raw(ty, std::ptr::null_mut());
+    let marker = p.store().alloc_leaf(ty);
     tape.place(marker);
     tape.at_mut(0).expect("placed above").hole = true;
     Ok(Constructed::Placed)
@@ -118,7 +118,7 @@ unsafe fn mint(store: &mut Store, types: &Core, key: DyadPtr, value: DyadPtr) ->
     {
         return *t;
     }
-    let scope = store.alloc_raw(types.scope, std::ptr::null_mut());
+    let scope = store.alloc_leaf(types.scope);
     let fields = array::build(store, types.array_, &[]);
     let layout = meta::record_layout(
         store,
@@ -129,7 +129,7 @@ unsafe fn mint(store: &mut Store, types: &Core, key: DyadPtr, value: DyadPtr) ->
         meta::prec::APPLY,
         crate::parse::Assoc::Left,
     );
-    let node = store.alloc_raw(types.type_, layout);
+    let node = store.alloc_head(types.type_, layout);
     for item in [key, value, node] {
         array::push(store, memo, item);
     }
@@ -242,8 +242,8 @@ pub(crate) unsafe fn build_get(
     };
     let key = accept(store, types, k, key)?;
     let map = super::pointer::build_addr(store, types, place);
-    let value = store.alloc_operands(&[map, key, types.hashmap.get_leaf]);
-    Ok(Some(store.alloc_raw(types.hashmap.get, value)))
+
+    Ok(Some(store.alloc_words(types.hashmap.get, &[map, key, types.hashmap.get_leaf])))
 }
 
 /// # Safety
@@ -257,8 +257,7 @@ pub(crate) unsafe fn build_put(
     let v = value_type_of(types, get).expect("a get node's map is a hashmap place");
     let value = accept(store, types, v, value)?;
     let ops = dyad::value(get) as *const DyadPtr;
-    let operands = store.alloc_operands(&[*ops, *ops.add(1), value, types.hashmap.put_leaf]);
-    Ok(store.alloc_raw(types.hashmap.put, operands))
+    Ok(store.alloc_words(types.hashmap.put, &[*ops, *ops.add(1), value, types.hashmap.put_leaf]))
 }
 
 /// The slot the instance's table pointer lives in.

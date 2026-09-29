@@ -26,7 +26,7 @@ pub(super) fn register(
     cs: &Callables,
 ) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::TIGHT);
-    let at = cx.store.alloc_raw(cx.type_, record);
+    let at = cx.store.alloc_head(cx.type_, record);
     cx.declare("@", at);
     // A completed dyad to the left makes `@` a postfix deref; none makes it the type prefix.
     cx.metas.insert(at, |p, _id, tape| {
@@ -48,7 +48,7 @@ pub(super) fn register(
         meta::prec::ADDRESS,
         crate::parse::Assoc::Right,
     );
-    let amp = cx.store.alloc_raw(cx.type_, record);
+    let amp = cx.store.alloc_head(cx.type_, record);
     cx.declare("&", amp);
     cx.metas.insert(amp, |p, _id, tape| p.construct_address_of(tape));
 
@@ -59,7 +59,7 @@ pub(super) fn register(
         Assoc::Left,
         &["pointer", "pointee", "offset", "op"],
     );
-    let deref = cx.store.alloc_raw(cx.type_, record);
+    let deref = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(deref, lower_deref);
     let deref_leaf = callable::mint_native(cx.store, cs.callable, run_deref, cs.seed_native);
 
@@ -70,7 +70,7 @@ pub(super) fn register(
         Assoc::Left,
         &["pointer", "value", "pointee", "offset", "op"],
     );
-    let storeptr = cx.store.alloc_raw(cx.type_, record);
+    let storeptr = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(storeptr, lower_storeptr);
     let storeptr_leaf = callable::mint_native(cx.store, cs.callable, run_storeptr, cs.seed_native);
 
@@ -82,7 +82,7 @@ pub(super) fn register(
         Assoc::Left,
         &["place", "pointee", "op"],
     );
-    let addr = cx.store.alloc_raw(cx.type_, record);
+    let addr = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(addr, lower_addr);
     let addr_leaf = callable::mint_native(cx.store, cs.callable, run_addr, cs.seed_native);
 
@@ -96,8 +96,8 @@ pub(super) fn register(
 /// `place` must be a storage-backed place node from the store.
 pub(crate) unsafe fn build_addr(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
     let pointee = types.type_of(place);
-    let value = store.alloc_operands(&[place, pointee, types.ops.addr_]);
-    store.alloc_raw(types.addr_, value)
+
+    store.alloc_words(types.addr_, &[place, pointee, types.ops.addr_])
 }
 
 fn run_addr(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
@@ -126,8 +126,7 @@ pub(crate) fn address_value(
 ) -> DyadPtr {
     // SAFETY: `pointee` is the type node the address was taken of.
     let ty = unsafe { make_pointer_type(store, types.type_, pointee) };
-    let storage = store.alloc_bytes(&(addr as usize as u64).to_ne_bytes());
-    store.alloc_raw(ty, storage)
+    store.alloc_blob(ty, &(addr as usize as u64).to_ne_bytes())
 }
 
 /// One node per pointee: the first mint is written into the pointee's record and every
@@ -149,7 +148,7 @@ pub(crate) unsafe fn make_pointer_type(
         }
     }
     let value = super::meta::pointer_record(store, pointee);
-    let node = store.alloc_raw(type_, value);
+    let node = store.alloc_head(type_, value);
     if interned {
         super::meta::install_pointer_type(pointee, node);
     }
@@ -169,7 +168,7 @@ pub(crate) unsafe fn make_owning_pointer_type(
     destructor: DyadPtr,
 ) -> DyadPtr {
     let value = super::meta::pointer_record(store, pointee);
-    let node = store.alloc_raw(type_, value);
+    let node = store.alloc_head(type_, value);
     super::meta::install_destructor(node, destructor);
     node
 }
@@ -182,10 +181,10 @@ pub(crate) fn build_deref(
     pointee: DyadPtr,
     offset: usize,
 ) -> DyadPtr {
-    let off_bytes = store.alloc_bytes(&(offset as u64).to_ne_bytes());
-    let off_node = store.alloc_raw(types.numtypes[NumType::U64 as usize], off_bytes);
-    let value = store.alloc_operands(&[ptr_expr, pointee, off_node, types.ops.deref_]);
-    store.alloc_raw(types.deref_, value)
+    let off_node =
+        store.alloc_blob(types.numtypes[NumType::U64 as usize], &(offset as u64).to_ne_bytes());
+
+    store.alloc_words(types.deref_, &[ptr_expr, pointee, off_node, types.ops.deref_])
 }
 
 /// # Safety
@@ -229,8 +228,7 @@ pub(crate) unsafe fn build_storeptr(
         super::check_store_type(types, pointee, rhs)?;
         rhs
     };
-    let value = store.alloc_operands(&[ptr_expr, rhs, pointee, off_node, types.ops.storeptr_]);
-    Ok(store.alloc_raw(types.storeptr_, value))
+    Ok(store.alloc_words(types.storeptr_, &[ptr_expr, rhs, pointee, off_node, types.ops.storeptr_]))
 }
 
 /// The address `p@` names, the base checked as `run_deref` checks it.

@@ -173,13 +173,13 @@ pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
         k if k < VOID_TAG => Shape::Scalar(numtype::of_type_node(logos)),
         VOID_TAG => Shape::Unit,
         STRING_TAG => Shape::Text,
-        COMMENT_TAG => Shape::Prose { text: dyad::value(node).cast() },
+        COMMENT_TAG => Shape::Prose { text: dyad::head(node).cast() },
         ADDR_TAG => Shape::Pointer { pointee: numtype::pointee_of(logos) },
         meta::ARRAY_TAG => Shape::Array { items: crate::identities::array::items(node).to_vec() },
         meta::CALLABLE_TAG => {
             Shape::Callable { convention: crate::identities::callable::convention_of(node) }
         }
-        meta::CONVENTION_TAG => Shape::Convention { name: dyad::value(node).cast() },
+        meta::CONVENTION_TAG => Shape::Convention { name: dyad::head(node).cast() },
         meta::FRACTION_TAG => Shape::Fraction,
         meta::TYPEREC_TAG => Shape::LogosNode {
             kind: meta::kind_of(node).unwrap_or(meta::TOKEN_TAG),

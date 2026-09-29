@@ -61,7 +61,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
             crate::parse::Assoc::Left,
             roles,
         );
-        let id = cx.store.alloc_raw(cx.type_, record);
+        let id = cx.store.alloc_head(cx.type_, record);
         let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
         (id, leaf)
     };
@@ -71,7 +71,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
         op(cx, &["value", "k", "type", "binding", "fill", "owner", "op"], run_load);
     let fill = {
         let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
-        cx.store.alloc_raw(cx.type_, record)
+        cx.store.alloc_head(cx.type_, record)
     };
     let (store, store_leaf) = op(cx, &["value", "k", "v", "type", "owner", "op"], run_store);
     let (copy, copy_leaf) = op(cx, &["this", "op"], run_copy);
@@ -98,8 +98,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
 fn node(store: &mut Store, op: DyadPtr, leaf: DyadPtr, operands: &[DyadPtr]) -> DyadPtr {
     let mut v = operands.to_vec();
     v.push(leaf);
-    let value = store.alloc_operands(&v);
-    store.alloc_raw(op, value)
+
+    store.alloc_words(op, &v)
 }
 
 /// `k` is the field's index among the instance fields, as a `u64` literal; `owner` the type
@@ -130,11 +130,11 @@ pub(crate) fn build_copy(store: &mut Store, types: &Core, template: DyadPtr) -> 
 pub(crate) unsafe fn empty_node(store: &mut Store, ty: DyadPtr) -> DyadPtr {
     let mut slots: Vec<DyadPtr> = super::array::items(meta::record_fields_of(ty))
         .iter()
-        .map(|&field| if dyad::value(field).is_null() { std::ptr::null_mut() } else { field })
+        .map(|&field| if dyad::head(field).is_null() { std::ptr::null_mut() } else { field })
         .collect();
     slots.extend([std::ptr::null_mut(); 2]);
-    let value = store.alloc_operands(&slots);
-    store.alloc_raw(ty, value)
+
+    store.alloc_words(ty, &slots)
 }
 
 /// A field read: a `load` when the field's declared type says what it holds, a number, a
@@ -407,8 +407,7 @@ fn run_store(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
                 let ty = *ops.add(3);
                 let width = super::read::place_layout(rt.types(), ty).map_or(8, |(_, w)| w);
                 let store = rt.store();
-                let storage = store.alloc_bytes(&bits.to_ne_bytes()[..width]);
-                *slot = store.alloc_raw(ty, storage);
+                *slot = store.alloc_blob(ty, &bits.to_ne_bytes()[..width]);
             }
         }
         Ok(0)
@@ -454,8 +453,8 @@ unsafe fn copy_of(store: &mut Store, template: DyadPtr) -> DyadPtr {
     let ty = dyad::ty(template);
     let n = super::array::items(meta::record_fields_of(ty)).len() + 2;
     let slots = std::slice::from_raw_parts(dyad::value(template) as *const DyadPtr, n).to_vec();
-    let value = store.alloc_operands(&slots);
-    store.alloc_raw(ty, value)
+
+    store.alloc_words(ty, &slots)
 }
 
 /// The value a bare `share` call from a `run` hands on: a new value of `ty` whose fields are
@@ -492,16 +491,15 @@ unsafe fn pack_of(
             let pty = types.type_of(place);
             match (!pty.is_null()).then(|| place_layout(types, pty)).flatten() {
                 Some((Read::Scalar(_) | Read::Pointer(_), width)) => {
-                    let storage = store.alloc_bytes(&b.to_ne_bytes()[..width]);
-                    store.alloc_raw(pty, storage)
+                    store.alloc_blob(pty, &b.to_ne_bytes()[..width])
                 }
                 _ => b as DyadPtr,
             }
         })
         .collect();
     slots.extend([std::ptr::null_mut(); 2]);
-    let value = store.alloc_operands(&slots);
-    store.alloc_raw(ty, value)
+
+    store.alloc_words(ty, &slots)
 }
 
 fn run_pack(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {

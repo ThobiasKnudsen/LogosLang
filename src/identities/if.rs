@@ -29,7 +29,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
         Assoc::Left,
         &["condition", "then", "else", "op"],
     );
-    let if_ = cx.store.alloc_raw(cx.type_, record);
+    let if_ = cx.store.alloc_head(cx.type_, record);
     cx.declare("if", if_);
     cx.metas.insert(if_, |p, id, tape| {
         let node = p.parse_if(id)?;
@@ -41,7 +41,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
 
     // `else` is a parse-only token between the branches, not a function.
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
-    let else_ = cx.store.alloc_raw(cx.type_, record);
+    let else_ = cx.store.alloc_head(cx.type_, record);
     cx.declare("else", else_);
 
     (if_, leaf, else_)

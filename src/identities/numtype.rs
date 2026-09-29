@@ -121,7 +121,7 @@ impl NumType {
 
 pub(crate) fn register_type(cx: &mut Cx, spelling: &str, nt: NumType) -> DyadPtr {
     let record = super::meta::record(cx.store, nt as u8, super::meta::prec::APPLY);
-    let id = cx.store.alloc_raw(cx.type_, record);
+    let id = cx.store.alloc_head(cx.type_, record);
     cx.declare(spelling, id);
     cx.metas.insert(id, construct);
     id
@@ -175,7 +175,7 @@ pub(crate) const VOID_TAG: u8 = 10;
 /// No lowering: `void` appears only as a `->` return type.
 pub(crate) fn register_void(cx: &mut Cx) -> DyadPtr {
     let record = super::meta::record(cx.store, VOID_TAG, super::meta::prec::INERT);
-    let id = cx.store.alloc_raw(cx.type_, record);
+    let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("void", id);
     id
 }

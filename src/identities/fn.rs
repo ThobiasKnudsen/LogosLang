@@ -16,7 +16,7 @@ use crate::store::Store;
 
 /// Called before the build context exists, since `=`/`+` reference `fn` as their logos.
 pub(super) fn register(store: &mut Store, type_: DyadPtr) -> DyadPtr {
-    store.alloc_raw(type_, std::ptr::null_mut())
+    store.alloc_leaf(type_)
 }
 
 /// Returns the `->` arrow.
@@ -55,11 +55,11 @@ pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
     );
     // SAFETY: `fn_type` was allocated by [`register`] and nothing has read its value slot.
     unsafe {
-        dyad::set_value(cx.fn_type, record);
+        dyad::set_head(cx.fn_type, record);
     }
 
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
-    let arrow = cx.store.alloc_raw(cx.type_, record);
+    let arrow = cx.store.alloc_head(cx.type_, record);
     cx.declare("->", arrow);
     arrow
 }
@@ -75,7 +75,7 @@ pub(super) fn register_compile(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr
         Assoc::Left,
         &["function", "code", "op"],
     );
-    let compile_ = cx.store.alloc_raw(cx.type_, record);
+    let compile_ = cx.store.alloc_head(cx.type_, record);
     let leaf = callable::mint_native(cx.store, cs.callable, compile_run, cs.seed_native);
     (compile_, leaf)
 }

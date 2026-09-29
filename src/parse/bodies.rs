@@ -74,6 +74,8 @@ pub const FN_OUTER: usize = 5;
 /// `share` function's body reads or writes a field of its value; null for neither.
 pub const FN_RECEIVER: usize = 6;
 
+pub const FN_SLOTS: usize = FN_RECEIVER + 1;
+
 pub const RECEIVER_READS: u64 = 1;
 
 pub const RECEIVER_WRITES: u64 = 2;
@@ -268,14 +270,12 @@ pub(crate) unsafe fn contains_return(types: &Core, node: DyadPtr) -> bool {
 /// `{type: callee, value: [args…, null]}`: null-terminated so `run` can count
 /// the arguments; a nullary call carries a null value.
 pub(super) fn build_call(store: &mut Store, callee: DyadPtr, args: &[DyadPtr]) -> DyadPtr {
-    let value = if args.is_empty() {
-        std::ptr::null_mut()
-    } else {
-        let mut ops = args.to_vec();
-        ops.push(std::ptr::null_mut());
-        store.alloc_operands(&ops)
-    };
-    store.alloc_raw(callee, value)
+    if args.is_empty() {
+        return store.alloc_leaf(callee);
+    }
+    let mut ops = args.to_vec();
+    ops.push(std::ptr::null_mut());
+    store.alloc_words(callee, &ops)
 }
 
 impl<'a> Parser<'a> {
@@ -309,7 +309,7 @@ impl<'a> Parser<'a> {
             nested.push(scope);
         }
         let base_depth = nested.depth();
-        let spec = self.rt.store.alloc_raw(types.fn_type, std::ptr::null_mut());
+        let spec = self.rt.store.alloc_words(types.fn_type, &[std::ptr::null_mut(); FN_SLOTS]);
         crate::identities::run_body::insert(self.rt.store, types, held, key, spec);
 
         let cx = Context {
@@ -498,9 +498,8 @@ impl<'a> Parser<'a> {
         let receiver = (u64::from(def.read_receiver) * RECEIVER_READS)
             | (u64::from(def.wrote_receiver) * RECEIVER_WRITES);
         if let (Ok(&f), true) = (f.as_ref(), receiver != 0) {
-            let bytes = self.rt.store.alloc_bytes(&receiver.to_ne_bytes());
             let u64_ty = self.types.numtypes[crate::identities::NumType::U64 as usize];
-            let leaf = self.rt.store.alloc_raw(u64_ty, bytes);
+            let leaf = self.rt.store.alloc_blob(u64_ty, &receiver.to_ne_bytes());
             // SAFETY: `f` is the node `fn_over_body` just built over its seven-slot record.
             unsafe { *(dyad::value(f) as *mut DyadPtr).add(FN_RECEIVER) = leaf };
         }
@@ -526,22 +525,22 @@ impl<'a> Parser<'a> {
         spec: DyadPtr,
         binding: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
+        let mut early = [std::ptr::null_mut(); FN_SLOTS];
+        early[FN_INPUT] = input;
+        early[FN_OUTPUT] = output;
         let node = if spec.is_null() {
-            self.rt.store.alloc_raw(fn_type, std::ptr::null_mut())
+            self.rt.store.alloc_words(fn_type, &early)
         } else {
+            // SAFETY: `spec` was minted with `FN_SLOTS` null words (the caller's contract).
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    early.as_ptr(),
+                    dyad::value(spec) as *mut DyadPtr,
+                    FN_SLOTS,
+                )
+            };
             spec
         };
-        let early = self.rt.store.alloc_operands(&[
-            input,
-            output,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        ]);
-        // SAFETY: `node` is `spec` or just minted; nothing has read a value from it.
-        unsafe { dyad::set_value(node, early) };
         if !binding.is_null() {
             // SAFETY: `binding` is a binding dyad from the store (the caller's contract).
             unsafe { Binding::set_dyad(binding, node) };
@@ -600,9 +599,8 @@ impl<'a> Parser<'a> {
         let frame = if frame_size == 0 {
             std::ptr::null_mut()
         } else {
-            let bytes = self.rt.store.alloc_bytes(&(frame_size as u64).to_ne_bytes());
             let u64_ty = self.types.numtypes[crate::identities::NumType::U64 as usize];
-            self.rt.store.alloc_raw(u64_ty, bytes)
+            self.rt.store.alloc_blob(u64_ty, &(frame_size as u64).to_ne_bytes())
         };
         let outer = if outer.is_empty() {
             std::ptr::null_mut()
@@ -702,8 +700,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let value = self.rt.store.alloc_operands(&[cond, then, els, self.types.ops.if_]);
-        Ok(self.rt.store.alloc_raw(if_type, value))
+        Ok(self.rt.store.alloc_words(if_type, &[cond, then, els, self.types.ops.if_]))
     }
 
     fn bracketed_body(&mut self) -> Result<DyadPtr, ParseError> {
@@ -758,13 +755,10 @@ impl<'a> Parser<'a> {
                 self.skip_else_tail(if_type)?;
                 return Ok(then);
             }
-            let value = self.rt.store.alloc_operands(&[
-                cond,
-                then,
-                std::ptr::null_mut(),
-                self.types.ops.if_,
-            ]);
-            return Ok(self.rt.store.alloc_raw(if_type, value));
+            return Ok(self
+                .rt
+                .store
+                .alloc_words(if_type, &[cond, then, std::ptr::null_mut(), self.types.ops.if_]));
         }
         self.skip_branch()?;
         if self.consume_else() {
@@ -773,9 +767,11 @@ impl<'a> Parser<'a> {
             }
             return self.parse_branch();
         }
-        let value =
-            self.rt.store.alloc_operands(&[cond, cond, std::ptr::null_mut(), self.types.ops.if_]);
-        Ok(self.rt.store.alloc_raw(if_type, value))
+
+        Ok(self
+            .rt
+            .store
+            .alloc_words(if_type, &[cond, cond, std::ptr::null_mut(), self.types.ops.if_]))
     }
 
     /// Drop a balanced `( … )` group without parsing it (DESIGN ›a constructor
@@ -881,8 +877,8 @@ impl<'a> Parser<'a> {
                 !v,
             ));
         }
-        let value = self.rt.store.alloc_operands(&[operand, self.types.ops.not_]);
-        Ok(self.rt.store.alloc_raw(not_id, value))
+
+        Ok(self.rt.store.alloc_words(not_id, &[operand, self.types.ops.not_]))
     }
 
     /// `while cond body`: the node is `[cond, body]`, a statement yielding
@@ -909,8 +905,7 @@ impl<'a> Parser<'a> {
         if self.cx.frames.is_empty() && unsafe { contains_return(types, body) } {
             return Err(ParseError::EarlyReturn);
         }
-        let value = self.rt.store.alloc_operands(&[cond, body, self.types.ops.while_]);
-        Ok(self.rt.store.alloc_raw(while_id, value))
+        Ok(self.rt.store.alloc_words(while_id, &[cond, body, self.types.ops.while_]))
     }
 
     /// `for i in a..b ( body )`, with an optional `..step` and optionally no
@@ -1005,9 +1000,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::EarlyReturn);
         }
 
-        let value =
-            self.rt.store.alloc_operands(&[var, start, end, step, body, self.types.ops.for_]);
-        Ok(self.rt.store.alloc_raw(for_id, value))
+        Ok(self.rt.store.alloc_words(for_id, &[var, start, end, step, body, self.types.ops.for_]))
     }
 
     /// The cell after `for` decides: a spelling followed by `in` is the name;

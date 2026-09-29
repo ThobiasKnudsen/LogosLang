@@ -16,7 +16,7 @@ pub(crate) fn register(cx: &mut Cx) {
         crate::parse::Assoc::Right,
         &["expr", "op"],
     );
-    let immediate = cx.store.alloc_raw(cx.type_, record);
+    let immediate = cx.store.alloc_head(cx.type_, record);
     cx.declare("immediate", immediate);
     cx.metas.insert(immediate, |p, _id, tape| p.construct_immediate(tape));
 }

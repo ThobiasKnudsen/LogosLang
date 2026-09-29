@@ -109,7 +109,7 @@ fn runs_a_compound_function_by_walking_its_body() {
             Parser::new("fn () -> i32 ( return a + 1 )", &mut store, &mut trie, &core, scopes);
         p.parse_expression().unwrap()
     };
-    let call = store.alloc_raw(main, std::ptr::null_mut());
+    let call = store.alloc_leaf(main);
 
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `call`/`main`/body are valid nodes in `store`.
@@ -192,7 +192,7 @@ fn parses_and_runs_a_fn() {
         assert!(!body.is_null());
     }
 
-    let call = store.alloc_raw(func, std::ptr::null_mut());
+    let call = store.alloc_leaf(func);
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `call`/`func`/body are valid nodes in `store`.
     let result = unsafe { rt.run(call) }.unwrap();
@@ -376,7 +376,7 @@ fn fn_body_return_is_optional() {
         p.parse_expression().unwrap()
     };
 
-    let call = store.alloc_raw(func, std::ptr::null_mut());
+    let call = store.alloc_leaf(func);
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `call`/`func`/body are valid nodes just parsed.
     assert_eq!(unsafe { rt.run(call) }.unwrap(), 42);
@@ -545,7 +545,7 @@ fn assign_to_a_wide_variable_stores_at_full_width_both_tiers() {
         );
         p.parse_expression().unwrap()
     };
-    let call = store.alloc_raw(func, std::ptr::null_mut());
+    let call = store.alloc_leaf(func);
 
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
@@ -577,7 +577,7 @@ fn milestone_2_fn_runs_interpreted_and_jit_identically() {
         p.parse_expression().unwrap()
     };
 
-    let call = store.alloc_raw(func, std::ptr::null_mut());
+    let call = store.alloc_leaf(func);
     let mut rt = Runtime::new(&core, &mut store);
 
     let interp = unsafe { rt.run(call) }.unwrap();
@@ -658,7 +658,7 @@ fn compiling_an_uninitialized_read_errors_instead_of_crashing() {
     let (mut store, mut trie, core) = new_core();
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
-    let x = store.alloc_raw(core.i32_, std::ptr::null_mut());
+    let x = store.alloc_leaf(core.i32_);
     unsafe { scopes.declare(&mut trie, "x", test_binding(&mut store, core.binding_, x)) }.unwrap();
 
     let node = {
@@ -696,7 +696,7 @@ fn plus_is_abstract_and_resolves_to_a_concrete_op() {
         );
     }
 
-    let call = store.alloc_raw(func, std::ptr::null_mut());
+    let call = store.alloc_leaf(func);
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `call`/`func`/body are valid nodes just parsed.
     let interp = unsafe { rt.run(call) }.unwrap();
@@ -772,7 +772,7 @@ fn diff_nullary_fn(src: &str, expect: i64) {
         let mut p = Parser::new(src, &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
-    let call = store.alloc_raw(func, std::ptr::null_mut());
+    let call = store.alloc_leaf(func);
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `call`/`func`/body are valid nodes just parsed.
     let interp = unsafe { rt.run(call) }.unwrap();
@@ -1082,7 +1082,7 @@ fn logical_operators_short_circuit_on_the_interpreter() {
     {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        let y = store.alloc_raw(core.i32_, std::ptr::null_mut());
+        let y = store.alloc_leaf(core.i32_);
         unsafe { s.declare(&mut trie, "y", test_binding(&mut store, core.binding_, y)) }.unwrap();
     }
     let mut rt = Runtime::new(&core, &mut store);
@@ -1226,7 +1226,7 @@ fn else_less_if_is_a_unit_statement_both_tiers() {
         );
         p.parse_expression().unwrap()
     };
-    let call = store.alloc_raw(func, std::ptr::null_mut());
+    let call = store.alloc_leaf(func);
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
     assert_eq!(unsafe { rt.run(call) }.unwrap(), 0, "unit (interpreted)");
@@ -1274,7 +1274,7 @@ fn the_else_binds_to_the_outer_if_across_a_bracketed_branch() {
         );
         p.parse_expression().unwrap()
     };
-    let call = store.alloc_raw(func, std::ptr::null_mut());
+    let call = store.alloc_leaf(func);
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
     assert_eq!(unsafe { rt.run(call) }.unwrap(), 0);
@@ -1324,7 +1324,7 @@ fn compiled_calls_between_compiled_functions_are_width_general() {
             Parser::new("fn () -> i64 ( mul(2000000000, 3) )", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
-    let call = store.alloc_raw(outer, std::ptr::null_mut());
+    let call = store.alloc_leaf(outer);
 
     // SAFETY: `mul` is the fn node just built and outlives every call.
     unsafe { compile_fn(&mut store, &core.lower, &core, mul) }.unwrap();
@@ -1364,7 +1364,7 @@ fn compiled_calls_pass_floats_across_the_boundary() {
         let mut p = Parser::new("fn () -> f64 ( g(a) )", &mut store, &mut trie, &core, scopes);
         p.parse_expression().unwrap()
     };
-    let call = store.alloc_raw(outer, std::ptr::null_mut());
+    let call = store.alloc_leaf(outer);
 
     // SAFETY: `g` is the fn node just built and outlives every call.
     unsafe { compile_fn(&mut store, &core.lower, &core, g) }.unwrap();
@@ -1737,12 +1737,12 @@ fn comments_are_reflectable_nodes_invisible_to_value_flow() {
         };
         let (c1, mid, c2) = (*c1, *mid, *c2);
         assert_eq!(dyad::ty(c1), core.comment_);
-        assert_eq!(crate::identities::string::text(dyad::value(c1).cast()), b"the answer");
+        assert_eq!(crate::identities::string::text(dyad::head(c1).cast()), b"the answer");
         assert_eq!(dyad::ty(mid), core.i32_);
         assert_eq!(dyad::ty(c2), core.comment_);
-        assert_eq!(crate::identities::string::text(dyad::value(c2).cast()), b"checked twice");
+        assert_eq!(crate::identities::string::text(dyad::head(c2).cast()), b"checked twice");
     }
-    let call = store.alloc_raw(func, std::ptr::null_mut());
+    let call = store.alloc_leaf(func);
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `call`/`func`/body are valid nodes just parsed.
     let interp = unsafe { rt.run(call) }.unwrap();
@@ -1803,7 +1803,7 @@ fn pointers_mutate_caller_state_through_calls_both_tiers() {
         );
         p.parse_expression().unwrap()
     };
-    let call = store.alloc_raw(func, std::ptr::null_mut());
+    let call = store.alloc_leaf(func);
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `call`/`func`/`incr` are valid nodes just parsed.
     let interp = unsafe { rt.run(call) }.unwrap();
@@ -1842,7 +1842,7 @@ fn pointer_chains_and_field_pointers_work_both_tiers() {
         );
         p.parse_expression().unwrap()
     };
-    let call = store.alloc_raw(func, std::ptr::null_mut());
+    let call = store.alloc_leaf(func);
     let mut rt = Runtime::new(&core, &mut store);
     // x: 3 + 10 = 13 (via q@.x); y: 4 + 1 = 5 (via fp@); 13 + 5 = 18.
     // SAFETY: `call`/`func` are valid nodes just parsed.
@@ -1875,7 +1875,7 @@ fn record_pointer_fields_hold_addresses_both_tiers() {
         );
         p.parse_expression().unwrap()
     };
-    let call = store.alloc_raw(func, std::ptr::null_mut());
+    let call = store.alloc_leaf(func);
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `call`/`func` are valid nodes just parsed.
     let interp = unsafe { rt.run(call) }.unwrap();
@@ -2188,7 +2188,7 @@ fn a_deoptimized_or_recompiled_callee_is_reached_by_an_earlier_compiled_caller()
         (fn_of(0), fn_of(1))
     };
     assert_eq!(rt.store.live_artifacts(), 2);
-    let call = rt.store.alloc_raw(f, std::ptr::null_mut());
+    let call = rt.store.alloc_leaf(f);
 
     // SAFETY: `call` applies the fn node `f`; `g` is a fn node; both from the store.
     unsafe {
@@ -2541,7 +2541,7 @@ fn record_instances_construct_read_and_write_fields_both_tiers() {
         );
         p.parse_expression().unwrap()
     };
-    let call = store.alloc_raw(func, std::ptr::null_mut());
+    let call = store.alloc_leaf(func);
     let mut rt = Runtime::new(&core, &mut store);
     // 3 + 36 = 39; 39 + 4 + 2 = 45.
     // SAFETY: `call`/`func` are valid nodes just parsed.
@@ -3387,7 +3387,7 @@ fn compiled_function_calls_another_compiled_function() {
         let mut p = Parser::new("fn () -> i32 ( add(40, 2) )", &mut store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
-    let call = store.alloc_raw(outer, std::ptr::null_mut());
+    let call = store.alloc_leaf(outer);
 
     // Compile `add` first so `outer`'s call has a machine address to bake.
     // SAFETY: `add` is the fn node just built and outlives every call.
@@ -3474,7 +3474,7 @@ fn diff_var_fn(nt: NumType, init: i64, fn_src: &str, expect: i64) {
         let mut p = Parser::new(fn_src, &mut store, &mut trie, &core, scopes);
         p.parse_expression().unwrap()
     };
-    let call = store.alloc_raw(func, std::ptr::null_mut());
+    let call = store.alloc_leaf(func);
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
     let interp = unsafe { rt.run(call) }.unwrap();
@@ -3610,7 +3610,7 @@ fn void_function_runs_its_body_for_effect() {
             Parser::new("fn () -> void ( a = a + 1 )", &mut store, &mut trie, &core, scopes);
         p.parse_expression().unwrap()
     };
-    let call = store.alloc_raw(func, std::ptr::null_mut());
+    let call = store.alloc_leaf(func);
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `call`/`func`/`a` are valid nodes just built in `store`.
     let interp = unsafe { rt.run(call) }.unwrap();

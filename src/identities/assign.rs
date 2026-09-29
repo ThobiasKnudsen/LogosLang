@@ -27,7 +27,7 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
         Assoc::Right,
         &["lhs", "rhs", "op"],
     );
-    let id = cx.store.alloc_raw(cx.type_, record);
+    let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("=", id);
     cx.metas.insert(id, construct);
     cx.lower.insert(id, lower);
@@ -224,8 +224,7 @@ pub(super) fn build_store(
             if !ok {
                 return Err(ParseError::BadDeclaredType);
             }
-            let value = store.alloc_operands(&[lhs, rhs, types.ops.store_leaf(NumType::I64)]);
-            return Ok(store.alloc_raw(op, value));
+            return Ok(store.alloc_words(op, &[lhs, rhs, types.ops.store_leaf(NumType::I64)]));
         }
         // SAFETY: as above.
         Read::Container(t) if unsafe { meta::is_node_valued(t, types.fn_type) } => {
@@ -233,8 +232,8 @@ pub(super) fn build_store(
             if unsafe { super::node_type_of(types, rhs) } != Some(t) {
                 return Err(ParseError::TypeMismatch);
             }
-            let value = store.alloc_operands(&[lhs, rhs, types.ops.store_leaf(NumType::I64)]);
-            return Ok(store.alloc_raw(op, value));
+
+            return Ok(store.alloc_words(op, &[lhs, rhs, types.ops.store_leaf(NumType::I64)]));
         }
         Read::Rational => {
             // SAFETY: `rhs` is a reduced dyad from the store.
@@ -245,8 +244,7 @@ pub(super) fn build_store(
             if !fits {
                 return Err(ParseError::TypeMismatch);
             }
-            let value = store.alloc_operands(&[lhs, rhs, types.ops.rational_store]);
-            return Ok(store.alloc_raw(op, value));
+            return Ok(store.alloc_words(op, &[lhs, rhs, types.ops.rational_store]));
         }
         Read::Scalar(_) | Read::Pointer(_) if marked => {}
         Read::Literal => {
@@ -285,8 +283,8 @@ pub(super) fn build_store(
     }
     // SAFETY: `lhs` is a typed variable checked assignable above.
     let nt = unsafe { of_type_node(lhs_type) };
-    let value = store.alloc_operands(&[lhs, rhs, types.ops.store_leaf(nt)]);
-    Ok(store.alloc_raw(op, value))
+
+    Ok(store.alloc_words(op, &[lhs, rhs, types.ops.store_leaf(nt)]))
 }
 
 /// `f(…) = v` where `f`'s body ends in `p@`: a copy of `f` ending in `p` instead finds
@@ -319,9 +317,18 @@ unsafe fn build_call_write(
     record[FN_OUTPUT] = super::pointer::make_pointer_type(store, types.type_, pointee);
     record[FN_BODY] = body;
     record[FN_BCODE] = std::ptr::null_mut();
-    let record = store.alloc_operands(&record);
-    let finder = store.alloc_raw(dyad::ty(f), record);
-    let found = store.alloc_raw(finder, dyad::value(call));
+    let finder = store.alloc_words(dyad::ty(f), &record);
+    // The call's argument words, null-terminated, copied under the finder.
+    let args = dyad::value(call) as *const DyadPtr;
+    let mut words = Vec::new();
+    loop {
+        let w = *args.add(words.len());
+        words.push(w);
+        if w.is_null() {
+            break;
+        }
+    }
+    let found = store.alloc_words(finder, &words);
     let place = super::pointer::build_deref(store, types, found, pointee, offset as usize);
     super::pointer::build_storeptr(store, types, place, rhs).map(Some)
 }

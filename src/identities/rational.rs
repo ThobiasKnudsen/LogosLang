@@ -19,7 +19,7 @@ use crate::Core;
 
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, meta::FRACTION_TAG, meta::prec::LITERAL);
-    let id = cx.store.alloc_raw(cx.type_, record);
+    let id = cx.store.alloc_head(cx.type_, record);
     // Unanchored: the lexer longest-matches a prefix. The span is unsigned: `-` is
     // always the operator, else `a-1` would lex as `a` then `-1`.
     cx.declare(r"[0-9]+(?:\.[0-9]+)?", id);
@@ -72,8 +72,7 @@ pub(crate) fn build_literal(store: &mut Store, rational: DyadPtr, num: i64, den:
     let mut bytes = [0u8; 16];
     bytes[..8].copy_from_slice(&num.to_ne_bytes());
     bytes[8..].copy_from_slice(&den.to_ne_bytes());
-    let value = store.alloc_bytes(&bytes);
-    store.alloc_raw(rational, value)
+    store.alloc_blob(rational, &bytes)
 }
 
 /// `Ok(None)` if either operand is not a rational literal; `UncomputableLiteral` if the

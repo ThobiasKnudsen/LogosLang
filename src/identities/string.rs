@@ -19,7 +19,7 @@ pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
     let record = meta::record(cx.store, STRING_TAG, meta::prec::LITERAL);
     let id = cx.string_;
     // SAFETY: `id` is the string type node the build allocated, its value null until now.
-    unsafe { dyad::set_value(id, record) };
+    unsafe { dyad::set_head(id, record) };
     cx.declare("«[^»]*»", id);
     cx.metas.insert(id, construct);
     id
@@ -42,8 +42,8 @@ pub(crate) fn build_text(store: &mut Store, string_ty: DyadPtr, text: &[u8]) -> 
     let mut blob = Vec::with_capacity(8 + text.len());
     blob.extend_from_slice(&(text.len() as u64).to_ne_bytes());
     blob.extend_from_slice(text);
-    let value = store.alloc_bytes(&blob);
-    store.alloc_raw(string_ty, value)
+
+    store.alloc_blob(string_ty, &blob)
 }
 
 /// # Safety

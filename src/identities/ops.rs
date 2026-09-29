@@ -316,13 +316,10 @@ mod tests {
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
 
-        let l = store.alloc_bytes(&20i32.to_ne_bytes());
-        let lhs = store.alloc_raw(core.i32_, l);
-        let r = store.alloc_bytes(&22i32.to_ne_bytes());
-        let rhs = store.alloc_raw(core.i32_, r);
+        let lhs = store.alloc_blob(core.i32_, &20i32.to_ne_bytes());
+        let rhs = store.alloc_blob(core.i32_, &22i32.to_ne_bytes());
         let leaf = core.ops.arith_leaf(ArithOp::Add, NumType::I32);
-        let value = store.alloc_operands(&[lhs, rhs, leaf]);
-        let node = store.alloc_raw(core.plus, value);
+        let node = store.alloc_words(core.plus, &[lhs, rhs, leaf]);
 
         let mut rt = Runtime::new(&core, &mut store);
         // SAFETY: the node and its operands were just built; the leaf is a
@@ -336,13 +333,11 @@ mod tests {
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
 
-        let l = store.alloc_bytes(&20i32.to_ne_bytes());
-        let lhs = store.alloc_raw(core.i32_, l);
-        let r = store.alloc_bytes(&22i32.to_ne_bytes());
-        let rhs = store.alloc_raw(core.i32_, r);
+        let lhs = store.alloc_blob(core.i32_, &20i32.to_ne_bytes());
+
+        let rhs = store.alloc_blob(core.i32_, &22i32.to_ne_bytes());
         let leaf = core.ops.arith_leaf(ArithOp::Add, NumType::I32);
-        let value = store.alloc_operands(&[lhs, rhs, leaf]);
-        let node = store.alloc_raw(core.plus, value);
+        let node = store.alloc_words(core.plus, &[lhs, rhs, leaf]);
 
         let mut rt = Runtime::new(&core, &mut store);
         // SAFETY: the leaf was minted from a seed-native RunFn shim; the node's

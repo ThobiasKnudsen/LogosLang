@@ -202,8 +202,32 @@ impl Store {
         })
     }
 
-    pub fn alloc_raw(&mut self, ty: DyadPtr, value: *mut u8) -> DyadPtr {
+    fn alloc_raw(&mut self, ty: DyadPtr, value: *mut u8) -> DyadPtr {
         self.alloc(Dyad::new(ty, value))
+    }
+
+    /// A node whose value is the operand words `words`, fixed at birth
+    /// (DESIGN ›Operands sit inline after the type word; a growing list stays behind a pointer‹).
+    pub fn alloc_words(&mut self, ty: DyadPtr, words: &[DyadPtr]) -> DyadPtr {
+        let run = self.alloc_operands(words);
+        self.alloc_raw(ty, run)
+    }
+
+    /// A node whose value is the bytes `bytes`, fixed at birth: a literal, a text.
+    pub fn alloc_blob(&mut self, ty: DyadPtr, bytes: &[u8]) -> DyadPtr {
+        let blob = self.alloc_bytes(bytes);
+        self.alloc_raw(ty, blob)
+    }
+
+    /// A node whose value is one address: a type's record, another node, a table. What
+    /// grows or is written after the node's birth lives behind this word.
+    pub fn alloc_head(&mut self, ty: DyadPtr, ptr: *mut u8) -> DyadPtr {
+        self.alloc_raw(ty, ptr)
+    }
+
+    /// A node with no value: a marker, a bare identity.
+    pub fn alloc_leaf(&mut self, ty: DyadPtr) -> DyadPtr {
+        self.alloc_raw(ty, std::ptr::null_mut())
     }
 
     /// An operand run (`dyad@` fields) as a `void@`, in the arena. A write pointer:
@@ -216,13 +240,14 @@ impl Store {
         ptr as *mut u8
     }
 
-    pub fn alloc_binding(&mut self, rec: Binding) -> *mut Binding {
+    /// A `binding` node: its value is the record `rec`, fixed at birth.
+    pub fn alloc_binding(&mut self, ty: DyadPtr, rec: Binding) -> DyadPtr {
         debug_assert!(std::mem::align_of::<Binding>() <= 8, "the arena bumps to 8");
         let at = self.arena.bump(std::mem::size_of::<Binding>());
         let ptr = self.arena_at(at) as *mut Binding;
         // SAFETY: just bumped at the record's size and alignment; `Binding` has no `Drop`.
         unsafe { ptr.write(rec) };
-        ptr
+        self.alloc_raw(ty, ptr as *mut u8)
     }
 
     /// A write pointer, as `alloc_operands`'s is: an `=` writes through it.

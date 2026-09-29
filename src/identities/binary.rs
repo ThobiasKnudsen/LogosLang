@@ -59,7 +59,7 @@ pub(super) fn register_all(cx: &mut Cx) -> BinaryIds {
 fn register(cx: &mut Cx, spelling: &str, rank: f64, family: Family) -> DyadPtr {
     let record =
         meta::operand_record(cx, meta::TUPLE_TAG, rank, Assoc::Left, &["lhs", "rhs", "op"]);
-    let id = cx.store.alloc_raw(cx.type_, record);
+    let id = cx.store.alloc_head(cx.type_, record);
     cx.declare(spelling, id);
     let (construct, lower) = shims(family);
     cx.metas.insert(id, construct);
@@ -163,8 +163,7 @@ fn build_op(
             let leaf = types.ops.rational_cmp_leaf(c);
             // SAFETY: `lhs`/`rhs` are reduced dyads from the store.
             if let Some(slots) = unsafe { rational_slots(types, lhs, rhs, leaf) }? {
-                let value = store.alloc_operands(&slots);
-                return Ok(store.alloc_raw(op, value));
+                return Ok(store.alloc_words(op, &slots));
             }
             if matches!(c, CmpOp::Eq | CmpOp::Ne) {
                 if let Some(node) = build_identity_compare(store, types, op, c, lhs, rhs) {
@@ -176,8 +175,7 @@ fn build_op(
             [lhs, rhs, types.ops.cmp_leaf(c, nt)]
         }
     };
-    let value = store.alloc_operands(&slots);
-    Ok(store.alloc_raw(op, value))
+    Ok(store.alloc_words(op, &slots))
 }
 
 /// `p + k` and `p - k` on an `@T` step k whole cells: the node is `[p, k * width, i64 op]`,
@@ -208,21 +206,18 @@ unsafe fn pointer_step(
             let k = rational::mold_to(types.through(rhs), NumType::I64)
                 .ok_or(ParseError::UncomputableLiteral)?;
             let bytes = k.checked_mul(width as i64).ok_or(ParseError::UncomputableLiteral)?;
-            let value = store.alloc_bytes(&bytes.to_ne_bytes());
-            store.alloc_raw(i64_ty, value)
+            store.alloc_blob(i64_ty, &bytes.to_ne_bytes())
         }
         super::Operand::Concrete(nt) if !nt.is_float() => {
             let k = super::build_cast(store, types, i64_ty, &[rhs])?;
-            let value = store.alloc_bytes(&(width as i64).to_ne_bytes());
-            let w = store.alloc_raw(i64_ty, value);
-            let value =
-                store.alloc_operands(&[k, w, types.ops.arith_leaf(ArithOp::Mul, NumType::I64)]);
-            store.alloc_raw(types.times, value)
+            let w = store.alloc_blob(i64_ty, &(width as i64).to_ne_bytes());
+            store
+                .alloc_words(types.times, &[k, w, types.ops.arith_leaf(ArithOp::Mul, NumType::I64)])
         }
         _ => return Err(ParseError::UnsupportedOperands),
     };
-    let value = store.alloc_operands(&[lhs, offset, types.ops.arith_leaf(a, NumType::I64)]);
-    Ok(Some(store.alloc_raw(op, value)))
+
+    Ok(Some(store.alloc_words(op, &[lhs, offset, types.ops.arith_leaf(a, NumType::I64)])))
 }
 
 /// When either side is a rational value, the other must be one too or a literal; a
@@ -294,8 +289,7 @@ fn build_identity_compare(
     let pointer =
         |n: DyadPtr| unsafe { matches!(super::numtype_of(types, n), super::Operand::Pointer(_)) };
     if (addressed(lhs, l) && addressed(rhs, r)) || (pointer(lhs) && pointer(rhs)) {
-        let value = store.alloc_operands(&[lhs, rhs, types.ops.cmp_leaf(c, NumType::I64)]);
-        return Some(store.alloc_raw(op, value));
+        return Some(store.alloc_words(op, &[lhs, rhs, types.ops.cmp_leaf(c, NumType::I64)]));
     }
     None
 }

@@ -30,7 +30,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> HeldTypeIds {
         crate::parse::Assoc::Left,
         &["text", "cells", "scope", "frames", "op"],
     );
-    let held_type = cx.store.alloc_raw(cx.type_, record);
+    let held_type = cx.store.alloc_head(cx.type_, record);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     HeldTypeIds { held_type, leaf }
 }
@@ -46,15 +46,15 @@ pub(crate) fn build(
     frames: &[DyadPtr],
 ) -> DyadPtr {
     let u64_ty = types.numtypes[NumType::U64 as usize];
-    let storage = store.alloc_bytes(&(cells as usize as u64).to_ne_bytes());
-    let cells = store.alloc_raw(u64_ty, storage);
+    let cells = store.alloc_blob(u64_ty, &(cells as usize as u64).to_ne_bytes());
     let frames = if frames.is_empty() {
         std::ptr::null_mut()
     } else {
         super::array::build(store, types.array_, frames)
     };
-    let value = store.alloc_operands(&[text, cells, scope, frames, types.held_type.leaf]);
-    store.alloc_raw(types.held_type.held_type, value)
+
+    store
+        .alloc_words(types.held_type.held_type, &[text, cells, scope, frames, types.held_type.leaf])
 }
 
 /// The parts `build` stored: text, cells, scope, the open `fn` nodes.

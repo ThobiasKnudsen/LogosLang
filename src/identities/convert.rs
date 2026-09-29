@@ -29,7 +29,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         Assoc::Left,
         &["operand", "from", "to", "op"],
     );
-    let id = cx.store.alloc_raw(cx.type_, record);
+    let id = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(id, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     (id, leaf)
@@ -42,8 +42,7 @@ pub(crate) fn build_convert(
     from: DyadPtr,
     to: DyadPtr,
 ) -> DyadPtr {
-    let value = store.alloc_operands(&[operand, from, to, types.ops.convert_]);
-    store.alloc_raw(types.convert, value)
+    store.alloc_words(types.convert, &[operand, from, to, types.ops.convert_])
 }
 
 /// # Safety

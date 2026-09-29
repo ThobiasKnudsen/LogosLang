@@ -27,7 +27,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
         Assoc::Left,
         &["variable", "start", "end", "step", "body", "op"],
     );
-    let for_ = cx.store.alloc_raw(cx.type_, record);
+    let for_ = cx.store.alloc_head(cx.type_, record);
     cx.declare("for", for_);
     cx.metas.insert(for_, |p, id, tape| {
         let node = p.parse_for(id)?;
@@ -38,11 +38,11 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
 
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::INERT);
-    let in_ = cx.store.alloc_raw(cx.type_, record);
+    let in_ = cx.store.alloc_head(cx.type_, record);
     cx.declare("in", in_);
 
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::RANGE);
-    let range = cx.store.alloc_raw(cx.type_, record);
+    let range = cx.store.alloc_head(cx.type_, record);
     cx.declare(r"\.\.", range);
 
     (for_, leaf, in_, range)

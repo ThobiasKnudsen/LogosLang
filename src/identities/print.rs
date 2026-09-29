@@ -32,7 +32,7 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> PrintIds {
         crate::parse::Assoc::Left,
         &["parts", "op"],
     );
-    let print = cx.store.alloc_raw(cx.type_, record);
+    let print = cx.store.alloc_head(cx.type_, record);
     cx.declare("print", print);
     cx.metas.insert(print, |p, _id, tape| p.construct_print(tape));
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
@@ -41,8 +41,7 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> PrintIds {
 
 pub(crate) fn build(store: &mut Store, types: &Core, parts: &[DyadPtr]) -> DyadPtr {
     let parts = super::array::build(store, types.array_, parts);
-    let value = store.alloc_operands(&[parts, types.print.leaf]);
-    store.alloc_raw(types.print.print, value)
+    store.alloc_words(types.print.print, &[parts, types.print.leaf])
 }
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {

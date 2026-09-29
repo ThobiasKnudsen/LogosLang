@@ -350,8 +350,8 @@ mod tests {
             let spec = crate::identities::run_body::spec_of(exprs[2]);
             assert!(!spec.is_null());
             assert_eq!(read_kind(types, exprs[2]), Read::Executable(Dispatch::Call(spec)));
-            let value = store.alloc_operands(&[exprs[2], exprs[2], std::ptr::null_mut()]);
-            let leafless = store.alloc_raw(core.plus, value);
+            let leafless =
+                store.alloc_words(core.plus, &[exprs[2], exprs[2], std::ptr::null_mut()]);
             assert_eq!(read_kind(types, leafless), Read::Executable(Dispatch::None));
         }
     }
@@ -374,8 +374,8 @@ mod tests {
             bind(std::ptr::null_mut()),
             bind(std::ptr::null_mut()),
         );
-        let f = store.alloc_raw(core.fn_type, std::ptr::null_mut());
-        let field_node = store.alloc_raw(core.i32_, std::ptr::null_mut());
+        let f = store.alloc_leaf(core.fn_type);
+        let field_node = store.alloc_leaf(core.i32_);
         let off = store.arena_alloc(4);
         // SAFETY: every handle was just minted into `store`, which outlives the reads.
         unsafe {
@@ -424,7 +424,7 @@ mod tests {
         let core = Core::build(&mut store, &mut trie);
         let bits: *mut u8 = std::ptr::without_provenance_mut((1 << 63) | (1 << 62) | (1 << 47));
         let i64_ = core.numtypes[NumType::I64 as usize];
-        let mut marked = |ty: DyadPtr| store.alloc_raw(ty, bits);
+        let mut marked = |ty: DyadPtr| store.alloc_head(ty, bits);
         let (n, t, d, r) =
             (marked(i64_), marked(core.type_), marked(core.dyad_), marked(core.rational));
         // SAFETY: the nodes were just minted; `read_kind` reads only their type slots.

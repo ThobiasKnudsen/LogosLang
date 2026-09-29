@@ -39,12 +39,12 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ByCopyIds {
         Assoc::Left,
         &["target", "call", "type", "op"],
     );
-    let result = cx.store.alloc_raw(cx.type_, record);
+    let result = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(result, lower_result);
     let result_leaf = callable::mint_native(cx.store, cs.callable, run_result, cs.seed_native);
     let record =
         meta::operand_record(cx, meta::TUPLE_TAG, meta::prec::INERT, Assoc::Left, &["expr", "op"]);
-    let out = cx.store.alloc_raw(cx.type_, record);
+    let out = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(out, lower_out);
     let out_leaf = callable::mint_native(cx.store, cs.callable, run_out, cs.seed_native);
     ByCopyIds { result, result_leaf, out, out_leaf }
@@ -57,8 +57,7 @@ pub(crate) fn build_result(
     call: DyadPtr,
     ty: DyadPtr,
 ) -> DyadPtr {
-    let value = store.alloc_operands(&[target, call, ty, types.by_copy.result_leaf]);
-    store.alloc_raw(types.by_copy.result, value)
+    store.alloc_words(types.by_copy.result, &[target, call, ty, types.by_copy.result_leaf])
 }
 
 /// The record type a `construct` or `result` node yields.
@@ -100,8 +99,7 @@ pub(crate) unsafe fn lower_dest_of(lw: &mut Lowerer, node: DyadPtr) -> Result<Va
 }
 
 pub(crate) fn build_out(store: &mut Store, types: &Core, expr: DyadPtr) -> DyadPtr {
-    let value = store.alloc_operands(&[expr, types.by_copy.out_leaf]);
-    store.alloc_raw(types.by_copy.out, value)
+    store.alloc_words(types.by_copy.out, &[expr, types.by_copy.out_leaf])
 }
 
 /// The width a value of `t` is copied at: `Some` for a plain record a `type (…)` body

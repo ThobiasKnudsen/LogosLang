@@ -194,11 +194,11 @@ impl Core {
         // Foundations first; everything below references them.
         let type_ = logos_mod::register_root(store);
         let scope_ = scope::register(store, type_);
-        let root_scope = store.alloc_raw(scope_, std::ptr::null_mut());
+        let root_scope = store.alloc_leaf(scope_);
         // `binding` and `string` are minted before the first declaration, which needs
         // both; their own definitions are filled in below.
-        let binding_ = store.alloc_raw(type_, std::ptr::null_mut());
-        let string_ = store.alloc_raw(type_, std::ptr::null_mut());
+        let binding_ = store.alloc_leaf(type_);
+        let string_ = store.alloc_leaf(type_);
         let fn_type = fn_mod::register(store, type_);
 
         let mut cx = Cx {
@@ -243,7 +243,7 @@ impl Core {
         let record = meta::record(cx.store, meta::TYPEREC_TAG, meta::prec::READER);
         // SAFETY: `type_` was minted above with a null value nothing has read.
         unsafe {
-            dyad::set_value(type_, record);
+            dyad::set_head(type_, record);
         }
         // The root's spelling and constructor come with `logos_mod::register_syntax` below.
         let record = meta::operand_record(
@@ -255,7 +255,7 @@ impl Core {
         );
         // SAFETY: `scope_` was minted above and nothing has read its value yet.
         unsafe {
-            dyad::set_value(scope_, record);
+            dyad::set_head(scope_, record);
         }
         let assign = assign::register(&mut cx);
         // No spelling: the parser builds conversions from the `T(value)` call surface.
@@ -877,8 +877,7 @@ unsafe fn commit_if_literal(
         // A comptime name used here is its binding; the literal folds through it.
         let bits =
             rational::mold_to(types.through(node), nt).ok_or(ParseError::UncomputableLiteral)?;
-        let value = store.alloc_bytes(&bits.to_ne_bytes()[..nt.bytes()]);
-        Ok(store.alloc_raw(type_node, value))
+        Ok(store.alloc_blob(type_node, &bits.to_ne_bytes()[..nt.bytes()]))
     } else {
         Ok(node)
     }
@@ -1399,8 +1398,7 @@ unsafe fn commit_tail(
         if dyad::ty(leaf) == types.rational {
             let nt = numtype::of_type_node(output);
             let bits = rational::mold_to(leaf, nt).ok_or(ParseError::UncomputableLiteral)?;
-            let value = store.alloc_bytes(&bits.to_ne_bytes()[..nt.bytes()]);
-            return Ok(store.alloc_raw(output, value));
+            return Ok(store.alloc_blob(output, &bits.to_ne_bytes()[..nt.bytes()]));
         }
         // Refused here rather than as an invalid widen at the ABI.
         if let Operand::Pointer(_) = numtype_of(types, leaf) {
@@ -1479,8 +1477,7 @@ pub(crate) unsafe fn build_cast(
         Operand::Literal => {
             let bits = rational::cast_to(types.through(operand), to)
                 .ok_or(ParseError::UncomputableLiteral)?;
-            let value = store.alloc_bytes(&bits.to_ne_bytes()[..to.bytes()]);
-            Ok(store.alloc_raw(target, value))
+            Ok(store.alloc_blob(target, &bits.to_ne_bytes()[..to.bytes()]))
         }
         _ if rational::is_rational_value(types, operand) => {
             Ok(convert::build_convert(store, types, operand, types.rational, target))

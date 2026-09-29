@@ -27,7 +27,7 @@ const DECL_DECLARED: usize = 2;
 /// Returns `(declare identity, leaf, := token)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr) {
     let record = meta::record(cx.store, meta::TOKEN_TAG, meta::prec::DECLARE);
-    let token = cx.store.alloc_raw(cx.type_, record);
+    let token = cx.store.alloc_head(cx.type_, record);
     cx.declare(":=", token);
     cx.metas.insert(token, |p, _id, tape| p.construct_decl(tape));
 
@@ -38,7 +38,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
         Assoc::Left,
         &["lhs", "rhs", "declared", "op"],
     );
-    let declare = cx.store.alloc_raw(cx.type_, record);
+    let declare = cx.store.alloc_head(cx.type_, record);
     cx.lower.insert(declare, lower);
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
     (declare, leaf, token)
@@ -52,8 +52,7 @@ pub(crate) fn build(
     rhs: DyadPtr,
     declared: DyadPtr,
 ) -> DyadPtr {
-    let value = store.alloc_operands(&[lhs, rhs, declared, op]);
-    store.alloc_raw(declare, value)
+    store.alloc_words(declare, &[lhs, rhs, declared, op])
 }
 
 /// # Safety

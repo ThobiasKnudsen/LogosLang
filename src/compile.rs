@@ -166,7 +166,7 @@ impl Lowerer<'_, '_> {
             Read::Unit => Ok(self.const_i32(0)),
             Read::Identity | Read::Node => Ok(self.node_addr(node)),
             // A view's value is the viewed node.
-            Read::Address => Ok(self.node_addr(dyad::value(node).cast())),
+            Read::Address => Ok(self.node_addr(dyad::head(node).cast())),
             Read::Container(_) => self.read_place(node, types::I64),
             // A rational travels as the address of its sixteen bytes; only its steps refuse.
             Read::Rational => self.place_addr(node),

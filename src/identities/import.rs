@@ -16,7 +16,7 @@ use crate::run::{RunError, Runtime};
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
     let record =
         meta::operand_record(cx, meta::TUPLE_TAG, meta::prec::IMPORT, Assoc::Left, &["path", "op"]);
-    let id = cx.store.alloc_raw(cx.type_, record);
+    let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("import", id);
     cx.metas.insert(id, |p, _id, tape| p.construct_import(tape));
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);

@@ -26,7 +26,7 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
             meta::prec::PREFIX,
             crate::parse::Assoc::Right,
         );
-        let id = cx.store.alloc_raw(cx.type_, record);
+        let id = cx.store.alloc_head(cx.type_, record);
         cx.declare(name, id);
         id
     };

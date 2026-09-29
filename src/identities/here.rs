@@ -36,7 +36,7 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> HereIds {
     let word = |cx: &mut Cx, rank: f64, roles: &[&str]| {
         let record =
             meta::operand_record(cx, meta::TUPLE_TAG, rank, crate::parse::Assoc::Left, roles);
-        cx.store.alloc_raw(cx.type_, record)
+        cx.store.alloc_head(cx.type_, record)
     };
     let here = word(cx, meta::prec::LITERAL, &["scope", "op"]);
     cx.declare("here", here);
@@ -65,25 +65,21 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> HereIds {
 
 /// `[scope, op]`, `scope` the scope open at the appearance.
 pub(crate) fn build_here(store: &mut Store, types: &Core, scope: DyadPtr) -> DyadPtr {
-    let value = store.alloc_operands(&[scope, types.here.here_leaf]);
-    store.alloc_raw(types.here.here, value)
+    store.alloc_words(types.here.here, &[scope, types.here.here_leaf])
 }
 
 pub(crate) fn build_caller(store: &mut Store, types: &Core) -> DyadPtr {
-    let value = store.alloc_operands(&[types.here.caller_leaf]);
-    store.alloc_raw(types.here.caller, value)
+    store.alloc_words(types.here.caller, &[types.here.caller_leaf])
 }
 
 pub(crate) fn build_caller_scope(store: &mut Store, types: &Core) -> DyadPtr {
-    let value = store.alloc_operands(&[types.here.caller_scope_leaf]);
-    store.alloc_raw(types.here.caller_scope, value)
+    store.alloc_words(types.here.caller_scope, &[types.here.caller_scope_leaf])
 }
 
 /// `[scope, op]`, `scope` what stands left of the `.`, read for its address
 /// when the node runs.
 pub(crate) fn build_back(store: &mut Store, types: &Core, of: DyadPtr) -> DyadPtr {
-    let value = store.alloc_operands(&[of, types.here.back_leaf]);
-    store.alloc_raw(types.here.back, value)
+    store.alloc_words(types.here.back, &[of, types.here.back_leaf])
 }
 
 /// # Safety

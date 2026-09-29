@@ -25,7 +25,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         Assoc::Left,
         &["lhs", "rhs", "op"],
     );
-    let id = cx.store.alloc_raw(cx.type_, record);
+    let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("⊆", id);
     cx.metas.insert(id, super::infix_construct!(build));
     let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
@@ -48,8 +48,7 @@ fn build(
             return Ok(bool_mod::literal_node(store, types.bool_, truth));
         }
         if type_valued(types, lhs, l) && type_valued(types, rhs, r) {
-            let value = store.alloc_operands(&[lhs, rhs, types.ops.subset_]);
-            return Ok(store.alloc_raw(op, value));
+            return Ok(store.alloc_words(op, &[lhs, rhs, types.ops.subset_]));
         }
     }
     Err(ParseError::UnsupportedOperands)

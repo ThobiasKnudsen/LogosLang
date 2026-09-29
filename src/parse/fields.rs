@@ -534,8 +534,12 @@ impl<'a> Parser<'a> {
                     0,
                     self.types.conv_container,
                 );
-                let value = self.rt.store.alloc_operands(&[lhs, code, self.types.ops.compile_]);
-                return Ok((self.rt.store.alloc_raw(self.types.compile_, value), 1));
+                return Ok((
+                    self.rt
+                        .store
+                        .alloc_words(self.types.compile_, &[lhs, code, self.types.ops.compile_]),
+                    1,
+                ));
             }
         }
         // A tape's natives, members of `parsing_tape`'s scope that are not
@@ -623,7 +627,7 @@ impl<'a> Parser<'a> {
                             let types = self.types;
                             crate::identities::by_copy::build_out(self.rt.store, types, lhs)
                         } else {
-                            self.rt.store.alloc_raw(self.types.dyad_, lhs.cast())
+                            self.rt.store.alloc_head(self.types.dyad_, lhs.cast())
                         };
                         let mut with_this = vec![view];
                         with_this.extend(args);
@@ -831,8 +835,8 @@ impl<'a> Parser<'a> {
         // SAFETY: `scope` is the block `parse_block` minted, closed.
         let dyads =
             unsafe { crate::identities::scope::dyads(self.rt.store, self.types.array_, scope) };
-        let value = self.rt.store.alloc_operands(&[dyads, std::ptr::null_mut()]);
-        let node = self.rt.store.alloc_raw(self.types.square_brackets, value);
+        let node =
+            self.rt.store.alloc_words(self.types.square_brackets, &[dyads, std::ptr::null_mut()]);
         tape.place(node);
         Ok(Constructed::Placed)
     }
@@ -1232,7 +1236,7 @@ impl<'a> Parser<'a> {
     /// # Safety
     /// `view` must be a node of type `dyad`.
     unsafe fn view_member(&mut self, view: DyadPtr, name: &str) -> Result<DyadPtr, ParseError> {
-        let viewed = dyad::value(view) as DyadPtr;
+        let viewed = dyad::head(view) as DyadPtr;
         if viewed.is_null() {
             return Err(ParseError::BadReflectRead);
         }
@@ -1294,7 +1298,7 @@ impl<'a> Parser<'a> {
                 if dyad::ty(c) == self.types.fn_type {
                     return Ok(c);
                 }
-                Ok(self.rt.store.alloc_raw(self.types.dyad_, c as *mut u8))
+                Ok(self.rt.store.alloc_head(self.types.dyad_, c as *mut u8))
             }
             // The held body is no function until a node's field types construct
             // it, so it is read through a view, as `.parse` reads a native leaf.
@@ -1303,7 +1307,7 @@ impl<'a> Parser<'a> {
                 if held.is_null() {
                     return Err(ParseError::BadReflectRead);
                 }
-                Ok(self.rt.store.alloc_raw(self.types.dyad_, held as *mut u8))
+                Ok(self.rt.store.alloc_head(self.types.dyad_, held as *mut u8))
             }
             "size_bytes" if meta::is_record_type(logos) => {
                 Ok(self.scalar_value(NumType::U64, meta::record_size_of(logos) as i64))
@@ -1319,7 +1323,7 @@ impl<'a> Parser<'a> {
             "scope" if meta::is_record_type(logos) => Ok(self
                 .rt
                 .store
-                .alloc_raw(self.types.dyad_, meta::record_scope_of(logos) as *mut u8)),
+                .alloc_head(self.types.dyad_, meta::record_scope_of(logos) as *mut u8)),
             "type" => Err(ParseError::TypeIsColonRead),
             _ if self.share_member_of(logos, name).is_some() => {
                 Ok(self.share_member_read(logos, name).expect("found just above"))
@@ -1395,7 +1399,6 @@ impl<'a> Parser<'a> {
         let ty = self.types.numtypes[nt as usize];
         let width = nt.bytes();
         let bytes = bits.to_ne_bytes();
-        let storage = self.rt.store.alloc_bytes(&bytes[..width]);
-        self.rt.store.alloc_raw(ty, storage)
+        self.rt.store.alloc_blob(ty, &bytes[..width])
     }
 }

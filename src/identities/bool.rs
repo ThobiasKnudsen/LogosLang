@@ -11,7 +11,7 @@ use crate::dyad::DyadPtr;
 pub(super) fn register(cx: &mut Cx) -> DyadPtr {
     // The record carries the I32 width kind; bool-ness lives in the identity itself.
     let record = meta::record(cx.store, NumType::I32 as u8, meta::prec::INERT);
-    let bool_ = cx.store.alloc_raw(cx.type_, record);
+    let bool_ = cx.store.alloc_head(cx.type_, record);
     cx.declare("bool", bool_);
 
     let true_ = literal(cx, bool_, 1);
@@ -23,11 +23,9 @@ pub(super) fn register(cx: &mut Cx) -> DyadPtr {
 }
 
 fn literal(cx: &mut Cx, bool_: DyadPtr, v: i32) -> DyadPtr {
-    let value = cx.store.alloc_bytes(&v.to_ne_bytes());
-    cx.store.alloc_raw(bool_, value)
+    cx.store.alloc_blob(bool_, &v.to_ne_bytes())
 }
 
 pub(crate) fn literal_node(store: &mut crate::store::Store, bool_: DyadPtr, v: bool) -> DyadPtr {
-    let value = store.alloc_bytes(&i32::from(v).to_ne_bytes());
-    store.alloc_raw(bool_, value)
+    store.alloc_blob(bool_, &i32::from(v).to_ne_bytes())
 }
