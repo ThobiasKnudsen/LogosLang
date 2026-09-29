@@ -320,7 +320,7 @@ impl<'a> Parser<'a> {
     /// A token that did not lex: an unclosed `«` or `{` is reported where it stands, `base`
     /// being where the failed lookup's text began.
     pub(super) fn lex_error(&mut self, base: usize, e: ResolveError) -> ParseError {
-        if let ResolveError::Unclosed { at, .. } = e {
+        if let ResolveError::Unmatched { at, .. } = e {
             self.cx.pos = base + at;
         }
         ParseError::Resolve(e)
@@ -425,7 +425,7 @@ impl<'a> Parser<'a> {
         {
             return None;
         }
-        let r = self.cx.scopes.lex(self.trie, rest).ok()?;
+        let (r, _) = token(&self.cx.scopes, self.trie, rest, true).ok()?;
         self.cx.pos = start + r.matched;
         Some((start, r.matched, r.fresh))
     }

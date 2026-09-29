@@ -502,7 +502,7 @@ impl<'a> Parser<'a> {
         }
         match self.token_at(start, false) {
             Ok(r) if r.identity == self.types.hash_ => Ok(Some((start, r.matched))),
-            Err(e @ ParseError::Resolve(ResolveError::Unclosed { .. })) => Err(e),
+            Err(e @ ParseError::Resolve(ResolveError::Unmatched { .. })) => Err(e),
             _ => Ok(None),
         }
     }

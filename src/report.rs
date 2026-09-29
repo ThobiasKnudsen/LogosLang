@@ -352,10 +352,13 @@ pub(crate) fn resolve_message(e: &ResolveError) -> String {
             "two spellings match here with the same lex_rank; give one of them a higher lex_rank"
                 .into()
         }
-        ResolveError::Unclosed { opener: '{', .. } => {
+        ResolveError::Unmatched { bracket: '{', .. } => {
             "this `{` has no `}`: write `\\{` for a brace as text".into()
         }
-        ResolveError::Unclosed { .. } => "this `«` has no `»`: write `\\«` for one as text".into(),
+        ResolveError::Unmatched { bracket: '»', .. } => {
+            "this `»` closes no `«`: a `{…}` in a quote is code".into()
+        }
+        ResolveError::Unmatched { .. } => "this `«` has no `»`: write `\\«` for one as text".into(),
         ResolveError::Index(RegexTrieError::NodeNotFound) => "unknown name".into(),
         ResolveError::Index(RegexTrieError::BadPattern(p)) => {
             format!("this name's pattern is invalid: {p}")

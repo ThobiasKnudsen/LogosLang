@@ -2681,6 +2681,9 @@ fn an_unclosed_quote_or_brace_is_reported_at_its_opener() {
         ("if false ( print «a ) else ( 1 )", "1:18: error: this `«` has no `»`"),
         ("t := type ( # «a )", "1:15: error: this `«` has no `»`"),
         ("# «{a»\n5", "1:4: error: this `{` has no `}`"),
+        ("# «x {»} y», 5", "1:7: error: this `»` closes no `«`"),
+        ("f := fn () -> void ( # «x {»} y»\n1 ), 5", "1:28: error: this `»` closes no `«`"),
+        ("t := type (a := i32 ?, share run = ( # «x {»} y»\n1 )), 5", "1:44: error: this `»`"),
     ] {
         let (_, stderr, code) = run(src);
         assert_eq!(code, Some(1), "{src}: {stderr}");

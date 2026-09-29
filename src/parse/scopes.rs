@@ -40,9 +40,10 @@ pub enum ResolveError {
     /// Two spellings of equal `lex_rank` match the same length: an
     /// inconsistency in the definitions, never a pick by declaration order.
     Tied,
-    /// A token reading its own extent met the end of the text inside an opener, a `«` or
-    /// a `{`, `at` bytes into the text the lookup was given.
-    Unclosed { opener: char, at: usize },
+    /// A token reading its own extent found a `«` or `{` the text ends inside, or a `»`
+    /// inside a `{…}` that closes no `«`: `bracket` is that character, `at` bytes into the
+    /// text the lookup was given.
+    Unmatched { bracket: char, at: usize },
     /// The name index itself rejected the lookup.
     Index(RegexTrieError),
 }

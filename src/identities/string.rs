@@ -91,10 +91,13 @@ const ESCAPED: [char; 5] = ['«', '»', '{', '}', '\\'];
 
 /// The quote whose `«` is at `from`: the scope that counts `«`/`»` and `{`/`}` by depth
 /// and reads a backslash before one of them, or before a backslash, as that character.
-/// Offsets, in the pieces and in an `Unclosed` error, are into `source`.
+/// A `{…}` is code: a backslash in it is itself, and a `»` in it that closes no `«` is the
+/// error once the `{` closes; if the text ends first, the `{` is. Offsets, in the pieces
+/// and in an error, are into `source`.
 pub(crate) fn read(source: &str, from: usize) -> Result<Quote, ResolveError> {
     debug_assert!(source[from..].starts_with('«'));
-    let mut open: Vec<(char, usize)> = vec![('«', from)];
+    // Each opener, where it stands, and for a `{` the first `»` in it that closed nothing.
+    let mut open: Vec<(char, usize, Option<usize>)> = vec![('«', from, None)];
     let mut pieces = Vec::new();
     let mut run: Vec<u8> = Vec::new();
     // The interior's start while a `{` the quote opened itself is open; its bytes are no text.
@@ -109,17 +112,19 @@ pub(crate) fn read(source: &str, from: usize) -> Result<Quote, ResolveError> {
                 run.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
             }
         };
-        let top = open.last().map(|&(o, _)| o);
+        let top = open.last().map(|&(o, _, _)| o);
         match c {
-            '\\' => match source[i..].chars().next().filter(|e| ESCAPED.contains(e)) {
-                Some(e) => {
-                    i += e.len_utf8();
-                    keep(e, &mut run);
+            '\\' if top == Some('«') => {
+                match source[i..].chars().next().filter(|e| ESCAPED.contains(e)) {
+                    Some(e) => {
+                        i += e.len_utf8();
+                        keep(e, &mut run);
+                    }
+                    None => keep(c, &mut run),
                 }
-                None => keep(c, &mut run),
-            },
+            }
             '«' => {
-                open.push(('«', at));
+                open.push(('«', at, None));
                 keep(c, &mut run);
             }
             '»' if top == Some('«') => {
@@ -132,6 +137,11 @@ pub(crate) fn read(source: &str, from: usize) -> Result<Quote, ResolveError> {
                 }
                 keep(c, &mut run);
             }
+            '»' => {
+                let stray = &mut open.last_mut().expect("a `{` is open").2;
+                stray.get_or_insert(at);
+                keep(c, &mut run);
+            }
             '{' => {
                 if open.len() == 1 {
                     if !run.is_empty() {
@@ -141,10 +151,12 @@ pub(crate) fn read(source: &str, from: usize) -> Result<Quote, ResolveError> {
                 } else {
                     keep(c, &mut run);
                 }
-                open.push(('{', at));
+                open.push(('{', at, None));
             }
             '}' if top == Some('{') => {
-                open.pop();
+                if let Some((_, _, Some(stray))) = open.pop() {
+                    return Err(ResolveError::Unmatched { bracket: '»', at: stray });
+                }
                 if open.len() == 1 {
                     let start = scope.take().expect("the quote's own `{` opened a scope");
                     pieces.push(Piece::Scope(start..at));
@@ -161,8 +173,8 @@ pub(crate) fn read(source: &str, from: usize) -> Result<Quote, ResolveError> {
             c => keep(c, &mut run),
         }
     }
-    let &(opener, at) = open.last().expect("the quote's own `«` is open until its `»`");
-    Err(ResolveError::Unclosed { opener, at })
+    let &(bracket, at, _) = open.last().expect("the quote's own `«` is open until its `»`");
+    Err(ResolveError::Unmatched { bracket, at })
 }
 
 pub(crate) fn build_text(store: &mut Store, string_ty: DyadPtr, text: &[u8]) -> DyadPtr {
@@ -215,9 +227,14 @@ mod tests {
     #[test]
     fn an_unclosed_quote_names_its_innermost_opener() {
         let unclosed = |src: &str| read(src, 0).err();
-        assert_eq!(unclosed("«a «b»"), Some(ResolveError::Unclosed { opener: '«', at: 0 }));
-        assert_eq!(unclosed("«a {b»"), Some(ResolveError::Unclosed { opener: '{', at: 4 }));
-        assert_eq!(unclosed("«a\\»"), Some(ResolveError::Unclosed { opener: '«', at: 0 }));
-        assert_eq!(unclosed("«{«a}»"), Some(ResolveError::Unclosed { opener: '{', at: 2 }));
+        let unmatched = |bracket, at| Some(ResolveError::Unmatched { bracket, at });
+        assert_eq!(unclosed("«a «b»"), unmatched('«', 0));
+        assert_eq!(unclosed("«a {b»"), unmatched('{', 4));
+        assert_eq!(unclosed("«a\\»"), unmatched('«', 0));
+        assert_eq!(unclosed("«{«a}»"), unmatched('{', 2));
+        // A `»` in code closes no `«`: the error once its `{` closes.
+        assert_eq!(unclosed("«x {»} y»"), unmatched('»', 5));
+        assert_eq!(unclosed("«a «b {c »} d» e»"), unmatched('»', 11));
+        assert_eq!(unclosed("«{\\»}»"), unmatched('»', 4));
     }
 }
