@@ -58,7 +58,7 @@ A pull request has to pass, and these run on every one:
 | `docs / test` | the docs guard's own self-test |
 | `docs / validate` | the docs versioning model, including the freeze on released snapshots |
 
-Run the first and the last two locally before you push:
+Run these locally before you push:
 
 ```sh
 cargo test --release
