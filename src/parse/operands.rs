@@ -367,7 +367,7 @@ impl<'a> Parser<'a> {
                 return Err(ParseError::MoveOfOuterName);
             }
             // Every section reads the arche's names, an import included, so ending one
-            // here would end it there: stand-in for #211.
+            // here would end it there: stand-in for #35.
             if scope == self.types.root_scope {
                 self.cx.pos = cell.start;
                 return Err(ParseError::EndsPrimordialName(Box::new(cell.spelling().into())));
