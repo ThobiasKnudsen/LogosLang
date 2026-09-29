@@ -2681,7 +2681,8 @@ fn the_boundary_s_comment_lift_reads_a_built_cell_with_no_node_without_faulting(
                share parse = ( tape.remove(1), tape.remove(0) )), \
                x := 7, x h2 h1 zz";
     let (code, _, stderr) = run_line(src);
-    assert!(code.is_some(), "killed by a signal: {stderr}");
+    // A panic on the work thread exits 1, as a Logos error does.
+    assert!(code.is_some() && !stderr.contains("panicked"), "{code:?}: {stderr}");
 }
 
 #[test]
