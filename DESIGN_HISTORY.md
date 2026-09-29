@@ -708,6 +708,7 @@ Nothing moved from this section.
 
 ### A tape read checked against a number type reads as that number
 - **History:** before 25 September array.logos wrote `if not tape[1].dyads[0]:type ⊆ this.size:type error «…»` and passed the index to `this.at` as a `u64`; changed by *An index may be of any integer type*.
+- **History:** until 29 September 2026: "A literal line has no committed type ("a concrete type beside a literal molds the literal to it"), so `⊆ T` answers for a literal by whether it molds into `T`". Reworded by Thobias's ruling that a plain number is a `rational_number` which the number type converts (#199: "rational_number is already a type"); what `⊆ T` answers for a literal is unchanged.
 
 ### A block settles its boxes as the top level does
 - **History:** 12 September 2026: the stores filling such a box were replayed at parse, in parse order (the right side a node address fixed at parse, so the run stored the same bits again). Replay superseded 13 September 2026 by *The pass runs only as far as it must*: nothing is replayed.
