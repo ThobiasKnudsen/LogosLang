@@ -97,12 +97,10 @@ fn keep_eatable_literals(path: &mut [Segment]) {
     }
 }
 
-/// Whether `chunk` run on its own can end elsewhere than where `literal`
-/// needs it to: some leaf of it matches the literal's first char, or its own
-/// preferences can stop it early (a lazy repetition, an alternation, or a
-/// second repetition of varying length: `a*(ab)?` on `aab` stops at 2). A
-/// chunk the syntax parser rejects is kept whole; the trie reports it at
-/// lookup.
+/// Whether `chunk` run alone can end elsewhere than where `literal` needs it
+/// to: a leaf matches the literal's first char, or a lazy repetition, an
+/// alternation or a second repetition of varying length can stop it early.
+/// A chunk the parser rejects is kept whole; the trie reports it at lookup.
 fn may_eat(chunk: &str, literal: &str) -> bool {
     let Some(first) = literal.chars().next() else {
         return false;
