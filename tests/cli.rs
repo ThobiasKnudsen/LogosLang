@@ -3276,11 +3276,27 @@ fn free_of_an_element_runs_its_free_there_and_the_array_skips_it() {
         assert!(stdout.is_empty(), "{free}: stdout: {stdout}");
         assert!(stderr.contains("cannot be compiled yet"), "{free}: stderr: {stderr}");
     }
-    // Over a cell of a type that fills no `free`, the free is inert: the index is never read.
-    let (code, stdout, stderr) =
-        run_line(&format!("{array}, a := array i32 [1, 2], free (a[5]), a[0]"));
-    assert_eq!(code, Some(0), "stderr: {stderr}");
-    assert_eq!(stdout, "1\n");
+    // The cell is reached whatever its type, bounds check included; over `i32` nothing is freed.
+    for tail in [
+        "a := array i32 [1, 2], free (a[5]), 1",
+        "x := box (1, 2), arr := array boxed [move x], free (arr[5]), 1",
+        "g := fn () -> i32 ( a := array i32 [1, 2], free (a[5]), 1 ), g.compile(), g()",
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{array}, {BOX}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stdout: {stdout}");
+        assert!(stderr.contains("index out of range"), "{tail}: stderr: {stderr}");
+    }
+    for (tail, printed) in [
+        ("a := array i32 [1, 2], free (a[0]), a[0]", "1\n"),
+        (
+            "x := i32 3, get := fn (q := @i32 ?) -> i32 ( print «ran», q@ ), free (get(&x)), x",
+            "ran\n3\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{array}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout, printed, "{tail}");
+    }
 }
 
 #[test]

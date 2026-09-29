@@ -760,6 +760,7 @@ Nothing moved from this section.
 - ›A value owns what its elements hold, and drops it‹ merged into ›A value owns what its elements hold and drops it‹ on 27 September 2026
 - ›A list's lines move into the value built from it‹ merged into ›A value owns what its elements hold and drops it‹ on 27 September 2026
 - **Seed detail (27 September 2026):** the refusal stands where a type's parse hands a bracket to the call it places, for every type written in Logos; a callee that only reads its list is refused alike.
+- **History:** until 29 September 2026 "the inert free" over a cell did not say whether the code that finds the cell runs. #211's first slice read it as running nothing, so `free (a[5])` passed silently over an `i32` array and was the index error over an array of boxes, whose free must read the cell. Thobias ruled that the cell is reached whatever its type, because the element type could be anything (`dyad`) and an out-of-range index is an error anyway.
 
 ### `a[k]` is an application, exactly as `a(k)`
 - ›Element access is `[…]`, application is `(…)`‹ merged into ›`a[k]` is an application, exactly as `a(k)`‹ on 27 September 2026

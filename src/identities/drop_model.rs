@@ -450,16 +450,18 @@ fn build_value_free(
     store.alloc_words(types.free_, &[value, what, op])
 }
 
-/// `[place, null, op]`: the null pointee marks nothing to run or free. A name's end was
-/// done at parse, where it became dead; the node stands in the body for reflection.
+/// `[place, null, op]`: the null pointee marks nothing to free; the run still reaches the
+/// place, the code that finds a cell included. A name's end was done at parse, where it
+/// became dead.
 fn build_inert_free(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
     store.alloc_words(types.free_, &[place, std::ptr::null_mut(), types.ops.free_])
 }
 
-/// The inert form is unit; a value runs, and a node it makes goes to the seed as a place's
-/// does; a node's free empties the place and hands the node to the seed, which runs the
-/// instances' `free`; the owning pointer's and the field's forms, and a node's free over a
-/// cell, have no lowering, so the function declines to compile and stays interpreted.
+/// The inert form is unit after the pointer to its cell is found; a value runs, and a node it
+/// makes goes to the seed as a place's does; a node's free empties the place and hands the
+/// node to the seed, which runs the instances' `free`; the owning pointer's and the field's
+/// forms, a node's free over a cell, and the inert form over a field's slot have no
+/// lowering, so the function declines to compile and stays interpreted.
 fn lower_free(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a `free` node `[place, pointee, op]`, `[place, free, op]` or
     // `[value, free, op]`.
@@ -477,6 +479,16 @@ fn lower_free(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         return Ok(lw.call_seed(compiled_instance_free as *const () as usize, &[this, free]));
     }
     if pointee.is_null() {
+        // SAFETY: `place` is a reduced dyad from the store; a deref node's parts are valid.
+        unsafe {
+            if dyad::ty(place) == lw.types().deref_ {
+                let addr = lw.lower(super::pointer::deref_parts(place).0)?;
+                return lw.guard_non_null(addr, types::I32, |s| Ok(s.const_i32(0)));
+            }
+            if super::this::is_field_read(lw.types(), place) {
+                return Err(CompileError::NotLowerable(node));
+            }
+        }
         return Ok(lw.const_i32(0));
     }
     if op != lw.types().ops.instance_free_ {
@@ -743,16 +755,18 @@ fn run_teardown(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 }
 
 /// The teardown flows through the reserved `destructor` slot. A null destructor here is a
-/// malformed node: `build_teardown` demanded an owning place at parse.
+/// malformed node: `build_teardown` demanded an owning place at parse. The inert form reaches
+/// its place and frees nothing (DESIGN ›A value owns what its elements hold and frees it‹).
 fn run_free(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `free` node; in the owning form its place's type carries a
     // destructor whose entry is a `RunFn` over this node's layout.
     unsafe {
         let slots = dyad::value(node) as *const DyadPtr;
+        let place = *slots.add(TEARDOWN_PLACE);
         if (*slots.add(TEARDOWN_POINTEE)).is_null() {
+            reached_slot(rt, place)?;
             return Ok(0);
         }
-        let place = *slots.add(TEARDOWN_PLACE);
         let dtor = meta::destructor_of(rt.types().type_of(place));
         if dtor.is_null() || !callable::is_callable(dtor) {
             return Err(RunError::NoDestructor(place));
@@ -840,13 +854,25 @@ fn run_value_release(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 /// # Safety
 /// `place` must be the place operand of a `move` or `free` node.
 unsafe fn owned_slot(rt: &mut Runtime, place: DyadPtr) -> Result<*mut u8, RunError> {
+    match reached_slot(rt, place)? {
+        Some(slot) => Ok(slot),
+        None => rt.place_addr(place).ok_or(RunError::NoActivation),
+    }
+}
+
+/// The cell a dereference reaches or the slot a field read reaches, found by running the code
+/// that leads there; `None` for a place a frame holds, found by its offset alone.
+///
+/// # Safety
+/// As `owned_slot`.
+unsafe fn reached_slot(rt: &mut Runtime, place: DyadPtr) -> Result<Option<*mut u8>, RunError> {
     if dyad::ty(place) == rt.types().deref_ {
-        return super::pointer::deref_addr(rt, place);
+        return super::pointer::deref_addr(rt, place).map(Some);
     }
     if super::this::is_field_read(rt.types(), place) {
-        return super::this::slot_addr(rt, place);
+        return super::this::slot_addr(rt, place).map(Some);
     }
-    rt.place_addr(place).ok_or(RunError::NoActivation)
+    Ok(None)
 }
 
 /// A move: the moved-from place's pending `defer free` then no-ops.

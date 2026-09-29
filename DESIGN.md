@@ -1488,14 +1488,15 @@ A field of such a type holds the node's address: a field `items := t ?` with `t 
 - **Source:** DESIGN.md l.211
 
 ### A value owns what its elements hold and frees it
-The outer's `share free` frees each element whose type fills a `share free`, then frees its own memory (array.logos: `for i in 0..size ( free (ptr + i)@ )` before `free ptr`). `free p@`, over a cell holding a node whose type fills `share free`, runs that free and empties the cell, as `free a` does for an owner; over any other cell it stays the inert free.
+The outer's `share free` frees each element whose type fills a `share free`, then frees its own memory (array.logos: `for i in 0..size ( free (ptr + i)@ )` before `free ptr`). `free p@`, over a cell holding a node whose type fills `share free`, runs that free and empties the cell, as `free a` does for an owner; over any other cell it stays the inert free, which still reaches the cell: the code that finds it runs, as for `=`, bounds check included, and nothing is freed. `free (a[5])` on a two-element array is the index error whatever the element type.
 
 A line that names a value whose type fills a `share free` is refused: "write `move x` to move it in". `move x` moves it, `x` dead from that line. A value made in the list (`array i32 [1, 2]`, `box (1, 2)`, `mk()`) belongs to the new value from the start.
 - **Why:** Thobias: "the outer array owns its inner arrays". One name owns each value, and for an inner array that name is the outer one, so the outer's free frees the inner ones: nothing leaks and nothing is freed twice. (lines move in) from DESIGN: "`=` into an owner takes only a value just made or moved" and "`b := a` and passing `f(a)` borrow". A line is an operand, which borrows, and the element is owned, so a bare name would give one value two owners and two frees. Moving it silently would end a name nobody wrote `move` on, where a name ends only where it is written (›`move` and `free` are static: the parse marks the name dead‹).
 - **Ruled:** 25 September 2026, Thobias (a value owns its elements); 25 September 2026, Claude's decision (asked by Thobias to decide from DESIGN), open to Thobias (lines move in).
+- **Ruled (29 September 2026, Thobias, #211):** the inert free still reaches its cell. **Why:** "trying to access index outof bounds should be an error anyways and i think its simpler to just get that at anyways even though the free actually doesnt free anything because the type of array could be dyad which means the type could be anything. so the access at the index should happen anyways."
 - **Rejected:** none recorded.
 - **Open:** a parameter that says it consumes its argument (`own` on a parameter, not in the seed) is the precise form, recorded open.
-- **Seed:** the refusal of a bare name in a list stands for every type written in Logos; `own` on a parameter not yet.
+- **Seed:** the refusal of a bare name in a list stands for every type written in Logos; `own` on a parameter not yet. The inert free reaches its cell since 29 September 2026 (#211), on both tiers.
 - **Source:** DESIGN.md l.211
 
 **A call that ends in a dereference is a place**
