@@ -232,7 +232,6 @@ pub(super) fn build_store(
             if unsafe { super::node_type_of(types, rhs) } != Some(t) {
                 return Err(ParseError::TypeMismatch);
             }
-
             return Ok(store.alloc_words(op, &[lhs, rhs, types.ops.store_leaf(NumType::I64)]));
         }
         Read::Rational => {
@@ -283,7 +282,6 @@ pub(super) fn build_store(
     }
     // SAFETY: `lhs` is a typed variable checked assignable above.
     let nt = unsafe { of_type_node(lhs_type) };
-
     Ok(store.alloc_words(op, &[lhs, rhs, types.ops.store_leaf(nt)]))
 }
 

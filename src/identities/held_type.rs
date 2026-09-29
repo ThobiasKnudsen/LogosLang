@@ -52,7 +52,6 @@ pub(crate) fn build(
     } else {
         super::array::build(store, types.array_, frames)
     };
-
     store
         .alloc_words(types.held_type.held_type, &[text, cells, scope, frames, types.held_type.leaf])
 }

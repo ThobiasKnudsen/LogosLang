@@ -764,7 +764,6 @@ impl<'a> Parser<'a> {
             }
             return self.parse_branch();
         }
-
         Ok(self
             .rt
             .store
@@ -874,7 +873,6 @@ impl<'a> Parser<'a> {
                 !v,
             ));
         }
-
         Ok(self.rt.store.alloc_words(not_id, &[operand, self.types.ops.not_]))
     }
 

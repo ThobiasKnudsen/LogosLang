@@ -42,7 +42,6 @@ pub(crate) fn build_text(store: &mut Store, string_ty: DyadPtr, text: &[u8]) -> 
     let mut blob = Vec::with_capacity(8 + text.len());
     blob.extend_from_slice(&(text.len() as u64).to_ne_bytes());
     blob.extend_from_slice(text);
-
     store.alloc_blob(string_ty, &blob)
 }
 

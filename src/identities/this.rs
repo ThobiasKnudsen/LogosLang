@@ -98,7 +98,6 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
 fn node(store: &mut Store, op: DyadPtr, leaf: DyadPtr, operands: &[DyadPtr]) -> DyadPtr {
     let mut v = operands.to_vec();
     v.push(leaf);
-
     store.alloc_words(op, &v)
 }
 
@@ -133,7 +132,6 @@ pub(crate) unsafe fn empty_node(store: &mut Store, ty: DyadPtr) -> DyadPtr {
         .map(|&field| super::hole::default_in(field))
         .collect();
     slots.extend([std::ptr::null_mut(); 2]);
-
     store.alloc_words(ty, &slots)
 }
 
@@ -453,7 +451,6 @@ unsafe fn copy_of(store: &mut Store, template: DyadPtr) -> DyadPtr {
     let ty = dyad::ty(template);
     let n = super::array::items(meta::record_fields_of(ty)).len() + 2;
     let slots = std::slice::from_raw_parts(dyad::value(template) as *const DyadPtr, n).to_vec();
-
     store.alloc_words(ty, &slots)
 }
 
@@ -498,7 +495,6 @@ unsafe fn pack_of(
         })
         .collect();
     slots.extend([std::ptr::null_mut(); 2]);
-
     store.alloc_words(ty, &slots)
 }
 

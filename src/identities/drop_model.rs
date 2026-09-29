@@ -296,7 +296,6 @@ pub(super) fn build_alloc(
     // `T ?`, the valueless marker, names the cells' type and fills them with nothing.
     // SAFETY: `init` is a reduced dyad just parsed.
     let init = init.filter(|&i| unsafe { !types.is_hole(i) }).unwrap_or(std::ptr::null_mut());
-
     Ok(store.alloc_words(types.alloc_, &[pointee, count, init, types.ops.alloc_]))
 }
 
@@ -328,7 +327,6 @@ pub(crate) fn build_teardown(
     } else {
         types.ops.teardown_
     };
-
     Ok(store.alloc_words(op_id, &[place, pointee, leaf]))
 }
 

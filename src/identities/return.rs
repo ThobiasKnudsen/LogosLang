@@ -41,7 +41,6 @@ fn construct(
 ) -> Result<crate::parse::Constructed, ParseError> {
     let operand = p.take_right(tape)?;
     let types = p.types();
-
     let node = p.store().alloc_words(id, &[operand, types.ops.return_]);
     // SAFETY: `node` is the `return` node just built.
     unsafe { p.note_return(node) }?;

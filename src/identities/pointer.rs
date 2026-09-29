@@ -96,7 +96,6 @@ pub(super) fn register(
 /// `place` must be a storage-backed place node from the store.
 pub(crate) unsafe fn build_addr(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
     let pointee = types.type_of(place);
-
     store.alloc_words(types.addr_, &[place, pointee, types.ops.addr_])
 }
 
@@ -183,7 +182,6 @@ pub(crate) fn build_deref(
 ) -> DyadPtr {
     let off_node =
         store.alloc_blob(types.numtypes[NumType::U64 as usize], &(offset as u64).to_ne_bytes());
-
     store.alloc_words(types.deref_, &[ptr_expr, pointee, off_node, types.ops.deref_])
 }
 

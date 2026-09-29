@@ -60,7 +60,6 @@ pub(crate) fn mint(
     let mut bytes = [0u8; 16];
     bytes[ENTRY_OFF..CONVENTION_OFF].copy_from_slice(&entry.to_ne_bytes());
     bytes[CONVENTION_OFF..].copy_from_slice(&(convention as usize).to_ne_bytes());
-
     store.alloc_blob(callable, &bytes)
 }
 

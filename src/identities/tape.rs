@@ -243,7 +243,6 @@ pub(crate) unsafe fn receiver_addr(
 fn node(store: &mut Store, op: DyadPtr, leaf: DyadPtr, operands: &[DyadPtr]) -> DyadPtr {
     let mut v = operands.to_vec();
     v.push(leaf);
-
     store.alloc_words(op, &v)
 }
 
@@ -1163,7 +1162,6 @@ unsafe fn bracket_holding(
         });
     }
     let dyads = super::array::build(store, types.array_, &values);
-
     store.alloc_words(dyad::ty(bracket), &[dyads, std::ptr::null_mut(), std::ptr::null_mut()])
 }
 

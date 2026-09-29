@@ -45,7 +45,6 @@ pub(crate) fn build(
 ) -> DyadPtr {
     let u64_ty = types.numtypes[NumType::U64 as usize];
     let handle = store.alloc_blob(u64_ty, &(cells as usize as u64).to_ne_bytes());
-
     store.alloc_words(
         types.run_body.run_body,
         &[text, handle, std::ptr::null_mut(), std::ptr::null_mut()],

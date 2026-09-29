@@ -121,7 +121,6 @@ pub(crate) unsafe fn with_exprs(
 ) -> DyadPtr {
     let slots = dyad::value(node) as *const DyadPtr;
     let lines = array::build(store, array_ty, exprs);
-
     store.alloc_words(dyad::ty(node), &[lines, *slots.add(OP), *slots.add(PARENT)])
 }
 
