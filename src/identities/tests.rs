@@ -1469,7 +1469,7 @@ fn an_argument_that_does_not_fit_its_parameter_is_rejected() {
 
 #[test]
 fn recursive_i64_factorial_matches_between_tiers() {
-    // The self-call must read i64 from the published signature; an unbound placeholder would default to i32.
+    // The self-call must read i64 from the signature the binding points at before the body parses.
     let (mut store, mut trie, core) = new_core();
 
     let fact = {
@@ -2403,6 +2403,11 @@ fn a_body_slot_takes_a_bracket_and_a_run_type_has_no_place() {
     );
     // `pw` is an infix still waiting for its operands, not a type applied to `?`.
     assert!(matches!(parse_err_after(&[POW_TYPE], "p := pw ?"), ParseError::ConstructorFailed(_)));
+}
+
+#[test]
+fn a_parsing_tape_takes_no_pointer_of_another_type() {
+    assert_eq!(parse_err("( x := u64 7, t := parsing_tape (&x) )"), ParseError::TypeMismatch);
 }
 
 #[test]

@@ -334,7 +334,6 @@ mod tests {
         let core = Core::build(&mut store, &mut trie);
 
         let lhs = store.alloc_blob(core.i32_, &20i32.to_ne_bytes());
-
         let rhs = store.alloc_blob(core.i32_, &22i32.to_ne_bytes());
         let leaf = core.ops.arith_leaf(ArithOp::Add, NumType::I32);
         let node = store.alloc_words(core.plus, &[lhs, rhs, leaf]);

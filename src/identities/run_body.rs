@@ -45,7 +45,6 @@ pub(crate) fn build(
 ) -> DyadPtr {
     let u64_ty = types.numtypes[NumType::U64 as usize];
     let handle = store.alloc_blob(u64_ty, &(cells as usize as u64).to_ne_bytes());
-
     store.alloc_words(
         types.run_body.run_body,
         &[text, handle, std::ptr::null_mut(), std::ptr::null_mut()],
@@ -163,10 +162,7 @@ pub(crate) unsafe fn spec_of(node: DyadPtr) -> DyadPtr {
 pub(crate) unsafe fn unfilled_field(node: DyadPtr) -> Option<usize> {
     let ty = dyad::ty(node);
     let slots = dyad::value(node) as *const DyadPtr;
-    if meta::kind_of(ty) != Some(meta::RECORD_TAG)
-        || meta::run_body_of(ty).is_null()
-        || slots.is_null()
-    {
+    if meta::kind_of(ty) != Some(meta::RECORD_TAG) || meta::run_body_of(ty).is_null() {
         return None;
     }
     let n_fields = array::items(meta::record_fields_of(ty)).len();

@@ -232,7 +232,7 @@ impl<'a> Parser<'a> {
         use crate::identities::{array, meta};
         let ty = dyad::ty(node);
         let value = dyad::value(node);
-        if ty.is_null() || value.is_null() || self.types.is_storage(node) {
+        if self.types.is_storage(node) {
             return Ok(None);
         }
         let slot = match meta::kind_of(ty) {
@@ -500,7 +500,6 @@ impl<'a> Parser<'a> {
             // An operator node's slots are the fields its own type defines:
             // `.operands[i]` fetches one, no view involved; a null slot is the checked error until `?`.
             if name == "operands"
-                && !dyad::ty(lhs).is_null()
                 && matches!(
                     crate::identities::meta::kind_of(dyad::ty(lhs)),
                     Some(crate::identities::meta::TUPLE_TAG | crate::identities::meta::LIST_TAG)
@@ -877,8 +876,7 @@ impl<'a> Parser<'a> {
         if callee.is_null() || dyad::ty(callee) != self.types.fn_type {
             return false;
         }
-        let fields = dyad::value(callee) as *const DyadPtr;
-        !fields.is_null() && *fields.add(FN_OUTPUT) == self.types.type_
+        *(dyad::value(callee) as *const DyadPtr).add(FN_OUTPUT) == self.types.type_
     }
 
     /// The call runs on the pass and the result bits are the produced type

@@ -296,7 +296,6 @@ pub(super) fn build_alloc(
     // `T ?`, the valueless marker, names the cells' type and fills them with nothing.
     // SAFETY: `init` is a reduced dyad just parsed.
     let init = init.filter(|&i| unsafe { !types.is_hole(i) }).unwrap_or(std::ptr::null_mut());
-
     Ok(store.alloc_words(types.alloc_, &[pointee, count, init, types.ops.alloc_]))
 }
 
@@ -328,7 +327,6 @@ pub(crate) fn build_teardown(
     } else {
         types.ops.teardown_
     };
-
     Ok(store.alloc_words(op_id, &[place, pointee, leaf]))
 }
 
@@ -577,10 +575,10 @@ unsafe fn moves_out_within(types: &Core, node: DyadPtr, depth: usize) -> bool {
     {
         // A call a type's own `parse` placed on its fresh node, yielding that node.
         let args = dyad::value(node) as *const DyadPtr;
-        if !args.is_null() && !(*args).is_null() && dyad::ty(*args) == types.this.copy {
+        if !(*args).is_null() && dyad::ty(*args) == types.this.copy {
             let template = *(dyad::value(*args) as *const DyadPtr);
             let fields = dyad::value(f) as *const DyadPtr;
-            return !fields.is_null() && *fields.add(crate::parse::FN_OUTPUT) == dyad::ty(template);
+            return *fields.add(crate::parse::FN_OUTPUT) == dyad::ty(template);
         }
         if dyad::ty(f) == types.fn_type {
             let body = *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_BODY);

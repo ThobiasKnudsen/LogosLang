@@ -116,8 +116,8 @@ pub enum Shape {
     /// A place holding a node address, a `type ?` or `dyad ?` box: eight bytes
     /// known when the program runs.
     Container,
-    /// A null type, a null value where operands would be, or a layout that
-    /// cannot be derived.
+    /// A hole that holds no type, a type with no record yet or of a kind with no
+    /// values, or a layout that cannot be derived.
     Undefined,
 }
 
@@ -128,11 +128,7 @@ pub enum Shape {
 /// `node` must be a valid dyad from the store, in the shapes the parser and
 /// `Core::build` produce.
 pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
-    let mut logos = dyad::ty(node);
-    // A hole or a field node describes as the valueless value of its type.
-    if logos == types.unknown {
-        logos = crate::identities::hole::type_in(node);
-    }
+    let logos = types.logos_of(node);
     if logos.is_null() {
         return Shape::Undefined;
     }
@@ -168,10 +164,13 @@ pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
         };
     }
     if dyad::ty(logos) == types.fn_type {
-        return Shape::Call { callee: logos, args: scan_null_terminated(dyad::value(node)) };
+        return Shape::Call {
+            callee: logos,
+            args: crate::parse::null_terminated(dyad::value(node) as *const DyadPtr).to_vec(),
+        };
     }
     let Some(kind) = meta::kind_of(logos) else {
-        return Shape::Undefined; // an unbound placeholder standing as a logos
+        return Shape::Undefined; // a type with no record yet, standing as a logos
     };
     match kind {
         k if k < VOID_TAG => Shape::Scalar(numtype::of_type_node(logos)),
@@ -203,9 +202,6 @@ pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
 /// `logos` carries an operand record; `node.value` has the shape it declares.
 unsafe fn operands_of(logos: DyadPtr, node: DyadPtr) -> Shape {
     let value = dyad::value(node) as *const DyadPtr;
-    if value.is_null() {
-        return Shape::Undefined; // declared, no operands yet
-    }
     let kind = meta::kind_of(logos).expect("operand records have a kind");
     let arity = meta::arity_of(logos);
     let slots =
@@ -214,30 +210,11 @@ unsafe fn operands_of(logos: DyadPtr, node: DyadPtr) -> Shape {
         meta::TUPLE_TAG => Shape::Tuple { slots },
         meta::LIST_TAG => Shape::List {
             head: slots,
-            tail: scan_null_terminated(
-                dyad::value(node).add(arity * std::mem::size_of::<DyadPtr>()),
-            ),
+            tail: crate::parse::null_terminated((dyad::value(node) as *const DyadPtr).add(arity))
+                .to_vec(),
         },
         _ => unreachable!("operand records are tuple or list"),
     }
-}
-
-/// The nodes of a null-terminated `dyad@` array (empty for a null array).
-///
-/// # Safety
-/// A non-null `value` must point at a null-terminated `dyad@` array.
-unsafe fn scan_null_terminated(value: *mut u8) -> Vec<DyadPtr> {
-    let p = value as *const DyadPtr;
-    let mut out = Vec::new();
-    if p.is_null() {
-        return out;
-    }
-    let mut i = 0;
-    while !(*p.add(i)).is_null() {
-        out.push(*p.add(i));
-        i += 1;
-    }
-    out
 }
 
 /// The text of a string node.

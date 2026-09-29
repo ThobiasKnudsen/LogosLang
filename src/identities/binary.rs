@@ -216,7 +216,6 @@ unsafe fn pointer_step(
         }
         _ => return Err(ParseError::UnsupportedOperands),
     };
-
     Ok(Some(store.alloc_words(op, &[lhs, offset, types.ops.arith_leaf(a, NumType::I64)])))
 }
 

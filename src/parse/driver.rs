@@ -611,7 +611,7 @@ impl<'a> Parser<'a> {
     /// `f` must be a resolved dyad from the store.
     pub(super) unsafe fn takes_this(&self, f: DyadPtr) -> bool {
         use crate::identities::{array, meta};
-        if f.is_null() || dyad::ty(f) != self.types.fn_type || dyad::value(f).is_null() {
+        if f.is_null() || dyad::ty(f) != self.types.fn_type {
             return false;
         }
         let input = *(dyad::value(f) as *const DyadPtr);

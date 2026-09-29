@@ -305,7 +305,7 @@ pub(crate) unsafe fn install_pointer_type(id: DyadPtr, p: DyadPtr) {
     std::ptr::write_unaligned(dyad::head(id).add(POINTER_TYPE_OFF) as *mut DyadPtr, p);
 }
 
-/// `None` where there is no record to read: a null value (an unbound placeholder) or a
+/// `None` where there is no record to read: no head yet (a type still being defined) or a
 /// node that is no type (a type is typed by the self-typed root). Every accessor below
 /// contracts on `Some`, so this is where a node that is not an identity is turned away.
 ///
@@ -314,22 +314,19 @@ pub(crate) unsafe fn install_pointer_type(id: DyadPtr, p: DyadPtr) {
 pub(crate) unsafe fn kind_of(id: DyadPtr) -> Option<u8> {
     let v = dyad::head(id);
     let t = dyad::ty(id);
-    if v.is_null() || t.is_null() || dyad::ty(t) != t {
+    if v.is_null() || dyad::ty(t) != t {
         None
     } else {
         Some(*(v as *const u8))
     }
 }
 
-/// Safe on any node: `kind_of` turns away both a null value and a type-valued place.
+/// Safe on any node: `kind_of` turns away a node with no record and one that is no type.
 ///
 /// # Safety
 /// `id` must be null or a valid dyad from the store.
 pub(crate) unsafe fn is_record_type(id: DyadPtr) -> bool {
-    !id.is_null()
-        && !dyad::ty(id).is_null()
-        && dyad::ty(id) == dyad::ty(dyad::ty(id))
-        && kind_of(id) == Some(RECORD_TAG)
+    !id.is_null() && kind_of(id) == Some(RECORD_TAG)
 }
 
 /// A record type whose values a Logos-written `parse` builds and no `run` executes: a value

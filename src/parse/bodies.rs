@@ -94,18 +94,13 @@ pub unsafe fn fn_frame_size(fn_node: DyadPtr) -> usize {
     }
 }
 
-/// Empty for a function that reads none, and for a declaration whose value is
-/// still being parsed.
+/// Empty for a function that reads none, and for one whose body is still being parsed.
 ///
 /// # Safety
-/// `fn_node` must be a function node: its value null, or the operands
-/// `parse_fn` builds (the early signature included).
+/// `fn_node` must be a function node: the operands `parse_fn` builds, the early
+/// signature included.
 pub unsafe fn fn_outer<'a>(fn_node: DyadPtr) -> &'a [DyadPtr] {
-    let fields = dyad::value(fn_node) as *const DyadPtr;
-    if fields.is_null() {
-        return &[];
-    }
-    let outer = *fields.add(FN_OUTER);
+    let outer = *(dyad::value(fn_node) as *const DyadPtr).add(FN_OUTER);
     if outer.is_null() {
         &[]
     } else {
@@ -265,14 +260,24 @@ pub(crate) unsafe fn contains_return(types: &Core, node: DyadPtr) -> bool {
 }
 
 /// `{type: callee, value: [args…, null]}`: null-terminated so `run` can count
-/// the arguments; a nullary call carries a null value.
-pub(super) fn build_call(store: &mut Store, callee: DyadPtr, args: &[DyadPtr]) -> DyadPtr {
+/// the arguments; a nullary call is a leaf, its one zero word the terminator.
+pub(crate) fn build_call(store: &mut Store, callee: DyadPtr, args: &[DyadPtr]) -> DyadPtr {
     if args.is_empty() {
         return store.alloc_leaf(callee);
     }
     let mut ops = args.to_vec();
     ops.push(std::ptr::null_mut());
     store.alloc_words(callee, &ops)
+}
+
+/// The words of a null-terminated run, the terminator left out: a call's arguments as
+/// `build_call` laid them, a list operand's tail.
+///
+/// # Safety
+/// `p` must point at a null-terminated run of node words.
+pub unsafe fn null_terminated<'a>(p: *const DyadPtr) -> &'a [DyadPtr] {
+    let n = (0..).take_while(|&i| !(*p.add(i)).is_null()).count();
+    std::slice::from_raw_parts(p, n)
 }
 
 impl<'a> Parser<'a> {
@@ -511,7 +516,7 @@ impl<'a> Parser<'a> {
     ///
     /// # Safety
     /// `input` must be a record node and `params` its fields' bindings in order; `spec`
-    /// null or a `fn`-typed dyad from the store that nothing has read a value from yet;
+    /// null or a `fn` node minted with `FN_SLOTS` null words that nothing has filled;
     /// `binding` null or a binding dyad from the store.
     pub(super) unsafe fn fn_over_body(
         &mut self,
@@ -522,20 +527,18 @@ impl<'a> Parser<'a> {
         spec: DyadPtr,
         binding: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
-        let mut early = [std::ptr::null_mut(); FN_SLOTS];
-        early[FN_INPUT] = input;
-        early[FN_OUTPUT] = output;
         let node = if spec.is_null() {
+            let mut early = [std::ptr::null_mut(); FN_SLOTS];
+            early[FN_INPUT] = input;
+            early[FN_OUTPUT] = output;
             self.rt.store.alloc_words(fn_type, &early)
         } else {
-            // SAFETY: `spec` was minted with `FN_SLOTS` null words (the caller's contract).
+            // SAFETY: `spec` holds `FN_SLOTS` words (the caller's contract).
             unsafe {
-                std::ptr::copy_nonoverlapping(
-                    early.as_ptr(),
-                    dyad::value(spec) as *mut DyadPtr,
-                    FN_SLOTS,
-                )
-            };
+                let slots = dyad::value(spec) as *mut DyadPtr;
+                *slots.add(FN_INPUT) = input;
+                *slots.add(FN_OUTPUT) = output;
+            }
             spec
         };
         if !binding.is_null() {
@@ -764,7 +767,6 @@ impl<'a> Parser<'a> {
             }
             return self.parse_branch();
         }
-
         Ok(self
             .rt
             .store
@@ -874,7 +876,6 @@ impl<'a> Parser<'a> {
                 !v,
             ));
         }
-
         Ok(self.rt.store.alloc_words(not_id, &[operand, self.types.ops.not_]))
     }
 
@@ -1079,7 +1080,7 @@ impl<'a> Parser<'a> {
             }
         } else {
             // Each uncommitted literal argument commits to its parameter's
-            // declared type; an unbound callee has no signature yet and commits nothing.
+            // declared type; a callee that is no `fn` has no signature and commits nothing.
             let types = self.types;
             let mut args = args;
             // SAFETY: `callee` and `args` are reduced dyads from the store.
@@ -1087,7 +1088,7 @@ impl<'a> Parser<'a> {
                 crate::identities::commit_call_args(self.rt.store, types, callee, &mut args)?;
             }
             let call = build_call(self.rt.store, callee, &args);
-            // SAFETY: `callee` is a reduced dyad; a `fn` callee's value is its field record or null.
+            // SAFETY: `callee` is a reduced dyad; a `fn` node holds `FN_SLOTS` words.
             let record_out = unsafe {
                 if dyad::ty(callee) == types.fn_type {
                     let out = *(dyad::value(callee) as *const DyadPtr).add(FN_OUTPUT);

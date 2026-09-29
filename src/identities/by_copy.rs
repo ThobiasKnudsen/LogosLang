@@ -144,11 +144,7 @@ pub(crate) unsafe fn record_type_of(types: &Core, node: DyadPtr) -> Option<DyadP
 /// # Safety
 /// `f` must be a `fn` node from the store.
 pub(crate) unsafe fn result_width(types: &Core, f: DyadPtr) -> Option<usize> {
-    let fields = dyad::value(f) as *const DyadPtr;
-    if fields.is_null() {
-        return None;
-    }
-    record_width(types, *fields.add(FN_OUTPUT))
+    record_width(types, *(dyad::value(f) as *const DyadPtr).add(FN_OUTPUT))
 }
 
 /// One parameter's place in the argument block: its first 8-byte word, the record width

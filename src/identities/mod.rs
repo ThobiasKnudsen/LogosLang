@@ -530,10 +530,19 @@ impl Core {
         if let Some(t) = self.storage_type(p) {
             return t;
         }
+        self.logos_of(p)
+    }
+
+    /// The type a node presents: a hole's or a field node's held type, else its type word.
+    ///
+    /// # Safety
+    /// `p` must be a valid dyad from the store.
+    pub(crate) unsafe fn logos_of(&self, p: DyadPtr) -> DyadPtr {
         if dyad::ty(p) == self.unknown {
-            return hole::type_in(p);
+            hole::type_in(p)
+        } else {
+            dyad::ty(p)
         }
-        dyad::ty(p)
     }
 
     /// Whether `p` is a `T ?` hole or a field node, a `?` holding its type.
@@ -648,8 +657,7 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
             Operand::NonNumeric
         };
     }
-    // A hole or a field node stands for a valueless value of its type.
-    let logos = if dyad::ty(node) == types.unknown { hole::type_in(node) } else { dyad::ty(node) };
+    let logos = types.logos_of(node);
     if logos == types.rational {
         return Operand::Literal;
     }
@@ -795,9 +803,8 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
             None => Operand::NonNumeric,
         };
     }
-    // A call yields the callee's return type; a placeholder with no published signature
-    // falls back to i32. A node of a type with a run reads as the function built for
-    // its field types, or as nothing until one exists.
+    // A call yields the callee's return type. A node of a type with a run reads as the
+    // function built for its field types, or as nothing until one exists.
     let logos =
         if !logos.is_null() && meta::is_record_type(logos) && !meta::run_body_of(logos).is_null() {
             let spec = run_body::spec_of(node);
@@ -809,38 +816,31 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
             logos
         };
     if !logos.is_null() && dyad::ty(logos) == types.fn_type {
-        let fields = dyad::value(logos) as *const DyadPtr;
-        if !fields.is_null() {
-            let out = *fields.add(FN_OUTPUT);
-            if !out.is_null() && numtype::is_void_type(out) {
-                return Operand::NonNumeric;
-            }
-            if !out.is_null() && numtype::is_pointer_type(out) {
-                return Operand::Pointer(numtype::pointee_of(out));
-            }
-            // A rational result has no machine form; a type or node result is a node address.
-            // A type still being defined, named in its own parse, has no record yet.
-            if !out.is_null()
-                && (out == types.rational
-                    || out == types.type_
-                    || meta::kind_of(out).is_none()
-                    || meta::is_record_type(out))
-            {
-                return Operand::NonNumeric;
-            }
+        let out = *(dyad::value(logos) as *const DyadPtr).add(FN_OUTPUT);
+        if !out.is_null() && numtype::is_void_type(out) {
+            return Operand::NonNumeric;
+        }
+        if !out.is_null() && numtype::is_pointer_type(out) {
+            return Operand::Pointer(numtype::pointee_of(out));
+        }
+        // A rational result has no machine form; a type or node result is a node address.
+        // A type still being defined, named in its own parse, has no record yet.
+        if !out.is_null()
+            && (out == types.rational
+                || out == types.type_
+                || meta::kind_of(out).is_none()
+                || meta::is_record_type(out))
+        {
+            return Operand::NonNumeric;
         }
         return Operand::Concrete(call_return_numtype(logos));
     }
     Operand::NonNumeric
 }
 
-/// `I32` when the callee has no published signature.
+/// `I32` when the callee declares no output.
 unsafe fn call_return_numtype(fn_node: DyadPtr) -> NumType {
-    let fields = dyad::value(fn_node) as *const DyadPtr;
-    if fields.is_null() {
-        return NumType::I32;
-    }
-    let out = *fields.add(FN_OUTPUT);
+    let out = *(dyad::value(fn_node) as *const DyadPtr).add(FN_OUTPUT);
     if out.is_null() {
         NumType::I32
     } else {
@@ -945,10 +945,8 @@ pub(crate) unsafe fn yields_type(types: &Core, node: DyadPtr) -> bool {
         read::Read::Identity => true,
         read::Read::Container(c) => c == types.type_,
         read::Read::Executable(read::Dispatch::Call(f)) => {
-            let fields = dyad::value(f) as *const DyadPtr;
             dyad::ty(f) == types.fn_type
-                && !fields.is_null()
-                && *fields.add(crate::parse::FN_OUTPUT) == types.type_
+                && *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_OUTPUT) == types.type_
         }
         _ => false,
     }
@@ -988,11 +986,7 @@ pub(crate) unsafe fn node_type_of(types: &Core, node: DyadPtr) -> Option<DyadPtr
         read::Read::Node => dyad::ty(node),
         read::Read::Container(t) => t,
         read::Read::Executable(read::Dispatch::Call(f)) if dyad::ty(f) == types.fn_type => {
-            let fields = dyad::value(f) as *const DyadPtr;
-            if fields.is_null() {
-                return None;
-            }
-            *fields.add(crate::parse::FN_OUTPUT)
+            *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_OUTPUT)
         }
         _ => return None,
     };
@@ -1243,11 +1237,7 @@ pub(crate) unsafe fn commit_call_args(
     if dyad::ty(callee) != types.fn_type {
         return Ok(());
     }
-    let fields = dyad::value(callee) as *const DyadPtr;
-    if fields.is_null() {
-        return Ok(());
-    }
-    let input = *fields.add(crate::parse::FN_INPUT);
+    let input = *(dyad::value(callee) as *const DyadPtr).add(crate::parse::FN_INPUT);
     let params = array::items(meta::record_fields_of(input));
     for (i, arg) in args.iter_mut().enumerate() {
         let Some(&param) = params.get(i) else {

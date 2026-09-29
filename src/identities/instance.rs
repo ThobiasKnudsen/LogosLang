@@ -183,7 +183,6 @@ pub(crate) unsafe fn build_ctor(
         ops.push(arg);
     }
     ops.push(std::ptr::null_mut());
-
     Ok(store.alloc_words(construct, &ops))
 }
 

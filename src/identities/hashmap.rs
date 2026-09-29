@@ -242,7 +242,6 @@ pub(crate) unsafe fn build_get(
     };
     let key = accept(store, types, k, key)?;
     let map = super::pointer::build_addr(store, types, place);
-
     Ok(Some(store.alloc_words(types.hashmap.get, &[map, key, types.hashmap.get_leaf])))
 }
 

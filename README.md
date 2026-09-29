@@ -6,7 +6,7 @@ What you can download today is the **bootstrap seed**: a small Rust program that
 
 ## The idea in five points
 
-1. **One cell.** Every node in the graph is a *dyad*: a pointer to a type and a pointer to a value, sixteen bytes. The type says how the value is read. Following type pointers always ends at `type`, whose type is itself.
+1. **One block.** Every node in the graph is a *dyad*: one block whose first word is its type and whose value bytes follow. The type says how the value is read. Following type words always ends at `type`, whose type is itself.
 2. **One evaluation rule.** To evaluate a dyad, read its type. If the type is a function, run it on the dyad's value. Otherwise the dyad is data. Operators, field access, and `if` are all functions. Operands arrive unevaluated, so `if` runs only the branch it takes without being a special form.
 3. **The parser is in the graph.** Every operator, keyword, and type carries its own parse_rank and its own `constructor`, the code that consumes the tokens around it and builds the node. Defining a new operator is writing a type. There is no separate grammar file.
 4. **One pass.** Source becomes graph one token at a time, and each expression runs as soon as it is built. Compile-time evaluation is ordinary interpretation that happens earlier: a function can return a type, and an `if` with a known condition drops the untaken branch before it is even parsed.

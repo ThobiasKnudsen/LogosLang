@@ -952,19 +952,10 @@ impl Lowerer<'_, '_> {
         dest: Option<Value>,
     ) -> Result<Value, CompileError> {
         let fields = dyad::value(callee) as *const DyadPtr;
-        if fields.is_null() {
-            // No signature to size the call by: an unbound placeholder.
-            return Err(CompileError::NotLowerable(callee));
-        }
         let ret = return_kind(self.types, *fields.add(FN_OUTPUT))?;
         let core = self.types;
-        let args = dyad::value(node) as *const DyadPtr; // [arg0 …, null] or null
-        let arg_count = if args.is_null() {
-            0
-        } else {
-            (0..).take_while(|&i| !(*args.add(i)).is_null()).count()
-        };
-        if arg_count != by_copy::slots(core, callee).count() {
+        let args = crate::parse::null_terminated(dyad::value(node) as *const DyadPtr);
+        if args.len() != by_copy::slots(core, callee).count() {
             return Err(CompileError::ArityMismatch);
         }
         let words = by_copy::words(core, callee);
@@ -981,7 +972,7 @@ impl Lowerer<'_, '_> {
                 self.builder.ins().stack_store(dest, block, 0);
             }
             for (i, slot) in by_copy::slots(core, callee).enumerate() {
-                let arg = *args.add(i);
+                let arg = args[i];
                 let at = (slot.word * 8) as i32;
                 if let Some(width) = slot.width {
                     let src = by_copy::lower_record_addr(self, arg)?;
@@ -1129,9 +1120,6 @@ unsafe fn compile_fn_body(
     fn_node: DyadPtr,
 ) -> Result<Artifact, CompileError> {
     let fields = dyad::value(fn_node) as *const DyadPtr;
-    if fields.is_null() {
-        return Err(CompileError::NotLowerable(fn_node));
-    }
     let body = *fields.add(FN_BODY);
     let ret = return_kind(types, *fields.add(FN_OUTPUT))?;
     compile_body(lower, types, fn_node, body, ret)

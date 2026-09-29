@@ -232,7 +232,6 @@ pub(super) fn build_store(
             if unsafe { super::node_type_of(types, rhs) } != Some(t) {
                 return Err(ParseError::TypeMismatch);
             }
-
             return Ok(store.alloc_words(op, &[lhs, rhs, types.ops.store_leaf(NumType::I64)]));
         }
         Read::Rational => {
@@ -283,7 +282,6 @@ pub(super) fn build_store(
     }
     // SAFETY: `lhs` is a typed variable checked assignable above.
     let nt = unsafe { of_type_node(lhs_type) };
-
     Ok(store.alloc_words(op, &[lhs, rhs, types.ops.store_leaf(nt)]))
 }
 
@@ -302,7 +300,7 @@ unsafe fn build_call_write(
     rhs: DyadPtr,
 ) -> Result<Option<DyadPtr>, ParseError> {
     let fields = dyad::value(f) as *const DyadPtr;
-    if dyad::ty(f) != types.fn_type || fields.is_null() {
+    if dyad::ty(f) != types.fn_type {
         return Ok(None);
     }
     let body = *fields.add(FN_BODY);
@@ -318,17 +316,8 @@ unsafe fn build_call_write(
     record[FN_BODY] = body;
     record[FN_BCODE] = std::ptr::null_mut();
     let finder = store.alloc_words(dyad::ty(f), &record);
-    // The call's argument words, null-terminated, copied under the finder.
-    let args = dyad::value(call) as *const DyadPtr;
-    let mut words = Vec::new();
-    loop {
-        let w = *args.add(words.len());
-        words.push(w);
-        if w.is_null() {
-            break;
-        }
-    }
-    let found = store.alloc_words(finder, &words);
+    let args = crate::parse::null_terminated(dyad::value(call) as *const DyadPtr);
+    let found = crate::parse::build_call(store, finder, args);
     let place = super::pointer::build_deref(store, types, found, pointee, offset as usize);
     super::pointer::build_storeptr(store, types, place, rhs).map(Some)
 }
