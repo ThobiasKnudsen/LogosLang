@@ -3266,6 +3266,16 @@ fn free_of_an_element_runs_its_free_there_and_the_array_skips_it() {
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
         assert_eq!(stdout, "free\nafter\n", "{tail}");
     }
+    // A compiled body declines the cell's free instead of reading the cell as its own bytes.
+    for free in ["free (arr[0])", "free (arr.ptr + 0)@"] {
+        let g = format!(
+            "g := fn () -> i32 ( x := box (1, 2), arr := array boxed [move x], {free}, 1 )"
+        );
+        let (code, stdout, stderr) = run_line(&format!("{array}, {BOX}, {g}, g.compile(), g()"));
+        assert_eq!(code, Some(1), "{free}: stderr: {stderr}");
+        assert!(stdout.is_empty(), "{free}: stdout: {stdout}");
+        assert!(stderr.contains("cannot be compiled yet"), "{free}: stderr: {stderr}");
+    }
     // Over a cell of a type that fills no `free`, the free is inert: the index is never read.
     let (code, stdout, stderr) =
         run_line(&format!("{array}, a := array i32 [1, 2], free (a[5]), a[0]"));

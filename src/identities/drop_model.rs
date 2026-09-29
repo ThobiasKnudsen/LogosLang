@@ -458,8 +458,8 @@ fn build_inert_free(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr 
 
 /// The inert form is unit; a value runs, and a node it makes goes to the seed as a place's
 /// does; a node's free empties the place and hands the node to the seed, which runs the
-/// instances' `free`; the owning pointer's and the field's forms have no lowering, so the
-/// function declines to compile and stays interpreted.
+/// instances' `free`; the owning pointer's and the field's forms, and a node's free over a
+/// cell, have no lowering, so the function declines to compile and stays interpreted.
 fn lower_free(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a `free` node `[place, pointee, op]`, `[place, free, op]` or
     // `[value, free, op]`.
@@ -480,6 +480,11 @@ fn lower_free(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
         return Ok(lw.const_i32(0));
     }
     if op != lw.types().ops.instance_free_ {
+        return Err(CompileError::NotLowerable(node));
+    }
+    // A place with no frame, a cell or a field slot, would be read as its own bytes.
+    // SAFETY: `place` is a reduced dyad from the store.
+    if unsafe { lw.types().frame_of(lw.through(place)) }.is_none() {
         return Err(CompileError::NotLowerable(node));
     }
     // SAFETY: `place` is the node place the binding site minted, read at its container width.
