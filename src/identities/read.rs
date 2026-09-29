@@ -118,11 +118,7 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
             let Some(idx) = meta::op_slot_of(op) else {
                 return Read::Executable(Dispatch::None);
             };
-            let slots = value as *const DyadPtr;
-            if slots.is_null() {
-                return Read::Executable(Dispatch::None);
-            }
-            let leaf = *slots.add(idx);
+            let leaf = *(value as *const DyadPtr).add(idx);
             if !leaf.is_null() && callable::is_callable(leaf) {
                 Read::Executable(Dispatch::Leaf(leaf))
             } else {

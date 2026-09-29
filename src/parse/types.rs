@@ -1180,11 +1180,7 @@ impl<'a> Parser<'a> {
                 return Ok(None);
             }
         }
-        let fields = dyad::value(spec) as *const DyadPtr;
-        if fields.is_null() {
-            return Ok(None);
-        }
-        let out = *fields.add(FN_OUTPUT);
+        let out = *(dyad::value(spec) as *const DyadPtr).add(FN_OUTPUT);
         let numeric = crate::identities::is_numtype_node(types, out);
         if !numeric && out != types.rational {
             return Ok(None);

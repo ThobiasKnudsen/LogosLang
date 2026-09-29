@@ -877,8 +877,7 @@ impl<'a> Parser<'a> {
         if callee.is_null() || dyad::ty(callee) != self.types.fn_type {
             return false;
         }
-        let fields = dyad::value(callee) as *const DyadPtr;
-        !fields.is_null() && *fields.add(FN_OUTPUT) == self.types.type_
+        *(dyad::value(callee) as *const DyadPtr).add(FN_OUTPUT) == self.types.type_
     }
 
     /// The call runs on the pass and the result bits are the produced type
