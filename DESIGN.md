@@ -1352,7 +1352,7 @@ A type may carry a *declarative consumption signature*. It stays the optional fa
 - **Why:** the same naming rule that named `run` the same day.
 - **Rejected:** the name *poiesis* (bringing forth from concealment into presence) for the slot. Plain words win.
 - **Ruled:** 17 September 2026 (slot names); poiesis declined August 2026; `drop` respelled `free` 28 September 2026; `print` joined 29 September 2026, Thobias (#174).
-- **Seed:** done (#130).
+- **Seed:** done (#130); `print` not yet (›A value is shown as the text its type's `print` slot gives back‹).
 - **Source:** DESIGN.md l.199
 
 **The constructor is a field** (DESIGN.md l.199 to l.201 at e75bcdc; the rules that paragraph held follow, and the per-instance field switch itself is history, see DESIGN_HISTORY.md ›History of type-body layout‹)
