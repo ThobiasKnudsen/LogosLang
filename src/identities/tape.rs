@@ -1027,7 +1027,6 @@ unsafe fn node_operand(rt: &mut Runtime, d: DyadPtr) -> DyadPtr {
     }
     let store = rt.store();
     if !d.is_null()
-        && store.contains(d)
         && super::read::read_kind(&*types, d) != super::read::Read::Node
         && super::node_type_of(&*types, d).is_some()
     {

@@ -159,7 +159,7 @@ impl<'a> Parser<'a> {
                 Some((Frame::Call(_), _)) | None => return id,
             };
             let held = std::ptr::read_unaligned(addr as *const DyadPtr);
-            if held.is_null() || !self.rt.store.contains(held) {
+            if held.is_null() {
                 return id;
             }
             // A `type ?` box may hold only an identity; a `dyad ?` box holds anything.

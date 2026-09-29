@@ -70,8 +70,6 @@ pub enum RunError {
     NoLayout(DyadPtr),
     /// A sequence node with no expression array.
     EmptyScope,
-    /// An address handed to `here`'s reads that is no node of the store.
-    NotANode(usize),
     /// A node handed to `here`'s reads that is not a scope.
     NotAScope(DyadPtr),
     /// The allocator refused an `alloc`.

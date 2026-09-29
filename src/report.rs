@@ -387,7 +387,6 @@ pub fn run_message(e: &RunError) -> String {
         RunError::NotDerefable => "only a scalar or a pointer is read through a pointer".into(),
         RunError::NoLayout(_) => "this type has no field layout to construct".into(),
         RunError::EmptyScope => "a scope with nothing in it has no value".into(),
-        RunError::NotANode(a) => format!("the address {a:#x} is not a node of the store"),
         RunError::NotAScope(_) => "this node is not a scope".into(),
         RunError::OutOfMemory => "the allocator refused this alloc".into(),
         RunError::NoDestructor(_) => "this place has no destructor to run".into(),
