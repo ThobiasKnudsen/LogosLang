@@ -530,10 +530,19 @@ impl Core {
         if let Some(t) = self.storage_type(p) {
             return t;
         }
+        self.logos_of(p)
+    }
+
+    /// The type a node presents: a hole's or a field node's held type, else its type word.
+    ///
+    /// # Safety
+    /// `p` must be a valid dyad from the store.
+    pub(crate) unsafe fn logos_of(&self, p: DyadPtr) -> DyadPtr {
         if dyad::ty(p) == self.unknown {
-            return hole::type_in(p);
+            hole::type_in(p)
+        } else {
+            dyad::ty(p)
         }
-        dyad::ty(p)
     }
 
     /// Whether `p` is a `T ?` hole or a field node, a `?` holding its type.
@@ -648,8 +657,7 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
             Operand::NonNumeric
         };
     }
-    // A hole or a field node stands for a valueless value of its type.
-    let logos = if dyad::ty(node) == types.unknown { hole::type_in(node) } else { dyad::ty(node) };
+    let logos = types.logos_of(node);
     if logos == types.rational {
         return Operand::Literal;
     }
