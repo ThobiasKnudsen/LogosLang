@@ -61,6 +61,9 @@ A pull request has to pass, and these run on every one:
 Run these locally before you push:
 
 ```sh
+cargo fmt --check
+bash .github/scripts/comment-check.sh
+cargo clippy --all-targets -- -D warnings
 cargo test --release
 cargo test
 bash .github/scripts/docs-check.sh validate
