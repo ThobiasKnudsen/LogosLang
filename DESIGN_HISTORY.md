@@ -193,6 +193,7 @@ Nothing moved from this section.
 
 ### Reflection (`:type`) is fail-closed and gated twice
 - **History:** `:dyad`, retired for `:type` 23 September 2026.
+- **History:** an Open line of 29 September 2026 (#199) asked where both gates stand now that a value's type is read with `.type`. Answered that night (Q-0022): `.type` is gated as any `.` field is, and no gate stands at it today. Which read the fine gate stands at is the rule's Open line since.
 - **Seed detail (27 September 2026):** (August 2026) the view registers ambient like every identity; the fail-closed target waits for the grant path (a capability passed by argument, needing `type`-typed parameters).
 
 ### A language is a section with a written start of five names
@@ -401,6 +402,7 @@ Nothing moved from this section.
 ### A field is filled at run, per evaluation; its type decides how the operand is used
 - **History:** an Open line from 16 to 28 September 2026: "the two moments of a field (operand slot written at parse, frame place evaluated at run) are implied but not yet said in one sentence." Closed by the two-moments sentence at the rule.
 - **History:** until 29 September 2026 the two-moments sentence ended "for `dyad ?`, the node itself, unrun." Superseded by ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹ (Thobias, #199, "i want it to actually work"): a `dyad ?` place became a transparent placeholder, so what it holds is said at that rule: the operand's value, its graph staying in the node's slot.
+- **History:** an Open line of 29 September 2026 (#199) asked which declared type keeps an operand as graph now that `dyad ?` holds the value. Closed that night by Thobias's choice of `@dyad ?` (Q-0022).
 
 ### A node's output type is per node, and its parse writes it
 - **History:** 16 Sept: `output := type ?`, `tape[0]:dyad.value.output = tape[-1]:dyad.type`.
@@ -545,6 +547,7 @@ Nothing moved from this section.
 
 ### `a[k]` is an application, exactly as `a(k)`
 - **History:** the first array.logos read the parse's own locals after the parse had returned, `tape[0] = scope ( … index … this … )`; superseded by this ruling. The 25 September spelling was `tape[0] = this.at(tape[1].dyads[0])` with `shared at := fn (index := u64 ?) -> element_type ( if index >= this.size error «…», (this.ptr + index)@ )`; since 26 September 2026 there is no `this` and the mark is `share` (a value in the cell is `tape[0]`, `tape[0].at(k)`; fields named bare in the function body, see l.207).
+- **History:** until 29 September 2026 the rule read "A node's operands are the collection its type defines, `(x + x).operands[0]`". Superseded by Thobias (#199): "(x+x).operands should not exist. it should be lhs and rhs for all the other operators as well."
 
 ### A placed call keeps its tape lines as operands
 - **History:** Claude's reading of the same day, "the placed call's arguments run as it is placed … so the node holds values", superseded.
@@ -630,6 +633,9 @@ Nothing moved from this section.
 ### A scope's lines are its one field, `dyads`
 - **History:** spelled `self` from the 2 September sketch until 24 September 2026, no reason recorded.
 
+### Reading a path runs nothing
+- **History:** until 29 September 2026 the rule's example ended "`(x + 2).lhs` reads `x`, as `.operands[0]` does". `.operands` went with Thobias's ruling (#199): "(x+x).operands should not exist. it should be lhs and rhs for all the other operators as well."
+
 ### `=` sits beside `:=`, and returns nothing
 - **History:** until 28 September 2026 the rule said nothing of a displaced value, and the seed leaks it (#170).
 - **Seed detail (27 September 2026):** 9 September 2026 (#60): `:`, `.`, `@` build at discovery with their right cell lexed on demand; a reader followed by a tight read is put to sleep before it drives; the seed's right-side drives lex onto a fresh tape; `=` drives at discovery. Application and juxtaposition also build at discovery, reading their bracket or literal lazily in source order (seed rank 91, above `(`'s 90), since a tight read above them would otherwise take the bracket first: `f(2).x` and `dyad (i32, 7):dyad` read the call.
@@ -652,10 +658,12 @@ Nothing moved from this section.
 
 ### The dyad's read surface: two fields, and the type answers the rest
 - **History:** until 29 September 2026 the rule said "The fields exist only where `s` is a dyad", gave as its Why "A value's type is never one of its own fields, so a universal `.type` on every value would be `.` doing a second job", and listed as Rejected "The universal `.type` metaproperty on every value: retired." Superseded by Thobias (#199): `.type` is read on every value, as a field `type`'s own body declares, because "type lives in the same payload as the value now" (the one-block node, #166). `.value` still exists only on a dyad.
+- **History:** until 29 September 2026 the rule read "an operator node's slots are the fields its type defines, so `(x + x).operands[0]` reads the first operand just as `p.x` reads a record field", and gave "an operand index past the arity" as a checked error. Superseded by Thobias (#199, Q-0022): "(x+x).operands should not exist. it should be lhs and rhs for all the other operators as well." The example is now a node reached by path, `b:start.rhs.lhs`.
 - **Seed detail (27 September 2026):** since August 2026 (#52 in part): `.operands[i]` is ordinary field access on any operand-kinded value; the type members (`.arity`, `.roles[i]`, `.parse_rank`, `.associativity`, `.parse`, `.drop`, `.fields`, `.size_bytes`, `.scope`) read the shared record as fields of the type value; every read folds at parse (comptime reflection, the regime a Logos-written constructor runs in); a mismatched read is the checked error.
 
 ### `a.type` reads the type of the value a name stands for (spelled `a:type` from 23 to 29 September 2026)
 - **History:** until 29 September 2026 the rule was headed "`a:type` reads the type of the value a name stands for" and read: "`x:type == i32`, `i32:type == type`, `a:type is number` in a premise, `tape[-1]:type` inside a constructor, `b:start.rhs:type` on a node reached by path. … `:type` is the one `:` read that reaches the dyad level. The binding gate stands at `:type` (see *Sections, the arche, and effect identities*). `a.type` is an ordinary field read on `a`'s value, present only if its type declares a `type` field." Its Why: "The type is the one fact about a value that `.` cannot give (it is never one of the value's own fields), so it takes the short spelling. The cell was only ever reached to get its two slots: one is now `:type`, the other is `.`." Superseded by Thobias's ruling of 29 September 2026 (#199): the type lives in the same payload as the value since the one-block node (#166), so "type should always be accessed by .type instead of :type". Where the reflection gate stood at `:type` is asked at ›Reflection (`:type`) is fail-closed and gated twice‹. An Open line of the same day asked what `:type` of an expression nobody named gives: what it yields, or the node's own type word. His answer ruled the spelling and chose neither, so the question stands at the rule's Open line as what `.type` of such an expression gives, beside the tape operand's case.
+- **History:** that Open line, on what `.type` of an expression nobody named gives in code or as a tape operand, was closed the same night by Thobias's leaning towards what it yields (Q-0022). How a node's own type word is read is the rule's Open line since.
 - **History:** August 2026: the dyad view was `(dyad a).type`, replacing the universal `.type` metaproperty. 7-8 September 2026: respelled `a:dyad.type` (`:dyad` = the view; `(dyad a)` as a second spelling dropped). In that period `a:type` was a checked error. 23 September 2026: `:dyad` and `:value` retired, `a:type` replaces `a:dyad.type`.
 - **Seed detail (27 September 2026):** since 24 September 2026 (#139): `:dyad` and `:value` are checked errors; the binding's pointer to its dyad stays a layout field that `:` does not spell.
 - **Quotes:** Amended: "its just a simplification in the definition of : where it emmits dyad when accessing type and value but you can still write a:dyad.type".
