@@ -460,8 +460,8 @@ fn build_inert_free(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr 
 /// The inert form is unit after the pointer to its cell is found; a value runs, and a node it
 /// makes goes to the seed as a place's does; a node's free empties the place and hands the
 /// node to the seed, which runs the instances' `free`; the owning pointer's and the field's
-/// forms, a node's free over a cell, and the inert form over a field's slot have no
-/// lowering, so the function declines to compile and stays interpreted.
+/// forms, a node's free over a cell or an owning field's slot, and the inert form over a
+/// field's slot have no lowering, so the function declines to compile and stays interpreted.
 fn lower_free(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a `free` node `[place, pointee, op]`, `[place, free, op]` or
     // `[value, free, op]`.
@@ -494,11 +494,8 @@ fn lower_free(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     if op != lw.types().ops.instance_free_ {
         return Err(CompileError::NotLowerable(node));
     }
-    // A place with no frame, a cell or a field slot, would be read as its own bytes.
     // SAFETY: `place` is a reduced dyad from the store.
-    if unsafe { lw.types().frame_of(lw.through(place)) }.is_none() {
-        return Err(CompileError::NotLowerable(node));
-    }
+    unsafe { require_frame_place(lw, node, place) }?;
     // SAFETY: `place` is the node place the binding site minted, read at its container width.
     unsafe {
         let this = lw.read_place(place, types::I64)?;
@@ -523,11 +520,30 @@ unsafe extern "C" fn compiled_instance_free(
     crate::run::interpret_call(ctx, free, 1, &this)
 }
 
+/// A place with no frame, a cell or a field's slot, would be read and emptied as its own
+/// bytes, so the function declines to compile: stand-in for #164.
+///
+/// # Safety
+/// `place` must be a reduced dyad from the store.
+unsafe fn require_frame_place(
+    lw: &Lowerer,
+    node: DyadPtr,
+    place: DyadPtr,
+) -> Result<(), CompileError> {
+    match lw.types().frame_of(lw.through(place)) {
+        Some(_) => Ok(()),
+        None => Err(CompileError::NotLowerable(node)),
+    }
+}
+
 /// The move reads the place and empties it, so the pending teardown over it finds nothing.
 fn lower_move(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a `move` node `[place, pointee, op]`; the place holds an address.
+    // SAFETY: `node` is a `move` node `[place, pointee, op]`.
+    let place = unsafe { *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_PLACE) };
+    // SAFETY: `place` is a reduced dyad from the store.
+    unsafe { require_frame_place(lw, node, place) }?;
+    // SAFETY: `place` is a frame place that holds an address.
     unsafe {
-        let place = *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_PLACE);
         let held = lw.read_place(place, types::I64)?;
         let empty = lw.const_i64(0);
         lw.write_place(place, types::I64, empty)?;

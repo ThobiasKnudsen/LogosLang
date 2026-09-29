@@ -3140,6 +3140,18 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
         assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
     }
+    // A compiled body declines a free or move out of the field instead of reading the
+    // field's slot as its own bytes; interpreted, the same body frees each node once.
+    for line in ["free g.b", "y := move g.b"] {
+        let f = format!("f := fn () -> i32 ( g := bag (), {line}, 1 )");
+        let (code, stdout, stderr) = run_line(&bag_line(&format!("{f}, f.compile(), f()")));
+        assert_eq!(code, Some(1), "{line}: stdout: {stdout}");
+        assert!(stdout.is_empty(), "{line}: stdout: {stdout}");
+        assert!(stderr.contains("cannot be compiled yet"), "{line}: stderr: {stderr}");
+        let (code, stdout, stderr) = run_line(&bag_line(&format!("{f}, f(), print «after»")));
+        assert_eq!(code, Some(0), "{line}: stderr: {stderr}");
+        assert_eq!(stdout, "free\nbag\nafter\n", "{line}");
+    }
 }
 
 #[test]
