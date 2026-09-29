@@ -9,7 +9,7 @@
 use super::numtype::COMMENT_TAG;
 use super::{meta, string, Cx};
 use crate::dyad::DyadPtr;
-use crate::parse::{Constructed, ParseError, Parser, ParsingTape};
+use crate::parse::{Constructed, Extent, ParseError, Parser, ParsingTape};
 
 /// The `comment` logos has no spelling and no run entry: the interpreter's data
 /// path yields unit for it off its tag. `#` is the constructor. Returns the
@@ -25,9 +25,10 @@ pub(crate) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr) {
     cx.extents.insert(hash, |text| {
         let at = text_start(text);
         if text[at..].starts_with('«') {
-            string::read(text, at).map(|q| q.end)
+            string::read(text, at).map(string::Quote::extent)
         } else {
-            Ok(text[at..].find('\n').map_or(text.len(), |n| at + n))
+            let len = text[at..].find('\n').map_or(text.len(), |n| at + n);
+            Ok(Extent { len, scopes: Vec::new() })
         }
     });
     (id, hash)

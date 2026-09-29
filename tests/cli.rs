@@ -2645,6 +2645,33 @@ fn a_hash_is_one_token_with_its_text_wherever_it_is_lexed() {
 }
 
 #[test]
+fn a_body_lexed_once_holds_the_scopes_of_its_quotes() {
+    let run_body = |body: &str| {
+        format!(
+            "mut n := i32 1, bump := type (a := i32 ?, share run = ( {body} ), \
+             share parse_rank = *.parse_rank + 1, share parse = ( tape[0]:type = bump, \
+             tape[0].a = tape[-1], tape.is_constructed[0] = true, tape.remove(-1) )), 3 bump"
+        )
+    };
+    for (src, printed) in [
+        (run_body("print «{a}»"), "3\n"),
+        (run_body("print «{n} {a + 1} {«)»} {«x {«y»}»}»"), "1 4 ) x {«y»}\n"),
+        (run_body("\n# «note {a}»\nprint «a={a}»\n"), "a=3\n"),
+        (
+            "f := fn () -> i32 ( t := type ( share k := immediate ( print «v {1}», 1 ) ), 1 ), f()"
+                .to_string(),
+            "v 1\n1\n",
+        ),
+    ] {
+        let (stdout, stderr, code) = run(&src);
+        assert_eq!(code, Some(0), "{src}: {stderr}");
+        assert!(stdout.starts_with(printed), "{src}: {stdout} {stderr}");
+    }
+    let (_, stderr, _) = run(&run_body("error «a is {a}»"));
+    assert!(stderr.contains("run error: a is 3"), "{stderr}");
+}
+
+#[test]
 fn an_unclosed_quote_or_brace_is_reported_at_its_opener() {
     for (src, message) in [
         ("print «abc", "1:7: error: this `«` has no `»`"),

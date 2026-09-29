@@ -201,8 +201,10 @@ impl<'a> Parser<'a> {
         Ok(parts)
     }
 
-    /// One expression over `source[from..to]` alone: the source is cut at `to`
-    /// so the segment ends there, and offsets stay those of the whole line.
+    /// A quote's `{…}` scope, one expression over its interior `from..to`: in a body lexed
+    /// once its cells are the ones lexed with the quote; where the quote is read from the
+    /// source they are lexed now. The source is cut at `to` so the segment ends there, and
+    /// offsets stay those of the whole line.
     fn parse_within(&mut self, from: usize, to: usize) -> Result<DyadPtr, ParseError> {
         let whole = self.cx.source;
         self.cx.source = &whole[..to];

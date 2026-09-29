@@ -733,11 +733,17 @@ impl<'a> Parser<'a> {
             lex_fragment(&self.cx.scopes, self.trie, held).map_err(ParseError::Resolve)?;
         // A slot word of a type around this one names that type's slot; the held body's
         // own are declared when it is built, so its cells wait to be resolved then.
-        for (i, cell) in fragment.cells().iter().enumerate() {
+        let outer_slot = |cell: &Cell| {
             let id = cell.identity(types);
-            if !cell.is_fresh() && self.cx.definitions.iter().any(|d| d.slots.contains(&id)) {
+            !cell.is_fresh() && self.cx.definitions.iter().any(|d| d.slots.contains(&id))
+        };
+        for (i, cell) in fragment.cells().iter().enumerate() {
+            if outer_slot(cell) {
                 fragment.set_dyad(i as isize, std::ptr::null_mut());
             }
+        }
+        for cell in fragment.inner.iter_mut().filter(|c| outer_slot(c)) {
+            cell.dyad = std::ptr::null_mut();
         }
         let cells = Box::into_raw(Box::new(fragment));
         let scope = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
@@ -760,7 +766,7 @@ impl<'a> Parser<'a> {
         let (text, cells, scope, open_fns) = crate::identities::held_type::parts(node);
         let bytes = crate::identities::string::text(text);
         let text: &'a str = std::str::from_utf8(bytes).expect("copied from the source text");
-        let cells = (*cells).cells();
+        let cells = (*cells).held_cells();
         let mut chain = Vec::new();
         let mut at = scope;
         while !at.is_null() {

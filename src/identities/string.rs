@@ -12,7 +12,7 @@ use super::numtype::STRING_TAG;
 use super::{meta, Cx};
 use crate::dyad;
 use crate::dyad::DyadPtr;
-use crate::parse::{Constructed, ParseError, Parser, ParsingTape, ResolveError};
+use crate::parse::{Constructed, Extent, ParseError, Parser, ParsingTape, ResolveError};
 use crate::store::Store;
 
 /// Fills the record into the type node the build minted first (every record's
@@ -24,7 +24,7 @@ pub(crate) fn register(cx: &mut Cx) -> DyadPtr {
     unsafe { dyad::set_head(id, record) };
     cx.declare("«", id);
     cx.metas.insert(id, construct);
-    cx.extents.insert(id, |text| read(text, 0).map(|q| q.end));
+    cx.extents.insert(id, |text| read(text, 0).map(Quote::extent));
     id
 }
 
@@ -57,6 +57,19 @@ pub(crate) struct Quote {
 }
 
 impl Quote {
+    /// What the lexer takes: the quote's end as its length, and its `{…}` scopes.
+    pub(crate) fn extent(self) -> Extent {
+        let scopes = self
+            .pieces
+            .into_iter()
+            .filter_map(|p| match p {
+                Piece::Scope(r) => Some(r),
+                Piece::Text(_) | Piece::StrayClose(_) => None,
+            })
+            .collect();
+        Extent { len: self.end, scopes }
+    }
+
     /// The text a string holds: the escapes applied, each `{…}` as written.
     pub(crate) fn text(&self, source: &str) -> Vec<u8> {
         let mut out = Vec::new();

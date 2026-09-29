@@ -298,7 +298,7 @@ impl<'a> Parser<'a> {
     ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
         let text = crate::identities::run_body::text_of(held);
-        let cells = (*crate::identities::run_body::cells_of(held)).cells();
+        let cells = (*crate::identities::run_body::cells_of(held)).held_cells();
         let mut chain = Vec::new();
         let mut scope =
             crate::identities::scope::parent_of(crate::identities::meta::record_scope_of(ty));
