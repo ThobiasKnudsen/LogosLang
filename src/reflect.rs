@@ -116,8 +116,8 @@ pub enum Shape {
     /// A place holding a node address, a `type ?` or `dyad ?` box: eight bytes
     /// known when the program runs.
     Container,
-    /// A null type, a null value where operands would be, or a layout that
-    /// cannot be derived.
+    /// A hole that holds no type, a type with no record yet or of a kind with no
+    /// values, or a layout that cannot be derived.
     Undefined,
 }
 

@@ -1080,7 +1080,7 @@ impl<'a> Parser<'a> {
             }
         } else {
             // Each uncommitted literal argument commits to its parameter's
-            // declared type; an unbound callee has no signature yet and commits nothing.
+            // declared type; a callee that is no `fn` has no signature and commits nothing.
             let types = self.types;
             let mut args = args;
             // SAFETY: `callee` and `args` are reduced dyads from the store.
@@ -1088,7 +1088,7 @@ impl<'a> Parser<'a> {
                 crate::identities::commit_call_args(self.rt.store, types, callee, &mut args)?;
             }
             let call = build_call(self.rt.store, callee, &args);
-            // SAFETY: `callee` is a reduced dyad; a `fn` callee's value is its field record or null.
+            // SAFETY: `callee` is a reduced dyad; a `fn` node holds `FN_SLOTS` words.
             let record_out = unsafe {
                 if dyad::ty(callee) == types.fn_type {
                     let out = *(dyad::value(callee) as *const DyadPtr).add(FN_OUTPUT);
