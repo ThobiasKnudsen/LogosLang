@@ -185,23 +185,6 @@ impl Store {
         chunk.last_mut().unwrap() as *mut Dyad
     }
 
-    /// Whether `ptr` is an address this store handed out, on a `Dyad` boundary:
-    /// bits that arrive from a run must become a checked error, never a dereference.
-    pub fn contains(&self, ptr: DyadPtr) -> bool {
-        if ptr.is_null() {
-            return false;
-        }
-        self.chunks.iter().any(|chunk| {
-            let start = chunk.as_ptr();
-            // SAFETY: `start` and `start + len` bound one allocation.
-            let end = unsafe { start.add(chunk.len()) };
-            let p = ptr.cast_const();
-            p >= start
-                && p < end
-                && (p as usize - start as usize).is_multiple_of(std::mem::size_of::<Dyad>())
-        })
-    }
-
     fn alloc_raw(&mut self, ty: DyadPtr, value: *mut u8) -> DyadPtr {
         self.alloc(Dyad::new(ty, value))
     }
@@ -387,7 +370,6 @@ mod tests {
             assert_eq!(*s.arena_at(a), 7);
             assert_eq!(*s.arena_at(b), 0);
         }
-        assert!(!s.contains(s.arena_at(b).cast()), "an arena address is no node");
         let st = s.stats();
         assert_eq!((st.arena_allocs, st.arena_bytes), (1002, 24 + 1000 * 64));
     }

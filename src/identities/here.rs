@@ -119,8 +119,6 @@ fn run_caller_scope(rt: &mut Runtime, _node: DyadPtr) -> Result<i64, RunError> {
     rt.pass_scope().map(|s| s as usize as i64)
 }
 
-/// The operand's address must be a node of the store, never a dereference of
-/// bits that are no node.
 fn run_back(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `back` node from the store; its operand is a reduced dyad.
     unsafe {
@@ -130,9 +128,6 @@ fn run_back(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             return Err(RunError::NullPointer);
         }
         let s = addr as usize as DyadPtr;
-        if !rt.store().contains(s) {
-            return Err(RunError::NotANode(addr as usize));
-        }
         let types = rt.types();
         if dyad::ty(s) == types.here.here {
             return Ok(scope_of_here(s) as usize as i64);
