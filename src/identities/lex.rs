@@ -64,7 +64,7 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         if dyad::ty(text) != string_ty {
             text = rt.run(*ops)? as DyadPtr;
         }
-        if text.is_null() || dyad::ty(text) != string_ty || dyad::value(text).is_null() {
+        if text.is_null() || dyad::ty(text) != string_ty {
             return Err(RunError::NotText);
         }
         let bytes = super::string::text(text);

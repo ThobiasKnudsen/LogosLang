@@ -170,7 +170,7 @@ impl<'a> Parser<'a> {
                 self.types,
                 this,
                 k,
-                dyad::ty(items[index]),
+                crate::identities::hole::type_in(items[index]),
                 binding,
                 fill,
                 owner,
@@ -271,7 +271,10 @@ impl<'a> Parser<'a> {
         fields.push(meta::record_scope_of(t));
         fields.resolve(self.trie, name).ok().is_some_and(|r| {
             array::items(meta::record_fields_of(t)).contains(&r.identity)
-                && meta::is_node_valued(dyad::ty(r.identity), self.types.fn_type)
+                && meta::is_node_valued(
+                    crate::identities::hole::type_in(r.identity),
+                    self.types.fn_type,
+                )
         })
     }
 
@@ -300,7 +303,7 @@ impl<'a> Parser<'a> {
             .and_then(|r| Some((items.iter().position(|&f| f == r.identity)?, r.binding)));
         if let Some((i, binding)) = found {
             let k = self.scalar_value(crate::identities::numtype::NumType::U64, i as i64);
-            let ty = dyad::ty(items[i]);
+            let ty = crate::identities::hole::type_in(items[i]);
             let node = this::build_field_read(
                 self.rt.store,
                 types,
@@ -594,7 +597,7 @@ impl<'a> Parser<'a> {
                     self.rt.store,
                     types,
                     ptr_expr,
-                    dyad::ty(field),
+                    crate::identities::hole::type_in(field),
                     base_off as usize + offset,
                 ),
                 0,
@@ -606,7 +609,7 @@ impl<'a> Parser<'a> {
         let record_logos = self.types.type_of(lhs);
         if record_logos.is_null()
             || !crate::identities::meta::is_record_type(record_logos)
-            || (!storage && dyad::value(lhs).is_null())
+            || (!storage && self.types.is_hole(lhs))
         {
             return Err(ParseError::UnsupportedOperands);
         }
@@ -1143,7 +1146,9 @@ impl<'a> Parser<'a> {
         // an untyped field's type is the written value's, unknown until the constructor runs.
         if crate::identities::this::is_field_read(types, lhs) && name == "type" {
             let declared = if crate::identities::this::is_fill(types, lhs) {
-                dyad::ty(Binding::read(crate::identities::this::field_binding_of(types, lhs)).dyad)
+                crate::identities::hole::type_in(
+                    Binding::read(crate::identities::this::field_binding_of(types, lhs)).dyad,
+                )
             } else {
                 std::ptr::null_mut()
             };
@@ -1153,7 +1158,7 @@ impl<'a> Parser<'a> {
             return Ok(declared);
         }
         let value = match name {
-            "type" => return Ok(dyad::ty(lhs)),
+            "type" => return Ok(types.type_of(lhs)),
             "scope" => self.cx.scopes.current().unwrap_or(std::ptr::null_mut()),
             "start" | "end" | "gate" => std::ptr::null_mut(),
             _ => {

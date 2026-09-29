@@ -120,7 +120,7 @@ pub(crate) unsafe fn layout(record_logos: DyadPtr) -> Result<FieldLayout, ParseE
     let mut fields = Vec::new();
     let mut offset = 0usize;
     for &field in super::array::items(meta::record_fields_of(record_logos)) {
-        let fty = dyad::ty(field);
+        let fty = super::hole::type_in(field);
         if fty.is_null() || dyad::ty(fty) != type_root || !numtype::is_scalar_type(fty) {
             return Err(ParseError::UnsupportedOperands);
         }
@@ -157,7 +157,7 @@ pub(crate) unsafe fn build_ctor(
     ops.push(record_logos);
     ops.push(types.ops.construct_);
     for (&arg, &(field, nt, _)) in args.iter().zip(&fields) {
-        let fty = dyad::ty(field);
+        let fty = super::hole::type_in(field);
         let field_read = super::read::place_layout(types, fty);
         let field_ptr = matches!(field_read, Some((super::read::Read::Pointer(_), _)));
         let arg = match numtype_of(types, arg) {
@@ -202,7 +202,7 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         }
         let blob = super::by_copy::dest_of(rt, node)?;
         for (&(field, _, offset), &b) in fields.iter().zip(&bits) {
-            numtype::write_scalar(dyad::ty(field), blob.add(offset), b);
+            numtype::write_scalar(super::hole::type_in(field), blob.add(offset), b);
         }
         Ok(blob as i64)
     }

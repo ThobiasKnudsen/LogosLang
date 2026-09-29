@@ -223,7 +223,7 @@ fn parses_a_fn_with_a_param_visible_in_the_body() {
         let (input, output, body) = (*v.add(FN_INPUT), *v.add(FN_OUTPUT), *v.add(FN_BODY));
         assert_eq!(output, core.i32_);
         let x_field = array::items(meta::record_fields_of(input))[0];
-        assert_eq!(dyad::ty(x_field), core.i32_);
+        assert_eq!(hole::type_in(x_field), core.i32_);
         // The use of `x` is its binding, laid out first in the function's frame.
         let return_operand = *(dyad::value(body) as *const DyadPtr);
         assert_eq!(core.through(return_operand), return_operand);
@@ -421,10 +421,10 @@ fn parses_a_record_with_typed_fields() {
         (meta::record_scope_of(node), fields[0], fields[1])
     };
     unsafe {
-        assert_eq!(dyad::ty(fx), core.i32_);
-        assert!(dyad::value(fx).is_null());
-        assert_eq!(dyad::ty(fy), core.i32_);
-        assert!(dyad::value(fy).is_null());
+        assert_eq!(hole::type_in(fx), core.i32_);
+        assert!(hole::default_in(fx).is_null());
+        assert_eq!(hole::type_in(fy), core.i32_);
+        assert!(hole::default_in(fy).is_null());
     }
 
     let mut inner = ScopeStack::new();
@@ -452,8 +452,8 @@ fn parses_a_bare_name_field() {
         (meta::record_scope_of(node), fields[0])
     };
     unsafe {
-        assert!(dyad::ty(ft).is_null());
-        assert!(dyad::value(ft).is_null());
+        assert!(hole::type_in(ft).is_null());
+        assert!(hole::default_in(ft).is_null());
     }
 
     let mut inner = ScopeStack::new();

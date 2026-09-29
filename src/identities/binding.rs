@@ -310,7 +310,7 @@ pub(super) fn register_type(
         ("offset", u64_ty),
     ];
     for (i, (name, ty)) in typed.into_iter().enumerate() {
-        let field = cx.store.alloc_leaf(ty);
+        let field = super::hole::build(cx.store, cx.unknown, ty, std::ptr::null_mut());
         let binding = cx.declare_in(scope, name, field);
         // SAFETY: `binding` was just minted by `declare_in`; `binding_` is the type node.
         unsafe { Binding::set_field_offset(binding, binding_, i * 8) };

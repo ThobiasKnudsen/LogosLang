@@ -1368,7 +1368,7 @@ unsafe fn build_pass(
                 continue;
             }
             let v = builder.ins().load(types::I64, MemFlagsData::new(), argv, at);
-            let logos = dyad::ty(p);
+            let logos = crate::identities::hole::type_in(p);
             let scalar = crate::identities::numtype::is_scalar_type(logos);
             if let Some(&(var, _)) = promoted.get(&off) {
                 let vn =

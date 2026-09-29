@@ -128,7 +128,11 @@ pub enum Shape {
 /// `node` must be a valid dyad from the store, in the shapes the parser and
 /// `Core::build` produce.
 pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
-    let logos = dyad::ty(node);
+    let mut logos = dyad::ty(node);
+    // A hole or a field node describes as the valueless value of its type.
+    if logos == types.unknown {
+        logos = crate::identities::hole::type_in(node);
+    }
     if logos.is_null() {
         return Shape::Undefined;
     }

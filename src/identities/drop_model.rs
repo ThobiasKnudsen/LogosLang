@@ -281,6 +281,8 @@ pub(super) fn build_alloc(
     let pointee = match init {
         None => types.numtypes[numtype::NumType::U8 as usize],
         // SAFETY: as above.
+        Some(init) if unsafe { types.is_hole(init) } => unsafe { super::hole::type_in(init) },
+        // SAFETY: as above.
         Some(init) => match unsafe { crate::identities::numtype_of(types, init) } {
             Operand::Concrete(_) | Operand::Pointer(_) => {
                 // SAFETY: as above; the operand is scalar or pointer, what `scalar_binding_type` takes.
@@ -293,8 +295,7 @@ pub(super) fn build_alloc(
     };
     // `T ?`, the valueless marker, names the cells' type and fills them with nothing.
     // SAFETY: `init` is a reduced dyad just parsed.
-    let init =
-        init.filter(|&i| unsafe { !dyad::value(i).is_null() }).unwrap_or(std::ptr::null_mut());
+    let init = init.filter(|&i| unsafe { !types.is_hole(i) }).unwrap_or(std::ptr::null_mut());
 
     Ok(store.alloc_words(types.alloc_, &[pointee, count, init, types.ops.alloc_]))
 }
@@ -349,7 +350,7 @@ fn own_hole(p: &mut crate::parse::Parser, hole: DyadPtr) -> Result<bool, ParseEr
     let types = p.types();
     // SAFETY: `hole` is the place `?` just built; its type is a type node.
     unsafe {
-        let ty = dyad::ty(hole);
+        let ty = super::hole::type_in(hole);
         if meta::is_node_valued(ty, types.fn_type) && !meta::instances_drop_of(ty).is_null() {
             return Ok(true);
         }
@@ -362,7 +363,7 @@ fn own_hole(p: &mut crate::parse::Parser, hole: DyadPtr) -> Result<bool, ParseEr
             numtype::pointee_of(ty),
             types.ops.teardown_,
         );
-        dyad::set_ty(hole, owning);
+        super::hole::set_type(hole, owning);
     }
     Ok(false)
 }

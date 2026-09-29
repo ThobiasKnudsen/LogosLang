@@ -625,7 +625,7 @@ impl<'a> Parser<'a> {
         // The receiver is the one parameter no name declares: no named binding of the
         // parameter scope is laid out at the frame's first offset.
         let scope = meta::record_scope_of(input);
-        dyad::ty(first) == self.types.dyad_
+        crate::identities::hole::type_in(first) == self.types.dyad_
             && !self.trie.bindings_in(scope).iter().any(|&b| {
                 let b = Binding::read(b);
                 b.frame == f && b.offset == 0

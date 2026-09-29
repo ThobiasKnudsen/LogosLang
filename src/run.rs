@@ -950,7 +950,7 @@ impl<'a> Runtime<'a> {
         }
         for slot in by_copy::slots(self.types, fn_node) {
             let dst = base.add(slot.offset);
-            let ty = dyad::ty(slot.param);
+            let ty = crate::identities::hole::type_in(slot.param);
             let at = values.as_ptr().add(slot.word);
             match slot.width {
                 Some(width) => std::ptr::copy_nonoverlapping(at.cast(), dst, width),

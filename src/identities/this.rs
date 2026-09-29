@@ -130,7 +130,7 @@ pub(crate) fn build_copy(store: &mut Store, types: &Core, template: DyadPtr) -> 
 pub(crate) unsafe fn empty_node(store: &mut Store, ty: DyadPtr) -> DyadPtr {
     let mut slots: Vec<DyadPtr> = super::array::items(meta::record_fields_of(ty))
         .iter()
-        .map(|&field| if dyad::head(field).is_null() { std::ptr::null_mut() } else { field })
+        .map(|&field| super::hole::default_in(field))
         .collect();
     slots.extend([std::ptr::null_mut(); 2]);
 

@@ -174,7 +174,7 @@ pub(crate) fn compare_pair(op: CmpOp, (n1, d1): (i64, i64), (n2, d2): (i64, i64)
 /// # Safety
 /// `node` must be null or a valid dyad from the store.
 unsafe fn is_literal(rational: DyadPtr, node: DyadPtr) -> bool {
-    !node.is_null() && dyad::ty(node) == rational && !dyad::value(node).is_null()
+    !node.is_null() && dyad::ty(node) == rational
 }
 
 fn reduce(mut num: i128, mut den: i128) -> (i128, i128) {

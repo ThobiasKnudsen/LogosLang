@@ -79,7 +79,7 @@ fn construct(p: &mut Parser, tape: &mut ParsingTape) -> Result<Constructed, Pars
         return Ok(Constructed::Placed);
     }
     // A fresh empty map: the marker `T ?` leaves, for the name that takes it to lay out.
-    let marker = p.store().alloc_leaf(ty);
+    let marker = super::hole::build(p.store(), types.unknown, ty, std::ptr::null_mut());
     tape.place(marker);
     tape.at_mut(0).expect("placed above").hole = true;
     Ok(Constructed::Placed)

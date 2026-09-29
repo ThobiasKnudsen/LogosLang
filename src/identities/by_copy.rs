@@ -186,8 +186,10 @@ pub(crate) unsafe fn slots<'a>(types: &'a Core, f: DyadPtr) -> impl Iterator<Ite
     let mut offset = 0;
     params.iter().map(move |&param| {
         // SAFETY: each parameter is a dyad from the store.
-        let (width, own) =
-            unsafe { (record_width(types, dyad::ty(param)), param_width(types, dyad::ty(param))) };
+        let (width, own) = unsafe {
+            let ty = super::hole::type_in(param);
+            (record_width(types, ty), param_width(types, ty))
+        };
         let slot = Slot { param, word, width, offset };
         word += width.map_or(1, |w| w.div_ceil(8));
         offset += own;

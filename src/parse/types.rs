@@ -99,7 +99,7 @@ unsafe fn lay_out_fields(ty: DyadPtr, fields: DyadPtr, bindings: &[DyadPtr]) {
     let mut offset = 0u64;
     for (&field, &binding) in crate::identities::array::items(fields).iter().zip(bindings) {
         Binding::set_field_offset(binding, ty, offset as usize);
-        offset += field_width(dyad::ty(field));
+        offset += field_width(crate::identities::hole::type_in(field));
     }
 }
 
@@ -155,7 +155,12 @@ impl<'a> Parser<'a> {
         let mut fields = Vec::new();
         let mut bindings = Vec::new();
         if let Some(ty) = leading {
-            let field = self.rt.store.alloc_leaf(ty);
+            let field = crate::identities::hole::build(
+                self.rt.store,
+                self.types.unknown,
+                ty,
+                std::ptr::null_mut(),
+            );
             fields.push(field);
             bindings.push(self.mint_binding(field, scope, b""));
         }
@@ -170,7 +175,10 @@ impl<'a> Parser<'a> {
         // Fields pack in declaration order at the width rule parameters claim
         // frame offsets by.
         // SAFETY: each field is the dyad just built, its type null or a type node.
-        let size_bytes: u64 = fields.iter().map(|&f| unsafe { field_width(dyad::ty(f)) }).sum();
+        let size_bytes: u64 = fields
+            .iter()
+            .map(|&f| unsafe { field_width(crate::identities::hole::type_in(f)) })
+            .sum();
         let fields_arr = crate::identities::array::build(self.rt.store, self.types.array_, &fields);
         Ok((scope, fields_arr, size_bytes, bindings))
     }
@@ -276,7 +284,7 @@ impl<'a> Parser<'a> {
                 owns_node = cell.owning;
                 if cell.hole {
                     // SAFETY: `value` is the place `?` just built.
-                    unsafe { dyad::ty(value) }
+                    unsafe { crate::identities::hole::type_in(value) }
                 } else {
                     // SAFETY: `value` is a reduced dyad just parsed.
                     let held = unsafe { self.types.through(value) };
@@ -292,8 +300,8 @@ impl<'a> Parser<'a> {
                         }
                     {
                         // SAFETY: as above.
-                        let (ty, value) = unsafe { (dyad::ty(held), dyad::value(held)) };
-                        default = value;
+                        let ty = unsafe { dyad::ty(held) };
+                        default = held;
                         ty
                     } else {
                         self.cx.pos = start;
@@ -328,7 +336,8 @@ impl<'a> Parser<'a> {
                 self.cx.pos = start;
                 return Err(ParseError::OwnParameterNotInSeed);
             }
-            let field = self.rt.store.alloc_head(logos, default);
+            let field =
+                crate::identities::hole::build(self.rt.store, self.types.unknown, logos, default);
             // The field's name is not stored on the record: declaring it puts
             // a binding in the one name index (DESIGN ›Name resolution is scope-filtered‹).
             let binding = if relaxed {
@@ -686,7 +695,7 @@ impl<'a> Parser<'a> {
         // SAFETY: `fields` is the block's array node, its items field dyads typed null or by a type node.
         let owning_field = unsafe {
             crate::identities::array::items(fields).iter().any(|&f| {
-                let ty = dyad::ty(f);
+                let ty = crate::identities::hole::type_in(f);
                 !ty.is_null()
                     && crate::identities::numtype::is_pointer_type(ty)
                     && !crate::identities::meta::destructor_of(ty).is_null()
@@ -1042,7 +1051,12 @@ impl<'a> Parser<'a> {
         let mut bindings = Vec::with_capacity(params.len());
         let mut declared = Ok(());
         for &(name, ty) in params {
-            let field = self.rt.store.alloc_leaf(ty);
+            let field = crate::identities::hole::build(
+                self.rt.store,
+                self.types.unknown,
+                ty,
+                std::ptr::null_mut(),
+            );
             // A parameter with no name is a place the body reaches another
             // way: a receiver, or a run body's field of type `type`.
             let binding = match name {
@@ -1062,7 +1076,10 @@ impl<'a> Parser<'a> {
         declared?;
         let fields_arr = crate::identities::array::build(self.rt.store, self.types.array_, &fields);
         // SAFETY: each `ty` is a type node from the store.
-        let size_bytes = fields.iter().map(|&f| unsafe { field_width(dyad::ty(f)) }).sum();
+        let size_bytes = fields
+            .iter()
+            .map(|&f| unsafe { field_width(crate::identities::hole::type_in(f)) })
+            .sum();
         let record = crate::identities::meta::record_layout(
             self.rt.store,
             scope,
@@ -1145,7 +1162,7 @@ impl<'a> Parser<'a> {
         let fields = crate::identities::array::items(crate::identities::meta::record_fields_of(ty));
         let slots = dyad::value(node) as *const DyadPtr;
         for (i, &field) in fields.iter().enumerate() {
-            if dyad::ty(field) == types.type_ {
+            if crate::identities::hole::type_in(field) == types.type_ {
                 continue;
             }
             let slot = types.through(*slots.add(i));
@@ -1205,7 +1222,7 @@ impl<'a> Parser<'a> {
         let slots = dyad::value(node) as *mut DyadPtr;
         let mut key = Vec::with_capacity(fields.len());
         for (i, &field) in fields.iter().enumerate() {
-            let declared = dyad::ty(field);
+            let declared = crate::identities::hole::type_in(field);
             let slot = *slots.add(i);
             if slot.is_null() {
                 return Ok(None);

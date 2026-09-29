@@ -376,7 +376,7 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
             return Err(CompileError::Internal("a store node holds a store leaf"));
         };
         let lhs = lw.through(lhs);
-        if dyad::value(lhs).is_null() {
+        if lw.types().is_hole(lhs) {
             return Err(CompileError::Uninitialized);
         }
         let v = lw.lower(rhs)?;

@@ -378,8 +378,11 @@ impl<'a> Parser<'a> {
     /// `binding` must be a binding dyad from the store; `t` a record type.
     unsafe fn leave_fields_unwritten(&mut self, binding: DyadPtr, t: DyadPtr, defaults: bool) {
         let fields = crate::identities::array::items(crate::identities::meta::record_fields_of(t));
-        let unwritten: Vec<DyadPtr> =
-            fields.iter().copied().filter(|&f| !defaults || dyad::value(f).is_null()).collect();
+        let unwritten: Vec<DyadPtr> = fields
+            .iter()
+            .copied()
+            .filter(|&f| !defaults || crate::identities::hole::default_in(f).is_null())
+            .collect();
         if unwritten.is_empty() {
             return;
         }
@@ -604,11 +607,14 @@ impl<'a> Parser<'a> {
         let declared = unsafe {
             let empty_node = cell.hole
                 && !cell.owning
-                && crate::identities::meta::is_node_valued(dyad::ty(value), self.types.fn_type);
+                && crate::identities::meta::is_node_valued(
+                    crate::identities::hole::type_in(value),
+                    self.types.fn_type,
+                );
             if empty_node {
                 // `v := T ?` of a type whose values are nodes: a new empty node each time the
                 // declaration runs, its fields filled one by one as a parse fills `tape[0]`.
-                let t = dyad::ty(value);
+                let t = crate::identities::hole::type_in(value);
                 let template = crate::identities::this::empty_node(self.rt.store, t);
                 let node = crate::identities::this::build_copy(self.rt.store, self.types, template);
                 let place = self.place_for(binding, t, 8);
@@ -625,7 +631,7 @@ impl<'a> Parser<'a> {
                 // initializes it, and `?`'s entry refuses a read until a sibling write fills
                 // it. A hashmap's zeroed place is already its empty map, so nothing is
                 // unknown to refuse.
-                let t = dyad::ty(value);
+                let t = crate::identities::hole::type_in(value);
                 let width = crate::identities::read::place_layout(self.types, t)
                     .map_or(8, |(_, width)| width);
                 let place = self.place_for(binding, t, width);
@@ -814,7 +820,7 @@ impl<'a> Parser<'a> {
             } else if scalar {
                 // `bool` is physically an i32 0/1 in storage; only `true` and
                 // `false` have bits at parse.
-                if dyad::ty(read) != types.bool_ || dyad::value(read).is_null() {
+                if dyad::ty(read) != types.bool_ {
                     return Err(ParseError::UnsupportedOperands);
                 }
                 let bits = std::ptr::read_unaligned(dyad::value(read) as *const i32);
@@ -908,7 +914,7 @@ impl<'a> Parser<'a> {
                 }
                 tape.remove(-1);
                 hole = true;
-                self.rt.store.alloc_leaf(t)
+                crate::identities::hole::build(self.rt.store, types.unknown, t, std::ptr::null_mut())
             }
         };
         tape.place(node);

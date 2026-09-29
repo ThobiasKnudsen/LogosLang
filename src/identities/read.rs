@@ -71,7 +71,13 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
     }
     let op = dyad::ty(node);
     let value = dyad::value(node);
-    // A hole or a fresh spelling holds nothing.
+    if op.is_null() {
+        return Read::Undefined;
+    }
+    // A hole or a field node reads as a value of the type it stands for; one with no type
+    // (a bare parameter's slot) holds nothing.
+    let hole = op == types.unknown;
+    let op = if hole { super::hole::type_in(node) } else { op };
     if op.is_null() {
         return Read::Undefined;
     }
@@ -101,7 +107,7 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
             if !meta::run_body_of(op).is_null() {
                 // The node runs as the function built for its field-type set,
                 // and not at all until one exists.
-                let spec = super::run_body::spec_of(node);
+                let spec = if hole { std::ptr::null_mut() } else { super::run_body::spec_of(node) };
                 if spec.is_null() {
                     Read::Executable(Dispatch::None)
                 } else {
@@ -375,7 +381,12 @@ mod tests {
             bind(std::ptr::null_mut()),
         );
         let f = store.alloc_leaf(core.fn_type);
-        let field_node = store.alloc_leaf(core.i32_);
+        let field_node = crate::identities::hole::build(
+            &mut store,
+            core.unknown,
+            core.i32_,
+            std::ptr::null_mut(),
+        );
         let off = store.arena_alloc(4);
         // SAFETY: every handle was just minted into `store`, which outlives the reads.
         unsafe {

@@ -183,7 +183,7 @@ pub(crate) unsafe fn is_bool_result(types: &Core, node: DyadPtr) -> bool {
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn bool_literal_value(types: &Core, node: DyadPtr) -> Option<bool> {
     let node = types.through(node);
-    if dyad::ty(node) != types.bool_ || dyad::value(node).is_null() {
+    if dyad::ty(node) != types.bool_ {
         return None;
     }
     Some(std::ptr::read_unaligned(dyad::value(node) as *const i32) != 0)
@@ -367,7 +367,7 @@ impl<'a> Parser<'a> {
         let mut type_fields = Vec::new();
         for (i, &field) in fields.iter().enumerate() {
             let name = names.get(&field).map(String::as_str);
-            let ty = if dyad::ty(field) == types.type_ {
+            let ty = if crate::identities::hole::type_in(field) == types.type_ {
                 // A field of type `type` names the type this set holds in it, so
                 // `output_type 1` reads `i32 1`; its parameter place goes unnamed.
                 type_fields.extend(name.map(|n| (n, key[i])));
@@ -387,7 +387,7 @@ impl<'a> Parser<'a> {
             .resolve(self.trie, "output_type")
             .ok()
             .and_then(|r| fields.iter().position(|&f| f == r.identity))
-            .filter(|&i| dyad::ty(fields[i]) == types.type_)
+            .filter(|&i| crate::identities::hole::type_in(fields[i]) == types.type_)
             .map_or(types.void_, |i| key[i]);
         let (input, places) = self.hidden_param_record(&params, 0)?;
         self.cx.run_fields = Some((ty, places.clone()));
@@ -561,7 +561,7 @@ impl<'a> Parser<'a> {
             let fields = crate::identities::meta::record_fields_of(input);
             for (&param, &binding) in crate::identities::array::items(fields).iter().zip(params) {
                 // Sized by the rule the argument block lays them out by (`by_copy::slots`).
-                let logos = dyad::ty(param);
+                let logos = crate::identities::hole::type_in(param);
                 let width = crate::identities::by_copy::param_width(self.types, logos);
                 let frame = self.cx.frames.last_mut().expect("pushed above");
                 Binding::lay_out(binding, logos, node, frame.size);

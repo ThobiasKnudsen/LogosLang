@@ -233,7 +233,7 @@ pub(crate) unsafe fn receiver_addr(
         return None;
     }
     if types.type_of(lhs) == types.tape.parsing_tape
-        && (types.is_storage(lhs) || !dyad::value(lhs).is_null())
+        && (types.is_storage(lhs) || !types.is_hole(lhs))
     {
         return Some(super::pointer::build_addr(store, types, lhs));
     }
@@ -954,7 +954,7 @@ fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         }
         let mut args = Vec::with_capacity(params.len() + 1);
         for (i, &param) in params.iter().enumerate() {
-            let ty = dyad::ty(param);
+            let ty = super::hole::type_in(param);
             let scalar = super::numtype::is_scalar_type(ty);
             if let Some(operand) = named_dyad(rt, arg_at(i)) {
                 let operand = operand?;

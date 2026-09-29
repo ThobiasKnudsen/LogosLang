@@ -45,7 +45,7 @@ pub(crate) mod group;
 pub(crate) mod hashmap;
 pub(crate) mod held_type;
 pub mod here;
-mod hole;
+pub(crate) mod hole;
 #[path = "if.rs"]
 mod if_mod;
 mod immediate;
@@ -209,6 +209,7 @@ impl Core {
             root_scope,
             binding_,
             string_,
+            unknown: std::ptr::null_mut(),
             metas: HashMap::new(),
             lower: HashMap::new(),
         };
@@ -292,6 +293,7 @@ impl Core {
         let dyad_ = dyad::register(&mut cx);
         let colon_ = colon::register(&mut cx);
         let unknown = hole::register(&mut cx);
+        cx.unknown = unknown;
         let (sep_, left_, right_) = logos_mod::register_syntax(&mut cx);
         fresh::register(&mut cx);
         let instance::InstanceIds {
@@ -496,7 +498,7 @@ impl Core {
         let p = self.through(p);
         self.frame_of(p)?;
         Some(if dyad::ty(p) == self.field_ {
-            dyad::ty(Binding::read(instance::field_parts(p).1).dyad)
+            hole::type_in(Binding::read(instance::field_parts(p).1).dyad)
         } else {
             Binding::read(p).dyad
         })
@@ -525,7 +527,21 @@ impl Core {
         if p.is_null() {
             return p;
         }
-        self.storage_type(p).unwrap_or_else(|| dyad::ty(p))
+        if let Some(t) = self.storage_type(p) {
+            return t;
+        }
+        if dyad::ty(p) == self.unknown {
+            return hole::type_in(p);
+        }
+        dyad::ty(p)
+    }
+
+    /// Whether `p` is a `T ?` hole or a field node, a `?` holding its type.
+    ///
+    /// # Safety
+    /// `p` must be null or a valid dyad from the store.
+    pub(crate) unsafe fn is_hole(&self, p: DyadPtr) -> bool {
+        hole::is_hole(self.unknown, p)
     }
 }
 
@@ -540,6 +556,8 @@ pub(crate) struct Cx<'a> {
     binding_: DyadPtr,
     /// Minted before any declaration: every binding's name is a string node.
     string_: DyadPtr,
+    /// `?`, the type of every hole and field node; null until `hole::register`.
+    unknown: DyadPtr,
     metas: HashMap<DyadPtr, ConstructFn>,
     lower: LowerTable,
 }
@@ -630,7 +648,8 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
             Operand::NonNumeric
         };
     }
-    let logos = dyad::ty(node);
+    // A hole or a field node stands for a valueless value of its type.
+    let logos = if dyad::ty(node) == types.unknown { hole::type_in(node) } else { dyad::ty(node) };
     if logos == types.rational {
         return Operand::Literal;
     }
@@ -1234,7 +1253,7 @@ pub(crate) unsafe fn commit_call_args(
         let Some(&param) = params.get(i) else {
             break;
         };
-        let pty = dyad::ty(param);
+        let pty = hole::type_in(param);
         // A bare `name` parameter accepts any dyad.
         if pty.is_null() {
             continue;
