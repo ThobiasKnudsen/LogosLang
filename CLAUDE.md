@@ -1,39 +1,21 @@
-# Follow Elon Musks rules faithfully:
-1. **Question every requirement:** Find out who exactly created the requirement and never just accept that it's from "the safety or legal department". Make the requirements less dumb.
-2. **Delete parts or processes:** Delete as many parts or steps as you can. Musk's rule of thumb: If you aren't forced to put back at least 10% of what you deleted, you didn't delete enough.
-3. **Simplify and optimize:** Only do this after you have completed steps 1 and 2, because a massive waste of time is optimizing something that shouldn't exist in the first place.
-4. **Accelerate cycle time:** Speed up the process.
-5. **Automate:** Only automate the process after the first four steps are done.
+# LogosLang's own rules
 
-# Behaviour rules
-- Always answer Thobias in simple, easily digestible text, with a Logos code example wherever one fits. An example is what makes a point easy to understand.
-- Before starting work that takes a long time, say which other open issues can run in parallel (disjoint files, no ruling needed first), so Thobias can start other agents on them.
-- Record everything important about an issue on the issue itself, so the next agent that picks it up has all it needs: each ruling as `Q: … / A (Thobias, date): …`, each landed slice with its commit, what was left out and why, what a reviewer should probe.
+The general rules live in the global `~/.claude/CLAUDE.md` since 29 September 2026: Musk's rules, the behaviour rules, the faithfulness protocol with DESIGN.md as the ruling document, the issue rules (root causes first), the comment rules, the branch rules, and how files and commands are handled. They bind every agent in this repo. This file holds only what is LogosLang's own. Reason (Thobias, 29 September 2026): the general rules should reach every agent on the machine, in every repo. A reader who does not have that file (another machine, a contributor) asks Thobias for it.
 
-# Issue rules (root causes first):
-- Reason (Thobias, 29 September 2026): a week's batch of small issues were all symptoms of a few structural causes (one rule written twice, once for the interpreter and once for the compiler; a Rust branch per node kind where DESIGN says the record decides; a mechanism DESIGN had superseded). Fixing symptoms one by one added arms and copies, and every sibling case became a new issue. "root causes should always be fixed first before any other problems."
-- **Search first.** A problem you meet (a failing probe, a review finding, a bug seen while building something else) is searched for before anything is filed: `gh issue list --state open --search "…"` with two or three spellings. An existing issue gets the new symptom as a comment: the Logos program, its output, the commit it was seen on.
-- **Find the root before filing.** Ask why the symptom happens, then why that answer holds, and again, until the answer is a fact about the structure of the seed or the spec rather than a mistake at one line: a rule implemented in two places, a `match`/`if` on node kind where DESIGN's rule has one case, a hand-kept list of kinds, a mechanism DESIGN has superseded, a rule DESIGN does not have yet. That is the root. Test it: if it were fixed, would this symptom and its sibling cases become impossible (the named value against the unnamed one, the interpreter against the compiled tier, one type against another), and would the seed be closer to DESIGN? One root has many symptoms, so read the open `root-cause` issues before deciding the root is new. A problem whose why ends at one wrong line has no root beyond itself and is filed as it is.
-- **File at the root.** A new root gets an issue with the `root-cause` label: the structural fact, the symptoms it explains (each with a Logos repro), the DESIGN rule the fix must satisfy, and the slices. A symptom gets its own issue only when it needs its own record (its own repro, test or ruling), and then its first line is `Blocked by #N`, the root.
-- **Link every issue.** A `root-cause` issue is blocked by nothing; if it turns out to wait for another issue, that one is the root and the label moves. Every other open issue says in its first line what it waits for: `Blocked by #N`, a root or an ordering dependency (a rename, a merge). An open issue with neither the label nor a `Blocked by` line has not been examined: whoever touches it finds its root and edits it (`gh issue edit`, `gh issue comment`). When a root is filed or found, comment `Blocked by #root` on each symptom it explains and list the symptoms on the root. This is how the work is ordered, so it is never left for later.
-- **Order the work by the links.** Roots first, in dependency order, each alone while they share files. A symptom is fixed before its root only when it blocks something now (a crash on a path in use, a release), then as the smallest change, naming the root in the issue and the commit message so the change is deleted with the root's fix, never kept as a second mechanism. Never fix a symptom in code the root's fix deletes.
-- **Fix at the root, and review for it.** A fix that adds an arm to a `match` on node kind, a second copy of a rule, a special case or a list entry is a symptom fix. A fix that removes a branch, a copy or a hand-kept list so that one rule reads the record is a root fix. Every review says which one landed; an added arm is a new symptom, recorded on the root's issue.
+# Behaviour
+- The example Thobias gets is a Logos example wherever one fits.
 
-# Faithfulness protocol (spec-governed code):
-- DESIGN.md is the ruling document. Issues, plans, memories, old comments and existing code are downstream and may be stale. Never implement from a downstream source alone.
-- Before implementing anything spec-governed, quote the exact DESIGN.md passage(s) that license it, in the plan or the commit message. No quote → stop and ask.
-- If any two sources disagree — DESIGN vs sketch, DESIGN vs an issue, one DESIGN section vs another — STOP and surface the conflict as a blocking question, with both quotes. Never silently pick a side, even if one side is newer or was written by Thobias: staleness is invisible from inside a session.
-- When a conflict is ruled on, or a design is rejected in conversation, record it in the same session: in DESIGN.md, at the rule it touches (a **Ruled** line with date, who and reason; a **Rejected, to stay rejected** line; or a new `###` rule), and what it supersedes as a **History** line in DESIGN_HISTORY.md under the same heading or, if spec wording must wait, as an explicit pending-spec-edit in the session log AND auto-memory. An unrecorded decision is a future bug.
+# Issues in this repo
+- The labels are `root-cause`, `question` and `in-progress`. The first-line forms are `Blocked by #N`, `Leaf, blocked by nothing (examined <date>)` and `Umbrella (examined <date>)`. Every open issue was linked this way on 29 September 2026.
+- A repro is the Logos program, its exact output, the commit and the tier (interpreted or compiled).
+- A root is tested along these axes: the named value against the unnamed one, the interpreter against the compiled tier, one type against another.
+- The structural facts that are roots here: one rule written twice, once for the interpreter and once for the compiler; a Rust `match`/`if` on node kind where DESIGN says the record decides; a hand-kept list of kinds; a mechanism DESIGN has superseded; a rule DESIGN does not have yet.
+
+# Faithfulness in this repo
 - DESIGN.md is one rule per `###` heading (since 27 September 2026). Point at a rule by its heading, `«### like this»`, never by line number; a `DESIGN.md l.N` in a Source bullet, an issue or a memory means line N of the paragraph form at git e75bcdc.
+- A ruling is recorded at the rule it touches: a **Ruled** line with date, who and reason; a **Rejected, to stay rejected** line; or a new `###` rule. What it supersedes is a **History** line in DESIGN_HISTORY.md under the same heading.
+- `language_sketch.logos` illustrates DESIGN.md; a conflict between the two is surfaced as a blocking question like any other.
 - Before starting work in a spec area, run /faithfulness-audit.
-- All rulings MUST have a good reason for existing, otherwise I will forget later why I chose what I chose and change the rule. And when something is superseded it also MUST say why.
-
-# Comment rules (as few comments as possible; only what is actually important):
-- A comment says what the code cannot: a one-line WHY at a spot a reader would not guess, an invariant (the SAFETY line on an unsafe block, a byte layout, what a slot holds), a bare pointer to the DESIGN.md rule by its heading, or a two-to-four-line module header saying what the file is. Nothing else.
-- No ruling history in code: no dates, no "ruled", "superseded", "amended", no issue numbers, no quotes from DESIGN.md. That story lives in DESIGN.md, the commit message and CLAUDE_LOG. The one exception is a known stand-in, marked with one phrase: "stand-in for #N".
-- No comment that restates the line below it, and no doc comment that only rephrases the item's name. If the name says it, the comment goes.
-- When in doubt, leave it out. A reader who needs more reads DESIGN.md or the git log, which is where the reasons are kept.
-- Reason for these rules: comments were 38% of the seed and were where staleness lived; every sentence that repeats a ruling is one more sentence that goes wrong when the ruling changes.
 
 # Release rules (a version tag is one-way):
 
@@ -54,9 +36,7 @@ Before pushing any version tag:
 
 Never tag speculatively "to see if CI passes". There is no undo.
 
-# Branch rules (dev is the working branch; a branch lives only while its work is unmerged):
-- An agent working on an issue does it in its own worktree, `.claude/worktrees/issue-N`, on a branch `issue-N-slug` from `dev`: one branch per issue, never one per slice, so agents never conflict with each other. Direct work on `dev` is for the session Thobias drives himself in the main checkout, and for edits outside the seed (CLAUDE.md, CLAUDE_LOG, memory).
-- A branch stays local unless another machine or agent must read it. Pushing it to GitHub is not a backup and not a habit.
-- Whoever merges a branch deletes it in the same command, local and on origin, and removes its worktree: `git merge --no-ff X && git branch -d X && git push origin --delete X && git worktree remove .claude/worktrees/issue-N`. A merged branch left behind is a bug, like an unrecorded ruling.
-- Before creating a branch and at the end of every session: `git branch -r | grep -v 'origin/dev$\|origin/main$'` must list only branches with unmerged work, and the session log names each one and what it waits for.
-- Reason: on 29 September 2026 GitHub held 43 branches, all but two merged into `dev` days or weeks earlier and never deleted (one per #137 slice, one per parallel agent). Thobias: "there are dozens of branches on github and i dont understand why. i dont like that."
+# Branches in this repo
+- `dev` is the working branch and the base of every issue branch; `main` is protected and takes a PR (Release rules, step 5).
+- `git branch -r | grep -v 'origin/dev$\|origin/main$'` must list only branches with unmerged work.
+- The orchestrator reads this repo's settings from `.claude/orchestrate.conf` and `.claude/orchestrate-notes.md`.

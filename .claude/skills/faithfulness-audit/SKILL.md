@@ -18,7 +18,7 @@ the downstream sources without quote-checking the ruling one.
 1. **DESIGN.md** — the ruling document.
 2. **language_sketch.logos** — illustrates DESIGN; where it conflicts, DESIGN rules.
 3. Downstream, never authoritative alone: GitHub issues and comments, plans,
-   session logs, auto-memory, and the existing code. Staleness is invisible
+   auto-memory, and the existing code. Staleness is invisible
    from inside a session — a source being newer, more concrete, or written by
    Thobias himself does not promote it.
 
@@ -54,5 +54,5 @@ use his wording or are explicitly drafted for his approval.
 A ruling on a conflict, or a rejection made in conversation, is written into
 DESIGN.md immediately — the existing pattern is the §Substrate vocabulary line
 "Recorded as rejected, to stay rejected: …" — or, if wording must wait, logged
-as an explicit pending-spec-edit in the session log AND auto-memory. An
+as an explicit pending-spec-edit in auto-memory. An
 unrecorded decision is a future bug.
