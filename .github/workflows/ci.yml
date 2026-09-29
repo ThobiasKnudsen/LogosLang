@@ -57,8 +57,7 @@ jobs:
       - name: Test
         run: cargo test --release --locked
 
-      # The debug profile is where debug_assert! fires; a release-only gate let one fail
-      # at startup for two days unseen.
+      # Only the debug profile fires debug_assert!.
       - name: Test (debug)
         run: cargo test --locked
 
