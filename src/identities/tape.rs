@@ -945,17 +945,15 @@ fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         };
         let input = *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_INPUT);
         let params = super::array::items(meta::record_fields_of(input));
-        let written = dyad::value(call) as *const DyadPtr;
-        let arg_at =
-            |i: usize| if written.is_null() { std::ptr::null_mut() } else { *written.add(i) };
-        if params.len() != (0..).take_while(|&i| !arg_at(i).is_null()).count() {
+        let given = crate::parse::null_terminated(dyad::value(call) as *const DyadPtr);
+        if params.len() != given.len() {
             return Err(RunError::ArityMismatch);
         }
-        let mut args = Vec::with_capacity(params.len() + 1);
+        let mut args = Vec::with_capacity(params.len());
         for (i, &param) in params.iter().enumerate() {
             let ty = super::hole::type_in(param);
             let scalar = super::numtype::is_scalar_type(ty);
-            if let Some(operand) = named_dyad(rt, arg_at(i)) {
+            if let Some(operand) = named_dyad(rt, given[i]) {
                 let operand = operand?;
                 let types = rt.types();
                 let bracket =
@@ -964,7 +962,7 @@ fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
                     owned_lines(types, operand).map_err(|e| RunError::Parse(Box::new(e)))?;
                 }
                 args.push(if scalar {
-                    let operand = narrowed_operand(rt, arg_at(i), operand);
+                    let operand = narrowed_operand(rt, given[i], operand);
                     typed_operand(rt, operand, ty)?
                 } else if bracket {
                     let (op, leaf) = (types.tape.bracket_arg, types.tape.bracket_arg_leaf);
@@ -974,7 +972,7 @@ fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
                 });
                 continue;
             }
-            let bits = rt.run(arg_at(i))?;
+            let bits = rt.run(given[i])?;
             args.push(if scalar {
                 let width = super::numtype::of_type_node(ty).bytes();
                 let store = rt.store();
@@ -983,12 +981,7 @@ fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
                 node_operand(rt, bits as usize as DyadPtr)
             });
         }
-        let store = rt.store();
-        if args.is_empty() {
-            return Ok(store.alloc_leaf(f) as i64);
-        }
-        args.push(std::ptr::null_mut());
-        Ok(store.alloc_words(f, &args) as i64)
+        Ok(crate::parse::build_call(rt.store(), f, &args) as i64)
     }
 }
 
