@@ -368,10 +368,11 @@ No teardown node is inserted at a declaration, and no `defer` is written for a v
 - **Seed:** not yet: `defer free` inserted at the binding site and emptied at `move`/`free`; nothing at `=` (#170).
 
 ### `move` is the act, `own` the gate word, `free` the end
-`b := move a` moves the value from `a` to `b`, `f(move a)` into a parameter, `move p.f` out of a field path; the source is dead from that line. `own` stands only in a type position and names a state: `mut items := own t ?`, `fn (p := own @i32 ?)` and `-> own @T` say that the field, parameter or result owns what is put into it. `free x` runs the teardown of the value `x` holds and ends `x`; `free p@` does the same for a cell; inside a type's own `free` body, `free ptr` tears a field down, the value being ended. The slot is `share free = (…)`, named for the moment it runs, beside `parse` and `run`. `free` on a name whose type fills no `free` ends the name and runs nothing.
+`b := move a` moves the value from `a` to `b`, `f(move a)` into a parameter, `move p.f` out of a field path; the source is dead from that line. `own` stands only in a type position and names a state: `mut items := own t ?`, `fn (p := own @i32 ?)` and `-> own @T` say that the field, parameter or result owns what is put into it. `free x` runs the teardown of the value `x` holds and ends `x`; `free p@` does the same for a cell; inside a type's own `free` body, `free ptr` tears a field down, the value being ended. The slot is `share free = (…)`, named for the moment it runs, beside `parse` and `run`. `free` on a name whose type fills no `free` ends the name and runs nothing. `free` of a value no name holds runs the value, then its type's `free` over it: `free (f())` runs `f()`, `free (alloc 1 of i32 5)` allocates and frees at once. `move` of a value no name holds, `move (f())`, is a checked error: there is no place to move it out of. A hole, `T ?`, is no value, so `free (own @i32 ?)` is the checked error too.
 - **Why:** Thobias: "own should be renamed to move and drop should be renamed to free". `move` names the act, which is what the line does, and keeping `own` for the state puts two meanings on two words. `free` is one word for "end this value's life now", a block and a node alike, and reads as plain English in a teardown body: free the cells, free the pointer. Accepted with it: `free n` on an `i32` ends the name and frees nothing, as Rust's `drop` on an integer does; an allocator's release is reached through `free` by the value's type, never by a second word.
 - **Ruled:** 28 September 2026, Thobias (`own` stays the gate word: "yes own can stay as the gate name").
-- **Seed:** since 29 September 2026 (#171): `move x` of an owning pointer or an owned node, `move p.f`, `free x`, `free p@`, `free ptr` in a type's own `free` body, and the slot `share free = (…)`; `free x` ends `x` in every form, and a cell or field it frees ends no name. `own` before anything but a hole is a checked error. `share drop = (…)` meets the general check for a fresh word filled after `share` in a type body, whose message names `share free = (…)`. Not yet: `move` of a scalar (#194) or of a plain record (#193), `f(move a)` (›Holding is decided at the binding site, parameters included‹), `own` on a parameter, `-> own @T`.
+- **Ruled (29 September 2026, Thobias, #210):** an operand that is not a place: `free` runs it and frees it, `move` refuses it. **Why:** "i think the free examples should work but they are unecessary but there are many sets of code you can write which is unecessary so this shouldnt actually be an error but the move line should be because you cannot move something anon."
+- **Seed:** since 29 September 2026 (#171): `move x` of an owning pointer or an owned node, `move p.f`, `free x`, `free p@`, `free ptr` in a type's own `free` body, and the slot `share free = (…)`; `free x` ends `x` in every form, and a cell or field it frees ends no name. `own` before anything but a hole is a checked error. `share drop = (…)` meets the general check for a fresh word filled after `share` in a type body, whose message names `share free = (…)`. Not yet: `move` of a scalar (#194) or of a plain record (#193), `f(move a)` (›Holding is decided at the binding site, parameters included‹), `own` on a parameter, `-> own @T`. Since 29 September 2026 (#211): `move`, `free` and `=`'s call place ask one predicate whether an operand is a place (`&` and `=`'s other place tests not yet); `free` of a value runs it and its type's `free`, `move` of a value and `free` or `move` of a hole are refused, and `free a[k]` is `free` of the cell `a[k]` reads; a function holding `free` of a node in a cell, or `free` or `move` of an owning field, stays interpreted (#164). Stand-ins: `free` of an `if` with an `else` whose arms carry a teardown is refused, its value's type being known only when it runs (#82); `free` or `move` of a name the run starts with (`free i32`) is refused, since every imported section reads it, until the borrow checker can tell that nothing reads it (#35; ›`free x` works on any identity‹).
 
 ### A type whose fields carry teardowns must write its own destructor
 Defining such a type without a destructor is a checked error at the type definition, pointing at the fields. There is no derived last-in-first-out fallback: the order is written per type, and the destructor's lines are the per-field teardown items (which a partial move can make the scope exit skip, see ›`move` and `free` take a field path too‹). A destructor gets its value by **mutable reference**, never by `own`, and tears fields down in place: `free` and `close` on each resource, and a nested field's destructor called as the ordinary function it is.
@@ -388,19 +389,21 @@ Defining such a type without a destructor is a checked error at the type definit
 - **Source:** DESIGN.md l.104
 
 ### Holding is decided at the binding site, parameters included
-`a := alloc …` and `b := move a` make the bound name the holder of the value, in that place's scope, whose exit runs the value's `free` (›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹). A constructor result passed straight as an argument, `f(alloc 1 of i32 5)`, is bound to the parameter in the callee's frame, which holds it; no `own` gate is needed, since no caller place is emptied. A value that reaches no name at all is a checked error.
+`a := alloc …` and `b := move a` make the bound name the holder of the value, in that place's scope, whose exit runs the value's `free` (›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹). A constructor result passed straight as an argument, `f(alloc 1 of i32 5)`, is bound to the parameter in the callee's frame, which holds it; no `own` gate is needed, since no caller place is emptied. A value that reaches no name at all is a checked error, unless `free` or `&` takes it. `free (v)` holds the value and ends it on the spot, running its type's `free`. `&(v)` holds it until the enclosing scope ends, whose exit runs its `free`, and hands out its address: `w := type ( x := i64 ? ), p := &w(7), p@.x` gives `7`, and `&(1 + 2)` works the same. `move (v)` holds nothing: there is no place to move it out of.
 - **Ruled:** binding site, July 2026; parameters, 30 August 2026; respelled 28 September 2026, when the inserted `defer` went.
-- **Seed:** named bindings only; the parameter case is a bug against the ruling.
+- **Ruled (29 September 2026, Thobias, #210):** `free` and `&` hold a value no name holds. **Why (`free`):** "i think the free examples should work but they are unecessary but there are many sets of code you can write which is unecessary so this shouldnt actually be an error". **Why (`&`):** none was given beyond the option he chose, which read: "`&` keeps the value alive until its scope ends and hands out its address, as Rust's `let p = &w(7);` does."
+- **Seed:** named bindings only; the parameter case is a bug against the ruling. `free` of a value since 29 September 2026 (#211), asking the binding site's own rule for what the value's life ends by; `&` of a value not yet (#211).
 - **Source:** DESIGN.md l.104
 
 ### Three fail-closed ownership rules, and `-> own @T`
 Each guards a place where ownership would escape the machinery that frees it:
-1. An owning value must be bound to a name (else no place holds it and nothing runs its `free`).
+1. An owning value must be bound to a name (else no place holds it and nothing runs its `free`). `free` and `&` are the two exceptions: `free (alloc 1 of i32 5)` holds the value and frees it on the spot, `&(v)` holds it to its scope's end (›Holding is decided at the binding site, parameters included‹).
 2. A scope's value may not be a place the scope owns: the teardown would free it on the way out and hand back freed memory; `move` is how ownership leaves a scope.
 3. Ownership may not cross a function return: a block hands ownership to its binder in plain view of the parse, but a call hides its body behind a return type that cannot yet say it transfers ownership, so the caller would not know it owes a `free`.
 
 Rules 2 and 3 no longer apply to a *last* value since 25 September 2026 (›A last value moves out‹). `-> own @T` hands ownership to the caller, whose bound name holds the value (`own` as a gate on a reference, the same primitive as `pub`/`mut`).
 - **Ruled:** rules, July 2026; `-> own @T`, 30 August 2026.
+- **Ruled (29 September 2026, Thobias, #210):** rule 1's exceptions, `free` and `&`, from the ruling recorded at ›Holding is decided at the binding site, parameters included‹.
 - **Source:** DESIGN.md l.104
 
 ### `&T` / `&mut T` are checked statically
@@ -472,9 +475,11 @@ No read, write or pass (›Name resolution is scope-filtered‹).
 - **Source:** DESIGN.md l.104
 
 ### `free x` works on any identity
-Runs the type's `free` where one is filled, ends the name either way: one verb releases a name whatever its type.
+Runs the type's `free` where one is filled, ends the name either way: one verb releases a name whatever its type. A value no name holds is released alike: it runs, then its type's `free` runs over it.
 - **Ruled:** inside the 3 September 2026 passage (no separate date); respelled 28 September 2026.
-- **Seed:** done, the same day.
+- **Ruled (29 September 2026, Thobias, #210):** a value too, from the ruling recorded at ›`move` is the act, `own` the gate word, `free` the end‹. **Why:** "many sets of code you can write which is unecessary so this shouldnt actually be an error".
+- **Seed:** done, the same day; a value since 29 September 2026 (#211).
+- **Open:** whether a program may end a name the run starts with (`free i32`), which every file reads. Thobias, 29 September 2026, a leaning, not a rule: "so im actually leaning towards b if you can actually free it when nothing is having a borrowed read". What counts as holding a borrowed read on such a name (the scope that declares it, each live use, an imported file) is the borrow checker's question (#35); until then the seed refuses `free i32` and `move i32`.
 - **Source:** DESIGN.md l.104
 
 ### A `move` argument is consumed at the call; a callee that does not take it hands it back in its error value
@@ -1063,9 +1068,11 @@ The `«` constructor counts `«`/`»` and `{`/`}`, so a string in an interpolati
 - **Source:** DESIGN.md l.168
 
 ### Pointer types are prefix `@T`; dereference is postfix `x@`; `&x` is address-of
-`@i32`, `@@i32`, any type (`@point`, `@dyad`). `p@`, `p@.x`, `p@@`. `&x` takes the address of a storage-backed place (`&p.x`). The `@` family is raw, unchecked addresses, all the seed has at v0.1.0; the borrow checker's `&T`, `&mut T` come later on top: same addresses plus proof of safe use.
+`@i32`, `@@i32`, any type (`@point`, `@dyad`). `p@`, `p@.x`, `p@@`. `&x` takes the address of a storage-backed place (`&p.x`). `&` of a value nothing names, `&w(7)` or `&(1 + 2)`, keeps the value alive until the enclosing scope ends and hands out its address; its `free` runs at that scope's end. The `@` family is raw, unchecked addresses, all the seed has at v0.1.0; the borrow checker's `&T`, `&mut T` come later on top: same addresses plus proof of safe use.
 - **Why:** the pointer is what the user meets first, so it reads first. Postfix deref reads in evaluation order where prefix needs brackets (`(@p).x`). A dereference can never start an expression, so `@` after a value is always deref and `@` opening a type position is always the pointer type: no ambiguity.
 - **Ruled:** July 2026, in discussion; replaced an earlier postfix pointer-type spelling.
+- **Ruled (29 September 2026, Thobias, #210):** `&` of a value nothing names holds it to its scope's end. **Why:** none was given beyond the option he chose ("b"), which read: "`&` keeps the value alive until its scope ends and hands out its address, as Rust's `let p = &w(7);` does."
+- **Seed:** `&` of a value nothing names is refused, "`&` needs a variable to take the address of", until #211's `&` slice.
 - **Source:** DESIGN.md l.170
 
 ### The dyad describes itself down to one fixed point
@@ -1481,14 +1488,15 @@ A field of such a type holds the node's address: a field `items := t ?` with `t 
 - **Source:** DESIGN.md l.211
 
 ### A value owns what its elements hold and frees it
-The outer's `share free` frees each element whose type fills a `share free`, then frees its own memory (array.logos: `for i in 0..size ( free (ptr + i)@ )` before `free ptr`). `free p@`, over a cell holding a node whose type fills `share free`, runs that free and empties the cell, as `free a` does for an owner; over any other cell it stays the inert free.
+The outer's `share free` frees each element whose type fills a `share free`, then frees its own memory (array.logos: `for i in 0..size ( free (ptr + i)@ )` before `free ptr`). `free p@`, over a cell holding a node whose type fills `share free`, runs that free and empties the cell, as `free a` does for an owner; over any other cell it stays the inert free, which still reaches the cell: the code that finds it runs, as for `=`, bounds check included, and nothing is freed. `free (a[5])` on a two-element array is the index error whatever the element type.
 
 A line that names a value whose type fills a `share free` is refused: "write `move x` to move it in". `move x` moves it, `x` dead from that line. A value made in the list (`array i32 [1, 2]`, `box (1, 2)`, `mk()`) belongs to the new value from the start.
 - **Why:** Thobias: "the outer array owns its inner arrays". One name owns each value, and for an inner array that name is the outer one, so the outer's free frees the inner ones: nothing leaks and nothing is freed twice. (lines move in) from DESIGN: "`=` into an owner takes only a value just made or moved" and "`b := a` and passing `f(a)` borrow". A line is an operand, which borrows, and the element is owned, so a bare name would give one value two owners and two frees. Moving it silently would end a name nobody wrote `move` on, where a name ends only where it is written (›`move` and `free` are static: the parse marks the name dead‹).
 - **Ruled:** 25 September 2026, Thobias (a value owns its elements); 25 September 2026, Claude's decision (asked by Thobias to decide from DESIGN), open to Thobias (lines move in).
+- **Ruled (29 September 2026, Thobias, #211):** the inert free still reaches its cell. **Why:** "trying to access index outof bounds should be an error anyways and i think its simpler to just get that at anyways even though the free actually doesnt free anything because the type of array could be dyad which means the type could be anything. so the access at the index should happen anyways."
 - **Rejected:** none recorded.
 - **Open:** a parameter that says it consumes its argument (`own` on a parameter, not in the seed) is the precise form, recorded open.
-- **Seed:** the refusal of a bare name in a list stands for every type written in Logos; `own` on a parameter not yet.
+- **Seed:** the refusal of a bare name in a list stands for every type written in Logos; `own` on a parameter not yet. The inert free reaches a dereference's cell and a field since 29 September 2026 (#211), on both tiers, except that a function holding it over a field read (a node's field, or a field of a `share` function's receiver) stays interpreted, as it does for the read alone; over a map entry or a tape cell it does not run the key yet, open on #211.
 - **Source:** DESIGN.md l.211
 
 **A call that ends in a dereference is a place**

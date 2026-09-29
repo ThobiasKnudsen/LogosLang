@@ -245,4 +245,13 @@ pub enum ParseError {
     /// function may own only what its parameters hand it (DESIGN ›`move` and `free` are
     /// static: the parse marks the name dead‹).
     MoveOfOuterName,
+    /// `move` of a value no name holds: there is no place to move it out of.
+    MoveOfValue,
+    /// `free` of a hole, which holds no value.
+    FreeOfHole,
+    /// `free` of a value whose type, and so its `free`, is known only when it runs.
+    FreeOfUntypedValue,
+    /// `move` or `free` of a name the run starts with (`i32`), which every section reads;
+    /// carries the name.
+    EndsPrimordialName(Box<String>),
 }
