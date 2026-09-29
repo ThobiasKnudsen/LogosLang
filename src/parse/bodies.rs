@@ -516,8 +516,8 @@ impl<'a> Parser<'a> {
     ///
     /// # Safety
     /// `input` must be a record node and `params` its fields' bindings in order; `spec`
-    /// null or a `fn`-typed dyad from the store that nothing has read a value from yet;
-    /// `binding` null or a binding dyad from the store.
+    /// null or a `fn` node of `FN_SLOTS` words from the store; `binding` null or a
+    /// binding dyad from the store.
     pub(super) unsafe fn fn_over_body(
         &mut self,
         fn_type: DyadPtr,
@@ -527,20 +527,18 @@ impl<'a> Parser<'a> {
         spec: DyadPtr,
         binding: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
-        let mut early = [std::ptr::null_mut(); FN_SLOTS];
-        early[FN_INPUT] = input;
-        early[FN_OUTPUT] = output;
         let node = if spec.is_null() {
+            let mut early = [std::ptr::null_mut(); FN_SLOTS];
+            early[FN_INPUT] = input;
+            early[FN_OUTPUT] = output;
             self.rt.store.alloc_words(fn_type, &early)
         } else {
-            // SAFETY: `spec` was minted with `FN_SLOTS` null words (the caller's contract).
+            // SAFETY: `spec` is a `fn` node of `FN_SLOTS` words (the caller's contract).
             unsafe {
-                std::ptr::copy_nonoverlapping(
-                    early.as_ptr(),
-                    dyad::value(spec) as *mut DyadPtr,
-                    FN_SLOTS,
-                )
-            };
+                let slots = dyad::value(spec) as *mut DyadPtr;
+                *slots.add(FN_INPUT) = input;
+                *slots.add(FN_OUTPUT) = output;
+            }
             spec
         };
         if !binding.is_null() {
