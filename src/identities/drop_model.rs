@@ -457,11 +457,8 @@ fn build_inert_free(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr 
     store.alloc_words(types.free_, &[place, std::ptr::null_mut(), types.ops.free_])
 }
 
-/// The inert form is unit after the pointer to its cell is found; a value runs, and a node it
-/// makes goes to the seed as a place's does; a node's free empties the place and hands the
-/// node to the seed, which runs the instances' `free`; the owning pointer's and the field's
-/// forms, a node's free over a cell or an owning field's slot, and the inert form over a
-/// field's slot have no lowering, so the function declines to compile and stays interpreted.
+/// A node's `free` runs in the seed; a form with no lowering declines, and the function stays
+/// interpreted.
 fn lower_free(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a `free` node `[place, pointee, op]`, `[place, free, op]` or
     // `[value, free, op]`.
@@ -530,9 +527,10 @@ unsafe fn require_frame_place(
     node: DyadPtr,
     place: DyadPtr,
 ) -> Result<(), CompileError> {
-    match lw.types().frame_of(lw.through(place)) {
-        Some(_) => Ok(()),
-        None => Err(CompileError::NotLowerable(node)),
+    if lw.types().is_storage(place) {
+        Ok(())
+    } else {
+        Err(CompileError::NotLowerable(node))
     }
 }
 

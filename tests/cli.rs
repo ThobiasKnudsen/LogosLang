@@ -3140,8 +3140,8 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
         assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
     }
-    // A compiled body declines a free or move out of the field instead of reading the
-    // field's slot as its own bytes; interpreted, the same body frees each node once.
+    // A compiled body holding a free or move out of the field declines to compile;
+    // interpreted, the same body frees each node once.
     for line in ["free g.b", "y := move g.b"] {
         let f = format!("f := fn () -> i32 ( g := bag (), {line}, 1 )");
         let (code, stdout, stderr) = run_line(&bag_line(&format!("{f}, f.compile(), f()")));
@@ -3278,7 +3278,7 @@ fn free_of_an_element_runs_its_free_there_and_the_array_skips_it() {
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
         assert_eq!(stdout, "free\nafter\n", "{tail}");
     }
-    // A compiled body declines the cell's free instead of reading the cell as its own bytes.
+    // A compiled body holding the cell's free declines to compile.
     for free in ["free (arr[0])", "free (arr.ptr + 0)@"] {
         let g = format!(
             "g := fn () -> i32 ( x := box (1, 2), arr := array boxed [move x], {free}, 1 )"
