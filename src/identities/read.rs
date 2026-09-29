@@ -74,11 +74,8 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
     if op.is_null() {
         return Read::Undefined;
     }
-    // A hole or a field node reads as a value of the type it stands for; one with no type
-    // (a bare parameter's slot) holds nothing.
-    let hole = op == types.unknown;
-    let op = if hole { super::hole::type_in(node) } else { op };
-    if op.is_null() {
+    // A hole or a field node holds nothing.
+    if op == types.unknown {
         return Read::Undefined;
     }
     // Before any record read: a function node's value is an operand array, not a record.
@@ -92,7 +89,7 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
     let Some(kind) = meta::kind_of(op) else {
         // The roots are back-filled in `Core::build`, and holes never stand in a type
         // slot, so no reachable node is classified by a type with no record.
-        debug_assert!(!dyad::value(op).is_null(), "a type with no record stands in a type slot");
+        debug_assert!(!dyad::head(op).is_null(), "a type with no record stands in a type slot");
         return Read::Undefined;
     };
     match kind {
@@ -107,7 +104,7 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
             if !meta::run_body_of(op).is_null() {
                 // The node runs as the function built for its field-type set,
                 // and not at all until one exists.
-                let spec = if hole { std::ptr::null_mut() } else { super::run_body::spec_of(node) };
+                let spec = super::run_body::spec_of(node);
                 if spec.is_null() {
                     Read::Executable(Dispatch::None)
                 } else {
@@ -380,7 +377,7 @@ mod tests {
             bind(std::ptr::null_mut()),
             bind(std::ptr::null_mut()),
         );
-        let f = store.alloc_leaf(core.fn_type);
+        let f = store.alloc_words(core.fn_type, &[std::ptr::null_mut(); crate::parse::FN_SLOTS]);
         let field_node = crate::identities::hole::build(
             &mut store,
             core.unknown,

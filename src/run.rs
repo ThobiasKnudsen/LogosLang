@@ -900,15 +900,8 @@ impl<'a> Runtime<'a> {
         call_node: DyadPtr,
         dest: Option<*mut u8>,
     ) -> Result<Vec<i64>, RunError> {
-        if dyad::value(fn_node).is_null() {
-            return Err(RunError::NotRunnable(fn_node));
-        }
-        let args = dyad::value(call_node) as *const DyadPtr; // [arg0 …, null] or null
-        let arg_count = if args.is_null() {
-            0
-        } else {
-            (0..).take_while(|&i| !(*args.add(i)).is_null()).count()
-        };
+        let args = dyad::value(call_node) as *const DyadPtr; // [arg0 …, null]
+        let arg_count = { (0..).take_while(|&i| !(*args.add(i)).is_null()).count() };
         let types = self.types;
         if arg_count != by_copy::slots(types, fn_node).count() {
             return Err(RunError::ArityMismatch);

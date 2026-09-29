@@ -118,7 +118,7 @@ pub unsafe fn fn_outer<'a>(fn_node: DyadPtr) -> &'a [DyadPtr] {
 /// # Safety
 /// `f` must be a resolved dyad from the store.
 pub(crate) unsafe fn fn_receiver(types: &Core, f: DyadPtr) -> u64 {
-    if f.is_null() || dyad::ty(f) != types.fn_type || dyad::value(f).is_null() {
+    if f.is_null() || dyad::ty(f) != types.fn_type {
         return 0;
     }
     let leaf = *(dyad::value(f) as *const DyadPtr).add(FN_RECEIVER);
@@ -161,7 +161,7 @@ pub(crate) unsafe fn is_bool_result(types: &Core, node: DyadPtr) -> bool {
     } else {
         logos
     };
-    if !f.is_null() && dyad::ty(f) == types.fn_type && !dyad::value(f).is_null() {
+    if !f.is_null() && dyad::ty(f) == types.fn_type {
         return *(dyad::value(f) as *const DyadPtr).add(FN_OUTPUT) == types.bool_;
     }
     logos == types.bool_
@@ -258,9 +258,6 @@ pub(crate) unsafe fn contains_return(types: &Core, node: DyadPtr) -> bool {
         return contains_return(types, then) || (!els.is_null() && contains_return(types, els));
     }
     if logos == types.scope {
-        if dyad::value(node).is_null() {
-            return false;
-        }
         let arr = *(dyad::value(node) as *const DyadPtr);
         return crate::identities::array::items(arr).iter().any(|&e| contains_return(types, e));
     }
@@ -1092,7 +1089,7 @@ impl<'a> Parser<'a> {
             let call = build_call(self.rt.store, callee, &args);
             // SAFETY: `callee` is a reduced dyad; a `fn` callee's value is its field record or null.
             let record_out = unsafe {
-                if dyad::ty(callee) == types.fn_type && !dyad::value(callee).is_null() {
+                if dyad::ty(callee) == types.fn_type {
                     let out = *(dyad::value(callee) as *const DyadPtr).add(FN_OUTPUT);
                     crate::identities::by_copy::record_width(types, out).map(|w| (out, w))
                 } else {
@@ -1254,7 +1251,7 @@ impl<'a> Parser<'a> {
                 let (tail_value, returned) = unsafe {
                     let t = exprs[tail];
                     // `return x` yields `x`, so the escape rides its operand.
-                    if dyad::ty(t) == types.return_ && !dyad::value(t).is_null() {
+                    if dyad::ty(t) == types.return_ {
                         (*(dyad::value(t) as *const DyadPtr), true)
                     } else {
                         (t, false)

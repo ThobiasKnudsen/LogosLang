@@ -186,7 +186,7 @@ pub(crate) unsafe fn is_void_type(type_node: DyadPtr) -> bool {
     if type_node.is_null() {
         return false;
     }
-    let v = dyad::value(type_node);
+    let v = dyad::head(type_node);
     !v.is_null() && *(v as *const u8) == VOID_TAG
 }
 
@@ -200,7 +200,7 @@ pub(crate) unsafe fn is_comment_type(type_node: DyadPtr) -> bool {
     if type_node.is_null() {
         return false;
     }
-    let v = dyad::value(type_node);
+    let v = dyad::head(type_node);
     !v.is_null() && *(v as *const u8) == COMMENT_TAG
 }
 
@@ -213,14 +213,14 @@ pub(crate) unsafe fn is_pointer_type(type_node: DyadPtr) -> bool {
     if type_node.is_null() {
         return false;
     }
-    let v = dyad::value(type_node);
+    let v = dyad::head(type_node);
     !v.is_null() && *(v as *const u8) == ADDR_TAG
 }
 
 /// # Safety
 /// `type_node` must be a pointer type node (`is_pointer_type`).
 pub(crate) unsafe fn pointee_of(type_node: DyadPtr) -> DyadPtr {
-    let p = dyad::value(type_node).add(super::meta::PAYLOAD_OFF);
+    let p = dyad::head(type_node).add(super::meta::PAYLOAD_OFF);
     std::ptr::read_unaligned(p as *const DyadPtr)
 }
 
@@ -232,7 +232,7 @@ pub(crate) unsafe fn is_scalar_type(type_node: DyadPtr) -> bool {
     if type_node.is_null() {
         return false;
     }
-    let v = dyad::value(type_node);
+    let v = dyad::head(type_node);
     if v.is_null() {
         return false;
     }
@@ -300,7 +300,7 @@ pub(crate) unsafe fn write_scalar_nt(nt: NumType, slot: *mut u8, bits: i64) {
 /// # Safety
 /// `type_node` must be a numeric or pointer type node.
 pub(crate) unsafe fn of_type_node(type_node: DyadPtr) -> NumType {
-    let tag = *(dyad::value(type_node) as *const u8);
+    let tag = *(dyad::head(type_node) as *const u8);
     if tag == ADDR_TAG {
         return NumType::U64;
     }

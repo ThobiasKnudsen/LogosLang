@@ -1,33 +1,27 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The node cell: a `type` pointer and a `value` pointer, its identity its address.
-//! `dyad` is also the spelled type whose constructor builds a cell, `dyad (type, value)`.
-//! DESIGN ›A dyad is a type and a value‹.
+//! The node: one block, its type word first and its value bytes after it, its identity
+//! its address. `dyad` is also the spelled type whose constructor builds a node,
+//! `dyad (type, value)`. DESIGN ›A dyad is a type and a value: one block, the type word
+//! first, and its identity is its address‹.
 
 use super::{meta, Cx};
 
+/// The block's first word; the value bytes follow it, laid out as the type says.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct Dyad {
-    ty: DyadPtr,
-    /// A type-erased address, read through `ty`.
-    value: *mut u8,
-}
-
-impl Dyad {
-    pub(crate) fn new(ty: DyadPtr, value: *mut u8) -> Self {
-        Dyad { ty, value }
-    }
+    pub(crate) ty: DyadPtr,
 }
 
 /// A node's handle; its address is its identity.
 pub type DyadPtr = *mut Dyad;
 
-/// Where the value word sits, for compiled code reading a cell.
-pub const VALUE_OFFSET: i64 = std::mem::offset_of!(Dyad, value) as i64;
+/// Where a node's value bytes begin, for compiled code reading a node.
+pub const PAYLOAD_OFFSET: i64 = std::mem::size_of::<Dyad>() as i64;
 
-/// The four readers of the cell's layout; nothing outside this file spells it.
+/// The readers of the block's layout; nothing outside this file spells it.
 ///
 /// # Safety
 /// `p` must be a valid dyad from the store.
@@ -35,24 +29,26 @@ pub unsafe fn ty(p: DyadPtr) -> DyadPtr {
     (*p).ty
 }
 
+/// The value bytes, right after the type word.
+///
 /// # Safety
 /// As [`ty`].
 pub unsafe fn value(p: DyadPtr) -> *mut u8 {
-    (*p).value
+    (p as *mut u8).add(std::mem::size_of::<Dyad>())
 }
 
 /// The one address a head node holds: a type's record, another node, a table.
 ///
 /// # Safety
-/// As [`ty`]; `p` must be a node built by `Store::alloc_head`.
+/// As [`ty`]; `p` must be a node built by `Store::alloc_head` or `alloc_leaf`.
 pub unsafe fn head(p: DyadPtr) -> *mut u8 {
-    (*p).value
+    *(value(p) as *const *mut u8)
 }
 
 /// # Safety
 /// As [`head`].
 pub unsafe fn set_head(p: DyadPtr, v: *mut u8) {
-    (*p).value = v;
+    *(value(p) as *mut *mut u8) = v;
 }
 
 /// # Safety

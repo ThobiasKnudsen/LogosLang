@@ -507,9 +507,7 @@ impl<'a> Parser<'a> {
                 )
             {
                 let i = index.ok_or(ParseError::ExpectedIndexBracket)?;
-                if i >= crate::identities::meta::arity_of(dyad::ty(lhs))
-                    || dyad::value(lhs).is_null()
-                {
+                if i >= crate::identities::meta::arity_of(dyad::ty(lhs)) {
                     return Err(ParseError::BadReflectRead);
                 }
                 let ops = dyad::value(lhs) as *const DyadPtr;

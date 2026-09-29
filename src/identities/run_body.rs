@@ -152,9 +152,6 @@ unsafe fn spec_slot(node: DyadPtr) -> *mut DyadPtr {
 /// # Safety
 /// As `spec_slot`.
 pub(crate) unsafe fn spec_of(node: DyadPtr) -> DyadPtr {
-    if dyad::value(node).is_null() {
-        return std::ptr::null_mut();
-    }
     *spec_slot(node)
 }
 

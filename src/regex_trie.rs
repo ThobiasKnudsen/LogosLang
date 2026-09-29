@@ -561,17 +561,18 @@ fn flatten(path: &[Segment]) -> Vec<Step> {
 #[allow(clippy::undocumented_unsafe_blocks)] // a test reads the nodes it built a line above
 mod tests {
     use super::*;
-    use crate::dyad::Dyad;
-
-    /// A leaked dyad whose address is its id; serves as identity and as scope.
+    /// A leaked block whose address is its id; serves as identity and as scope.
     fn dummy(tag: usize) -> DyadPtr {
-        Box::into_raw(Box::new(Dyad::new(std::ptr::null_mut(), tag as *mut u8)))
+        Box::into_raw(Box::new([std::ptr::null_mut::<u8>(), tag as *mut u8])) as DyadPtr
     }
 
-    /// A leaked binding dyad in `scope` for `identity`.
+    /// A leaked binding node in `scope` for `identity`: a null type word, then the record.
+    #[repr(C)]
+    struct Leaked(DyadPtr, Binding);
+
     fn rec(identity: DyadPtr, scope: DyadPtr) -> DyadPtr {
-        let fields = Box::into_raw(Box::new(Binding::new(identity, scope, std::ptr::null_mut())));
-        Box::into_raw(Box::new(Dyad::new(std::ptr::null_mut(), fields as *mut u8)))
+        let rec = Binding::new(identity, scope, std::ptr::null_mut());
+        Box::into_raw(Box::new(Leaked(std::ptr::null_mut(), rec))) as DyadPtr
     }
 
     fn f(binding: DyadPtr) -> Binding {
