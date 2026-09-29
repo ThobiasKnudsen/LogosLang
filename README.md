@@ -245,7 +245,6 @@ Stable Rust is enough. Cranelift is the one heavy dependency. The Rust toolchain
 - `examples/` holds runnable programs, shipped in every release archive.
 - `tests/` holds end-to-end tests of the binary and their fixtures.
 - `docs/` holds the documentation, one complete tree per `vX.Y.Z`, rendered by the website.
-- `CLAUDE_LOG/` holds the session logs of the design work.
 
 ### Versions
 
