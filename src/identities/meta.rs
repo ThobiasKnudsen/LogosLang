@@ -305,7 +305,7 @@ pub(crate) unsafe fn install_pointer_type(id: DyadPtr, p: DyadPtr) {
     std::ptr::write_unaligned(dyad::head(id).add(POINTER_TYPE_OFF) as *mut DyadPtr, p);
 }
 
-/// `None` where there is no record to read: a null value (an unbound placeholder) or a
+/// `None` where there is no record to read: no head yet (a type still being defined) or a
 /// node that is no type (a type is typed by the self-typed root). Every accessor below
 /// contracts on `Some`, so this is where a node that is not an identity is turned away.
 ///

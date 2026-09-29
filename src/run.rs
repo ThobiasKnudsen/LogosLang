@@ -641,10 +641,6 @@ impl<'a> Runtime<'a> {
         if dyad::ty(fn_node) != self.types.fn_type {
             return Err(RunError::NotAFunction(fn_node));
         }
-        let fields = dyad::value(fn_node) as *const DyadPtr;
-        if fields.is_null() {
-            return Err(RunError::NotRunnable(fn_node));
-        }
         crate::compile::compile_into(self.store, lower, self.types, fn_node, code_leaf)
             .map_err(|e| RunError::CompileFailed(Box::new(crate::report::compile_message(&e))))
     }
@@ -656,14 +652,11 @@ impl<'a> Runtime<'a> {
     /// # Safety
     /// `fn_node` must be a valid `fn` node from the store.
     pub unsafe fn deopt(&mut self, fn_node: DyadPtr) {
-        let fields = dyad::value(fn_node) as *mut DyadPtr;
-        if !fields.is_null() {
-            let bcode_slot = fields.add(FN_BCODE);
-            let leaf = *bcode_slot;
-            if !leaf.is_null() {
-                crate::identities::callable::install_entry(leaf, 0);
-                *bcode_slot = std::ptr::null_mut();
-            }
+        let bcode_slot = (dyad::value(fn_node) as *mut DyadPtr).add(FN_BCODE);
+        let leaf = *bcode_slot;
+        if !leaf.is_null() {
+            crate::identities::callable::install_entry(leaf, 0);
+            *bcode_slot = std::ptr::null_mut();
         }
         self.store.retire_artifact(fn_node);
     }
@@ -760,9 +753,6 @@ impl<'a> Runtime<'a> {
     /// word is a live result slot's address when the result is a record.
     pub unsafe fn apply_values(&mut self, f: DyadPtr, values: &[i64]) -> Result<i64, RunError> {
         let fields = dyad::value(f) as *const DyadPtr;
-        if fields.is_null() {
-            return Err(RunError::NotRunnable(f));
-        }
         let bcode = *fields.add(FN_BCODE);
         if !bcode.is_null() {
             let entry = crate::identities::callable::entry_of(bcode);
@@ -901,7 +891,7 @@ impl<'a> Runtime<'a> {
         dest: Option<*mut u8>,
     ) -> Result<Vec<i64>, RunError> {
         let args = dyad::value(call_node) as *const DyadPtr; // [arg0 …, null]
-        let arg_count = { (0..).take_while(|&i| !(*args.add(i)).is_null()).count() };
+        let arg_count = (0..).take_while(|&i| !(*args.add(i)).is_null()).count();
         let types = self.types;
         if arg_count != by_copy::slots(types, fn_node).count() {
             return Err(RunError::ArityMismatch);

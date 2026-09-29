@@ -94,18 +94,13 @@ pub unsafe fn fn_frame_size(fn_node: DyadPtr) -> usize {
     }
 }
 
-/// Empty for a function that reads none, and for a declaration whose value is
-/// still being parsed.
+/// Empty for a function that reads none, and for one whose body is still being parsed.
 ///
 /// # Safety
-/// `fn_node` must be a function node: its value null, or the operands
-/// `parse_fn` builds (the early signature included).
+/// `fn_node` must be a function node: the operands `parse_fn` builds, the early
+/// signature included.
 pub unsafe fn fn_outer<'a>(fn_node: DyadPtr) -> &'a [DyadPtr] {
-    let fields = dyad::value(fn_node) as *const DyadPtr;
-    if fields.is_null() {
-        return &[];
-    }
-    let outer = *fields.add(FN_OUTER);
+    let outer = *(dyad::value(fn_node) as *const DyadPtr).add(FN_OUTER);
     if outer.is_null() {
         &[]
     } else {
@@ -265,7 +260,7 @@ pub(crate) unsafe fn contains_return(types: &Core, node: DyadPtr) -> bool {
 }
 
 /// `{type: callee, value: [args…, null]}`: null-terminated so `run` can count
-/// the arguments; a nullary call carries a null value.
+/// the arguments; a nullary call is a leaf, its one zero word the terminator.
 pub(super) fn build_call(store: &mut Store, callee: DyadPtr, args: &[DyadPtr]) -> DyadPtr {
     if args.is_empty() {
         return store.alloc_leaf(callee);

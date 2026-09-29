@@ -319,9 +319,6 @@ unsafe fn field_of(
         return Err(RunError::FieldBeforeStamp);
     }
     let slots = dyad::value(this) as *mut DyadPtr;
-    if slots.is_null() {
-        return Err(RunError::NoThis);
-    }
     let k = rt.run(*ops.add(1))?;
     if k < 0 {
         return Err(RunError::BadIndex(k));

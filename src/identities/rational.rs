@@ -442,8 +442,7 @@ pub(crate) unsafe fn is_rational_value(types: &Core, node: DyadPtr) -> bool {
     match read_kind(types, node) {
         Read::Rational => true,
         Read::Executable(Dispatch::Call(f)) => {
-            let fields = dyad::value(f) as *const DyadPtr;
-            !fields.is_null() && *fields.add(crate::parse::FN_OUTPUT) == types.rational
+            *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_OUTPUT) == types.rational
         }
         Read::Executable(Dispatch::Leaf(leaf)) => types.ops.rational_arith_op_of(leaf).is_some(),
         _ => false,

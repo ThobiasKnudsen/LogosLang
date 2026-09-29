@@ -1469,7 +1469,7 @@ fn an_argument_that_does_not_fit_its_parameter_is_rejected() {
 
 #[test]
 fn recursive_i64_factorial_matches_between_tiers() {
-    // The self-call must read i64 from the published signature; an unbound placeholder would default to i32.
+    // The self-call must read i64 from the signature the binding points at before the body parses.
     let (mut store, mut trie, core) = new_core();
 
     let fact = {

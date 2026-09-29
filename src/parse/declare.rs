@@ -581,13 +581,12 @@ impl<'a> Parser<'a> {
         self.cx.pending_binding = std::ptr::null_mut();
         let cell = value?;
         let value = cell.dyad;
-        // A bare name as the value is its binding (a use); the fixpoint
-        // inspects the dyad behind it and keeps `value` as what the initializer stores.
+        // A bare name as the value is its binding (a use); the declaration inspects
+        // the dyad behind it and keeps `value` as what the initializer stores.
         // SAFETY: `value` is a dyad from the store.
         let read = unsafe { self.types.through(value) };
-        // Fixpoint: make the placeholder *be* the value, so references to
-        // `name` captured while parsing the value resolve to it. A box on the
-        // right is decided first; a rational value gets a place of `rational_number`.
+        // A box on the right is decided first; a rational value gets a place of
+        // `rational_number`.
         // SAFETY: `read` is a dyad from the store.
         let rational = unsafe { crate::identities::rational::is_rational_value(self.types, read) };
         // SAFETY: `read` is a reduced dyad from the store.

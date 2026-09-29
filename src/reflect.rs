@@ -171,7 +171,7 @@ pub unsafe fn describe(types: &Core, node: DyadPtr) -> Shape {
         return Shape::Call { callee: logos, args: scan_null_terminated(dyad::value(node)) };
     }
     let Some(kind) = meta::kind_of(logos) else {
-        return Shape::Undefined; // an unbound placeholder standing as a logos
+        return Shape::Undefined; // a type with no record yet, standing as a logos
     };
     match kind {
         k if k < VOID_TAG => Shape::Scalar(numtype::of_type_node(logos)),

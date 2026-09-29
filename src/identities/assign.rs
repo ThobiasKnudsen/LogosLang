@@ -300,7 +300,7 @@ unsafe fn build_call_write(
     rhs: DyadPtr,
 ) -> Result<Option<DyadPtr>, ParseError> {
     let fields = dyad::value(f) as *const DyadPtr;
-    if dyad::ty(f) != types.fn_type || fields.is_null() {
+    if dyad::ty(f) != types.fn_type {
         return Ok(None);
     }
     let body = *fields.add(FN_BODY);
