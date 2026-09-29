@@ -308,7 +308,7 @@ impl<'a> Parser<'a> {
     /// The operand of `move`/`free`: a place as the node it is reached through
     /// (`read::place_node`), never an `addr`, a value no name holds, or a hole. A bare
     /// name comes back with the `Ended` the caller hands to `mark_dead`; a name from
-    /// outside a loop or `fn` body is refused.
+    /// outside a loop or `fn` body is refused, and so is one the run starts with.
     pub(crate) fn place_operand_cell(
         &mut self,
         tape: &mut ParsingTape,
@@ -365,6 +365,12 @@ impl<'a> Parser<'a> {
             if self.cx.scopes.crosses_barrier(scope) {
                 self.cx.pos = cell.start;
                 return Err(ParseError::MoveOfOuterName);
+            }
+            // Every section reads the arche's names, an import included, so ending one
+            // here would end it there: stand-in for #211.
+            if scope == self.types.root_scope {
+                self.cx.pos = cell.start;
+                return Err(ParseError::EndsPrimordialName(Box::new(cell.spelling().into())));
             }
             self.check_made(binding)?;
             self.note_outer_read(binding);

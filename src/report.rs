@@ -326,6 +326,10 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::FreeOfHole => {
             "a hole, `T ?`, holds no value yet, so `free` has nothing to run or free here".into()
         }
+        ParseError::EndsPrimordialName(name) => format!(
+            "`{name}` is a name the run starts with, which every imported file reads too, so \
+             this program cannot end it: give it a name of your own, `t := {name}`, and end that"
+        ),
         ParseError::FreeOfUntypedValue => {
             "`free` runs a value and then its type's `free`, and which type this value has is \
              known only when it runs: free it inside each branch, `if c (free (a())) else (free (b()))`"

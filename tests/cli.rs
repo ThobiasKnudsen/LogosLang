@@ -3318,6 +3318,7 @@ fn free_and_move_refuse_what_they_cannot_take_where_it_stands() {
             "(own",
             "a hole, `T ?`, holds no value yet",
         ),
+        ("free i32, 1", "i32", "`i32` is a name the run starts with"),
         (
             "c := i32 1, free (if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i32 6)), 1",
             "(if",
