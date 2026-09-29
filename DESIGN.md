@@ -1405,7 +1405,7 @@ In a type body, `b = 3` is the checked error whatever `b` names, an alias of a s
 - **Ruled:** 19 September 2026, Thobias.
 - **Seed:** done 20 September 2026 (#133 slice 4 undone).
 - **Ruled (28 September 2026, Thobias):** the rule stands as written: the language-start word that runs an expression at parse is spelled `immediate` (›`immediate x` runs the expression to its right as soon as it is parsed, and stands as its value‹), so no root word shares a slot word's spelling and `run := 5` at the root is the ordinary declaration. **Why:** for some hours that word was `run`, which made `run := 5` the no-shadowing error and would have needed every reader to sleep before `:=`; the respelling removed both.
-- **Ruled (29 September 2026, Thobias, #174):** `print` is a slot word and stays one word with the output word `print «…»`, as `free` is (›`free` is one word‹): its parse looks to its right, so neither the root nor a type body needs a second spelling. The sentence above holds for `run` and `immediate`; `free` and `print` share their spelling by being one word. **Why:** "print because i guess print could also mean print text in a string and return the string" (Thobias).
+- **Ruled (29 September 2026, Thobias, #174):** `print` is a slot word and stays one word with the output word `print «…»`, as `free` is (›`free` is one word‹): its parse looks to its right, so neither the root nor a type body needs a second spelling. The sentence above holds for every slot word but `free` and `print`, which share their spelling with a root word by being one word. **Why:** "print because i guess print could also mean print text in a string and return the string" (Thobias).
 - **Source:** DESIGN.md l.201
 
 ### `free` is one word
