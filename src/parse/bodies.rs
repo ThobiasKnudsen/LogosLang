@@ -573,7 +573,7 @@ impl<'a> Parser<'a> {
         // off inside.
         // SAFETY: `input` is the record just built; its record stores its scope.
         let scope = unsafe { crate::identities::meta::record_scope_of(input) };
-        // Names declared outside the body may not be moved or dropped inside;
+        // Names declared outside the body may not be moved or freed inside;
         // the parameters, in the scope pushed next, may (DESIGN ›A function's surface‹).
         self.cx.scopes.push_barrier();
         self.cx.scopes.push(scope);
@@ -892,7 +892,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::NonBoolCondition);
         }
         // A repeated body: parse-time rebinding is off inside, and a name
-        // declared outside may not be moved or dropped inside.
+        // declared outside may not be moved or freed inside.
         self.cx.runtime_depth += 1;
         self.cx.scopes.push_barrier();
         let body = self.parse_branch();
@@ -968,7 +968,7 @@ impl<'a> Parser<'a> {
         let width = unsafe { crate::identities::numtype::of_type_node(logos) }.bytes();
         let parent = self.cx.scopes.current().unwrap_or(std::ptr::null_mut());
         let scope = crate::identities::scope::mint(self.rt.store, types.scope, parent);
-        // A repeated body: a name declared outside may not be moved or dropped
+        // A repeated body: a name declared outside may not be moved or freed
         // inside; the loop variable, declared in the scope pushed next, is inside.
         self.cx.scopes.push_barrier();
         self.cx.scopes.push(scope);

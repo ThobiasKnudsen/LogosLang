@@ -698,7 +698,7 @@ fn settle_patches_start_and_end_to_the_body_item() {
     assert!(a(&trie).end.is_null());
 
     unsafe { scopes.mark_dead(a1, dyad(50)) };
-    assert_eq!(a(&trie).end, dyad(50), "provisional: the own/drop node");
+    assert_eq!(a(&trie).end, dyad(50), "provisional: the move/free node");
     unsafe { scopes.settle_item(scope, dyad(11)) };
     assert_eq!(a(&trie).end, dyad(11), "settled: the body item");
     assert_eq!(a(&trie).start, dyad(10), "start untouched by the end's settle");
@@ -731,7 +731,7 @@ fn a_barrier_between_a_name_and_the_current_scope_is_detected() {
 
 #[test]
 fn truncating_past_a_body_drops_its_barrier() {
-    // Or every later top-level `own`/`drop` is refused for the rest of the session.
+    // Or every later top-level `move`/`free` is refused for the rest of the session.
     let mut scopes = ScopeStack::new();
     let (outer, body) = (dyad(100), dyad(101));
     scopes.push(outer);

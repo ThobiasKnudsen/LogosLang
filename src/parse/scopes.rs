@@ -32,7 +32,7 @@ pub enum ResolveError {
     OutOfScope(String),
     /// Declaring it would shadow a declaration still live in an open scope.
     Shadowed(String),
-    /// Declared in an open scope but made dead by an `own` or `drop`; only
+    /// Declared in an open scope but made dead by a `move` or `free`; only
     /// `:=` may follow (DESIGN ›Name resolution is scope-filtered‹).
     Dead(String),
     /// Declared, but its `:=` is still driving its value: the node does not exist yet.
@@ -80,7 +80,7 @@ struct Pending {
     endpoint: Endpoint,
 }
 
-/// A bare name an `own` or `drop` is about to make dead, handed back so the
+/// A bare name a `move` or `free` is about to make dead, handed back so the
 /// keyword's constructor can mark it dead with the node it built.
 #[derive(Debug)]
 pub(crate) struct Ended {
@@ -98,7 +98,7 @@ pub struct ScopeStack {
     /// marks back, so a typo never burns a name for the session.
     journal: Vec<Journal>,
     pending: Vec<Pending>,
-    /// Stack depths where a body that runs again or later begins; `own`/`drop`
+    /// Stack depths where a body that runs again or later begins; `move`/`free`
     /// of a name declared below one is refused (DESIGN ›Memory and concurrency‹).
     barriers: Vec<usize>,
 }
@@ -153,7 +153,7 @@ impl ScopeStack {
         self.barriers.pop();
     }
 
-    /// A barrier began after `scope` was pushed, so `own`/`drop` of a name
+    /// A barrier began after `scope` was pushed, so `move`/`free` of a name
     /// from it is refused here.
     pub fn crosses_barrier(&self, scope: DyadPtr) -> bool {
         let Some(idx) = self.position(scope) else {
@@ -180,7 +180,7 @@ impl ScopeStack {
 
     /// The REPL's recovery after an error skipped the balancing pops. The
     /// barriers of the bodies closed this way go too, or they would refuse
-    /// `own`/`drop` for the rest of the session.
+    /// `move`/`free` for the rest of the session.
     pub fn truncate(&mut self, depth: usize) {
         while self.open.len() > depth {
             self.pop();
@@ -375,7 +375,7 @@ impl ScopeStack {
     }
 
     /// Every endpoint pending for `scope` now points at `item`, the line as a
-    /// whole: an `own` inside an `if` body ends the outer name at the `if`
+    /// whole: a `move` inside an `if` body ends the outer name at the `if`
     /// (DESIGN ›Name resolution is scope-filtered‹).
     ///
     /// # Safety

@@ -428,7 +428,7 @@ impl<'a> Parser<'a> {
     }
 
     /// A call is a use of every outer name the callee's body reads (DESIGN
-    /// ›`own` and `drop` are static‹): each listed binding is checked as a bare
+    /// ›`move` and `free` are static‹): each listed binding is checked as a bare
     /// use here would be, and joins the lists of the functions being parsed.
     ///
     /// # Safety
