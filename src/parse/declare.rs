@@ -216,6 +216,16 @@ impl<'a> Parser<'a> {
         Binding::has_gate(binding, self.types.own_)
     }
 
+    /// Whether the binding site made the name an owner: of a block, its place an owning
+    /// pointer's, or of a node, its binding carrying `own`.
+    ///
+    /// # Safety
+    /// `binding` must be a binding dyad from the store.
+    pub(crate) unsafe fn name_holds(&self, binding: DyadPtr) -> bool {
+        crate::identities::drop_model::is_owning_place(self.types, binding)
+            || self.owns_node(binding)
+    }
+
     /// The binding site of a node whose type fills the instances' `free`: the name owns it
     /// and its scope holds it.
     ///
@@ -237,24 +247,45 @@ impl<'a> Parser<'a> {
         open.exit.push(ExitItem { what: binding, from: open.lines + 1, end: None });
     }
 
-    /// The open scope whose end holds `binding`, innermost first.
-    pub(super) fn holder_of(&self, binding: DyadPtr) -> Option<usize> {
-        self.cx
-            .open
-            .iter()
-            .rposition(|s| s.exit.iter().any(|h| h.what == binding && h.end.is_none()))
+    /// The open scope whose end holds `place`, innermost first.
+    pub(super) fn holder_of(&self, place: DyadPtr) -> Option<usize> {
+        // SAFETY: held places and `place` are dyads from the store.
+        self.cx.open.iter().rposition(|s| s.exit.iter().any(|h| unsafe { self.holds(h, place) }))
     }
 
-    /// `node` has emptied `ended`'s place: its name is dead from here on
-    /// (DESIGN ›Memory and concurrency‹), and the scope that held it settles, when the
-    /// line closes, that it holds it no longer.
+    /// Whether the exit item holds `place` still.
+    ///
+    /// # Safety
+    /// `place` must be a dyad from the store.
+    pub(super) unsafe fn holds(&self, item: &ExitItem, place: DyadPtr) -> bool {
+        item.end.is_none()
+            && crate::identities::drop_model::same_place(self.types, item.what, place)
+    }
+
+    /// `node` has emptied `ended`'s place: its name is dead from here on (DESIGN ›`move` and
+    /// `free` are static: the parse marks the name dead‹). Each scope from the one that held it
+    /// inward settles, when its line closes, that it holds the name up to that line, and an
+    /// `if` reads which of its arms ended it.
     pub(crate) fn mark_dead(&mut self, ended: Ended, node: DyadPtr) {
+        if self.cx.dropping > 0 {
+            return;
+        }
         // SAFETY: `ended.binding` is the binding the resolver returned for the operand.
         unsafe { self.cx.scopes.mark_dead(ended.binding, node) };
-        let depth = self.cx.open.len();
-        if let Some(holder) = self.holder_of(ended.binding) {
-            self.cx.open[holder].ended.push((ended.binding, depth));
+        let Some(holder) = self.holder_of(ended.binding) else {
+            // An owner no open scope holds is an earlier REPL line's, whose items the
+            // session's scope keeps: held from outside everything this line opened.
+            // SAFETY: as above.
+            if unsafe { self.name_holds(ended.binding) } {
+                self.cx.open[0].ended_earlier.push(ended.binding);
+                self.cx.ended_log.push((ended.binding, 0));
+            }
+            return;
+        };
+        for open in &mut self.cx.open[holder..] {
+            open.ended.push(ended.binding);
         }
+        self.cx.ended_log.push((ended.binding, holder));
     }
 
     /// `?`'s entry on a binding refuses every read of the value until it is

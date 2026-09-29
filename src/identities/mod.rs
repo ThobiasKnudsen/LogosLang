@@ -47,7 +47,7 @@ pub(crate) mod held_type;
 pub mod here;
 pub(crate) mod hole;
 #[path = "if.rs"]
-mod if_mod;
+pub(crate) mod if_mod;
 mod immediate;
 pub mod import;
 pub(crate) mod instance;
@@ -318,6 +318,7 @@ impl Core {
         op_leaves.alloc_ = dm.alloc_leaf;
         op_leaves.move_ = dm.move_leaf;
         op_leaves.free_ = dm.free_leaf;
+        op_leaves.held_free_ = dm.held_free_leaf;
         op_leaves.instance_free_ = dm.instance_free_leaf;
         op_leaves.field_free_ = dm.field_free_leaf;
         op_leaves.value_free_ = dm.value_free_leaf;

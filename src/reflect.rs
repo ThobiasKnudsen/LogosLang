@@ -487,7 +487,7 @@ mod tests {
                 (core.and_, meta::TUPLE_TAG, 3),
                 (core.or_, meta::TUPLE_TAG, 3),
                 (core.assign, meta::TUPLE_TAG, 3),
-                (core.if_, meta::TUPLE_TAG, 4),
+                (core.if_, meta::TUPLE_TAG, 6),
                 (core.while_, meta::TUPLE_TAG, 3),
                 (core.for_, meta::TUPLE_TAG, 6),
                 (core.convert, meta::TUPLE_TAG, 4),

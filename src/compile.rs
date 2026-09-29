@@ -703,17 +703,38 @@ impl Lowerer<'_, '_> {
         Ok(result)
     }
 
+    /// Each arm is lowered, then the places it frees at its end; the arm's value is the if's.
+    ///
     /// # Safety
-    /// `cond`/`then`/`els` must be valid dyads from the store.
+    /// `cond` and the arms must be valid dyads from the store, the ends held places.
     pub unsafe fn lower_if(
         &mut self,
         cond: DyadPtr,
-        then: DyadPtr,
-        els: DyadPtr,
+        [(then, then_ends), (els, else_ends)]: [(DyadPtr, &[DyadPtr]); 2],
     ) -> Result<Value, CompileError> {
         let c = self.lower(cond)?;
-        // SAFETY: `then`/`els` are the dyads the caller's contract covers.
-        self.branch(c, |s| unsafe { s.lower(then) }, |s| unsafe { s.lower(els) })
+        // SAFETY: the arms and ends are the dyads the caller's contract covers.
+        self.branch(
+            c,
+            |s| unsafe { s.lower_arm(then, then_ends) },
+            |s| unsafe { s.lower_arm(els, else_ends) },
+        )
+    }
+
+    /// An arm and the places it frees at its end; a `return` inside would leave past them.
+    ///
+    /// # Safety
+    /// `arm` must be a valid dyad from the store, `ends` held places.
+    unsafe fn lower_arm(&mut self, arm: DyadPtr, ends: &[DyadPtr]) -> Result<Value, CompileError> {
+        let held = usize::from(!ends.is_empty());
+        self.teardowns += held;
+        let value = self.lower(arm);
+        self.teardowns -= held;
+        let value = value?;
+        for &place in ends.iter().rev() {
+            crate::identities::drop_model::lower_end_held(self, place)?;
+        }
+        Ok(value)
     }
 
     /// The header re-evaluates the condition, the body jumps back, and the
@@ -871,24 +892,33 @@ impl Lowerer<'_, '_> {
         }
     }
 
-    /// A statement: both arms yield unit, so the merge always agrees.
+    /// A statement: both arms yield unit, so the merge always agrees; the arm the `if` gains
+    /// frees `else_ends`.
     ///
     /// # Safety
-    /// `cond`/`then` must be valid dyads from the store.
+    /// `cond`/`then` must be valid dyads from the store, the ends held places.
     pub unsafe fn lower_if_stmt(
         &mut self,
         cond: DyadPtr,
         then: DyadPtr,
+        then_ends: &[DyadPtr],
+        else_ends: &[DyadPtr],
     ) -> Result<Value, CompileError> {
         let c = self.lower(cond)?;
         self.branch(
             c,
             |s| {
-                // SAFETY: `then` is the dyad the caller's contract covers.
-                unsafe { s.lower(then) }?;
+                // SAFETY: `then` and its ends are the dyads the caller's contract covers.
+                unsafe { s.lower_arm(then, then_ends) }?;
                 Ok(s.const_i32(0))
             },
-            |s| Ok(s.const_i32(0)),
+            |s| {
+                for &place in else_ends.iter().rev() {
+                    // SAFETY: as above.
+                    unsafe { crate::identities::drop_model::lower_end_held(s, place) }?;
+                }
+                Ok(s.const_i32(0))
+            },
         )
     }
 

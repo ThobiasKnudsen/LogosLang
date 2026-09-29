@@ -3013,6 +3013,46 @@ fn the_program_s_end_runs_its_defers_and_what_it_holds_last_first() {
 }
 
 #[test]
+fn an_if_frees_what_one_arm_moved_at_the_end_of_the_other() {
+    for (tail, printed) in [
+        (
+            "f := fn (c := i32 ?) -> i32 ( a := box (1, 2), if (c == 1) ( b := move a, 1 ), 3 ), \
+             f.compile(), f(0), f(1), print «after»",
+            "free\nfree\nafter\n",
+        ),
+        (
+            "f := fn (c := i32 ?) -> i32 ( a := box (1, 2), \
+             if (c == 1) ( b := move a, 1 ) else ( return 2 ), 3 ), f(0), f(1), print «after»",
+            "free\nfree\nafter\n",
+        ),
+        (
+            "c := i32 0, a := box (1, 2), if (c == 1) ( free a ) else ( print «kept» ), \
+             print «after»",
+            "kept\nfree\nafter\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{BOX}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout, printed, "{tail}");
+    }
+    // A REPL line ends a name an earlier line holds: the session's end frees it no more.
+    let lines = BOX.replacen("), box := ", ")\nbox := ", 1);
+    for (tail, last) in [
+        ("a := box (1, 2)\nb := move a\nprint «end»\n", "free"),
+        ("a := box (1, 2)\nfree a\nprint «end»\n", "end"),
+        ("a := box (1, 2)\nc := i32 0\nif (c == 1) ( b := move a )\nprint «end»\n", "end"),
+    ] {
+        let (echoes, stderr) = repl(format!("{lines}\n{tail}").as_bytes());
+        assert_eq!(
+            echoes.iter().filter(|l| *l == "free").count(),
+            1,
+            "{tail}: {echoes:?} {stderr}"
+        );
+        assert_eq!(echoes.last().map(String::as_str), Some(last), "{tail}: {echoes:?}");
+    }
+}
+
+#[test]
 fn an_array_holds_arrays_as_their_addresses() {
     let array = "import ./identities/array.logos, x := array i32 [1, 2], y := array i32 [3, 4], \
                  t := array i32, b := array t [move x, move y]";
