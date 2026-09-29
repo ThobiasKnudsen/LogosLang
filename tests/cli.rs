@@ -2630,11 +2630,47 @@ fn a_hash_is_one_token_with_its_text_wherever_it_is_lexed() {
     let (_, stdout, stderr) =
         run_line(&format!("{},\nh, print «same line»,\nprint «next line»", splice("#")));
     assert_eq!(stdout, "same line\nnext line\n", "{stderr}");
-    // The comment in a fragment is one cell, no code; built at the splice it stays an operand.
-    for fragment in ["* 2 # note", "+ 1 # + 1", "* 2 # «a «b» ) c»"] {
-        let (_, _, stderr) = run_line(&format!("{}, 5 h", splice(fragment)));
-        assert!(stderr.contains("expected one expression, found more"), "{fragment}: {stderr}");
+    // The comment in a fragment is one cell, no code.
+    for (fragment, printed) in
+        [("* 2 # note", "10\n"), ("+ 1 # + 1", "6\n"), ("* 2 # «a «b» ) c»", "10\n")]
+    {
+        let (code, stdout, stderr) = run_line(&format!("{}, 5 h", splice(fragment)));
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{fragment}: {stderr}");
     }
+}
+
+#[test]
+fn a_comment_built_in_the_boundary_s_build_loop_is_read_through_before_the_next_cell() {
+    // Below `(`, `h` runs at the boundary and its `#` is built in the build loop; at `fn`'s rank, at discovery.
+    for rank in ["*.parse_rank + 1", "fn.parse_rank"] {
+        let h = |fragment: &str| {
+            format!(
+                "h := type (share parse_rank = {rank}, \
+                 share parse = ( tape.insert(1, lex «{fragment}»), tape.remove(0) ))"
+            )
+        };
+        for (fragment, line, printed) in [
+            ("* 2 #", "5 h", "10\n"),
+            ("+ 1 #", "5 h", "6\n"),
+            ("* #", "5 h 2", "10\n"),
+            ("# «x» * 2", "5 h", "10\n"),
+            ("* 2 #", "c := 5 h", ""),
+            ("#", "5, h", "5\n"),
+            ("* 2 #", "f := fn () -> i32 ( 5 h ), f()", "10\n"),
+            ("* #", "f := fn () -> i32 ( 5 h 2 ), f()", "10\n"),
+            ("* 2 #", "f := fn () -> i32 ( 5 h ), f.compile(), f()", "10\n"),
+            ("* #", "f := fn () -> i32 ( 5 h 2 ), f.compile(), f()", "10\n"),
+        ] {
+            let src = format!("{}, {line}", h(fragment));
+            let (code, stdout, stderr) = run_line(&src);
+            assert_eq!((code, stdout.as_str()), (Some(0), printed), "{src}: {stderr}");
+        }
+        let (echoes, stderr) = repl(format!("{}\n5 h\n", h("* 2 #")).as_bytes());
+        assert_eq!(echoes, ["10"], "{rank}: {stderr}");
+    }
+    let out = logos().arg("import tests/fixtures/spliced_comment.logos, ten").output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "10\n");
 }
 
 #[test]
