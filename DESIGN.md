@@ -1283,6 +1283,9 @@ A write to `tape[k]` replaces the pointer, nothing more. A constructor that fini
 
 ### A function's surface is `fn (params) -> T (body)`, and its parameter list is a record type
 `main := fn () -> i32 ( return 40 + 2 )`. Fields are `name := T ?` or a bare `name` (any dyad); `()` is the empty record. `input` is literally the type the brackets define. `->` is mandatory (`-> void` if nothing). The body is a `( )` scope valued by its trailing expression; `return` only exits early.
+- **Ruled (29 September 2026, Thobias, #199):** a bare `name` is `name := dyad ?`, not the generic `name := ?`. **Why:** Thobias: "that is the only way to have dynamic types". Compiling such a function "needs specific compilation for each callee since the type may vary"; how ("some sort of minting per combination of types") is its own issue, "something that needs to be discussed later".
+- **Open:** whether `fn (a) -> i64 ( a )` is refused where it is defined, a `dyad ?` holding "the node itself, unrun" (›A field is filled at run, per evaluation; its type decides how the operand is used‹), or runs with `a` holding a value whose type is checked when the body runs (asked 29 September 2026, #199).
+- **Seed:** not yet: a bare parameter is read as `name := ?`.
 - **Source:** DESIGN.md l.191
 
 ### Positional arguments fill the holes in order; an expression line among them is a precondition
