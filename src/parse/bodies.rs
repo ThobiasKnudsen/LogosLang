@@ -516,8 +516,8 @@ impl<'a> Parser<'a> {
     ///
     /// # Safety
     /// `input` must be a record node and `params` its fields' bindings in order; `spec`
-    /// null or a `fn` node of `FN_SLOTS` words from the store; `binding` null or a
-    /// binding dyad from the store.
+    /// null or a `fn` node minted with `FN_SLOTS` null words that nothing has filled;
+    /// `binding` null or a binding dyad from the store.
     pub(super) unsafe fn fn_over_body(
         &mut self,
         fn_type: DyadPtr,
@@ -533,7 +533,7 @@ impl<'a> Parser<'a> {
             early[FN_OUTPUT] = output;
             self.rt.store.alloc_words(fn_type, &early)
         } else {
-            // SAFETY: `spec` is a `fn` node of `FN_SLOTS` words (the caller's contract).
+            // SAFETY: `spec` holds `FN_SLOTS` words (the caller's contract).
             unsafe {
                 let slots = dyad::value(spec) as *mut DyadPtr;
                 *slots.add(FN_INPUT) = input;
