@@ -224,7 +224,7 @@ fn run_line(source: &str) -> ExitCode {
     let mut sources: Vec<&str> = vec![source];
     sources.extend(imports.sources());
     if let Some(core) = core_stats {
-        print_stats(core, engine.store.stats(), &sources);
+        print_stats(&engine, core, engine.store.stats(), &sources);
     }
 
     match last {
@@ -246,10 +246,10 @@ fn run_line(source: &str) -> ExitCode {
 
 /// `LOGOS_STATS`: the store after the core, after the line, and their delta
 /// against the source that was parsed (the command line and every loaded file).
-fn print_stats(core: StoreStats, after: StoreStats, sources: &[&str]) {
+fn print_stats(engine: &Engine, core: StoreStats, after: StoreStats, sources: &[&str]) {
     let delta = after.since(&core);
     let source_bytes: usize = sources.iter().map(|s| s.len()).sum();
-    let code_bytes: usize = sources.iter().map(|s| code_bytes(s)).sum();
+    let code_bytes: usize = sources.iter().map(|s| code_bytes(engine, s)).sum();
     let per = |n: usize, d: usize| if d == 0 { 0.0 } else { n as f64 / d as f64 };
     eprintln!("store core:  {core}");
     eprintln!("store after: {after}");
@@ -263,12 +263,16 @@ fn print_stats(core: StoreStats, after: StoreStats, sources: &[&str]) {
     );
 }
 
-/// Bytes of code: each line cut at its first `#`, whitespace dropped.
-fn code_bytes(text: &str) -> usize {
-    text.lines()
-        .map(|line| line.find('#').map_or(line, |i| &line[..i]))
-        .map(|code| code.split_whitespace().map(str::len).sum::<usize>())
-        .sum()
+/// Bytes of code: every token the lexer reads but a comment, the whitespace between them
+/// dropped. The program's own names lex as fresh spellings, which spans the same bytes.
+fn code_bytes(engine: &Engine, text: &str) -> usize {
+    let mut scopes = ScopeStack::new();
+    scopes.push(engine.core.root_scope);
+    let Ok(tape) = seed::parse::lex_fragment(&scopes, &engine.trie, text) else {
+        return 0;
+    };
+    let cells = tape.cells();
+    cells.iter().filter(|c| c.identity(&engine.core) != engine.core.hash_).map(|c| c.len).sum()
 }
 
 /// One persistent store, index and scope; one expression per line, each value

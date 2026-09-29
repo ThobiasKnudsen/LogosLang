@@ -98,9 +98,6 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::ExpectedPath => "`import` must be followed by a file path".into(),
         ParseError::ExpectedPattern => "`regex` must be followed by a «…» pattern".into(),
         ParseError::ExpectedQuote(word) => format!("`{word}` must be followed by a «…» quote"),
-        ParseError::UnclosedInterpolation => {
-            "this `{` has no `}`: write `\\{` to print a brace".into()
-        }
         ParseError::StrayInterpolationClose => {
             "this `}` closes no `{`: write `\\}` to print a brace".into()
         }
@@ -355,6 +352,13 @@ pub(crate) fn resolve_message(e: &ResolveError) -> String {
             "two spellings match here with the same lex_rank; give one of them a higher lex_rank"
                 .into()
         }
+        ResolveError::Unmatched { bracket: '{', .. } => {
+            "this `{` has no `}`: write `\\{` for a brace as text".into()
+        }
+        ResolveError::Unmatched { bracket: '»', .. } => {
+            "this `»` closes no `«`: a `{…}` in a quote is code".into()
+        }
+        ResolveError::Unmatched { .. } => "this `«` has no `»`: write `\\«` for one as text".into(),
         ResolveError::Index(RegexTrieError::NodeNotFound) => "unknown name".into(),
         ResolveError::Index(RegexTrieError::BadPattern(p)) => {
             format!("this name's pattern is invalid: {p}")

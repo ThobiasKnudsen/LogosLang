@@ -120,6 +120,8 @@ pub struct Core {
     pub regex_: DyadPtr,
     /// The prose node a statement-level `#` builds; invisible to value flow.
     pub comment_: DyadPtr,
+    /// `#`, the token that builds a comment; it reads its own extent.
+    pub hash_: DyadPtr,
     pub construct_: DyadPtr,
     /// `p.x` over a record's storage: a place read through two bindings.
     pub field_: DyadPtr,
@@ -211,6 +213,7 @@ impl Core {
             string_,
             unknown: std::ptr::null_mut(),
             metas: HashMap::new(),
+            extents: HashMap::new(),
             lower: HashMap::new(),
         };
         let mut numtypes: [DyadPtr; 10] = [std::ptr::null_mut(); 10];
@@ -234,7 +237,7 @@ impl Core {
         let rational = rational::register(&mut cx);
         // Before the operators: their records name operands with string nodes.
         string::register(&mut cx);
-        let comment_ = comment::register(&mut cx);
+        let (comment_, hash_) = comment::register(&mut cx);
         let regex_ = regex_mod::register(&mut cx);
         // After `string`, before anything executable.
         let callables = callable::register(&mut cx);
@@ -346,10 +349,11 @@ impl Core {
         );
         op_leaves.scope_ = scope::register_exec(&mut cx, scope_, &callables);
 
-        // Every constructor moves onto a callable leaf in its record; the table drops
-        // before any parsing runs.
-        let Cx { store, metas, lower, .. } = cx;
-        // SAFETY: every key in `metas` has its record built, and each entry is a `ConstructFn`.
+        // Every constructor and extent reader moves onto a callable leaf in its record; the
+        // tables drop before any parsing runs.
+        let Cx { store, metas, extents, lower, .. } = cx;
+        // SAFETY: every key in `metas` and `extents` has its record built, and each entry is a
+        // `ConstructFn` or an `ExtentFn`.
         unsafe {
             for (&id, &construct) in &metas {
                 let leaf = callable::mint(
@@ -360,8 +364,18 @@ impl Core {
                 );
                 meta::install_constructor(id, leaf);
             }
+            for (&id, &extent) in &extents {
+                let leaf = callable::mint(
+                    store,
+                    callables.callable,
+                    extent as usize,
+                    callables.seed_extent,
+                );
+                meta::install_extent(id, leaf);
+            }
         }
         drop(metas);
+        drop(extents);
         Core {
             type_,
             scope: scope_,
@@ -399,6 +413,7 @@ impl Core {
             string_,
             regex_,
             comment_,
+            hash_,
             construct_,
             field_,
             deref_,
@@ -570,6 +585,7 @@ pub(crate) struct Cx<'a> {
     /// `?`, the type of every hole and field node; null until `hole::register`.
     unknown: DyadPtr,
     metas: HashMap<DyadPtr, ConstructFn>,
+    extents: HashMap<DyadPtr, crate::parse::ExtentFn>,
     lower: LowerTable,
 }
 
