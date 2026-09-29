@@ -53,7 +53,7 @@ A pull request has to pass, and these run on every one:
 
 | Check | What it does |
 |---|---|
-| `ci / rust` | `cargo fmt --check`, clippy with warnings as errors, build, `cargo test --release`, and the release smoke test |
+| `ci / rust` | `cargo fmt --check`, the comment guard, clippy with warnings as errors, build, `cargo test --release`, `cargo test`, and the release smoke test |
 | `ci / dco` | every commit in the pull request is signed off |
 | `docs / test` | the docs guard's own self-test |
 | `docs / validate` | the docs versioning model, including the freeze on released snapshots |
@@ -62,6 +62,7 @@ Run the first and the last two locally before you push:
 
 ```sh
 cargo test --release
+cargo test
 bash .github/scripts/docs-check.sh validate
 bash .github/scripts/docs-check.test.sh
 bash .github/scripts/dco-check.test.sh
