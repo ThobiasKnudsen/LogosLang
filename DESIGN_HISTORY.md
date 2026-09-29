@@ -207,6 +207,7 @@ Nothing moved from this section.
 
 ### Scheduling, preemption and cancellation happen at boundaries
 - **Seed detail (27 September 2026):** the bootstrap can ship cooperative `.await` yielding and add boundary preemption as the compiled tier matures.
+- **History:** until 30 September 2026 cancelling was "running its live scopes' pending `defer`s", and rule 1 read "inserted as reflectable structure, the same law as constructor-inserted teardown". Both dated from the July 2026 mechanism, where every value's teardown was a `defer` its constructor inserted; since 28 September 2026 nothing is inserted, so the first left a value's `free` unsaid at a cancel and the second compared with a mechanism that no longer exists (Thobias, Q-0035, "a").
 
 ### Case study: an RCU library's comment-only rules become machine-checked
 - **History:** "on failure ownership stays with the caller": superseded 3 September 2026 (›An `own` argument is consumed at the call‹); in v0.1.0 a failed call is a fault.
@@ -330,6 +331,9 @@ Nothing moved from this section.
 ### Error values are in v0.1.0; an error names a category, which is a scoped name
 - **History:** supersedes the 2 September 2026 staging-out below.
 - **Quotes:** Why: "its rather just only a name without and type or value … in one scope you can define error.X and in another you can defined the same error name error.X and they are actually different … maybe a better word is error category".
+
+### A checked error is a fault: the task that hit it is cancelled
+- **History:** until 30 September 2026 a fault ran "pending `defer`s of its live scopes". Written 30 August 2026, when every value's teardown was a `defer` inserted at the declaration, so the defers were the whole teardown; since 28 September 2026 a value's `free` is run by the scope's end and no `defer` carries it, so the wording no longer said whether it runs at a fault. Thobias ruled that it does, each live scope ending as its normal end does (Q-0035, "a").
 
 ### There is no bare `error «…»`; `abort «…»` stops the program; `alloc` returns `@T!`
 - **Seed detail (27 September 2026):** `error «…»` is the fault today and becomes `abort «…»`; `alloc` is not `!` yet; both pending.
@@ -760,6 +764,7 @@ Nothing moved from this section.
 - ›A value owns what its elements hold, and drops it‹ merged into ›A value owns what its elements hold and drops it‹ on 27 September 2026
 - ›A list's lines move into the value built from it‹ merged into ›A value owns what its elements hold and drops it‹ on 27 September 2026
 - **Seed detail (27 September 2026):** the refusal stands where a type's parse hands a bracket to the call it places, for every type written in Logos; a callee that only reads its list is refused alike.
+- **History:** until 30 September 2026 a freed cell was emptied "as `free a` does for an owner"; since 28 September 2026 a freed name is left `undefined`, not emptied, so the comparison no longer held (Thobias, Q-0035, "a").
 - **History:** until 29 September 2026 "the inert free" over a cell did not say whether the code that finds the cell runs. #211's first slice read it as running nothing, so `free (a[5])` passed silently over an `i32` array and was the index error over an array of boxes, whose free must read the cell. Thobias ruled that the cell is reached whatever its type, because the element type could be anything (`dyad`) and an out-of-range index is an error anyway.
 
 ### `a[k]` is an application, exactly as `a(k)`
@@ -891,6 +896,9 @@ Nothing moved from this section.
 
 ### A durable store, in files, managed by Logos code alone
 - **Seed detail (27 September 2026):** owes only file syscalls, already in the `native` floor. Formats, manifests, compaction, policy are stdlib or third-party Logos; the manifest is graph values.
+
+### A checkpoint is saved task state
+- **History:** until 30 September 2026 "(same law as constructor-inserted teardown and boundary placement)"; since 28 September 2026 no teardown is inserted, so only boundary placement stays as the comparison (Thobias, Q-0035, "a").
 
 ## Feasibility and effort
 
