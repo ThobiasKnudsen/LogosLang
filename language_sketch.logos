@@ -151,7 +151,7 @@ binding of a {        # the trie entry (id_context renamed record 7 September 20
     dyad -> a
     scope -> (the scope a was declared in)
     start -> (the := node that declared a)
-    end -> null                                        # to scope end, unless own a / drop a ends the name earlier
+    end -> null                                        # to scope end, unless move a / free a ends the name earlier
     gate -> [read own scope, write own scope while null, mut]   # ordered set, grants and vetoes; lock would seal it
     name -> «a»                                        # the spelling the trie holds; a:name (ruled 14 September 2026: the binding is the lex level,
                                                        # every fact tied to the name; the dyad is the other level, and := binds only that)
