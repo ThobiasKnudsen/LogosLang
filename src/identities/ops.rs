@@ -54,6 +54,10 @@ pub struct OpLeaves {
     pub(crate) instance_free_: DyadPtr,
     /// A `free` over an owning field: the block the field holds, freed.
     pub(crate) field_free_: DyadPtr,
+    /// A `free` over a value no name holds: it runs, then its type's `free` over the node.
+    pub(crate) value_free_: DyadPtr,
+    /// A `free` over a value no name holds that owns a block: it runs, the block is freed.
+    pub(crate) value_release_: DyadPtr,
     /// A no-op; the scope machinery runs the inner.
     pub(crate) defer_: DyadPtr,
     pub(crate) import_: DyadPtr,
@@ -262,6 +266,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
         alloc_: std::ptr::null_mut(),
         instance_free_: std::ptr::null_mut(),
         field_free_: std::ptr::null_mut(),
+        value_free_: std::ptr::null_mut(),
+        value_release_: std::ptr::null_mut(),
         teardown_: std::ptr::null_mut(),
         move_: std::ptr::null_mut(),
         free_: std::ptr::null_mut(),

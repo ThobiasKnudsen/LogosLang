@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::dyad;
+use crate::identities::drop_model::{teardown_of, Teardown};
 
 impl<'a> Parser<'a> {
     /// A gate word marks the declaration that just reduced to its right.
@@ -703,17 +704,14 @@ impl<'a> Parser<'a> {
                 // and a value just made or moved makes the name its owner.
                 let place = self.place_for(binding, t, 8);
                 let init = crate::identities::build_init(self.rt.store, self.types, place, value)?;
-                let free = crate::identities::meta::instances_free_of(t);
-                if !free.is_null() && crate::identities::drop_model::moves_out(self.types, value) {
+                if let Some(Teardown::Node(free)) = teardown_of(self.types, value) {
                     self.own_node(binding, place, free);
                 }
                 init
-            } else if crate::identities::drop_model::is_owning_value(self.types, value) {
+            } else if let Some(Teardown::Block(pointee)) = teardown_of(self.types, value) {
                 // An owning value lands in a place here, the one site that
                 // knows the name it binds, so the teardown attaches here (DESIGN
                 // ›Explicit heap‹): an owning `@pointee` place, the value in it, `defer free <place>` in this scope.
-                let pointee = crate::identities::drop_model::owning_pointee_of(self.types, value)
-                    .expect("is_owning_value implies a pointee");
                 let owning_ty = crate::identities::pointer::make_owning_pointer_type(
                     self.rt.store,
                     self.types.type_,

@@ -3140,6 +3140,18 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
         assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
     }
+    // A compiled body holding a free or move out of the field declines to compile;
+    // interpreted, the same body frees each node once.
+    for line in ["free g.b", "y := move g.b"] {
+        let f = format!("f := fn () -> i32 ( g := bag (), {line}, 1 )");
+        let (code, stdout, stderr) = run_line(&bag_line(&format!("{f}, f.compile(), f()")));
+        assert_eq!(code, Some(1), "{line}: stdout: {stdout}");
+        assert!(stdout.is_empty(), "{line}: stdout: {stdout}");
+        assert!(stderr.contains("cannot be compiled yet"), "{line}: stderr: {stderr}");
+        let (code, stdout, stderr) = run_line(&bag_line(&format!("{f}, f(), print «after»")));
+        assert_eq!(code, Some(0), "{line}: stderr: {stderr}");
+        assert_eq!(stdout, "free\nbag\nafter\n", "{line}");
+    }
 }
 
 #[test]
@@ -3253,6 +3265,128 @@ fn the_outer_array_s_free_frees_each_element_once() {
         assert!(stdout.starts_with(printed), "{tail}: stdout: {stdout}");
         assert_eq!(stdout.matches("free").count(), printed.matches("free").count(), "{tail}");
     }
+}
+
+#[test]
+fn free_of_an_element_runs_its_free_there_and_the_array_skips_it() {
+    let array = "import ./identities/array.logos";
+    for tail in [
+        "x := box (1, 2), arr := array boxed [move x], free (arr[0]), print «after»",
+        "x := box (1, 2), arr := array boxed [move x], free arr[0], print «after»",
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{array}, {BOX}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout, "free\nafter\n", "{tail}");
+    }
+    // A compiled body holding the cell's free declines to compile.
+    for free in ["free (arr[0])", "free (arr.ptr + 0)@"] {
+        let g = format!(
+            "g := fn () -> i32 ( x := box (1, 2), arr := array boxed [move x], {free}, 1 )"
+        );
+        let (code, stdout, stderr) = run_line(&format!("{array}, {BOX}, {g}, g.compile(), g()"));
+        assert_eq!(code, Some(1), "{free}: stderr: {stderr}");
+        assert!(stdout.is_empty(), "{free}: stdout: {stdout}");
+        assert!(stderr.contains("cannot be compiled yet"), "{free}: stderr: {stderr}");
+    }
+    // The cell is reached whatever its type, bounds check included; over `i32` nothing is freed.
+    for tail in [
+        "a := array i32 [1, 2], free (a[5]), 1",
+        "x := box (1, 2), arr := array boxed [move x], free (arr[5]), 1",
+        "g := fn () -> i32 ( a := array i32 [1, 2], free (a[5]), 1 ), g.compile(), g()",
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{array}, {BOX}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stdout: {stdout}");
+        assert!(stderr.contains("index out of range"), "{tail}: stderr: {stderr}");
+    }
+    for (tail, printed) in [
+        ("a := array i32 [1, 2], free (a[0]), a[0]", "1\n"),
+        (
+            "x := i32 3, get := fn (q := @i32 ?) -> i32 ( print «ran», q@ ), free (get(&x)), x",
+            "ran\n3\n",
+        ),
+        // A plain record's field lies in its bytes, not in a node's slot.
+        (
+            "p := type ( x := i32 ?, y := i32 ?, share s := fn () -> i32 ( free x, y ) ), \
+             q := p (1, 2), q.s()",
+            "2\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{array}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout, printed, "{tail}");
+    }
+}
+
+#[test]
+fn free_of_a_value_runs_it_and_frees_what_it_made() {
+    let array = "import ./identities/array.logos";
+    for (tail, printed) in [
+        ("free (box (1, 2)), print «after»", "free\nafter\n"),
+        ("free box (1, 2), print «after»", "free\nafter\n"),
+        ("mk := fn () -> boxed ( box (1, 2) ), free (mk()), print «after»", "free\nafter\n"),
+        (
+            "g := fn () -> i32 ( free (box (1, 2)), 7 ), g.compile(), print «before», g(), \
+             print «after»",
+            "before\nfree\nafter\n",
+        ),
+        // A borrow's free is its owner's, at the owner's end.
+        (
+            "b := box (1, 2), id := fn (q := boxed ?) -> boxed ( q ), free (id(b)), print «after»",
+            "after\nfree\n",
+        ),
+        ("f := fn () -> i32 ( print «ran», 7 ), free (f()), print «after»", "ran\nafter\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{array}, {BOX}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout, printed, "{tail}");
+    }
+    // A field of a node the parse knows is a place: its block is freed at `free b.p`.
+    let (code, _, stderr) =
+        run_line(&format!("{array}, {BOX}, b := box (1, 2), free b.p, (b.p + 0)@"));
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("this pointer holds nothing yet"), "stderr: {stderr}");
+}
+
+#[test]
+fn free_and_move_refuse_what_they_cannot_take_where_it_stands() {
+    // Each error stands at the operand it refuses.
+    for (src, operand, message) in [
+        (
+            "f := fn () -> i32 ( 7 ), b := move (f()), 1",
+            "(f())",
+            "`move` moves a value out of a place",
+        ),
+        ("free (own @i32 ?), 1", "(own", "a hole, `T ?`, holds no value yet"),
+        (
+            "g := fn () -> i32 ( free (own @i32 ?), 1 ), g.compile(), g()",
+            "(own",
+            "a hole, `T ?`, holds no value yet",
+        ),
+        ("free i32, 1", "i32", "`i32` is a name the run starts with"),
+        (
+            "c := i32 1, free (if (c == 1) (alloc 1 of i32 5) else (alloc 1 of i32 6)), 1",
+            "(if",
+            "`free` runs a value and then its type's `free`",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stdout.is_empty(), "{src}: stdout: {stdout}");
+        let col = src.find(operand).expect("the operand is in the program") + 1;
+        let head = format!("<command line>:1:{col}: error: {message}");
+        assert!(stderr.starts_with(&head), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn the_repl_runs_a_freed_value_and_refuses_a_hole_and_a_moved_value() {
+    let (echoes, stderr) = repl(
+        b"f := fn () -> i32 ( print \xc2\xabran\xc2\xbb, 7 )\nfree (f())\nfree (own @i32 ?)\n\
+          b := move (f())\nfree (alloc 1 of i32 5)\n1\n",
+    );
+    assert_eq!(echoes, ["ran", "1"], "stderr: {stderr}");
+    assert!(stderr.contains("<repl>:1:6: error: a hole"), "stderr: {stderr}");
+    assert!(stderr.contains("<repl>:1:11: error: `move` moves a value"), "stderr: {stderr}");
 }
 
 #[test]

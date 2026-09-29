@@ -118,6 +118,7 @@ Nothing moved from this section.
 
 ### `move` is the act, `own` the gate word, `free` the end
 - **History:** the act was `take` until 30 August 2026, then `own` for act and gate alike until 28 September 2026; the end was `drop` from July 2026 until 28 September 2026. Each rule whose heading carried the old words keeps the old heading in a History line here.
+- **History:** until 29 September 2026 the rule named only places as operands and said nothing of any other; the seed built an inert `free` over a value and never ran it (`free (f())`), and `move` refused one only because its type was no owning pointer. Settled by Thobias's ruling on #210: `free` runs a value and frees it, `move` refuses it, a hole is no value.
 
 ### A type whose fields carry teardowns must write its own destructor
 - **History:** at first a record type's auto-derived constructor composed its fields' teardowns; per-type order 30 August 2026.
@@ -130,10 +131,12 @@ Nothing moved from this section.
 
 ### Holding is decided at the binding site, parameters included
 - **History:** heading ›Teardown attaches at the binding site, parameters included‹ until 28 September 2026, when `defer free <place>` stopped being inserted; the binding site still decides who holds.
+- **History:** "A value that reaches no name at all is a checked error" had no exception until 29 September 2026; narrowed by Thobias's ruling on #210, which made `free` and `&` holders of a value no name holds, because unnecessary code is not an error (`free`) and by his choice of option (b) (`&`). Before it, #117 and #99's addendum (12 September 2026) read a constructor's result `w(7)` as having a place for `&` and `&(1 + 2)` as having none; the ruling treats both alike.
 - **Seed detail (27 September 2026):** covers only *named* owning bindings. A bare owning temporary passed as an argument is rejected: a bug against the ruling.
 
 ### Three fail-closed ownership rules, and `-> own @T`
 - **History:** "ownership may not cross a function return at all" and "a bare `-> @T` returning an owned place stays the checked error": superseded for a last value 25 September 2026.
+- **History:** rule 1 had no exception until 29 September 2026; `free` and `&` became its exceptions by Thobias's ruling on #210 (›Holding is decided at the binding site, parameters included‹).
 
 ### A pointer steps by whole cells
 - **Seed detail (27 September 2026):** since 25 September 2026 (#137): pointer on the left, integer on the right, k scaled to bytes as an `i64` product in the graph, both tiers. `k + p`, `p - q` and every other pointer operator stay refused.
@@ -160,6 +163,7 @@ Nothing moved from this section.
 
 ### `free x` works on any identity
 - **History:** ›`drop x` works on any identity‹ until 28 September 2026.
+- **History:** said of a name only until 29 September 2026; a value no name holds joined it by Thobias's ruling on #210.
 - **Seed detail (27 September 2026):** realized the same day.
 
 ### A `move` argument is consumed at the call; a callee that does not take it hands it back in its error value
@@ -353,6 +357,9 @@ Nothing moved from this section.
 
 ### Text literals are plain values; `#` is the one comment constructor
 - **Seed detail (27 September 2026):** builds the comment node over `string` in both forms: `# raw text` to end of line, and `# «…»` bounded by the string (may span lines; anything after `»` is live code). `#` becomes a graph-resident constructor at self-hosting.
+
+### Pointer types are prefix `@T`; dereference is postfix `x@`; `&x` is address-of
+- **History:** until 29 September 2026 `&x` took only "a storage-backed place", a phrase DESIGN never defined; `&` of a value nothing names was refused by the seed and unsettled by DESIGN. Widened by Thobias's ruling on #210, option (b), no reason given beyond the option: `&` holds such a value to its scope's end.
 
 ### The tape is Logic Graph with a string extension
 - **History:** `token` as a wrapper identity superseded 2 Sept 2026: an unconstructed cell points at the identity itself.
@@ -785,6 +792,7 @@ Nothing moved from this section.
 - ›A value owns what its elements hold, and drops it‹ merged into ›A value owns what its elements hold and drops it‹ on 27 September 2026
 - ›A list's lines move into the value built from it‹ merged into ›A value owns what its elements hold and drops it‹ on 27 September 2026
 - **Seed detail (27 September 2026):** the refusal stands where a type's parse hands a bracket to the call it places, for every type written in Logos; a callee that only reads its list is refused alike.
+- **History:** until 29 September 2026 "the inert free" over a cell did not say whether the code that finds the cell runs. #211's first slice read it as running nothing, so `free (a[5])` passed silently over an `i32` array and was the index error over an array of boxes, whose free must read the cell. Thobias ruled that the cell is reached whatever its type, because the element type could be anything (`dyad`) and an out-of-range index is an error anyway.
 
 ### `a[k]` is an application, exactly as `a(k)`
 - ›Element access is `[…]`, application is `(…)`‹ merged into ›`a[k]` is an application, exactly as `a(k)`‹ on 27 September 2026
