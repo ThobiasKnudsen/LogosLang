@@ -13,8 +13,8 @@ pub(super) struct OpenType {
     pub(super) scope: DyadPtr,
     /// The five slot words as this definition's own markers, declared into the body's scope.
     slots: [DyadPtr; 5],
-    /// The marker a `drop = (…)` line declares; `drop` itself is the core word.
-    drop_marker: DyadPtr,
+    /// The marker a `free = (…)` line declares; `free` itself is the core word.
+    free_marker: DyadPtr,
     parse_rank: f64,
     /// From a `lex_rank = …` line; written onto the declaration's binding at
     /// the close.
@@ -24,7 +24,7 @@ pub(super) struct OpenType {
     /// From a `run = (…)` line: the body lexed once into its cells; a node of
     /// the type constructs it per field-type set.
     run_body: DyadPtr,
-    /// The hidden receiver of the body being read, a parse's node or a `drop`'s or
+    /// The hidden receiver of the body being read, a parse's node or a `free`'s or
     /// `share` function's value; null otherwise.
     pub(super) this_param: DyadPtr,
     /// `this_param` is a parse's node, whose fields are reached through `tape[0]`, never bare.
@@ -39,16 +39,16 @@ pub(super) struct OpenType {
     /// The fields' scope and the fields declared so far: what a body written
     /// below them reaches by name.
     pub(super) block: (DyadPtr, Vec<DyadPtr>),
-    /// From a `share drop = (…)` line: the `fn` over the value an owner's teardown runs.
-    instances_drop: DyadPtr,
-    /// A field declared `own` over a node's type, whose teardown the type's drop must write.
+    /// From a `share free = (…)` line: the `fn` over the value an owner's teardown runs.
+    instances_free: DyadPtr,
+    /// A field declared `own` over a node's type, whose teardown the type's free must write.
     owns_node_field: bool,
     /// The type node being defined, its record written at the close: what its name means in its parse.
     pub(super) self_type: DyadPtr,
 }
 
 /// The slot words a type body declares into its own scope, in `SlotKind`
-/// order (DESIGN ›A type body describes one level‹). `drop` is not here: it is
+/// order (DESIGN ›A type body describes one level‹). `free` is not here: it is
 /// the statement keyword, which `=` takes as the slot's name.
 pub const SLOT_NAMES: [&str; 5] = ["parse_rank", "lex_rank", "associativity", "parse", "run"];
 
@@ -60,9 +60,9 @@ pub enum SlotKind {
     Associativity = 2,
     Parse = 3,
     Run = 4,
-    /// The `drop` keyword left of `=`: no spelling in `SLOT_NAMES`, since the
+    /// The `free` keyword left of `=`: no spelling in `SLOT_NAMES`, since the
     /// word is the statement's.
-    Drop = 5,
+    Free = 5,
 }
 
 impl SlotKind {
@@ -260,7 +260,7 @@ impl<'a> Parser<'a> {
                 let declares =
                     matches!(self.peek_token(), Some((id, _)) if id == self.types.declare_tok);
                 let def = self.cx.definitions.last().expect("a relaxed field list is a type body");
-                if word.is_some_and(|id| id == self.types.drop_ || def.slots.contains(&id)) {
+                if word.is_some_and(|id| id == self.types.free_ || def.slots.contains(&id)) {
                     self.cx.pos = start;
                     return Err(if declares {
                         ParseError::Resolve(ResolveError::Shadowed(name.to_string()))
@@ -386,6 +386,15 @@ impl<'a> Parser<'a> {
             self.cx.pos = at;
             return Err(ParseError::ShareNeedsDeclaration);
         }
+        // `=` writes what exists, so a fresh word before it names no slot.
+        let word_at = self.cx.pos;
+        if let Some((start, len, true)) = self.lex_spelling_fresh() {
+            if self.peek_token().is_some_and(|(id, _)| id == self.types.assign) {
+                self.cx.pos = start;
+                return Err(ParseError::NoSuchSlot(self.cx.source[start..start + len].to_string()));
+            }
+        }
+        self.cx.pos = word_at;
         let field_scope = self.cx.scopes.pop().expect("the field list's scope is open");
         self.cx.last_declared = std::ptr::null_mut();
         let outer_member = self.cx.member_fn_depth.replace(self.cx.frames.len());
@@ -451,7 +460,7 @@ impl<'a> Parser<'a> {
         Ok(items)
     }
 
-    /// A slot fill in a type body, `parse = (…)` or `drop = (…)`, parsed over
+    /// A slot fill in a type body, `parse = (…)` or `free = (…)`, parsed over
     /// the body's scope from the slot word at `start`.
     fn slot_line(&mut self, start: usize) -> Result<(), ParseError> {
         let body = self.cx.definitions.last().expect("a slot line is in a type body").scope;
@@ -523,7 +532,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// The next words are `share` and a slot word or `drop`; nothing is consumed.
+    /// The next words are `share` and a slot word or `free`; nothing is consumed.
     fn at_share_slot(&mut self) -> bool {
         let at = self.cx.pos;
         let word = self.lex_spelling().and_then(|(start, len)| {
@@ -535,7 +544,7 @@ impl<'a> Parser<'a> {
         slot
     }
 
-    /// The next word is a slot word or `drop`; nothing is consumed.
+    /// The next word is a slot word or `free`; nothing is consumed.
     fn at_slot_word(&mut self) -> bool {
         let at = self.cx.pos;
         let word = self.lex_spelling().and_then(|(start, len)| {
@@ -544,7 +553,7 @@ impl<'a> Parser<'a> {
         });
         self.cx.pos = at;
         let def = self.cx.definitions.last().expect("read inside a type body");
-        word.is_some_and(|id| id == self.types.drop_ || def.slots.contains(&id))
+        word.is_some_and(|id| id == self.types.free_ || def.slots.contains(&id))
     }
 
     /// A slot fill's item declares the definition's own marker.
@@ -554,7 +563,7 @@ impl<'a> Parser<'a> {
         self.cx
             .definitions
             .last()
-            .is_some_and(|def| def.slots.contains(&declared) || def.drop_marker == declared)
+            .is_some_and(|def| def.slots.contains(&declared) || def.free_marker == declared)
     }
 
     /// One body for one level (DESIGN ›A type body describes one level‹): its
@@ -602,7 +611,7 @@ impl<'a> Parser<'a> {
             crate::identities::meta::TYPEREC_TAG,
             crate::identities::meta::prec::INERT,
         );
-        let drop_marker = self.rt.store.alloc_head(self.types.type_, head);
+        let free_marker = self.rt.store.alloc_head(self.types.type_, head);
         let self_type = self.rt.store.alloc_leaf(id);
         if !own_name.is_null() {
             // The body's lines name the type they are building (DESIGN ›An unknown spelling
@@ -614,7 +623,7 @@ impl<'a> Parser<'a> {
         self.cx.definitions.push(OpenType {
             scope,
             slots,
-            drop_marker,
+            free_marker,
             parse_rank: crate::identities::meta::prec::APPLY,
             lex_rank: None,
             assoc: Assoc::Left,
@@ -626,7 +635,7 @@ impl<'a> Parser<'a> {
             read_receiver: false,
             wrote_receiver: false,
             block: (scope, Vec::new()),
-            instances_drop: std::ptr::null_mut(),
+            instances_free: std::ptr::null_mut(),
             owns_node_field: false,
             self_type,
         });
@@ -701,12 +710,12 @@ impl<'a> Parser<'a> {
                     && !crate::identities::meta::destructor_of(ty).is_null()
             })
         };
-        if (owning_field || def.owns_node_field) && def.instances_drop.is_null() {
-            return Err(ParseError::OwningFieldNeedsDrop);
+        if (owning_field || def.owns_node_field) && def.instances_free.is_null() {
+            return Err(ParseError::OwningFieldNeedsFree);
         }
-        if !def.instances_drop.is_null() {
-            // SAFETY: `node` was just built with a record layout; the drop is the fill's fn.
-            unsafe { crate::identities::meta::install_instances_drop(node, def.instances_drop) };
+        if !def.instances_free.is_null() {
+            // SAFETY: `node` was just built with a record layout; the free is the fill's fn.
+            unsafe { crate::identities::meta::install_instances_free(node, def.instances_free) };
         }
         Ok(node)
     }
@@ -817,14 +826,14 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// A use of one of the slot words, or of `drop`; whether the fill reaches
+    /// A use of one of the slot words, or of `free`; whether the fill reaches
     /// a type being defined is `filling_definition`'s question.
     ///
     /// # Safety
     /// `target` must be a dyad from the store.
     pub(crate) unsafe fn slot_of(&self, target: DyadPtr) -> Option<SlotKind> {
         // The binding of the word's use, or the identity itself when its
-        // constructor stood aside (`drop`).
+        // constructor stood aside (`free`).
         // SAFETY: `target` is a reduced dyad from the store.
         unsafe {
             let id = if dyad::ty(target) == self.types.binding_ {
@@ -832,8 +841,8 @@ impl<'a> Parser<'a> {
             } else {
                 target
             };
-            if id == self.types.drop_ {
-                return Some(SlotKind::Drop);
+            if id == self.types.free_ {
+                return Some(SlotKind::Free);
             }
             self.cx
                 .definitions
@@ -891,7 +900,7 @@ impl<'a> Parser<'a> {
         value: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
-        if matches!(kind, SlotKind::Parse | SlotKind::Run | SlotKind::Drop) {
+        if matches!(kind, SlotKind::Parse | SlotKind::Run | SlotKind::Free) {
             return Err(ParseError::SlotNeedsBody(kind));
         }
         // SAFETY: `value` is a reduced dyad from the store.
@@ -924,8 +933,8 @@ impl<'a> Parser<'a> {
                 };
                 def.assoc = assoc;
             }
-            SlotKind::Parse | SlotKind::Run | SlotKind::Drop => {
-                unreachable!("body slots and `drop` returned above")
+            SlotKind::Parse | SlotKind::Run | SlotKind::Free => {
+                unreachable!("body slots and `free` returned above")
             }
         }
         Ok(self.slot_declare(kind, target, value))
@@ -938,7 +947,7 @@ impl<'a> Parser<'a> {
         let types = self.types;
         let def = self.cx.definitions.last().expect("a slot is filled inside a definition");
         let marker = match kind {
-            SlotKind::Drop => def.drop_marker,
+            SlotKind::Free => def.free_marker,
             kind => def.slots[kind as usize],
         };
         crate::identities::declare::build(
@@ -1011,7 +1020,7 @@ impl<'a> Parser<'a> {
                 self.cx.definitions.last_mut().expect("checked above").run_body = body;
                 Ok(self.slot_declare(SlotKind::Run, target, body))
             }
-            SlotKind::Drop => {
+            SlotKind::Free => {
                 // One parameter, unnamed: the value an owner's teardown hands in.
                 let at = self.cx.pos;
                 let (input, params) = self.hidden_param_record(&[(None, types.dyad_)], at)?;
@@ -1030,11 +1039,11 @@ impl<'a> Parser<'a> {
                 };
                 let def = self.cx.definitions.last_mut().expect("checked above");
                 def.this_param = std::ptr::null_mut();
-                def.instances_drop = f?;
-                let f = def.instances_drop;
-                Ok(self.slot_declare(SlotKind::Drop, target, f))
+                def.instances_free = f?;
+                let f = def.instances_free;
+                Ok(self.slot_declare(SlotKind::Free, target, f))
             }
-            _ => unreachable!("`=` reads a bare body for `parse`, `run` and `drop` only"),
+            _ => unreachable!("`=` reads a bare body for `parse`, `run` and `free` only"),
         }
     }
 

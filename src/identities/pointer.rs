@@ -155,7 +155,7 @@ pub(crate) unsafe fn make_pointer_type(
 }
 
 /// The same record as `make_pointer_type` with `destructor` filled: what `alloc` mints,
-/// so `drop`/`own` recognize owning-ness by the slot while a borrow's pointer has none.
+/// so `free`/`move` recognize owning-ness by the slot while a borrow's pointer has none.
 /// Never interned.
 ///
 /// # Safety

@@ -194,7 +194,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Whether `d` is a read of a field declared `own` over a node's type: what it reaches
-    /// is owned, for `=`, `own` and `drop` to consult.
+    /// is owned, for `=`, `move` and `free` to consult.
     pub(crate) fn is_owning_read(&self, d: DyadPtr) -> bool {
         use crate::identities::this;
         // SAFETY: `d` is null or a reduced dyad from the store; a field read's binding operand
@@ -208,7 +208,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Whether the name owns the node it holds: its binding site inserted the teardown
-    /// that runs the node's instances' `drop`, and its binding carries `own`.
+    /// that runs the node's instances' `free`, and its binding carries `own`.
     ///
     /// # Safety
     /// `binding` must be a binding dyad from the store.
@@ -216,20 +216,20 @@ impl<'a> Parser<'a> {
         Binding::has_gate(binding, self.types.own_)
     }
 
-    /// The binding site of a node whose type fills the instances' `drop`: the name owns
-    /// it, and `defer drop <place>` goes into the scope where the ownership lands (DESIGN
+    /// The binding site of a node whose type fills the instances' `free`: the name owns
+    /// it, and `defer free <place>` goes into the scope where the ownership lands (DESIGN
     /// ›Holding is decided at the binding site‹; the inserted defer is a stand-in).
     ///
     /// # Safety
-    /// `binding` must be the binding dyad being declared, `place` its node place, `drop`
-    /// the instances' `drop` of the place's type.
-    unsafe fn own_node(&mut self, binding: DyadPtr, place: DyadPtr, drop: DyadPtr) {
+    /// `binding` must be the binding dyad being declared, `place` its node place, `free`
+    /// the instances' `free` of the place's type.
+    unsafe fn own_node(&mut self, binding: DyadPtr, place: DyadPtr, free: DyadPtr) {
         Binding::add_gate(self.rt.store, self.types.array_, binding, self.types.own_);
-        let teardown = crate::identities::drop_model::build_instance_drop(
+        let teardown = crate::identities::drop_model::build_instance_free(
             self.rt.store,
             self.types,
             place,
-            drop,
+            free,
         );
         let defer_node =
             crate::identities::drop_model::build_defer(self.rt.store, self.types, teardown);
@@ -618,9 +618,9 @@ impl<'a> Parser<'a> {
                 let node = crate::identities::this::build_copy(self.rt.store, self.types, template);
                 let place = self.place_for(binding, t, 8);
                 let init = crate::identities::build_init(self.rt.store, self.types, place, node)?;
-                let drop = crate::identities::meta::instances_drop_of(t);
-                if !drop.is_null() {
-                    self.own_node(binding, place, drop);
+                let free = crate::identities::meta::instances_free_of(t);
+                if !free.is_null() {
+                    self.own_node(binding, place, free);
                 }
                 // A field with a default starts with it, the empty node's slot holding it.
                 self.leave_fields_unwritten(binding, t, true);
@@ -636,8 +636,8 @@ impl<'a> Parser<'a> {
                 let place = self.place_for(binding, t, width);
                 // `a := own t ?`: the owner of whatever node is written into it later.
                 if cell.owning {
-                    let drop = crate::identities::meta::instances_drop_of(t);
-                    self.own_node(binding, place, drop);
+                    let free = crate::identities::meta::instances_free_of(t);
+                    self.own_node(binding, place, free);
                 }
                 // `a := own @T ?`: the owner of whatever block is written into it later.
                 if crate::identities::drop_model::is_owning_place(self.types, place) {
@@ -646,7 +646,6 @@ impl<'a> Parser<'a> {
                         self.types,
                         self.types.free_,
                         place,
-                        true,
                     )?;
                     let defer_node = crate::identities::drop_model::build_defer(
                         self.rt.store,
@@ -704,9 +703,9 @@ impl<'a> Parser<'a> {
                 // and a value just made or moved makes the name its owner.
                 let place = self.place_for(binding, t, 8);
                 let init = crate::identities::build_init(self.rt.store, self.types, place, value)?;
-                let drop = crate::identities::meta::instances_drop_of(t);
-                if !drop.is_null() && crate::identities::drop_model::moves_out(self.types, value) {
-                    self.own_node(binding, place, drop);
+                let free = crate::identities::meta::instances_free_of(t);
+                if !free.is_null() && crate::identities::drop_model::moves_out(self.types, value) {
+                    self.own_node(binding, place, free);
                 }
                 init
             } else if crate::identities::drop_model::is_owning_value(self.types, value) {
@@ -724,14 +723,11 @@ impl<'a> Parser<'a> {
                 // A pointer is 8 bytes (U64-wide), whatever it points at.
                 let place = self.place_for(binding, owning_ty, 8);
                 let init = crate::identities::build_init(self.rt.store, self.types, place, value)?;
-                // The owning check is kept on to guard a future caller
-                // inserting a free over a borrow.
                 let free_node = crate::identities::drop_model::build_teardown(
                     self.rt.store,
                     self.types,
                     self.types.free_,
                     place,
-                    true,
                 )?;
                 let defer_node = crate::identities::drop_model::build_defer(
                     self.rt.store,

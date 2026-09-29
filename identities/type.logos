@@ -13,7 +13,7 @@ type := type (
     associativity := ?
     parse := parse ?
     run := run ?
-    drop := drop ?
+    free := free ?
 
     share parse_rank = f64 2.0
     share associativity = left

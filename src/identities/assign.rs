@@ -40,10 +40,10 @@ fn construct(
     tape: &mut crate::parse::ParsingTape,
 ) -> Result<crate::parse::Constructed, ParseError> {
     let types = p.types();
-    // A lone `drop` constructed on its own would read an operand to its
+    // A lone `free` constructed on its own would read an operand to its
     // right, so `=` takes the keyword's use as the slot's name unconstructed.
     let target = match tape.at(-1) {
-        Some(c) if tape.cursor() == 1 && !c.constructed && c.identity(types) == types.drop_ => {
+        Some(c) if tape.cursor() == 1 && !c.constructed && c.identity(types) == types.free_ => {
             let name = *c;
             tape.remove(-1);
             name
@@ -67,7 +67,7 @@ fn construct(
         Some(
             crate::parse::SlotKind::Parse
                 | crate::parse::SlotKind::Run
-                | crate::parse::SlotKind::Drop
+                | crate::parse::SlotKind::Free
         )
     ) && p.at_open()
     {

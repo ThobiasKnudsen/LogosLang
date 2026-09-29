@@ -29,7 +29,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Inside a `drop` or a `share` function a field of the value is named bare (DESIGN
+    /// Inside a `free` or a `share` function a field of the value is named bare (DESIGN
     /// ›There is no `this`‹); fields come first, so an outer name never stands in for one.
     /// Inside a parse the same name is the checked error, the field going through `tape[0]`.
     pub(super) fn names_own_field(&self, cell: &Cell) -> bool {
@@ -86,7 +86,7 @@ impl<'a> Parser<'a> {
     }
 
     /// A bare call of a `share` function that works on a value takes the value the calling
-    /// body is about (DESIGN ›There is no `this`‹): a `run`'s node, a `drop`'s or `share`
+    /// body is about (DESIGN ›There is no `this`‹): a `run`'s node, a `free`'s or `share`
     /// function's own, or in a parse none, so only one that reads no field of its value is
     /// called bare there.
     ///
