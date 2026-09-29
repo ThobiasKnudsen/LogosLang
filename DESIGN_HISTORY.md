@@ -635,6 +635,7 @@ Nothing moved from this section.
 
 ### Reading a path runs nothing
 - **History:** until 29 September 2026 the rule's example ended "`(x + 2).lhs` reads `x`, as `.operands[0]` does". `.operands` went with Thobias's ruling (#199): "(x+x).operands should not exist. it should be lhs and rhs for all the other operators as well."
+- **History:** until 30 September 2026 the rule read "So `(2 ^ 3).lhs` is `2` and `(x + 2).lhs` reads `x`": a `.` written straight on an expression read its node. Superseded by Thobias (#199, Q-0026), who chose that such a `.` reads what the expression evaluates to, as `.type` does: "i dont see when (x + x).lhs is needed because where you write that you already know its x. but when you want to inspect LG from some other place which doesnt know its x you would probably start via somename:start or via the scope array of dyads." The examples are now paths, `b:start.rhs.lhs`. An Open line of 29 September asking this closed with it.
 
 ### `=` sits beside `:=`, and returns nothing
 - **History:** until 28 September 2026 the rule said nothing of a displaced value, and the seed leaks it (#170).
