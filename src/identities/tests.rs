@@ -2014,29 +2014,21 @@ fn a_type_returning_body_must_hand_back_a_type() {
 
 #[test]
 fn runaway_depth_is_a_checked_error_not_an_abort() {
-    // On the seed's own stack size: a test thread's 2 MiB would abort the runner before the guard fires.
-    let work = std::thread::Builder::new()
-        .stack_size(crate::WORK_STACK_BYTES)
-        .spawn(|| {
-            let deep = "(".repeat(crate::parse::MAX_BRACKET_DEPTH + 1);
-            assert_eq!(parse_err(&format!("{deep}1")), ParseError::TooDeep);
-            assert_eq!(run_script("(((((1)))))"), 1);
+    on_work_stack(|| {
+        let deep = "(".repeat(crate::parse::MAX_BRACKET_DEPTH + 1);
+        assert_eq!(parse_err(&format!("{deep}1")), ParseError::TooDeep);
+        assert_eq!(run_script("(((((1)))))"), 1);
 
-            let runaway = "f := fn (n := i32 ?) -> i32 ( f(n + 1) ), f(1)";
-            assert_eq!(run_script_depth(runaway), (Err(crate::run::RunError::CallDepth), 0));
-            let ending = "f := fn (n := i32 ?) -> i32 ( if (n < 1) (0) else (f(n - 1)) ), f(9000)";
-            assert_eq!(run_script(ending), 0);
-            let runaway_compiled = "f := fn (n := i32 ?) -> i32 ( f(n + 1) ), f.compile(), f(1)";
-            assert_eq!(
-                run_script_depth(runaway_compiled),
-                (Err(crate::run::RunError::CallDepth), 0)
-            );
-            let ending_compiled =
-                "f := fn (n := i32 ?) -> i32 ( if (n < 1) (0) else (f(n - 1)) ), f.compile(), f(9000)";
-            assert_eq!(run_script(ending_compiled), 0);
-        })
-        .expect("the work thread must start");
-    work.join().expect("depth guards hold");
+        let runaway = "f := fn (n := i32 ?) -> i32 ( f(n + 1) ), f(1)";
+        assert_eq!(run_script_depth(runaway), (Err(crate::run::RunError::CallDepth), 0));
+        let ending = "f := fn (n := i32 ?) -> i32 ( if (n < 1) (0) else (f(n - 1)) ), f(9000)";
+        assert_eq!(run_script(ending), 0);
+        let runaway_compiled = "f := fn (n := i32 ?) -> i32 ( f(n + 1) ), f.compile(), f(1)";
+        assert_eq!(run_script_depth(runaway_compiled), (Err(crate::run::RunError::CallDepth), 0));
+        let ending_compiled =
+            "f := fn (n := i32 ?) -> i32 ( if (n < 1) (0) else (f(n - 1)) ), f.compile(), f(9000)";
+        assert_eq!(run_script(ending_compiled), 0);
+    });
 }
 
 #[test]
@@ -2171,6 +2163,17 @@ fn run_script_depth(src: &str) -> (Result<i64, crate::run::RunError>, usize) {
     (r, rt.ctx.depth)
 }
 
+/// Runs `f` on a thread of the seed's stack size, as `main` runs every program: a deep
+/// recursion then meets the depth guard, not the harness's 2 MiB thread.
+fn on_work_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new()
+        .stack_size(crate::WORK_STACK_BYTES)
+        .spawn(f)
+        .expect("the work thread must start")
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
 #[test]
 fn a_deoptimized_or_recompiled_callee_is_reached_by_an_earlier_compiled_caller() {
     let (mut store, mut trie, core) = new_core();
@@ -2239,7 +2242,7 @@ fn code_retired_under_a_live_jump_is_freed_when_the_jump_returns() {
 fn interpreted_recursion_stacks_frames() {
     // 1..=500 sums right only if no call's frame aliases another's.
     let src = "f := fn (n := i64 ?) -> i64 ( mut m := i64 0, m = n, if (n == 0) (0) else (m + f(n - 1)) ),\nf(500)";
-    assert_eq!(run_script(src), 125_250);
+    assert_eq!(on_work_stack(|| run_script(src)), 125_250);
 }
 
 #[test]
