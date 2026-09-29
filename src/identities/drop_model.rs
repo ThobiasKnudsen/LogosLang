@@ -876,7 +876,7 @@ unsafe fn owned_slot(rt: &mut Runtime, place: DyadPtr) -> Result<*mut u8, RunErr
     }
 }
 
-/// The cell a dereference reaches or the slot a field read reaches, found by running the code
+/// The cell a dereference reaches or the field a field read reaches, found by running the code
 /// that leads there; `None` for a place a frame holds, found by its offset alone.
 ///
 /// # Safety
@@ -886,7 +886,7 @@ unsafe fn reached_slot(rt: &mut Runtime, place: DyadPtr) -> Result<Option<*mut u
         return super::pointer::deref_addr(rt, place).map(Some);
     }
     if super::this::is_field_read(rt.types(), place) {
-        return super::this::slot_addr(rt, place).map(Some);
+        return super::this::field_addr(rt, place).map(Some);
     }
     Ok(None)
 }

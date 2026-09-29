@@ -3304,6 +3304,12 @@ fn free_of_an_element_runs_its_free_there_and_the_array_skips_it() {
             "x := i32 3, get := fn (q := @i32 ?) -> i32 ( print «ran», q@ ), free (get(&x)), x",
             "ran\n3\n",
         ),
+        // A plain record's field lies in its bytes, not in a node's slot.
+        (
+            "p := type ( x := i32 ?, y := i32 ?, share s := fn () -> i32 ( free x, y ) ), \
+             q := p (1, 2), q.s()",
+            "2\n",
+        ),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{array}, {tail}"));
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
