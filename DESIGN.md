@@ -642,7 +642,7 @@ The interpreted tier catches the dynamic classes at runtime as checked errors, n
 - **Why:** identity is address. Rebinding the name to a fresh dyad would break it.
 - **Ruled:** mechanics settled in design iteration, June 2026; in-place writing ruled 30 August 2026.
 - **Rejected:** rebinding to a fresh dyad on `=` (breaks identity-is-address).
-- **Ruled (29 September 2026, Thobias, #199):** a `dyad ?` place keeps its address too. A write of a new type puts a new node in it and frees the one it held first (›A `dyad ?` place is transparent: a placeholder for a new node of any type‹): the place is not rebound, what it holds is replaced.
+- **Ruled (29 September 2026, Thobias, #199):** a `dyad ?` place keeps its address too. A write into one that holds a node replaces that node, as ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹ rules: the place is not rebound, what it holds is replaced.
 - **Source:** DESIGN.md l.117
 
 ### Declarations are immutable by default; two operators write a dyad, `:=` declares and `=` reassigns
