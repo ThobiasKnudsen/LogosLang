@@ -673,6 +673,7 @@ Nothing moved from this section.
 
 ### `immediate x` runs the expression to its right as soon as it is parsed, and stands as its value (spelled `run x` earlier on 28 September 2026)
 - **History:** spelled `run x` from the morning of 28 September 2026 to the evening, as a second word beside the slot word; respelled `immediate` because one spelling for two words made `run := 5` at the root an error and would have needed every reader to sleep before `:=`. Thobias asked for "some other name for run x", a word "for saying something should be done right now in the moment"; `immediate` was chosen over `now`, `settle` and `once`.
+- **History:** 28 to 29 September 2026 the text read "Inside a deferred body too: `f := fn () -> i32 ( immediate bump() )` runs `bump` once, as the body parses, and the body holds the value; an operand that reads a name of that body, a parameter say, is the ordinary read-before-written error." Superseded 29 September 2026 (#197) by "when that body is parsed", per build, because a type's `run` body and a `type (…)` in a body are lexed where written and built later, some more than once, where "once" and "a parameter … is the read-before-written error" gave different answers; Thobias: "immediate executes right when its parsed".
 
 ### `dyad ?` is the general box, `type ?` the narrow case
 - **History:** written `a:dyad.type == type` until the 23 September 2026 respelling.
@@ -691,7 +692,8 @@ Nothing moved from this section.
 ### A block settles its boxes as the top level does
 - **History:** 12 September 2026: the stores filling such a box were replayed at parse, in parse order (the right side a node address fixed at parse, so the run stored the same bits again). Replay superseded 13 September 2026 by *The pass runs only as far as it must*: nothing is replayed.
 
-### A `type (…)` inside a body is built each time it runs
+### A `type (…)` inside a body is built once per set of the values it reads (built each time it runs, until 29 September 2026)
+- **History:** 25 to 29 September 2026 the heading was "A `type (…)` inside a body is built each time it runs" and the text read "each time its node runs the parser builds it from those cells with that call's values live. So `mk := fn (t := type ?) -> type ( type ( fields = ( shared e := t ) ) )` gives a new type per call whose `e` is that call's `t`." Superseded 29 September 2026 (#197) by one build per set of the values it reads, because it makes a written type a template over what it reads, and types are created too seldom for the speed of a build at every run to matter (Thobias: "i would lean towards b since that allows for more general templates for types").
 - **Seed detail (27 September 2026):** since 25 September 2026 (#137): a held `type (…)` builds a fresh type on every run, so one type per element type is array.logos's `array_mints`, not the seed's.
 
 ### The chooser keeps its mints in a memo, and the driver constructs the mint
