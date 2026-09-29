@@ -2044,7 +2044,7 @@ A `type (…)` written where parse order is not run order (function body, loop b
 - **Ruled:** 25 September 2026, Thobias, "yes" (same question).
 - **Ruled (29 September 2026, Thobias, #197):** once per set of the values it reads, superseding a new type at every run. **Why:** "both cases are actually usefull. case a is faster and case b is more expressive. you can do more things with case b. and the existance of run shows that there is a meaningfull difference. but at the same time there isnt often types are created so i would lean towards b since that allows for more general templates for types" (Thobias). Case b is this rule; case a is the next line.
 - **Rejected:** a new type at every run, its text parsed once with the body around it and an `immediate` in it run once, at that parse (#197's case a): faster, but an `immediate` in it could not read what a run supplies (`type ( share e := immediate t )` in `mk` the read-before-written error) and the same values gave a new type at every run (`mk(i32) == mk(i32)` false).
-- **Open:** when two runs read the same set for a value that is neither a type nor a number (a record, a pointer).
+- **Open:** when two runs read the same set for a value that is not a type, a bool or an exact number: a float (by `==` or by its bits, which differ on `0.0` against `-0.0` and on NaN), a record, a pointer.
 - **Seed:** since 25 September 2026 (#137); it builds a new type at every run, not once per set (#197).
 - **Source:** DESIGN.md l.217 (the example keeps the text's `fields = (…)` / `shared` spelling; see report)
 
