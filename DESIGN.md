@@ -1496,7 +1496,7 @@ A line that names a value whose type fills a `share free` is refused: "write `mo
 - **Ruled (29 September 2026, Thobias, #211):** the inert free still reaches its cell. **Why:** "trying to access index outof bounds should be an error anyways and i think its simpler to just get that at anyways even though the free actually doesnt free anything because the type of array could be dyad which means the type could be anything. so the access at the index should happen anyways."
 - **Rejected:** none recorded.
 - **Open:** a parameter that says it consumes its argument (`own` on a parameter, not in the seed) is the precise form, recorded open.
-- **Seed:** the refusal of a bare name in a list stands for every type written in Logos; `own` on a parameter not yet. The inert free reaches its cell since 29 September 2026 (#211), on both tiers.
+- **Seed:** the refusal of a bare name in a list stands for every type written in Logos; `own` on a parameter not yet. The inert free reaches a dereference's cell and a field since 29 September 2026 (#211), on both tiers (a function holding it over a node's field stays interpreted); over a map entry or a tape cell it does not run the key yet, open on #211.
 - **Source:** DESIGN.md l.211
 
 **A call that ends in a dereference is a place**
