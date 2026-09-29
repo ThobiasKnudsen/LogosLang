@@ -2406,6 +2406,11 @@ fn a_body_slot_takes_a_bracket_and_a_run_type_has_no_place() {
 }
 
 #[test]
+fn a_parsing_tape_takes_no_pointer_of_another_type() {
+    assert_eq!(parse_err("( x := u64 7, t := parsing_tape (&x) )"), ParseError::TypeMismatch);
+}
+
+#[test]
 fn a_compiled_caller_reaches_an_uncompiled_callee_through_the_interpreter() {
     assert_eq!(
         run_script(
