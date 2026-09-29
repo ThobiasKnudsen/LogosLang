@@ -6,6 +6,28 @@
 
 use super::*;
 
+/// The extent of a token that reads its own: the byte length of the token at the start of
+/// the text, its spelling first.
+pub type ExtentFn = fn(&str) -> Result<usize, ResolveError>;
+
+/// The one door every lexer takes to the token at the start of `text`: the selection
+/// rule's winner, its extent the trie's match unless its record says it reads its own
+/// (DESIGN ›Unknown spellings are two pattern identities‹). With `fresh` the
+/// fresh-spelling patterns compete too.
+pub(crate) fn token(
+    scopes: &ScopeStack,
+    trie: &RegexTrie,
+    text: &str,
+    fresh: bool,
+) -> Result<Resolved, ResolveError> {
+    let mut r = if fresh { scopes.lex(trie, text)? } else { scopes.resolve(trie, text)? };
+    // SAFETY: a resolved identity is null or a dyad from the store.
+    if let Some(read) = unsafe { crate::identities::meta::extent_reader(r.identity) } {
+        r.matched = read(text)?;
+    }
+    Ok(r)
+}
+
 /// The lex step the driver and `lex «…»` share: a fresh spelling is a cell with no node,
 /// the pattern's construction done at the lex. `None` at the end of the text; `text` must
 /// outlive the cell.
@@ -23,7 +45,7 @@ pub(crate) fn lex_token(
     if start >= bytes.len() {
         return Ok(None);
     }
-    let r = scopes.lex(trie, &text[start..])?;
+    let r = token(scopes, trie, &text[start..], true)?;
     // DESIGN ›An unknown spelling stays text on the tape; `:=` makes the binding, and the
     // node comes with the value‹.
     let dyad = if r.fresh { std::ptr::null_mut() } else { r.binding };
@@ -33,9 +55,9 @@ pub(crate) fn lex_token(
 }
 
 /// Every token of `text` as an unconstructed cell on a fresh tape centered on
-/// its first cell: the fragment `insert` splices (DESIGN ›Text is the quote‹).
-/// `text` must outlive the fragment's reads.
-pub(crate) fn lex_fragment(
+/// its first cell: the fragment `insert` splices (DESIGN ›Text is the quote‹), and a
+/// held body lexed once. `text` must outlive the fragment's reads.
+pub fn lex_fragment(
     scopes: &ScopeStack,
     trie: &RegexTrie,
     text: &str,
@@ -76,8 +98,9 @@ impl<'a> Parser<'a> {
         } else {
             self.skip_whitespace();
             let source = self.cx.source;
-            let Some((cell, next)) = lex_token(&self.cx.scopes, self.trie, source, self.cx.pos)
-                .map_err(ParseError::Resolve)?
+            let start = self.cx.pos;
+            let Some((cell, next)) = lex_token(&self.cx.scopes, self.trie, source, start)
+                .map_err(|e| self.lex_error(start, e))?
             else {
                 return Ok(None);
             };
@@ -251,35 +274,19 @@ impl<'a> Parser<'a> {
         Some((cell.identity(self.types), cell.len))
     }
 
-    /// Lex a held run body's text once, at the definition: every token an
-    /// unconstructed cell, brackets included; a `#` comment's text is passed
-    /// over as its constructor will read it. `text` must live for the run.
-    pub(super) fn lex_body_fragment(
-        &mut self,
-        text: &'static str,
-    ) -> Result<ParsingTape, ParseError> {
-        let mut tape = ParsingTape::new();
-        let mut pos = 0;
-        while let Some((cell, next)) =
-            lex_token(&self.cx.scopes, self.trie, text, pos).map_err(ParseError::Resolve)?
-        {
-            pos = next;
-            let is_hash = cell.spelling() == "#";
-            tape.push(cell);
-            if is_hash {
-                let bytes = text.as_bytes();
-                while pos < bytes.len() && matches!(bytes[pos], b' ' | b'\t') {
-                    pos += 1;
-                }
-                if !text[pos..].starts_with('«') {
-                    while pos < bytes.len() && bytes[pos] != b'\n' {
-                        pos += 1;
-                    }
-                }
-            }
+    /// [`token`] at `pos` in the source.
+    pub(super) fn token_at(&mut self, pos: usize, fresh: bool) -> Result<Resolved, ParseError> {
+        let source = self.cx.source;
+        token(&self.cx.scopes, self.trie, &source[pos..], fresh).map_err(|e| self.lex_error(pos, e))
+    }
+
+    /// A token that did not lex: an unclosed `«` or `{` is reported where it stands, `base`
+    /// being where the failed lookup's text began.
+    pub(super) fn lex_error(&mut self, base: usize, e: ResolveError) -> ParseError {
+        if let ResolveError::Unclosed { at, .. } = e {
+            self.cx.pos = base + at;
         }
-        tape.set_cursor(0);
-        Ok(tape)
+        ParseError::Resolve(e)
     }
 
     /// Never past a `#`: the sequence parser peeks at a statement-level `#`
@@ -308,7 +315,7 @@ impl<'a> Parser<'a> {
         if self.cx.pos >= source.len() {
             return None;
         }
-        let r = self.cx.scopes.resolve(self.trie, &source[self.cx.pos..]).ok()?;
+        let r = token(&self.cx.scopes, self.trie, &source[self.cx.pos..], false).ok()?;
         Some((r.identity, r.matched))
     }
 
@@ -400,7 +407,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::UnclosedBracket);
         }
         let start = self.cx.pos;
-        let r = self.cx.scopes.resolve(self.trie, &source[start..]).map_err(ParseError::Resolve)?;
+        let r = self.token_at(start, false)?;
         if r.identity == self.types.close_ {
             self.cx.pos = start + r.matched;
             Ok(())

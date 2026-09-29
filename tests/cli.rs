@@ -2547,6 +2547,123 @@ fn print_interpolates_braces_as_echo_shows_them_and_escapes_them_with_a_backslas
     }
 }
 
+/// The program's stdout, stderr and exit code, run as the command line.
+fn run(src: &str) -> (String, String, Option<i32>) {
+    let out = logos().arg(src).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    (stdout, String::from_utf8_lossy(&out.stderr).into_owned(), out.status.code())
+}
+
+#[test]
+fn a_quote_counts_its_pairs_by_depth_and_reads_five_escapes() {
+    for (src, printed) in [
+        ("print «a «b» c»", "a «b» c\n"),
+        ("print «{«a»}»", "a\n"),
+        // A plain string's `{…}` waits on live strings: it stays as written.
+        ("print «{«b{«c»}»}»", "b{«c»}\n"),
+        ("print «a\\»b»", "a»b\n"),
+        ("print «a\\«b»", "a«b\n"),
+        ("print «a\\\\b»", "a\\b\n"),
+        ("print «\\{a\\} \\q»", "{a} \\q\n"),
+        ("t := lex «print «a «b» c»», 5", "5\n"),
+        ("t := type (share greet := fn () -> void ( print «{«a»}» )), 5", "5\n"),
+        ("# «a «b» c», 5", "5\n"),
+        ("regex «a\\»» := type (), 5", "5\n"),
+        ("regex «[0-9]+\\\\.k» := type (), (5.k):type == type", "true\n"),
+    ] {
+        let (stdout, stderr, code) = run(src);
+        assert_eq!(code, Some(0), "{src}: {stderr}");
+        assert_eq!(stdout, printed, "{src}: {stderr}");
+    }
+    let (stdout, _, _) = run("f := fn () -> void ( print «{«a»}» ), f()");
+    assert!(stdout.starts_with("a\n"), "{stdout}");
+    // The escapes are applied before the pattern is read, so `5\.k` is no longer its spelling.
+    let (_, stderr, _) = run("regex «[0-9]+\\\\.k» := type (), (5\\.k):type == type");
+    assert!(stderr.contains("1:34: error: unknown name `\\`"), "{stderr}");
+    let (_, stderr, _) = run("error «{«a»}»");
+    assert!(stderr.contains("run error: a"), "{stderr}");
+    // The quote holds `a «b» c` whole; the text value's read is still missing.
+    let (_, stderr, _) = run("s := «a «b» c», print «{s}»");
+    assert!(stderr.contains("run error: a record, text or hole is not read"), "{stderr}");
+    let (_, stderr, _) = run("import «tests/fixtures/a«b».logos»");
+    assert!(stderr.contains("cannot read ./tests/fixtures/a«b».logos"), "{stderr}");
+
+    let (echoes, stderr) = repl("print «{«a»}»\nprint «a «b» c»\n".as_bytes());
+    assert_eq!(echoes, ["a", "a «b» c"], "stderr: {stderr}");
+}
+
+#[test]
+fn a_bracket_inside_a_nested_quote_or_its_comment_is_text_in_every_body() {
+    let run_body = |body: &str| {
+        format!(
+            "bump := type (a := i32 ?, share run = ( {body} ), share parse_rank = *.parse_rank + 1, \
+             share parse = ( tape[0]:type = bump, tape[0].a = tape[-1], tape.is_constructed[0] = true, \
+             tape.remove(-1) )), 3 bump"
+        )
+    };
+    for (src, printed) in [
+        ("f := fn () -> void ( print «a «b» ) c» ), f()".to_string(), "a «b» ) c\n"),
+        ("if false ( print «a «b» ) c» ) else ( print «ok» )".to_string(), "ok\n"),
+        (run_body("print «a «b» ) c»"), "a «b» ) c\n"),
+        ("f := fn () -> void (\n# «a «b» ) c»\nprint «ok»\n), f()".to_string(), "ok\n"),
+        (run_body("\n# «a «b» ) c»\nprint «hi»\n"), "hi\n"),
+        (run_body("\n# a ) b\nprint «hi»\n"), "hi\n"),
+        ("# «a «b» c»\nprint «ok»".to_string(), "ok\n"),
+        (
+            "pt := type (\n# «a «b» ) c»\na := i32 ?,\n# the rank\nshare parse_rank = *.parse_rank + 1,\n\
+             # «before the fill»\nshare parse = ( tape[0]:type = pt, tape[0].a = tape[-1], \
+             tape.is_constructed[0] = true, tape.remove(-1) )\n), q := 4 pt, q.a"
+                .to_string(),
+            "4\n",
+        ),
+    ] {
+        let (stdout, stderr, code) = run(&src);
+        assert_eq!(code, Some(0), "{src}: {stderr}");
+        assert!(stdout.starts_with(printed), "{src}: {stdout} {stderr}");
+    }
+}
+
+#[test]
+fn a_hash_is_one_token_with_its_text_wherever_it_is_lexed() {
+    let splice = |fragment: &str| {
+        format!(
+            "h := type (share parse_rank = *.parse_rank + 1, \
+             share parse = ( tape.insert(1, lex «{fragment}»), tape.remove(0) ))"
+        )
+    };
+    // A spliced `#` reads its own cell, never the rest of the outer line.
+    let (stdout, stderr, _) = run(&format!("{}, h, print «after»", splice("#")));
+    assert_eq!(stdout, "after\n", "{stderr}");
+    let (stdout, stderr, _) =
+        run(&format!("{},\nh, print «same line»,\nprint «next line»", splice("#")));
+    assert_eq!(stdout, "same line\nnext line\n", "{stderr}");
+    // The comment in a fragment is one cell, no code; built at the splice it stays an operand.
+    for fragment in ["* 2 # note", "+ 1 # + 1", "* 2 # «a «b» ) c»"] {
+        let (_, stderr, _) = run(&format!("{}, 5 h", splice(fragment)));
+        assert!(stderr.contains("expected one expression, found more"), "{fragment}: {stderr}");
+    }
+}
+
+#[test]
+fn an_unclosed_quote_or_brace_is_reported_at_its_opener() {
+    for (src, message) in [
+        ("print «abc", "1:7: error: this `«` has no `»`"),
+        ("print «a {b»", "1:10: error: this `{` has no `}`"),
+        ("x := «a «b»", "1:6: error: this `«` has no `»`"),
+        ("f := fn () -> void ( print «a ), f()", "1:28: error: this `«` has no `»`"),
+        ("if false ( print «a ) else ( 1 )", "1:18: error: this `«` has no `»`"),
+        ("t := type ( # «a )", "1:15: error: this `«` has no `»`"),
+        ("# «{a»\n5", "1:4: error: this `{` has no `}`"),
+    ] {
+        let (_, stderr, code) = run(src);
+        assert_eq!(code, Some(1), "{src}: {stderr}");
+        assert!(stderr.contains(message), "{src}: {stderr}");
+    }
+    // A `lex` quote lexes its text when it runs, the escapes applied first.
+    let (_, stderr, _) = run("t := lex «x \\«», 5");
+    assert!(stderr.contains("this `«` has no `»`"), "{stderr}");
+}
+
 #[test]
 fn error_aborts_the_run_with_its_message() {
     let out = logos()

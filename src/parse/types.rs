@@ -203,9 +203,9 @@ impl<'a> Parser<'a> {
                 }
                 // Prose before a slot fill is lifted beside it, as on any line;
                 // before a field or member it is read past.
-                if self.at_prose() {
+                if self.prose_at()?.is_some() {
                     let at = self.cx.pos;
-                    self.skip_prose();
+                    self.skip_prose()?;
                     if self.at_slot_word() {
                         return Err(ParseError::SlotFillNeedsShare);
                     }
@@ -492,40 +492,35 @@ impl<'a> Parser<'a> {
         self.cx.pos >= self.cx.source.len()
     }
 
-    fn at_prose(&mut self) -> bool {
+    /// The `#` token at the cursor, `(start, len)`, its text with it.
+    fn prose_at(&mut self) -> Result<Option<(usize, usize)>, ParseError> {
         self.skip_whitespace();
-        self.cx.source.as_bytes().get(self.cx.pos) == Some(&b'#')
+        let source = self.cx.source;
+        let start = self.cx.pos;
+        if start >= source.len() {
+            return Ok(None);
+        }
+        match self.token_at(start, false) {
+            Ok(r) if r.identity == self.types.hash_ => Ok(Some((start, r.matched))),
+            Err(e @ ParseError::Resolve(ResolveError::Unclosed { .. })) => Err(e),
+            _ => Ok(None),
+        }
     }
 
-    /// Past each comment at the cursor, the line form to its newline and the
-    /// string form, `# «…»`, past its quote.
-    fn skip_prose(&mut self) {
-        let source = self.cx.source;
-        let bytes = source.as_bytes();
-        while self.at_prose() {
-            self.cx.pos += 1;
-            while matches!(bytes.get(self.cx.pos), Some(b' ' | b'\t')) {
-                self.cx.pos += 1;
-            }
-            if source[self.cx.pos..].starts_with('«') {
-                match self.cx.scopes.lex(self.trie, &source[self.cx.pos..]) {
-                    Ok(r) => self.cx.pos += r.matched,
-                    Err(_) => return,
-                }
-            } else {
-                while bytes.get(self.cx.pos).is_some_and(|&b| b != b'\n') {
-                    self.cx.pos += 1;
-                }
-            }
+    fn skip_prose(&mut self) -> Result<(), ParseError> {
+        while let Some((start, len)) = self.prose_at()? {
+            self.cx.pos = start + len;
         }
+        Ok(())
     }
 
     /// The comments at the cursor, settled into the body beside the line after them.
     fn lift_prose(&mut self) -> Result<(), ParseError> {
         let body = self.cx.definitions.last().expect("read inside a type body").scope;
-        while self.at_prose() {
-            self.cx.pos += 1;
-            let node = self.comment_after_hash()?;
+        while let Some((start, len)) = self.prose_at()? {
+            self.cx.pos = start + len;
+            let node =
+                self.construct_leaf(self.types.hash_, start, len)?.ok_or(ParseError::BadLiteral)?;
             // SAFETY: `node` is the comment node just built.
             unsafe { self.cx.scopes.settle_item(body, node) };
         }
@@ -734,7 +729,8 @@ impl<'a> Parser<'a> {
         // SAFETY: `text` is the string node just built; its bytes live for the store.
         let held = unsafe { crate::identities::string::text(text) };
         let held = std::str::from_utf8(held).expect("copied from the source text");
-        let mut fragment = self.lex_body_fragment(held)?;
+        let mut fragment =
+            lex_fragment(&self.cx.scopes, self.trie, held).map_err(ParseError::Resolve)?;
         // A slot word of a type around this one names that type's slot; the held body's
         // own are declared when it is built, so its cells wait to be resolved then.
         for (i, cell) in fragment.cells().iter().enumerate() {
@@ -1014,7 +1010,8 @@ impl<'a> Parser<'a> {
                 // SAFETY: `text` is the string node just built; its bytes live for the store.
                 let held = unsafe { crate::identities::string::text(text) };
                 let held = std::str::from_utf8(held).expect("copied from the source text");
-                let fragment = self.lex_body_fragment(held)?;
+                let fragment =
+                    lex_fragment(&self.cx.scopes, self.trie, held).map_err(ParseError::Resolve)?;
                 let cells = Box::into_raw(Box::new(fragment));
                 let body = crate::identities::run_body::build(self.rt.store, types, text, cells);
                 self.cx.definitions.last_mut().expect("checked above").run_body = body;
