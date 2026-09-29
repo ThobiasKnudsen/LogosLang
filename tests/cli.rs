@@ -1011,9 +1011,10 @@ fn a_pattern_spelling_is_declared_through_regex() {
 #[test]
 fn a_pattern_whose_class_can_eat_its_own_literal_still_lexes() {
     let (echoes, stderr) = repl(
-        b"regex \xc2\xab[a-z]+ing\xc2\xbb := type ()\n(running):type == type\n(ring):type == type\n",
+        b"regex \xc2\xab[a-z]+ing\xc2\xbb := type ()\n(running):type == type\n(ring):type == type\n\
+          regex \xc2\xab[0-9]+(?:[0-9]k)?x\xc2\xbb := type ()\n(12kx):type == type\n",
     );
-    assert_eq!(echoes, ["true", "true"], "stderr: {stderr}");
+    assert_eq!(echoes, ["true", "true", "true"], "stderr: {stderr}");
 }
 
 #[test]

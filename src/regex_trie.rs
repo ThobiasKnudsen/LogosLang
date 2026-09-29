@@ -832,6 +832,25 @@ mod tests {
     }
 
     #[test]
+    fn a_chunk_whose_preferred_match_is_short_gives_the_literal_back() {
+        let root = dummy(100);
+        let mut t = RegexTrie::new();
+        let (abc, kx) = (dummy(1), dummy(2));
+        t.insert("a*(ab)?c", rec(abc, root));
+        t.insert("[0-9]+(?:[0-9]k)?x", rec(kx, root));
+
+        let m = t.get("aabc").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (4, abc));
+        let m = t.get("ac").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (2, abc));
+        let m = t.get("12kx").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (4, kx));
+        let m = t.get("12x").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (3, kx));
+        assert!(matches!(t.get("1kx"), Err(RegexTrieError::NodeNotFound)));
+    }
+
+    #[test]
     fn bad_pattern_surfaces_error() {
         // Lookaround is unsupported by the `regex` crate.
         let root = dummy(100);

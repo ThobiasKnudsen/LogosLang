@@ -99,8 +99,10 @@ fn keep_eatable_literals(path: &mut [Segment]) {
 
 /// Whether `chunk` run on its own can end elsewhere than where `literal`
 /// needs it to: some leaf of it matches the literal's first char, or its own
-/// preferences (a lazy repetition, an alternation) can stop it early. A chunk
-/// the syntax parser rejects is kept whole; the trie reports it at lookup.
+/// preferences can stop it early (a lazy repetition, an alternation, or a
+/// second repetition of varying length: `a*(ab)?` on `aab` stops at 2). A
+/// chunk the syntax parser rejects is kept whole; the trie reports it at
+/// lookup.
 fn may_eat(chunk: &str, literal: &str) -> bool {
     let Some(first) = literal.chars().next() else {
         return false;
@@ -110,7 +112,9 @@ fn may_eat(chunk: &str, literal: &str) -> bool {
     let Ok(hir) = regex_syntax::ParserBuilder::new().utf8(false).build().parse(chunk) else {
         return true;
     };
-    fn walk(hir: &Hir, first: char, first_bytes: &[u8]) -> bool {
+    // `varying` counts the repetitions of varying length, a repetition around
+    // one counting as well.
+    fn walk(hir: &Hir, first: char, first_bytes: &[u8], varying: &mut usize) -> bool {
         match hir.kind() {
             HirKind::Empty | HirKind::Look(_) => false,
             HirKind::Literal(Literal(bytes)) => {
@@ -122,13 +126,21 @@ fn may_eat(chunk: &str, literal: &str) -> bool {
             HirKind::Class(Class::Bytes(class)) => first_bytes
                 .iter()
                 .any(|&b| class.ranges().iter().any(|r| r.start() <= b && b <= r.end())),
-            HirKind::Repetition(rep) => !rep.greedy || walk(&rep.sub, first, first_bytes),
-            HirKind::Capture(cap) => walk(&cap.sub, first, first_bytes),
-            HirKind::Concat(subs) => subs.iter().any(|s| walk(s, first, first_bytes)),
+            HirKind::Repetition(rep) => {
+                let inner = *varying;
+                let eats = walk(&rep.sub, first, first_bytes, varying);
+                if rep.max != Some(rep.min) || *varying > inner {
+                    *varying += 1;
+                }
+                !rep.greedy || eats
+            }
+            HirKind::Capture(cap) => walk(&cap.sub, first, first_bytes, varying),
+            HirKind::Concat(subs) => subs.iter().any(|s| walk(s, first, first_bytes, varying)),
             HirKind::Alternation(_) => true,
         }
     }
-    walk(&hir, first, first_bytes)
+    let mut varying = 0;
+    walk(&hir, first, first_bytes, &mut varying) || varying > 1
 }
 
 /// A run of single literal chars becomes one literal segment.
@@ -575,6 +587,27 @@ mod tests {
     fn a_lazy_or_alternating_chunk_keeps_its_literal() {
         assert_eq!(regex_splitting("[0-9]+?x"), vec![vec![rx("[0-9]+?x")]]);
         assert_eq!(regex_splitting("(?:a|ab)c"), vec![vec![rx("(?:a|ab)c")]]);
+    }
+
+    #[test]
+    fn a_chunk_with_two_varying_repetitions_keeps_its_literal() {
+        assert_eq!(
+            regex_splitting("a*(ab)?c"),
+            vec![
+                vec![rx("a*(?:ab)?c")],
+                vec![rx("a*"), lit("c")],
+                vec![rx("(?:ab)?"), lit("c")],
+                vec![lit("c")]
+            ]
+        );
+        assert_eq!(
+            regex_splitting("[0-9]+(?:[0-9]k)?x"),
+            vec![vec![rx("[0-9]+(?:[0-9]k)?x")], vec![rx("[0-9]+"), lit("x")]]
+        );
+        // A fixed count around a varying repetition counts as a second one.
+        assert_eq!(regex_splitting("(?:a*b){12}x"), vec![vec![rx("(?:a*b){12}x")]]);
+        // One varying repetition alone still lets the literal split off.
+        assert_eq!(regex_splitting("[0-9]{2,5}x"), vec![vec![rx("[0-9]{2,5}"), lit("x")]]);
     }
 
     #[test]
