@@ -2616,14 +2616,17 @@ fn a_bracket_inside_a_nested_quote_or_its_comment_is_text_in_every_body() {
     }
 }
 
+/// A type `h` whose `parse` splices `fragment` in its own place.
+fn splicer(rank: &str, fragment: &str) -> String {
+    format!(
+        "h := type (share parse_rank = {rank}, \
+         share parse = ( tape.insert(1, lex «{fragment}»), tape.remove(0) ))"
+    )
+}
+
 #[test]
 fn a_hash_is_one_token_with_its_text_wherever_it_is_lexed() {
-    let splice = |fragment: &str| {
-        format!(
-            "h := type (share parse_rank = *.parse_rank + 1, \
-             share parse = ( tape.insert(1, lex «{fragment}»), tape.remove(0) ))"
-        )
-    };
+    let splice = |fragment: &str| splicer("*.parse_rank + 1", fragment);
     // A spliced `#` reads its own cell, never the rest of the outer line.
     let (_, stdout, stderr) = run_line(&format!("{}, h, print «after»", splice("#")));
     assert_eq!(stdout, "after\n", "{stderr}");
@@ -2643,12 +2646,7 @@ fn a_hash_is_one_token_with_its_text_wherever_it_is_lexed() {
 fn a_comment_built_in_the_boundary_s_build_loop_is_read_through_before_the_next_cell() {
     // Below `(`, `h` runs at the boundary and its `#` is built in the build loop; at `fn`'s rank, at discovery.
     for rank in ["*.parse_rank + 1", "fn.parse_rank"] {
-        let h = |fragment: &str| {
-            format!(
-                "h := type (share parse_rank = {rank}, \
-                 share parse = ( tape.insert(1, lex «{fragment}»), tape.remove(0) ))"
-            )
-        };
+        let h = |fragment: &str| splicer(rank, fragment);
         for (fragment, line, printed) in [
             ("* 2 #", "5 h", "10\n"),
             ("+ 1 #", "5 h", "6\n"),
