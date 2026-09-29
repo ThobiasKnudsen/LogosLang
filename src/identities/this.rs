@@ -354,13 +354,17 @@ pub(crate) unsafe fn field_node(
     Ok((!(*slot).is_null()).then_some(*slot))
 }
 
-/// The slot `read` reaches, as the address of the node pointer it holds.
+/// Where the field `read` reaches lies: a node's slot, the node pointer it holds, or a plain
+/// record's bytes.
 ///
 /// # Safety
-/// As `field_node`.
-pub(crate) unsafe fn slot_addr(rt: &mut Runtime, read: DyadPtr) -> Result<*mut u8, RunError> {
+/// `read` must be a node `is_field_read` accepts.
+pub(crate) unsafe fn field_addr(rt: &mut Runtime, read: DyadPtr) -> Result<*mut u8, RunError> {
     let owner = owner_of(rt.types(), read);
-    Ok(slot_of(rt, dyad::value(read) as *const DyadPtr, owner)?.0 as *mut u8)
+    Ok(match field_of(rt, dyad::value(read) as *const DyadPtr, owner)? {
+        Field::Slot(slot, _) => slot as *mut u8,
+        Field::Bytes(bytes, _) => bytes,
+    })
 }
 
 fn run_slot(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {

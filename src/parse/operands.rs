@@ -299,13 +299,20 @@ impl<'a> Parser<'a> {
         Ok(Some((self.as_operand(l)?, self.as_operand(r)?)))
     }
 
-    /// The place operand of `move`/`free`, the place node itself (not an
-    /// `addr`). A bare name comes back as the `Ended` the caller hands to
-    /// `mark_dead`; a name from outside a loop or `fn` body is refused.
+    /// `e` with its caret at `at`, for a constructor refusing an operand it read.
+    pub(crate) fn fail_at(&mut self, at: usize, e: ParseError) -> ParseError {
+        self.cx.pos = at;
+        e
+    }
+
+    /// The operand of `move`/`free`: a place as the node it is reached through
+    /// (`read::place_node`), never an `addr`, a value no name holds, or a hole. A bare
+    /// name comes back with the `Ended` the caller hands to `mark_dead`; a name from
+    /// outside a loop or `fn` body is refused, and so is one the run starts with.
     pub(crate) fn place_operand_cell(
         &mut self,
         tape: &mut ParsingTape,
-    ) -> Result<(Cell, Option<Ended>), ParseError> {
+    ) -> Result<Taken, ParseError> {
         let Some(&cell) = tape.at(1) else {
             return Err(ParseError::MissingOperand);
         };
@@ -319,8 +326,19 @@ impl<'a> Parser<'a> {
         let field = !cell.constructed
             && !cell.dyad.is_null()
             && unsafe { crate::identities::this::is_field_read(self.types, cell.dyad) };
-        let (node, ended) = if cell.constructed && !woke || field {
-            (cell.dyad, None)
+        let taken = if cell.constructed && !woke || field {
+            // SAFETY: as above.
+            if unsafe { self.types.is_hole(cell.dyad) } {
+                Taken::Hole(cell.start)
+            } else {
+                // SAFETY: as above.
+                match unsafe {
+                    crate::identities::read::place_node(self.rt.store, self.types, cell.dyad)
+                } {
+                    Some(place) => Taken::Place(place, None),
+                    None => Taken::Value(cell.dyad, cell.start),
+                }
+            }
         } else {
             let (identity, binding, scope) = if woke {
                 // SAFETY: checked above to be a binding dyad.
@@ -340,23 +358,32 @@ impl<'a> Parser<'a> {
                 }
                 (r.identity, r.binding, r.scope)
             };
+            if identity == self.types.unknown {
+                tape.remove(1);
+                return Ok(Taken::Hole(cell.start));
+            }
+            // Every section reads the arche's names, an import included, so ending one
+            // here would end it there: stand-in for #35.
+            if scope == self.types.root_scope {
+                self.cx.pos = cell.start;
+                return Err(ParseError::EndsPrimordialName(Box::new(cell.spelling().into())));
+            }
             if self.cx.scopes.crosses_barrier(scope) {
                 self.cx.pos = cell.start;
                 return Err(ParseError::MoveOfOuterName);
             }
             self.check_made(binding)?;
             self.note_outer_read(binding);
-            (identity, Some(Ended { binding }))
+            Taken::Place(identity, Some(Ended { binding }))
         };
-        // SAFETY: `node` is a resolved dyad from the store.
-        unsafe {
-            self.check_capture(node)?;
+        if let Taken::Place(node, _) | Taken::Value(node, _) = taken {
+            // SAFETY: `node` is a resolved dyad from the store.
+            unsafe {
+                self.check_capture(node)?;
+            }
         }
         tape.remove(1);
-        let mut reduced = cell;
-        reduced.dyad = node;
-        reduced.constructed = true;
-        Ok((reduced, ended))
+        Ok(taken)
     }
 
     /// The one read every prefix constructor makes (`return x`, `not x`, a
