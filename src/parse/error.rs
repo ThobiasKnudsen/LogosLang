@@ -232,6 +232,8 @@ pub enum ParseError {
     MoveOfBorrow,
     /// `move a` of a plain record: its bytes are not copied into a name yet. stand-in for #193
     RecordMoveNotInSeed,
+    /// `move p.f` or `move p@` of a field or cell that owns nothing. stand-in for #66
+    MoveOfUnownedPath,
     /// A name as a line of a list a type's `parse` builds from, where the value's type fills
     /// a `free`: the built value owns its lines, so the name must be moved in.
     LineNotMoved,

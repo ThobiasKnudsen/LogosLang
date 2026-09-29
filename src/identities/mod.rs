@@ -656,18 +656,9 @@ pub(crate) enum Operand {
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     let node = types.through(node);
-    // Storage reads as its declared type; a rational place holds a run-time rational, which
-    // no machine type takes silently, and a bare parameter's container is no number.
+    // Storage reads as its declared type.
     if let Some(t) = types.storage_type(node) {
-        return if t.is_null() || t == types.rational {
-            Operand::NonNumeric
-        } else if numtype::is_pointer_type(t) {
-            Operand::Pointer(numtype::pointee_of(t))
-        } else if is_numtype_node(types, t) {
-            Operand::Concrete(numtype::of_type_node(t))
-        } else {
-            Operand::NonNumeric
-        };
+        return operand_of_type(types, t);
     }
     let logos = types.logos_of(node);
     if logos == types.rational {
@@ -776,13 +767,14 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     {
         return Operand::NonNumeric;
     }
-    // `alloc`'s pointee sits at operand 0, `move`'s at 1; owning-ness rides the bound
-    // place's type, not this result.
+    // `alloc`'s pointee sits at operand 0; owning-ness rides the bound place's type, not this
+    // result.
     if logos == types.alloc_ {
         return Operand::Pointer(*(dyad::value(node) as *const DyadPtr));
     }
+    // A move yields the value of the type it carries.
     if logos == types.move_ {
-        return Operand::Pointer(*(dyad::value(node) as *const DyadPtr).add(1));
+        return operand_of_type(types, *(dyad::value(node) as *const DyadPtr).add(1));
     }
     if !logos.is_null() && numtype::is_pointer_type(logos) {
         return Operand::Pointer(numtype::pointee_of(logos));
@@ -847,6 +839,23 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
         return Operand::Concrete(call_return_numtype(logos));
     }
     Operand::NonNumeric
+}
+
+/// A value of type `t` as an operand: a rational holds a run-time rational, which no machine
+/// type takes silently, and a bare parameter's container (`t` null) is no number.
+///
+/// # Safety
+/// `t` must be null or a type node from the store.
+unsafe fn operand_of_type(types: &Core, t: DyadPtr) -> Operand {
+    if t.is_null() || t == types.rational {
+        Operand::NonNumeric
+    } else if numtype::is_pointer_type(t) {
+        Operand::Pointer(numtype::pointee_of(t))
+    } else if is_numtype_node(types, t) {
+        Operand::Concrete(numtype::of_type_node(t))
+    } else {
+        Operand::NonNumeric
+    }
 }
 
 /// `I32` when the callee declares no output.

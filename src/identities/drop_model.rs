@@ -121,22 +121,25 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
             if unsafe { super::this::is_plain(types, types.type_of(place)) } {
                 return Err(ParseError::RecordMoveNotInSeed);
             }
+            // A name moves whatever it holds, a borrowed node's name excepted: it holds none.
+            // A field or cell moves only what it owns, and is emptied: stand-in for #66.
             // SAFETY: as above, and `ended` holds the binding the resolver returned for it.
-            let (owner, node_valued, ty) = unsafe {
+            let (owner, node_valued) = unsafe {
                 (
                     ended.as_ref().is_some_and(|e| p.owns_node(e.binding))
-                        || p.is_owning_read(place),
+                        || p.is_owning_read(place)
+                        || is_owning_place(types, place),
                     meta::is_node_valued(types.type_of(place), types.fn_type),
-                    super::node_type_of(types, place).unwrap_or(types.type_of(place)),
                 )
             };
-            let node = if owner {
-                build_instance_move(p.store(), types, place, ty)
-            } else if node_valued && ended.is_some() {
+            if !owner && node_valued && ended.is_some() {
                 return Err(ParseError::MoveOfBorrow);
-            } else {
-                build_teardown(p.store(), types, types.move_, place)?
-            };
+            }
+            if !owner && ended.is_none() {
+                return Err(ParseError::MoveOfUnownedPath);
+            }
+            // SAFETY: as above.
+            let node = unsafe { build_move(p.store(), types, place) };
             tape.place(node);
             if let Some(ended) = ended {
                 p.mark_dead(ended, node);
@@ -330,28 +333,13 @@ pub(super) fn build_alloc(
     Ok(store.alloc_words(types.alloc_, &[pointee, count, init, types.ops.alloc_]))
 }
 
-/// `move` or `free` over an owning pointer: the place must carry a non-null destructor.
-/// `place` must be a reduced dyad from the store.
-pub(crate) fn build_teardown(
-    store: &mut Store,
-    types: &Core,
-    op_id: DyadPtr,
-    place: DyadPtr,
-) -> Result<DyadPtr, ParseError> {
-    // SAFETY: `place` is a reduced dyad; its type is a valid type node.
-    let logos = unsafe { types.type_of(place) };
-    // SAFETY: `logos` is a type node from the store (above).
-    if unsafe { !numtype::is_pointer_type(logos) } {
-        return Err(ParseError::BadAssignTarget);
-    }
-    // SAFETY: a pointer type carries a record, which the destructor slot is in.
-    if unsafe { meta::destructor_of(logos).is_null() } {
-        return Err(ParseError::BadAssignTarget);
-    }
-    // SAFETY: as above: a pointer type's record holds its pointee.
-    let pointee = unsafe { numtype::pointee_of(logos) };
-    let leaf = if op_id == types.move_ { types.ops.move_ } else { types.ops.free_ };
-    Ok(store.alloc_words(op_id, &[place, pointee, leaf]))
+/// `free` over an owning pointer reached through a field or cell: `[place, pointee, op]`.
+///
+/// # Safety
+/// `place` must be a reduced dyad from the store whose type is an owning pointer type.
+unsafe fn build_block_free(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
+    let pointee = numtype::pointee_of(types.type_of(place));
+    store.alloc_words(types.free_, &[place, pointee, types.ops.free_])
 }
 
 /// A pointer type whose `destructor` slot is set, as opposed to a borrow or a plain
@@ -390,14 +378,13 @@ fn own_hole(p: &mut crate::parse::Parser, hole: DyadPtr) -> Result<bool, ParseEr
     Ok(false)
 }
 
-/// `move a` where `a` owns a node: the move reads the node's address and empties the place,
-/// as over an owning pointer; the pointee slot holds the node's type.
-pub(crate) fn build_instance_move(
-    store: &mut Store,
-    types: &Core,
-    place: DyadPtr,
-    ty: DyadPtr,
-) -> DyadPtr {
+/// `move` of a place: `[place, type, op]`, `type` the moved value's, from which the name
+/// that takes it learns whether it holds it.
+///
+/// # Safety
+/// `place` must be a reduced dyad from the store.
+pub(crate) unsafe fn build_move(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
+    let ty = super::node_type_of(types, place).unwrap_or(types.type_of(place));
     store.alloc_words(types.move_, &[place, ty, types.ops.move_])
 }
 
@@ -418,7 +405,7 @@ pub(crate) unsafe fn build_place_free(
     } else if holder {
         build_held_free(p.store(), types, place)
     } else if is_owning_place(types, place) {
-        build_teardown(p.store(), types, types.free_, place)?
+        build_block_free(p.store(), types, place)
     } else if p.is_owning_read(place) {
         // An owning field reads a node of a type whose body fills `free`.
         let free = meta::instances_free_of(
@@ -627,12 +614,12 @@ unsafe fn require_frame_place(
 
 /// The move reads the place; the parse ended its name, so nothing is written.
 fn lower_move(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a `move` node `[place, pointee, op]`.
+    // SAFETY: `node` is a `move` node `[place, type, op]`.
     let place = unsafe { *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_PLACE) };
     // SAFETY: `place` is a reduced dyad from the store.
     unsafe { require_frame_place(lw, node, place) }?;
-    // SAFETY: `place` is a frame place that holds an address.
-    unsafe { lw.read_place(place, types::I64) }
+    // SAFETY: `place` is a frame place, read by its type.
+    unsafe { lw.lower(place) }
 }
 
 pub(crate) fn build_defer(store: &mut Store, types: &Core, inner: DyadPtr) -> DyadPtr {
@@ -793,9 +780,9 @@ pub(crate) unsafe fn owning_pointee_of(types: &Core, node: DyadPtr) -> Option<Dy
     if logos == types.alloc_ {
         Some(*(dyad::value(node) as *const DyadPtr).add(ALLOC_POINTEE))
     } else if logos == types.move_ {
-        // A move of a node carries the node's type there, and owns no pointer.
-        let pointee = *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_POINTEE);
-        (!meta::is_node_valued(pointee, types.fn_type)).then_some(pointee)
+        let ty = *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_POINTEE);
+        (!ty.is_null() && numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null())
+            .then(|| numtype::pointee_of(ty))
     } else if let Some(output) = moving_call_output(types, node) {
         numtype::is_pointer_type(output).then(|| numtype::pointee_of(output))
     } else if logos == types.scope {
@@ -1135,22 +1122,16 @@ unsafe fn reached_slot(rt: &mut Runtime, place: DyadPtr) -> Result<Option<*mut u
 /// A move reads the value; the parse ended a moved name. A field moved out is emptied, so its
 /// owner's free skips it: stand-in for #66.
 fn run_move(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a `move` node `[place, pointee, op]` from the store.
+    // SAFETY: `node` is a `move` node `[place, type, op]` from the store; a field or cell it
+    // reaches is an owning one, eight bytes wide.
     unsafe {
         let place = *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_PLACE);
-        let reached = reached_slot(rt, place)?;
-        let slot = match reached {
-            Some(slot) => slot,
-            None => rt.place_addr(place).ok_or(RunError::NoActivation)?,
-        };
-        if slot.is_null() {
-            return Err(RunError::Uninitialized);
-        }
-        let ptr = std::ptr::read_unaligned(slot as *const i64);
-        if reached.is_some() {
+        let value = rt.run(place)?;
+        if dyad::ty(place) != rt.types().binding_ {
+            let slot = owned_slot(rt, place)?;
             std::ptr::write_unaligned(slot as *mut i64, 0);
         }
-        Ok(ptr)
+        Ok(value)
     }
 }
 
@@ -1324,6 +1305,27 @@ mod tests {
         assert_eq!(v, 7);
         assert_eq!(live, 0, "the moved pointer is freed once, through b");
         assert_eq!(free_log(), vec![7], "move does not double-free the source");
+    }
+
+    #[test]
+    fn move_moves_the_value_of_any_name() {
+        // A scalar is copied at its width, a borrowed pointer stays a borrow; the name ends.
+        assert_eq!(run("a := i32 5,\nb := move a,\nb"), (5, 0));
+        assert_eq!(run("a := i64 7,\nb := move a,\nb + 1"), (8, 0));
+        assert_eq!(run("x := i32 3,\nq := &x,\nr := move q,\nr@"), (3, 0));
+        assert_eq!(
+            run("f := fn (n := i32 ?) -> i32 ( m := move n, m + 1 ),\nf.compile(),\nf(4)"),
+            (5, 0)
+        );
+        assert_eq!(
+            parse_err("a := i32 5,\nb := move a,\na"),
+            ParseError::Resolve(ResolveError::Dead("a".into()))
+        );
+        // A field moves only what it owns.
+        assert_eq!(
+            parse_err("p := type ( x := i32 ?, y := i32 ? ),\nq := p (1, 2),\nb := move q.x"),
+            ParseError::MoveOfUnownedPath
+        );
     }
 
     #[test]

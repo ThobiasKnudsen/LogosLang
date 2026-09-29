@@ -3098,6 +3098,8 @@ fn a_plain_record_s_owning_field_keeps_its_pointer_in_its_own_bytes() {
         ("a := alloc 1 of i32 5, x.p = move a, x.s()", "2"),
         ("x.s()", "2"),
         ("a := alloc 1 of i32 5, x.p = move a, b := alloc 1 of i32 6, x.p = move b, x.p@", "6"),
+        // Moved out, the field is empty, so the record's own free frees nothing twice.
+        ("a := alloc 1 of i32 5, x.p = move a, b := move x.p, b@", "5"),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{r}, {tail}"));
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");

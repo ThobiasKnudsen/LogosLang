@@ -291,6 +291,11 @@ pub fn parse_message(e: &ParseError) -> String {
              which moves out to the caller"
                 .into()
         }
+        ParseError::MoveOfUnownedPath => {
+            "moving out of a field or cell that owns nothing is not in the seed yet; a name \
+             moves whatever it holds"
+                .into()
+        }
         ParseError::RecordMoveNotInSeed => {
             "moving a plain record is not in the seed yet: its bytes are not copied into a name"
                 .into()
