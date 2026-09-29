@@ -5,6 +5,8 @@
 //! the trie: alternation yields several paths, each an ordered list of
 //! [`Segment`]s.
 
+use regex_syntax::hir::{Class, Hir, HirKind, Literal};
+
 /// Cap on path explosion from cartesian alternation.
 const MAX_PATHS: usize = 1000;
 
@@ -75,6 +77,70 @@ fn get_quant_n(q: &str) -> (usize, usize) {
         }
     }
     (0, 0)
+}
+
+/// The trie matches a path segment by segment and never backs up between
+/// them, so a literal the regex chunk before it could eat stays inside that
+/// chunk, escaped.
+fn keep_eatable_literals(path: &mut [Segment]) {
+    let mut chunk = String::new();
+    for seg in path.iter_mut() {
+        if seg.is_lit {
+            if chunk.is_empty() || !may_eat(&chunk, &seg.str) {
+                chunk.clear();
+                continue;
+            }
+            seg.str = regex::escape(&seg.str);
+            seg.is_lit = false;
+        }
+        chunk.push_str(&seg.str);
+    }
+}
+
+/// Whether `chunk` run alone can end elsewhere than where `literal` needs it
+/// to: a leaf matches the literal's first char, or a lazy repetition, an
+/// alternation or a second repetition of varying length can stop it early.
+/// A chunk the parser rejects is kept whole; the trie reports it at lookup.
+fn may_eat(chunk: &str, literal: &str) -> bool {
+    let Some(first) = literal.chars().next() else {
+        return false;
+    };
+    let mut buf = [0u8; 4];
+    let first_bytes = first.encode_utf8(&mut buf).as_bytes();
+    let Ok(hir) = regex_syntax::ParserBuilder::new().utf8(false).build().parse(chunk) else {
+        return true;
+    };
+    // `varying` counts the repetitions of varying length, a repetition around
+    // one counting as well.
+    fn walk(hir: &Hir, first: char, first_bytes: &[u8], varying: &mut usize) -> bool {
+        match hir.kind() {
+            HirKind::Empty | HirKind::Look(_) => false,
+            // A byte literal can end inside a char; a text literal cannot.
+            HirKind::Literal(Literal(bytes)) => match std::str::from_utf8(bytes) {
+                Ok(text) => text.contains(first),
+                Err(_) => first_bytes.iter().any(|b| bytes.contains(b)),
+            },
+            HirKind::Class(Class::Unicode(class)) => {
+                class.ranges().iter().any(|r| r.start() <= first && first <= r.end())
+            }
+            HirKind::Class(Class::Bytes(class)) => first_bytes
+                .iter()
+                .any(|&b| class.ranges().iter().any(|r| r.start() <= b && b <= r.end())),
+            HirKind::Repetition(rep) => {
+                let inner = *varying;
+                let eats = walk(&rep.sub, first, first_bytes, varying);
+                if rep.max != Some(rep.min) || *varying > inner {
+                    *varying += 1;
+                }
+                !rep.greedy || eats
+            }
+            HirKind::Capture(cap) => walk(&cap.sub, first, first_bytes, varying),
+            HirKind::Concat(subs) => subs.iter().any(|s| walk(s, first, first_bytes, varying)),
+            HirKind::Alternation(_) => true,
+        }
+    }
+    let mut varying = 0;
+    walk(&hir, first, first_bytes, &mut varying) || varying > 1
 }
 
 /// A run of single literal chars becomes one literal segment.
@@ -436,6 +502,10 @@ pub fn regex_splitting(pattern: &str) -> Vec<Vec<Segment>> {
             }
         }
     }
+    for path in paths.iter_mut() {
+        keep_eatable_literals(path);
+        merge_adjacent(path);
+    }
     paths
 }
 
@@ -488,6 +558,68 @@ mod tests {
     #[test]
     fn capturing_group_repetition_keeps_grouping() {
         assert_eq!(regex_splitting("(ab)+"), vec![vec![rx("(?:ab)+")]]);
+    }
+
+    #[test]
+    fn a_literal_the_chunk_can_eat_stays_in_the_chunk() {
+        assert_eq!(regex_splitting("[a-z]+ing"), vec![vec![rx("[a-z]+ing")]]);
+        assert_eq!(regex_splitting("[0-9]+0"), vec![vec![rx("[0-9]+0")]]);
+        // Every atom of the chunk counts, not only the one before the literal.
+        assert_eq!(
+            regex_splitting("[a-z]+ing[0-9]*a"),
+            vec![vec![rx("[a-z]+ing[0-9]*a")], vec![rx("[a-z]+inga")]]
+        );
+        // The literal is escaped as it joins the chunk.
+        assert_eq!(regex_splitting("[a-z.]+\\.x"), vec![vec![rx("[a-z.]+\\.x")]]);
+    }
+
+    #[test]
+    fn a_literal_the_chunk_cannot_eat_splits_off() {
+        assert_eq!(regex_splitting("a[0-9]+b"), vec![vec![lit("a"), rx("[0-9]+"), lit("b")]]);
+        assert_eq!(regex_splitting("x+y"), vec![vec![rx("x+"), lit("y")]]);
+        assert_eq!(
+            regex_splitting("[0-9]+\\.[0-9]+"),
+            vec![vec![rx("[0-9]+"), lit("."), rx("[0-9]+")]]
+        );
+    }
+
+    #[test]
+    fn a_lazy_or_alternating_chunk_keeps_its_literal() {
+        assert_eq!(regex_splitting("[0-9]+?x"), vec![vec![rx("[0-9]+?x")]]);
+        assert_eq!(regex_splitting("(?:a|ab)c"), vec![vec![rx("(?:a|ab)c")]]);
+    }
+
+    #[test]
+    fn a_chunk_with_two_varying_repetitions_keeps_its_literal() {
+        assert_eq!(
+            regex_splitting("a*(ab)?c"),
+            vec![
+                vec![rx("a*(?:ab)?c")],
+                vec![rx("a*"), lit("c")],
+                vec![rx("(?:ab)?"), lit("c")],
+                vec![lit("c")]
+            ]
+        );
+        assert_eq!(
+            regex_splitting("[0-9]+(?:[0-9]k)?x"),
+            vec![vec![rx("[0-9]+(?:[0-9]k)?x")], vec![rx("[0-9]+"), lit("x")]]
+        );
+        // A fixed count around a varying repetition counts as a second one.
+        assert_eq!(regex_splitting("(?:a*b){12}x"), vec![vec![rx("(?:a*b){12}x")]]);
+        // One varying repetition alone still lets the literal split off.
+        assert_eq!(regex_splitting("[0-9]{2,5}x"), vec![vec![rx("[0-9]{2,5}"), lit("x")]]);
+    }
+
+    #[test]
+    fn may_eat_judges_byte_classes_multibyte_chars_and_looks() {
+        assert!(may_eat("(?-u:[a-z])+", "ing"));
+        assert!(!may_eat("[a-z]+", "ø"));
+        assert!(may_eat("[a-zø]+", "ø"));
+        assert!(may_eat("(?-u:\\xC3)*", "ø"));
+        assert!(!may_eat("é+", "ø"));
+        assert!(may_eat("aø+", "ø"));
+        assert!(!may_eat("[a-z]+\\b", "."));
+        assert!(may_eat("[a-z]+\\b", "x"));
     }
 
     #[test]
