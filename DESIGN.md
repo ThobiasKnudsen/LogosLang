@@ -368,9 +368,10 @@ No teardown node is inserted at a declaration, and no `defer` is written for a v
 - **Seed:** not yet: `defer free` inserted at the binding site and emptied at `move`/`free`; nothing at `=` (#170).
 
 ### `move` is the act, `own` the gate word, `free` the end
-`b := move a` moves the value from `a` to `b`, `f(move a)` into a parameter, `move p.f` out of a field path; the source is dead from that line. `own` stands only in a type position and names a state: `mut items := own t ?`, `fn (p := own @i32 ?)` and `-> own @T` say that the field, parameter or result owns what is put into it. `free x` runs the teardown of the value `x` holds and ends `x`; `free p@` does the same for a cell; inside a type's own `free` body, `free ptr` tears a field down, the value being ended. The slot is `share free = (…)`, named for the moment it runs, beside `parse` and `run`. `free` on a name whose type fills no `free` ends the name and runs nothing.
+`b := move a` moves the value from `a` to `b`, `f(move a)` into a parameter, `move p.f` out of a field path; the source is dead from that line. `own` stands only in a type position and names a state: `mut items := own t ?`, `fn (p := own @i32 ?)` and `-> own @T` say that the field, parameter or result owns what is put into it. `free x` runs the teardown of the value `x` holds and ends `x`; `free p@` does the same for a cell; inside a type's own `free` body, `free ptr` tears a field down, the value being ended. The slot is `share free = (…)`, named for the moment it runs, beside `parse` and `run`. `free` on a name whose type fills no `free` ends the name and runs nothing. `free` of a value no name holds runs the value, then its type's `free` over it: `free (f())` runs `f()`, `free (alloc 1 of i32 5)` allocates and frees at once. `move` of a value no name holds, `move (f())`, is a checked error: there is no place to move it out of. A hole, `T ?`, is no value, so `free (own @i32 ?)` is the checked error too.
 - **Why:** Thobias: "own should be renamed to move and drop should be renamed to free". `move` names the act, which is what the line does, and keeping `own` for the state puts two meanings on two words. `free` is one word for "end this value's life now", a block and a node alike, and reads as plain English in a teardown body: free the cells, free the pointer. Accepted with it: `free n` on an `i32` ends the name and frees nothing, as Rust's `drop` on an integer does; an allocator's release is reached through `free` by the value's type, never by a second word.
 - **Ruled:** 28 September 2026, Thobias (`own` stays the gate word: "yes own can stay as the gate name").
+- **Ruled (29 September 2026, Thobias, #210):** an operand that is not a place: `free` runs it and frees it, `move` refuses it. **Why:** "i think the free examples should work but they are unecessary but there are many sets of code you can write which is unecessary so this shouldnt actually be an error but the move line should be because you cannot move something anon."
 - **Seed:** since 29 September 2026 (#171): `move x` of an owning pointer or an owned node, `move p.f`, `free x`, `free p@`, `free ptr` in a type's own `free` body, and the slot `share free = (…)`; `free x` ends `x` in every form, and a cell or field it frees ends no name. `own` before anything but a hole is a checked error. `share drop = (…)` meets the general check for a fresh word filled after `share` in a type body, whose message names `share free = (…)`. Not yet: `move` of a scalar (#194) or of a plain record (#193), `f(move a)` (›Holding is decided at the binding site, parameters included‹), `own` on a parameter, `-> own @T`.
 
 ### A type whose fields carry teardowns must write its own destructor
@@ -388,19 +389,21 @@ Defining such a type without a destructor is a checked error at the type definit
 - **Source:** DESIGN.md l.104
 
 ### Holding is decided at the binding site, parameters included
-`a := alloc …` and `b := move a` make the bound name the holder of the value, in that place's scope, whose exit runs the value's `free` (›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹). A constructor result passed straight as an argument, `f(alloc 1 of i32 5)`, is bound to the parameter in the callee's frame, which holds it; no `own` gate is needed, since no caller place is emptied. A value that reaches no name at all is a checked error.
+`a := alloc …` and `b := move a` make the bound name the holder of the value, in that place's scope, whose exit runs the value's `free` (›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹). A constructor result passed straight as an argument, `f(alloc 1 of i32 5)`, is bound to the parameter in the callee's frame, which holds it; no `own` gate is needed, since no caller place is emptied. A value that reaches no name at all is a checked error, unless `free` or `&` takes it. `free (v)` holds the value and ends it on the spot, running its type's `free`. `&(v)` holds it until the enclosing scope ends, whose exit runs its `free`, and hands out its address: `w := type ( x := i64 ? ), p := &w(7), p@.x` gives `7`, and `&(1 + 2)` works the same. `move (v)` holds nothing: there is no place to move it out of.
 - **Ruled:** binding site, July 2026; parameters, 30 August 2026; respelled 28 September 2026, when the inserted `defer` went.
+- **Ruled (29 September 2026, Thobias, #210):** `free` and `&` hold a value no name holds. **Why (`free`):** "i think the free examples should work but they are unecessary but there are many sets of code you can write which is unecessary so this shouldnt actually be an error". **Why (`&`):** none was given beyond the option he chose, which read: "`&` keeps the value alive until its scope ends and hands out its address, as Rust's `let p = &w(7);` does."
 - **Seed:** named bindings only; the parameter case is a bug against the ruling.
 - **Source:** DESIGN.md l.104
 
 ### Three fail-closed ownership rules, and `-> own @T`
 Each guards a place where ownership would escape the machinery that frees it:
-1. An owning value must be bound to a name (else no place holds it and nothing runs its `free`).
+1. An owning value must be bound to a name (else no place holds it and nothing runs its `free`). `free` and `&` are the two exceptions: `free (alloc 1 of i32 5)` holds the value and frees it on the spot, `&(v)` holds it to its scope's end (›Holding is decided at the binding site, parameters included‹).
 2. A scope's value may not be a place the scope owns: the teardown would free it on the way out and hand back freed memory; `move` is how ownership leaves a scope.
 3. Ownership may not cross a function return: a block hands ownership to its binder in plain view of the parse, but a call hides its body behind a return type that cannot yet say it transfers ownership, so the caller would not know it owes a `free`.
 
 Rules 2 and 3 no longer apply to a *last* value since 25 September 2026 (›A last value moves out‹). `-> own @T` hands ownership to the caller, whose bound name holds the value (`own` as a gate on a reference, the same primitive as `pub`/`mut`).
 - **Ruled:** rules, July 2026; `-> own @T`, 30 August 2026.
+- **Ruled (29 September 2026, Thobias, #210):** rule 1's exceptions, `free` and `&`, from the ruling recorded at ›Holding is decided at the binding site, parameters included‹.
 - **Source:** DESIGN.md l.104
 
 ### `&T` / `&mut T` are checked statically
@@ -472,8 +475,9 @@ No read, write or pass (›Name resolution is scope-filtered‹).
 - **Source:** DESIGN.md l.104
 
 ### `free x` works on any identity
-Runs the type's `free` where one is filled, ends the name either way: one verb releases a name whatever its type.
+Runs the type's `free` where one is filled, ends the name either way: one verb releases a name whatever its type. A value no name holds is released alike: it runs, then its type's `free` runs over it.
 - **Ruled:** inside the 3 September 2026 passage (no separate date); respelled 28 September 2026.
+- **Ruled (29 September 2026, Thobias, #210):** a value too, from the ruling recorded at ›`move` is the act, `own` the gate word, `free` the end‹. **Why:** "many sets of code you can write which is unecessary so this shouldnt actually be an error".
 - **Seed:** done, the same day.
 - **Source:** DESIGN.md l.104
 
@@ -1063,9 +1067,11 @@ The `«` constructor counts `«`/`»` and `{`/`}`, so a string in an interpolati
 - **Source:** DESIGN.md l.168
 
 ### Pointer types are prefix `@T`; dereference is postfix `x@`; `&x` is address-of
-`@i32`, `@@i32`, any type (`@point`, `@dyad`). `p@`, `p@.x`, `p@@`. `&x` takes the address of a storage-backed place (`&p.x`). The `@` family is raw, unchecked addresses, all the seed has at v0.1.0; the borrow checker's `&T`, `&mut T` come later on top: same addresses plus proof of safe use.
+`@i32`, `@@i32`, any type (`@point`, `@dyad`). `p@`, `p@.x`, `p@@`. `&x` takes the address of a storage-backed place (`&p.x`). `&` of a value nothing names, `&w(7)` or `&(1 + 2)`, keeps the value alive until the enclosing scope ends and hands out its address; its `free` runs at that scope's end. The `@` family is raw, unchecked addresses, all the seed has at v0.1.0; the borrow checker's `&T`, `&mut T` come later on top: same addresses plus proof of safe use.
 - **Why:** the pointer is what the user meets first, so it reads first. Postfix deref reads in evaluation order where prefix needs brackets (`(@p).x`). A dereference can never start an expression, so `@` after a value is always deref and `@` opening a type position is always the pointer type: no ambiguity.
 - **Ruled:** July 2026, in discussion; replaced an earlier postfix pointer-type spelling.
+- **Ruled (29 September 2026, Thobias, #210):** `&` of a value nothing names holds it to its scope's end. **Why:** none was given beyond the option he chose ("b"), which read: "`&` keeps the value alive until its scope ends and hands out its address, as Rust's `let p = &w(7);` does."
+- **Seed:** `&` of a value nothing names is refused, "`&` needs a variable to take the address of", until #211's `&` slice.
 - **Source:** DESIGN.md l.170
 
 ### The dyad describes itself down to one fixed point
