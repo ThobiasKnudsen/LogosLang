@@ -408,6 +408,7 @@ Nothing moved from this section.
 
 ### `fn` is not a primitive: a function is a type in this same shape
 - **History:** the `fn` type was two shared functions, `compile` (lower body to `bcode`) and `run` (execute), plus per-instance `input`, `output_type`, `body` (reflectable graph), `bcode` (opaque, null until compiled), `frame` (byte size of parameters and locals per call, null when none).
+- **History:** 29 September 2026 the #197 Ruled line ended "One rule decides this for a `fn` and for a type's `run` body (›A generic function body is lexed once and built once per set of field types‹); whether the same body written out as a type is built at its definition too is the Open line there." Closed the same night by Thobias's "a" on `sq` and `sq2` (›A generic function body is lexed once and built once per set of field types‹): the written-out type is built at its definition too when its build has all it needs there.
 - **Seed detail (27 September 2026):** #127, after #126.
 
 ### The executing primitive has two paths: jump to `bcode`, or walk the body
