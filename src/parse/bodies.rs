@@ -92,8 +92,8 @@ pub unsafe fn fn_frame_size(fn_node: DyadPtr) -> usize {
     }
 }
 
-/// Empty for a function that reads none, and for a declaration's placeholder
-/// whose value is still being parsed.
+/// Empty for a function that reads none, and for a declaration whose value is
+/// still being parsed.
 ///
 /// # Safety
 /// `fn_node` must be a function node: its value null, or the operands
@@ -296,14 +296,7 @@ impl<'a> Parser<'a> {
     ) -> Result<DyadPtr, ParseError> {
         let types = self.types;
         let text = crate::identities::run_body::text_of(held);
-        let mut cells = (*crate::identities::run_body::cells_of(held)).cells();
-        // A fresh cell's dyad is the placeholder a `:=` in the body fills, so
-        // each construction gets its own and the held cells stay as lexed.
-        for cell in &mut cells {
-            if cell.is_fresh() {
-                cell.dyad = self.rt.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut());
-            }
-        }
+        let cells = (*crate::identities::run_body::cells_of(held)).cells();
         let mut chain = Vec::new();
         let mut scope =
             crate::identities::scope::parent_of(crate::identities::meta::record_scope_of(ty));
@@ -404,7 +397,7 @@ impl<'a> Parser<'a> {
             type_fields.iter().try_for_each(|&(n, t)| self.declare_name(n, t, 0).map(|_| ()));
         self.cx.scopes.pop();
         declared?;
-        self.fn_over_body(types.fn_type, input, &places, output, spec)
+        self.fn_over_body(types.fn_type, input, &places, output, spec, std::ptr::null_mut())
     }
 
     /// `(start, len)` of the text inside the `( … )` at the cursor, consumed
@@ -456,20 +449,19 @@ impl<'a> Parser<'a> {
     }
 
     /// `fn ( params ) -> ret ( body )` (DESIGN ›A function's surface‹): the
-    /// node is `[input, output, body, bcode, frame, outer]`. `declared` is the
-    /// declaration's placeholder the signature publishes onto before the body parses.
+    /// node is `[input, output, body, bcode, frame, outer]`. `binding` is the
+    /// declaration's, pointed at the node before the body parses, or null.
     ///
     /// # Safety
-    /// `declared` must be null or a placeholder dyad from the store that
-    /// nothing has read a value from yet; the early signature is written through it.
+    /// `binding` must be null or a binding dyad from the store.
     pub unsafe fn parse_fn(
         &mut self,
         fn_type: DyadPtr,
-        declared: DyadPtr,
+        binding: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
         // A `share` function reached through a value takes that value
         // (DESIGN ›The constructor is a field‹): the `fn` takes it first.
-        let member = !declared.is_null()
+        let member = !binding.is_null()
             && self.cx.member_fn_depth == Some(self.cx.frames.len())
             && self.cx.definitions.last().is_some_and(|d| d.this_param.is_null());
         let (input, params) = self.parse_record_taking(member.then_some(self.types.dyad_))?;
@@ -486,8 +478,10 @@ impl<'a> Parser<'a> {
             unsafe { self.types.through(out) }
         };
         if !member {
-            // SAFETY: `input` was just built by `parse_record`; `declared` is the caller's placeholder.
-            return unsafe { self.fn_over_body(fn_type, input, &params, output, declared) };
+            // SAFETY: `input` was just built by `parse_record`; `binding` is the caller's.
+            return unsafe {
+                self.fn_over_body(fn_type, input, &params, output, std::ptr::null_mut(), binding)
+            };
         }
         // The value is the first parameter, the one no name declares.
         let this = params[0];
@@ -496,7 +490,9 @@ impl<'a> Parser<'a> {
         def.read_receiver = false;
         def.wrote_receiver = false;
         // SAFETY: as above.
-        let f = unsafe { self.fn_over_body(fn_type, input, &params, output, declared) };
+        let f = unsafe {
+            self.fn_over_body(fn_type, input, &params, output, std::ptr::null_mut(), binding)
+        };
         let def = self.cx.definitions.last_mut().expect("still open");
         def.this_param = std::ptr::null_mut();
         let receiver = (u64::from(def.read_receiver) * RECEIVER_READS)
@@ -513,25 +509,27 @@ impl<'a> Parser<'a> {
 
     /// The half of `parse_fn` after the signature, shared with a slot body read bare: the
     /// frame opened on the `fn` node, the parameters laid out in it on their bindings, the
-    /// body parsed deferred with the parameter scope reopened. The node is `declared`, the
-    /// declaration's placeholder or a run body's `spec`, or a fresh cell; its signature is
-    /// on it before the body parses, so a recursive self-call resolves its types.
+    /// body parsed deferred with the parameter scope reopened. The node is `spec`, a run
+    /// body's node minted for its set, or fresh; its signature is on it, and `binding`
+    /// points at it, before the body parses, so a recursive self-call resolves its types.
     ///
     /// # Safety
-    /// `input` must be a record node and `params` its fields' bindings in order; `declared`
-    /// null or a `fn`-typed dyad from the store that nothing has read a value from yet.
+    /// `input` must be a record node and `params` its fields' bindings in order; `spec`
+    /// null or a `fn`-typed dyad from the store that nothing has read a value from yet;
+    /// `binding` null or a binding dyad from the store.
     pub(super) unsafe fn fn_over_body(
         &mut self,
         fn_type: DyadPtr,
         input: DyadPtr,
         params: &[DyadPtr],
         output: DyadPtr,
-        declared: DyadPtr,
+        spec: DyadPtr,
+        binding: DyadPtr,
     ) -> Result<DyadPtr, ParseError> {
-        let node = if declared.is_null() {
+        let node = if spec.is_null() {
             self.rt.store.alloc_raw(fn_type, std::ptr::null_mut())
         } else {
-            declared
+            spec
         };
         let early = self.rt.store.alloc_operands(&[
             input,
@@ -542,8 +540,12 @@ impl<'a> Parser<'a> {
             std::ptr::null_mut(),
             std::ptr::null_mut(),
         ]);
-        // SAFETY: `node` is the placeholder or a fresh cell; nothing has read a value from it.
+        // SAFETY: `node` is `spec` or just minted; nothing has read a value from it.
         unsafe { dyad::set_value(node, early) };
+        if !binding.is_null() {
+            // SAFETY: `binding` is a binding dyad from the store (the caller's contract).
+            unsafe { Binding::set_dyad(binding, node) };
+        }
         // A call frame is an instance of its function, so a parameter resolves
         // to a frame slot as a local does (DESIGN ›Resolution is one rule‹). The
         // barrier begins at the current depth, so a lesser depth is outside the function.

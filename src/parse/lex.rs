@@ -6,13 +6,12 @@
 
 use super::*;
 
-/// The lex step the driver and `lex «…»` share: a fresh spelling mints its
-/// dyad with both slots null into `store`, the pattern's construction done at
-/// the lex. `None` at the end of the text; `text` must outlive the cell.
+/// The lex step the driver and `lex «…»` share: a fresh spelling is a cell with no node,
+/// the pattern's construction done at the lex. `None` at the end of the text; `text` must
+/// outlive the cell.
 pub(crate) fn lex_token(
     scopes: &ScopeStack,
     trie: &RegexTrie,
-    store: &mut Store,
     text: &str,
     pos: usize,
 ) -> Result<Option<(Cell, usize)>, ResolveError> {
@@ -25,12 +24,10 @@ pub(crate) fn lex_token(
         return Ok(None);
     }
     let r = scopes.lex(trie, &text[start..])?;
-    let dyad = if r.fresh {
-        store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut())
-    } else {
-        r.binding
-    };
-    // SAFETY: `text` outlives the cell (the caller's contract); `dyad` is the index's binding or a fresh dyad.
+    // DESIGN ›An unknown spelling stays text on the tape; `:=` makes the binding, and the
+    // node comes with the value‹.
+    let dyad = if r.fresh { std::ptr::null_mut() } else { r.binding };
+    // SAFETY: `text` outlives the cell (the caller's contract); `dyad` is null or the index's binding.
     let cell = unsafe { Cell::lexed(dyad, text, start, r.matched) };
     Ok(Some((cell, start + r.matched)))
 }
@@ -41,12 +38,11 @@ pub(crate) fn lex_token(
 pub(crate) fn lex_fragment(
     scopes: &ScopeStack,
     trie: &RegexTrie,
-    store: &mut Store,
     text: &str,
 ) -> Result<ParsingTape, ResolveError> {
     let mut tape = ParsingTape::new();
     let mut pos = 0;
-    while let Some((cell, next)) = lex_token(scopes, trie, store, text, pos)? {
+    while let Some((cell, next)) = lex_token(scopes, trie, text, pos)? {
         tape.push(cell);
         pos = next;
     }
@@ -80,13 +76,18 @@ impl<'a> Parser<'a> {
         } else {
             self.skip_whitespace();
             let source = self.cx.source;
-            let Some((cell, next)) =
-                lex_token(&self.cx.scopes, self.trie, self.rt.store, source, self.cx.pos)
-                    .map_err(ParseError::Resolve)?
+            let Some((cell, next)) = lex_token(&self.cx.scopes, self.trie, source, self.cx.pos)
+                .map_err(ParseError::Resolve)?
             else {
                 return Ok(None);
             };
             self.cx.pos = next;
+            if self.unbuilt(&cell) {
+                self.cx.pos = cell.start;
+                return Err(ParseError::Resolve(ResolveError::Unbuilt(
+                    cell.spelling().to_string(),
+                )));
+            }
             cell
         };
         // A box is read by the pass wherever it stands as an operand, and the
@@ -212,8 +213,23 @@ impl<'a> Parser<'a> {
         if let Ok(r) = self.resolve_fresh(cell.spelling()) {
             if r.matched == cell.len {
                 cell.dyad = r.binding;
+                if self.unbuilt(cell) {
+                    cell.dyad = std::ptr::null_mut();
+                }
             }
         }
+    }
+
+    /// A name whose `:=` is still driving its value: its binding has no node yet and is
+    /// no storage, so a use of it would read nothing.
+    fn unbuilt(&self, cell: &Cell) -> bool {
+        let binding = cell.binding(self.types);
+        if binding.is_null() {
+            return false;
+        }
+        // SAFETY: a cell's binding is a binding dyad from the store.
+        let b = unsafe { Binding::read(binding) };
+        b.dyad.is_null() && b.frame.is_null()
     }
 
     fn feed_take(&mut self) -> Option<Cell> {
@@ -245,8 +261,7 @@ impl<'a> Parser<'a> {
         let mut tape = ParsingTape::new();
         let mut pos = 0;
         while let Some((cell, next)) =
-            lex_token(&self.cx.scopes, self.trie, self.rt.store, text, pos)
-                .map_err(ParseError::Resolve)?
+            lex_token(&self.cx.scopes, self.trie, text, pos).map_err(ParseError::Resolve)?
         {
             pos = next;
             let is_hash = cell.spelling() == "#";

@@ -68,10 +68,9 @@ struct Context<'a> {
     source: &'a str,
     pos: usize,
     scopes: ScopeStack,
-    /// The placeholder of the declaration awaiting its value, or null:
-    /// `parse_fn` publishes the signature onto it before the body parses, so
-    /// a recursive self-call resolves its types.
-    pending_fn: DyadPtr,
+    /// The binding of the declaration awaiting its value, or null: `parse_fn` points it at
+    /// the `fn` node before the body parses, so a recursive self-call resolves its types.
+    pending_binding: DyadPtr,
     /// The bindings of the declarations whose right side is being driven,
     /// innermost last: what a `lex_rank = …` line writes. A stand-in for a
     /// definition writing a binding field from inside `:=`.
@@ -154,7 +153,7 @@ impl<'a> Context<'a> {
             source,
             pos: 0,
             scopes,
-            pending_fn: std::ptr::null_mut(),
+            pending_binding: std::ptr::null_mut(),
             filling: Vec::new(),
             filling_at: Vec::new(),
             last_declared: std::ptr::null_mut(),

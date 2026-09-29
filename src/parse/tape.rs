@@ -7,12 +7,12 @@
 use super::*;
 use crate::dyad;
 
-/// One cell of the tape: a dyad pointer (a binding, a fresh dyad, or the built
-/// node) plus the tape's own two facts, the flag and the lexed spelling
+/// One cell of the tape: a dyad pointer (a binding, the built node, or null for a fresh
+/// spelling) plus the tape's own two facts, the flag and the lexed spelling
 /// (DESIGN ›The scope's constructor is the driver‹).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cell {
-    /// The binding, the fresh dyad, or the node.
+    /// The binding or the node; null for a fresh spelling.
     pub dyad: DyadPtr,
     pub constructed: bool,
     /// The constructed cell is the group a `(` landed, so the identity to its
@@ -74,7 +74,7 @@ impl Cell {
 impl Cell {
     /// # Safety
     /// `text` must outlive every read of the cell's spelling; `dyad` must be
-    /// null or a dyad from the store.
+    /// null (a fresh spelling) or a dyad from the store.
     pub unsafe fn lexed(dyad: DyadPtr, text: &str, start: usize, len: usize) -> Self {
         let (path, origin, target, hole, owning) = Self::NO_FACTS;
         Cell {
@@ -126,7 +126,7 @@ impl Cell {
         self.start + self.len
     }
 
-    /// The binding read through to its dyad, a fresh dyad or a node itself.
+    /// The binding read through to its dyad, a node itself, or null for a fresh spelling.
     pub fn identity(&self, types: &Core) -> DyadPtr {
         // SAFETY: a cell's dyad is null or a dyad from the store.
         unsafe { types.through(self.dyad) }
@@ -144,10 +144,9 @@ impl Cell {
         }
     }
 
-    /// An unconstructed cell whose fresh dyad has both slots null.
+    /// A lexed spelling nothing has declared: no node, its text on the tape.
     pub fn is_fresh(&self) -> bool {
-        // SAFETY: a cell's dyad is null or a dyad from the store.
-        !self.constructed && !self.dyad.is_null() && unsafe { dyad::ty(self.dyad) }.is_null()
+        !self.constructed && self.dyad.is_null() && self.text.is_some()
     }
 
     /// The finished group `(` leaves, which the identity to its left may

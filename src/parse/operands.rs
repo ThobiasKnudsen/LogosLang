@@ -10,15 +10,15 @@ use crate::dyad;
 impl<'a> Parser<'a> {
     /// `fn`'s constructor claims it so a recursive self-call inside the body
     /// resolves the published signature.
-    pub(crate) fn take_pending_fn(&mut self) -> DyadPtr {
-        std::mem::replace(&mut self.cx.pending_fn, std::ptr::null_mut())
+    pub(crate) fn take_pending_binding(&mut self) -> DyadPtr {
+        std::mem::replace(&mut self.cx.pending_binding, std::ptr::null_mut())
     }
 
     /// `fn`'s constructor suppresses the handoff around a literal that does
     /// not open its expression, so a grouped literal deeper in the same
     /// declaration can still claim it.
-    pub(crate) fn restore_pending_fn(&mut self, pending: DyadPtr) {
-        self.cx.pending_fn = pending;
+    pub(crate) fn restore_pending_binding(&mut self, pending: DyadPtr) {
+        self.cx.pending_binding = pending;
     }
 
     /// A reduced dyad, or a token that does not extend: a resolved operand or
@@ -202,9 +202,6 @@ impl<'a> Parser<'a> {
                 };
                 // SAFETY: `id` is a resolved dyad from the store.
                 unsafe { self.check_capture(id)? };
-                if let Some(own) = self.own_type_in_parse(binding) {
-                    return Ok(own);
-                }
                 self.check_made(binding)?;
                 self.note_outer_read(binding);
                 Ok(if binding.is_null() { id } else { binding })
@@ -258,21 +255,9 @@ impl<'a> Parser<'a> {
     /// binding, when the cell was lexed; the bare identity for a minted token.
     pub(crate) fn stand_as_value(&self, tape: &ParsingTape, id: DyadPtr) -> DyadPtr {
         match tape.at(0).map(|c| c.binding(self.types)) {
-            Some(binding) if !binding.is_null() => {
-                self.own_type_in_parse(binding).unwrap_or(binding)
-            }
+            Some(binding) if !binding.is_null() => binding,
             _ => id,
         }
-    }
-
-    /// Inside its own parse a type's name is the type node its body is building, made by
-    /// the time the parse runs, though its declaration is still being filled.
-    pub(super) fn own_type_in_parse(&self, binding: DyadPtr) -> Option<DyadPtr> {
-        self.cx
-            .definitions
-            .last()
-            .filter(|d| d.in_parse && !binding.is_null() && d.binding == binding)
-            .map(|d| d.self_type)
     }
 
     /// `as_operand` read through the reading rule, for the constructors that

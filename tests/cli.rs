@@ -3574,3 +3574,31 @@ fn a_run_body_takes_a_plain_record_field_by_copy() {
         assert_eq!((code, stdout.as_str()), (Some(0), "2\n"), "{tail}: stderr: {stderr}");
     }
 }
+
+#[test]
+fn a_name_used_inside_its_own_declaration_is_a_checked_error() {
+    // The binding exists from the `:=` on; the node comes with the value.
+    let out = logos().arg("x := x + 1").output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success());
+    assert!(
+        stderr.contains("`x` is used inside its own declaration, before its value is built"),
+        "stderr: {stderr}"
+    );
+    // Overflowed the stack when the name copied the scope it stood in.
+    let out = logos().arg("s := ( a := 1, s ), s").output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success());
+    assert!(stderr.contains("`s` is used inside its own declaration"), "stderr: {stderr}");
+    // A `fn` points the binding at its node before the body parses.
+    let out = logos()
+        .arg("f := fn (n := i32 ?) -> i32 ( if n == 0 (1) else (n * f(n - 1)) ), f(4)")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "24\n");
+    // A name declared again after `drop` gets a new binding.
+    let out = logos().arg("x := 5, drop x, x := 6, x").output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "6\n");
+}

@@ -35,6 +35,8 @@ pub enum ResolveError {
     /// Declared in an open scope but made dead by an `own` or `drop`; only
     /// `:=` may follow (DESIGN ›Name resolution is scope-filtered‹).
     Dead(String),
+    /// Declared, but its `:=` is still driving its value: the node does not exist yet.
+    Unbuilt(String),
     /// Two spellings of equal `lex_rank` match the same length: an
     /// inconsistency in the definitions, never a pick by declaration order.
     Tied,

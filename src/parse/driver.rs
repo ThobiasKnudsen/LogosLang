@@ -740,9 +740,16 @@ impl<'a> Parser<'a> {
         id: DyadPtr,
         tape: &mut ParsingTape,
     ) -> Result<Constructed, ParseError> {
-        // A type named inside its own parse stands as itself: its bracket is not in reach.
-        if let Some(own) = tape.at(0).and_then(|c| self.own_type_in_parse(c.binding(self.types))) {
-            tape.place(own);
+        // A type still being defined has no record yet: its name stands as itself, the
+        // bracket to its right not in reach.
+        // SAFETY: `id` is a reduced dyad from the store.
+        let unfinished = unsafe {
+            let node = self.types.through(id);
+            dyad::ty(node) == self.types.type_ && dyad::value(node).is_null()
+        };
+        if unfinished {
+            let value = self.stand_as_value(tape, id);
+            tape.place(value);
             return Ok(Constructed::Placed);
         }
         // The bracket, lexed on demand: application runs at discovery.

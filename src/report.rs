@@ -321,6 +321,9 @@ pub(crate) fn resolve_message(e: &ResolveError) -> String {
              leave the first one shadowed (a name ended by `drop {n}` may be declared again)"
         ),
         ResolveError::Dead(n) => format!("`{n}` is dead here: it was moved or dropped above"),
+        ResolveError::Unbuilt(n) => {
+            format!("`{n}` is used inside its own declaration, before its value is built")
+        }
         ResolveError::Tied => {
             "two spellings match here with the same lex_rank; give one of them a higher lex_rank"
                 .into()

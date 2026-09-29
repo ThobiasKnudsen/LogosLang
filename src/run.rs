@@ -589,7 +589,7 @@ impl<'a> Runtime<'a> {
         };
         // SAFETY: `lexer` is set only inside `hosting`, whose borrows outlive this call.
         let (scopes, trie) = unsafe { (lexer.scopes.as_ref(), lexer.trie.as_ref()) };
-        let tape = crate::parse::lex_fragment(scopes, trie, self.store, text)
+        let tape = crate::parse::lex_fragment(scopes, trie, text)
             .map_err(|e| RunError::Lex(Box::new(crate::report::resolve_message(&e))))?;
         let mut tape = Box::new(tape);
         let handle: *mut crate::parse::ParsingTape = &mut *tape;

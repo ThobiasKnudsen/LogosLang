@@ -22,20 +22,20 @@ pub(super) fn register(store: &mut Store, type_: DyadPtr) -> DyadPtr {
 /// Returns the `->` arrow.
 pub(super) fn register_syntax(cx: &mut Cx) -> DyadPtr {
     cx.declare("fn", cx.fn_type);
-    // The pending `:=` placeholder is claimed so a self-call in the body
+    // The pending `:=` binding is claimed so a self-call in the body
     // resolves the published signature.
     cx.metas.insert(cx.fn_type, |p, id, tape| {
         // Claimed only when the literal is the only cell on the tape; elsewhere
         // suppressed around the parse so a deeper literal can still claim it.
         let node = if tape.len() == 1 {
-            let declared = p.take_pending_fn();
-            // SAFETY: `declared` is null or the placeholder `:=` handed over.
-            unsafe { p.parse_fn(id, declared) }?
+            let binding = p.take_pending_binding();
+            // SAFETY: `binding` is null or the binding `:=` handed over.
+            unsafe { p.parse_fn(id, binding) }?
         } else {
-            let suppressed = p.take_pending_fn();
-            // SAFETY: a null `declared` writes nothing.
+            let suppressed = p.take_pending_binding();
+            // SAFETY: a null `binding` publishes nothing.
             let node = unsafe { p.parse_fn(id, std::ptr::null_mut()) };
-            p.restore_pending_fn(suppressed);
+            p.restore_pending_binding(suppressed);
             node?
         };
         tape.place(node);

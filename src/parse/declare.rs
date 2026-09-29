@@ -524,9 +524,9 @@ impl<'a> Parser<'a> {
         false
     }
 
-    /// `name := value`: the name is declared before the value parses, so the
-    /// value can refer to it, and the fixpoint then makes the placeholder BE
-    /// the value. Legal only opening its expression; anywhere else it declines.
+    /// `name := value`: the binding is made before the value parses and points at the
+    /// value's node once it exists (a `fn` publishes it before its body). Legal only
+    /// opening its expression; anywhere else it declines.
     fn declare_here(&mut self, tape: &mut ParsingTape) -> Result<Constructed, ParseError> {
         // The name is the cell to the left: a spelling, or the node `regex «…»`
         // placed, whose text is a pattern; anything else declines.
@@ -545,26 +545,18 @@ impl<'a> Parser<'a> {
             None
         };
         // Copied out: the cell's text is independent of the `&mut self` the
-        // declaration and value parse need, and of the fresh dyad written below.
+        // declaration and value parse need.
         let name: String = match &pattern {
             Some(bytes) => String::from_utf8_lossy(bytes).into_owned(),
             None => tok.spelling().to_string(),
         };
         let name: &str = &name;
-        // The placeholder: the fresh dyad the cell already holds (DESIGN ›The
-        // scope's constructor is the driver‹), or a fresh one for a known
-        // spelling. `fn`-typed so a recursive self-call sees a function-typed callee.
-        let placeholder = if tok.is_fresh() {
-            // SAFETY: a fresh cell's dyad is a dyad from the store.
-            unsafe { dyad::set_ty(tok.dyad, self.types.fn_type) };
-            tok.dyad
-        } else {
-            self.rt.store.alloc_raw(self.types.fn_type, std::ptr::null_mut())
-        };
+        // The binding is the name's home before its node exists (DESIGN ›An unknown spelling
+        // stays text on the tape; `:=` makes the binding, and the node comes with the value‹).
         let declared = if pattern.is_some() {
-            self.declare_pattern(name, placeholder, tok.start)
+            self.declare_pattern(name, std::ptr::null_mut(), tok.start)
         } else {
-            self.declare_name(name, placeholder, tok.start)
+            self.declare_name(name, std::ptr::null_mut(), tok.start)
         };
         let binding = match declared {
             Ok(binding) => binding,
@@ -574,16 +566,16 @@ impl<'a> Parser<'a> {
                 return Err(e);
             }
         };
-        // A `fn` literal opening the value publishes its signature onto the
-        // placeholder; the binding is the one a `lex_rank = …` line in the value writes.
-        self.cx.pending_fn = placeholder;
+        // A `fn` literal opening the value points the binding at its node before its body
+        // parses; the binding is also the one a `lex_rank = …` line in the value writes.
+        self.cx.pending_binding = binding;
         self.cx.filling.push(binding);
         self.cx.filling_at.push(self.cx.pos);
         let value = self.parse_expression_cell();
         self.cx.filling.pop();
         self.cx.filling_at.pop();
         self.cx.last_declared = binding;
-        self.cx.pending_fn = std::ptr::null_mut();
+        self.cx.pending_binding = std::ptr::null_mut();
         let cell = value?;
         let value = cell.dyad;
         // A bare name as the value is its binding (a use); the fixpoint
@@ -608,7 +600,7 @@ impl<'a> Parser<'a> {
             // SAFETY: as above.
             _ => unsafe { crate::identities::hashmap::box_of(self.types, read) },
         };
-        // SAFETY: `placeholder` was minted for the name and nothing has read a value from it; `binding`, `value` and `read` are dyads from the store.
+        // SAFETY: `binding`, `value` and `read` are dyads from the store.
         let declared = unsafe {
             let empty_node = cell.hole
                 && !cell.owning
@@ -765,9 +757,9 @@ impl<'a> Parser<'a> {
                 Binding::lay_out(binding, b.dyad, b.frame, b.offset);
                 read
             } else {
-                dyad::set_ty(placeholder, dyad::ty(read));
-                dyad::set_value(placeholder, dyad::value(read));
-                placeholder
+                // The name denotes the node the value built, never a copy of it.
+                Binding::set_dyad(binding, read);
+                read
             }
         };
         let node = crate::identities::declare::build(

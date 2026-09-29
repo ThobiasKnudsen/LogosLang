@@ -31,8 +31,6 @@ pub(super) struct OpenType {
     pub(super) in_parse: bool,
     /// The parse body's `tape` parameter while `in_parse`.
     pub(super) tape_param: DyadPtr,
-    /// The declaration this body is the value of: inside its parse, its name is `self_type`.
-    pub(super) binding: DyadPtr,
     /// The `share` function being read has read a field of its value.
     pub(super) read_receiver: bool,
     /// The `share` function being read has written a field of its value, itself or through a
@@ -597,6 +595,12 @@ impl<'a> Parser<'a> {
         );
         let drop_marker = self.rt.store.alloc_raw(self.types.type_, head);
         let self_type = self.rt.store.alloc_raw(id, std::ptr::null_mut());
+        if !own_name.is_null() {
+            // The body's lines name the type they are building (DESIGN ›An unknown spelling
+            // stays text on the tape; `:=` makes the binding, and the node comes with the value‹).
+            // SAFETY: `own_name` is the binding `:=` is filling, live for the whole drive.
+            unsafe { Binding::set_dyad(own_name, self_type) };
+        }
         let scope = self.open_scope();
         self.cx.definitions.push(OpenType {
             scope,
@@ -610,7 +614,6 @@ impl<'a> Parser<'a> {
             this_param: std::ptr::null_mut(),
             in_parse: false,
             tape_param: std::ptr::null_mut(),
-            binding: own_name,
             read_receiver: false,
             wrote_receiver: false,
             block: (scope, Vec::new()),
@@ -619,8 +622,8 @@ impl<'a> Parser<'a> {
             self_type,
         });
         // A `fn` literal on a slot's right side must not claim the enclosing
-        // declaration's placeholder.
-        let suppressed = self.take_pending_fn();
+        // declaration's binding.
+        let suppressed = self.take_pending_binding();
         // The body's declarations are pending until its close: a type is
         // comptime and its members are stored at the definition. Everything
         // before the body runs first, and a failure among its lines is the body's.
@@ -637,7 +640,7 @@ impl<'a> Parser<'a> {
         });
         self.cx.runtime_depth = saved_depth;
         let defers = self.cx.open.pop().expect("pushed above").defers;
-        self.restore_pending_fn(suppressed);
+        self.restore_pending_binding(suppressed);
         let def = self.cx.definitions.pop().expect("pushed above");
         while self.cx.scopes.depth() > depth {
             self.cx.scopes.pop();
@@ -719,8 +722,7 @@ impl<'a> Parser<'a> {
         for (i, cell) in fragment.cells().iter().enumerate() {
             let id = cell.identity(types);
             if !cell.is_fresh() && self.cx.definitions.iter().any(|d| d.slots.contains(&id)) {
-                let fresh = self.rt.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut());
-                fragment.set_dyad(i as isize, fresh);
+                fragment.set_dyad(i as isize, std::ptr::null_mut());
             }
         }
         let cells = Box::into_raw(Box::new(fragment));
@@ -744,12 +746,7 @@ impl<'a> Parser<'a> {
         let (text, cells, scope, open_fns) = crate::identities::held_type::parts(node);
         let bytes = crate::identities::string::text(text);
         let text: &'a str = std::str::from_utf8(bytes).expect("copied from the source text");
-        let mut cells = (*cells).cells();
-        for cell in &mut cells {
-            if cell.is_fresh() {
-                cell.dyad = self.rt.store.alloc_raw(std::ptr::null_mut(), std::ptr::null_mut());
-            }
-        }
+        let cells = (*cells).cells();
         let mut chain = Vec::new();
         let mut at = scope;
         while !at.is_null() {
@@ -967,13 +964,14 @@ impl<'a> Parser<'a> {
                 def.this_param = params[1];
                 def.tape_param = params[0];
                 def.in_parse = true;
-                // SAFETY: `input` was just built, `params` its bindings; no declaration's placeholder is being filled.
+                // SAFETY: `input` was just built, `params` its bindings; no declaration is published to.
                 let f = unsafe {
                     self.fn_over_body(
                         types.fn_type,
                         input,
                         &params,
                         types.void_,
+                        std::ptr::null_mut(),
                         std::ptr::null_mut(),
                     )
                 };
@@ -1010,13 +1008,14 @@ impl<'a> Parser<'a> {
                 let (input, params) = self.hidden_param_record(&[(None, types.dyad_)], at)?;
                 let def = self.cx.definitions.last_mut().expect("checked above");
                 def.this_param = params[0];
-                // SAFETY: `input` was just built, `params` its bindings; no declaration's placeholder is being filled.
+                // SAFETY: `input` was just built, `params` its bindings; no declaration is published to.
                 let f = unsafe {
                     self.fn_over_body(
                         types.fn_type,
                         input,
                         &params,
                         types.void_,
+                        std::ptr::null_mut(),
                         std::ptr::null_mut(),
                     )
                 };

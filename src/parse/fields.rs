@@ -78,7 +78,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::StampOutsideParse);
         }
         let def = self.cx.definitions.last().expect("is_node_cell found a parse body");
-        if value != def.self_type {
+        if self.types.through(value) != def.self_type {
             return Err(ParseError::StampOtherType);
         }
         let node = def.this_param;
