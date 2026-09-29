@@ -24,7 +24,7 @@ pub struct Binding {
     /// The body item of `scope` that declares the name; null until the parser fills it, and at
     /// top level.
     pub start: DyadPtr,
-    /// The body item holding the `own` or `drop` that made the name dead (the node itself
+    /// The body item holding the `move` or `free` that made the name dead (the node itself
     /// while that item is still parsing); null while the name is alive.
     pub end: DyadPtr,
     /// The gate words on the name in text order, an `array` node; null while none.

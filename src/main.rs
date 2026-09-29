@@ -45,7 +45,7 @@ unsafe fn is_statement_node(core: &Core, node: seed::dyad::DyadPtr) -> bool {
         return seed::identities::read::read_kind(core, named)
             == seed::identities::read::Read::Identity;
     }
-    is_silent_type(core, logos) || logos == core.fn_type || logos == core.drop_
+    is_silent_type(core, logos) || logos == core.fn_type || logos == core.free_
 }
 
 /// The dyad a line's tail names (through its binding) and its type.

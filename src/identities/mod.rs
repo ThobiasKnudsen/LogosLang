@@ -128,9 +128,9 @@ pub struct Core {
     pub storeptr_: DyadPtr,
     pub addr_: DyadPtr,
     pub alloc_: DyadPtr,
+    /// The gate word in a type position, `own @T ?`.
     pub own_: DyadPtr,
-    pub drop_: DyadPtr,
-    /// The teardown `alloc` inserts as `defer free <place>`.
+    pub move_: DyadPtr,
     pub free_: DyadPtr,
     pub defer_: DyadPtr,
     /// The gate word; its constructor fills the declare node's gate slot.
@@ -314,14 +314,14 @@ impl Core {
         // After pointers: the owning pointer is an `@T`.
         let dm = drop_model::register(&mut cx, &callables);
         op_leaves.alloc_ = dm.alloc_leaf;
-        op_leaves.own_ = dm.own_leaf;
-        op_leaves.drop_ = dm.drop_leaf;
-        op_leaves.instance_drop_ = dm.instance_drop_leaf;
+        op_leaves.move_ = dm.move_leaf;
+        op_leaves.free_ = dm.free_leaf;
+        op_leaves.instance_free_ = dm.instance_free_leaf;
         op_leaves.field_free_ = dm.field_free_leaf;
         op_leaves.teardown_ = dm.teardown_leaf;
         op_leaves.defer_ = dm.defer_leaf;
-        let (alloc_, own_, drop_, free_, defer_, of_) =
-            (dm.alloc_, dm.own_, dm.drop_, dm.free_, dm.defer_, dm.of_);
+        let (alloc_, own_, move_, free_, defer_, of_) =
+            (dm.alloc_, dm.own_, dm.move_, dm.free_, dm.defer_, dm.of_);
         let tape = tape::register(&mut cx, &callables, scope_, array_, void);
         let hashmap = hashmap::register(&mut cx, &callables, array_);
         let held_type = held_type::register(&mut cx, &callables);
@@ -404,7 +404,7 @@ impl Core {
             addr_,
             alloc_,
             own_,
-            drop_,
+            move_,
             free_,
             defer_,
             pub_,
@@ -759,18 +759,17 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
         || logos == types.construct_
         || logos == types.declare_
         || logos == types.compile_
-        || logos == types.drop_
         || logos == types.free_
         || logos == types.defer_
     {
         return Operand::NonNumeric;
     }
-    // `alloc`'s pointee sits at operand 0, `own`'s at 1; owning-ness rides the bound
+    // `alloc`'s pointee sits at operand 0, `move`'s at 1; owning-ness rides the bound
     // place's type, not this result.
     if logos == types.alloc_ {
         return Operand::Pointer(*(dyad::value(node) as *const DyadPtr));
     }
-    if logos == types.own_ {
+    if logos == types.move_ {
         return Operand::Pointer(*(dyad::value(node) as *const DyadPtr).add(1));
     }
     if !logos.is_null() && numtype::is_pointer_type(logos) {
@@ -960,7 +959,7 @@ pub(crate) unsafe fn yields_type(types: &Core, node: DyadPtr) -> bool {
 pub(crate) unsafe fn node_type_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
     let node = types.through(node);
     // A move of a node yields the node; its pointee slot carries the node's type.
-    if dyad::ty(node) == types.own_ {
+    if dyad::ty(node) == types.move_ {
         let ty = *(dyad::value(node) as *const DyadPtr).add(1);
         return meta::is_node_valued(ty, types.fn_type).then_some(ty);
     }

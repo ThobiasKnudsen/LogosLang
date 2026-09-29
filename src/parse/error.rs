@@ -225,19 +225,24 @@ pub enum ParseError {
     OwningEscape,
     /// A `return` hands out an owning value, which only a last value moves out to the caller.
     OwnershipAcrossReturn,
-    /// `own b` where `b` borrows the node it names: only the owner can move it.
+    /// `move b` where `b` borrows the node it names: only the owner can move it.
     MoveOfBorrow,
     /// A name as a line of a list a type's `parse` builds from, where the value's type fills
-    /// a `drop`: the built value owns its lines, so the name must be moved in.
+    /// a `free`: the built value owns its lines, so the name must be moved in.
     LineNotMoved,
     /// `own` in a type position over something other than a pointer hole, `own @T ?`.
     OwnNeedsPointer,
-    /// A type body with an `own` field and no `drop = (…)` to free it.
-    OwningFieldNeedsDrop,
+    /// `own` before anything but a hole: the word names a state, the act is `move`.
+    OwnOutsideType,
+    /// `share w = …` in a type body where `w` is no slot and nothing declared.
+    NoSuchSlot(String),
+    /// A type body with an `own` field and no `free = (…)` to free it.
+    OwningFieldNeedsFree,
     /// `own @T ?` on a parameter, which would consume the caller's argument.
     OwnParameterNotInSeed,
-    /// An `own` or `drop` inside a loop or `fn` body names a place declared
+    /// A `move` or `free` inside a loop or `fn` body names a place declared
     /// outside it: the loop would read a dead name on its next pass, and a
-    /// function may own only what its parameters hand it (DESIGN ›Memory and concurrency‹).
-    OwnOfOuterName,
+    /// function may own only what its parameters hand it (DESIGN ›`move` and `free` are
+    /// static: the parse marks the name dead‹).
+    MoveOfOuterName,
 }

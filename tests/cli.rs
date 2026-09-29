@@ -1131,7 +1131,7 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"g := type (share)\n", "followed by a declaration"),
         (b"f := fn (share a := i32 ?) -> void ( a )\n", "never on a parameter"),
         (b"share parse_rank = 3\n", "unknown name"),
-        (b"d := i32 5\ndrop = 3\n", "a line of the type body itself"),
+        (b"d := i32 5\nfree = 3\n", "a line of the type body itself"),
         (b"t := type (share parse = ( parse_rank = 3 ))\n", "a line of the type body itself"),
         (b"t := type (share parse = ( share parse_rank = 3 ))\n", "followed by a declaration"),
         (b"t := type (lex_rank = 5)\n", "its fill says so"),
@@ -1140,7 +1140,8 @@ fn a_type_body_refuses_what_is_not_its_own() {
         (b"x := 1\nt := type (x = 5)\n", "a type body line"),
         (b"t := type (fields = (a := i32 ?))\n", "unknown name `fields`"),
         (b"t := type (share associativity = 5)\n", "`left` or `right`"),
-        (b"t := type (share drop = 5)\n", "`share drop = (…)`"),
+        (b"t := type (share free = 5)\n", "`share free = (…)`"),
+        (b"t := type (share drop = ( 0 ))\n", "`drop` names no slot"),
         (b"t := type (share parse = ( tape[0].a = tape[-1] ))\n", "no field `a`"),
         (b"t := type (a := ?, share parse = ( tape[0].b = tape[-1] ))\n", "no field `b`"),
         (b"t := type (a := ?, share parse = ( tape.is_constructed[0] = 5 ))\n", "takes a bool"),
@@ -1645,17 +1646,17 @@ fn the_repl_keeps_an_owning_binding_alive_across_lines() {
 }
 
 #[test]
-fn the_repl_reuses_a_name_after_drop() {
-    let (echoes, stderr) = repl(b"n := i32 5\ndrop n\nn\nn := i32 6\nn\n");
+fn the_repl_reuses_a_name_after_free() {
+    let (echoes, stderr) = repl(b"n := i32 5\nfree n\nn\nn := i32 6\nn\n");
     assert_eq!(echoes, ["6"], "stderr: {stderr}");
     assert!(stderr.contains("<repl>:1:1: error: `n` is dead here"), "stderr: {stderr}");
 }
 
 #[test]
-fn the_repl_refuses_a_call_whose_body_reads_a_dropped_name() {
+fn the_repl_refuses_a_call_whose_body_reads_a_freed_name() {
     // A call is a use of every outer name the callee's body reads.
     let (echoes, stderr) = repl(
-        b"mut n := i32 0\nclimb := fn () -> i32 ( n = n + 1, n )\nclimb()\nclimb()\ndrop n\n\
+        b"mut n := i32 0\nclimb := fn () -> i32 ( n = n + 1, n )\nclimb()\nclimb()\nfree n\n\
           climb()\nmut n := i32 10\nclimb()\nclimb2 := fn () -> i32 ( n = n + 1, n )\nclimb2()\n",
     );
     assert_eq!(echoes, ["1", "2", "11"], "stderr: {stderr}");
@@ -1676,7 +1677,7 @@ fn an_imported_function_may_read_its_own_sections_private_names() {
 
 #[test]
 fn a_failed_repl_line_restores_a_moved_name() {
-    let (echoes, stderr) = repl(b"a := alloc 1 of i32 5\nr := ( b := own a, b@ ) + nosuch\na@\n");
+    let (echoes, stderr) = repl(b"a := alloc 1 of i32 5\nr := ( b := move a, b@ ) + nosuch\na@\n");
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
     assert!(stderr.contains("unknown name"), "stderr: {stderr}");
     assert!(!stderr.contains("dead"), "stderr: {stderr}");
@@ -2888,12 +2889,12 @@ fn a_share_function_names_its_fields_bare() {
 }
 
 #[test]
-fn a_drop_body_fills_the_values_drop() {
+fn a_free_body_fills_the_values_free() {
     let (code, stdout, stderr) =
-        run_line("x := type ( n := u64 ?, share drop = ( print «gone» ) ), 1");
+        run_line("x := type ( n := u64 ?, share free = ( print «gone» ) ), 1");
     assert_eq!((code, stdout.as_str()), (Some(0), "1\n"), "stderr: {stderr}");
     for (src, expect) in [
-        ("x := type ( share drop = 5 ), 1", "`share drop = (…)`"),
+        ("x := type ( share free = 5 ), 1", "`share free = (…)`"),
         ("x := type ( mut p := own @i32 ? ), 1", "must be freed by the type's"),
         ("x := type ( p := own i32 ? ), 1", "over a pointer hole"),
     ] {
@@ -2903,13 +2904,13 @@ fn a_drop_body_fills_the_values_drop() {
     }
 }
 
-/// A collection in the array's shape whose values' `drop` prints `drop` before it frees, so a
+/// A collection in the array's shape whose values' `free` prints `free` before it frees, so a
 /// run shows each teardown: `box (…)` is a node whose run makes a new `boxed`, and `box`
 /// with no bracket is `boxed`.
 const BOX: &str = "boxed := type ( \
     mut p := own @i32 ?, \
     mut size := u64 0, \
-    share drop = ( print «drop», free p ), \
+    share free = ( print «free», free p ), \
     share parse_rank = dyad.parse_rank, \
     share parse = ( tape.is_constructed[0] = true ) \
 ), \
@@ -2923,7 +2924,7 @@ box := type ( \
             (v.p + i)@ = elements.dyads[i], \
             v.size = i + 1 \
         ), \
-        own v \
+        move v \
     ), \
     share parse_rank = dyad.parse_rank, \
     share associativity = left, \
@@ -2942,44 +2943,44 @@ box := type ( \
 )";
 
 #[test]
-fn the_owner_s_scope_end_runs_the_instances_drop_once() {
+fn the_owner_s_scope_end_runs_the_instances_free_once() {
     for (tail, printed) in [
         // Made in a function and not returned: freed as the call ends, each call its own.
         (
             "f := fn () -> i32 ( a := box (6, 1), 3 ), print «before», f(), f(), print «after»",
-            "before\ndrop\ndrop\nafter\n",
+            "before\nfree\nfree\nafter\n",
         ),
         (
             "f := fn () -> i32 ( a := box (6, 1), 3 ), f.compile(), print «before», f(), print «after»",
-            "before\ndrop\nafter\n",
+            "before\nfree\nafter\n",
         ),
         // The last value moves out: the caller's name is the owner.
         (
             "mk := fn () -> box ( a := box (9, 1), a ), \
              g := fn () -> i32 ( m := mk(), print «got», (m.p + 0)@ ), g(), print «after»",
-            "got\ndrop\nafter\n",
+            "got\nfree\nafter\n",
         ),
-        ("mk := fn () -> box ( box (9, 1) ), m := mk(), print «got»", "got\ndrop\n"),
-        // A borrow frees nothing: one drop, by the owner.
-        ("a := box (5, 1), b := a, print «borrowed»", "borrowed\ndrop\n"),
+        ("mk := fn () -> box ( box (9, 1) ), m := mk(), print «got»", "got\nfree\n"),
+        // A borrow frees nothing: one free, by the owner.
+        ("a := box (5, 1), b := a, print «borrowed»", "borrowed\nfree\n"),
         (
             "a := box (5, 1), f := fn (q := box ?) -> i32 ( (q.p + 0)@ ), f(a), print «after»",
-            "after\ndrop\n",
+            "after\nfree\n",
         ),
-        ("a := box (7, 1), b := own a, print «moved»", "moved\ndrop\n"),
-        // An early `drop` tears down now, and the scope end finds nothing left.
-        ("a := box (7, 1), drop a, print «after»", "drop\nafter\n"),
+        ("a := box (7, 1), b := move a, print «moved»", "moved\nfree\n"),
+        // An early `free` tears down now, and the scope end finds nothing left.
+        ("a := box (7, 1), free a, print «after»", "free\nafter\n"),
         // A returned borrow is no owner: the callee's own array is freed as it returns.
-        ("mk := fn () -> box ( a := box (9, 1), b := a, b ), m := mk(), print «got»", "drop\ngot\n"),
+        ("mk := fn () -> box ( a := box (9, 1), b := a, b ), m := mk(), print «got»", "free\ngot\n"),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{BOX}, {tail}"));
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
         assert!(stdout.starts_with(printed), "{tail}: stdout: {stdout}");
-        assert_eq!(stdout.matches("drop").count(), printed.matches("drop").count(), "{tail}");
+        assert_eq!(stdout.matches("free").count(), printed.matches("free").count(), "{tail}");
     }
     for (tail, expect) in [
-        ("a := box (7, 1), drop a, a", "`a` is dead here"),
-        ("a := box (7, 1), b := a, c := own b", "only its owner can"),
+        ("a := box (7, 1), free a, a", "`a` is dead here"),
+        ("a := box (7, 1), b := a, c := move b", "only its owner can"),
         ("mut a := box (7, 1), b := box (8, 1), a = b", "what is assigned must own too"),
     ] {
         let (code, _, stderr) = run_line(&format!("{BOX}, {tail}"));
@@ -2991,7 +2992,7 @@ fn the_owner_s_scope_end_runs_the_instances_drop_once() {
 #[test]
 fn an_array_holds_arrays_as_their_addresses() {
     let array = "import ./identities/array.logos, x := array i32 [1, 2], y := array i32 [3, 4], \
-                 t := array i32, b := array t [own x, own y]";
+                 t := array i32, b := array t [move x, move y]";
     for (tail, printed) in [
         ("b[1][0]", "3"),
         ("b[0][1] + b[1][1]", "6"),
@@ -3010,8 +3011,8 @@ fn an_array_holds_arrays_as_their_addresses() {
     // The outer array owns its elements, so a name is moved in; a borrow cannot be.
     for (tail, expect) in [
         ("x[0]", "`x` is dead here"),
-        ("z := array i32 [5], c := array t [z]", "write `own x` to move it in"),
-        ("z := array i32 [5], w := z, c := array t [own w]", "only its owner can"),
+        ("z := array i32 [5], c := array t [z]", "write `move x` to move it in"),
+        ("z := array i32 [5], w := z, c := array t [move w]", "only its owner can"),
     ] {
         let (code, _, stderr) = run_line(&format!("{array}, {tail}"));
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
@@ -3068,7 +3069,7 @@ fn a_field_holding_an_array_reads_as_that_array() {
     assert!(stderr.contains("these types do not match"), "stderr: {stderr}");
 }
 
-/// `BOX` and a `bag` whose owning fields hold an array and a box, its drop printing «bag»,
+/// `BOX` and a `bag` whose owning fields hold an array and a box, its free printing «bag»,
 /// in the array's shape: `bag ()` makes a new `bagged`.
 fn bag_line(tail: &str) -> String {
     format!(
@@ -3076,14 +3077,14 @@ fn bag_line(tail: &str) -> String {
          bagged := type ( \
              mut items := own t ?, \
              mut b := own boxed ?, \
-             share drop = ( print «bag», drop items, drop b ), \
+             share free = ( print «bag», free items, free b ), \
              share parse_rank = dyad.parse_rank, \
              share parse = ( tape.is_constructed[0] = true ) ), \
          bag := type ( \
              output_type := type ?, \
              share run = ( \
                  mut v := output_type ?, \
-                 v.items = array i32 [4, 5, 6], v.b = box (7, 1), own v ), \
+                 v.items = array i32 [4, 5, 6], v.b = box (7, 1), move v ), \
              share parse_rank = dyad.parse_rank, \
              share associativity = left, \
              share parse = ( \
@@ -3096,30 +3097,30 @@ fn bag_line(tail: &str) -> String {
 }
 
 #[test]
-fn an_owning_field_is_dropped_once_by_the_owner_s_drop() {
+fn an_owning_field_is_freed_once_by_the_owner_s_free() {
     for (tail, printed) in [
-        ("g := bag (), print «made»", "made\nbag\ndrop\n"),
-        ("g := bag (), drop g, print «after»", "bag\ndrop\nafter\n"),
-        ("f := fn () -> i32 ( g := bag (), g.items[2] ), f(), print «after»", "bag\ndrop\nafter\n"),
-        ("g := bag (), h := g, print «borrowed»", "borrowed\nbag\ndrop\n"),
-        // A move out of the field leaves the bag's drop nothing to drop there.
-        ("g := bag (), y := own g.b, print «moved»", "moved\ndrop\nbag\n"),
-        ("g := bag (), x := box (8, 1), g.b = own x, print «set»", "set\nbag\ndrop\n"),
-        ("l := array bagged [bag (), bag ()], print «made»", "made\nbag\ndrop\nbag\ndrop\n"),
-        ("g := bag (), l := array bagged [own g], print «made»", "made\nbag\ndrop\n"),
-        ("mut a := own box ?, a = box (3, 1), print «set»", "set\ndrop\n"),
+        ("g := bag (), print «made»", "made\nbag\nfree\n"),
+        ("g := bag (), free g, print «after»", "bag\nfree\nafter\n"),
+        ("f := fn () -> i32 ( g := bag (), g.items[2] ), f(), print «after»", "bag\nfree\nafter\n"),
+        ("g := bag (), h := g, print «borrowed»", "borrowed\nbag\nfree\n"),
+        // A move out of the field leaves the bag's free nothing to free there.
+        ("g := bag (), y := move g.b, print «moved»", "moved\nfree\nbag\n"),
+        ("g := bag (), x := box (8, 1), g.b = move x, print «set»", "set\nbag\nfree\n"),
+        ("l := array bagged [bag (), bag ()], print «made»", "made\nbag\nfree\nbag\nfree\n"),
+        ("g := bag (), l := array bagged [move g], print «made»", "made\nbag\nfree\n"),
+        ("mut a := own box ?, a = box (3, 1), print «set»", "set\nfree\n"),
     ] {
         let (code, stdout, stderr) = run_line(&bag_line(tail));
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
         assert!(stdout.starts_with(printed), "{tail}: stdout: {stdout}");
-        assert_eq!(stdout.matches("drop").count(), printed.matches("drop").count(), "{tail}");
+        assert_eq!(stdout.matches("free").count(), printed.matches("free").count(), "{tail}");
         assert_eq!(stdout.matches("bag").count(), printed.matches("bag").count(), "{tail}");
     }
     for (tail, printed) in [
         ("g := bag (), g.items[1] + g.items.at(2)", "11"),
         ("g := bag (), g.items[0] = i32 9, g.items[0]", "9"),
         ("f := fn (p := t ?) -> u64 ( p.size ), g := bag (), f(g.items)", "3"),
-        ("g := bag (), x := array i32 [1, 2], g.items = own x, g.items[1]", "2"),
+        ("g := bag (), x := array i32 [1, 2], g.items = move x, g.items[1]", "2"),
         ("l := array bagged [bag (), bag ()], l[1].items[0] = i32 8, l[1].items[0]", "8"),
     ] {
         let (code, stdout, stderr) = run_line(&bag_line(tail));
@@ -3128,8 +3129,10 @@ fn an_owning_field_is_dropped_once_by_the_owner_s_drop() {
     }
     for (tail, expect) in [
         ("g := bag (), x := array i32 [1], g.items = x", "what is assigned must own too"),
-        ("g := bag (), x := array i32 [1], y := x, g.items = own y", "only its owner can"),
-        ("nd := type ( mut items := own t ? )", "must be freed by the type's `share drop = (…)`"),
+        ("g := bag (), x := array i32 [1], y := x, g.items = move y", "only its owner can"),
+        ("nd := type ( mut items := own t ? )", "must be freed by the type's `share free = (…)`"),
+        ("g := bag (), x := array i32 [1], g.items = own x", "`move x` moves a value"),
+        ("mk := fn () -> own @i32 ( alloc 1 of i32 7 ), 1", "`-> own @T` is not in the seed"),
         ("nd := type ( mut n := own i32 ? )", "or a hole of a type"),
         ("f := fn (p := own t ?) -> i32 ( 1 )", "an `own` parameter"),
     ] {
@@ -3147,11 +3150,11 @@ fn a_chooser_takes_the_type_the_chooser_right_of_it_leaves() {
         ("t := array array i32, u := array i32, v := array u, t == v", "true"),
         ("t := array array i32, u := array i32, t == u", "false"),
         (
-            "x := array i32 [1, 2], y := array i32 [3, 4], b := array array i32 [own x, own y], \
+            "x := array i32 [1, 2], y := array i32 [3, 4], b := array array i32 [move x, move y], \
              b[1][0]",
             "3",
         ),
-        ("x := array i32 [1, 2], b := array (array i32) [own x], b[0][1]", "2"),
+        ("x := array i32 [1, 2], b := array (array i32) [move x], b[0][1]", "2"),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{array}, {tail}"));
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
@@ -3171,7 +3174,7 @@ fn a_nested_list_builds_each_element_with_the_element_type() {
         ("a := array (array i32) [[1, 2], [3, 4]], a[1][1]", "4"),
         ("a := array array array i32 [[[1]], [[2, 3]]], a[1][0][1]", "3"),
         ("x := i32 5, a := array array i32 [[x, 2], [3, x]], a[1][1]", "5"),
-        ("x := array i32 [7], a := array array i32 [[1], own x], a[1][0]", "7"),
+        ("x := array i32 [7], a := array array i32 [[1], move x], a[1][0]", "7"),
         (
             "mk := fn () -> array array i32 ( array array i32 [[1, 2], [3, 4]] ), \
              m := mk(), m[1][0]",
@@ -3219,36 +3222,36 @@ fn a_nested_list_builds_each_element_with_the_element_type() {
 }
 
 #[test]
-fn the_outer_array_s_drop_drops_each_element_once() {
+fn the_outer_array_s_free_frees_each_element_once() {
     let array = "import ./identities/array.logos";
     for (tail, printed) in [
-        ("a := array boxed [box (1, 2), box (3, 4)], print «made»", "made\ndrop\ndrop\n"),
+        ("a := array boxed [box (1, 2), box (3, 4)], print «made»", "made\nfree\nfree\n"),
         (
             "f := fn () -> i32 ( a := array boxed [box (1, 2), box (3, 4)], 7 ), \
              print «before», f(), print «after»",
-            "before\ndrop\ndrop\nafter\n",
+            "before\nfree\nfree\nafter\n",
         ),
         (
             "f := fn () -> i32 ( a := array boxed [box (1, 2)], 7 ), f.compile(), \
              print «before», f(), print «after»",
-            "before\ndrop\nafter\n",
+            "before\nfree\nafter\n",
         ),
-        ("x := box (1, 2), a := array boxed [own x], print «made»", "made\ndrop\n"),
-        ("a := array boxed [box (5, 6)], drop a, print «after»", "drop\nafter\n"),
+        ("x := box (1, 2), a := array boxed [move x], print «made»", "made\nfree\n"),
+        ("a := array boxed [box (5, 6)], free a, print «after»", "free\nafter\n"),
         (
             "a := array array boxed [[box (1, 2)], [box (3, 4), box (5, 6)]], print «made»",
-            "made\ndrop\ndrop\ndrop\n",
+            "made\nfree\nfree\nfree\n",
         ),
         (
             "f := fn () -> i32 ( a := array array boxed [[box (1, 2)], [box (3, 4)]], 1 ), \
              f(), f(), print «after»",
-            "drop\ndrop\ndrop\ndrop\nafter\n",
+            "free\nfree\nfree\nfree\nafter\n",
         ),
     ] {
         let (code, stdout, stderr) = run_line(&format!("{array}, {BOX}, {tail}"));
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
         assert!(stdout.starts_with(printed), "{tail}: stdout: {stdout}");
-        assert_eq!(stdout.matches("drop").count(), printed.matches("drop").count(), "{tail}");
+        assert_eq!(stdout.matches("free").count(), printed.matches("free").count(), "{tail}");
     }
 }
 
@@ -3256,16 +3259,16 @@ fn the_outer_array_s_drop_drops_each_element_once() {
 fn an_array_is_freed_by_its_owner_and_a_borrow_outliving_it_reads_nothing() {
     let array = "import ./identities/array.logos, a := array i32 [1, 2, 3]";
     for (tail, printed) in
-        [("drop a, 5", "5"), ("b := a, f := fn (p := array i32 ?) -> i32 ( p[1] ), f(b)", "2")]
+        [("free a, 5", "5"), ("b := a, f := fn (p := array i32 ?) -> i32 ( p[1] ), f(b)", "2")]
     {
         let (code, stdout, stderr) = run_line(&format!("{array}, {tail}"));
         assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
         assert_eq!(stdout.trim(), printed, "{tail}");
     }
-    // Until the borrow checker, a borrow may outlive its owner; the drop emptied the
+    // Until the borrow checker, a borrow may outlive its owner; the free emptied the
     // array's pointer, so a read at the first cell is refused (one further in is not).
     for (tail, expect) in
-        [("drop a, a[0]", "`a` is dead here"), ("b := a, drop a, b[0]", "holds nothing")]
+        [("free a, a[0]", "`a` is dead here"), ("b := a, free a, b[0]", "holds nothing")]
     {
         let (code, _, stderr) = run_line(&format!("{array}, {tail}"));
         assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
@@ -3304,7 +3307,7 @@ fn a_member_function_called_through_a_node_reads_that_node() {
 #[test]
 fn a_value_left_unwritten_is_filled_one_field_at_a_time() {
     let pt = "pt := type ( mut x := i32 ?, mut y := i32 ? )";
-    let bx = "bx := type ( mut p := own @i32 ?, mut size := u64 0, share drop = ( free p ), \
+    let bx = "bx := type ( mut p := own @i32 ?, mut size := u64 0, share free = ( free p ), \
               share parse_rank = dyad.parse_rank, share parse = ( tape.is_constructed[0] = true ) )";
     for (src, want) in [
         (format!("{pt}, f := fn () -> i32 ( mut v := pt ?, v.x = 3, v.y = 4, v.x + v.y ), f()"), "7\n"),
@@ -3329,7 +3332,7 @@ fn a_value_left_unwritten_is_filled_one_field_at_a_time() {
             format!("{pt}, f := fn () -> i32 ( mut v := pt ?, if true ( v.x = 3 ), v.y = 1, v.x ), f()"),
             "`v.x` is read before",
         ),
-        (format!("{bx}, f := fn () -> u64 ( mut v := bx ?, v.size = 2, own v ), f()"), "`v` is read before"),
+        (format!("{bx}, f := fn () -> u64 ( mut v := bx ?, v.size = 2, move v ), f()"), "`v` is read before"),
     ] {
         let (code, _, stderr) = run_line(&src);
         assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
@@ -3606,8 +3609,8 @@ fn a_name_used_inside_its_own_declaration_is_a_checked_error() {
         .unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "24\n");
-    // A name declared again after `drop` gets a new binding.
-    let out = logos().arg("x := 5, drop x, x := 6, x").output().unwrap();
+    // A name declared again after `free` gets a new binding.
+    let out = logos().arg("x := 5, free x, x := 6, x").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "6\n");
 }
