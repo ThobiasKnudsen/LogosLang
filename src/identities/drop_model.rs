@@ -652,8 +652,8 @@ pub(crate) enum Teardown {
     Block(DyadPtr),
 }
 
-/// `None` for an `if` whose arms carry a teardown, whose value's type shows only when it
-/// runs: stand-in for #82.
+/// `None` for an `if` with an `else` whose arms carry a teardown, whose value's type shows
+/// only when it runs: stand-in for #82.
 ///
 /// # Safety
 /// `value` must be a reduced dyad from the store.
@@ -672,10 +672,13 @@ pub(crate) unsafe fn teardown_of(types: &Core, value: DyadPtr) -> Option<Teardow
             .map_or(Some(Teardown::Nothing), |tail| teardown_of(types, tail));
     }
     if dyad::ty(node) == types.if_ {
-        let arms = dyad::value(node) as *const DyadPtr;
-        let plain =
-            |arm: DyadPtr| arm.is_null() || teardown_of(types, arm) == Some(Teardown::Nothing);
-        return (plain(*arms.add(1)) && plain(*arms.add(2))).then_some(Teardown::Nothing);
+        let (_, then, els) = super::if_mod::branches(node);
+        // An `if` with no `else` yields unit whichever way it goes.
+        if els.is_null() {
+            return Some(Teardown::Nothing);
+        }
+        let plain = |arm: DyadPtr| teardown_of(types, arm) == Some(Teardown::Nothing);
+        return (plain(then) && plain(els)).then_some(Teardown::Nothing);
     }
     Some(Teardown::Nothing)
 }
@@ -1324,6 +1327,8 @@ mod tests {
             ),
             ParseError::FreeOfUntypedValue
         );
+        // With no `else` the value is unit, known at parse.
+        assert_eq!(run("c := i32 1,\nfree (if (c == 1) (alloc 1 of i32 5)),\n1").0, 1);
     }
 
     #[test]
