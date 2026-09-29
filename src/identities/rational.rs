@@ -5,7 +5,8 @@
 //! (`den > 0`), two native-endian `i64`s. A literal molds exactly to a numeric type
 //! where it lands (`mold_to`), or stays a rational value at run time: the same sixteen
 //! bytes in a place, copied like a record, the leaves below operating on them and no
-//! node made. DESIGN ›Numeric literals are uncommitted until context classifies them‹.
+//! node made. DESIGN ›A plain number is a `rational_number`, and a number type's
+//! definition converts it‹.
 
 use super::numtype::{ArithOp, CmpOp, NumType};
 use super::read::{read_kind, Dispatch, Read};
