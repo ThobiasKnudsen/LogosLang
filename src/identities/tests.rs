@@ -2166,7 +2166,9 @@ fn run_script_depth(src: &str) -> (Result<i64, crate::run::RunError>, usize) {
 /// Runs `f` on a thread of the seed's stack size, as `main` runs every program: a deep
 /// recursion then meets the depth guard, not the harness's 2 MiB thread.
 fn on_work_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    let test = std::thread::current().name().unwrap_or("work").to_owned();
     std::thread::Builder::new()
+        .name(test)
         .stack_size(crate::WORK_STACK_BYTES)
         .spawn(f)
         .expect("the work thread must start")
