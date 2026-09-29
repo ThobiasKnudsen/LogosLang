@@ -100,13 +100,31 @@ fn construct(
             return Err(ParseError::NonOwningIntoOwning);
         }
         let node = build(p.store(), types, id, target, value)?;
-        // SAFETY: `target` is the reduced dyad of the cell to the left.
-        unsafe { p.note_receiver_write(target) };
+        // SAFETY: `target` is the reduced dyad of the cell to the left; `node` the write just
+        // built over it.
+        unsafe {
+            if let Some(free) = super::drop_model::displaced_free(p, target)? {
+                displace(p.store(), types, node, free);
+            }
+            p.note_receiver_write(target);
+        }
         p.note_write(node, fill);
         node
     };
     tape.place(node);
     Ok(crate::parse::Constructed::Placed)
+}
+
+/// `node` writes a place that holds its value: its right side becomes the node that builds it
+/// and then frees the value it displaces, so the write comes last (DESIGN ›`=` sits beside
+/// `:=`, and returns nothing‹). A name's write holds its right side second, a field's third.
+///
+/// # Safety
+/// `node` must be an `=` or a field write just built; `free` a free node.
+unsafe fn displace(store: &mut Store, types: &Core, node: DyadPtr, free: DyadPtr) {
+    let at = if dyad::ty(node) == types.assign { 1 } else { 2 };
+    let slot = (dyad::value(node) as *mut DyadPtr).add(at);
+    *slot = super::drop_model::build_displace(store, types, *slot, free);
 }
 
 /// A literal right side commits to the target's type; a non-literal one must

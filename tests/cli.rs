@@ -3013,6 +3013,39 @@ fn the_program_s_end_runs_its_defers_and_what_it_holds_last_first() {
 }
 
 #[test]
+fn assignment_frees_the_value_it_displaces() {
+    for (tail, printed) in [
+        ("mut x := box (1, 2), x = box (3, 4), print «after»", "free\nafter\nfree\n"),
+        (
+            "f := fn () -> i32 ( mut x := box (1, 2), x = box (3, 4), 1 ), f.compile(), f(), \
+             print «after»",
+            "free\nfree\nafter\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{BOX}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout, printed, "{tail}");
+    }
+}
+
+#[test]
+fn a_plain_record_s_owning_field_keeps_its_pointer_in_its_own_bytes() {
+    let r = "r := type ( mut p := own @i32 ?, share free = ( free p ), \
+             share set := fn () -> i32 ( a := alloc 1 of i32 5, p = move a, 1 ), \
+             share s := fn () -> i32 ( free p, 2 ) ), mut x := r ?";
+    for (tail, printed) in [
+        ("x.set(), x.s()", "2"),
+        ("a := alloc 1 of i32 5, x.p = move a, x.s()", "2"),
+        ("x.s()", "2"),
+        ("a := alloc 1 of i32 5, x.p = move a, b := alloc 1 of i32 6, x.p = move b, x.p@", "6"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{r}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout.trim(), printed, "{tail}");
+    }
+}
+
+#[test]
 fn an_if_frees_what_one_arm_moved_at_the_end_of_the_other() {
     for (tail, printed) in [
         (
@@ -3168,7 +3201,8 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
         ("g := bag (), h := g, print «borrowed»", "borrowed\nbag\nfree\n"),
         // A move out of the field leaves the bag's free nothing to free there.
         ("g := bag (), y := move g.b, print «moved»", "moved\nfree\nbag\n"),
-        ("g := bag (), x := box (8, 1), g.b = move x, print «set»", "set\nbag\nfree\n"),
+        // `=` frees the box it displaces before the write.
+        ("g := bag (), x := box (8, 1), g.b = move x, print «set»", "free\nset\nbag\nfree\n"),
         ("l := array bagged [bag (), bag ()], print «made»", "made\nbag\nfree\nbag\nfree\n"),
         ("g := bag (), l := array bagged [move g], print «made»", "made\nbag\nfree\n"),
         ("mut a := own box ?, a = box (3, 1), print «set»", "set\nfree\n"),

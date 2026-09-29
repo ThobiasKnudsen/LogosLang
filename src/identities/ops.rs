@@ -62,6 +62,8 @@ pub struct OpLeaves {
     pub(crate) value_release_: DyadPtr,
     /// A no-op; a scope's end runs the inner.
     pub(crate) defer_: DyadPtr,
+    /// An `=`'s right side over a place that holds: built, then the displaced value freed.
+    pub(crate) displace_: DyadPtr,
     pub(crate) import_: DyadPtr,
 }
 
@@ -275,6 +277,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> OpLeaves {
         move_: std::ptr::null_mut(),
         free_: std::ptr::null_mut(),
         defer_: std::ptr::null_mut(),
+        displace_: std::ptr::null_mut(),
         import_: std::ptr::null_mut(),
     }
 }

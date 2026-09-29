@@ -135,6 +135,9 @@ pub struct Core {
     pub defer_: DyadPtr,
     /// The type of an item of a scope's exit: a held name or an authored `defer`.
     pub exit_item: DyadPtr,
+    /// The type of an `=`'s right side over a place that holds: built, then the displaced
+    /// value freed.
+    pub displace_: DyadPtr,
     /// The gate word; its constructor fills the declare node's gate slot.
     pub pub_: DyadPtr,
     pub mut_: DyadPtr,
@@ -325,8 +328,9 @@ impl Core {
         op_leaves.value_release_ = dm.value_release_leaf;
         op_leaves.teardown_ = dm.teardown_leaf;
         op_leaves.defer_ = dm.defer_leaf;
-        let (alloc_, own_, move_, free_, defer_, exit_item, of_) =
-            (dm.alloc_, dm.own_, dm.move_, dm.free_, dm.defer_, dm.exit_item, dm.of_);
+        op_leaves.displace_ = dm.displace_leaf;
+        let (alloc_, own_, move_, free_, defer_, exit_item, displace_, of_) =
+            (dm.alloc_, dm.own_, dm.move_, dm.free_, dm.defer_, dm.exit_item, dm.displace_, dm.of_);
         let tape = tape::register(&mut cx, &callables, scope_, array_, void);
         let hashmap = hashmap::register(&mut cx, &callables, array_);
         let held_type = held_type::register(&mut cx, &callables);
@@ -413,6 +417,7 @@ impl Core {
             free_,
             defer_,
             exit_item,
+            displace_,
             pub_,
             mut_,
             immut_,
