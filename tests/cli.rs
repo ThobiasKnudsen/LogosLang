@@ -2674,6 +2674,19 @@ fn a_comment_built_in_the_boundary_s_build_loop_is_read_through_before_the_next_
 }
 
 #[test]
+fn the_boundary_s_comment_lift_reads_a_built_cell_with_no_node_without_faulting() {
+    // `h1` marks the unknown `zz` built, which leaves its cell with no node, and `h2`
+    // removes it at the next step: the lift between the two reads that cell.
+    let src = "h1 := type (share parse_rank = *.parse_rank + 2, \
+               share parse = ( tape.is_constructed[1] = true, tape.remove(0) )), \
+               h2 := type (share parse_rank = *.parse_rank + 1, \
+               share parse = ( tape.remove(1), tape.remove(0) )), \
+               x := 7, x h2 h1 zz";
+    let (code, _, stderr) = run_line(src);
+    assert!(code.is_some(), "killed by a signal: {stderr}");
+}
+
+#[test]
 fn a_body_lexed_once_holds_the_scopes_of_its_quotes() {
     let run_body = |body: &str| {
         format!(

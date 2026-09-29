@@ -287,8 +287,10 @@ impl<'a> Parser<'a> {
         loop {
             let prose: Vec<(usize, usize, DyadPtr)> = tape
                 .iter()
-                // SAFETY: a constructed cell holds a node from the store.
-                .filter(|(_, c)| c.constructed && unsafe { dyad::ty(c.dyad) } == comment_)
+                .filter(|(_, c)| {
+                    // SAFETY: a cell's dyad is null or a dyad from the store.
+                    c.constructed && !c.dyad.is_null() && unsafe { dyad::ty(c.dyad) } == comment_
+                })
                 .map(|(n, c)| (n, c.start, c.dyad))
                 .collect();
             for (n, start, d) in prose {
