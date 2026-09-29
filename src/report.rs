@@ -291,6 +291,10 @@ pub fn parse_message(e: &ParseError) -> String {
              which moves out to the caller"
                 .into()
         }
+        ParseError::RecordMoveNotInSeed => {
+            "moving a plain record is not in the seed yet: its bytes are not copied into a name"
+                .into()
+        }
         ParseError::MoveOfBorrow => {
             "this name borrows what it holds, so it cannot move it; only its owner can".into()
         }

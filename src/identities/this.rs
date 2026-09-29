@@ -290,7 +290,7 @@ enum Field {
 ///
 /// # Safety
 /// `owner` must be a type node from the store.
-unsafe fn is_plain(types: &Core, owner: DyadPtr) -> bool {
+pub(crate) unsafe fn is_plain(types: &Core, owner: DyadPtr) -> bool {
     meta::is_record_type(owner)
         && meta::run_body_of(owner).is_null()
         && !meta::is_node_valued(owner, types.fn_type)

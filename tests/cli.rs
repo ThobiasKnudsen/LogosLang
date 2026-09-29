@@ -3028,6 +3028,66 @@ fn assignment_frees_the_value_it_displaces() {
     }
 }
 
+/// A plain record whose type fills `share free`, its free printing the one field.
+const RECORD: &str = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+
+#[test]
+fn a_plain_record_s_owner_runs_its_free_once() {
+    for (tail, printed) in [
+        // The scope's end runs it; the program's before the tail shows.
+        ("a := bag(1), 1", "freed 1\n1\n"),
+        ("f := fn () -> i32 ( a := bag(2), 1 ), f()", "freed 2\n1\n"),
+        (
+            "f := fn () -> i32 ( a := bag(3), 1 ), print «before», f(), f(), print «after»",
+            "before\nfreed 3\nfreed 3\nafter\n",
+        ),
+        (
+            "f := fn () -> i32 ( a := bag(4), 1 ), f.compile(), print «before», f(), print «after»",
+            "before\nfreed 4\nafter\n",
+        ),
+        // `bag ?` owns too: the end runs its free over whatever was written.
+        (
+            "f := fn () -> i32 ( mut a := bag ?, a.n = 5, 1 ), f(), print «after»",
+            "freed 5\nafter\n",
+        ),
+        // An early `free` tears down now, and the end finds nothing held.
+        ("a := bag(6), free a, print «after»", "freed 6\nafter\n"),
+        ("a := bag(7), if true ( free a ), print «after»", "freed 7\nafter\n"),
+        ("c := i32 0, a := bag(15), if (c == 1) ( free a ), print «after»", "freed 15\nafter\n"),
+        // A borrow frees nothing: one free, by the owner; `free` of the borrow ends its name.
+        ("a := bag(8), b := a, print «borrowed»", "borrowed\nfreed 8\n"),
+        ("a := bag(14), b := a, free b, print «after»", "after\nfreed 14\n"),
+        (
+            "a := bag(9), f := fn (q := bag ?) -> i32 ( q.n ), f(a), print «after»",
+            "after\nfreed 9\n",
+        ),
+        // The last value moves out: the caller's name is the owner.
+        ("mk := fn () -> bag ( bag(10) ), m := mk(), print «got»", "got\nfreed 10\n"),
+        ("mk := fn () -> bag ( a := bag(11), a ), m := mk(), print «got»", "got\nfreed 11\n"),
+        // A returned borrow is no owner: the callee's own record is freed as it returns.
+        (
+            "mk := fn () -> bag ( a := bag(12), b := a, b ), m := mk(), print «got»",
+            "freed 12\ngot\n",
+        ),
+        ("free (bag(16)), print «after»", "freed 16\nafter\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{tail}: stderr: {stderr}");
+    }
+    for (tail, expect) in [
+        ("a := bag(1), free a, a", "`a` is dead here"),
+        ("a := bag(1), b := a, free b, b", "`b` is dead here"),
+        ("a := bag(1), b := move a, 1", "moving a plain record is not in the seed yet"),
+    ] {
+        let (code, _, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
+    }
+    // A later REPL line frees what an earlier one holds, and the session's end frees it no more.
+    let (echoes, stderr) = repl(format!("{RECORD}\na := bag(13)\nfree a\n").as_bytes());
+    assert_eq!(echoes, ["freed 13"], "stderr: {stderr}");
+}
+
 #[test]
 fn a_plain_record_s_owning_field_keeps_its_pointer_in_its_own_bytes() {
     let r = "r := type ( mut p := own @i32 ?, share free = ( free p ), \

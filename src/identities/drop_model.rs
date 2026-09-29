@@ -117,8 +117,11 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
                 }
             };
             let types = p.types();
-            // SAFETY: `place` is a resolved dyad whose type is a valid type node, and
-            // `ended` holds the binding the resolver returned for it.
+            // SAFETY: `place` is a resolved dyad whose type is a valid type node.
+            if unsafe { super::this::is_plain(types, types.type_of(place)) } {
+                return Err(ParseError::RecordMoveNotInSeed);
+            }
+            // SAFETY: as above, and `ended` holds the binding the resolver returned for it.
             let (owner, node_valued, ty) = unsafe {
                 (
                     ended.as_ref().is_some_and(|e| p.owns_node(e.binding))
@@ -731,7 +734,9 @@ pub(crate) unsafe fn exit_item_of(node: DyadPtr) -> ExitItem {
 
 /// The one teardown of the value a held place holds, the `free` slot of the place's type run
 /// over it: an owning pointer's destructor frees its block, a type that fills `free` runs it
-/// over the node. A place that holds nothing, never written, frees nothing.
+/// over the value, a node by its address and a plain record by its bytes' address, as a
+/// `share` function takes its receiver. A place that holds no node, never written, frees
+/// nothing.
 ///
 /// # Safety
 /// `place` must be a place the binding site made an owner, laid out in the frame `rt` runs.
@@ -746,14 +751,18 @@ pub(crate) unsafe fn end_held(rt: &mut Runtime, place: DyadPtr) -> Result<(), Ru
     if slot.is_null() {
         return Err(RunError::Uninitialized);
     }
-    let held = std::ptr::read_unaligned(slot as *const i64);
+    let held = if super::this::is_plain(rt.types(), ty) {
+        slot as i64
+    } else {
+        std::ptr::read_unaligned(slot as *const i64)
+    };
     if held != 0 {
         rt.apply_values(meta::instances_free_of(ty), &[held])?;
     }
     Ok(())
 }
 
-/// [`end_held`] compiled: a node's `free` is called over what the place holds; a block's
+/// [`end_held`] compiled: a type's `free` is called over the value the place holds; a block's
 /// free keeps the function interpreted.
 ///
 /// # Safety
@@ -762,8 +771,13 @@ pub(crate) unsafe fn lower_end_held(lw: &mut Lowerer, place: DyadPtr) -> Result<
     if is_owning_place(lw.types(), place) {
         return Err(CompileError::NotLowerable(place));
     }
-    let this = lw.read_place(place, types::I64)?;
-    let free = lw.node_addr(meta::instances_free_of(lw.types().type_of(place)));
+    let ty = lw.types().type_of(place);
+    let this = if super::this::is_plain(lw.types(), ty) {
+        lw.place_addr(place)?
+    } else {
+        lw.read_place(place, types::I64)?
+    };
+    let free = lw.node_addr(meta::instances_free_of(ty));
     lw.call_seed(compiled_instance_free as *const () as usize, &[this, free]);
     Ok(())
 }
@@ -832,8 +846,24 @@ unsafe fn moves_out_within(types: &Core, node: DyadPtr, depth: usize) -> bool {
     }
     let node = types.through(node);
     let logos = dyad::ty(node);
-    if logos == types.alloc_ || logos == types.move_ || logos == types.this.copy {
+    if logos == types.alloc_
+        || logos == types.move_
+        || logos == types.this.copy
+        || logos == types.construct_
+    {
         return true;
+    }
+    // A record call's result moves out when its callee's value does; a record handed on by
+    // its bytes' address, when a name that held it or what it copies does.
+    if logos == types.by_copy.result {
+        let call = *(dyad::value(node) as *const DyadPtr).add(1);
+        return moves_out_within(types, call, depth + 1);
+    }
+    if logos == types.by_copy.out {
+        let inner = types.through(*(dyad::value(node) as *const DyadPtr));
+        return (dyad::ty(inner) == types.binding_
+            && crate::binding::Binding::has_gate(inner, types.own_))
+            || moves_out_within(types, inner, depth + 1);
     }
     if logos == types.scope {
         return crate::parse::last_sequence_expr(node)
@@ -886,7 +916,11 @@ pub(crate) unsafe fn teardown_of(types: &Core, value: DyadPtr) -> Option<Teardow
     if let Some(pointee) = owning_pointee_of(types, value) {
         return Some(Teardown::Block(pointee));
     }
-    if let Some(t) = super::node_type_of(types, value) {
+    // A node, or a plain record in its bytes.
+    let typed = super::node_type_of(types, value).or_else(|| {
+        super::by_copy::record_type_of(types, value).filter(|&t| meta::is_record_type(t))
+    });
+    if let Some(t) = typed {
         let free = meta::instances_free_of(t);
         let owned = !free.is_null() && moves_out(types, value);
         return Some(if owned { Teardown::Node(free) } else { Teardown::Nothing });

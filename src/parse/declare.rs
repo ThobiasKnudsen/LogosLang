@@ -253,13 +253,18 @@ impl<'a> Parser<'a> {
         self.cx.open.iter().rposition(|s| s.exit.iter().any(|h| unsafe { self.holds(h, place) }))
     }
 
-    /// Whether the exit item holds `place` still.
+    /// Whether the exit item holds `place` still: the same name, or a name that holds over the
+    /// same bytes, as an imported `pub` name over the file's. A borrow over the same bytes, a
+    /// plain record's second name, is another name.
     ///
     /// # Safety
     /// `place` must be a dyad from the store.
     pub(super) unsafe fn holds(&self, item: &ExitItem, place: DyadPtr) -> bool {
         item.end.is_none()
-            && crate::identities::drop_model::same_place(self.types, item.what, place)
+            && (item.what == place
+                || dyad::ty(place) == self.types.binding_
+                    && self.name_holds(place)
+                    && crate::identities::drop_model::same_place(self.types, item.what, place))
     }
 
     /// `node` has emptied `ended`'s place: its name is dead from here on (DESIGN ›`move` and
@@ -272,14 +277,16 @@ impl<'a> Parser<'a> {
         }
         // SAFETY: `ended.binding` is the binding the resolver returned for the operand.
         unsafe { self.cx.scopes.mark_dead(ended.binding, node) };
+        // A borrow ends its name alone.
+        // SAFETY: as above.
+        if !unsafe { self.name_holds(ended.binding) } {
+            return;
+        }
         let Some(holder) = self.holder_of(ended.binding) else {
             // An owner no open scope holds is an earlier REPL line's, whose items the
             // session's scope keeps: held from outside everything this line opened.
-            // SAFETY: as above.
-            if unsafe { self.name_holds(ended.binding) } {
-                self.cx.open[0].ended_earlier.push(ended.binding);
-                self.cx.ended_log.push((ended.binding, 0));
-            }
+            self.cx.open[0].ended_earlier.push(ended.binding);
+            self.cx.ended_log.push((ended.binding, 0));
             return;
         };
         for open in &mut self.cx.open[holder..] {
@@ -667,8 +674,11 @@ impl<'a> Parser<'a> {
                 let width = crate::identities::read::place_layout(self.types, t)
                     .map_or(8, |(_, width)| width);
                 let place = self.place_for(binding, t, width);
-                // `a := own t ?`: the owner of whatever node is written into it later.
-                if cell.owning {
+                // `a := own t ?`, and `a := r ?` of a plain record `r` whose body fills `free`:
+                // the owner of whatever is written into it later.
+                let record_free = crate::identities::this::is_plain(self.types, t)
+                    && !crate::identities::meta::instances_free_of(t).is_null();
+                if cell.owning || record_free {
                     self.hold_node(binding);
                 }
                 // `a := own @T ?`: the owner of whatever block is written into it later.
@@ -692,13 +702,18 @@ impl<'a> Parser<'a> {
             } else if dyad::ty(read) == self.types.construct_
                 || dyad::ty(read) == self.types.by_copy.result
             {
-                // Both make their value into the name's own bytes: the target slot.
+                // Both make their value into the name's own bytes: the target slot. A record
+                // just made or moved out, of a type whose body fills `free`, makes the name its
+                // owner.
                 let t = crate::identities::by_copy::made_type(self.types, read);
                 let width = crate::identities::read::place_layout(self.types, t)
                     .map_or(8, |(_, width)| width)
                     .max(1);
                 let place = self.place_for(binding, t, width);
                 *(dyad::value(read) as *mut DyadPtr) = place;
+                if let Some(Teardown::Node(_)) = teardown_of(self.types, value) {
+                    self.hold_node(binding);
+                }
                 value
             } else if crate::identities::read::read_kind(self.types, read)
                 == crate::identities::read::Read::Identity

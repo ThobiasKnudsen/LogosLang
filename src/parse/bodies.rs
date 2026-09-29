@@ -1272,17 +1272,19 @@ impl<'a> Parser<'a> {
             };
             // SAFETY: `tail_value` is a reduced dyad from the store.
             let place = unsafe { types.through(tail_value) };
-            let holds = |p: DyadPtr| exit.iter().any(|h| h.what == p && h.end.is_none());
+            // SAFETY: held places and `place` are dyads from the store.
+            let held_at = |p: DyadPtr| exit.iter().position(|h| unsafe { self.holds(h, p) });
             // SAFETY: as above.
-            if unsafe { crate::identities::drop_model::lent_place(types, place) }.is_some_and(holds)
-            {
+            let lent = unsafe { crate::identities::drop_model::lent_place(types, place) };
+            if lent.and_then(held_at).is_some() {
                 return Err(ParseError::AddressOfHeld);
             }
-            if let Some(held) = exit.iter_mut().find(|h| h.what == place && h.end.is_none()) {
+            if let Some(at) = held_at(place) {
                 if returned {
                     return Err(ParseError::OwningEscape);
                 }
-                held.end = Some(tail);
+                exit[at].end = Some(tail);
+                // A plain record moves out as its bytes' address, which the taker copies.
                 // SAFETY: `place` is a place this scope's binding site laid out, and
                 // `tail` indexes the scope's own lines, which nothing else reads yet.
                 unsafe {
@@ -1293,6 +1295,8 @@ impl<'a> Parser<'a> {
                             types.move_,
                             place,
                         )?
+                    } else if crate::identities::this::is_plain(types, types.type_of(place)) {
+                        crate::identities::by_copy::build_out(self.rt.store, types, place)
                     } else {
                         crate::identities::drop_model::build_instance_move(
                             self.rt.store,

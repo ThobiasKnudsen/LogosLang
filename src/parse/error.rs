@@ -230,6 +230,8 @@ pub enum ParseError {
     OwnershipAcrossReturn,
     /// `move b` where `b` borrows the node it names: only the owner can move it.
     MoveOfBorrow,
+    /// `move a` of a plain record: its bytes are not copied into a name yet. stand-in for #193
+    RecordMoveNotInSeed,
     /// A name as a line of a list a type's `parse` builds from, where the value's type fills
     /// a `free`: the built value owns its lines, so the name must be moved in.
     LineNotMoved,
