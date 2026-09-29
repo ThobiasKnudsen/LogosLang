@@ -194,7 +194,7 @@ impl Core {
         // Foundations first; everything below references them.
         let type_ = logos_mod::register_root(store);
         let scope_ = scope::register(store, type_);
-        let root_scope = store.alloc_leaf(scope_);
+        let root_scope = scope::mint(store, scope_, std::ptr::null_mut());
         // `binding` and `string` are minted before the first declaration, which needs
         // both; their own definitions are filled in below.
         let binding_ = store.alloc_leaf(type_);

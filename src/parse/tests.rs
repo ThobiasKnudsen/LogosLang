@@ -25,9 +25,13 @@ fn rec(identity: DyadPtr) -> DyadPtr {
     rec_in(identity, std::ptr::null_mut())
 }
 
+/// A leaked binding node: a null type word, then the record.
+#[repr(C)]
+struct Leaked(DyadPtr, Binding);
+
 fn rec_in(identity: DyadPtr, scope: DyadPtr) -> DyadPtr {
-    let fields = Box::into_raw(Box::new(Binding::new(identity, scope, std::ptr::null_mut())));
-    Box::into_raw(Box::new(crate::dyad::Dyad::new(std::ptr::null_mut(), fields as *mut u8)))
+    let rec = Binding::new(identity, scope, std::ptr::null_mut());
+    Box::into_raw(Box::new(Leaked(std::ptr::null_mut(), rec))) as DyadPtr
 }
 
 /// The fields behind a binding dyad.

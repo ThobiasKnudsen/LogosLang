@@ -507,9 +507,7 @@ impl<'a> Parser<'a> {
                 )
             {
                 let i = index.ok_or(ParseError::ExpectedIndexBracket)?;
-                if i >= crate::identities::meta::arity_of(dyad::ty(lhs))
-                    || dyad::value(lhs).is_null()
-                {
+                if i >= crate::identities::meta::arity_of(dyad::ty(lhs)) {
                     return Err(ParseError::BadReflectRead);
                 }
                 let ops = dyad::value(lhs) as *const DyadPtr;
@@ -896,13 +894,9 @@ impl<'a> Parser<'a> {
             crate::run::RunError::MintFailed(_) => ParseError::Run(e),
             _ => ParseError::NonComptimeTypeCall,
         })?;
+        // A call declared `-> type` yields a node's address (DESIGN ›The store is keyed by address‹).
         let node = bits as usize as DyadPtr;
-        // The bits are read as a node address, so they must be one: bits that
-        // were never a node are the checked error, never a dereference.
-        if !self.rt.store.contains(node) {
-            return Err(ParseError::NonComptimeTypeCall);
-        }
-        if crate::identities::is_type_value(self.types, node) {
+        if !node.is_null() && crate::identities::is_type_value(self.types, node) {
             Ok(node)
         } else {
             Err(ParseError::NonComptimeTypeCall)
@@ -1232,7 +1226,7 @@ impl<'a> Parser<'a> {
             return None;
         }
         let node = *(stored as *const DyadPtr);
-        (!node.is_null() && self.rt.store.contains(node)).then_some(node)
+        (!node.is_null()).then_some(node)
     }
 
     /// Exactly the cell's two fields, `.type` and `.value` (DESIGN ›The dyad's

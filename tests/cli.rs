@@ -78,8 +78,8 @@ fn logos_stats_measures_the_store_on_stderr() {
         "store core:",
         "store after:",
         "store delta:",
-        "cells=",
-        "cell_bytes=",
+        "nodes=",
+        "node_bytes=",
         "arena_bytes=",
         "arena_allocs=",
         "boxed_bytes=",
@@ -89,7 +89,7 @@ fn logos_stats_measures_the_store_on_stderr() {
         "code_bytes=",
         "per_source_byte=",
         "per_code_byte=",
-        "per_cell=",
+        "per_node=",
     ] {
         assert!(err.contains(field), "missing {field} in stderr: {err}");
     }

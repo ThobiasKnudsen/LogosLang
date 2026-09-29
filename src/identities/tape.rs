@@ -96,7 +96,7 @@ pub(super) fn register(
     array_ty: DyadPtr,
     void_ty: DyadPtr,
 ) -> TapeIds {
-    let scope = cx.store.alloc_leaf(scope_ty);
+    let scope = super::scope::mint(cx.store, scope_ty, std::ptr::null_mut());
     // SAFETY: `void_ty` is the type node `Core::build` minted.
     let at_void = unsafe { super::pointer::make_pointer_type(cx.store, cx.type_, void_ty) };
     let cells = cx.store.alloc_leaf(at_void);
@@ -1027,7 +1027,6 @@ unsafe fn node_operand(rt: &mut Runtime, d: DyadPtr) -> DyadPtr {
     }
     let store = rt.store();
     if !d.is_null()
-        && store.contains(d)
         && super::read::read_kind(&*types, d) != super::read::Read::Node
         && super::node_type_of(&*types, d).is_some()
     {

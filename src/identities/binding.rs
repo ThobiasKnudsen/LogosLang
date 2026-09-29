@@ -292,7 +292,7 @@ pub(super) fn register_type(
     u64_ty: DyadPtr,
 ) {
     let binding_ = cx.binding_;
-    let scope = cx.store.alloc_leaf(scope_ty);
+    let scope = super::scope::mint(cx.store, scope_ty, std::ptr::null_mut());
     let mut fields = Vec::with_capacity(9);
     // SAFETY: `dyad_ty` is the type node `Core::build` minted.
     let at_dyad = unsafe { super::pointer::make_pointer_type(cx.store, cx.type_, dyad_ty) };

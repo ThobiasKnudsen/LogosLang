@@ -658,7 +658,7 @@ fn compiling_an_uninitialized_read_errors_instead_of_crashing() {
     let (mut store, mut trie, core) = new_core();
     let mut scopes = ScopeStack::new();
     scopes.push(core.root_scope);
-    let x = store.alloc_leaf(core.i32_);
+    let x = hole::build(&mut store, core.unknown, core.i32_, std::ptr::null_mut());
     unsafe { scopes.declare(&mut trie, "x", test_binding(&mut store, core.binding_, x)) }.unwrap();
 
     let node = {
@@ -667,10 +667,10 @@ fn compiling_an_uninitialized_read_errors_instead_of_crashing() {
     };
     let mut rt = Runtime::new(&core, &mut store);
     // SAFETY: `node` is the variable reference just parsed.
-    assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::Uninitialized));
-    // SAFETY: same node; the lowering guards the null storage.
+    assert_eq!(unsafe { rt.run(node) }, Err(crate::run::RunError::NoWholeRead));
+    // SAFETY: same node; a hole has no whole read to lower.
     let compiled = unsafe { compile_nullary_i32(&core.lower, &core, node) };
-    assert!(matches!(compiled, Err(crate::compile::CompileError::Uninitialized)));
+    assert!(matches!(compiled, Err(crate::compile::CompileError::NotLowerable(_))));
 }
 
 #[test]
@@ -1082,7 +1082,7 @@ fn logical_operators_short_circuit_on_the_interpreter() {
     {
         let mut s = ScopeStack::new();
         s.push(core.root_scope);
-        let y = store.alloc_leaf(core.i32_);
+        let y = hole::build(&mut store, core.unknown, core.i32_, std::ptr::null_mut());
         unsafe { s.declare(&mut trie, "y", test_binding(&mut store, core.binding_, y)) }.unwrap();
     }
     let mut rt = Runtime::new(&core, &mut store);
@@ -1093,7 +1093,7 @@ fn logical_operators_short_circuit_on_the_interpreter() {
         let mut p = Parser::new("y < 1", rt.store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
-    assert_eq!(unsafe { rt.run(bad) }, Err(crate::run::RunError::Uninitialized));
+    assert_eq!(unsafe { rt.run(bad) }, Err(crate::run::RunError::NoWholeRead));
 
     let and_sc = {
         let mut s = ScopeStack::new();
