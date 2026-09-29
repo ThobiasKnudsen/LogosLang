@@ -791,6 +791,46 @@ mod tests {
     }
 
     #[test]
+    fn a_greedy_class_before_a_literal_gives_the_literal_back() {
+        let root = dummy(100);
+        let mut t = RegexTrie::new();
+        let (ing, tens) = (dummy(1), dummy(2));
+        t.insert("[a-z]+ing", rec(ing, root));
+        t.insert("[0-9]+0", rec(tens, root));
+
+        let m = t.get("running").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (7, ing));
+        let m = t.get("ring").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (4, ing));
+        assert!(matches!(t.get("ing"), Err(RegexTrieError::NodeNotFound)));
+        let m = t.get("100").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (3, tens));
+
+        assert_eq!(t.bindings_for_key("[a-z]+ing").map(<[_]>::len), Some(1));
+        assert_eq!(t.remove("[a-z]+ing", root).unwrap(), ing);
+        assert!(t.get("running").is_err());
+    }
+
+    #[test]
+    fn a_literal_the_class_cannot_eat_stays_on_the_byte_path() {
+        let root = dummy(100);
+        let mut t = RegexTrie::new();
+        let (a_b, xy, alnum) = (dummy(1), dummy(2), dummy(3));
+        t.insert("a[0-9]+b", rec(a_b, root));
+        t.insert("x+y", rec(xy, root));
+        t.insert("[a-z]+[0-9]", rec(alnum, root));
+
+        let m = t.get("a12b").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (4, a_b));
+        let m = t.get("xxy").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (3, xy));
+        let m = t.get("ab1").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (3, alnum));
+        let m = t.get("a12c").unwrap();
+        assert_eq!((m.matched, f(m.bindings[0]).dyad), (2, alnum));
+    }
+
+    #[test]
     fn bad_pattern_surfaces_error() {
         // Lookaround is unsupported by the `regex` crate.
         let root = dummy(100);

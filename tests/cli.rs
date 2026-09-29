@@ -1009,6 +1009,14 @@ fn a_pattern_spelling_is_declared_through_regex() {
 }
 
 #[test]
+fn a_pattern_whose_class_can_eat_its_own_literal_still_lexes() {
+    let (echoes, stderr) = repl(
+        b"regex \xc2\xab[a-z]+ing\xc2\xbb := type ()\n(running):type == type\n(ring):type == type\n",
+    );
+    assert_eq!(echoes, ["true", "true"], "stderr: {stderr}");
+}
+
+#[test]
 fn a_constructor_written_in_logos_runs_during_the_parse() {
     let out = logos().args(["import", "tests/fixtures/squared.logos"]).output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));

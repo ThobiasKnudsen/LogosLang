@@ -411,6 +411,7 @@ dependencies = [
  "cranelift-module",
  "cranelift-native",
  "regex",
+ "regex-syntax",
 ]
 
 [[package]]
