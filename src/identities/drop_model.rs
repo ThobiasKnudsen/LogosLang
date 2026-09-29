@@ -85,8 +85,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     let alloc_leaf = callable::mint_native(cx.store, cs.callable, run_alloc, cs.seed_native);
 
     // `own` stands only in a type position, `own @T ?`: the word makes the hole an owning one.
-    // It places the hole it reads and builds no node, so it names no slots.
-    let own_ = keyword(cx, "own", meta::prec::PREFIX, &[], |p, _id, tape| {
+    let own_ = super::gate::word(cx, "own");
+    cx.metas.insert(own_, |p, _id, tape| {
         let Some(&hole) = tape.at(1) else {
             return Err(ParseError::MissingOperand);
         };
@@ -1124,8 +1124,7 @@ mod tests {
             parse_err("a := alloc 1 of i32 7,\nb := own a,\nb@"),
             ParseError::OwnOutsideType
         );
-        assert_eq!(run("own.arity"), (0, 0), "`own` builds no node");
-        assert_eq!(run("move.arity"), (3, 0));
+        assert_eq!(parse_err("own.arity"), ParseError::BadReflectRead, "a gate word, as `pub`");
         assert_eq!(
             parse_err("a := alloc 1 of i32 7,\ndrop a,\n1"),
             ParseError::Resolve(ResolveError::Unknown("drop".into()))
