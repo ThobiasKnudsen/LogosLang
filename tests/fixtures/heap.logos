@@ -1,4 +1,4 @@
-# The ruled drop model at file scope (issue #49): a top-level owning binding,
+# Ownership at file scope: a top-level owning binding,
 # a move out of it, and a block whose alloc frees at its own exit. The file
 # driver drains the top level's teardowns at program exit, so this runs clean
 # and prints its result with no leak or double free.

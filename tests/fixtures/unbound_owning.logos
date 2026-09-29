@@ -1,5 +1,5 @@
 # An owning value handed straight to a call has no name to hang its `free` on,
-# so the seed refuses it rather than leaking (issue #49). Binding it first
+# so the seed refuses it rather than leaking. Binding it first
 # (`p := alloc 1 of i32 5`) and passing the name is the way to write this today.
 f := fn (p := @i32 ?) -> i32 ( p@ ),
 f(alloc 1 of i32 5)
