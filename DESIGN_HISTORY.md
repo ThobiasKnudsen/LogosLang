@@ -423,6 +423,9 @@ Nothing moved from this section.
 - **History:** a colon field form replaced 2 September 2026.
 - **History:** an Open line of the morning of 29 September 2026 (#199): whether `fn (a) -> i64 ( a )` is refused where it is defined, a `dyad ?` holding "the node itself, unrun", or runs with `a` holding a value whose type is checked when the body runs. Closed the same day: it works ("i want it to actually work"), through ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹.
 
+### Positional arguments fill the holes in order; an expression line among them is a precondition
+- **History:** for some hours on 29 September 2026 the #199 Ruled line said "`a:start` reaches the graph where `a` is declared and defined, the nodes `a`, `:=`, `x`, `+`, `1`", from Thobias's "if you do a:start you get to the actuall LG where a is declared and defined". Narrowed for a parameter the same night by his choice of option (a) (Q-0024): a body is built once per set of argument types and `a:start` is fixed at the build (›A binding's fields are read at elaboration, at the line of the read; running code never reads a binding‹), so one `a:start` cannot show each call's argument. A parameter's `a:start` is where `a` is written in `fn (a)`, and the argument's graph is reached from the call.
+
 ### Mandatory named arguments are rejected
 - **History:** a third reason (the callee is asleep while `(` builds, so `x = X` hits an undeclared name) was superseded 3 Sept 2026: a callable reads its own bracket (›The scope's constructor is the driver‹).
 
