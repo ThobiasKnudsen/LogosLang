@@ -57,6 +57,11 @@ jobs:
       - name: Test
         run: cargo test --release --locked
 
+      # The debug profile is where debug_assert! fires; a release-only gate let one fail
+      # at startup for two days unseen.
+      - name: Test (debug)
+        run: cargo test --locked
+
       # The exact check release.yml runs on every native artifact, so it cannot
       # rot unnoticed between releases (it did, from #58 until issue #71).
       - name: Smoke-test the binary
