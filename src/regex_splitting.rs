@@ -80,8 +80,8 @@ fn get_quant_n(q: &str) -> (usize, usize) {
 }
 
 /// The trie matches a path segment by segment and never backs up between
-/// them, so a literal the regex chunk before it could eat (`[a-z]+` eats the
-/// `ing` of `running`) stays inside that chunk, escaped.
+/// them, so a literal the regex chunk before it could eat stays inside that
+/// chunk, escaped.
 fn keep_eatable_literals(path: &mut [Segment]) {
     let mut chunk = String::new();
     for seg in path.iter_mut() {
