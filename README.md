@@ -230,6 +230,7 @@ One expression per line. Values echo, declarations are silent, and a line that f
 ```
 cargo build --release                                   # target/release/logos
 cargo test --release                                    # unit tests and the end-to-end CLI tests
+cargo test                                              # the same in the debug profile, where debug_assert! fires
 ./target/release/logos import examples/answer.logos     # 42
 ```
 
@@ -258,6 +259,7 @@ Pushing a `vX.Y.Z` tag to `main` builds the archives, creates the GitHub Release
 
 ```
 cargo test --release
+cargo test
 bash .github/scripts/docs-check.sh validate
 bash .github/scripts/docs-check.sh release vX.Y.Z   # the exact check the gate job runs
 bash .github/scripts/docs-check.test.sh

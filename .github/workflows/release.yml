@@ -97,6 +97,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Test the tagged tree
         run: cargo test --release --locked
+      - name: Test the tagged tree (debug)
+        run: cargo test --locked
 
   build:
     needs: gate
