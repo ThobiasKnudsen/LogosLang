@@ -87,6 +87,17 @@ pub(crate) struct Ended {
     pub(crate) binding: DyadPtr,
 }
 
+/// The operand of a `move` or `free`.
+#[derive(Debug)]
+pub(crate) enum Taken {
+    /// The node the place is reached through, and the name it ends when it is a bare name.
+    Place(DyadPtr, Option<Ended>),
+    /// A value no name holds, and where it starts in the source.
+    Value(DyadPtr, usize),
+    /// A hole, `T ?` or `?`, which is neither, and where it starts.
+    Hole(usize),
+}
+
 /// The open scopes with an O(1) membership set: a cache over the parent link
 /// every scope node carries (DESIGN ›Meta-navigation‹). Resolution keeps the
 /// one live candidate (DESIGN ›Name resolution is scope-filtered‹).

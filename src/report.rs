@@ -317,6 +317,20 @@ pub fn parse_message(e: &ParseError) -> String {
              or hand it in as a parameter"
                 .into()
         }
+        ParseError::MoveOfValue => {
+            "`move` moves a value out of a place: a name, a field `p.f`, a dereference `p@` or \
+             an element `a[k]`. No name holds this value, so there is nothing to move it out of: \
+             bind it as it is, `b := f()` for `b := move (f())`"
+                .into()
+        }
+        ParseError::FreeOfHole => {
+            "a hole, `T ?`, holds no value yet, so `free` has nothing to run or free here".into()
+        }
+        ParseError::FreeOfUntypedValue => {
+            "`free` runs a value and then its type's `free`, and which type this value has is \
+             known only when it runs: free it inside each branch, `if c (free (a())) else (free (b()))`"
+                .into()
+        }
     }
 }
 

@@ -318,6 +318,8 @@ impl Core {
         op_leaves.free_ = dm.free_leaf;
         op_leaves.instance_free_ = dm.instance_free_leaf;
         op_leaves.field_free_ = dm.field_free_leaf;
+        op_leaves.value_free_ = dm.value_free_leaf;
+        op_leaves.value_release_ = dm.value_release_leaf;
         op_leaves.teardown_ = dm.teardown_leaf;
         op_leaves.defer_ = dm.defer_leaf;
         let (alloc_, own_, move_, free_, defer_, of_) =

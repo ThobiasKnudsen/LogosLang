@@ -4,13 +4,15 @@
 //! The reading rule: how a node's value is read, decided once in `read_kind`, which
 //! every reader asks. What decides it: the binding hop, storage by its declared type,
 //! then `fn` (the one identity no record can carry), then the type's record kind byte.
-//! DESIGN ›The dyad's read surface‹, ›A scope lays out its declarations…‹.
+//! DESIGN ›The dyad's read surface‹, ›A scope lays out its declarations…‹. Beside it,
+//! `place_of`: whether a node is a place at all.
 
 use super::callable;
 use super::meta;
 use super::numtype::{self, NumType, ADDR_TAG, COMMENT_TAG, STRING_TAG, VOID_TAG};
 use crate::dyad;
 use crate::dyad::DyadPtr;
+use crate::store::Store;
 use crate::Core;
 
 /// `Copy` and register-sized: it is asked on every interpreted value read.
@@ -196,6 +198,142 @@ pub unsafe fn cell_numtype(types: &Core, t: DyadPtr) -> Option<NumType> {
         (Read::Container(c), _) if meta::is_node_valued(c, types.fn_type) => Some(NumType::U64),
         _ => None,
     }
+}
+
+/// What makes a node a place (DESIGN ›The checker reads a fact base the graph provides; the
+/// rules over it are user-definable‹, Places, and ›`a[k]` is an application, exactly as
+/// `a(k)`‹).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Place {
+    /// A name, a field path, a dereference, or a cell of the tape, of its `is_constructed`
+    /// flags or of a map.
+    Itself,
+    /// A call that ends in a dereference: its place is that dereference.
+    Call(CallTail),
+}
+
+/// A call whose callee is a `fn` whose body ends in a dereference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CallTail {
+    call: DyadPtr,
+    callee: DyadPtr,
+    body: DyadPtr,
+    tail: DyadPtr,
+    /// The body line the dereference stands on; `None` when the body is the dereference.
+    line: Option<usize>,
+}
+
+/// Whether `node` is a place, and which; `None` for a value nothing holds. A binding's own
+/// field, `x:f`, is read at elaboration and is no place.
+///
+/// # Safety
+/// `node` must be null or a reduced dyad from the store.
+pub unsafe fn place_of(types: &Core, node: DyadPtr) -> Option<Place> {
+    if node.is_null() {
+        return None;
+    }
+    let ty = dyad::ty(node);
+    let itself = if ty == types.field_ {
+        types.binding_field_of(node).is_none()
+    } else {
+        ty == types.binding_
+            || super::this::is_field_read(types, node)
+            || is_owning_slot(node)
+            || ty == types.deref_
+            || ty == types.hashmap.get
+            || ty == types.tape.is_constructed
+            || super::tape::is_cell_read(types, node)
+    };
+    if itself {
+        return Some(Place::Itself);
+    }
+    call_tail(types, node).map(Place::Call)
+}
+
+/// The node an owning field's slot holds, which a read of a node known at parse folds to:
+/// only a field's slot is typed an owning pointer, never a value, and a hole's type is `?`.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store.
+unsafe fn is_owning_slot(node: DyadPtr) -> bool {
+    let ty = dyad::ty(node);
+    meta::kind_of(ty) == Some(ADDR_TAG) && !meta::destructor_of(ty).is_null()
+}
+
+/// A body holding a `return` could leave with a value where the place owes an address, and
+/// one holding a `defer` would free what the address points at before the place is used.
+///
+/// # Safety
+/// As `place_of`.
+unsafe fn call_tail(types: &Core, node: DyadPtr) -> Option<CallTail> {
+    let Read::Executable(Dispatch::Call(callee)) = read_kind(types, node) else {
+        return None;
+    };
+    if dyad::ty(callee) != types.fn_type {
+        return None;
+    }
+    let body = *(dyad::value(callee) as *const DyadPtr).add(crate::parse::FN_BODY);
+    if body.is_null() || crate::parse::contains_return(types, body) {
+        return None;
+    }
+    let body = types.through(body);
+    let (tail, line) = if dyad::ty(body) == types.scope {
+        let lines = super::scope::exprs_of(body)?;
+        if lines.iter().any(|&e| dyad::ty(e) == types.defer_) {
+            return None;
+        }
+        let i = lines.iter().rposition(|&e| !numtype::is_comment_type(dyad::ty(e)))?;
+        (types.through(lines[i]), Some(i))
+    } else {
+        (body, None)
+    };
+    (dyad::ty(tail) == types.deref_).then_some(CallTail {
+        call: types.through(node),
+        callee,
+        body,
+        tail,
+        line,
+    })
+}
+
+/// The node every word meets a place as: `node` itself, or for a call that ends in a
+/// dereference, that dereference. `None` when `node` is no place.
+///
+/// # Safety
+/// As `place_of`.
+pub unsafe fn place_node(store: &mut Store, types: &Core, node: DyadPtr) -> Option<DyadPtr> {
+    match place_of(types, node)? {
+        Place::Itself => Some(node),
+        Place::Call(call) => Some(call_place(store, types, call)),
+    }
+}
+
+/// The call's dereference, over a call of a copy of the callee whose body yields the address
+/// where the original reads through it: the body runs with the call's arguments, bounds
+/// check included, and the place is where its dereference points.
+///
+/// # Safety
+/// `call` must come from `place_of`.
+pub unsafe fn call_place(store: &mut Store, types: &Core, call: CallTail) -> DyadPtr {
+    use crate::parse::{FN_BCODE, FN_BODY, FN_OUTPUT, FN_RECEIVER};
+    let (address, pointee, offset) = super::pointer::deref_parts(call.tail);
+    let body = match call.line {
+        None => address,
+        Some(i) => {
+            let mut lines = super::array::items(super::scope::exprs_array(call.body)).to_vec();
+            lines[i] = address;
+            super::scope::with_exprs(store, types.array_, call.body, &lines)
+        }
+    };
+    let fields = dyad::value(call.callee) as *const DyadPtr;
+    let mut record: Vec<DyadPtr> = (0..=FN_RECEIVER).map(|k| *fields.add(k)).collect();
+    record[FN_OUTPUT] = super::pointer::make_pointer_type(store, types.type_, pointee);
+    record[FN_BODY] = body;
+    record[FN_BCODE] = std::ptr::null_mut();
+    let finder = store.alloc_words(dyad::ty(call.callee), &record);
+    let args = crate::parse::null_terminated(dyad::value(call.call) as *const DyadPtr);
+    let found = crate::parse::build_call(store, finder, args);
+    super::pointer::build_deref(store, types, found, pointee, offset as usize)
 }
 
 #[cfg(test)]
@@ -435,6 +573,59 @@ mod tests {
             assert_eq!(read_kind(&core, d), Read::Address);
             assert_eq!(read_kind(&core, r), Read::Literal);
             assert!(!core.is_storage(n) && !core.is_storage(t));
+        }
+    }
+
+    #[test]
+    fn a_place_is_a_name_a_field_path_a_dereference_a_cell_or_a_call_that_ends_in_one() {
+        let (mut store, _trie, core, exprs) = parse_seq(
+            "point := type ( x := i32 ?, y := i32 ? ),\n\
+             mut v := point (1, 2),\n\
+             x := i32 1,\n\
+             a := &x,\n\
+             get := fn (p := @i32 ?) -> i32 ( p@ ),\n\
+             seven := fn () -> i32 ( 7 ),\n\
+             early := fn (p := @i32 ?) -> i32 ( return p@ ),\n\
+             kept := fn (p := @i32 ?) -> i32 ( q := alloc 1 of i32 2, p@ ),\n\
+             v.x,\n\
+             a@,\n\
+             get(a),\n\
+             seven(),\n\
+             early(a),\n\
+             kept(a),\n\
+             5,\n\
+             a + 1,\n\
+             v:lex_rank,\n\
+             @i32 ?",
+        );
+        let types = &core;
+        // SAFETY: every node was just parsed into `store`, which is alive.
+        unsafe {
+            let a = declare::binding_of(exprs[3]);
+            assert_eq!(place_of(types, a), Some(Place::Itself), "a name");
+            assert_eq!(place_of(types, exprs[8]), Some(Place::Itself), "a field path");
+            assert_eq!(place_of(types, exprs[9]), Some(Place::Itself), "a dereference");
+            assert!(matches!(place_of(types, exprs[10]), Some(Place::Call(_))));
+            let place = place_node(&mut store, types, exprs[10]).expect("a call place");
+            assert_eq!(dyad::ty(place), types.deref_, "met as the dereference it ends in");
+            let (found, pointee, _) = super::super::pointer::deref_parts(place);
+            assert_eq!(pointee, core.i32_);
+            // The copy of the callee yields the address its body reads through.
+            let finder = dyad::ty(found);
+            let output = *(dyad::value(finder) as *const DyadPtr).add(crate::parse::FN_OUTPUT);
+            assert_eq!(numtype::pointee_of(output), core.i32_);
+            for (k, what) in [
+                (11, "a call ending in a literal"),
+                (12, "a call whose body holds a `return`"),
+                (13, "a call whose body holds a teardown of its own"),
+                (14, "a literal"),
+                (15, "an arithmetic value"),
+                (16, "a binding's own field"),
+                (17, "a hole"),
+            ] {
+                assert_eq!(place_of(types, exprs[k]), None, "{what}");
+                assert_eq!(place_node(&mut store, types, exprs[k]), None, "{what}");
+            }
         }
     }
 
