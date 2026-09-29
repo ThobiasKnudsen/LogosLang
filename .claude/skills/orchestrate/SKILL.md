@@ -27,6 +27,10 @@ For each chosen issue:
 2. `ORCH=<name> bash .claude/skills/orchestrate/orchestrate.sh spawn-worker N slug`. It creates the worktree and branch from dev, composes the prompt, starts `issue-N-worker`, comments on the issue, prints the session id.
 3. Subscribe: SendMessage to `issue-N-worker` with `notify_when_idle: true` and no message. You will hear once when it ends a turn.
 
+## The review loop
+
+When a review agent starts, the agent before it (the worker, or the previous review agent) is killed immediately. If the review agent finds everything good, the orchestrator merges and kills that review agent as well. If the review agent had to fix things, another review agent runs, and when it starts the orchestrator kills the previous one; so the loop goes on until a review agent says good and the branch is merged. No round limit. The script does the killing: `spawn-reviewer` and `merge` each stop every other `issue-N-*` session.
+
 ## The message protocol
 
 Workers and reviewers write to you with SendMessage; the first line is a tag. React to each:
@@ -34,9 +38,9 @@ Workers and reviewers write to you with SendMessage; the first line is a tag. Re
 | First line | You do |
 | :- | :- |
 | `QUESTION #N: …` | Ask Thobias with AskUserQuestion, the worker's whole question inside the question text, in plain words, with his options and the worker's recommendation. Then SendMessage to the sender: `ANSWER #N:` and his answer in his own words, verbatim where he gave words, with `notify_when_idle: true`. If he may be away, PushNotification first. |
-| `DONE #N: …` | `spawn-reviewer N`. It starts `issue-N-review-K` and stops the worker. Subscribe to the reviewer. |
-| `REVIEW #N round K: FIXED …` | `spawn-reviewer N` again (round K+1 stops round K). After round 4, stop and ask Thobias whether to keep going, merge as is, or abandon. |
-| `REVIEW #N round K: CLEAN` | `merge N`. Exit 3 means dev moved since the review: `spawn-reviewer N` once more. On success tell Thobias in one line and propose the next issue. |
+| `DONE #N: …` | `spawn-reviewer N`: review round 1 starts and the worker is killed at once. Subscribe to the reviewer. |
+| `REVIEW #N round K: FIXED …` | The review agent had to fix things, so another review agent must run: `spawn-reviewer N`. The moment round K+1 starts, round K is killed. The loop goes on like this until a review agent says CLEAN. |
+| `REVIEW #N round K: CLEAN` | `merge N`: the orchestrator merges and kills that review agent as well. Exit 3 means dev moved since the review: one more `spawn-reviewer N`. On success tell Thobias in one line and propose the next issue. |
 | `BLOCKED #N: …` | Tell Thobias what would unblock it and ask. `kill N` only when he says so. |
 | `PROGRESS #N: …` | Note it. No reply. |
 
