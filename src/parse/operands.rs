@@ -362,15 +362,15 @@ impl<'a> Parser<'a> {
                 tape.remove(1);
                 return Ok(Taken::Hole(cell.start));
             }
-            if self.cx.scopes.crosses_barrier(scope) {
-                self.cx.pos = cell.start;
-                return Err(ParseError::MoveOfOuterName);
-            }
             // Every section reads the arche's names, an import included, so ending one
             // here would end it there: stand-in for #35.
             if scope == self.types.root_scope {
                 self.cx.pos = cell.start;
                 return Err(ParseError::EndsPrimordialName(Box::new(cell.spelling().into())));
+            }
+            if self.cx.scopes.crosses_barrier(scope) {
+                self.cx.pos = cell.start;
+                return Err(ParseError::MoveOfOuterName);
             }
             self.check_made(binding)?;
             self.note_outer_read(binding);

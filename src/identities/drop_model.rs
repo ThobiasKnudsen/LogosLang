@@ -1333,7 +1333,7 @@ mod tests {
 
     #[test]
     fn a_name_the_run_starts_with_is_not_ended_by_a_program() {
-        for src in ["free i32,\n1", "b := move i32"] {
+        for src in ["free i32,\n1", "b := move i32", "g := fn () -> i32 ( free i32, 1 )"] {
             assert_eq!(
                 parse_err(src),
                 ParseError::EndsPrimordialName(Box::new("i32".into())),
