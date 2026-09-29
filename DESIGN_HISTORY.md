@@ -222,6 +222,7 @@ Nothing moved from this section.
 - **History:** before 23 September, `?` was a constructor building a fresh dyad with both slots `undefined` at every appearance, a literal, so `x := ?` bound x "to its own hole rather than aliasing one global unknown". Replaced because freshness belongs to the place.
 - **Seed detail (27 September 2026):** a bare `?` stands as the one identity. `?` reads a type to its left only when that type applies to it, not when an operator waits there (`x != ?`). `T ?` still allocates zeroed bytes, which no read reaches.
 - **History (28 September 2026):** `key := ?` questioned by Thobias ("i dont think x := ? should be possible to write though i dont see any reason why you wouldnt give it the type when its declared") and kept; the reason is at the rule. Seed detail the same day: the seed still makes the null-typed placeholder node at the lex and retypes it in place at the fill, the shape #166 would remove.
+- **History:** until 29 September 2026 the 28 September ruling's reason went on: "`lhs := dyad ?` would hand the run body an unrun node, so `r * a` could not settle its operation once per node and the operand would run again inside the loop; the seed refuses `a * 2` on a `dyad ?` field." Superseded by ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹ (Thobias, #199, "i want it to actually work"): a `dyad ?` is read through, so it no longer hands the body an unrun node, and `a * 2` on one reads the node it holds. Whether a `dyad ?` operand still leaves `r * a` unsettled until the node runs is open there. The ruling, `key := ?` stays, is not reopened.
 
 ### Reading a place before its first write is refused at parse
 - **Seed detail (27 September 2026):** the entry refuses at parse every use of the name except the target of `x = …` and the binding read `x:…`, until the sibling write.
@@ -395,6 +396,7 @@ Nothing moved from this section.
 
 ### A field is filled at run, per evaluation; its type decides how the operand is used
 - **History:** an Open line from 16 to 28 September 2026: "the two moments of a field (operand slot written at parse, frame place evaluated at run) are implied but not yet said in one sentence." Closed by the two-moments sentence at the rule.
+- **History:** until 29 September 2026 the two-moments sentence ended "for `dyad ?`, the node itself, unrun." Superseded by ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹ (Thobias, #199, "i want it to actually work"): once a bare parameter was `dyad ?`, a place holding the operand's node unrun could not give `f := fn (a) -> i64 ( a ), f(i64 42)` its `42`.
 
 ### A node's output type is per node, and its parse writes it
 - **History:** 16 Sept: `output := type ?`, `tape[0]:dyad.value.output = tape[-1]:dyad.type`.
@@ -415,6 +417,7 @@ Nothing moved from this section.
 
 ### A function's surface is `fn (params) -> T (body)`, and its parameter list is a record type
 - **History:** a colon field form replaced 2 September 2026.
+- **History:** an Open line of the morning of 29 September 2026 (#199): whether `fn (a) -> i64 ( a )` is refused where it is defined, a `dyad ?` holding "the node itself, unrun", or runs with `a` holding a value whose type is checked when the body runs. Closed the same day: it works ("i want it to actually work"), through ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹.
 
 ### Mandatory named arguments are rejected
 - **History:** a third reason (the callee is asleep while `(` builds, so `x = X` hits an undeclared name) was superseded 3 Sept 2026: a callable reads its own bracket (›The scope's constructor is the driver‹).
@@ -846,6 +849,7 @@ Nothing moved from this section.
 - **History:** until 28 September 2026 the seed read "the address is an index" as a raw `*mut Dyad`, the cell two raw pointers; the 32-bit index handle behind store accessors superseded that reading (#165).
 - **History:** 28 September 2026, later the same day: the 32-bit index handle (address = base + index × 16, cell head a 32-bit type index) was withdrawn as a misconception, Thobias had asked whether the agent proposed it, it had not, and he never wanted it; the handle is the 64-bit address, and the cell head's 32-bit type index went with it the same day, no reason for it being his either: the cell is two full pointers again. Seed: #165 slice B's flip was cancelled before it was built; its accessor pass stays, being layout-neutral.
 - **History:** until 29 September 2026: "Nodes are fixed two-pointer (16-byte) cells, so the address is an index: no key, no hash", and an Open line of 28 September holding the one-word node back "while a fresh cell is stamped (`tape[0]:type = T`) after it exists, since a block cannot be allocated before its type is known". The blocker was stale (›How a Logos constructor builds its node‹ replaces the cell with a fresh node of the assigned type, and the seed births it typed) and the layout was adopted the next day (#166). Superseded record: the seed's `Store::contains` grid check, five sites, guarded what the types refuse.
+- **History:** until 29 September 2026 the Why of the #166 ruling ended with the example "(`mut d := dyad ?, d = 5` is a parse error)". Superseded the same day by ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹ (Thobias, #199): a write into an empty `dyad ?` writes the written value's type, then the value, so the example no longer shows a refusal. Which type a literal takes there is open at that rule.
 
 ### A uniform model is not uniform storage
 - **History:** "(16 bytes; handle = address)" until 29 September 2026 (the one-word node, #166).
