@@ -500,7 +500,6 @@ impl<'a> Parser<'a> {
             // An operator node's slots are the fields its own type defines:
             // `.operands[i]` fetches one, no view involved; a null slot is the checked error until `?`.
             if name == "operands"
-                && !dyad::ty(lhs).is_null()
                 && matches!(
                     crate::identities::meta::kind_of(dyad::ty(lhs)),
                     Some(crate::identities::meta::TUPLE_TAG | crate::identities::meta::LIST_TAG)

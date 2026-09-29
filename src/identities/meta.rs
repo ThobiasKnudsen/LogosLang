@@ -321,15 +321,12 @@ pub(crate) unsafe fn kind_of(id: DyadPtr) -> Option<u8> {
     }
 }
 
-/// Safe on any node: `kind_of` turns away both a null value and a type-valued place.
+/// Safe on any node: `kind_of` turns away a node with no record and one that is no type.
 ///
 /// # Safety
 /// `id` must be null or a valid dyad from the store.
 pub(crate) unsafe fn is_record_type(id: DyadPtr) -> bool {
-    !id.is_null()
-        && !dyad::ty(id).is_null()
-        && dyad::ty(id) == dyad::ty(dyad::ty(id))
-        && kind_of(id) == Some(RECORD_TAG)
+    !id.is_null() && kind_of(id) == Some(RECORD_TAG)
 }
 
 /// A record type whose values a Logos-written `parse` builds and no `run` executes: a value
