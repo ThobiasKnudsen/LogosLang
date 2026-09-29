@@ -5,6 +5,13 @@
 4. **Accelerate cycle time:** Speed up the process.
 5. **Automate:** Only automate the process after the first four steps are done.
 
+# Behaviour rules
+- ALLWAYS respond to the user with simple and easily digestible text and use logos code example where ever possible. Logos code examples makes it much easier to understand for the user
+- Before starting work that takes alot of time figure out what other issues can be worked on in parallel and tell the user about those issues that can be done in parallel so that the user can start other agents working in parallel on those issues
+- remember to record everything important for each issue so that when a new agents starts working on it, it gets all the information it needs
+- Whenever you find any issues or problems or anything that you are completely sure needs a github issue then create a github issue for it. But make sure there isnt an existing issue
+- When fixing a github issue make sure you checkout to a new worktree so that you dont conflict with any other agents
+
 # Faithfulness protocol (spec-governed code):
 - DESIGN.md is the ruling document.  issues, plans, memories, old comments, and existing code are downstream and may be stale. Never implement from a downstream source alone.
 - Before implementing anything spec-governed, quote the exact DESIGN.md passage(s) that license it, in the plan or the commit message. No quote → stop and ask.
@@ -13,7 +20,6 @@
 - DESIGN.md is one rule per `###` heading (since 27 September 2026). Point at a rule by its heading, `«### like this»`, never by line number; a `DESIGN.md l.N` in a Source bullet, an issue or a memory means line N of the paragraph form at git e75bcdc.
 - Before starting work in a spec area, run /faithfulness-audit.
 - All rulings MUST have a good reason for existing otherwise i will forget later why i choose what i choose and change the rule. And when something is superseeded it also MUST say why.
-- ALLWAYS respond to the user with simple and easily digestible text and use logos code example where ever possible. Logos code examples makes it much easier to understand for the user 
 
 # Comment rules (as few comments as possible; only what is actually important):
 - A comment says what the code cannot: a one-line WHY at a spot a reader would not guess, an invariant (the SAFETY line on an unsafe block, a byte layout, what a slot holds), a bare pointer to the DESIGN.md rule by its heading, or a two-to-four-line module header saying what the file is. Nothing else.
@@ -32,7 +38,7 @@ A spent version also freezes its docs. `docs-check.sh validate` treats any `docs
 
 Before pushing any version tag:
 
-1. `cargo test --release` is green.
+1. `cargo test --release` and `cargo test` is green.
 2. `bash .github/scripts/docs-check.sh validate` passes.
 3. `bash .github/scripts/docs-check.sh release vX.Y.Z` passes — this is the exact check the `gate` job runs, and the in-progress `docs/vX.Y.Z/` folder must be named for the version being released.
 4. `bash .github/scripts/docs-check.test.sh` passes (the guard's own self-test).
@@ -40,7 +46,6 @@ Before pushing any version tag:
 6. Rehearse the archive: build the seed, stage `bin/logos` with LICENSE, NOTICE, TRADEMARK.md and examples, pack it, unpack it, and run it. What ships must have been run.
 
 Never tag speculatively "to see if CI passes". There is no undo.
-
 # Branch rules (dev is the working branch; a branch lives only while its work is unmerged):
 - Work on `dev` directly. A branch exists only when a second agent or a worktree needs isolation from `dev`, and then it is one branch per issue, named `issue-N-slug`, never one per slice.
 - A branch stays local unless another machine or agent must read it. Pushing it to GitHub is not a backup and not a habit.
