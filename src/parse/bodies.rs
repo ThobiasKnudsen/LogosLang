@@ -1272,12 +1272,11 @@ impl<'a> Parser<'a> {
                             crate::identities::drop_model::build_teardown(
                                 self.rt.store,
                                 types,
-                                types.own_,
+                                types.move_,
                                 place,
-                                true,
                             )?
                         } else {
-                            crate::identities::drop_model::build_instance_own(
+                            crate::identities::drop_model::build_instance_move(
                                 self.rt.store,
                                 types,
                                 place,

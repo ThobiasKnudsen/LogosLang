@@ -14,8 +14,8 @@ pub array := type (
             mut size := u64 0,
             share size_bytes := fn () -> u64 (size * element_type.size_bytes),
 
-            share drop = (
-                for i in 0..size ( drop (ptr + i)@ ),
+            share free = (
+                for i in 0..size ( free (ptr + i)@ ),
                 free ptr
             ),
 
@@ -61,12 +61,12 @@ pub array := type (
     share run = (
         mut v := output_type ?,
         v.ptr = mut alloc elements.dyads.size of v.element_type ?,
-        # size counts only written elements, so a failed `=` leaves drop nothing unwritten to walk.
+        # size counts only written elements, so a failed `=` leaves free nothing unwritten to walk.
         for i in 0..elements.dyads.size (
             (v.ptr + i)@ = elements.dyads[i],
             v.size = i + 1
         ),
-        own v
+        move v
     ),
 
     # Above application, so it takes its element type before anything else reads it.

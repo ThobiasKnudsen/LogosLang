@@ -201,21 +201,21 @@ pub(crate) unsafe fn record_body_of(id: DyadPtr) -> DyadPtr {
     std::ptr::read_unaligned(dyad::head(id).add(PAYLOAD_OFF + 24) as *const DyadPtr)
 }
 
-const INSTANCES_DROP_OFF: usize = PAYLOAD_OFF + 32;
+const INSTANCES_FREE_OFF: usize = PAYLOAD_OFF + 32;
 
-/// The `fn` a `share drop = (…)` line filled, over the one unnamed value parameter; null where the type
+/// The `fn` a `share free = (…)` line filled, over the one unnamed value parameter; null where the type
 /// body fills none.
 ///
 /// # Safety
 /// As `record_scope_of`.
-pub(crate) unsafe fn instances_drop_of(id: DyadPtr) -> DyadPtr {
-    std::ptr::read_unaligned(dyad::head(id).add(INSTANCES_DROP_OFF) as *const DyadPtr)
+pub(crate) unsafe fn instances_free_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned(dyad::head(id).add(INSTANCES_FREE_OFF) as *const DyadPtr)
 }
 
 /// # Safety
-/// `id` must carry a `RECORD_TAG` record; `drop` must be null or a `fn` node from the store.
-pub(crate) unsafe fn install_instances_drop(id: DyadPtr, drop: DyadPtr) {
-    std::ptr::write_unaligned(dyad::head(id).add(INSTANCES_DROP_OFF) as *mut DyadPtr, drop);
+/// `id` must carry a `RECORD_TAG` record; `free` must be null or a `fn` node from the store.
+pub(crate) unsafe fn install_instances_free(id: DyadPtr, free: DyadPtr) {
+    std::ptr::write_unaligned(dyad::head(id).add(INSTANCES_FREE_OFF) as *mut DyadPtr, free);
 }
 
 const BRACKET_BUILDER_OFF: usize = PAYLOAD_OFF + 40;

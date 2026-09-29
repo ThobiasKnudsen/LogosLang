@@ -187,11 +187,11 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::LineNotMoved => {
             "what this list holds becomes the new value's, and a name keeps what it holds: \
-             write `own x` to move it in, or make the value in the list"
+             write `move x` to move it in, or make the value in the list"
                 .into()
         }
         ParseError::NonOwningIntoOwning => {
-            "this place owns what it holds, so what is assigned must own too (`alloc …`, or `own x`)"
+            "this place owns what it holds, so what is assigned must own too (`alloc …`, or `move x`)"
                 .into()
         }
         ParseError::BadDyadType => {
@@ -210,8 +210,8 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::SlotNeedsBody(SlotKind::Parse) => {
             "`parse` is a bare body over the tape, `share parse = (…)`".into()
         }
-        ParseError::SlotNeedsBody(SlotKind::Drop) => {
-            "`drop` is a bare body over the value, `share drop = (…)`".into()
+        ParseError::SlotNeedsBody(SlotKind::Free) => {
+            "`free` is a bare body over the value, `share free = (…)`".into()
         }
         ParseError::SlotNeedsBody(_) => {
             "`run` is a bare body over the value's fields, `share run = (…)`".into()
@@ -230,7 +230,7 @@ pub fn parse_message(e: &ParseError) -> String {
                 .into()
         }
         ParseError::ShareFnNeedsValue(name) => format!(
-            "`{name}` works on a value of its type: call it through one, `v.{name}(…)`, or bare from that type's `run`, `drop` or `share` functions; a parse calls bare only a function that reads no field"
+            "`{name}` works on a value of its type: call it through one, `v.{name}(…)`, or bare from that type's `run`, `free` or `share` functions; a parse calls bare only a function that reads no field"
         ),
         ParseError::FlagTakesBool => {
             "`tape.is_constructed[k] = …` takes a bool, `true` or `false`".into()
@@ -291,20 +291,27 @@ pub fn parse_message(e: &ParseError) -> String {
         }
         ParseError::OwnNeedsPointer => {
             "`own` in a type is written over a pointer hole, `own @T ?`, or a hole of a type \
-             whose body fills `drop`, `own t ?`"
+             whose body fills `free`, `own t ?`"
                 .into()
         }
-        ParseError::OwningFieldNeedsDrop => {
-            "a field declared `own` must be freed by the type's `share drop = (…)`, which this \
+        ParseError::OwnOutsideType => {
+            "`own` stands only in a type, `own @T ?` or `own t ?`; `move x` moves a value".into()
+        }
+        ParseError::NoSuchSlot(name) => format!(
+            "`{name}` names no slot: a type body fills `share parse = (…)`, `share run = (…)`, \
+             `share free = (…)` and its ranks, and declares a member of its own, `share {name} := …`"
+        ),
+        ParseError::OwningFieldNeedsFree => {
+            "a field declared `own` must be freed by the type's `share free = (…)`, which this \
              type body does not fill"
                 .into()
         }
         ParseError::OwnParameterNotInSeed => {
             "an `own` parameter, which takes its argument's ownership, is not in the seed yet".into()
         }
-        ParseError::OwnOfOuterName => {
-            "own or drop of a name declared outside this loop or function body: \
-             the next pass or call would find it dead; move or drop it outside, \
+        ParseError::MoveOfOuterName => {
+            "move or free of a name declared outside this loop or function body: \
+             the next pass or call would find it dead; move or free it outside, \
              or hand it in as a parameter"
                 .into()
         }
@@ -318,9 +325,9 @@ pub(crate) fn resolve_message(e: &ResolveError) -> String {
         ResolveError::OutOfScope(n) => format!("`{n}` is not in scope here"),
         ResolveError::Shadowed(n) => format!(
             "`{n}` is already declared and still in scope; declaring it again would \
-             leave the first one shadowed (a name ended by `drop {n}` may be declared again)"
+             leave the first one shadowed (a name ended by `free {n}` may be declared again)"
         ),
-        ResolveError::Dead(n) => format!("`{n}` is dead here: it was moved or dropped above"),
+        ResolveError::Dead(n) => format!("`{n}` is dead here: it was moved or freed above"),
         ResolveError::Unbuilt(n) => {
             format!("`{n}` is used inside its own declaration, before its value is built")
         }

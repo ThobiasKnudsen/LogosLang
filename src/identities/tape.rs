@@ -996,7 +996,7 @@ unsafe fn owned_lines(types: &Core, bracket: DyadPtr) -> Result<(), crate::parse
         let line = types.through(line);
         let named = matches!(super::read::read_kind(types, line), super::read::Read::Container(_));
         let owned =
-            super::node_type_of(types, line).is_some_and(|t| !meta::instances_drop_of(t).is_null());
+            super::node_type_of(types, line).is_some_and(|t| !meta::instances_free_of(t).is_null());
         if named && owned {
             return Err(crate::parse::ParseError::LineNotMoved);
         }

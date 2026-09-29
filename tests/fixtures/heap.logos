@@ -3,6 +3,6 @@
 # driver drains the top level's teardowns at program exit, so this runs clean
 # and prints its result with no leak or double free.
 a := alloc 1 of i32 40,
-b := own a,
+b := move a,
 inner := ( c := alloc 1 of i32 100, c@ ),
 print «{b@ + inner - 98}»
