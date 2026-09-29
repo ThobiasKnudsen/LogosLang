@@ -609,6 +609,15 @@ mod tests {
     }
 
     #[test]
+    fn may_eat_judges_byte_classes_multibyte_chars_and_looks() {
+        assert!(may_eat("(?-u:[a-z])+", "ing"));
+        assert!(!may_eat("[a-z]+", "ø"));
+        assert!(may_eat("[a-zø]+", "ø"));
+        assert!(!may_eat("[a-z]+\\b", "."));
+        assert!(may_eat("[a-z]+\\b", "x"));
+    }
+
+    #[test]
     fn single_char_and_class_repetition_are_left_bare() {
         assert_eq!(regex_splitting("ab?"), vec![vec![lit("a"), rx("b?")], vec![lit("a")]]);
         assert_eq!(regex_splitting("[0-9]+"), vec![vec![rx("[0-9]+")]]);
