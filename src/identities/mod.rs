@@ -171,8 +171,6 @@ pub struct Core {
     pub conv_container: DyadPtr,
     /// The constructor convention, one `ConstructFn` signature for every identity.
     pub conv_seed_parse: DyadPtr,
-    /// The convention of a token's own extent, `ExtentFn`.
-    pub conv_seed_extent: DyadPtr,
     pub open_: DyadPtr,
     pub close_: DyadPtr,
     pub open_sq_: DyadPtr,
@@ -451,7 +449,6 @@ impl Core {
             conv_seed_native: callables.seed_native,
             conv_container: callables.container_i64,
             conv_seed_parse: callables.seed_parse,
-            conv_seed_extent: callables.seed_extent,
             open_,
             close_,
             open_sq_,
