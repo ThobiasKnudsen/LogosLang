@@ -281,6 +281,11 @@ pub fn parse_message(e: &ParseError) -> String {
              freed on the way out; make it the function's last value, which moves out"
                 .into()
         }
+        ParseError::AddressOfHeld => {
+            "this hands out the address of a name its scope holds, whose end frees the value \
+             under the address; hand out the name itself, which moves out"
+                .into()
+        }
         ParseError::OwnershipAcrossReturn => {
             "a `return` cannot hand ownership out yet; make it the function's last value, \
              which moves out to the caller"

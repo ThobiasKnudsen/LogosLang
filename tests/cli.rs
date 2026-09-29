@@ -2990,6 +2990,29 @@ fn the_owner_s_scope_end_runs_the_instances_free_once() {
 }
 
 #[test]
+fn the_program_s_end_runs_its_defers_and_what_it_holds_last_first() {
+    for (src, printed) in [
+        ("defer print «hi», 5".to_string(), "hi\n5\n"),
+        ("defer print «a», defer print «b», 1".to_string(), "b\na\n1\n"),
+        (
+            "mut n := i32 1, f := fn () -> void ( print «{n}» ), defer f(), n = 3, 7".to_string(),
+            "3\n7\n",
+        ),
+        (format!("{BOX}, a := box (1, 2), defer print «d», print «made»"), "made\nd\nfree\n"),
+        (
+            "import ./tests/fixtures/deferring.logos, print «main», k".to_string(),
+            "main\nfile ends\n1\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
+        assert_eq!(stdout, printed, "{src}");
+    }
+    let (echoes, stderr) = repl(b"defer print \xc2\xabbye\xc2\xbb\n1\n");
+    assert_eq!(echoes.last().map(String::as_str), Some("bye"), "stderr: {stderr}");
+}
+
+#[test]
 fn an_array_holds_arrays_as_their_addresses() {
     let array = "import ./identities/array.logos, x := array i32 [1, 2], y := array i32 [3, 4], \
                  t := array i32, b := array t [move x, move y]";

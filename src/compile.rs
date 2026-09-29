@@ -314,19 +314,21 @@ impl Lowerer<'_, '_> {
         Ok(())
     }
 
-    /// Lower `lines`, a scope's body, then its `defer`s' inners in reverse, as the scope's run
-    /// does at exit; the value is the last line's that is no `defer`.
+    /// Lower `lines`, a scope's body, then its end: the items of `exit` still held after
+    /// the last line, in reverse, as the scope's run does; the value is the last line's that
+    /// is no `defer`.
     ///
     /// # Safety
-    /// `lines` must be reduced dyads from the store, none of them prose.
+    /// `lines` must be reduced dyads from the store, none of them prose; `exit` the scope's
+    /// exit items.
     pub(crate) unsafe fn lower_with_teardowns(
         &mut self,
         lines: &[DyadPtr],
+        exit: &[DyadPtr],
     ) -> Result<Option<Value>, CompileError> {
+        use crate::identities::drop_model;
         let defer_ = self.types.defer_;
-        let defers: Vec<DyadPtr> =
-            lines.iter().copied().filter(|&e| dyad::ty(e) == defer_).collect();
-        let held = usize::from(!defers.is_empty());
+        let held = usize::from(!exit.is_empty());
         self.teardowns += held;
         let mut last = Ok(None);
         for &line in lines.iter().filter(|&&e| dyad::ty(e) != defer_) {
@@ -337,8 +339,16 @@ impl Lowerer<'_, '_> {
         }
         self.teardowns -= held;
         let last = last?;
-        for &d in defers.iter().rev() {
-            self.lower(crate::identities::drop_model::deferred_inner_of(d))?;
+        for &item in exit.iter().rev() {
+            let item = drop_model::exit_item_of(item);
+            if !item.held_at(usize::MAX) {
+                continue;
+            }
+            if dyad::ty(item.what) == defer_ {
+                self.lower(drop_model::deferred_inner_of(item.what))?;
+            } else {
+                drop_model::lower_end_held(self, item.what)?;
+            }
         }
         Ok(last)
     }

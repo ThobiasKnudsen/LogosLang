@@ -133,6 +133,8 @@ pub struct Core {
     pub move_: DyadPtr,
     pub free_: DyadPtr,
     pub defer_: DyadPtr,
+    /// The type of an item of a scope's exit: a held name or an authored `defer`.
+    pub exit_item: DyadPtr,
     /// The gate word; its constructor fills the declare node's gate slot.
     pub pub_: DyadPtr,
     pub mut_: DyadPtr,
@@ -322,8 +324,8 @@ impl Core {
         op_leaves.value_release_ = dm.value_release_leaf;
         op_leaves.teardown_ = dm.teardown_leaf;
         op_leaves.defer_ = dm.defer_leaf;
-        let (alloc_, own_, move_, free_, defer_, of_) =
-            (dm.alloc_, dm.own_, dm.move_, dm.free_, dm.defer_, dm.of_);
+        let (alloc_, own_, move_, free_, defer_, exit_item, of_) =
+            (dm.alloc_, dm.own_, dm.move_, dm.free_, dm.defer_, dm.exit_item, dm.of_);
         let tape = tape::register(&mut cx, &callables, scope_, array_, void);
         let hashmap = hashmap::register(&mut cx, &callables, array_);
         let held_type = held_type::register(&mut cx, &callables);
@@ -409,6 +411,7 @@ impl Core {
             move_,
             free_,
             defer_,
+            exit_item,
             pub_,
             mut_,
             immut_,
@@ -614,15 +617,16 @@ macro_rules! infix_construct {
 }
 pub(crate) use infix_construct;
 
-/// Exposed so the binary can drain the top level's `defer`s at program exit.
+/// The end of a scope every line of which completed: exposed so the binary can end the
+/// REPL's session.
 ///
 /// # Safety
-/// `defer_node` must be a `defer` node from the store; `rt` its runtime.
-pub unsafe fn run_deferred(
+/// `scope` must be a scope node from the store, its places in the frame `rt` runs.
+pub unsafe fn run_scope_exit(
     rt: &mut crate::run::Runtime,
-    defer_node: DyadPtr,
-) -> Result<i64, crate::run::RunError> {
-    rt.run(drop_model::deferred_inner_of(defer_node))
+    scope: DyadPtr,
+) -> Result<(), crate::run::RunError> {
+    scope::run_exit(rt, scope, usize::MAX)
 }
 
 /// # Safety

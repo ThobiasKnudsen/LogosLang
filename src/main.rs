@@ -283,9 +283,6 @@ fn repl() -> ExitCode {
 
     let stdin = std::io::stdin();
     let mut lines = stdin.lock().lines();
-    // A REPL binding lives for the session, so its teardowns run at session
-    // exit; each line's parser is fresh, so they collect here.
-    let mut session_defers: Vec<seed::dyad::DyadPtr> = Vec::new();
     // Once-per-run imports must hold across lines: one registry threads through
     // each line's fresh parser.
     let mut imports = Imports::default();
@@ -296,13 +293,13 @@ fn repl() -> ExitCode {
             Some(Ok(line)) => line,
             _ => {
                 println!();
+                // The session is one scope, and its end runs what its kept lines hold and defer.
+                let session = scopes.current().expect("the session's scope is open");
                 let mut rt = Runtime::new(&engine.core, &mut engine.store);
-                for defer_node in session_defers.into_iter().rev() {
-                    // SAFETY: each is a `defer` node in the engine's store, still alive here.
-                    if let Err(e) = unsafe { seed::identities::run_deferred(&mut rt, defer_node) } {
-                        eprintln!("<repl>: run error: {}", report::run_message(&e));
-                        return ExitCode::FAILURE;
-                    }
+                // SAFETY: `session` is the session's scope node, its places in the program frame.
+                if let Err(e) = unsafe { seed::identities::run_scope_exit(&mut rt, session) } {
+                    eprintln!("<repl>: run error: {}", report::run_message(&e));
+                    return ExitCode::FAILURE;
                 }
                 return ExitCode::SUCCESS;
             }
@@ -314,7 +311,7 @@ fn repl() -> ExitCode {
         let types = &engine.core;
         // The value is read and rendered while the parser is alive, since an unnamed result
         // lives in its runtime's scratch, and only for a line that parsed whole.
-        let (parsed, end, value, line_defers, scopes_back, imports_back) = {
+        let (parsed, end, value, scopes_back, imports_back) = {
             let mut p = Parser::new(&line, &mut engine.store, &mut engine.trie, types, scopes)
                 .with_imports(std::mem::take(&mut imports))
                 .with_lower(&engine.core.lower);
@@ -325,16 +322,24 @@ fn repl() -> ExitCode {
                     // SAFETY: `node` was just parsed into the engine's store.
                     unsafe { p.fill_if_sibling_write(node) };
                     // SAFETY: as above; `bits` is the value `node` yielded.
-                    Some(unsafe {
+                    let value = unsafe {
                         p.value_of(node)
                             .map(|bits| seed::identities::display_value(types, node, bits))
-                    })
+                    };
+                    // A kept line is a line of the session: what it holds and defers
+                    // joins the session's end.
+                    if value.is_ok() {
+                        // SAFETY: `node` is the line just parsed; its pending bindings are
+                        // this line's declares.
+                        unsafe { p.close_item(node) };
+                        p.hand_exit();
+                    }
+                    Some(value)
                 }
                 _ => None,
             };
-            let line_defers = p.take_pending_defers();
             let imports_back = p.take_imports();
-            (parsed, end, value, line_defers, p.into_scopes(), imports_back)
+            (parsed, end, value, p.into_scopes(), imports_back)
         };
         scopes = scopes_back;
         imports = imports_back;
@@ -367,10 +372,6 @@ fn repl() -> ExitCode {
         // SAFETY: `node` is the valid dyad just parsed.
         let is_statement = unsafe { is_statement_node(&engine.core, node) };
 
-        // Kept even for a binding that never ran: its teardown sees a null
-        // place and no-ops, the fail-closed side.
-        session_defers.extend(line_defers);
-
         match value {
             Some(Ok(shown)) if !is_statement => println!("{shown}"),
             Some(Ok(_)) => {}
@@ -382,8 +383,6 @@ fn repl() -> ExitCode {
             // Unreachable: every line that parsed whole had its value read above.
             None => {}
         }
-        // SAFETY: `node` is the line just parsed; its pending bindings are this line's declares.
-        unsafe { scopes.close_item(&mut engine.store, engine.core.array_, node) };
         scopes.commit();
     }
 }

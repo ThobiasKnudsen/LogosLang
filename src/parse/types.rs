@@ -657,14 +657,14 @@ impl<'a> Parser<'a> {
             })
         });
         self.cx.runtime_depth = saved_depth;
-        let defers = self.cx.open.pop().expect("pushed above").defers;
+        let held = self.cx.open.pop().expect("pushed above").exit;
         self.restore_pending_binding(suppressed);
         let def = self.cx.definitions.pop().expect("pushed above");
         while self.cx.scopes.depth() > depth {
             self.cx.scopes.pop();
         }
         let (field_scope, fields, size_bytes, bindings) = lines?;
-        if !defers.is_empty() {
+        if !held.is_empty() {
             return Err(ParseError::DeferInTypeBody);
         }
         self.expect_close()?;

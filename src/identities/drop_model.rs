@@ -1,14 +1,12 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The drop model: `alloc`, `own`, `move`, `free`, and `defer`, one mechanism in one
-//! file. `alloc n of T v` yields an owning `@T` to the first of n cells (a pointer type
-//! with a non-null destructor), `alloc n` an `@u8` over n bytes; binding it inserts
-//! `defer free <place>`, and `move`/`free` empty the place to null so
-//! a pending teardown no-ops. `move`, the inert and a node's `free` and a scope's `defer`s
-//! lower; `alloc` and a block's `free` keep a function interpreted. DESIGN ›Explicit heap‹
-//! and ›`move` is the act, `own` the gate word, `free` the end‹. The inserted `defer` is
-//! a stand-in: DESIGN ›A value's teardown runs where its life ends‹.
+//! The drop model: `alloc`, `own`, `move`, `free`, `defer`, and what a scope's end runs,
+//! one mechanism in one file. `alloc n of T v` yields an owning `@T` to the first of n
+//! cells (a pointer type with a non-null destructor), `alloc n` an `@u8` over n bytes. A
+//! name bound to a value with a teardown is held by its scope, whose end runs the teardown
+//! read off the place's type (DESIGN ›A value's teardown runs where its life ends‹).
+//! `alloc` and a block's `free` keep a function interpreted.
 
 use crate::Core;
 use cranelift_codegen::ir::{types, Value};
@@ -39,6 +37,8 @@ pub(super) struct DropModel {
     pub move_: DyadPtr,
     pub free_: DyadPtr,
     pub defer_: DyadPtr,
+    /// The type of a scope's exit items; never spelled.
+    pub exit_item: DyadPtr,
     /// The word between `alloc`'s count and its value; constructs nothing itself.
     pub of_: DyadPtr,
     /// The owning pointer's stored destructor.
@@ -202,6 +202,15 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
     });
     let defer_leaf = callable::mint_native(cx.store, cs.callable, run_defer_noop, cs.seed_native);
 
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        meta::prec::INERT,
+        Assoc::Left,
+        &["what", "from", "end", "op"],
+    );
+    let exit_item = cx.store.alloc_head(cx.type_, record);
+
     let instance_free_leaf =
         callable::mint_native(cx.store, cs.callable, run_instance_free, cs.seed_native);
     let field_free_leaf =
@@ -217,6 +226,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
         move_,
         free_,
         defer_,
+        exit_item,
         of_,
         teardown_leaf,
         move_leaf,
@@ -558,14 +568,119 @@ pub(crate) unsafe fn deferred_inner_of(node: DyadPtr) -> DyadPtr {
     *(dyad::value(node) as *const DyadPtr).add(DEFER_INNER)
 }
 
-/// The place an inserted `defer free <place>` frees; the escape check compares a scope's
-/// tail against these.
+/// One thing a scope's end runs: an authored `defer`, or a name the scope holds, whose
+/// value's teardown runs. It is held once `from` of the scope's lines completed and until
+/// line `end`, the one that moved or freed the name, when there is one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ExitItem {
+    pub what: DyadPtr,
+    pub from: usize,
+    pub end: Option<usize>,
+}
+
+/// An exit item node is `[what, from, end, op]`, `from` and `end` `u64` leaves, `end` null
+/// while nothing ended the name, `op` null: nothing runs the node itself.
+const ITEM_FROM: usize = 1;
+const ITEM_END: usize = 2;
+
+impl ExitItem {
+    /// Whether the scope's end, reached after `reached` of its lines completed, runs it.
+    pub(crate) fn held_at(&self, reached: usize) -> bool {
+        self.from <= reached && self.end.is_none_or(|end| end > reached)
+    }
+
+    /// # Safety
+    /// `what` must be a `defer` node or a place laid out in the frame `rt` runs.
+    pub(crate) unsafe fn run(&self, rt: &mut Runtime) -> Result<(), RunError> {
+        if dyad::ty(self.what) == rt.types().defer_ {
+            rt.run(deferred_inner_of(self.what)).map(|_| ())
+        } else {
+            end_held(rt, self.what)
+        }
+    }
+
+    pub(crate) fn build(&self, store: &mut Store, types: &Core) -> DyadPtr {
+        let u64_ty = types.numtypes[numtype::NumType::U64 as usize];
+        let from = store.alloc_blob(u64_ty, &(self.from as u64).to_ne_bytes());
+        let end = self.end.map_or(std::ptr::null_mut(), |end| {
+            store.alloc_blob(u64_ty, &(end as u64).to_ne_bytes())
+        });
+        store.alloc_words(types.exit_item, &[self.what, from, end, std::ptr::null_mut()])
+    }
+}
+
+/// The place `&x` lends when `value` is one; a scope's end that holds it frees the value
+/// under the address.
 ///
 /// # Safety
-/// `defer_node` must be a `defer` node over a teardown, as the binding site builds.
-pub(crate) unsafe fn teardown_place_of(defer_node: DyadPtr) -> DyadPtr {
-    let inner = deferred_inner_of(defer_node);
-    *(dyad::value(inner) as *const DyadPtr).add(TEARDOWN_PLACE)
+/// `value` must be a reduced dyad from the store.
+pub(crate) unsafe fn lent_place(types: &Core, value: DyadPtr) -> Option<DyadPtr> {
+    let value = types.through(value);
+    (dyad::ty(value) == types.addr_).then(|| types.through(*(dyad::value(value) as *const DyadPtr)))
+}
+
+/// # Safety
+/// `node` must be an exit item node [`ExitItem::build`] made.
+pub(crate) unsafe fn exit_item_of(node: DyadPtr) -> ExitItem {
+    let slots = dyad::value(node) as *const DyadPtr;
+    let leaf = |at: usize| {
+        let leaf = *slots.add(at);
+        (!leaf.is_null())
+            .then(|| std::ptr::read_unaligned(dyad::value(leaf) as *const u64) as usize)
+    };
+    ExitItem {
+        what: *slots,
+        from: leaf(ITEM_FROM).expect("an exit item holds from where"),
+        end: leaf(ITEM_END),
+    }
+}
+
+/// The one teardown of the value a held place holds, read off the place's type: an owning
+/// pointer frees its block, a type that fills `free` runs it over the node. A place that
+/// holds nothing, never written or emptied, frees nothing.
+///
+/// # Safety
+/// `place` must be a place the binding site made an owner, laid out in the frame `rt` runs.
+pub(crate) unsafe fn end_held(rt: &mut Runtime, place: DyadPtr) -> Result<(), RunError> {
+    let slot = rt.place_addr(place).ok_or(RunError::NoActivation)?;
+    if slot.is_null() {
+        return Err(RunError::Uninitialized);
+    }
+    let held = std::ptr::read_unaligned(slot as *const i64);
+    if held == 0 {
+        return Ok(());
+    }
+    if is_owning_place(rt.types(), place) {
+        let ptr = held as u64 as *mut u8;
+        // Tests observe teardown order (LIFO) by the value each freed block held.
+        #[cfg(test)]
+        {
+            let pointee = numtype::pointee_of(rt.types().type_of(place));
+            let value = numtype::read_scalar(pointee, ptr);
+            FREE_LOG.with(|log| log.borrow_mut().push(value));
+        }
+        heap_free(ptr);
+        rt.note_free();
+        return Ok(());
+    }
+    let free = meta::instances_free_of(rt.types().type_of(place));
+    rt.apply_values(free, &[held])?;
+    Ok(())
+}
+
+/// [`end_held`] compiled: a node's `free` is called over what the place holds; a block's
+/// free keeps the function interpreted.
+///
+/// # Safety
+/// As `end_held`.
+pub(crate) unsafe fn lower_end_held(lw: &mut Lowerer, place: DyadPtr) -> Result<(), CompileError> {
+    if is_owning_place(lw.types(), place) {
+        return Err(CompileError::NotLowerable(place));
+    }
+    let this = lw.read_place(place, types::I64)?;
+    let free = lw.node_addr(meta::instances_free_of(lw.types().type_of(place)));
+    lw.call_seed(compiled_instance_free as *const () as usize, &[this, free]);
+    Ok(())
 }
 
 /// What a bound owning pointer points at, so the binding site can mint its owning
@@ -888,7 +1003,8 @@ unsafe fn reached_slot(rt: &mut Runtime, place: DyadPtr) -> Result<Option<*mut u
     Ok(None)
 }
 
-/// A move: the moved-from place's pending `defer free` then no-ops.
+/// A move: the place is emptied, so a scope's end that still holds the name frees nothing:
+/// stand-in for #68.
 fn run_move(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `move` node `[place, pointee, op]` from the store.
     unsafe {
@@ -903,8 +1019,8 @@ fn run_move(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     }
 }
 
-/// The scope machinery and the top-level drain run the inner, never this node; reaching
-/// it directly means a defer stood outside any scope.
+/// A scope's end runs the inner, never this node; reaching it directly means a defer stood
+/// outside any scope.
 fn run_defer_noop(_rt: &mut Runtime, _node: DyadPtr) -> Result<i64, RunError> {
     Ok(0)
 }
@@ -1016,6 +1132,30 @@ mod tests {
                  ( q := alloc 1 of i32 1, for i in 0..n ( if (i == 2) (return p@ + q@) ) ), 0 ),\n";
         assert_eq!(run(&format!("{f}f(5)")), (43, 0));
         assert_eq!(run(&format!("{f}f(1)")), (0, 0));
+    }
+
+    #[test]
+    fn a_return_ends_what_the_scope_holds_at_its_line() {
+        let f = "f := fn (c := i32 ?) -> i32 ( a := alloc 1 of i32 5, \
+                 if (c == 1) (return 1), free a, 2 ),\n";
+        assert_eq!(run(&format!("{f}f(1) + f(0)")), (3, 0));
+        assert_eq!(free_log(), vec![5, 5], "freed once on each path");
+        // A name declared after the return is not held there yet.
+        let g = "g := fn (c := i32 ?) -> i32 ( if (c == 1) (return 1), \
+                 a := alloc 1 of i32 5, a@ ),\n";
+        assert_eq!(run(&format!("{g}g(1) + g(0)")), (6, 0));
+        assert_eq!(free_log(), vec![5]);
+    }
+
+    #[test]
+    fn the_address_of_a_held_name_does_not_leave_its_scope() {
+        for src in [
+            "p := ( c := alloc 1 of i32 7, &c ),\n1",
+            "f := fn () -> @@i32 ( c := alloc 1 of i32 7, &c )",
+            "f := fn (n := i32 ?) -> i32 ( c := alloc 1 of i32 7, if (n > 2) (return &c), 0 )",
+        ] {
+            assert_eq!(parse_err(src), ParseError::AddressOfHeld, "{src}");
+        }
     }
 
     #[test]
@@ -1207,29 +1347,44 @@ mod tests {
         assert_eq!(run(&format!("{forgetful}b := bag (), 1")), (1, 1));
     }
 
+    /// The scope `src` parses to, and the items of its exit.
+    fn exit_items(
+        store: &mut Store,
+        trie: &mut RegexTrie,
+        core: &Core,
+        src: &str,
+    ) -> Vec<ExitItem> {
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let scope = {
+            let mut p = Parser::new(src, store, trie, core, scopes);
+            p.parse_sequence().expect("parse")
+        };
+        // SAFETY: `scope` is the sequence node just parsed; its exit holds exit items.
+        unsafe {
+            let exit = super::super::scope::exit_of(scope);
+            assert!(!exit.is_null(), "{src}: the scope's end runs something");
+            super::super::array::items(exit).iter().map(|&i| exit_item_of(i)).collect()
+        }
+    }
+
     #[test]
-    fn the_inserted_defer_is_reflectable_graph_structure() {
+    fn a_scope_s_exit_is_reflectable_graph_structure() {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
-        let mut scopes = ScopeStack::new();
-        scopes.push(core.root_scope);
-        let types = &core;
-        let scope = {
-            let mut p =
-                Parser::new("a := alloc 1 of i32 5,\n0", &mut store, &mut trie, types, scopes);
-            p.parse_sequence().expect("parse")
-        };
-        // SAFETY: `scope` is a sequence node; its body is an array of exprs.
+        let src = "a := alloc 1 of i32 5,\ndefer free (alloc 1 of i32 6),\nfree a,\n0";
+        let items = exit_items(&mut store, &mut trie, &core, src);
+        // Nothing is inserted into the lines: the scope holds `a` until `free a` and
+        // defers what its `defer` line wrote.
+        assert_eq!(items.len(), 2, "{items:?}");
+        assert_eq!((items[0].from, items[0].end), (1, Some(2)), "held from line 0 to line 2");
+        // SAFETY: the items' `what` are dyads from the store.
         unsafe {
-            let arr = *(dyad::value(scope) as *const DyadPtr);
-            let exprs = crate::identities::array::items(arr);
-            let defer = exprs.iter().find(|&&e| dyad::ty(e) == core.defer_);
-            assert!(defer.is_some(), "an inserted defer node is in the scope body");
-            let inner = deferred_inner_of(*defer.unwrap());
-            assert_eq!(dyad::ty(inner), core.free_, "it defers a free");
-            let _ = crate::reflect::describe(types, *defer.unwrap());
+            assert_eq!(dyad::ty(items[0].what), core.binding_, "a held name");
+            assert_eq!(dyad::ty(items[1].what), core.defer_, "an authored defer");
         }
+        assert_eq!((items[1].from, items[1].end), (2, None));
     }
 
     #[test]
@@ -1238,23 +1393,10 @@ mod tests {
         let mut store = Store::new();
         let mut trie = RegexTrie::new();
         let core = Core::build(&mut store, &mut trie);
-        let mut scopes = ScopeStack::new();
-        scopes.push(core.root_scope);
-        let types = &core;
-        let scope = {
-            let mut p =
-                Parser::new("a := alloc 1 of i32 5,\na@", &mut store, &mut trie, types, scopes);
-            p.parse_sequence().expect("parse")
-        };
-        // SAFETY: the scope body holds the inserted `defer free a`, whose place slot is `a`.
+        let items = exit_items(&mut store, &mut trie, &core, "a := alloc 1 of i32 5,\na@");
+        let a = items[0].what;
+        // SAFETY: `a` is the held name's binding, laid out over an owning pointer type.
         unsafe {
-            let arr = *(dyad::value(scope) as *const DyadPtr);
-            let exprs = crate::identities::array::items(arr);
-            let defer = *exprs
-                .iter()
-                .find(|&&e| dyad::ty(e) == core.defer_)
-                .expect("the binding inserted a defer");
-            let a = teardown_place_of(defer);
             assert!(numtype::is_pointer_type(core.type_of(a)), "a is a pointer place");
             assert!(
                 !meta::destructor_of(core.type_of(a)).is_null(),
