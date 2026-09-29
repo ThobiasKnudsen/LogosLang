@@ -6,7 +6,7 @@ The general rules live in the global `~/.claude/CLAUDE.md` since 29 September 20
 - The example Thobias gets is a Logos example wherever one fits.
 
 # Issues in this repo
-- The labels are `root-cause`, `question` and `in-progress`. The first-line forms are `Blocked by #N`, `Leaf, blocked by nothing (examined <date>)` and `Umbrella (examined <date>)`. Every open issue was linked this way on 29 September 2026.
+- The labels are `root-cause`, `question` and `in-progress`. The first-line forms are `Root-cause, blocked by nothing` or `Root-cause, blocked by #N` on a root, `Blocked by #N`, `Leaf, blocked by nothing (examined <date>)` and `Umbrella (examined <date>)`. Every open issue was linked this way on 29 September 2026.
 - A repro is the Logos program, its exact output, the commit and the tier (interpreted or compiled).
 - A root is tested along these axes: the named value against the unnamed one, the interpreter against the compiled tier, one type against another.
 - The structural facts that are roots here: one rule written twice, once for the interpreter and once for the compiler; a Rust `match`/`if` on node kind where DESIGN says the record decides; a hand-kept list of kinds; a mechanism DESIGN has superseded; a rule DESIGN does not have yet.
