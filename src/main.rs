@@ -256,10 +256,10 @@ fn print_stats(core: StoreStats, after: StoreStats, sources: &[&str]) {
     eprintln!("store delta: {delta}");
     eprintln!(
         "store ratio: source_bytes={source_bytes} code_bytes={code_bytes} \
-         per_source_byte={:.2} per_code_byte={:.2} per_cell={:.2}",
+         per_source_byte={:.2} per_code_byte={:.2} per_node={:.2}",
         per(delta.total_bytes(), source_bytes),
         per(delta.total_bytes(), code_bytes),
-        per(delta.total_bytes(), delta.cells),
+        per(delta.total_bytes(), delta.nodes),
     );
 }
 

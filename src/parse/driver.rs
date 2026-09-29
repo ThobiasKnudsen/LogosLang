@@ -455,10 +455,9 @@ impl<'a> Parser<'a> {
                 return None;
             }
             let ty = dyad::ty(id);
-            let value = dyad::value(id);
             let wakes = |t: DyadPtr| meta::is_record_type(t) && !meta::constructor_of(t).is_null();
             // A node of a type with a run stands for the value its run yields.
-            if wakes(ty) && meta::run_body_of(ty).is_null() && !value.is_null() {
+            if wakes(ty) && meta::run_body_of(ty).is_null() {
                 return Some(ty);
             }
             if ty == self.types.fn_type || ty == self.types.type_ {
@@ -745,7 +744,7 @@ impl<'a> Parser<'a> {
         // SAFETY: `id` is a reduced dyad from the store.
         let unfinished = unsafe {
             let node = self.types.through(id);
-            dyad::ty(node) == self.types.type_ && dyad::value(node).is_null()
+            dyad::ty(node) == self.types.type_ && dyad::head(node).is_null()
         };
         if unfinished {
             let value = self.stand_as_value(tape, id);

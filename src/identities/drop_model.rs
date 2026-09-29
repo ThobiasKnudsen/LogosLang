@@ -534,7 +534,7 @@ unsafe fn moving_call_output(types: &Core, node: DyadPtr) -> Option<DyadPtr> {
     let Read::Executable(Dispatch::Call(f)) = read_kind(types, node) else {
         return None;
     };
-    if dyad::ty(f) != types.fn_type || dyad::value(f).is_null() {
+    if dyad::ty(f) != types.fn_type {
         return None;
     }
     let fields = dyad::value(f) as *const DyadPtr;
@@ -582,7 +582,7 @@ unsafe fn moves_out_within(types: &Core, node: DyadPtr, depth: usize) -> bool {
             let fields = dyad::value(f) as *const DyadPtr;
             return !fields.is_null() && *fields.add(crate::parse::FN_OUTPUT) == dyad::ty(template);
         }
-        if dyad::ty(f) == types.fn_type && !dyad::value(f).is_null() {
+        if dyad::ty(f) == types.fn_type {
             let body = *(dyad::value(f) as *const DyadPtr).add(crate::parse::FN_BODY);
             return !body.is_null() && moves_out_within(types, body, depth + 1);
         }

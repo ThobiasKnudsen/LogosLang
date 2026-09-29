@@ -174,19 +174,8 @@ impl Lowerer<'_, '_> {
                 Some(v) => Ok(self.const_i32(v)),
                 None => Err(CompileError::UncomputableLiteral),
             },
-            // A null value slot is a comptime binding with no storage.
-            Read::Scalar(nt) => {
-                if dyad::value(node).is_null() {
-                    return Err(CompileError::Uninitialized);
-                }
-                self.read_place(node, nt.cranelift_type())
-            }
-            Read::Pointer(_) => {
-                if dyad::value(node).is_null() {
-                    return Err(CompileError::Uninitialized);
-                }
-                self.read_place(node, NumType::U64.cranelift_type())
-            }
+            Read::Scalar(nt) => self.read_place(node, nt.cranelift_type()),
+            Read::Pointer(_) => self.read_place(node, NumType::U64.cranelift_type()),
             Read::Aggregate | Read::Opaque | Read::Undefined => Err(CompileError::NotLowerable(op)),
         }
     }
@@ -1038,7 +1027,7 @@ impl Lowerer<'_, '_> {
                 // Read at the jump, never baked: a recompile of the callee reaches
                 // this caller, and a nulled entry sends it to the body-walk.
                 let leaf = self.node_addr(bcode);
-                let blob = self.load_at(self.ptr_ty, leaf, crate::dyad::VALUE_OFFSET);
+                let blob = self.builder.ins().iadd_imm(leaf, crate::dyad::PAYLOAD_OFFSET);
                 let entry_at = crate::identities::callable::ENTRY_OFF as i64;
                 let entry = self.load_at(self.ptr_ty, blob, entry_at);
                 let zero = self.builder.ins().iconst(self.ptr_ty, 0);

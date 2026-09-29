@@ -50,7 +50,8 @@ const OP: usize = 1;
 const PARENT: usize = 2;
 
 /// The block's membership key while it parses, and the sequence node once
-/// [`fill`] gives it its expressions; `parent` is null at the arche.
+/// [`fill`] gives it its expressions; `parent` is null at the arche. A scope that
+/// holds names alone (the root, a type's member scope) is minted with no parent.
 pub(crate) fn mint(store: &mut Store, scope_ty: DyadPtr, parent: DyadPtr) -> DyadPtr {
     store.alloc_words(scope_ty, &[std::ptr::null_mut(), std::ptr::null_mut(), parent])
 }
@@ -63,15 +64,11 @@ pub(crate) unsafe fn fill(node: DyadPtr, op: DyadPtr) {
     *(dyad::value(node) as *mut DyadPtr).add(OP) = op;
 }
 
-/// The scope's `dyads`, made empty on first read; null for a scope minted
-/// with no value (the root, a type's member scope), which holds none.
+/// The scope's `dyads`, made empty on first read.
 ///
 /// # Safety
 /// `node` must be a scope or `square_brackets` node from the store.
 pub(crate) unsafe fn dyads(store: &mut Store, array_ty: DyadPtr, node: DyadPtr) -> DyadPtr {
-    if dyad::value(node).is_null() {
-        return std::ptr::null_mut();
-    }
     let slot = (dyad::value(node) as *mut DyadPtr).add(EXPRS);
     if (*slot).is_null() {
         *slot = array::build(store, array_ty, &[]);
@@ -91,15 +88,12 @@ pub(crate) unsafe fn push_item(store: &mut Store, array_ty: DyadPtr, node: DyadP
     }
 }
 
-/// Null for a scope that is no sequence: a record or parameter scope, or one
-/// minted with no value.
+/// Null for a scope that is no sequence yet: a record or parameter scope, one whose
+/// lines nobody has read.
 ///
 /// # Safety
 /// `node` must be a scope or `square_brackets` node from the store.
 pub(crate) unsafe fn exprs_array(node: DyadPtr) -> DyadPtr {
-    if dyad::value(node).is_null() {
-        return std::ptr::null_mut();
-    }
     *(dyad::value(node) as *const DyadPtr).add(EXPRS)
 }
 
@@ -131,15 +125,11 @@ pub(crate) unsafe fn with_exprs(
     store.alloc_words(dyad::ty(node), &[lines, *slots.add(OP), *slots.add(PARENT)])
 }
 
-/// Null at the arche, and on a scope minted with no value (the root, a type's
-/// member scope).
+/// Null at the arche.
 ///
 /// # Safety
 /// `node` must be a scope node from the store.
 pub(crate) unsafe fn parent_of(node: DyadPtr) -> DyadPtr {
-    if dyad::value(node).is_null() {
-        return std::ptr::null_mut();
-    }
     *(dyad::value(node) as *const DyadPtr).add(PARENT)
 }
 
