@@ -115,9 +115,7 @@ fn may_eat(chunk: &str, literal: &str) -> bool {
     fn walk(hir: &Hir, first: char, first_bytes: &[u8], varying: &mut usize) -> bool {
         match hir.kind() {
             HirKind::Empty | HirKind::Look(_) => false,
-            HirKind::Literal(Literal(bytes)) => {
-                bytes.windows(first_bytes.len()).any(|w| w == first_bytes)
-            }
+            HirKind::Literal(Literal(bytes)) => first_bytes.iter().any(|b| bytes.contains(b)),
             HirKind::Class(Class::Unicode(class)) => {
                 class.ranges().iter().any(|r| r.start() <= first && first <= r.end())
             }
@@ -613,6 +611,7 @@ mod tests {
         assert!(may_eat("(?-u:[a-z])+", "ing"));
         assert!(!may_eat("[a-z]+", "ø"));
         assert!(may_eat("[a-zø]+", "ø"));
+        assert!(may_eat("(?-u:\\xC3)*", "ø"));
         assert!(!may_eat("[a-z]+\\b", "."));
         assert!(may_eat("[a-z]+\\b", "x"));
     }
