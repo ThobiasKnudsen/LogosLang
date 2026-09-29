@@ -1,8 +1,8 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `pub`, `mut`, `immut` and `share`: the gate words, each a prefix word
-//! over a declaration (`pub x := 5`, `mut x := i32 ?`, `pub mut x := 5`) that
+//! `pub`, `mut`, `immut` and `share`: the gate words over a declaration, each
+//! a prefix word (`pub x := 5`, `mut x := i32 ?`, `pub mut x := 5`) that
 //! adds itself to the name's binding, first in the set, so the set reads in
 //! text order. Unmarked stays private and unwritable, so there is no
 //! `private` word to write; `immut` vetoes the one write a field gets by
@@ -16,20 +16,8 @@ use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::{Constructed, ParseError};
 
-/// No node is ever typed by a gate word; its identity exists to stand on a
-/// binding. Returns `pub`, `mut`, `immut`, `share`.
+/// Returns `pub`, `mut`, `immut`, `share`.
 pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
-    let word = |cx: &mut Cx, name: &str| {
-        let record = meta::record_assoc(
-            cx.store,
-            meta::TOKEN_TAG,
-            meta::prec::PREFIX,
-            crate::parse::Assoc::Right,
-        );
-        let id = cx.store.alloc_head(cx.type_, record);
-        cx.declare(name, id);
-        id
-    };
     let pub_ = word(cx, "pub");
     cx.metas.insert(pub_, construct);
     let mut_ = word(cx, "mut");
@@ -39,6 +27,20 @@ pub(super) fn register(cx: &mut Cx) -> (DyadPtr, DyadPtr, DyadPtr, DyadPtr) {
     let share_ = word(cx, "share");
     cx.metas.insert(share_, outside_block);
     (pub_, mut_, immut_, share_)
+}
+
+/// No node is ever typed by a gate word; its identity exists to stand on a
+/// binding.
+pub(super) fn word(cx: &mut Cx, name: &str) -> DyadPtr {
+    let record = meta::record_assoc(
+        cx.store,
+        meta::TOKEN_TAG,
+        meta::prec::PREFIX,
+        crate::parse::Assoc::Right,
+    );
+    let id = cx.store.alloc_head(cx.type_, record);
+    cx.declare(name, id);
+    id
 }
 
 /// A type body's reader takes the word at a line's start; anywhere else on

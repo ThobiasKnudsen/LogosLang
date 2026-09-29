@@ -35,7 +35,7 @@ pub struct Cell {
     pub target: (DyadPtr, DyadPtr),
     /// The valueless place `?` built, no declaration having taken it yet.
     pub hole: bool,
-    /// A hole `own` marked over a type whose body fills `drop`: the name or field declared
+    /// A hole `own` marked over a type whose body fills `free`: the name or field declared
     /// with it owns the node written into it.
     pub owning: bool,
 }

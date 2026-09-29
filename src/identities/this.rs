@@ -1,7 +1,7 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The value a type's bodies work on: a parse's node, `tape[0]`, or a `drop`'s or `share`
+//! The value a type's bodies work on: a parse's node, `tape[0]`, or a `free`'s or `share`
 //! function's value, bound as an unnamed parameter, a `dyad ?` place holding the value's
 //! address: a node's, or a plain record's bytes. A field read, `tape[0].f` or bare `f`,
 //! reaches field `f` of the value by its index: a node's slot holding the node the field
@@ -51,7 +51,7 @@ pub struct ThisIds {
 }
 
 /// Neither has a spelling: `.` builds the read right of a parse's `tape[0]`, a bare field
-/// name in a `drop` or `share` function builds it too, and `=` the write over it.
+/// name in a `free` or `share` function builds it too, and `=` the write over it.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     let op = |cx: &mut Cx, roles: &[&str], run: crate::run::RunFn| {
         let record = meta::operand_record(

@@ -987,7 +987,7 @@ fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 
 /// A bracket a type's `parse` hands to the call it places is the list the new value is built
 /// from, so the value owns what its lines hold: a line naming a value whose type fills a
-/// `drop` must move it in, `own x`, or two names would own one value.
+/// `free` must move it in, `move x`, or two names would own one value.
 ///
 /// # Safety
 /// `bracket` must be a scope or `square_brackets` node from the store.
@@ -996,7 +996,7 @@ unsafe fn owned_lines(types: &Core, bracket: DyadPtr) -> Result<(), crate::parse
         let line = types.through(line);
         let named = matches!(super::read::read_kind(types, line), super::read::Read::Container(_));
         let owned =
-            super::node_type_of(types, line).is_some_and(|t| !meta::instances_drop_of(t).is_null());
+            super::node_type_of(types, line).is_some_and(|t| !meta::instances_free_of(t).is_null());
         if named && owned {
             return Err(crate::parse::ParseError::LineNotMoved);
         }

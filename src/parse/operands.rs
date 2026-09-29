@@ -299,13 +299,12 @@ impl<'a> Parser<'a> {
         Ok(Some((self.as_operand(l)?, self.as_operand(r)?)))
     }
 
-    /// The place operand of `own`/`drop`/`free`, the place node itself (not an
-    /// `addr`). With `ends_name` a bare name comes back as the `Ended` the
-    /// caller hands to `mark_dead`; a name from outside a loop or `fn` body is refused.
+    /// The place operand of `move`/`free`, the place node itself (not an
+    /// `addr`). A bare name comes back as the `Ended` the caller hands to
+    /// `mark_dead`; a name from outside a loop or `fn` body is refused.
     pub(crate) fn place_operand_cell(
         &mut self,
         tape: &mut ParsingTape,
-        ends_name: bool,
     ) -> Result<(Cell, Option<Ended>), ParseError> {
         let Some(&cell) = tape.at(1) else {
             return Err(ParseError::MissingOperand);
@@ -341,18 +340,13 @@ impl<'a> Parser<'a> {
                 }
                 (r.identity, r.binding, r.scope)
             };
-            let ended = if ends_name {
-                if self.cx.scopes.crosses_barrier(scope) {
-                    self.cx.pos = cell.start;
-                    return Err(ParseError::OwnOfOuterName);
-                }
-                Some(Ended { binding })
-            } else {
-                None
-            };
+            if self.cx.scopes.crosses_barrier(scope) {
+                self.cx.pos = cell.start;
+                return Err(ParseError::MoveOfOuterName);
+            }
             self.check_made(binding)?;
             self.note_outer_read(binding);
-            (identity, ended)
+            (identity, Some(Ended { binding }))
         };
         // SAFETY: `node` is a resolved dyad from the store.
         unsafe {
@@ -434,7 +428,7 @@ impl<'a> Parser<'a> {
     }
 
     /// A call is a use of every outer name the callee's body reads (DESIGN
-    /// ›`own` and `drop` are static‹): each listed binding is checked as a bare
+    /// ›`move` and `free` are static‹): each listed binding is checked as a bare
     /// use here would be, and joins the lists of the functions being parsed.
     ///
     /// # Safety
