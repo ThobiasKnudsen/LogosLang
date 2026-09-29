@@ -1348,10 +1348,10 @@ A type may carry a *declarative consumption signature*. It stays the optional fa
 - **Source:** DESIGN.md l.197
 
 ### Slots are named for the moment they run: `parse`, `run`, `free`
-`parse` runs when the spelling appears on the tape, `run` when the node is evaluated, `free` when the value's life ends: `free x`, the holder's scope exit, an `=` over the holder. `parse` stands beside `parse_rank` and `lex_rank`. The prose keeps "constructor" and "destructor" as plain English for the `parse` and `free` slots.
+`parse` runs when the spelling appears on the tape, `run` when the node is evaluated, `free` when the value's life ends: `free x`, the holder's scope exit, an `=` over the holder. `print` runs when the value is shown and gives back its text (›A value is shown as the text its type's `print` slot gives back‹). `parse` stands beside `parse_rank` and `lex_rank`. The prose keeps "constructor" and "destructor" as plain English for the `parse` and `free` slots.
 - **Why:** the same naming rule that named `run` the same day.
 - **Rejected:** the name *poiesis* (bringing forth from concealment into presence) for the slot. Plain words win.
-- **Ruled:** 17 September 2026 (slot names); poiesis declined August 2026; `drop` respelled `free` 28 September 2026.
+- **Ruled:** 17 September 2026 (slot names); poiesis declined August 2026; `drop` respelled `free` 28 September 2026; `print` joined 29 September 2026, Thobias (#174).
 - **Seed:** done (#130).
 - **Source:** DESIGN.md l.199
 
@@ -1391,9 +1391,9 @@ Dispatch is one lookup with no climbing. A type without a constructor leaves its
 - **Source:** DESIGN.md l.201
 
 ### A slot is filled with `=`; `:=` declares a member of your own
-`parse_rank`, `associativity`, `parse`, `run` and `free` are places `type` declares for every type it builds. A type body fills them with `=`. So inside `^ := type (…)` the body writes `share parse_rank = *.parse_rank + 1`, `share associativity = right`, `share parse = (…)`. A `:=` on a slot name is the ordinary no-shadowing error.
+`parse_rank`, `associativity`, `parse`, `run`, `free` and `print` are places `type` declares for every type it builds. A type body fills them with `=`. So inside `^ := type (…)` the body writes `share parse_rank = *.parse_rank + 1`, `share associativity = right`, `share parse = (…)`. A `:=` on a slot name is the ordinary no-shadowing error.
 - **Why:** the two operators keep one meaning each: `=` writes what exists, `:=` introduces what does not.
-- **Ruled:** 4 September 2026. `run` joined 16 September 2026. `share` on slot fills: 26 September 2026 (l.207).
+- **Ruled:** 4 September 2026. `run` joined 16 September 2026. `share` on slot fills: 26 September 2026 (l.207). `print` joined 29 September 2026, Thobias (#174).
 - **Source:** DESIGN.md l.201, l.203, l.207
 
 ### Slot words are known only inside a type body
@@ -1405,6 +1405,7 @@ In a type body, `b = 3` is the checked error whatever `b` names, an alias of a s
 - **Ruled:** 19 September 2026, Thobias.
 - **Seed:** done 20 September 2026 (#133 slice 4 undone).
 - **Ruled (28 September 2026, Thobias):** the rule stands as written: the language-start word that runs an expression at parse is spelled `immediate` (›`immediate x` runs the expression to its right as soon as it is parsed, and stands as its value‹), so no root word shares a slot word's spelling and `run := 5` at the root is the ordinary declaration. **Why:** for some hours that word was `run`, which made `run := 5` the no-shadowing error and would have needed every reader to sleep before `:=`; the respelling removed both.
+- **Ruled (29 September 2026, Thobias, #174):** `print` is a slot word and stays one word with the output word `print «…»`, as `free` is (›`free` is one word‹): its parse looks to its right, so neither the root nor a type body needs a second spelling. The sentence above holds for `run` and `immediate`; `free` and `print` share their spelling by being one word. **Why:** "print because i guess print could also mean print text in a string and return the string" (Thobias).
 - **Source:** DESIGN.md l.201
 
 ### `free` is one word
@@ -2083,11 +2084,11 @@ The trailing value of a program prints: the seed's stand-in until `print` lands 
 - **Source:** DESIGN.md l.221, l.215
 
 ### A value is shown as the text its type's `print` slot gives back
-Every value is a node with an address, a number included; a number shows as a number only because its type says how. So `print` is a slot every type has, as `parse` and `free` are: `type` declares it, and a type body fills it with `share print = (…)`, a body over the value's fields that gives back the value's text. A record shows the way its own type's slot says: `pt := type (a := i32 ?, b := i32 ?, share print = ( «pt({a}, {b})» ))` shows `pt(3, 4)` as `pt(3, 4)`. The slot's default is an error: showing a value whose type fills no `print` is the checked error. The tail-value echo, `print «{…}»` and `error «{…}»` all show a value through this one slot (›`print «…»` is the output word‹, ›`error «…»` reads `{…}` exactly as `print «…»` does‹). A `void` value shows nothing. A pointer shows what its own type's slot gives back, so what `x:frame` and `x:scope` show is `@dyad`'s answer (#182).
+Every value is a node with an address, a number included; a number shows as a number only because its type says how. So `print` is a slot every type has, as `parse` and `free` are: `type` declares it, and a type body fills it with `share print = (…)`, a body over the value's fields that gives back the value's text. A record shows the way its own type's slot says: `pt := type (a := i32 ?, b := i32 ?, share print = ( «pt({a}, {b})» ))` shows `pt(3, 4)` as `pt(3, 4)`. `print` is one word, as `free` is (›`free` is one word‹): with `=` to its right it fills the slot, with a `«…»` it writes the text, in a type's own bodies too. The slot's default is an error: showing a value whose type fills no `print` is the checked error. The tail-value echo, `print «{…}»` and `error «{…}»` all show a value through this one slot (›`print «…»` is the output word‹, ›`error «…»` reads `{…}` exactly as `print «…»` does‹). A `void` value shows nothing. A pointer shows what its own type's slot gives back, so what `x:frame` and `x:scope` show is `@dyad`'s answer (#182).
 - **Why:** Thobias: "its basically the same as when printing a number. its really a node with an address but since its a number its preinted a specific way and so there should be a share print function in each type to define how something should be printed". How a value is shown is then one more fact read off its type (›The dyad's read surface: two fields, and the type answers the rest‹), not a list of cases kept outside the language. A slot, "a slot every type has like free and parse" (Thobias). Text, not output: "it gives back text" (Thobias), so a message can hold what the slot gives. An error by default: "the default implementation of print is an error" (Thobias), fail-closed as ›No climbing: a type without a parse leaves its values inert‹ is.
 - **Ruled:** 29 September 2026, Thobias (#174), in place of the five displays put to him (the type's name, `pt(3, 4)`, `(3, 4)`, `dyad`, the address); the same day, the four points that ruling left: a slot like `free` and `parse`, text given back, an error by default, and "yes" to `void` showing nothing and to #182 being `@dyad`'s answer.
 - **Ruled (29 September 2026, Thobias):** the echo, `print «{…}»` and `error «{…}»` share the one slot "for now. but when building the error system more precicely this willl maybe change".
-- **Open (asked 29 September 2026):** the slot's name. "it gives back text so maybe there is a better name tjen print then?" (Thobias). Until it is named, the slot lists of ›Slots are named for the moment they run: `parse`, `run`, `free`‹ and ›A slot is filled with `=`; `:=` declares a member of your own‹ do not carry it.
+- **Ruled (29 September 2026, Thobias):** the slot is named `print`, one word with the output word, over `show`, `text`, `display` and `spell`. **Why:** asked "maybe there is a better name tjen print then?", he answered "print because i guess print could also mean print text in a string and return the string".
 - **Seed:** divergence: `display_value` decides in Rust, by case; a record prints the address of its scratch bytes when unnamed and is a run error when named (#174). A fill written in Logos waits for text as a run-time value: the seed reads no text whole, not even `«hi»`, and has no `{…}` outside `print` and `error`.
 
 ### Importing is dropping the text there, wrapped in its own scope
