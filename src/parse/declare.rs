@@ -282,13 +282,12 @@ impl<'a> Parser<'a> {
         if !unsafe { self.name_holds(ended.binding) } {
             return;
         }
-        let Some(holder) = self.holder_of(ended.binding) else {
+        let holder = self.holder_of(ended.binding).unwrap_or_else(|| {
             // An owner no open scope holds is an earlier REPL line's, whose items the
             // session's scope keeps: held from outside everything this line opened.
             self.cx.open[0].ended_earlier.push(ended.binding);
-            self.cx.ended_log.push((ended.binding, 0));
-            return;
-        };
+            0
+        });
         for open in &mut self.cx.open[holder..] {
             open.ended.push(ended.binding);
         }

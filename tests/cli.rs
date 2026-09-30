@@ -1684,6 +1684,29 @@ fn a_failed_repl_line_restores_a_moved_name() {
 }
 
 #[test]
+fn a_repl_line_that_faults_keeps_the_end_of_what_it_ended() {
+    // Its run freed the value, before the fault or as the fault left: the session neither
+    // reads it nor frees it again.
+    let (echoes, stderr) =
+        repl(b"a := alloc 1 of i32 5\n( free a, error \xc2\xabx\xc2\xbb )\na@\n");
+    assert!(echoes.is_empty(), "{echoes:?} stderr: {stderr}");
+    assert!(stderr.contains("`a` is dead here"), "stderr: {stderr}");
+    let lines = BOX.replacen("), box := ", ")\nbox := ", 1);
+    let g = "g := fn () -> i32 ( error «x» )\nc := i32 1";
+    for tail in ["( free a, error «x» )", "if (c == 1) ( g(), free a )", "if (g() == 1) ( free a )"]
+    {
+        let (echoes, stderr) =
+            repl(format!("{lines}\n{g}\na := box (1, 2)\n{tail}\na.size\n").as_bytes());
+        assert_eq!(echoes, ["free"], "{tail}: stderr: {stderr}");
+        assert!(stderr.contains("`a` is dead here"), "{tail}: stderr: {stderr}");
+    }
+    // A fault the pass meets before the parse reaches the `free` ends nothing.
+    let (echoes, stderr) =
+        repl(format!("{lines}\n{g}\na := box (1, 2)\n( g(), free a )\na.size\n").as_bytes());
+    assert_eq!(echoes, ["2", "free"], "stderr: {stderr}");
+}
+
+#[test]
 fn an_owning_value_that_nothing_can_free_is_refused() {
     let out = logos().args(["import", "tests/fixtures/unbound_owning.logos"]).output().unwrap();
     assert_eq!(out.status.code(), Some(1));

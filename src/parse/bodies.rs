@@ -1447,6 +1447,21 @@ impl<'a> Parser<'a> {
     /// REPL keeps a session's across its lines, and a name this parse ended that an earlier
     /// line's item holds is held no longer; returns the top scope.
     pub fn hand_exit(&mut self) -> DyadPtr {
+        use crate::identities::scope;
+        self.end_earlier_holds();
+        let top = self.cx.scopes.current().expect("the top scope is open");
+        let items: Vec<DyadPtr> = std::mem::take(&mut self.cx.open[0].exit)
+            .iter()
+            .map(|h| h.build(self.rt.store, self.types))
+            .collect();
+        // SAFETY: `top` is a scope node the driver minted; `items` exit items just built.
+        unsafe { scope::extend_exit(self.rt.store, self.types.array_, top, &items) };
+        top
+    }
+
+    /// The names an earlier REPL line holds that this parse ended: the top scope's end frees
+    /// them no more. Returns them.
+    pub fn end_earlier_holds(&mut self) -> Vec<DyadPtr> {
         use crate::identities::{drop_model, scope};
         let top = self.cx.scopes.current().expect("the top scope is open");
         let ended = std::mem::take(&mut self.cx.open[0].ended_earlier);
@@ -1462,12 +1477,6 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        let items: Vec<DyadPtr> = std::mem::take(&mut self.cx.open[0].exit)
-            .iter()
-            .map(|h| h.build(self.rt.store, self.types))
-            .collect();
-        // SAFETY: `top` is a scope node the driver minted; `items` exit items just built.
-        unsafe { scope::extend_exit(self.rt.store, self.types.array_, top, &items) };
-        top
+        ended
     }
 }

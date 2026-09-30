@@ -319,7 +319,7 @@ fn repl() -> ExitCode {
         let types = &engine.core;
         // The value is read and rendered while the parser is alive, since an unnamed result
         // lives in its runtime's scratch, and only for a line that parsed whole.
-        let (parsed, end, value, scopes_back, imports_back) = {
+        let (parsed, end, value, freed, scopes_back, imports_back) = {
             let mut p = Parser::new(&line, &mut engine.store, &mut engine.trie, types, scopes)
                 .with_imports(std::mem::take(&mut imports))
                 .with_lower(&engine.core.lower);
@@ -346,8 +346,13 @@ fn repl() -> ExitCode {
                 }
                 _ => None,
             };
+            // A line that ran and failed freed what it ended of an earlier line's, if not before
+            // the fault then as the fault left (DESIGN ›A checked error is a fault: the task
+            // that hit it is cancelled‹): those names stay ended.
+            let ran = matches!(parsed, Err(ParseError::Run(_))) || matches!(value, Some(Err(_)));
+            let freed = if ran { p.end_earlier_holds() } else { Vec::new() };
             let imports_back = p.take_imports();
-            (parsed, end, value, p.into_scopes(), imports_back)
+            (parsed, end, value, freed, p.into_scopes(), imports_back)
         };
         scopes = scopes_back;
         imports = imports_back;
@@ -355,7 +360,7 @@ fn repl() -> ExitCode {
         // A failed line must leave no trace, or a typo would burn its name for
         // the session under the no-shadowing rule.
         let fail = |scopes: &mut ScopeStack, trie: &mut RegexTrie| {
-            scopes.rollback(trie);
+            scopes.rollback(trie, &freed);
             scopes.truncate(2); // the root and the session's own section
         };
 
