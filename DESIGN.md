@@ -1053,7 +1053,7 @@ A plain number literal is a `rational_number`, a type of its own. Every `int`, `
 ### No implicit coercion; a numeric type applied to a value is the conversion
 `i32(a)` is the conversion, per constructor, reusing token consumption; there is no `cast` identity. Comparisons resolve operands the same way and yield `bool`. `and` and `or` run both sides: they are plain operators over two `bool`s, and `if` is the one identity that runs one part and skips another. Code that counts on a skip writes the `if`: `ok := if (i < n) ( xs[i] > 0 ) else ( false )`.
 - **Ruled (1 October 2026, Thobias, Q-0043):** both sides of `and` and `or` run. **Why:** "why would "and" skips its right side? it shouldnt", written beside `x := (c == 1) and ( free a, c == 0 )`, which skipped its right side and so never freed `a`, where the same line written with `if` frees it in the other arm. Chosen over keeping the skip and freeing at `and`'s close what its right side would have ended.
-- **Seed:** stand-in (`not` takes a bracketed operand).
+- **Seed:** stand-in (`not` takes a bracketed operand). `and` and `or` run both sides on both tiers since 1 October 2026 (#192).
 - **Source:** DESIGN.md l.166
 
 ### `-` before an operand is negation: one identity that reads its left side

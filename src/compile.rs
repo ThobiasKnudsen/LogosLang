@@ -953,24 +953,25 @@ impl Lowerer<'_, '_> {
         })
     }
 
-    /// Short-circuit: `b` is not evaluated when `a` is false.
+    /// Both sides run; a lowered `bool` is an `I32` `0` or `1`, so the bitwise `and` is the
+    /// logical one.
     ///
     /// # Safety
     /// `a`/`b` must be valid dyads from the store.
     pub unsafe fn lower_and(&mut self, a: DyadPtr, b: DyadPtr) -> Result<Value, CompileError> {
         let va = self.lower(a)?;
-        // SAFETY: `b` is the dyad the caller's contract covers.
-        self.branch(va, |s| unsafe { s.lower(b) }, |s| Ok(s.const_i32(0)))
+        let vb = self.lower(b)?;
+        Ok(self.builder.ins().band(va, vb))
     }
 
-    /// Short-circuit: `b` is not evaluated when `a` is true.
+    /// Both sides run, as [`Self::lower_and`].
     ///
     /// # Safety
     /// `a`/`b` must be valid dyads from the store.
     pub unsafe fn lower_or(&mut self, a: DyadPtr, b: DyadPtr) -> Result<Value, CompileError> {
         let va = self.lower(a)?;
-        // SAFETY: `b` is the dyad the caller's contract covers.
-        self.branch(va, |s| Ok(s.const_i32(1)), |s| unsafe { s.lower(b) })
+        let vb = self.lower(b)?;
+        Ok(self.builder.ins().bor(va, vb))
     }
 
     /// A self-call is a direct `call` the JIT patches to this function; a callee

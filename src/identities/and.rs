@@ -1,9 +1,10 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `and`: short-circuiting conjunction over two `bool`s, or, over two
+//! `and`: conjunction over two `bool`s, both sides run, or, over two
 //! non-booleans, a group the consuming operator distributes over.
-//! DESIGN ›The proof layer‹
+//! DESIGN ›No implicit coercion; a numeric type applied to a value is the conversion‹,
+//! ›`and`/`or` on non-booleans build a group; every operator on a group applies to each member‹
 
 use crate::Core;
 use cranelift_codegen::ir::Value;
@@ -62,11 +63,9 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a valid `and` application; its two operands are valid.
     unsafe {
         let (lhs, rhs) = operands(node);
-        if rt.run(lhs)? != 0 {
-            rt.run(rhs)
-        } else {
-            Ok(0)
-        }
+        let l = rt.run(lhs)?;
+        let r = rt.run(rhs)?;
+        Ok((l != 0 && r != 0) as i64)
     }
 }
 

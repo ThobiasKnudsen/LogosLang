@@ -3542,6 +3542,29 @@ fn an_if_frees_what_one_arm_moved_at_the_end_of_the_other() {
 }
 
 #[test]
+fn and_and_or_run_both_sides() {
+    for (tail, printed) in [
+        (
+            "c := i32 0, a := box (1, 2), x := (c == 1) and ( free a, c == 0 ), print «after {x}»",
+            "free\nafter 0\n",
+        ),
+        (
+            "c := i32 1, a := box (1, 2), x := (c == 1) or ( free a, c == 0 ), print «after {x}»",
+            "free\nafter 1\n",
+        ),
+        (
+            "f := fn (c := i32 ?) -> i32 ( a := box (1, 2), x := (c == 1) and ( free a, c == 0 ), 7 ), \
+             f.compile(), print «after {f(0)}»",
+            "free\nafter 7\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{BOX}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout, printed, "{tail}");
+    }
+}
+
+#[test]
 fn an_array_holds_arrays_as_their_addresses() {
     let array = "import ./identities/array.logos, x := array i32 [1, 2], y := array i32 [3, 4], \
                  t := array i32, b := array t [move x, move y]";
