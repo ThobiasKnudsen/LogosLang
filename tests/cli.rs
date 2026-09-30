@@ -3576,6 +3576,25 @@ fn and_and_or_run_both_sides() {
 }
 
 #[test]
+fn a_return_frees_what_its_line_ends_after_it_compiled_or_not() {
+    let ret = "(if (c == 1) (return 5) else (i32 2))";
+    for (body, other) in [
+        (format!("x := {ret} + (free a, i32 1)"), 3),
+        (format!("x := ( {ret}, 7 ) + (free a, i32 1)"), 8),
+        (format!("x := ( {ret} + (free a, i32 1), 7 )"), 7),
+    ] {
+        for compile in ["", "f.compile(), "] {
+            let (code, stdout, stderr) = run_line(&format!(
+                "{BOX}, f := fn (c := i32 ?) -> i32 ( a := box (1, 2), {body}, x ), \
+                 {compile}print «got {{f(1)}}», print «got {{f(0)}}»"
+            ));
+            assert_eq!(code, Some(0), "{compile}{body}: stderr: {stderr}");
+            assert_eq!(stdout, format!("free\ngot 5\nfree\ngot {other}\n"), "{compile}{body}");
+        }
+    }
+}
+
+#[test]
 fn an_array_holds_arrays_as_their_addresses() {
     let array = "import ./identities/array.logos, x := array i32 [1, 2], y := array i32 [3, 4], \
                  t := array i32, b := array t [move x, move y]";

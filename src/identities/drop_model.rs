@@ -1324,6 +1324,48 @@ mod tests {
     }
 
     #[test]
+    fn a_return_frees_what_its_line_ends_after_it() {
+        // Freed once on each path, by whichever end the path reaches first: the `return`, a
+        // block it leaves, the `if` it leaves, or the line's own `free`.
+        let (ret, other) = (
+            "(if (c == 1) (return 5) else (i32 2))",
+            "(if (c == 1) (return 5) else (free a, i32 2))",
+        );
+        let bodies = [
+            format!("x := {ret} + (free a, i32 1)"),
+            format!("x := ( {ret}, 7 ) + (free a, i32 1)"),
+            format!("x := ( {ret} + (free a, i32 1), 7 )"),
+            format!("x := (free a, i32 1) + {ret}"),
+            format!("x := ( {ret}, free a, i32 1 )"),
+            format!("x := {other} + 1"),
+            format!("x := (if (c > 0) ( {ret}, free a, i32 2 ) else (i32 3)) + 1"),
+            format!("x := if ({ret} == 2) (free a, i32 1) else (i32 3)"),
+        ];
+        for body in bodies {
+            let f = format!("f := fn (c := i32 ?) -> i32 ( a := alloc 1 of i32 7, {body}, x ),\n");
+            for c in [1, 0] {
+                let (v, live) = run(&format!("{f}f({c})"));
+                assert_eq!(live, 0, "{body}: c = {c}");
+                assert_eq!(free_log(), vec![7], "{body}: c = {c}");
+                if c == 1 {
+                    assert_eq!(v, 5, "{body}");
+                }
+            }
+        }
+        // A name the block holds; the return's frees run where the names' lives end, before
+        // the end of the block it leaves.
+        let block = format!(
+            "( b := alloc 1 of i32 8, {ret} + (free a, free b, i32 1), d := alloc 1 of i32 9, d@ )"
+        );
+        let f =
+            format!("f := fn (c := i32 ?) -> i32 ( a := alloc 1 of i32 7, x := {block}, x ),\n");
+        assert_eq!(run(&format!("{f}f(1)")), (5, 0));
+        assert_eq!(free_log(), vec![8, 7]);
+        assert_eq!(run(&format!("{f}f(0)")), (9, 0));
+        assert_eq!(free_log(), vec![7, 8, 9]);
+    }
+
+    #[test]
     fn the_address_of_a_held_name_does_not_leave_its_scope() {
         for src in [
             "p := ( c := alloc 1 of i32 7, &c ),\n1",

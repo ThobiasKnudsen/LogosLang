@@ -922,17 +922,24 @@ impl Lowerer<'_, '_> {
         )
     }
 
-    /// `return X` leaves the function from wherever it stands, counting the
-    /// call out as the epilogue does. What follows it is unreachable, so the
+    /// `return X` leaves the function from wherever it stands, freeing `ends` last first and
+    /// counting the call out as the epilogue does. What follows it is unreachable, so the
     /// value handed back to the enclosing lowering is a zero of `X`'s type.
     ///
     /// # Safety
-    /// `value` must be a valid dyad from the store.
-    pub unsafe fn lower_return(&mut self, value: DyadPtr) -> Result<Value, CompileError> {
+    /// `value` must be a valid dyad from the store, `ends` held places.
+    pub unsafe fn lower_return(
+        &mut self,
+        value: DyadPtr,
+        ends: &[DyadPtr],
+    ) -> Result<Value, CompileError> {
         if self.teardowns > 0 {
             return Err(CompileError::NotLowerable(value));
         }
         let v = self.lower(value)?;
+        for &place in ends.iter().rev() {
+            crate::identities::drop_model::lower_end_held(self, place)?;
+        }
         let ret64 = match (self.ret_dest, self.ret) {
             (Some((dest, width)), _) => {
                 self.copy_bytes(dest, v, width);

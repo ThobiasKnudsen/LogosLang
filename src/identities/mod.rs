@@ -65,7 +65,7 @@ pub mod print;
 pub(crate) mod rational;
 mod regex_mod;
 #[path = "return.rs"]
-mod return_mod;
+pub(crate) mod return_mod;
 pub(crate) mod run_body;
 pub(crate) mod scope;
 pub(crate) mod string;

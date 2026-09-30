@@ -25,7 +25,24 @@ pub(super) struct OpenFn {
     /// `open`'s length outside the body: the scopes a `return` leaves are the ones past it.
     pub(super) open_below: usize,
     /// Every `return` in the body, committed to the result type as the tail is.
-    pub(super) returns: Vec<DyadPtr>,
+    pub(super) returns: Vec<OpenReturn>,
+}
+
+/// A `return` in a function body being parsed. Its line may still end names after it, in a
+/// part the `return` leaves before: the `return` frees those itself (DESIGN ›A value's
+/// teardown runs where its life ends; the ending identity reads the type's `free` slot‹).
+pub(super) struct OpenReturn {
+    node: DyadPtr,
+    /// The names the scopes it leaves hold at it, in declaration order; an `if` whose arm
+    /// frees one on the `return`'s way out takes it off.
+    live: Vec<DyadPtr>,
+    /// The names its line ended after it.
+    ended: Vec<DyadPtr>,
+    /// The innermost scope it is still inside, whose line holding it is closed or not.
+    level: usize,
+    line_closed: bool,
+    /// Where in `ended_log` its line at `level` goes on after it.
+    cursor: usize,
 }
 
 #[derive(Default)]
@@ -566,8 +583,14 @@ impl<'a> Parser<'a> {
         let body =
             unsafe { crate::identities::commit_fn_body(self.rt.store, self.types, body, output)? };
         for r in returns {
-            // SAFETY: `r` is a `return` node built in this body.
-            unsafe { crate::identities::commit_fn_body(self.rt.store, self.types, r, output)? };
+            let ends: Vec<DyadPtr> =
+                r.live.iter().copied().filter(|name| r.ended.contains(name)).collect();
+            // SAFETY: `r.node` is a `return` node built in this body, not yet run; `ends` are
+            // places the scopes it leaves hold.
+            unsafe {
+                crate::identities::commit_fn_body(self.rt.store, self.types, r.node, output)?;
+                crate::identities::return_mod::set_ends(self.rt.store, self.types, r.node, &ends);
+            }
         }
 
         let frame = if frame_size == 0 {
@@ -614,8 +637,31 @@ impl<'a> Parser<'a> {
         if crate::identities::drop_model::is_owning_value(types, value) {
             return Err(ParseError::OwnershipAcrossReturn);
         }
-        self.cx.frames.last_mut().expect("checked above").returns.push(node);
+        let live = self.cx.open[frame.open_below..]
+            .iter()
+            .flat_map(|s| &s.exit)
+            .filter(|item| item.end.is_none())
+            .map(|item| item.what)
+            .collect();
+        let open = OpenReturn {
+            node,
+            live,
+            ended: Vec::new(),
+            level: self.cx.open.len() - 1,
+            line_closed: false,
+            cursor: self.cx.ended_log.len(),
+        };
+        self.cx.frames.last_mut().expect("checked above").returns.push(open);
         Ok(())
+    }
+
+    /// The returns of the function being parsed from index `from`; none outside one.
+    fn returns_from(&mut self, from: usize) -> &mut [OpenReturn] {
+        self.cx.frames.last_mut().map(|f| &mut f.returns[from..]).unwrap_or_default()
+    }
+
+    fn returns_len(&self) -> usize {
+        self.cx.frames.last().map_or(0, |f| f.returns.len())
     }
 
     /// `if cond then` with an optional `else else`: the node is
@@ -623,6 +669,7 @@ impl<'a> Parser<'a> {
     /// statement. Each branch is a bracket or the next expression, and a bare
     /// `else` binds to the nearest `if`; `if` opens no scope.
     pub fn parse_if(&mut self, if_type: DyadPtr) -> Result<DyadPtr, ParseError> {
+        let returns_start = self.returns_len();
         let items = self.drive_until_open(RightSide::Condition)?;
         let cond = self.one_of(items)?.dyad;
         let types = self.types;
@@ -648,8 +695,9 @@ impl<'a> Parser<'a> {
         self.cx.runtime_depth += 1;
         self.cx.narrow_next = check.filter(|&(_, _, holds)| holds).map(|(key, ty, _)| (key, ty));
         let (if_depth, log_start) = (self.cx.open.len(), self.cx.ended_log.len());
+        let returns_then = self.returns_len();
         let then = self.parse_branch();
-        let log_then = self.cx.ended_log.len();
+        let (log_then, returns_else) = (self.cx.ended_log.len(), self.returns_len());
         self.cx.narrow_next = None;
         // `else if …` is sugar: the `if` right after `else` becomes the
         // else-branch directly, so a chain nests right-associatively.
@@ -688,6 +736,16 @@ impl<'a> Parser<'a> {
         let then_ends = self.ended_outside(log_then..log_end, if_depth);
         let else_ends = self.ended_outside(log_start..log_then, if_depth);
         let condition_ends = self.ended_outside(log_start..log_end, if_depth);
+        // A `return` in the condition or the then arm leaves through the `if`, which frees
+        // these on its way; an else arm's `return` stands after what the then arm ended.
+        let returns = self.returns_from(returns_start);
+        let (in_condition, in_then) = returns.split_at_mut(returns_then - returns_start);
+        for r in in_condition {
+            r.live.retain(|name| !condition_ends.contains(name));
+        }
+        for r in &mut in_then[..returns_else - returns_then] {
+            r.live.retain(|name| !then_ends.contains(name));
+        }
         let node = crate::identities::if_mod::build(self.rt.store, types, cond, then, els);
         // SAFETY: `node` was just built; the ends are places the enclosing scopes hold.
         unsafe {
@@ -1159,6 +1217,7 @@ impl<'a> Parser<'a> {
         // What the block parsed and did not run runs when the block runs;
         // what it did run stands in the body as its result.
         let closed = self.cx.open.pop().expect("pushed above");
+        self.close_returns(self.cx.open.len());
         let mut exit = closed.exit.clone();
         // Prose and a `defer` (it runs at exit, never as the tail) are
         // invisible to value flow.
@@ -1261,6 +1320,12 @@ impl<'a> Parser<'a> {
         unsafe { self.cx.scopes.close_item(self.rt.store, self.types.array_, item) };
         let depth = self.cx.open.len() - 1;
         let line = self.cx.open[depth].lines;
+        if let Some(frame) = self.cx.frames.last_mut() {
+            for r in frame.returns.iter_mut().filter(|r| r.level == depth && !r.line_closed) {
+                r.ended.extend(self.cx.ended_log[r.cursor..].iter().map(|&(name, _)| name));
+                r.line_closed = true;
+            }
+        }
         for name in std::mem::take(&mut self.cx.open[depth].ended) {
             let open = &self.cx.open[depth];
             // SAFETY: held places and `name` are dyads from the store.
@@ -1281,6 +1346,17 @@ impl<'a> Parser<'a> {
             self.cx.open[depth].exit.push(ExitItem { what: item, from: line + 1, end: None });
         }
         self.cx.open[depth].lines += 1;
+    }
+
+    /// The block at `depth` closed: a `return` inside it stands in the enclosing scope's line
+    /// from here, which may end names after the block.
+    fn close_returns(&mut self, depth: usize) {
+        let log_len = self.cx.ended_log.len();
+        for r in self.returns_from(0).iter_mut().filter(|r| r.level == depth) {
+            r.level = depth - 1;
+            r.line_closed = false;
+            r.cursor = log_len;
+        }
     }
 
     /// A driver's top-level line is complete: see [`Parser::close_line`].

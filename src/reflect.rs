@@ -493,7 +493,7 @@ mod tests {
                 (core.convert, meta::TUPLE_TAG, 4),
                 (core.deref_, meta::TUPLE_TAG, 4),
                 (core.storeptr_, meta::TUPLE_TAG, 5),
-                (core.return_, meta::TUPLE_TAG, 2),
+                (core.return_, meta::TUPLE_TAG, 3),
                 (core.not_, meta::TUPLE_TAG, 2),
                 (core.construct_, meta::LIST_TAG, 3),
             ] {
