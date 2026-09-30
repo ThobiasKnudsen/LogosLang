@@ -3198,6 +3198,18 @@ fn the_program_s_end_runs_its_defers_and_what_it_holds_last_first() {
     }
     let (echoes, stderr) = repl(b"defer print \xc2\xabbye\xc2\xbb\n1\n");
     assert_eq!(echoes.last().map(String::as_str), Some("bye"), "stderr: {stderr}");
+    // An imported name is the file's own place: ending it ends the file's hold, once.
+    for src in [
+        "import ./tests/fixtures/owning_pub.logos, p@",
+        "import ./tests/fixtures/owning_pub.logos, free p, 1",
+        "import ./tests/fixtures/owning_pub.logos, q := move p, q@",
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
+        assert!(matches!(stdout.trim(), "7" | "1"), "{src}: {stdout}");
+    }
+    let (echoes, stderr) = repl(b"import ./tests/fixtures/owning_pub.logos\nfree p\n1\n");
+    assert_eq!(echoes, ["1"], "stderr: {stderr}");
 }
 
 #[test]
