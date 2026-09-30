@@ -1253,8 +1253,8 @@ impl<'a> Parser<'a> {
     /// A line of the innermost scope is complete: the names it declared or ended settle on
     /// it (see [`ScopeStack::close_item`]), and a `defer` line joins the exit. A held name the
     /// line ended is held up to it; one an enclosing scope holds, this scope holds from its
-    /// start up to it, so a `return` before the line frees it (DESIGN ›`move` and `free` are
-    /// static: the parse marks the name dead‹: "ends `x`'s life at that item, on every path").
+    /// start up to it, so a `return` or fault before the line frees it (DESIGN ›`move` and
+    /// `free` are static: the parse marks the name dead‹).
     ///
     /// # Safety
     /// `item` must be a line this parser just returned.
