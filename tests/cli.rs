@@ -1646,6 +1646,16 @@ fn the_repl_keeps_an_owning_binding_alive_across_lines() {
 }
 
 #[test]
+fn a_repl_session_frees_each_line_s_value_once_at_its_end() {
+    // The session's exit grows a line at a time, text made between its lines.
+    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+    let lines: String =
+        (1..=5).map(|i| format!("v{i} := bag({i})\nt{i} := «text {i}»\n")).collect();
+    let (echoes, stderr) = repl(format!("{bag}\n{lines}").as_bytes());
+    assert_eq!(echoes, ["freed 5", "freed 4", "freed 3", "freed 2", "freed 1"], "stderr: {stderr}");
+}
+
+#[test]
 fn the_repl_reuses_a_name_after_free() {
     let (echoes, stderr) = repl(b"n := i32 5\nfree n\nn\nn := i32 6\nn\n");
     assert_eq!(echoes, ["6"], "stderr: {stderr}");

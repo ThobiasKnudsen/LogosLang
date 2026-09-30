@@ -151,9 +151,9 @@ pub(crate) unsafe fn extend_exit(
         return;
     }
     let slot = (dyad::value(node) as *mut DyadPtr).add(EXIT);
+    // Empty, so `push` knows its capacity.
     if (*slot).is_null() {
-        *slot = array::build(store, array_ty, items);
-        return;
+        *slot = array::build(store, array_ty, &[]);
     }
     for &item in items {
         array::push(store, *slot, item);
