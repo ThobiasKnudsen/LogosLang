@@ -387,10 +387,23 @@ impl<'a> Parser<'a> {
         self.consume_token(self.types.sep_)
     }
 
-    /// `)` or `]`: a closer ends the body, and the opener's own expect-helper
-    /// checks it is the matching one.
+    /// A closer ends the body, and [`Parser::take_closer`] checks it is its opener's.
     pub(super) fn at_close(&mut self) -> bool {
-        matches!(self.peek_token(), Some((id, _)) if id == self.types.close_ || id == self.types.close_sq_)
+        matches!(self.peek_token(), Some((id, _)) if self.is_closer(id))
+    }
+
+    /// Each opener with the closer that ends its bracket, built, held or skipped alike
+    /// (DESIGN ›Every identity has a `parse_rank`, and `(` works in two steps‹).
+    fn brackets(&self) -> [(DyadPtr, DyadPtr); 2] {
+        [(self.types.open_, self.types.close_), (self.types.open_sq_, self.types.close_sq_)]
+    }
+
+    fn closer_of(&self, opener: DyadPtr) -> Option<DyadPtr> {
+        self.brackets().into_iter().find(|&(open, _)| open == opener).map(|(_, close)| close)
+    }
+
+    pub(super) fn is_closer(&self, id: DyadPtr) -> bool {
+        self.brackets().into_iter().any(|(_, close)| close == id)
     }
 
     /// One spelling at the cursor, a declared name or a fresh run, never a
@@ -431,8 +444,16 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn expect_close(&mut self) -> Result<(), ParseError> {
+        self.take_closer(self.types.open_)
+    }
+
+    /// Where every bracket ends, built or not: the closer of `opener` at the cursor is
+    /// consumed; a closer of another bracket, or the end of the text, is `UnclosedBracket`
+    /// with the cursor left on it.
+    pub(super) fn take_closer(&mut self, opener: DyadPtr) -> Result<(), ParseError> {
+        let closer = self.closer_of(opener);
         if self.cx.feed.is_some() {
-            return if self.consume_token(self.types.close_) {
+            return if closer.is_some_and(|c| self.consume_token(c)) {
                 Ok(())
             } else {
                 Err(ParseError::UnclosedBracket)
@@ -445,7 +466,7 @@ impl<'a> Parser<'a> {
         }
         let start = self.cx.pos;
         let r = self.token_at(start, false)?;
-        if r.identity == self.types.close_ {
+        if Some(r.identity) == closer {
             self.cx.pos = start + r.matched;
             Ok(())
         } else {
@@ -453,12 +474,31 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// A `)` there is the mismatched closer, the same error.
-    pub(crate) fn expect_close_sq(&mut self) -> Result<(), ParseError> {
-        if self.consume_token(self.types.close_sq_) {
-            Ok(())
-        } else {
-            Err(ParseError::UnclosedBracket)
+    /// The bracket `opener` opened just behind the cursor, read past its closer and built
+    /// by nothing: token by token through the one door, a quote or a `#` comment being one
+    /// token and an inner bracket read the same way. Gives where the closer stood.
+    /// `depth` skipped brackets are open around this one.
+    pub(super) fn skip_bracket(
+        &mut self,
+        opener: DyadPtr,
+        depth: usize,
+    ) -> Result<usize, ParseError> {
+        self.check_depth(depth)?;
+        loop {
+            self.skip_whitespace();
+            let at = self.cx.pos;
+            if at >= self.cx.source.len() {
+                return Err(ParseError::UnclosedBracket);
+            }
+            let r = self.token_at(at, true)?;
+            let id = if r.fresh { std::ptr::null_mut() } else { r.identity };
+            if self.is_closer(id) {
+                return self.take_closer(opener).map(|()| at);
+            }
+            self.cx.pos += r.matched;
+            if self.closer_of(id).is_some() {
+                self.skip_bracket(id, depth + 1)?;
+            }
         }
     }
 
