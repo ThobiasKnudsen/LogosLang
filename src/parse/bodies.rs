@@ -858,26 +858,32 @@ impl<'a> Parser<'a> {
     /// thrown away (DESIGN ›a loop body's is thrown away‹); a `return` in it
     /// leaves the enclosing function.
     pub fn parse_while(&mut self, while_id: DyadPtr) -> Result<DyadPtr, ParseError> {
-        let items = self.drive_until_open(RightSide::Condition)?;
-        let cond = self.one_of(items)?.dyad;
-        let types = self.types;
-        // SAFETY: `cond` is the reduced dyad just parsed.
-        if !unsafe { is_bool_result(types, cond) } {
-            return Err(ParseError::NonBoolCondition);
-        }
-        // A repeated body: parse-time rebinding is off inside, and a name
-        // declared outside may not be moved or freed inside.
-        self.cx.runtime_depth += 1;
+        // The condition runs every pass too, so a name declared outside may not be moved or
+        // freed in it either.
         self.cx.scopes.push_barrier();
-        let body = self.parse_branch();
+        let body = self.parse_while_parts();
         self.cx.scopes.pop_barrier();
-        self.cx.runtime_depth -= 1;
-        let body = body?;
+        let (cond, body) = body?;
+        let types = self.types;
         // SAFETY: `body` is the reduced dyad just parsed.
         if self.cx.frames.is_empty() && unsafe { contains_return(types, body) } {
             return Err(ParseError::EarlyReturn);
         }
         Ok(self.rt.store.alloc_words(while_id, &[cond, body, self.types.ops.while_]))
+    }
+
+    fn parse_while_parts(&mut self) -> Result<(DyadPtr, DyadPtr), ParseError> {
+        let items = self.drive_until_open(RightSide::Condition)?;
+        let cond = self.one_of(items)?.dyad;
+        // SAFETY: `cond` is the reduced dyad just parsed.
+        if !unsafe { is_bool_result(self.types, cond) } {
+            return Err(ParseError::NonBoolCondition);
+        }
+        // A repeated body: parse-time rebinding is off inside.
+        self.cx.runtime_depth += 1;
+        let body = self.parse_branch();
+        self.cx.runtime_depth -= 1;
+        Ok((cond, body?))
     }
 
     /// `for i in a..b ( body )`, with an optional `..step` and optionally no

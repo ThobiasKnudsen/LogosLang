@@ -1513,6 +1513,15 @@ mod tests {
             parse_err("a := alloc 1 of i32 7,\nfor i in 0..2 ( free a )"),
             ParseError::MoveOfOuterName
         );
+        // A `while` condition runs every pass as its body does.
+        assert_eq!(
+            parse_err(
+                "a := alloc 1 of i32 7,\nmut c := i32 0,\nwhile ((free a, c) < 2) ( c = c + 1 )"
+            ),
+            ParseError::MoveOfOuterName
+        );
+        // A range runs once, before the first pass.
+        assert_eq!(run("a := alloc 1 of i32 7,\nmut c := i32 0,\nfor i in 0..(free a, i32 3) ( c = c + 1 ),\nc"), (3, 0));
     }
 
     #[test]
