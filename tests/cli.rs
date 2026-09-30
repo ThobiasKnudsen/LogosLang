@@ -1250,6 +1250,70 @@ fn a_square_bracket_is_a_paren_that_closes_only_itself() {
     assert!(stderr.contains("never closed"), "stderr: {stderr}");
     let (_echoes, stderr) = repl(b"x := i32 5\n(x + x).operands[0)\n");
     assert!(stderr.contains("never closed"), "stderr: {stderr}");
+    // Held or skipped, a bracket ends where the built one does: at the stray closer.
+    for (src, stray) in [
+        ("t := type ( a := i32 ?, share run = ( print «a» ] print «b» ) )", "] print"),
+        ("t := type ( a := i32 ?, share run = ( k := [1 ), print «b» ) )", "), print"),
+        ("f := fn () -> i32 ( t := type ( a := i32 ? ] ), 1 )", "] )"),
+        ("f := fn () -> i32 ( t := type ( share k := immediate [1 ) ), 1 )", ") ), 1"),
+        ("if false ( 1 ] 2 ) else ( 3 )", "] 2"),
+        ("if false ( k := [1 ) ) else ( 3 )", ") ) else"),
+        ("if true ( 3 ) else ( 1 ] 2 )", "] 2"),
+        ("if true ( 3 ) else ( k := [1 ) )", ") )"),
+        ("if true ( 3 ) else if ( 1 ] == 1 ) ( 4 )", "] =="),
+        ("if true ( 3 ) else if ( [1 ) == 1 ) ( 4 )", ") =="),
+    ] {
+        let (echoes, stderr) = repl(format!("{src}\n").as_bytes());
+        let col =
+            src[..src.find(stray).expect("the stray closer is in the line")].chars().count() + 1;
+        let head = format!("<repl>:1:{col}: error: this bracket is never closed");
+        assert!(echoes.is_empty() && stderr.contains(&head), "{src}: {echoes:?} {stderr}");
+    }
+}
+
+#[test]
+fn a_held_or_skipped_bracket_is_refused_where_it_is_written_before_anything_runs() {
+    let bump = |body: &str, tail: &str| {
+        format!(
+            "bump := type (a := i32 ?, share run = ( {body} ), share parse_rank = *.parse_rank + 1, \
+             share parse = ( tape[0]:type = bump, tape[0].a = tape[-1], tape.is_constructed[0] = true, \
+             tape.remove(-1) )), {tail}"
+        )
+    };
+    let held_type = "print «a», t := type ( share k := immediate [1 ) ), print «b»";
+    for (src, stray) in [
+        (bump("print «a» ] print «b»", "3 bump"), "] print"),
+        (bump("print «a», k := [1 ), print «b»", "3 bump"), "), print"),
+        (bump("print «a», k := [1 ), print «b»", "x := 3 bump, x"), "), print"),
+        (bump("print «a», k := [1 ), print «b»", "5"), "), print"),
+        (bump("x := ( 1 ], print «b»", "3 bump"), "], print"),
+        (bump(held_type, "3 bump"), ") ), print"),
+        (bump(held_type, "5"), ") ), print"),
+        ("f := fn () -> i32 ( t := type ( share k := immediate [1 ) ), 1 ), 5".into(), ") ), 1"),
+        ("if false ( k := [1 ) ) else ( print «ok» )".into(), ") ) else"),
+        ("if true ( print «ok» ) else ( k := [1 ) )".into(), ") )"),
+        ("f := fn () -> i32 ( if false ( k := [1 ) ) else ( 7 ) ), f()".into(), ") ) else"),
+        (
+            "f := fn () -> i32 ( if false ( k := [1 ) ) else ( 7 ) ), f.compile(), f()".into(),
+            ") ) else",
+        ),
+        (
+            "f := fn () -> i32 ( if true ( k := [1 ) ) else ( 7 ) ), f.compile(), f()".into(),
+            ") ) else",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}: stderr: {stderr}");
+        assert!(stdout.is_empty(), "{src}: stdout: {stdout}");
+        let col =
+            src[..src.find(stray).expect("the stray closer is in the program")].chars().count() + 1;
+        let head = format!("<command line>:1:{col}: error: this bracket is never closed");
+        assert!(stderr.starts_with(&head), "{src}: stderr: {stderr}");
+    }
+    let nested = bump("x := ((a + 2) * (3)), print «{x}»", "3 bump");
+    let (code, stdout, stderr) =
+        run_line(&format!("{nested}, if false ( j := zz [(1), [2 (3)]] ) else ( print «ok» )"));
+    assert_eq!((code, stdout.as_str()), (Some(0), "15\nok\n"), "stderr: {stderr}");
 }
 
 #[test]

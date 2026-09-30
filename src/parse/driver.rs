@@ -143,7 +143,7 @@ impl<'a> Parser<'a> {
                 self.cx.pos = start;
                 return Ok(Some(Boundary::Comma));
             }
-            if id == self.types.close_ || id == self.types.close_sq_ {
+            if self.is_closer(id) {
                 self.cx.pos = start;
                 return Ok(Some(Boundary::Close));
             }

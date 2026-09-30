@@ -2048,6 +2048,11 @@ fn runaway_depth_is_a_checked_error_not_an_abort() {
     on_work_stack(|| {
         let deep = "(".repeat(crate::parse::MAX_BRACKET_DEPTH + 1);
         assert_eq!(parse_err(&format!("{deep}1")), ParseError::TooDeep);
+        let shut = ")".repeat(crate::parse::MAX_BRACKET_DEPTH + 1);
+        let skipped = format!("if false ( {deep}1{shut} ) else ( 1 )");
+        assert_eq!(parse_err(&skipped), ParseError::TooDeep);
+        let held = format!("t := type ( a := i32 ?, share run = ( {deep}1{shut} ) ), 5");
+        assert_eq!(parse_err(&held), ParseError::TooDeep);
         assert_eq!(run_script("(((((1)))))"), 1);
 
         let runaway = "f := fn (n := i32 ?) -> i32 ( f(n + 1) ), f(1)";
