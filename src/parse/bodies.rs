@@ -41,9 +41,11 @@ pub(super) struct OpenScope {
     /// At the top level: owners a `move` or `free` ended that no open scope holds, which the
     /// top scope's exit does, from an earlier REPL line.
     pub(super) ended_earlier: Vec<DyadPtr>,
-    /// Items parsed at depth 0 and not yet run: `drain` runs them when the
-    /// pass needs a value, the scope's own run otherwise.
-    pub(super) unrun: Vec<DyadPtr>,
+    /// Items parsed at depth 0 and not yet run, each with its line: `drain` runs them when
+    /// the pass needs a value, the scope's own run otherwise.
+    pub(super) unrun: Vec<(DyadPtr, usize)>,
+    /// The lines the pass has run, up to which a fault's end ends what they hold.
+    ran: usize,
     /// The block node whose `dyads` hold the items, when the scope runs as one
     /// later: a drain leaves its cursor on the frame. None at the top level and in a type body.
     scope: Option<DyadPtr>,
@@ -1219,7 +1221,10 @@ impl<'a> Parser<'a> {
                 Ok(cell) => cell,
                 Err(e) => {
                     self.cx.scopes.pop();
-                    self.cx.open.pop();
+                    let open = self.cx.open.pop().expect("pushed above");
+                    if matches!(e, ParseError::Run(_)) {
+                        self.end_after_fault(&open);
+                    }
                     return Err(e);
                 }
             };
@@ -1365,12 +1370,13 @@ impl<'a> Parser<'a> {
     /// back the last item run with its value: the tail, on the stack (DESIGN ›The
     /// pass runs only as far as it must, in order, and never twice‹). A block's
     /// cursor moves to its last line, so its own run starts after it. The lists
-    /// are taken first, so a nested drain finds nothing.
+    /// are taken first, so a nested drain finds nothing. A scope's lines count as run as
+    /// they go, prose, `defer` and `[…]` lines included.
     pub fn drain(&mut self) -> Result<Option<(DyadPtr, i64)>, ParseError> {
-        let lists: Vec<(Option<DyadPtr>, Vec<DyadPtr>)> =
+        let lists: Vec<_> =
             self.cx.open.iter_mut().map(|s| (s.scope, std::mem::take(&mut s.unrun))).collect();
         let mut items = Vec::new();
-        for (scope, list) in lists {
+        for (depth, (scope, list)) in lists.into_iter().enumerate() {
             if list.is_empty() {
                 continue;
             }
@@ -1381,35 +1387,48 @@ impl<'a> Parser<'a> {
                     unsafe { crate::identities::scope::exprs_of(scope) }.map_or(0, <[_]>::len);
                 self.rt.set_cursor(scope, lines);
             }
-            for node in list {
+            for (node, line) in list {
                 // A `[…]` line is a list that goes whole to the call that takes it, which
                 // evaluates its lines when it runs (DESIGN ›A bracket goes to the call whole‹).
                 // SAFETY: every pending item is a dyad this parser built into its store.
-                let skip = unsafe {
+                let runs = unsafe {
                     let ty = dyad::ty(node);
-                    crate::identities::numtype::is_comment_type(ty)
-                        || ty == self.types.defer_
-                        || ty == self.types.square_brackets
+                    !crate::identities::numtype::is_comment_type(ty)
+                        && ty != self.types.defer_
+                        && ty != self.types.square_brackets
                 };
-                if skip {
-                    continue;
-                }
-                items.push(node);
+                items.push((node, runs, depth, line));
             }
         }
         let mut last = None;
-        let n = items.len();
-        for (i, node) in items.into_iter().enumerate() {
-            // A line's scratch goes with the line; the last item's is the value handed on.
-            let mark = self.rt.stack_mark();
-            // SAFETY: every pending item is a dyad this parser built into its store, which outlives the pass.
-            let bits = unsafe { self.run_on_pass(node) }.map_err(ParseError::Run)?;
-            if i + 1 < n {
-                self.rt.stack_release(mark);
+        let mut left = items.iter().filter(|&&(_, runs, _, _)| runs).count();
+        for (node, runs, depth, line) in items {
+            if runs {
+                // A line's scratch goes with the line; the last item's is the value handed on.
+                let mark = self.rt.stack_mark();
+                // SAFETY: every pending item is a dyad this parser built into its store, which outlives the pass.
+                let bits = unsafe { self.run_on_pass(node) }.map_err(ParseError::Run)?;
+                left -= 1;
+                if left > 0 {
+                    self.rt.stack_release(mark);
+                }
+                last = Some((node, bits));
             }
-            last = Some((node, bits));
+            self.cx.open[depth].ran = line + 1;
         }
         Ok(last)
+    }
+
+    /// A fault unwinds the parse of an open scope: what the lines the pass ran hold and
+    /// defer ends, and the fault stays the error shown (DESIGN ›A checked error is a fault:
+    /// the task that hit it is cancelled‹).
+    pub(super) fn end_after_fault(&mut self, open: &OpenScope) {
+        for item in open.exit.iter().rev().filter(|item| item.held_at(open.ran)) {
+            // SAFETY: the pass laid the scope's places out in the frame `self.rt` runs.
+            if unsafe { item.run(&mut self.rt) }.is_err() {
+                return;
+            }
+        }
     }
 
     /// `immediate x` (DESIGN ›`immediate x` runs the expression to its right as soon as
@@ -1480,8 +1499,20 @@ impl<'a> Parser<'a> {
     /// runs after every top-level line. The file driver calls this at program end; a
     /// nested scope ran its own at its end.
     pub fn exit(&mut self) -> Result<(), ParseError> {
-        let top = self.hand_exit();
         let reached = self.cx.open[0].lines;
+        self.exit_from(reached)
+    }
+
+    /// The program's end after a fault or a failed parse: what the lines that ran hold and
+    /// defer ends, and the fault stays the error shown, whatever this cleanup meets (DESIGN
+    /// ›A checked error is a fault: the task that hit it is cancelled‹).
+    pub fn exit_after_fault(&mut self) {
+        let reached = self.cx.open[0].ran;
+        let _ = self.exit_from(reached);
+    }
+
+    fn exit_from(&mut self, reached: usize) -> Result<(), ParseError> {
+        let top = self.hand_exit();
         // SAFETY: `top` is the top scope, its places in the program frame `self.rt` runs.
         unsafe { crate::identities::scope::run_exit(&mut self.rt, top, reached) }
             .map_err(ParseError::Run)

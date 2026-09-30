@@ -110,7 +110,8 @@ pub(crate) unsafe fn set_arm_ends(
 }
 
 /// An else-less `if` yields unit either way, matching the compiled merge. The arm that ran
-/// frees, at its end or on a `return` through it, what the other arm moved or freed.
+/// frees, at its end or on a `return` or fault through it, what the other arm moved or freed;
+/// a fault in the arm is the error shown, whatever that cleanup meets.
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an `if` node [`build`] made; its ends are held places.
     unsafe {
@@ -118,13 +119,15 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let (then_ends, else_ends) = arm_ends(node);
         let (arm, ends) = if rt.run(cond)? != 0 { (then, then_ends) } else { (els, else_ends) };
         let value = if arm.is_null() { Ok(0) } else { rt.run(arm) };
-        if matches!(value, Ok(_) | Err(RunError::Return(_))) {
-            for &place in ends.iter().rev() {
-                super::drop_model::end_held(rt, place)?;
+        let ended = ends.iter().rev().try_for_each(|&place| super::drop_model::end_held(rt, place));
+        match (value, ended) {
+            (Err(fault), _) if !matches!(fault, RunError::Return(_)) => Err(fault),
+            (_, Err(e)) => Err(e),
+            (value, Ok(())) => {
+                let value = value?;
+                Ok(if els.is_null() { 0 } else { value })
             }
         }
-        let value = value?;
-        Ok(if els.is_null() { 0 } else { value })
     }
 }
 

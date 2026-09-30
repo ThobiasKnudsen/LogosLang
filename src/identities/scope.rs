@@ -229,8 +229,13 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
                     run_exit(rt, node, i)?;
                     return Err(RunError::Return(v));
                 }
-                // A body error skips the held teardowns.
-                Err(e) => return Err(e),
+                // A fault ends the scope as its end would, from line `i`; the fault is the error
+                // shown, whatever its cleanup meets (DESIGN ›A checked error is a fault: the
+                // task that hit it is cancelled‹).
+                Err(fault) => {
+                    let _ = run_exit(rt, node, i);
+                    return Err(fault);
+                }
             }
         }
         run_exit(rt, node, exprs.len())?;

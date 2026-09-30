@@ -384,11 +384,15 @@ impl<'a> Parser<'a> {
         let inner = g.0.run_imported();
         let inner_pos = g.0.cx.pos;
         let file = g.0.cx.open.pop().expect("pushed above");
-        let program = g.0.cx.open.first_mut().expect("the program's scope is open");
-        let from = program.lines + 1;
-        program.exit.extend(
-            file.exit.into_iter().filter(|h| h.end.is_none()).map(|h| ExitItem { from, ..h }),
-        );
+        if inner.is_err() {
+            g.0.end_after_fault(&file);
+        } else {
+            let program = g.0.cx.open.first_mut().expect("the program's scope is open");
+            let from = program.lines + 1;
+            program.exit.extend(
+                file.exit.into_iter().filter(|h| h.end.is_none()).map(|h| ExitItem { from, ..h }),
+            );
+        }
         g.0.outer.last_mut().expect("pushed by enter").open = std::mem::take(&mut g.0.cx.open);
         drop(g);
 

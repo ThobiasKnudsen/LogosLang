@@ -3013,6 +3013,54 @@ fn the_program_s_end_runs_its_defers_and_what_it_holds_last_first() {
 }
 
 #[test]
+fn a_fault_ends_every_live_scope_as_its_end_would() {
+    let array = "import ./identities/array.logos";
+    for (tail, printed, error) in [
+        (
+            "f := fn () -> i32 ( a := box (1, 2), defer print «bye», error «stop» ), f()",
+            "bye\nfree\n",
+            "stop",
+        ),
+        ("a := box (1, 2), defer print «bye», error «stop»", "bye\nfree\n", "stop"),
+        // Only what was declared before the fault ends.
+        ("a := box (1, 2), error «stop», b := box (3, 4), print «never»", "free\n", "stop"),
+        // The arm that did not move the name frees it on the fault's way out.
+        (
+            "c := i32 0, a := box (1, 2), if (c == 1) ( b := move a ) else ( error «stop» ), 1",
+            "free\n",
+            "stop",
+        ),
+        ("f := fn () -> i32 ( ( a := box (1, 2), error «in» ), 1 ), f()", "free\n", "in"),
+        // Lines the pass ran early, in a block the fault unwinds.
+        (
+            "g := fn () -> i32 ( error «stop» ), x := ( a := box (1, 2), n := immediate g(), 1 ), 1",
+            "free\n",
+            "stop",
+        ),
+        (
+            "g := fn () -> i32 ( error «stop» ), \
+             x := ( a := box (1, 2), free a, n := immediate g(), 1 ), 1",
+            "free\n",
+            "stop",
+        ),
+        (
+            "f := fn (n := i32 ?) -> i32 ( a := box (1, 2), b := array i32 [1, 2], b[n] ), \
+             f.compile(), f(5)",
+            "free\n",
+            "index out of range",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{array}, {BOX}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(1), printed), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains(error), "{tail}: stderr: {stderr}");
+    }
+    // An imported file that faults ends its own scope before the import fails.
+    let (code, stdout, stderr) = run_line("import ./tests/fixtures/faulting.logos, 1");
+    assert_eq!((code, stdout.as_str()), (Some(1), "file cleanup\nfreed\n"), "stderr: {stderr}");
+    assert!(stderr.contains("file stops"), "stderr: {stderr}");
+}
+
+#[test]
 fn assignment_frees_the_value_it_displaces() {
     for (tail, printed) in [
         ("mut x := box (1, 2), x = box (3, 4), print «after»", "free\nafter\nfree\n"),

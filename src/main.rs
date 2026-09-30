@@ -154,15 +154,16 @@ fn run_line(source: &str) -> ExitCode {
                 unsafe { p.close_item(node) };
                 node
             }
+            // What the lines that ran hold and defer ends before the error shows.
             Err(ParseError::Run(e)) => {
+                p.exit_after_fault();
                 eprintln!("{path}: run error: {}", report::run_message(&e));
                 return ExitCode::FAILURE;
             }
             Err(e) => {
-                eprintln!(
-                    "{}",
-                    report::render(path, source, p.offset(), &report::parse_message(&e))
-                );
+                let shown = report::render(path, source, p.offset(), &report::parse_message(&e));
+                p.exit_after_fault();
+                eprintln!("{shown}");
                 return ExitCode::FAILURE;
             }
         };
@@ -176,6 +177,7 @@ fn run_line(source: &str) -> ExitCode {
     // A stray `)` ends the item loop without being consumed.
     let end = p.offset();
     if !source[end..].trim_start().is_empty() {
+        p.exit_after_fault();
         eprintln!(
             "{}",
             report::render(path, source, end, "unexpected `)` — no scope is open here")
@@ -188,6 +190,7 @@ fn run_line(source: &str) -> ExitCode {
     let ran = match p.finish() {
         Ok(ran) => ran,
         Err(e) => {
+            p.exit_after_fault();
             eprintln!("{path}: {}", report::parse_message(&e));
             return ExitCode::FAILURE;
         }
@@ -206,6 +209,7 @@ fn run_line(source: &str) -> ExitCode {
                 // SAFETY: `node` is the parsed dyad whose value `bits` is.
                 Ok(bits) => Some(unsafe { seed::identities::display_value(types, node, bits) }),
                 Err(e) => {
+                    p.exit_after_fault();
                     eprintln!("{path}: {}", report::parse_message(&e));
                     return ExitCode::FAILURE;
                 }
@@ -214,7 +218,7 @@ fn run_line(source: &str) -> ExitCode {
         None => None,
     };
 
-    // The top level's scope exit: its owning bindings' teardowns run LIFO here.
+    // The program's end: what the top level holds and defers ends here, last first.
     if let Err(e) = p.exit() {
         eprintln!("{path}: {}", report::parse_message(&e));
         return ExitCode::FAILURE;

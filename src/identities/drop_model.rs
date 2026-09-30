@@ -1207,6 +1207,37 @@ mod tests {
         FREE_LOG.with(|l| l.borrow().clone())
     }
 
+    /// Parse and run `src`, which must fault; returns the fault and the still-live blocks.
+    fn fault(src: &str) -> (RunError, usize) {
+        FREE_LOG.with(|l| l.borrow_mut().clear());
+        let mut store = Store::new();
+        let mut trie = RegexTrie::new();
+        let core = Core::build(&mut store, &mut trie);
+        let mut scopes = ScopeStack::new();
+        scopes.push(core.root_scope);
+        let types = &core;
+        let mut p = Parser::new(src, &mut store, &mut trie, types, scopes).with_lower(&core.lower);
+        let root = p.parse_sequence().expect("parse");
+        let mut rt = p.into_runtime();
+        // SAFETY: `root` is the scope just parsed into `store`, which outlives `rt`.
+        let fault = unsafe { rt.run(root) }.expect_err("expected a fault");
+        (fault, rt.live_allocs())
+    }
+
+    #[test]
+    fn a_fault_ends_what_every_scope_it_leaves_holds() {
+        let f = "f := fn () -> i32 ( p := alloc 1 of i32 7, \
+                 ( q := alloc 1 of i32 8, error «stop» ), 0 ),\n";
+        let (e, live) = fault(&format!("{f}f()"));
+        assert!(matches!(e, RunError::Raised(_)), "{e:?}");
+        assert_eq!(live, 0);
+        assert_eq!(free_log(), vec![8, 7], "the inner scope's first");
+        // Only what was declared before the fault ends.
+        let (_, live) = fault("p := alloc 1 of i32 7,\nerror «stop»,\nq := alloc 1 of i32 8,\n1");
+        assert_eq!(live, 0);
+        assert_eq!(free_log(), vec![7]);
+    }
+
     /// The parse error `src` raises; for the fail-closed paths.
     fn parse_err(src: &str) -> ParseError {
         let mut store = Store::new();
