@@ -475,8 +475,8 @@ impl<'a> Parser<'a> {
     }
 
     /// The bracket `opener` opened just behind the cursor, read past its closer and built
-    /// by nothing: token by token through the one door, so a bracket inside a quote or a
-    /// `#` comment is text, an inner bracket read the same way. Gives where the closer stood.
+    /// by nothing: token by token through the one door, a quote or a `#` comment being one
+    /// token and an inner bracket read the same way. Gives where the closer stood.
     /// `depth` skipped brackets are open around this one.
     pub(super) fn skip_bracket(
         &mut self,
