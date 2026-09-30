@@ -3404,6 +3404,17 @@ fn a_fault_ends_every_live_scope_as_its_end_would() {
     let (code, stdout, stderr) = run_line("import ./tests/fixtures/faulting.logos, 1");
     assert_eq!((code, stdout.as_str()), (Some(1), "file cleanup\nfreed\n"), "stderr: {stderr}");
     assert!(stderr.contains("file stops"), "stderr: {stderr}");
+    // The stopped function's `defer` runs, the line after the fault does not.
+    let (echoes, stderr) = repl(
+        "p := alloc 1 of i32 5\n\
+         g := fn () -> i32 ( error «stop» )\n\
+         f := fn () -> i32 ( defer (p@ = p@ + 100), g(), p@ = 9, 1 )\n\
+         f()\n\
+         p@\n"
+            .as_bytes(),
+    );
+    assert_eq!(echoes.last().map(String::as_str), Some("105"), "{echoes:?} {stderr}");
+    assert!(stderr.contains("stop"), "stderr: {stderr}");
 }
 
 #[test]
