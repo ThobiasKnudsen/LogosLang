@@ -404,33 +404,12 @@ impl<'a> Parser<'a> {
 
     /// `(start, len)` of the text inside the `( … )` at the cursor, consumed
     /// with its brackets and constructed by nothing: an untaken branch dropped unlexed, a
-    /// body held to be lexed later. The closer is found token by token, so a bracket
-    /// inside a quote or a `#` comment is text.
+    /// body held to be lexed later.
     pub(super) fn body_text_extent(&mut self) -> Result<(usize, usize), ParseError> {
         self.expect_open()?;
-        let source = self.cx.source;
         let start = self.cx.pos;
-        let mut depth = 0usize;
-        loop {
-            self.skip_whitespace();
-            let at = self.cx.pos;
-            if at >= source.len() {
-                return Err(ParseError::UnclosedBracket);
-            }
-            let r = self.token_at(at, true)?;
-            let id = if r.fresh { std::ptr::null_mut() } else { r.identity };
-            if id == self.types.open_ || id == self.types.open_sq_ {
-                depth += 1;
-            } else if id == self.types.close_ || id == self.types.close_sq_ {
-                if depth == 0 {
-                    let len = self.cx.pos - start;
-                    self.cx.pos += r.matched;
-                    return Ok((start, len));
-                }
-                depth -= 1;
-            }
-            self.cx.pos += r.matched;
-        }
+        let close = self.skip_bracket(self.types.open_, 0)?;
+        Ok((start, close - start))
     }
 
     /// `fn ( params ) -> ret ( body )` (DESIGN ›A function's surface‹): the
@@ -1077,14 +1056,20 @@ impl<'a> Parser<'a> {
         self.parse_block(false).map(|(_, value)| value)
     }
 
+    /// `open` has one entry per open scope, and `unopened` counts the skipped brackets it
+    /// does not hold, so together they are the nesting depth; past the limit the parse is
+    /// the checked error, not a Rust stack overflow.
+    pub(super) fn check_depth(&self, unopened: usize) -> Result<(), ParseError> {
+        if self.cx.open.len() + unopened >= MAX_BRACKET_DEPTH {
+            return Err(ParseError::TooDeep);
+        }
+        Ok(())
+    }
+
     /// [`Parser::parse_sequence`], with the scope the block opened, whose `dyads` hold
     /// every line whatever the value collapsed to.
     pub(super) fn parse_block(&mut self, list: bool) -> Result<(DyadPtr, Cell), ParseError> {
-        // `open` has one entry per open scope, so its length is the nesting
-        // depth; past the limit the parse is the checked error, not a Rust stack overflow.
-        if self.cx.open.len() >= MAX_BRACKET_DEPTH {
-            return Err(ParseError::TooDeep);
-        }
+        self.check_depth(0)?;
         let scope = self.open_scope();
         let narrowed = self.cx.narrow_next.take().into_iter().collect();
         self.cx.open.push(OpenScope { narrowed, scope: Some(scope), list, ..OpenScope::default() });
