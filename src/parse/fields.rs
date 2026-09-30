@@ -802,7 +802,7 @@ impl<'a> Parser<'a> {
     ) -> Result<Constructed, ParseError> {
         let (scope, key) = self.parse_block(true)?;
         let key = key.dyad;
-        self.expect_close_sq()?;
+        self.take_closer(self.types.open_sq_)?;
         // An index right after a tape value is the element read, a slot node
         // the identity to its left owns; after a `.` it stays a passive cell.
         if let Some(left) = tape.at(-1).copied() {
