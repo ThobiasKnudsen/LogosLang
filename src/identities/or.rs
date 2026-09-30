@@ -3,7 +3,8 @@
 
 //! `or`: disjunction over two `bool`s, both sides run, or, over two
 //! non-booleans, a group the consuming operator distributes over, as `and`.
-//! DESIGN ›No implicit coercion; a numeric type applied to a value is the conversion‹
+//! DESIGN ›`and` and `or` run both sides; `if` is the one identity that skips‹,
+//! ›`and`/`or` on non-booleans build a group; every operator on a group applies to each member‹
 
 use crate::Core;
 use cranelift_codegen::ir::Value;

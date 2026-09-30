@@ -355,8 +355,11 @@ Nothing moved from this section.
 - **History:** until 28 September 2026 the seed carried a run-time rational as the address of a literal node made per operation, a `dyad` view boxing a literal; the sixteen-byte value in its place superseded that (#165).
 
 ### No implicit coercion; a numeric type applied to a value is the conversion
-- **History:** until 1 October 2026 the rule read "Logical operators short-circuit", with no reason recorded. A skipped right side left what it would have ended alive, and nothing freed it: `x := (c == 1) and ( free a, c == 0 )` never freed `a`. Thobias ruled that both sides run, `if` being the one identity that skips (Q-0043: "why would "and" skips its right side? it shouldnt", then "a").
+- **History:** until 1 October 2026 the rule also read "Logical operators short-circuit"; that sentence went to its own rule, ›`and` and `or` run both sides; `if` is the one identity that skips‹, reversed.
 - **Seed detail (27 September 2026):** `not` takes a bracketed operand, a parsing shortcut, not a keep.
+
+### `and` and `or` run both sides; `if` is the one identity that skips
+- **History:** until 1 October 2026 ›No implicit coercion; a numeric type applied to a value is the conversion‹ read "Logical operators short-circuit", with no reason recorded. A skipped right side left what it would have ended alive, and nothing freed it: `x := (c == 1) and ( free a, c == 0 )` never freed `a`. Thobias ruled that both sides run, `if` being the one identity that skips (Q-0043: "why would "and" skips its right side? it shouldnt", then "a").
 
 ### `-` before an operand is negation: one identity that reads its left side
 - **History:** first worded "binds tighter than the binary arithmetic operators"; corrected 5 Sept, since one rank cannot do that.
