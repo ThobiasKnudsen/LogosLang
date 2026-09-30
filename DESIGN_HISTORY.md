@@ -197,6 +197,7 @@ Nothing moved from this section.
 
 ### Reflection (`:type`) is fail-closed and gated twice
 - **History:** `:dyad`, retired for `:type` 23 September 2026.
+- **History:** an Open line of 29 September 2026 (#199) asked where both gates stand now that a value's type is read with `.type`. Answered that night (Q-0022): `.type` is gated as any `.` field is, and no gate stands at it today. Which read the fine gate stands at is the rule's Open line since.
 - **Seed detail (27 September 2026):** (August 2026) the view registers ambient like every identity; the fail-closed target waits for the grant path (a capability passed by argument, needing `type`-typed parameters).
 
 ### A language is a section with a written start of five names
@@ -227,6 +228,7 @@ Nothing moved from this section.
 - **History:** before 23 September, `?` was a constructor building a fresh dyad with both slots `undefined` at every appearance, a literal, so `x := ?` bound x "to its own hole rather than aliasing one global unknown". Replaced because freshness belongs to the place.
 - **Seed detail (27 September 2026):** a bare `?` stands as the one identity. `?` reads a type to its left only when that type applies to it, not when an operator waits there (`x != ?`). `T ?` still allocates zeroed bytes, which no read reaches.
 - **History (28 September 2026):** `key := ?` questioned by Thobias ("i dont think x := ? should be possible to write though i dont see any reason why you wouldnt give it the type when its declared") and kept; the reason is at the rule. Seed detail the same day: the seed still makes the null-typed placeholder node at the lex and retypes it in place at the fill, the shape #166 would remove.
+- **History:** until 29 September 2026 the 28 September ruling's reason went on: "`lhs := dyad ?` would hand the run body an unrun node, so `r * a` could not settle its operation once per node and the operand would run again inside the loop; the seed refuses `a * 2` on a `dyad ?` field." Superseded by ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹ and its rulings of the same day (Thobias, #199, "i want it to actually work"): a `dyad ?` is read through, so `a * 2` on one reads the node it holds and the seed's refusal is a lag, and a function over one is built per set of argument types where the call is parsed. An argument that must run leaves its value there, run once when the call runs (›Positional arguments fill the holes in order; an expression line among them is a precondition‹). The ruling, `key := ?` stays, is not reopened.
 
 ### Reading a place before its first write is refused at parse
 - **Seed detail (27 September 2026):** the entry refuses at parse every use of the name except the target of `x = …` and the binding read `x:…`, until the sibling write.
@@ -345,7 +347,8 @@ Nothing moved from this section.
 
 ## Representation, elaboration, and lifetimes
 
-### Numeric literals are uncommitted until context classifies them
+### A plain number is a `rational_number`, and a number type's definition converts it (headed "Numeric literals are uncommitted until context classifies them" until 29 September 2026)
+- **History:** until 29 September 2026 the rule was headed "Numeric literals are uncommitted until context classifies them" and read "It can become any `int`, `uint` or `float`. Beside a typed value it takes that type … the result stays `rational_number` until it lands in a typed slot." Reworded by Thobias's ruling (#199): "the working of "stays rational_number until lands in a typed slot" is wrong wording because rational_number is already a type. its just that i64 converts rational_number to i64, which should be part of the definition of i64." A number is not uncommitted; it is a `rational_number`, and the conversion belongs to the type it lands in.
 - **Seed detail (27 September 2026):** folds all-literal arithmetic exactly over `i64` fractions; out of range is a clean error, not a wrap. Arbitrary precision deferred, not blocked.
 - **History:** until 28 September 2026 the seed carried a run-time rational as the address of a literal node made per operation, a `dyad` view boxing a literal; the sixteen-byte value in its place superseded that (#165).
 
@@ -378,6 +381,9 @@ Nothing moved from this section.
 - **History:** 2 Sept 2026 declined bare `if c body`. 5 Sept: any constructed cell may be a condition (`if` reads its own right side). 25 Sept: bodies decline reversed.
 - **Quotes:** Ruled: "brackets should not be needed".
 
+### `,` outranks a type's optional operand: `f(i32 3)` is one argument, `f(i32, 3)` two
+- **History:** "`3` stays an uncommitted literal" until 29 September 2026, when a plain number became a `rational_number` from the start (›A plain number is a `rational_number`, and a number type's definition converts it‹, #199).
+
 ### `compile` never fails on an uncompiled Logos callee
 - **Seed detail (27 September 2026):** since 10 Sept 2026 emits the jump into the interpreter, and a second compile (`f.compile()` in the seed's spelling today) lifts a boundary. Before, it failed fast and left the caller interpreted.
 
@@ -406,6 +412,8 @@ Nothing moved from this section.
 
 ### A field is filled at run, per evaluation; its type decides how the operand is used
 - **History:** an Open line from 16 to 28 September 2026: "the two moments of a field (operand slot written at parse, frame place evaluated at run) are implied but not yet said in one sentence." Closed by the two-moments sentence at the rule.
+- **History:** until 29 September 2026 the two-moments sentence ended "for `dyad ?`, the node itself, unrun." Superseded by ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹ (Thobias, #199, "i want it to actually work"): a `dyad ?` place became a transparent placeholder, so what it holds is said at that rule: the operand's value, its graph staying in the node's slot.
+- **History:** an Open line of 29 September 2026 (#199) asked which declared type keeps an operand as graph now that `dyad ?` holds the value. Closed that night by Thobias's choice of `@dyad ?` (Q-0022).
 
 ### A node's output type is per node, and its parse writes it
 - **History:** 16 Sept: `output := type ?`, `tape[0]:dyad.value.output = tape[-1]:dyad.type`.
@@ -426,6 +434,10 @@ Nothing moved from this section.
 
 ### A function's surface is `fn (params) -> T (body)`, and its parameter list is a record type
 - **History:** a colon field form replaced 2 September 2026.
+- **History:** an Open line of the morning of 29 September 2026 (#199): whether `fn (a) -> i64 ( a )` is refused where it is defined, a `dyad ?` holding "the node itself, unrun", or runs with `a` holding a value whose type is checked when the body runs. Closed the same day: it works ("i want it to actually work"), through ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹.
+
+### Positional arguments fill the holes in order; an expression line among them is a precondition
+- **History:** for some hours on 29 September 2026 the #199 Ruled line said "`a:start` reaches the graph where `a` is declared and defined, the nodes `a`, `:=`, `x`, `+`, `1`", from Thobias's "if you do a:start you get to the actuall LG where a is declared and defined". Narrowed for a parameter the same night by his choice of option (a) (Q-0024): a body is built once per set of argument types and `a:start` is fixed at the build (›A binding's fields are read at elaboration, at the line of the read; running code never reads a binding‹), so one `a:start` cannot show each call's argument. A parameter's `a:start` is where `a` is written in `fn (a)`, and the argument's graph is reached from the call.
 
 ### Mandatory named arguments are rejected
 - **History:** a third reason (the callee is asleep while `(` builds, so `x = X` hits an undeclared name) was superseded 3 Sept 2026: a callable reads its own bracket (›The scope's constructor is the driver‹).
@@ -507,6 +519,7 @@ Nothing moved from this section.
 
 ### Plain substrate words: dyad, `.type`, `.value`
 - **History:** the view read was first written `(dyad a).type`, superseded 8 September 2026 by `a:dyad.type`, which `a:type` replaced (l.213). `logos` first survived in three places (the ground identity's name, the definition keyword, the language's name); superseded 4 September 2026: the first two are `type`'s (*Substrate vocabulary*).
+- **History:** "The view read is `a:type`" until 29 September 2026, when a value's type became `a.type` (#199).
 
 ### Text is the quote: `lex «…»` hands back the tape, unconstructed
 - **History:** the founding example was respelled 2 September 2026, `:` having left the declaration surface. l.209 writes the field read `if.constructor`; the slot is `parse` since 17 September 2026.
@@ -534,6 +547,7 @@ Nothing moved from this section.
 - **History:** 9 September 2026 (superseded 10 September): a fresh spelling reached from where the trie stops matching to the next whitespace, bracket, `,`, or start of a known spelling. So `^ := …` declared `^`, `a:=1` lexed `a` then `:=`, `x^2` with `x` declared lexed `x`, fresh `^`, `2`; a first appearance wanted spaces. Reason then: the lexer must bound an unknown spelling before it sees the `:=`; whitespace, brackets and `,` are the only structure; stopping at a known spelling keeps `a:=1` and `f(x)` readable.
 - **Seed detail (27 September 2026):** the letters-and-digits identifier scanner and the word-boundary check are divergences (#110).
 - **History:** until 29 September 2026: "Each builds the fresh null-slotted dyad." The fresh dyad went with the one-word node (#166, ›An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value‹); the sentence followed on 29 September 2026 (review round 2 of #166).
+- **History:** until 30 September 2026 the Seed line read "divergences (#110)". #110 closed on 10 September 2026 (4650307) with the fresh-spelling patterns, but `«…»` stayed the trie pattern `«[^»]*»`, ending at its first `»` with no escapes, and `#`'s text was read beside the tape by a test on its spelling in each lexer that did not build. #220 gave both their own extent through one door; the line now says so.
 
 ### Every spelling has a `lex_rank`; rank first, then length
 - **History:** first form, 10 September 2026, same day: only patterns ranked, and a literal met a pattern by length. First wording also claimed the boundary rule fell out of longest match; corrected the same day (under rank-before-length it does not).
@@ -545,6 +559,7 @@ Nothing moved from this section.
 
 ### `a[k]` is an application, exactly as `a(k)`
 - **History:** the first array.logos read the parse's own locals after the parse had returned, `tape[0] = scope ( … index … this … )`; superseded by this ruling. The 25 September spelling was `tape[0] = this.at(tape[1].dyads[0])` with `shared at := fn (index := u64 ?) -> element_type ( if index >= this.size error «…», (this.ptr + index)@ )`; since 26 September 2026 there is no `this` and the mark is `share` (a value in the cell is `tape[0]`, `tape[0].at(k)`; fields named bare in the function body, see l.207).
+- **History:** until 29 September 2026 the rule read "A node's operands are the collection its type defines, `(x + x).operands[0]`". Superseded by Thobias (#199): "(x+x).operands should not exist. it should be lhs and rhs for all the other operators as well."
 
 ### A placed call keeps its tape lines as operands
 - **History:** Claude's reading of the same day, "the placed call's arguments run as it is placed … so the node holds values", superseded.
@@ -630,6 +645,10 @@ Nothing moved from this section.
 ### A scope's lines are its one field, `dyads`
 - **History:** spelled `self` from the 2 September sketch until 24 September 2026, no reason recorded.
 
+### Reading a path runs nothing
+- **History:** until 29 September 2026 the rule's example ended "`(x + 2).lhs` reads `x`, as `.operands[0]` does". `.operands` went with Thobias's ruling (#199): "(x+x).operands should not exist. it should be lhs and rhs for all the other operators as well."
+- **History:** until 30 September 2026 the rule read "So `(2 ^ 3).lhs` is `2` and `(x + 2).lhs` reads `x`": a `.` written straight on an expression read its node. Superseded by Thobias (#199, Q-0026), who chose that such a `.` reads what the expression evaluates to, as `.type` does: "i dont see when (x + x).lhs is needed because where you write that you already know its x. but when you want to inspect LG from some other place which doesnt know its x you would probably start via somename:start or via the scope array of dyads." The examples are now paths, `b:start.rhs.lhs`. An Open line of 29 September asking this closed with it.
+
 ### `=` sits beside `:=`, and returns nothing
 - **History:** until 28 September 2026 the rule said nothing of a displaced value, and the seed leaks it (#170).
 - **Seed detail (27 September 2026):** 9 September 2026 (#60): `:`, `.`, `@` build at discovery with their right cell lexed on demand; a reader followed by a tight read is put to sleep before it drives; the seed's right-side drives lex onto a fresh tape; `=` drives at discovery. Application and juxtaposition also build at discovery, reading their bracket or literal lazily in source order (seed rank 91, above `(`'s 90), since a tight read above them would otherwise take the bracket first: `f(2).x` and `dyad (i32, 7):dyad` read the call.
@@ -651,9 +670,13 @@ Nothing moved from this section.
 - **History:** l.211 described a `type (…)` body with four slots filled by `=` and a `fields = (…)` block (spelled `instance` in the seed until #128) taking holes and bare names only, stored-once members there waiting. The fields block is gone since 25 September 2026 (l.203; seed #150).
 
 ### The dyad's read surface: two fields, and the type answers the rest
+- **History:** until 29 September 2026 the rule said "The fields exist only where `s` is a dyad", gave as its Why "A value's type is never one of its own fields, so a universal `.type` on every value would be `.` doing a second job", and listed as Rejected "The universal `.type` metaproperty on every value: retired." Superseded by Thobias (#199): `.type` is read on every value, as a field `type`'s own body declares, because "type lives in the same payload as the value now" (the one-block node, #166). `.value` still exists only on a dyad.
+- **History:** until 29 September 2026 the rule read "an operator node's slots are the fields its type defines, so `(x + x).operands[0]` reads the first operand just as `p.x` reads a record field", and gave "an operand index past the arity" as a checked error. Superseded by Thobias (#199, Q-0022): "(x+x).operands should not exist. it should be lhs and rhs for all the other operators as well." The example is now a node reached by path, `b:start.rhs.lhs`.
 - **Seed detail (27 September 2026):** since August 2026 (#52 in part): `.operands[i]` is ordinary field access on any operand-kinded value; the type members (`.arity`, `.roles[i]`, `.parse_rank`, `.associativity`, `.parse`, `.drop`, `.fields`, `.size_bytes`, `.scope`) read the shared record as fields of the type value; every read folds at parse (comptime reflection, the regime a Logos-written constructor runs in); a mismatched read is the checked error.
 
-### `a:type` reads the type of the value a name stands for
+### `a.type` reads the type of the value a name stands for (spelled `a:type` from 23 to 29 September 2026)
+- **History:** until 29 September 2026 the rule was headed "`a:type` reads the type of the value a name stands for" and read: "`x:type == i32`, `i32:type == type`, `a:type is number` in a premise, `tape[-1]:type` inside a constructor, `b:start.rhs:type` on a node reached by path. … `:type` is the one `:` read that reaches the dyad level. The binding gate stands at `:type` (see *Sections, the arche, and effect identities*). `a.type` is an ordinary field read on `a`'s value, present only if its type declares a `type` field." Its Why: "The type is the one fact about a value that `.` cannot give (it is never one of the value's own fields), so it takes the short spelling. The cell was only ever reached to get its two slots: one is now `:type`, the other is `.`." Superseded by Thobias's ruling of 29 September 2026 (#199): the type lives in the same payload as the value since the one-block node (#166), so "type should always be accessed by .type instead of :type". Where the reflection gate stood at `:type` is asked at ›Reflection (`:type`) is fail-closed and gated twice‹. An Open line of the same day asked what `:type` of an expression nobody named gives: what it yields, or the node's own type word. His answer ruled the spelling and chose neither, so the question stands at the rule's Open line as what `.type` of such an expression gives, beside the tape operand's case.
+- **History:** that Open line, on what `.type` of an expression nobody named gives in code or as a tape operand, was closed the same night by Thobias's leaning towards what it yields (Q-0022). How a node's own type word is read is the rule's Open line since.
 - **History:** August 2026: the dyad view was `(dyad a).type`, replacing the universal `.type` metaproperty. 7-8 September 2026: respelled `a:dyad.type` (`:dyad` = the view; `(dyad a)` as a second spelling dropped). In that period `a:type` was a checked error. 23 September 2026: `:dyad` and `:value` retired, `a:type` replaces `a:dyad.type`.
 - **Seed detail (27 September 2026):** since 24 September 2026 (#139): `:dyad` and `:value` are checked errors; the binding's pointer to its dyad stays a layout field that `:` does not spell.
 - **Quotes:** Amended: "its just a simplification in the definition of : where it emmits dyad when accessing type and value but you can still write a:dyad.type".
@@ -669,11 +692,15 @@ Nothing moved from this section.
 - **Seed detail (27 September 2026):** since 25 September 2026 (#137), for a record, a number type and a pointer type.
 
 ### `:` reads a name's binding, `.` reads a thing's own fields
+- **History:** until 29 September 2026 code walking the graph asked a named operand's binding "`:scope`, `:gate`, `:type` directly". `:type` left the binding's reads with #199: a value's type is read `.type`, from the payload.
 - **History:** 7 September 2026: the binding held `dyad`, `scope`, `start`, `end`, `gate`; `a:dyad` was its cell. 23 September 2026: `:dyad` retired (see `a:type` above). The `b:start.rhs.type` example corrected 8 September 2026.
 - **Seed detail (27 September 2026):** since 8 September 2026 (#70): every trie entry is a dyad of type `binding`, a use stores it, `:` reads its fields. A constructed node answers `:scope` with the scope open at the read and `:start`/`:end`/`:gate` null, the enclosing item being the segment still under construction.
 
 ### `x:name` is the name's spelling, held by the binding
 - **Seed detail (27 September 2026):** since 14 September 2026 (#120): the binding's sixth slot, a place of type `string` holding the name node. `x:name` reads it as the container it is; the display shows its text. A constructor reaches it for the binding a cell holds as `tape[k]:name` (always the identity's name, never the appearance's text, which is `tape.spelling[k]`).
+
+### A binding's fields are read at elaboration, at the line of the read; running code never reads a binding
+- **History:** until 29 September 2026 the list of binding reads began "`a:gate`, `a:scope`, `a:type`, …". `a:type` left it with Thobias's ruling that a value's type is read `a.type`, from the payload, not the binding (›`a.type` reads the type of the value a name stands for (spelled `a:type` from 23 to 29 September 2026)‹, #199).
 
 ### A `type ?` place is a box, written any number of times
 - **History:** before 12 September 2026 the first `a = i32` rebound the name to the type, making it define-once; a second assignment said a type is not an assignable place, because the name by then *was* the type.
@@ -689,7 +716,12 @@ Nothing moved from this section.
 
 ### `dyad ?` is the general box, `type ?` the narrow case
 - **History:** written `a:dyad.type == type` until the 23 September 2026 respelling.
+- **History:** written `a:type == type` from 23 to 29 September 2026, when a value's type became `a.type` (#199).
 - **History:** 12 to 28 September 2026: the box's mark sat on the value word (the seed's bits 63 frame, 62 global, 47 arena). Superseded 28 September 2026 by ›A scope lays out its declarations; a use reaches the offset through its binding‹, because the frame is per call, the offset per name, and a node's value word should be the value.
+
+### A `dyad ?` place is transparent: a placeholder for a new node of any type
+- **History:** the rule's first Open line (29 September 2026) held seven points. The same evening Thobias ruled five: `a:type` is the held node's type; `-> i64 ( a )` is checked where the call is parsed; a second write replaces the node; a literal keeps its own type; and the 28 September rejection at ›A `type ?` place is a box, written any number of times‹ holds for the name `id` only. Three were asked again, because his answers left them unclear or he lacked the context: what an argument that must run leaves in `a`, whether a held `rational_number` lands in `-> i64`, and when a build made after `compile f` is compiled.
+- **History:** the second round's Open line (29 September 2026) held those three points; they were ruled the same night, each recorded at the rule its reason belongs to. The rule's `a:type` examples were respelled `a.type` with the ruling of the same night.
 
 ### A scope lays out its declarations; a use reaches the offset through its binding
 - **History:** before 28 September 2026 the seed kept a name's storage as a place node the binding pointed at, its value word marked (bit 63 a frame offset with the lexical depth beside it for the capture guard, bit 62 an absolute address, bit 47 an arena offset); a nameless result (an instance, a call's record result, a rational step, the receiver of a `share` call) got a marked place of its own at parse; between #167 and #168 the program frame's cursors stood on the runtime. Superseded 28 September 2026 by the rule and its five points, because a frame is per call, an offset per name, a result nobody named is nobody's, and a node's value word is the value.
@@ -700,6 +732,7 @@ Nothing moved from this section.
 
 ### A tape read checked against a number type reads as that number
 - **History:** before 25 September array.logos wrote `if not tape[1].dyads[0]:type ⊆ this.size:type error «…»` and passed the index to `this.at` as a `u64`; changed by *An index may be of any integer type*.
+- **History:** until 29 September 2026: "A literal line has no committed type ("a concrete type beside a literal molds the literal to it"), so `⊆ T` answers for a literal by whether it molds into `T`". Reworded by Thobias's ruling that a plain number is a `rational_number` which the number type converts (#199: "rational_number is already a type"); what `⊆ T` answers for a literal is unchanged.
 
 ### A block settles its boxes as the top level does
 - **History:** 12 September 2026: the stores filling such a box were replayed at parse, in parse order (the right side a node address fixed at parse, so the run stored the same bits again). Replay superseded 13 September 2026 by *The pass runs only as far as it must*: nothing is replayed.
@@ -816,6 +849,7 @@ Nothing moved from this section.
 - **History:** until 28 September 2026 the seed gave an `import` line the imported file's tail value (the command line and the REPL echoed it, held in a `ran` node). Ruled valueless 28 September 2026: a file is its own graph, the importer gets its `pub` names, and no result is kept outside the stack.
 
 ### A dyad is a type and a value: one block, the type word first, and its identity is its address
+- **History:** "`x:type` reads the first word" until 29 September 2026, when a value's type became `x.type`, read from this block like any field (#199).
 - **History:** until 29 September 2026 the heading read "two pointers, and its identity is its address" and the rule opened "Sixteen bytes. Any allocator can hold it (no arena needed; the address is the id)": a node was a 16-byte cell of two pointers, type and value, the value's bytes behind the second. Superseded by the one-word node, Thobias, 29 September 2026 (#166): a node is one thing, and the seed loses the typeless node, the placeholder copy and the second space; the measured gain was only about 1.2×, so bytes were not the reason.
 
 ### Operands sit inline after the type word; a growing list stays behind a pointer
@@ -864,6 +898,7 @@ Nothing moved from this section.
 - **History:** until 28 September 2026 the seed read "the address is an index" as a raw `*mut Dyad`, the cell two raw pointers; the 32-bit index handle behind store accessors superseded that reading (#165).
 - **History:** 28 September 2026, later the same day: the 32-bit index handle (address = base + index × 16, cell head a 32-bit type index) was withdrawn as a misconception, Thobias had asked whether the agent proposed it, it had not, and he never wanted it; the handle is the 64-bit address, and the cell head's 32-bit type index went with it the same day, no reason for it being his either: the cell is two full pointers again. Seed: #165 slice B's flip was cancelled before it was built; its accessor pass stays, being layout-neutral.
 - **History:** until 29 September 2026: "Nodes are fixed two-pointer (16-byte) cells, so the address is an index: no key, no hash", and an Open line of 28 September holding the one-word node back "while a fresh cell is stamped (`tape[0]:type = T`) after it exists, since a block cannot be allocated before its type is known". The blocker was stale (›How a Logos constructor builds its node‹ replaces the cell with a fresh node of the assigned type, and the seed births it typed) and the layout was adopted the next day (#166). Superseded record: the seed's `Store::contains` grid check, five sites, guarded what the types refuse.
+- **History:** until 29 September 2026 the Why of the #166 ruling ended with the example "(`mut d := dyad ?, d = 5` is a parse error)". Superseded the same day by ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹ (Thobias, #199): a write into an empty `dyad ?` writes the written value's type, then the value, so the example no longer shows a refusal: `d = 5` writes a `rational_number` node (Thobias, #199: "a plain number is type rational_number").
 
 ### A uniform model is not uniform storage
 - **History:** "(16 bytes; handle = address)" until 29 September 2026 (the one-word node, #166).

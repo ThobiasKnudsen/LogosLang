@@ -1,12 +1,13 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! The raw-text words (`#`, `«…»` readers, `regex`, `lex`, `print`, `error`, `here`,
-//! `caller`) and `import`, which reads a file as text dropped in place.
+//! The words that read the `«…»` to their right (`regex`, `lex`, `print`, `error`), `here`,
+//! `caller`, and `import`, which reads a file as text dropped in place.
 
 use super::*;
 use crate::dyad;
 use crate::identities::drop_model::ExitItem;
+use crate::identities::string::Piece;
 
 /// The once-per-run import registry: a file loads once per run, every
 /// importer sharing the one loaded section, and a path met again while its
@@ -41,49 +42,6 @@ impl Imports {
 }
 
 impl<'a> Parser<'a> {
-    /// `#` followed by a `«…»` string or raw text to the end of the line
-    /// (DESIGN ›Text literals are plain values; `#` is the one comment constructor‹).
-    pub(crate) fn construct_comment(
-        &mut self,
-        tape: &mut ParsingTape,
-    ) -> Result<Constructed, ParseError> {
-        let node = self.comment_after_hash()?;
-        tape.place(node);
-        Ok(Constructed::Placed)
-    }
-
-    pub(super) fn comment_after_hash(&mut self) -> Result<DyadPtr, ParseError> {
-        let bytes = self.cx.source.as_bytes();
-        // Spaces (not the newline) may separate `#` from its text.
-        while self.cx.pos < bytes.len() && matches!(bytes[self.cx.pos], b' ' | b'\t') {
-            self.cx.pos += 1;
-        }
-        let source = self.cx.source;
-        let text_node = if source[self.cx.pos..].starts_with('«') {
-            // `# «…»`: the string form ends at the `»`, not the line.
-            let r = self
-                .cx
-                .scopes
-                .resolve(self.trie, &source[self.cx.pos..])
-                .map_err(ParseError::Resolve)?;
-            let start = self.cx.pos;
-            self.cx.pos += r.matched;
-            self.construct_leaf(r.identity, start, r.matched)?.ok_or(ParseError::BadLiteral)?
-        } else {
-            let start = self.cx.pos;
-            while self.cx.pos < bytes.len() && bytes[self.cx.pos] != b'\n' {
-                self.cx.pos += 1;
-            }
-            let text = source[start..self.cx.pos].trim_end();
-            crate::identities::string::build_text(
-                self.rt.store,
-                self.types.string_,
-                text.as_bytes(),
-            )
-        };
-        Ok(self.rt.store.alloc_head(self.types.comment_, text_node.cast()))
-    }
-
     /// Consume the path token (raw text up to whitespace or `,`, or a `«…»`
     /// string), load the file, and place `{type: import, value: [path, op]}`.
     /// The load happens here, once per run; the node's run does nothing.
@@ -100,11 +58,7 @@ impl<'a> Parser<'a> {
         let source = self.cx.source;
         let start = self.cx.pos;
         let path_text: String = if source[self.cx.pos..].starts_with('«') {
-            let r = self
-                .cx
-                .scopes
-                .resolve(self.trie, &source[self.cx.pos..])
-                .map_err(ParseError::Resolve)?;
+            let r = self.token_at(start, false)?;
             let s = self.cx.pos;
             self.cx.pos += r.matched;
             let node =
@@ -150,7 +104,7 @@ impl<'a> Parser<'a> {
         if !source[start..].starts_with('«') {
             return Err(ParseError::ExpectedPattern);
         }
-        let r = self.cx.scopes.resolve(self.trie, &source[start..]).map_err(ParseError::Resolve)?;
+        let r = self.token_at(start, false)?;
         self.cx.pos += r.matched;
         let quote = self
             .construct_leaf(r.identity, start, r.matched)?
@@ -216,73 +170,42 @@ impl<'a> Parser<'a> {
         Ok(Constructed::Placed)
     }
 
-    /// The `«…»` to the right of `print` or `error`, read into its parts.
+    /// The `«…»` to the right of `print` or `error`, read into its parts: text runs, and
+    /// each `{…}` expression parsed here, in the scope the word appears in.
     fn interpolated_quote(&mut self, word: &'static str) -> Result<Vec<DyadPtr>, ParseError> {
-        let quote = self.quote_after(word)?;
-        let end = self.cx.pos;
-        // SAFETY: `quote` is the string node the `«…»` constructor just built.
-        let len = unsafe { crate::identities::string::text(quote) }.len();
-        // The literal has no escapes, so its text is the source between the guillemets.
-        let inner = end - 2 - len;
-        let parts = self.quote_parts(inner, inner + len)?;
-        self.cx.pos = end;
-        Ok(parts)
-    }
-
-    /// A `print` or `error` quote's text runs and `{…}` expressions, each
-    /// expression parsed here, in the scope the word appears in; `\{` and `\}`
-    /// are the braces as text.
-    fn quote_parts(&mut self, from: usize, to: usize) -> Result<Vec<DyadPtr>, ParseError> {
-        let source = self.cx.source;
-        let bytes = source.as_bytes();
+        let (start, len) = self.quote_span_after(word)?;
+        let quote = crate::identities::string::read(self.cx.source, start)
+            .map_err(|e| self.lex_error(0, e))?;
         let mut parts = Vec::new();
-        let mut text = Vec::new();
-        let mut i = from;
-        while i < to {
-            match bytes[i] {
-                b'\\' if i + 1 < to && matches!(bytes[i + 1], b'{' | b'}') => {
-                    text.push(bytes[i + 1]);
-                    i += 2;
-                }
-                b'}' => {
-                    self.cx.pos = i;
+        for piece in quote.pieces {
+            match piece {
+                Piece::Text(text) => parts.push(crate::identities::string::build_text(
+                    self.rt.store,
+                    self.types.string_,
+                    &text,
+                )),
+                Piece::Scope(inner) => parts.push(self.parse_within(inner.start, inner.end)?),
+                Piece::StrayClose(at) => {
+                    self.cx.pos = at;
                     return Err(ParseError::StrayInterpolationClose);
-                }
-                b'{' => {
-                    let Some(close) = source[i + 1..to].find('}').map(|k| i + 1 + k) else {
-                        self.cx.pos = i;
-                        return Err(ParseError::UnclosedInterpolation);
-                    };
-                    if !text.is_empty() {
-                        let t = crate::identities::string::build_text(
-                            self.rt.store,
-                            self.types.string_,
-                            &text,
-                        );
-                        parts.push(t);
-                        text.clear();
-                    }
-                    parts.push(self.parse_within(i + 1, close)?);
-                    i = close + 1;
-                }
-                b => {
-                    text.push(b);
-                    i += 1;
                 }
             }
         }
-        if !text.is_empty() || parts.is_empty() {
+        if parts.is_empty() {
             parts.push(crate::identities::string::build_text(
                 self.rt.store,
                 self.types.string_,
-                &text,
+                b"",
             ));
         }
+        self.cx.pos = start + len;
         Ok(parts)
     }
 
-    /// One expression over `source[from..to]` alone: the source is cut at `to`
-    /// so the segment ends there, and offsets stay those of the whole line.
+    /// A quote's `{…}` scope, one expression over its interior `from..to`: in a body lexed
+    /// once its cells are the ones lexed with the quote; where the quote is read from the
+    /// source they are lexed now. The source is cut at `to` so the segment ends there, and
+    /// offsets stay those of the whole line.
     fn parse_within(&mut self, from: usize, to: usize) -> Result<DyadPtr, ParseError> {
         let whole = self.cx.source;
         self.cx.source = &whole[..to];
@@ -301,15 +224,21 @@ impl<'a> Parser<'a> {
 
     /// The `«…»` string node to the right of a raw-text word, consumed at discovery.
     fn quote_after(&mut self, word: &'static str) -> Result<DyadPtr, ParseError> {
+        let (start, len) = self.quote_span_after(word)?;
+        self.construct_leaf(self.types.string_, start, len)?.ok_or(ParseError::ExpectedQuote(word))
+    }
+
+    /// Where the `«…»` to the right of a raw-text word stands, consumed at discovery.
+    fn quote_span_after(&mut self, word: &'static str) -> Result<(usize, usize), ParseError> {
         self.skip_whitespace();
         let source = self.cx.source;
         let start = self.cx.pos;
         if !source[start..].starts_with('«') {
             return Err(ParseError::ExpectedQuote(word));
         }
-        let r = self.cx.scopes.resolve(self.trie, &source[start..]).map_err(ParseError::Resolve)?;
+        let r = self.token_at(start, false)?;
         self.cx.pos += r.matched;
-        self.construct_leaf(r.identity, start, r.matched)?.ok_or(ParseError::ExpectedQuote(word))
+        Ok((start, r.matched))
     }
 
     /// The node placed at discovery carries the scope open at its appearance

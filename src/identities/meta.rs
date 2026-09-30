@@ -15,7 +15,9 @@
 //! [18..26]   u64  destructor: the owning pointer's teardown, else 0
 //! [26..34]   u64  run body: the lexed body a `run = (…)` line held, or 0
 //! [34..42]   u64  pointer type: the interned `@T` of this type, or 0
-//! [42..]     payload, per kind:
+//! [42..50]   u64  extent: a `seed-extent` callable leaf for a token that reads its own
+//!                 extent, or 0
+//! [50..]     payload, per kind:
 //!              ADDR              pointee type node (`dyad@`)
 //!              TUPLE/LIST         u8 arity, then arity × `dyad@` role-name strings
 //! ```
@@ -24,7 +26,7 @@
 //! `STRING_TAG` 11, `COMMENT_TAG` 12, `ADDR_TAG` 13).
 
 use crate::dyad::DyadPtr;
-use crate::parse::Assoc;
+use crate::parse::{Assoc, ExtentFn};
 use crate::store::Store;
 
 use super::numtype::ADDR_TAG;
@@ -64,7 +66,8 @@ const DTOR_OFF: usize = 18;
 const RUN_BODY_OFF: usize = 26;
 /// The interned `@T` of this type, so two spellings of `@i32` are one node.
 const POINTER_TYPE_OFF: usize = 34;
-pub(crate) const PAYLOAD_OFF: usize = 42;
+const EXTENT_OFF: usize = 42;
+pub(crate) const PAYLOAD_OFF: usize = 50;
 
 /// The one parse_rank axis. Higher binds tighter. A constructor at or above `OPEN`
 /// runs at discovery, one below at the segment boundary, highest first, associativity
@@ -303,6 +306,37 @@ pub(crate) unsafe fn pointer_type_of(id: DyadPtr) -> DyadPtr {
 /// `id` must carry a record and `p` must be the plain pointer type node over `id`.
 pub(crate) unsafe fn install_pointer_type(id: DyadPtr, p: DyadPtr) {
     std::ptr::write_unaligned(dyad::head(id).add(POINTER_TYPE_OFF) as *mut DyadPtr, p);
+}
+
+/// Null on every identity whose extent is its spelling.
+///
+/// # Safety
+/// As `parse_rank_of`.
+pub(crate) unsafe fn extent_of(id: DyadPtr) -> DyadPtr {
+    std::ptr::read_unaligned(dyad::head(id).add(EXTENT_OFF) as *const DyadPtr)
+}
+
+/// # Safety
+/// `id` must carry a record and `leaf` must be a callable leaf whose entry is an `ExtentFn`.
+pub(crate) unsafe fn install_extent(id: DyadPtr, leaf: DyadPtr) {
+    std::ptr::write_unaligned(dyad::head(id).add(EXTENT_OFF) as *mut DyadPtr, leaf);
+}
+
+/// The reader of a token that reads its own extent (DESIGN ›Unknown spellings are two
+/// pattern identities‹), or `None`. Safe on any node, as `kind_of` is.
+///
+/// # Safety
+/// `id` must be null or a valid dyad from the store.
+pub(crate) unsafe fn extent_reader(id: DyadPtr) -> Option<ExtentFn> {
+    if id.is_null() || kind_of(id).is_none() {
+        return None;
+    }
+    let leaf = extent_of(id);
+    if leaf.is_null() {
+        return None;
+    }
+    // SAFETY: `install_extent` is the one writer, and takes only a leaf minted from an `ExtentFn`.
+    Some(std::mem::transmute::<usize, ExtentFn>(super::callable::entry_of(leaf)))
 }
 
 /// `None` where there is no record to read: no head yet (a type still being defined) or a

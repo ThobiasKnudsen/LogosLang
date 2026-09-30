@@ -139,8 +139,6 @@ pub enum ParseError {
     ExpectedPattern,
     /// A `lex`, `print` or `error` was not followed by a `«…»` quote; carries the word.
     ExpectedQuote(&'static str),
-    /// A `{` in a `print` quote with no `}` after it.
-    UnclosedInterpolation,
     /// A `}` in a `print` quote with no `{` before it.
     StrayInterpolationClose,
     /// `tape.insert(k, …)` was handed something that is not a tape: `insert`

@@ -184,6 +184,9 @@ pub struct ParsingTape {
     /// (DESIGN ›The scope's constructor is the driver‹), so a return type's
     /// constructor does not reach the body bracket.
     pub(super) sealed: bool,
+    /// The cells of the `{…}` scopes its quotes opened, lexed with them: no frontier holds
+    /// them, a held body's construction reads them by position.
+    pub(crate) inner: Vec<Cell>,
 }
 
 impl ParsingTape {
@@ -350,6 +353,14 @@ impl ParsingTape {
             out.push(self.nodes[k].cell);
             n = self.nodes[k].next;
         }
+        out
+    }
+
+    /// A held body's cells in source order, its scopes' among them: what its feed serves.
+    pub fn held_cells(&self) -> Vec<Cell> {
+        let mut out = self.cells();
+        out.extend_from_slice(&self.inner);
+        out.sort_by_key(|c| c.start);
         out
     }
 
