@@ -2803,7 +2803,9 @@
     "expected": "`true`, as `a := true, a` prints; the name then works with `and` (›Anything yielding a `bool` is a condition‹; ›A node's output type is per node, and its parse writes it‹); `x := i32 1, a := x == 1, b := true, a and b` gives \"these operands must be bools\"",
     "tier": "interpreted",
     "found": "queue comparison-name-reads-number: #197 review round 1 (session 34384c84, 30 September 2026, dev 5a6c160), recorded in rca-queue.md; rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
-    "why": null,
+    "why": [
+      "W30"
+    ],
     "issue": null,
     "fixed": null,
     "made": {
@@ -2815,7 +2817,17 @@
       "run": "pws-migration",
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-01T00:35+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W30",
+        "reason": null
+      }
+    ]
   },
   {
     "id": "P22",
@@ -2912,5 +2924,2022 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "W30",
+    "kind": "why",
+    "status": "accepted",
+    "text": "`declare_here` lays out a bool-yielding value (a comparison, `not`, `and` of bools, a call to a `-> bool` fn) as a scalar snapshot typed by `numtype_of`, which answers `Concrete(I32)` for it, so `scalar_binding_type` gives the name the place type `i32`; every later read goes through `storage_type` first, so `is_bool_result` and the tail print see an i32",
+    "proposed_for": "P21",
+    "why": [
+      "W32",
+      "W34",
+      "W2"
+    ],
+    "anchors": [
+      "declare_here",
+      "numtype_of",
+      "scalar_binding_type",
+      "is_bool_result",
+      "storage_type",
+      "display_value",
+      "type_of"
+    ],
+    "design": [
+      "A node's output type is per node, and its parse writes it",
+      "Anything yielding a `bool` is a condition"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'A comparison or logical result|return Operand::Concrete\\(NumType::I32\\);|scalar_binding_type\\(self|Concrete\\(nt\\) => \\(types.numtypes|if let Some\\(t\\) = self.storage_type' src/identities/mod.rs src/parse/declare.rs",
+        "output": "src/identities/mod.rs:547:        if let Some(t) = self.storage_type(p) {\nsrc/identities/mod.rs:693:    // A comparison or logical result is `bool`, physically an i32.\nsrc/identities/mod.rs:704:        return Operand::Concrete(NumType::I32);\nsrc/identities/mod.rs:1054:        Operand::Concrete(nt) => (types.numtypes[nt as usize], nt.bytes()),\nsrc/parse/declare.rs:749:                    crate::identities::scalar_binding_type(self.rt.store, self.types, value);",
+        "commit": "e14738b"
+      },
+      {
+        "command": "for l in 'x := i32 1, x == 1' 'x := i32 1, a := x == 1, a' 'x := i32 1, a := x == 1, a:type' 'x := i32 1, a := x == 1, if a ( print «yes» ) else ( print «no» )' (why-probes/p21.txt, p21b.txt); target/release/logos \"$l\"",
+        "output": "== x := i32 1, x == 1\ntrue\n== x := i32 1, a := x == 1, a\n1\n== x := i32 1, a := x == 1, a:type\ni32\n== x := i32 1, a := x == 1, if a ( print «yes» ) else ( print «no» )\nerror: this condition must be a bool",
+        "commit": "e14738b"
+      },
+      {
+        "command": "siblings, one type against another (why-probes/p21c.txt): target/release/logos \"$l\"",
+        "output": "== f := fn (x := i32 ?) -> bool ( x == 1 ), f(1)\ntrue\n== f := fn (x := i32 ?) -> bool ( x == 1 ), a := f(1), a\n1\n== f := fn (x := i32 ?) -> bool ( x == 1 ), a := f(1), a:type\ni32\n== x := i32 1, a := not (x == 1), a\n0\n== x := i32 1, b := x == 1 and x == 1, b:type\ni32",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'return Operand::Concrete\\(NumType::I32\\);|Operand::Concrete\\(nt\\) => \\(types.numtypes|scalar_binding_type\\(self' src/identities/mod.rs src/parse/declare.rs",
+        "output": "src/parse/declare.rs:749:  crate::identities::scalar_binding_type(self.rt.store, self.types, value);\nsrc/identities/mod.rs:704:        return Operand::Concrete(NumType::I32);   (the lt/gt/le/ge/eq/ne/not_/subset/return_ list)\nsrc/identities/mod.rs:1054:        Operand::Concrete(nt) => (types.numtypes[nt as usize], nt.bytes()),",
+        "commit": "e14738b"
+      },
+      {
+        "command": "for p in 'x := i32 1, a := x == 1, a:type' 'x := i32 1, x == 1' 'a := 1 == 1, a:type' 'x := i32 1, a := not (x == 1), a:type' 'x := i32 1, a := (x == 1) and (x < 2), a' 'f := fn (x := i32 ?) -> bool ( a := x == 1, a and true ), f.compile(), f(i32 1)'; do target/release/logos \"$p\"; done",
+        "output": "> x := i32 1, a := x == 1, a:type\ni32\n> x := i32 1, x == 1\ntrue\n> a := 1 == 1, a:type\nbool\n> x := i32 1, a := not (x == 1), a:type\ni32\n> x := i32 1, a := (x == 1) and (x < 2), a\n1\n> f := fn (x := i32 ?) -> bool ( a := x == 1, a and true ), f.compile(), f(i32 1)\nerror: these operands must be bools",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "`declare_here` gives `a := x == 1` a place typed `i32`: its scalar arm takes the place type from `scalar_binding_type`, which maps `numtype_of`'s `Concrete(NumType::I32)` for a comparison (and `not`, bool `and`/`or`) to `types.numtypes[I32]`, so `type_of` of the name is `i32` and `display_value` and `is_bool_result` see a number"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:32+02:00",
+      "by": "logoslang-why-P21-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:35+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "accepted as a why of P21, same as W31",
+        "reason": "found blind by A and B; a name placed as bool reads as bool (B checked type_of and is_bool_result), so the i32 place is the direct step to P21; W2 is deeper"
+      },
+      {
+        "at": "2026-10-01T00:41+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W32",
+        "reason": null
+      },
+      {
+        "at": "2026-10-01T00:41+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W34",
+        "reason": null
+      },
+      {
+        "at": "2026-10-01T00:41+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W2",
+        "reason": "B: a comparison, not and and carry no output type, so numtype_of's own kind list answers I32; the call case needs W32"
+      }
+    ]
+  },
+  {
+    "id": "W31",
+    "kind": "why",
+    "status": "merged",
+    "text": "`declare_here` gives `a := x == 1` a place typed `i32`: its scalar arm takes the place type from `scalar_binding_type`, which maps `numtype_of`'s `Concrete(NumType::I32)` for a comparison (and `not`, bool `and`/`or`) to `types.numtypes[I32]`, so `type_of` of the name is `i32` and `display_value` and `is_bool_result` see a number",
+    "proposed_for": "P21",
+    "why": null,
+    "anchors": [
+      "declare_here",
+      "scalar_binding_type",
+      "numtype_of",
+      "display_value",
+      "is_bool_result",
+      "type_of"
+    ],
+    "design": [
+      "A node's output type is per node, and its parse writes it",
+      "Anything yielding a `bool` is a condition"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'return Operand::Concrete\\(NumType::I32\\);|Operand::Concrete\\(nt\\) => \\(types.numtypes|scalar_binding_type\\(self' src/identities/mod.rs src/parse/declare.rs",
+        "output": "src/parse/declare.rs:749:  crate::identities::scalar_binding_type(self.rt.store, self.types, value);\nsrc/identities/mod.rs:704:        return Operand::Concrete(NumType::I32);   (the lt/gt/le/ge/eq/ne/not_/subset/return_ list)\nsrc/identities/mod.rs:1054:        Operand::Concrete(nt) => (types.numtypes[nt as usize], nt.bytes()),",
+        "commit": "e14738b"
+      },
+      {
+        "command": "for p in 'x := i32 1, a := x == 1, a:type' 'x := i32 1, x == 1' 'a := 1 == 1, a:type' 'x := i32 1, a := not (x == 1), a:type' 'x := i32 1, a := (x == 1) and (x < 2), a' 'f := fn (x := i32 ?) -> bool ( a := x == 1, a and true ), f.compile(), f(i32 1)'; do target/release/logos \"$p\"; done",
+        "output": "> x := i32 1, a := x == 1, a:type\ni32\n> x := i32 1, x == 1\ntrue\n> a := 1 == 1, a:type\nbool\n> x := i32 1, a := not (x == 1), a:type\ni32\n> x := i32 1, a := (x == 1) and (x < 2), a\n1\n> f := fn (x := i32 ?) -> bool ( a := x == 1, a and true ), f.compile(), f(i32 1)\nerror: these operands must be bools",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W30",
+    "made": {
+      "at": "2026-10-01T00:32+02:00",
+      "by": "logoslang-why-P21-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:35+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "merged into W30",
+        "reason": "found blind by A and B; a name placed as bool reads as bool (B checked type_of and is_bool_result), so the i32 place is the direct step to P21; W2 is deeper"
+      }
+    ]
+  },
+  {
+    "id": "W32",
+    "kind": "why",
+    "status": "accepted",
+    "text": "`numtype_of` answers with `Operand::Concrete(NumType)`, a machine width and not the type node, and `scalar_binding_type` rebuilds the place type from that width (`types.numtypes[nt]`); `bool`'s record carries the kind `I32`, so `numtype::of_type_node(bool)` is `I32` and a bool comes back as the `i32` type node, even from a call whose `FN_OUTPUT` is `bool`",
+    "proposed_for": "W30",
+    "why": [
+      "W35",
+      "W2"
+    ],
+    "anchors": [
+      "Operand",
+      "NumType",
+      "numtype_of",
+      "call_return_numtype",
+      "scalar_binding_type",
+      "of_type_node",
+      "src/identities/bool.rs"
+    ],
+    "design": [
+      "A node's output type is per node, and its parse writes it",
+      "No implicit coercion; a numeric type applied to a value is the conversion"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'Concrete\\(NumType\\),|fn call_return_numtype|numtype::of_type_node\\(out\\)|Concrete\\(nt\\) => \\(types.numtypes|meta::record\\(cx.store, NumType::I32' src/identities",
+        "output": "src/identities/mod.rs:653:    Concrete(NumType),\nsrc/identities/mod.rs:859:unsafe fn call_return_numtype(fn_node: DyadPtr) -> NumType {\nsrc/identities/mod.rs:864:        numtype::of_type_node(out)\nsrc/identities/mod.rs:1054:        Operand::Concrete(nt) => (types.numtypes[nt as usize], nt.bytes()),\nsrc/identities/bool.rs:13:    let record = meta::record(cx.store, NumType::I32 as u8, meta::prec::INERT);",
+        "commit": "e14738b"
+      },
+      {
+        "command": "one type against another, named against unnamed, both tiers (why-probes/p21f.txt): target/release/logos \"$l\"",
+        "output": "> f := fn (x := i32 ?) -> bool ( x == 1 ), f(i32 1) and true\ntrue\n> f := fn (x := i32 ?) -> bool ( x == 1 ), a := f(i32 1), a:type\ni32\n> f := fn (x := i32 ?) -> bool ( x == 1 ), f.compile(), a := f(i32 1), a\n1",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'carries the I32 width kind|meta::record\\(cx.store, NumType::I32|^pub enum (NumType|Operand)|Concrete\\(NumType\\),|NumType::from_tag\\(tag\\)|numtype::of_type_node\\(out\\)' src/identities/bool.rs src/identities/numtype.rs src/identities/mod.rs",
+        "output": "src/identities/bool.rs:12:    // The record carries the I32 width kind; bool-ness lives in the identity itself.\nsrc/identities/bool.rs:13:    let record = meta::record(cx.store, NumType::I32 as u8, meta::prec::INERT);\nsrc/identities/numtype.rs:19:pub enum NumType {   (I8 I16 I32 I64 U8 U16 U32 U64 F32 F64, no bool)\nsrc/identities/numtype.rs:307:    NumType::from_tag(tag)\nsrc/identities/mod.rs:652:pub(crate) enum Operand {   (Concrete(NumType), Literal, Pointer, NonNumeric)\nsrc/identities/mod.rs:864:        numtype::of_type_node(out)",
+        "commit": "e14738b"
+      },
+      {
+        "command": "the callee carries -> bool, the name still gets i32 (why-probes/p21c.txt): target/release/logos \"$l\"",
+        "output": "== f := fn (x := i32 ?) -> bool ( x == 1 ), a := f(1), a\n1\n== f := fn (x := i32 ?) -> bool ( x == 1 ), a := f(1), a:type\ni32",
+        "commit": "e14738b"
+      },
+      {
+        "command": "sibling, a bool crosses into i32 with no conversion (why-probes/w30b.txt): target/release/logos \"$l\"",
+        "output": "== x := i32 1, mut a := i32 ?, a = x == 1, a\n1\nexit 0\n== mut a := i32 ?, a = true, a\nerror: these types do not match (crossing types needs an explicit cast)",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "`bool`'s record carries the `I32` width kind and neither `NumType` nor `Operand` has a bool, so every step that turns a type into a `NumType` (`of_type_node`, `call_return_numtype`, `numtype_of`'s comparison list) answers `I32` for bool, even where the output type is carried (a callee's `-> bool`)"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:36+02:00",
+      "by": "logoslang-why-P21-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:41+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "accepted as a why of W30, same as W33",
+        "reason": "found blind by A and B: the place type is rebuilt from a NumType width, which has no bool; shown where the output type is carried (a -> bool call prints i32), so W2 alone does not explain W30"
+      },
+      {
+        "at": "2026-10-01T00:45+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W35",
+        "reason": null
+      },
+      {
+        "at": "2026-10-01T00:45+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W2",
+        "reason": "A: numtype_of answers a width, not the type node, because no node carries the type it gives back; declare_here asks it instead of reading the node"
+      }
+    ]
+  },
+  {
+    "id": "W33",
+    "kind": "why",
+    "status": "merged",
+    "text": "`bool`'s record carries the `I32` width kind and neither `NumType` nor `Operand` has a bool, so every step that turns a type into a `NumType` (`of_type_node`, `call_return_numtype`, `numtype_of`'s comparison list) answers `I32` for bool, even where the output type is carried (a callee's `-> bool`)",
+    "proposed_for": "W30",
+    "why": null,
+    "anchors": [
+      "NumType",
+      "Operand",
+      "of_type_node",
+      "call_return_numtype",
+      "numtype_of",
+      "src/identities/bool.rs"
+    ],
+    "design": [
+      "No implicit coercion; a numeric type applied to a value is the conversion",
+      "A node's output type is per node, and its parse writes it"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'carries the I32 width kind|meta::record\\(cx.store, NumType::I32|^pub enum (NumType|Operand)|Concrete\\(NumType\\),|NumType::from_tag\\(tag\\)|numtype::of_type_node\\(out\\)' src/identities/bool.rs src/identities/numtype.rs src/identities/mod.rs",
+        "output": "src/identities/bool.rs:12:    // The record carries the I32 width kind; bool-ness lives in the identity itself.\nsrc/identities/bool.rs:13:    let record = meta::record(cx.store, NumType::I32 as u8, meta::prec::INERT);\nsrc/identities/numtype.rs:19:pub enum NumType {   (I8 I16 I32 I64 U8 U16 U32 U64 F32 F64, no bool)\nsrc/identities/numtype.rs:307:    NumType::from_tag(tag)\nsrc/identities/mod.rs:652:pub(crate) enum Operand {   (Concrete(NumType), Literal, Pointer, NonNumeric)\nsrc/identities/mod.rs:864:        numtype::of_type_node(out)",
+        "commit": "e14738b"
+      },
+      {
+        "command": "the callee carries -> bool, the name still gets i32 (why-probes/p21c.txt): target/release/logos \"$l\"",
+        "output": "== f := fn (x := i32 ?) -> bool ( x == 1 ), a := f(1), a\n1\n== f := fn (x := i32 ?) -> bool ( x == 1 ), a := f(1), a:type\ni32",
+        "commit": "e14738b"
+      },
+      {
+        "command": "sibling, a bool crosses into i32 with no conversion (why-probes/w30b.txt): target/release/logos \"$l\"",
+        "output": "== x := i32 1, mut a := i32 ?, a = x == 1, a\n1\nexit 0\n== mut a := i32 ?, a = true, a\nerror: these types do not match (crossing types needs an explicit cast)",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W32",
+    "made": {
+      "at": "2026-10-01T00:36+02:00",
+      "by": "logoslang-why-P21-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:41+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "merged into W32",
+        "reason": "found blind by A and B: the place type is rebuilt from a NumType width, which has no bool; shown where the output type is carried (a -> bool call prints i32), so W2 alone does not explain W30"
+      }
+    ]
+  },
+  {
+    "id": "W34",
+    "kind": "why",
+    "status": "accepted",
+    "text": "No declaration lays out a place of type `bool`: `construct_decl`'s hole path refuses `bool ?` by name (`NonNumericDeclaredType`) and `a := true` falls to `declare_here`'s last arm, `Binding::set_dyad` on the literal node, so the numeric snapshot arm is the only one a run-time bool can reach",
+    "proposed_for": "W30",
+    "why": [
+      "W37"
+    ],
+    "anchors": [
+      "declare_here",
+      "NonNumericDeclaredType",
+      "set_dyad",
+      "src/parse/declare.rs"
+    ],
+    "design": [
+      "Anything yielding a `bool` is a condition",
+      "What `=` does is decided by the type of the place on its left"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'if t == types.bool_ \\{|a .bool. place is refused|return Err\\(ParseError::NonNumericDeclaredType\\)|Binding::set_dyad\\(binding, read\\)' src/parse/declare.rs",
+        "output": "src/parse/declare.rs:760:                Binding::set_dyad(binding, read);\nsrc/parse/declare.rs:897:                // disagree; a `bool` place is refused since its literals cannot yet be stored into one.\nsrc/parse/declare.rs:899:                if t == types.bool_ {\nsrc/parse/declare.rs:900:                    return Err(ParseError::NonNumericDeclaredType);",
+        "commit": "e14738b"
+      },
+      {
+        "command": "while IFS= read -r l; do target/release/logos \"$l\"; done < why-probes/w30.txt, w30b.txt",
+        "output": "== a := bool ?, a\nerror: declarations of non-numeric types are not in the seed yet\n== mut a := true, a = false, a\nerror: this is not an assignable place\n== x := i32 1, mut a := true, a = x == 1, a\nerror: this is not an assignable place",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:36+02:00",
+      "by": "logoslang-why-P21-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:41+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "accepted as a why of W30",
+        "reason": "A only; direct: with no declaration that lays out a bool place, the numeric snapshot arm of W30 is the only one a run-time bool reaches (bool ? refused by name, a := true aliases the literal); B saw the same refusal"
+      },
+      {
+        "at": "2026-10-01T00:45+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W37",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W35",
+    "kind": "why",
+    "status": "accepted",
+    "text": "`bool` has no kind of its own: a record's kind byte is a closed Rust list of tags (the ten `NumType` tags, `VOID_TAG`, `STRING_TAG`, `ADDR_TAG`, ... `DYAD_TAG`) with none for bool, so `bool.rs` registers it under `I32`'s tag, and `of_type_node` and `place_layout` read only that byte",
+    "proposed_for": "W32",
+    "why": [
+      "W40"
+    ],
+    "anchors": [
+      "kind_of",
+      "of_type_node",
+      "place_layout",
+      "VOID_TAG",
+      "ADDR_TAG",
+      "DYAD_TAG",
+      "src/identities/bool.rs",
+      "src/identities/meta.rs",
+      "NumType",
+      "type_name",
+      "is_bool_result"
+    ],
+    "design": [
+      "A node's output type is per node, and its parse writes it",
+      "No implicit coercion; a numeric type applied to a value is the conversion"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'pub\\(crate\\) const [A-Z_]*TAG: u8' src/identities; rg -n 'NumType::I32 as u8' src/identities/bool.rs",
+        "output": "src/identities/numtype.rs:173:pub(crate) const VOID_TAG: u8 = 10;   (NumType tags 0..9 before it)\nsrc/identities/numtype.rs:193:pub(crate) const STRING_TAG: u8 = 11;\nsrc/identities/numtype.rs:195:pub(crate) const COMMENT_TAG: u8 = 12;\nsrc/identities/numtype.rs:208:pub(crate) const ADDR_TAG: u8 = 13;\nsrc/identities/meta.rs:38:pub(crate) const TUPLE_TAG: u8 = 14;\nsrc/identities/meta.rs:40:pub(crate) const LIST_TAG: u8 = 15;\nsrc/identities/meta.rs:42:pub(crate) const FRACTION_TAG: u8 = 16;\nsrc/identities/meta.rs:44:pub(crate) const TYPEREC_TAG: u8 = 18;\nsrc/identities/meta.rs:46..52: TOKEN_TAG 19, CALLABLE_TAG 20, CONVENTION_TAG 21, ARRAY_TAG 22\nsrc/identities/meta.rs:56:pub(crate) const RECORD_TAG: u8 = 23;\nsrc/identities/meta.rs:58:pub(crate) const DYAD_TAG: u8 = 24;\nsrc/identities/bool.rs:13:    let record = meta::record(cx.store, NumType::I32 as u8, meta::prec::INERT);",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'let kind = meta::kind_of\\(t\\)\\?|k if k < VOID_TAG|NumType::from_tag\\(tag\\)' src/identities/read.rs src/identities/numtype.rs",
+        "output": "src/identities/read.rs:164:    let kind = meta::kind_of(t)?;\nsrc/identities/read.rs:167:        k if k < VOID_TAG => {\nsrc/identities/numtype.rs:307:    NumType::from_tag(tag)",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'meta::record\\(cx.store, NumType::I32|place_layout\\(types, core.bool_\\)|if node == types.bool_|if t == types.bool_' src",
+        "output": "src/identities/bool.rs:13:    let record = meta::record(cx.store, NumType::I32 as u8, meta::prec::INERT);\nsrc/identities/read.rs:641:            assert_eq!(place_layout(types, core.bool_), Some((Read::Scalar(NumType::I32), 4)));\nsrc/identities/mod.rs:1029:    if node == types.bool_ {\nsrc/parse/declare.rs:899:                if t == types.bool_ {",
+        "commit": "e14738b"
+      },
+      {
+        "command": "one type against another (why-probes/w34.txt): target/release/logos \"$l\"",
+        "output": "> x := i32 1, mut a := i32 0, a = x == 1, a\n1\n> mut a := i32 0, a = 1 == 1, a\nerror: these types do not match (crossing types needs an explicit cast)\n> mut a := i32 0, a = true, a\nerror: these types do not match (crossing types needs an explicit cast)",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "A scalar type is known on the width path only by its record's kind byte, and `bool` has no kind of its own: `bool.rs` registers it with `NumType::I32`'s kind, so `place_layout`, `numtype::of_type_node` and every `NumType` reader take `bool` for `i32`, and only hand comparisons against `types.bool_` (`type_name`, `is_bool_result`, `construct_hole`) tell them apart"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:43+02:00",
+      "by": "logoslang-why-P21-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:45+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "accepted as a why of W32, same as W36",
+        "reason": "found blind by A and B: bool's record carries I32's tag because the kind byte is a closed Rust list with no bool"
+      },
+      {
+        "at": "2026-10-01T00:47+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W40",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W36",
+    "kind": "why",
+    "status": "merged",
+    "text": "A scalar type is known on the width path only by its record's kind byte, and `bool` has no kind of its own: `bool.rs` registers it with `NumType::I32`'s kind, so `place_layout`, `numtype::of_type_node` and every `NumType` reader take `bool` for `i32`, and only hand comparisons against `types.bool_` (`type_name`, `is_bool_result`, `construct_hole`) tell them apart",
+    "proposed_for": "W32",
+    "why": null,
+    "anchors": [
+      "src/identities/bool.rs",
+      "place_layout",
+      "of_type_node",
+      "NumType",
+      "type_name",
+      "is_bool_result"
+    ],
+    "design": [
+      "No implicit coercion; a numeric type applied to a value is the conversion"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'meta::record\\(cx.store, NumType::I32|place_layout\\(types, core.bool_\\)|if node == types.bool_|if t == types.bool_' src",
+        "output": "src/identities/bool.rs:13:    let record = meta::record(cx.store, NumType::I32 as u8, meta::prec::INERT);\nsrc/identities/read.rs:641:            assert_eq!(place_layout(types, core.bool_), Some((Read::Scalar(NumType::I32), 4)));\nsrc/identities/mod.rs:1029:    if node == types.bool_ {\nsrc/parse/declare.rs:899:                if t == types.bool_ {",
+        "commit": "e14738b"
+      },
+      {
+        "command": "one type against another (why-probes/w34.txt): target/release/logos \"$l\"",
+        "output": "> x := i32 1, mut a := i32 0, a = x == 1, a\n1\n> mut a := i32 0, a = 1 == 1, a\nerror: these types do not match (crossing types needs an explicit cast)\n> mut a := i32 0, a = true, a\nerror: these types do not match (crossing types needs an explicit cast)",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W35",
+    "made": {
+      "at": "2026-10-01T00:43+02:00",
+      "by": "logoslang-why-P21-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:45+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "merged into W35",
+        "reason": "found blind by A and B: bool's record carries I32's tag because the kind byte is a closed Rust list with no bool"
+      }
+    ]
+  },
+  {
+    "id": "W37",
+    "kind": "why",
+    "status": "accepted",
+    "text": "`numtype_of` reads bool two ways: a node typed `bool` (a literal, a folded `not true`) is `NonNumeric`, its type checked against `types.numtypes`, the ten number types, while a comparison, `not` of one or a `-> bool` call is `Concrete(I32)`; so `check_store_type` refuses `true` into any place, the hole path refuses `bool ?` by name (its literals cannot be stored), and `a := true` misses the snapshot arm and aliases",
+    "proposed_for": "W34",
+    "why": [
+      "W2",
+      "W35"
+    ],
+    "anchors": [
+      "numtype_of",
+      "check_store_type",
+      "construct_decl",
+      "declare_here",
+      "src/identities/mod.rs",
+      "construct_hole",
+      "set_dyad"
+    ],
+    "design": [
+      "No implicit coercion; a numeric type applied to a value is the conversion",
+      "Anything yielding a `bool` is a condition"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'A comparison or logical result is|types.numtypes.iter\\(\\).any\\(\\|&t\\| !t.is_null\\(\\) && t == logos\\)|Concrete\\(c\\) if c == nt|since its literals cannot yet be stored' src/identities/mod.rs src/parse/declare.rs",
+        "output": "src/identities/mod.rs:693:    // A comparison or logical result is `bool`, physically an i32.\nsrc/identities/mod.rs:765:    if types.numtypes.iter().any(|&t| !t.is_null() && t == logos) {\nsrc/identities/mod.rs:1090:            matches!(numtype_of(types, rhs), Operand::Concrete(c) if c == nt)\nsrc/parse/declare.rs:897:                // disagree; a `bool` place is refused since its literals cannot yet be stored into one.",
+        "commit": "e14738b"
+      },
+      {
+        "command": "a run-time bool against a bool literal (why-probes/w34.txt): target/release/logos \"$l\"",
+        "output": "== x := i32 1, mut a := i32 ?, a = x == 1, a\n1\n== mut a := i32 ?, a = true, a\nerror: these types do not match (crossing types needs an explicit cast)\n== x := i32 1, mut a := i32 ?, a = not (x == 1), a\n0\n== mut a := i32 ?, a = not true, a\nerror: these types do not match (crossing types needs an explicit cast)\n== x := i32 1, (x == 1) + 1\n2\n== true + 1\nerror: this operator cannot compute over these operands",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'types.numtypes.iter\\(\\).any|return Operand::Concrete\\(NumType::I32\\);|matches!\\(numtype_of\\(types, rhs\\), Operand::Concrete\\(c\\) if c == nt\\)|a .bool. place is refused' src/identities/mod.rs src/parse/declare.rs",
+        "output": "src/identities/mod.rs:704:        return Operand::Concrete(NumType::I32);   (the comparison list)\nsrc/identities/mod.rs:765:    if types.numtypes.iter().any(|&t| !t.is_null() && t == logos) {\nsrc/identities/mod.rs:1090:            matches!(numtype_of(types, rhs), Operand::Concrete(c) if c == nt)\nsrc/parse/declare.rs:897:  // disagree; a `bool` place is refused since its literals cannot yet be stored into one.",
+        "commit": "e14738b"
+      },
+      {
+        "command": "literal against comparison (why-probes/w34.txt): target/release/logos \"$l\"",
+        "output": "> mut a := i32 0, a = true, a\nerror: these types do not match (crossing types needs an explicit cast)\n> x := i32 1, mut a := i32 0, a = x == 1, a\n1\n> mut a := true, a = false, a\nerror: this is not an assignable place\n> a := bool ?, a\nerror: declarations of non-numeric types are not in the seed yet",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "`numtype_of` has no arm for a node of type `bool`: `true`/`false` are not in `types.numtypes`, so a bool literal is `NonNumeric` while a comparison is `Concrete(I32)`; so `a := true` skips `declare_here`'s scalar arm for `set_dyad`, and `check_store_type` would refuse `true` into a bool place (`Scalar(I32)` wants `Concrete(I32)`), the reason `construct_hole` refuses `bool ?`"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:43+02:00",
+      "by": "logoslang-why-P21-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:45+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "accepted as a why of W34, same as W38",
+        "reason": "found blind by A and B: numtype_of reads a typed bool as NonNumeric and a comparison as I32, so a bool literal cannot be stored and bool ? is refused"
+      },
+      {
+        "at": "2026-10-01T00:47+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W2",
+        "reason": "both: the comparison arm answers from numtype_of's own kind list"
+      },
+      {
+        "at": "2026-10-01T00:47+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W35",
+        "reason": "B: types.numtypes has one slot per NumType and none for bool, and the call arm reads bool's borrowed I32 tag; A's W39 lies one step behind W35"
+      }
+    ]
+  },
+  {
+    "id": "W38",
+    "kind": "why",
+    "status": "merged",
+    "text": "`numtype_of` has no arm for a node of type `bool`: `true`/`false` are not in `types.numtypes`, so a bool literal is `NonNumeric` while a comparison is `Concrete(I32)`; so `a := true` skips `declare_here`'s scalar arm for `set_dyad`, and `check_store_type` would refuse `true` into a bool place (`Scalar(I32)` wants `Concrete(I32)`), the reason `construct_hole` refuses `bool ?`",
+    "proposed_for": "W34",
+    "why": null,
+    "anchors": [
+      "numtype_of",
+      "check_store_type",
+      "declare_here",
+      "construct_hole",
+      "set_dyad"
+    ],
+    "design": [
+      "Anything yielding a `bool` is a condition",
+      "No implicit coercion; a numeric type applied to a value is the conversion"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'types.numtypes.iter\\(\\).any|return Operand::Concrete\\(NumType::I32\\);|matches!\\(numtype_of\\(types, rhs\\), Operand::Concrete\\(c\\) if c == nt\\)|a .bool. place is refused' src/identities/mod.rs src/parse/declare.rs",
+        "output": "src/identities/mod.rs:704:        return Operand::Concrete(NumType::I32);   (the comparison list)\nsrc/identities/mod.rs:765:    if types.numtypes.iter().any(|&t| !t.is_null() && t == logos) {\nsrc/identities/mod.rs:1090:            matches!(numtype_of(types, rhs), Operand::Concrete(c) if c == nt)\nsrc/parse/declare.rs:897:  // disagree; a `bool` place is refused since its literals cannot yet be stored into one.",
+        "commit": "e14738b"
+      },
+      {
+        "command": "literal against comparison (why-probes/w34.txt): target/release/logos \"$l\"",
+        "output": "> mut a := i32 0, a = true, a\nerror: these types do not match (crossing types needs an explicit cast)\n> x := i32 1, mut a := i32 0, a = x == 1, a\n1\n> mut a := true, a = false, a\nerror: this is not an assignable place\n> a := bool ?, a\nerror: declarations of non-numeric types are not in the seed yet",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W37",
+    "made": {
+      "at": "2026-10-01T00:43+02:00",
+      "by": "logoslang-why-P21-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:45+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "merged into W37",
+        "reason": "found blind by A and B: numtype_of reads a typed bool as NonNumeric and a comparison as I32, so a bool literal cannot be stored and bool ? is refused"
+      }
+    ]
+  },
+  {
+    "id": "W39",
+    "kind": "why",
+    "status": "merged",
+    "text": "The seed classifies a type by a kind byte in its record (`meta::record` takes one, `kind_of` reads it, 39 reads in 10 files) where ›The dyad's read surface‹ says the type is the kind and a value is classified by comparing its type against known identities, so a type the fixed tag list has no entry for must borrow another's tag",
+    "proposed_for": "W35",
+    "why": null,
+    "anchors": [
+      "kind_of",
+      "record",
+      "place_layout",
+      "of_type_node",
+      "src/identities/meta.rs",
+      "src/reflect.rs"
+    ],
+    "design": [
+      "The dyad's read surface: two fields, and the type answers the rest"
+    ],
+    "evidence": [
+      {
+        "command": "rg -c 'kind_of\\(' src; rg -n 'kind_of\\(' src | wc -l",
+        "output": "src/reflect.rs:14\nsrc/parse/fields.rs:5\nsrc/identities/meta.rs:4\nsrc/parse/operands.rs:3\nsrc/parse/driver.rs:3\nsrc/identities/read.rs:3\nsrc/identities/callable.rs:3\nsrc/identities/mod.rs:2\nsrc/identities/run_body.rs:1\nsrc/identities/pointer.rs:1\n39",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'There is no .\\.kind.|Rejected:\\*\\* a .\\.kind. field' DESIGN.md; rg -n 'pub\\(crate\\) fn record\\(store: &mut Store, kind: u8|let kind = meta::kind_of\\(t\\)\\?' src/identities",
+        "output": "DESIGN.md: There is no `.kind`: the type is the kind, and you classify a value by comparing its type against known identities.\nDESIGN.md: - **Rejected:** a `.kind` field, a second classification axis: redundant with the cell's self-description.\nsrc/identities/meta.rs:125:pub(crate) fn record(store: &mut Store, kind: u8, parse_rank: f64) -> *mut u8 {\nsrc/identities/read.rs:164:    let kind = meta::kind_of(t)?;",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W40",
+    "made": {
+      "at": "2026-10-01T00:46+02:00",
+      "by": "logoslang-why-P21-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:47+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "merged into W40",
+        "reason": "found blind by A and B: the seed sorts types by a kind byte, the second classification axis DESIGN rejects, so bool borrows I32's tag"
+      }
+    ]
+  },
+  {
+    "id": "W40",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The seed classifies a type by its record's kind byte (`meta::kind_of`, 39 readers in 10 files) instead of by its identity, the second classification axis ›The dyad's read surface: two fields, and the type answers the rest‹ rejects (\"the type is the kind\"); so a type the byte has no tag for, as `bool`, must borrow another's tag, and every byte reader sees the borrowed type",
+    "proposed_for": "W35",
+    "why": [
+      "W42"
+    ],
+    "anchors": [
+      "kind_of",
+      "src/identities/meta.rs",
+      "place_layout",
+      "of_type_node",
+      "type_name",
+      "record",
+      "src/reflect.rs"
+    ],
+    "design": [
+      "The dyad's read surface: two fields, and the type answers the rest"
+    ],
+    "evidence": [
+      {
+        "command": "rg -c 'kind_of\\(' src --glob '!*tests.rs'",
+        "output": "src/reflect.rs:14\nsrc/parse/fields.rs:5\nsrc/identities/meta.rs:4\nsrc/parse/operands.rs:3\nsrc/parse/driver.rs:3\nsrc/identities/read.rs:3\nsrc/identities/callable.rs:3\nsrc/identities/mod.rs:2\nsrc/identities/run_body.rs:1\nsrc/identities/pointer.rs:1\n(total 39)",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'There is no .\\.kind.|a .\\.kind. field, a second classification axis' DESIGN.md; rg -n 'let kind = meta::kind_of\\(t\\)\\?|if node == types.bool_ \\{|match meta::kind_of\\(node\\)' src/identities/read.rs src/identities/mod.rs",
+        "output": "DESIGN.md: There is no `.kind`: the type is the kind, and you classify a value by comparing its type against known identities.\nDESIGN.md: - **Rejected:** a `.kind` field, a second classification axis: redundant with the cell's self-description.\nsrc/identities/read.rs:164:    let kind = meta::kind_of(t)?;   (place_layout)\nsrc/identities/mod.rs:1029:    if node == types.bool_ {        (type_name: bool special-cased before the byte)\nsrc/identities/mod.rs:1035:    match meta::kind_of(node) {",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -c 'kind_of\\(' src; rg -n 'kind_of\\(' src | wc -l",
+        "output": "src/reflect.rs:14\nsrc/parse/fields.rs:5\nsrc/identities/meta.rs:4\nsrc/parse/operands.rs:3\nsrc/parse/driver.rs:3\nsrc/identities/read.rs:3\nsrc/identities/callable.rs:3\nsrc/identities/mod.rs:2\nsrc/identities/run_body.rs:1\nsrc/identities/pointer.rs:1\n39",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'There is no .\\.kind.|Rejected:\\*\\* a .\\.kind. field' DESIGN.md; rg -n 'pub\\(crate\\) fn record\\(store: &mut Store, kind: u8|let kind = meta::kind_of\\(t\\)\\?' src/identities",
+        "output": "DESIGN.md: There is no `.kind`: the type is the kind, and you classify a value by comparing its type against known identities.\nDESIGN.md: - **Rejected:** a `.kind` field, a second classification axis: redundant with the cell's self-description.\nsrc/identities/meta.rs:125:pub(crate) fn record(store: &mut Store, kind: u8, parse_rank: f64) -> *mut u8 {\nsrc/identities/read.rs:164:    let kind = meta::kind_of(t)?;",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "The seed classifies a type by a kind byte in its record (`meta::record` takes one, `kind_of` reads it, 39 reads in 10 files) where ›The dyad's read surface‹ says the type is the kind and a value is classified by comparing its type against known identities, so a type the fixed tag list has no entry for must borrow another's tag"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:46+02:00",
+      "by": "logoslang-why-P21-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:47+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "accepted as a why of W35, same as W39",
+        "reason": "found blind by A and B: the seed sorts types by a kind byte, the second classification axis DESIGN rejects, so bool borrows I32's tag"
+      },
+      {
+        "at": "2026-10-01T00:49+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W42",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W41",
+    "kind": "why",
+    "status": "merged",
+    "text": "A built-in type's record is only the header `meta::header` writes (kind byte, associativity, `parse_rank`): a scalar type has no layout field of its own (no `size_bytes`, no machine form, which ›The dyad's read surface‹ puts on the type), so the kind byte is the one place its width and int/float form live, and `place_layout` and `of_type_node` cannot know a scalar's layout from its identity",
+    "proposed_for": "W40",
+    "why": null,
+    "anchors": [
+      "header",
+      "record",
+      "kind_of",
+      "place_layout",
+      "of_type_node",
+      "record_size_of"
+    ],
+    "design": [
+      "The dyad's read surface: two fields, and the type answers the rest"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'h\\[0\\] = kind;|h\\[ASSOC_OFF\\] =|h\\[PREC_OFF..CTOR_OFF\\]|The slots from CTOR_OFF on stay zero|A record type node.s record: payload|let nt = numtype::of_type_node\\(t\\);|Some\\(\\(Read::Scalar\\(nt\\), nt.bytes\\(\\)\\)\\)' src/identities/meta.rs src/identities/read.rs",
+        "output": "src/identities/meta.rs:53:/// A record type node's record: payload `[scope: @dyad][fields: @dyad][size_bytes: u64]   (RECORD_TAG types only)\nsrc/identities/meta.rs:243:    h[0] = kind;\nsrc/identities/meta.rs:244:    h[ASSOC_OFF] = match assoc {\nsrc/identities/meta.rs:248:    h[PREC_OFF..CTOR_OFF].copy_from_slice(&parse_rank.to_ne_bytes());\nsrc/identities/meta.rs:249:    // The slots from CTOR_OFF on stay zero until their writers fill them.\nsrc/identities/read.rs:168:            let nt = numtype::of_type_node(t);\nsrc/identities/read.rs:169:            Some((Read::Scalar(nt), nt.bytes()))",
+        "commit": "e14738b"
+      },
+      {
+        "command": "for p in 'i32.size_bytes' 'bool.size_bytes'; do target/release/logos \"$p\"; done",
+        "output": "4\n4",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W42",
+    "made": {
+      "at": "2026-10-01T00:48+02:00",
+      "by": "logoslang-why-P21-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:49+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "merged into W42",
+        "reason": "found blind by A and B: a built-in type's record is a bare header with no size_bytes or machine form, so the byte is the only statement of its layout; identity alone already classifies these types (A), the layout is what the byte adds"
+      }
+    ]
+  },
+  {
+    "id": "W42",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A built-in type (the ten number types, `bool`) is registered in Rust as a bare record header, `meta::record(cx.store, <tag>, <rank>)`, with no `fields`/`size_bytes` payload such as a `RECORD_TAG` type carries, so the kind byte is the only statement on the type of what its values are, and `place_layout` gets its width from the byte through Rust (`nt.bytes()`) instead of from the type",
+    "proposed_for": "W40",
+    "why": [
+      "W43"
+    ],
+    "anchors": [
+      "record",
+      "place_layout",
+      "record_size_of",
+      "RECORD_TAG",
+      "src/identities/numtype.rs",
+      "src/identities/bool.rs",
+      "header",
+      "kind_of",
+      "of_type_node"
+    ],
+    "design": [
+      "The dyad's read surface: two fields, and the type answers the rest",
+      "A plain number is a `rational_number`, and a number type's definition converts it (headed \"Numeric literals are uncommitted until context classifies them\" until 29 September 2026)"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'meta::record\\(cx.store, (nt as u8|NumType::I32 as u8)' src/identities; rg -n 'payload .\\[scope: @dyad\\]\\[fields: @dyad\\]\\[size_bytes|k if k < VOID_TAG|Some\\(\\(Read::Scalar\\(nt\\), nt.bytes\\(\\)\\)\\)|record_size_of\\(t\\)' src/identities/meta.rs src/identities/read.rs",
+        "output": "src/identities/numtype.rs:123:    let record = super::meta::record(cx.store, nt as u8, super::meta::prec::APPLY);\nsrc/identities/bool.rs:13:    let record = meta::record(cx.store, NumType::I32 as u8, meta::prec::INERT);\nsrc/identities/meta.rs:53:/// A record type node's record: payload `[scope: @dyad][fields: @dyad][size_bytes: u64]\nsrc/identities/read.rs:167:        k if k < VOID_TAG => {\nsrc/identities/read.rs:169:            Some((Read::Scalar(nt), nt.bytes()))\nsrc/identities/read.rs:181:            Some((Read::Aggregate, (meta::record_size_of(t) as usize).max(1)))",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'layout reads .\\.fields., .\\.size_bytes.|a number type.s definition converts it' DESIGN.md",
+        "output": "DESIGN.md: Everything shared lives on the type and is reached through it: ... and the layout reads `.fields`, `.size_bytes`, `.scope`.\nDESIGN.md: ### A plain number is a `rational_number`, and a number type's definition converts it",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'h\\[0\\] = kind;|h\\[ASSOC_OFF\\] =|h\\[PREC_OFF..CTOR_OFF\\]|The slots from CTOR_OFF on stay zero|A record type node.s record: payload|let nt = numtype::of_type_node\\(t\\);|Some\\(\\(Read::Scalar\\(nt\\), nt.bytes\\(\\)\\)\\)' src/identities/meta.rs src/identities/read.rs",
+        "output": "src/identities/meta.rs:53:/// A record type node's record: payload `[scope: @dyad][fields: @dyad][size_bytes: u64]   (RECORD_TAG types only)\nsrc/identities/meta.rs:243:    h[0] = kind;\nsrc/identities/meta.rs:244:    h[ASSOC_OFF] = match assoc {\nsrc/identities/meta.rs:248:    h[PREC_OFF..CTOR_OFF].copy_from_slice(&parse_rank.to_ne_bytes());\nsrc/identities/meta.rs:249:    // The slots from CTOR_OFF on stay zero until their writers fill them.\nsrc/identities/read.rs:168:            let nt = numtype::of_type_node(t);\nsrc/identities/read.rs:169:            Some((Read::Scalar(nt), nt.bytes()))",
+        "commit": "e14738b"
+      },
+      {
+        "command": "for p in 'i32.size_bytes' 'bool.size_bytes'; do target/release/logos \"$p\"; done",
+        "output": "4\n4",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "A built-in type's record is only the header `meta::header` writes (kind byte, associativity, `parse_rank`): a scalar type has no layout field of its own (no `size_bytes`, no machine form, which ›The dyad's read surface‹ puts on the type), so the kind byte is the one place its width and int/float form live, and `place_layout` and `of_type_node` cannot know a scalar's layout from its identity"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:48+02:00",
+      "by": "logoslang-why-P21-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:49+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "accepted as a why of W40, same as W41",
+        "reason": "found blind by A and B: a built-in type's record is a bare header with no size_bytes or machine form, so the byte is the only statement of its layout; identity alone already classifies these types (A), the layout is what the byte adds"
+      },
+      {
+        "at": "2026-10-01T00:52+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W43",
+        "reason": null
+      },
+      {
+        "at": "2026-10-01T00:52+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W45",
+        "reason": null
+      },
+      {
+        "at": "2026-10-01T00:56+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why - W45",
+        "reason": "both agents trace W45 to W32, which lies above W42: W45 is a consequence of the width path, not a cause of W42's missing payload"
+      }
+    ]
+  },
+  {
+    "id": "W43",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The layout payload (`scope`, `fields`, `size_bytes`) is a property of the `RECORD_TAG` kind, not of `type`: only `meta::record_layout` writes it and it stamps `RECORD_TAG`, so a hand-written type has no place for a `size_bytes`, and readers branch on `is_record_type` (26 calls in 9 files), `.size_bytes` itself answered twice in `fields.rs`, against ›Plain data and hand-written types are one identity, `type`‹ (`size_bytes` a `share` member of the type)",
+    "proposed_for": "W42",
+    "why": [
+      "W48"
+    ],
+    "anchors": [
+      "record_layout",
+      "is_record_type",
+      "record_size_of",
+      "RECORD_TAG",
+      "src/parse/fields.rs",
+      "place_layout",
+      "logos_member"
+    ],
+    "design": [
+      "Plain data and hand-written types are one identity, `type`",
+      "The dyad's read surface: two fields, and the type answers the rest",
+      "`.size_bytes` is a `u64`"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'let mut blob = header\\(RECORD_TAG|\"size_bytes\" if meta::is_record_type|\"size_bytes\" => match crate::identities::read::place_layout' src; rg -c 'is_record_type\\(' src --glob '!*tests.rs'",
+        "output": "src/identities/meta.rs:169:    let mut blob = header(RECORD_TAG, assoc, parse_rank).to_vec();   (record_layout)\nsrc/parse/fields.rs:1309:            \"size_bytes\" if meta::is_record_type(logos) => {   (reads record_size_of)\nsrc/parse/fields.rs:1312:            \"size_bytes\" => match crate::identities::read::place_layout(self.types, logos) {   (width from the kind byte)\nis_record_type( : 26 calls in 9 files outside tests",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'is one identity|a type whose parsing or meaning is written by hand|.size_bytes. is a .share. member' DESIGN.md",
+        "output": "DESIGN.md (### Plain data and hand-written types are one identity, `type`): A type whose `parse` derives its layout automatically (... fills `fields` and `size_bytes` ...) and a type whose parsing or meaning is written by hand (operators, primitives) are **one identity, not two**.\nDESIGN.md: ... and `size_bytes` is a `share` member of the type (›`.size_bytes` is a `u64`‹).",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'unsafe fn logos_member|\"parse\" => \\{|\"run\" => \\{|\"size_bytes\"|\"scope\" if' src/parse/fields.rs",
+        "output": "src/parse/fields.rs:1257:    unsafe fn logos_member(\nsrc/parse/fields.rs:1290:            \"parse\" => {\nsrc/parse/fields.rs:1302:            \"run\" => {\nsrc/parse/fields.rs:1309:            \"size_bytes\" if meta::is_record_type(logos) => {\nsrc/parse/fields.rs:1312:            \"size_bytes\" => match crate::identities::read::place_layout(self.types, logos) {\nsrc/parse/fields.rs:1320:            \"scope\" if meta::is_record_type(logos) => Ok(self",
+        "commit": "e14738b"
+      },
+      {
+        "command": "DESIGN ›.size_bytes is a u64‹ against the seed (why-probes/w42.txt): target/release/logos \"$l\"",
+        "output": "DESIGN.md: `i32.size_bytes` is `u64 4` ... `size_bytes` is a `share` member defined inside the type\n== i32.size_bytes\n4\n== bool.size_bytes\n4\n== pt := type ( a := i32 ? ), pt.size_bytes\n4",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "A type's members (`.size_bytes`, `.parse`, `.run`, `.scope`) are answered by a Rust `match` on the member's spelling in `logos_member`, one arm per kind (a record's `record_size_of`, else `place_layout`'s width from the byte), not by `share` members defined in the type's scope, so a built-in type needs no scope or `size_bytes` of its own and gets none"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:50+02:00",
+      "by": "logoslang-why-P21-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:52+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "accepted as a why of W42, same as W44",
+        "reason": "found blind by A and B: a type's facts are not members of the type; only a RECORD_TAG record holds the layout payload, and member reads are a Rust match per kind; one fix, every type holding its members in its own scope, removes both"
+      },
+      {
+        "at": "2026-10-01T00:56+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W48",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W44",
+    "kind": "why",
+    "status": "merged",
+    "text": "A type's members (`.size_bytes`, `.parse`, `.run`, `.scope`) are answered by a Rust `match` on the member's spelling in `logos_member`, one arm per kind (a record's `record_size_of`, else `place_layout`'s width from the byte), not by `share` members defined in the type's scope, so a built-in type needs no scope or `size_bytes` of its own and gets none",
+    "proposed_for": "W42",
+    "why": null,
+    "anchors": [
+      "logos_member",
+      "record_size_of",
+      "place_layout",
+      "src/parse/fields.rs"
+    ],
+    "design": [
+      "`.size_bytes` is a `u64`",
+      "The dyad's read surface: two fields, and the type answers the rest"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'unsafe fn logos_member|\"parse\" => \\{|\"run\" => \\{|\"size_bytes\"|\"scope\" if' src/parse/fields.rs",
+        "output": "src/parse/fields.rs:1257:    unsafe fn logos_member(\nsrc/parse/fields.rs:1290:            \"parse\" => {\nsrc/parse/fields.rs:1302:            \"run\" => {\nsrc/parse/fields.rs:1309:            \"size_bytes\" if meta::is_record_type(logos) => {\nsrc/parse/fields.rs:1312:            \"size_bytes\" => match crate::identities::read::place_layout(self.types, logos) {\nsrc/parse/fields.rs:1320:            \"scope\" if meta::is_record_type(logos) => Ok(self",
+        "commit": "e14738b"
+      },
+      {
+        "command": "DESIGN ›.size_bytes is a u64‹ against the seed (why-probes/w42.txt): target/release/logos \"$l\"",
+        "output": "DESIGN.md: `i32.size_bytes` is `u64 4` ... `size_bytes` is a `share` member defined inside the type\n== i32.size_bytes\n4\n== bool.size_bytes\n4\n== pt := type ( a := i32 ? ), pt.size_bytes\n4",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W43",
+    "made": {
+      "at": "2026-10-01T00:50+02:00",
+      "by": "logoslang-why-P21-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:52+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "merged into W43",
+        "reason": "found blind by A and B: a type's facts are not members of the type; only a RECORD_TAG record holds the layout payload, and member reads are a Rust match per kind; one fix, every type holding its members in its own scope, removes both"
+      }
+    ]
+  },
+  {
+    "id": "W45",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The machine operation is looked up in Rust tables indexed by `NumType` (`arith_leaf`, `cmp_leaf`: `self.cmp[op][nt]`), the width the byte gives, not picked by a rule per operator and operand type identity, so a type need state nothing about its machine form beyond its tag",
+    "proposed_for": "W42",
+    "why": [
+      "W32",
+      "W47"
+    ],
+    "anchors": [
+      "arith_leaf",
+      "cmp_leaf",
+      "resolve_binary",
+      "src/identities/ops.rs",
+      "src/identities/binary.rs"
+    ],
+    "design": [
+      "Which machine operation an operator is (`+` over `i32` → `add_i32`) is a lowering rule",
+      "The dyad describes itself down to one fixed point"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'self.arith\\[op as usize\\]\\[nt as usize\\]|self.cmp\\[op as usize\\]\\[nt as usize\\]|types.ops.cmp_leaf\\(c, nt\\)|types.ops.arith_leaf\\(a, nt\\)' src/identities",
+        "output": "src/identities/ops.rs:68:        self.arith[op as usize][nt as usize]\nsrc/identities/ops.rs:72:        self.cmp[op as usize][nt as usize]\nsrc/identities/binary.rs:156:                [lhs, rhs, types.ops.arith_leaf(a, nt)]\nsrc/identities/binary.rs:175:            [lhs, rhs, types.ops.cmp_leaf(c, nt)]",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'one per operator and operand-type combination|whose layout is the seed.s only built-in knowledge' DESIGN.md",
+        "output": "DESIGN.md: A rewrite rule, one per operator and operand-type combination, picks the operation the first time the node is lowered or run\nDESIGN.md: Reading recurses through types and ends at the one dyad whose type is itself, whose layout is the seed's only built-in knowledge.",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:50+02:00",
+      "by": "logoslang-why-P21-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:52+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "accepted as a why of W42",
+        "reason": "A only; direct: op selection keyed by NumType means no type has to state its machine form, so the byte stays its only statement"
+      },
+      {
+        "at": "2026-10-01T00:56+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W32",
+        "reason": "both: resolve_binary takes both operand types from numtype_of as widths, so the tables can only be keyed by a width"
+      },
+      {
+        "at": "2026-10-01T00:56+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W47",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W46",
+    "kind": "why",
+    "status": "merged",
+    "text": "A type's record is a fixed Rust byte layout in `meta.rs`: the slots every type has (`parse_rank`, associativity, `parse`, `free`, `run`) sit at header offsets (`PREC_OFF` .. `EXTENT_OFF`), not in places `type`'s body declares, and a scope for a type's own `share` members exists only as the first word of the `RECORD_TAG` payload (`record_scope_of` reads `PAYLOAD_OFF`), so a type without that payload has nowhere to hold a member such as `size_bytes`",
+    "proposed_for": "W43",
+    "why": null,
+    "anchors": [
+      "record_scope_of",
+      "PAYLOAD_OFF",
+      "header",
+      "record",
+      "src/identities/meta.rs"
+    ],
+    "design": [
+      "A slot is filled with `=`; `:=` declares a member of your own",
+      "Plain data and hand-written types are one identity, `type`"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n '^const [A-Z_]+_OFF|^pub\\(crate\\) const PAYLOAD_OFF' src/identities/meta.rs; rg -n 'fn record_scope_of' -A 2 src/identities/meta.rs",
+        "output": "src/identities/meta.rs:60:const ASSOC_OFF: usize = 1;\nsrc/identities/meta.rs:62:const PREC_OFF: usize = 2;\nsrc/identities/meta.rs:63:const CTOR_OFF: usize = 10;\nsrc/identities/meta.rs:64:const DTOR_OFF: usize = 18;\nsrc/identities/meta.rs:66:const RUN_BODY_OFF: usize = 26;\nsrc/identities/meta.rs:68:const POINTER_TYPE_OFF: usize = 34;\nsrc/identities/meta.rs:69:const EXTENT_OFF: usize = 42;\nsrc/identities/meta.rs:70:pub(crate) const PAYLOAD_OFF: usize = 50;\nsrc/identities/meta.rs:183:pub(crate) unsafe fn record_scope_of(id: DyadPtr) -> DyadPtr {\nsrc/identities/meta.rs:184:    std::ptr::read_unaligned(dyad::head(id).add(PAYLOAD_OFF) as *const DyadPtr)",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'are places .type. declares for every type it builds' DESIGN.md",
+        "output": "DESIGN.md (### A slot is filled with `=`; `:=` declares a member of your own): `parse_rank`, `associativity`, `parse`, `run`, `free` and `print` are places `type` declares for every type it builds.",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W48",
+    "made": {
+      "at": "2026-10-01T00:53+02:00",
+      "by": "logoslang-why-P21-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:56+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "merged into W48",
+        "reason": "found blind by A and B: a type's record is a Rust byte layout whose payload the kind byte picks, not members type's body declares; a built-in has no body, so nothing can hold its size"
+      }
+    ]
+  },
+  {
+    "id": "W47",
+    "kind": "why",
+    "status": "accepted",
+    "text": "Which machine operation an operator gets is Rust code in its constructor at parse (`build_op` in `binary.rs`, a `match` on `Family`), not a lowering rule per operator and operand type that a backend identity carries, so the key is whatever that Rust code holds, the `NumType` from `resolve_binary`",
+    "proposed_for": "W45",
+    "why": [
+      "W49"
+    ],
+    "anchors": [
+      "build_op",
+      "resolve_binary",
+      "Family",
+      "src/identities/binary.rs"
+    ],
+    "design": [
+      "Which machine operation an operator is (`+` over `i32` → `add_i32`) is a lowering rule",
+      "Backends are identities, and lowering is keyed by them"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'fn build_op|let slots = match family|Family::Cmp\\(c\\) => \\{|let \\(\\[lhs, rhs\\], nt\\) = unsafe \\{ resolve_binary' src/identities/binary.rs; rg -n 'Seed:\\*\\* divergence: .\\+. resolves at parse' DESIGN.md",
+        "output": "src/identities/binary.rs:128:fn build_op(\nsrc/identities/binary.rs:136:    let slots = match family {\nsrc/identities/binary.rs:151:                let ([lhs, rhs], nt) = unsafe { resolve_binary(store, types, lhs, rhs) }?;\nsrc/identities/binary.rs:159:        Family::Cmp(c) => {\nsrc/identities/binary.rs:174:            let ([lhs, rhs], nt) = unsafe { resolve_binary(store, types, lhs, rhs) }?;\nDESIGN.md (### Which machine operation an operator is ...): - **Seed:** divergence: `+` resolves at parse; run tier since July 2026.",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:53+02:00",
+      "by": "logoslang-why-P21-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:56+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "accepted as a why of W45",
+        "reason": "A only; direct: the op choice is Rust code in the operator's constructor at parse, keyed by what resolve_binary hands it, not a backend lowering rule keyed by type identity; DESIGN's own Seed line names the divergence"
+      },
+      {
+        "at": "2026-10-01T00:58+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W49",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W48",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A type's record is a Rust byte blob whose payload shape the kind byte picks (`meta.rs`: \"payload, per kind\": ADDR a pointee, TUPLE/LIST an arity and roles, RECORD scope/fields/size_bytes/body/free, a number type or `bool` nothing), not members the type's body defines (›`.size_bytes` is a `u64`‹: a `share` member defined inside the type); a built-in type is registered with no body, so it has no member to hold a size, and `type`'s own body (`identities/type.logos`) declares no `size_bytes` slot for every type either",
+    "proposed_for": "W43",
+    "why": [
+      "W52"
+    ],
+    "anchors": [
+      "src/identities/meta.rs",
+      "record_assoc",
+      "operand_record",
+      "record_layout",
+      "identities/type.logos",
+      "record_scope_of",
+      "PAYLOAD_OFF",
+      "header",
+      "record"
+    ],
+    "design": [
+      "`.size_bytes` is a `u64`",
+      "The dyad's read surface: two fields, and the type answers the rest",
+      "A slot is filled with `=`; `:=` declares a member of your own",
+      "Plain data and hand-written types are one identity, `type`"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'payload, per kind|ADDR              pointee|TUPLE/LIST         u8 arity|A record type node.s record: payload|header\\((kind|ADDR_TAG|RECORD_TAG)' src/identities/meta.rs",
+        "output": "src/identities/meta.rs:20://! [50..]     payload, per kind:\nsrc/identities/meta.rs:21://!              ADDR              pointee type node (`dyad@`)\nsrc/identities/meta.rs:22://!              TUPLE/LIST         u8 arity, then arity × `dyad@` role-name strings\nsrc/identities/meta.rs:53:/// A record type node's record: payload `[scope: @dyad][fields: @dyad][size_bytes: u64]\nsrc/identities/meta.rs:132:    let blob = header(kind, assoc, parse_rank);            (record: no payload)\nsrc/identities/meta.rs:145:    let mut blob = header(kind, assoc, parse_rank).to_vec();  (operand_record)\nsrc/identities/meta.rs:155:    let mut blob = header(ADDR_TAG, Assoc::Left, prec::INERT).to_vec();\nsrc/identities/meta.rs:169:    let mut blob = header(RECORD_TAG, assoc, parse_rank).to_vec();  (record_layout)",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n ':= ' identities/type.logos",
+        "output": "type := type (\n    parse_rank := f64 ?\n    associativity := ?\n    parse := parse ?\n    run := run ?\n    free := free ?\n(no size_bytes, fields or scope)",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n '^const [A-Z_]+_OFF|^pub\\(crate\\) const PAYLOAD_OFF' src/identities/meta.rs; rg -n 'fn record_scope_of' -A 2 src/identities/meta.rs",
+        "output": "src/identities/meta.rs:60:const ASSOC_OFF: usize = 1;\nsrc/identities/meta.rs:62:const PREC_OFF: usize = 2;\nsrc/identities/meta.rs:63:const CTOR_OFF: usize = 10;\nsrc/identities/meta.rs:64:const DTOR_OFF: usize = 18;\nsrc/identities/meta.rs:66:const RUN_BODY_OFF: usize = 26;\nsrc/identities/meta.rs:68:const POINTER_TYPE_OFF: usize = 34;\nsrc/identities/meta.rs:69:const EXTENT_OFF: usize = 42;\nsrc/identities/meta.rs:70:pub(crate) const PAYLOAD_OFF: usize = 50;\nsrc/identities/meta.rs:183:pub(crate) unsafe fn record_scope_of(id: DyadPtr) -> DyadPtr {\nsrc/identities/meta.rs:184:    std::ptr::read_unaligned(dyad::head(id).add(PAYLOAD_OFF) as *const DyadPtr)",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'are places .type. declares for every type it builds' DESIGN.md",
+        "output": "DESIGN.md (### A slot is filled with `=`; `:=` declares a member of your own): `parse_rank`, `associativity`, `parse`, `run`, `free` and `print` are places `type` declares for every type it builds.",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "A type's record is a fixed Rust byte layout in `meta.rs`: the slots every type has (`parse_rank`, associativity, `parse`, `free`, `run`) sit at header offsets (`PREC_OFF` .. `EXTENT_OFF`), not in places `type`'s body declares, and a scope for a type's own `share` members exists only as the first word of the `RECORD_TAG` payload (`record_scope_of` reads `PAYLOAD_OFF`), so a type without that payload has nowhere to hold a member such as `size_bytes`"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:53+02:00",
+      "by": "logoslang-why-P21-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:56+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "accepted as a why of W43, same as W46",
+        "reason": "found blind by A and B: a type's record is a Rust byte layout whose payload the kind byte picks, not members type's body declares; a built-in has no body, so nothing can hold its size"
+      },
+      {
+        "at": "2026-10-01T00:58+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W52",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W49",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The seed has no backend identity to carry lowering rules: lowering is one Rust `LowerTable` (`HashMap<DyadPtr, LowerFn>`, operator identity to a Rust fn, 23 `lower.insert` fills in 18 files) for the one Cranelift backend, the \"one lowering slot per identity\" ›Backends are identities, and lowering is keyed by them‹ rejects; with no per-backend rule set to hold an (operator, operand type) rule, the op choice stays in the operator's constructor",
+    "proposed_for": "W47",
+    "why": [],
+    "anchors": [
+      "LowerTable",
+      "LowerFn",
+      "src/compile.rs",
+      "build_op",
+      "src/identities/mod.rs"
+    ],
+    "design": [
+      "Backends are identities, and lowering is keyed by them",
+      "Which machine operation an operator is (`+` over `i32` → `add_i32`) is a lowering rule"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'pub type LowerTable|Some\\(f\\) => f\\(self, node\\)' src/compile.rs; rg -c 'lower\\.insert\\(' src --glob '!*tests.rs'; rg -in 'backend' src --glob '!*tests.rs'",
+        "output": "src/compile.rs:82:pub type LowerTable = HashMap<DyadPtr, LowerFn>;\nsrc/compile.rs:162:                Some(f) => f(self, node),\nlower.insert( : 23 fills in 18 files\nsrc/report.rs:477:        CompileError::Cranelift(msg) => format!(\"the backend rejected this: {msg}\"),   (the only mention of a backend in src)",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'one lowering slot per identity|Nothing per identity may hard-code one backend' DESIGN.md",
+        "output": "DESIGN.md: ... Nothing per identity may hard-code one backend; lowering is per backend, per identity.\nDESIGN.md: - **Why:** one lowering slot per identity would repeat the mistake of one mutable code field on `+`.",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'pub type LowerTable' src/compile.rs; rg -n 'cx.lower.insert' src | wc -l; rg -in 'backend' src --glob '*.rs'",
+        "output": "src/compile.rs:82:pub type LowerTable = HashMap<DyadPtr, LowerFn>;\n23\nsrc/report.rs:477:        CompileError::Cranelift(msg) => format!(\"the backend rejected this: {msg}\"),   (the only mention: no backend identity)",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'A backend is an ordinary identity carrying its own mapping|Nothing per identity may hard-code one backend' DESIGN.md",
+        "output": "DESIGN.md (### Backends are identities, and lowering is keyed by them): A backend is an ordinary identity carrying its own mapping from node kinds to emission code. ... Nothing per identity may hard-code one backend; lowering is per backend, per identity.",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "The seed has no lowering rule set and no backend identity: lowering is one global `LowerTable`, a Rust `HashMap` from a node's identity to a Cranelift `LowerFn` (23 `cx.lower.insert` entries), so a rule keyed by operator and operand type has nowhere to live and the choice stays in the constructor"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:57+02:00",
+      "by": "logoslang-why-P21-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:58+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "accepted as a why of W47, same as W51",
+        "reason": "found blind by A and B: no backend identity carries lowering rules; one global LowerTable maps an identity to one Cranelift fn, so an (operator, operand type) rule has nowhere to live; both checked W4: related, not the same"
+      },
+      {
+        "at": "2026-10-01T01:03+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "asked: no why found",
+        "reason": "root: B none, and A none once W56 is not taken; nothing records the one LowerTable as a stand-in for ›Backends are identities, and lowering is keyed by them‹"
+      }
+    ]
+  },
+  {
+    "id": "P26",
+    "kind": "problem",
+    "status": "open",
+    "text": "A comparison adds to a number: `(x == 1) + 1` prints `2`",
+    "program": "x := i32 1, (x == 1) + 1",
+    "output": "2\nexit 0",
+    "expected": "refused, as `true + 1` is (\"this operator cannot compute over these operands\"): a comparison yields `bool` (›No implicit coercion; a numeric type applied to a value is the conversion‹: \"Comparisons resolve operands the same way and yield `bool`\")",
+    "tier": "interpreted",
+    "found": "sibling probe in the why run on P21 (logoslang-why-P21-a and -b, 1 October 2026); rerun by Orchestrator (2) on dev e14738b, release, command line",
+    "why": [
+      "W37",
+      "W45"
+    ],
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:57+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:57+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W37",
+        "reason": "A's probe: (x == 1) + 1 prints 2 while true + 1 is refused; resolve_binary asks numtype_of, which answers I32 for a comparison and NonNumeric for a bool literal"
+      },
+      {
+        "at": "2026-10-01T00:57+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W45",
+        "reason": "B: the op is looked up by NumType, so + over the comparison's I32 is add_i32, and no rule per type identity refuses a bool"
+      }
+    ]
+  },
+  {
+    "id": "P27",
+    "kind": "problem",
+    "status": "open",
+    "text": "A comparison is stored into an `i32` place without a conversion",
+    "program": "x := i32 1, mut a := i32 0, a = x == 1, a",
+    "output": "1\nexit 0",
+    "expected": "refused, as `a = true` is (\"these types do not match (crossing types needs an explicit cast)\"): a comparison yields `bool`, and crossing types takes a conversion (›No implicit coercion; a numeric type applied to a value is the conversion‹)",
+    "tier": "interpreted",
+    "found": "sibling probe in the why run on P21 (logoslang-why-P21-a and -b, 1 October 2026); rerun by Orchestrator (2) on dev e14738b, release, command line",
+    "why": [
+      "W37"
+    ],
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:57+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:57+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W37",
+        "reason": "A's and B's probes: check_store_type compares the i32 place against numtype_of's answer, I32 for a comparison and NonNumeric for true"
+      }
+    ]
+  },
+  {
+    "id": "P28",
+    "kind": "problem",
+    "status": "open",
+    "text": "An `if` whose arms are `true` and `false` prints `1`",
+    "program": "x := i32 1, if (x == 1) (true) else (false)",
+    "output": "1\nexit 0",
+    "expected": "`true`: the `if` gives back its arms' type, `bool` (›A node's output type is per node, and its parse writes it‹); `true` alone prints `true`",
+    "tier": "interpreted",
+    "found": "sibling probe in the why run on P21 (logoslang-why-P21-a and -b, 1 October 2026); rerun by Orchestrator (2) on dev e14738b, release, command line",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:57+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W50",
+    "kind": "why",
+    "status": "merged",
+    "text": "The seed never loads `identities/type.logos`: `type` and the slots every type has are hand-built in Rust, the header offsets in `meta.rs` and `SLOT_NAMES` in `types.rs`, a hand-kept list that disagrees with type.logos (it has `lex_rank`, which type.logos says is not a slot, and lacks `free`), so what a type's record holds follows the Rust and nothing ties it to `type`'s body",
+    "proposed_for": "W48",
+    "why": null,
+    "anchors": [
+      "SLOT_NAMES",
+      "identities/type.logos",
+      "src/parse/types.rs",
+      "src/identities/meta.rs"
+    ],
+    "design": [
+      "Still to be written in type.logos; reflection of fields is open",
+      "A slot is filled with `=`; `:=` declares a member of your own"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'type\\.logos' src --glob '*.rs'; rg -n 'pub const SLOT_NAMES' src/parse/types.rs; rg -n ':= .* \\?$|lex_rank is not here' identities/type.logos",
+        "output": "src/parse/types.rs:582:        // The slot words are the fields `type` declares (identities/type.logos):   (a comment; no Rust reads the file)\nsrc/parse/types.rs:53:pub const SLOT_NAMES: [&str; 5] = [\"parse_rank\", \"lex_rank\", \"associativity\", \"parse\", \"run\"];\nidentities/type.logos:  ... it lives on the binding (14 September 2026).   (\"lex_rank is not here\")\nidentities/type.logos:    parse_rank := f64 ?\nidentities/type.logos:    associativity := ?\nidentities/type.logos:    parse := parse ?\nidentities/type.logos:    run := run ?\nidentities/type.logos:    free := free ?",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'Every field under the .type. scope must be expressed there' DESIGN.md",
+        "output": "DESIGN.md (### Still to be written in type.logos; reflection of fields is open): Direction (23 September 2026, Thobias): type.logos is not done. Every field under the `type` scope must be expressed there, and the definition of `type` must define what `run` and `free` do, much as `parse` is, or the language is not self-contained.",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W52",
+    "made": {
+      "at": "2026-10-01T00:57+02:00",
+      "by": "logoslang-why-P21-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:58+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "merged into W52",
+        "reason": "found blind by A and B: which slots a type's record holds is Rust's choice per kind tag (A: type.logos is never loaded and SLOT_NAMES is hand-kept), not the fields type declares; DESIGN allows one built-in layout, the fixed point's"
+      }
+    ]
+  },
+  {
+    "id": "W51",
+    "kind": "why",
+    "status": "merged",
+    "text": "The seed has no lowering rule set and no backend identity: lowering is one global `LowerTable`, a Rust `HashMap` from a node's identity to a Cranelift `LowerFn` (23 `cx.lower.insert` entries), so a rule keyed by operator and operand type has nowhere to live and the choice stays in the constructor",
+    "proposed_for": "W47",
+    "why": null,
+    "anchors": [
+      "LowerTable",
+      "LowerFn",
+      "src/compile.rs",
+      "src/identities/mod.rs"
+    ],
+    "design": [
+      "Backends are identities, and lowering is keyed by them",
+      "Which machine operation an operator is (`+` over `i32` → `add_i32`) is a lowering rule"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'pub type LowerTable' src/compile.rs; rg -n 'cx.lower.insert' src | wc -l; rg -in 'backend' src --glob '*.rs'",
+        "output": "src/compile.rs:82:pub type LowerTable = HashMap<DyadPtr, LowerFn>;\n23\nsrc/report.rs:477:        CompileError::Cranelift(msg) => format!(\"the backend rejected this: {msg}\"),   (the only mention: no backend identity)",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'A backend is an ordinary identity carrying its own mapping|Nothing per identity may hard-code one backend' DESIGN.md",
+        "output": "DESIGN.md (### Backends are identities, and lowering is keyed by them): A backend is an ordinary identity carrying its own mapping from node kinds to emission code. ... Nothing per identity may hard-code one backend; lowering is per backend, per identity.",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W49",
+    "made": {
+      "at": "2026-10-01T00:57+02:00",
+      "by": "logoslang-why-P21-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:58+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "merged into W49",
+        "reason": "found blind by A and B: no backend identity carries lowering rules; one global LowerTable maps an identity to one Cranelift fn, so an (operator, operand type) rule has nowhere to live; both checked W4: related, not the same"
+      }
+    ]
+  },
+  {
+    "id": "W52",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The seed reads a type's record by fixed Rust offsets chosen per kind tag (`meta.rs`'s byte-offset table, then \"payload, per kind\"; `record_size_of` at `PAYLOAD_OFF + 16`; 14 tag constants beside the 10 `NumType` tags), not through the fields `type` declares, so the seed has built-in knowledge of every record shape where ›The dyad describes itself down to one fixed point‹ allows one, the fixed point's; which slots a type's record has is thus Rust's choice per tag",
+    "proposed_for": "W48",
+    "why": [
+      "W54"
+    ],
+    "anchors": [
+      "src/identities/meta.rs",
+      "record_size_of",
+      "PAYLOAD_OFF",
+      "kind_of",
+      "identities/type.logos",
+      "SLOT_NAMES",
+      "src/parse/types.rs"
+    ],
+    "design": [
+      "The dyad describes itself down to one fixed point",
+      "The dyad's read surface: two fields, and the type answers the rest",
+      "Still to be written in type.logos; reflection of fields is open",
+      "A slot is filled with `=`; `:=` declares a member of your own"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'Record layout \\(unaligned|payload, per kind|read_unaligned\\(dyad::head\\(id\\).add\\(PAYLOAD_OFF \\+ 16\\)' src/identities/meta.rs; rg -n 'pub\\(crate\\) const [A-Z_]*TAG: u8' src/identities | wc -l; rg -c 'PAYLOAD_OFF \\+ [0-9]+' src/identities/meta.rs",
+        "output": "src/identities/meta.rs:7://! Record layout (unaligned, native-endian, byte offsets):\nsrc/identities/meta.rs:20://! [50..]     payload, per kind:\nsrc/identities/meta.rs:196:    std::ptr::read_unaligned(dyad::head(id).add(PAYLOAD_OFF + 16) as *const u64)   (record_size_of)\n14   (tag constants beside NumType 0..9)\n6    (fixed PAYLOAD_OFF + n reads in meta.rs)",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'whose layout is the seed.s only built-in knowledge' DESIGN.md",
+        "output": "DESIGN.md (### The dyad describes itself down to one fixed point): Reading recurses through types and ends at the one dyad whose type is itself, whose layout is the seed's only built-in knowledge.",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'type\\.logos' src --glob '*.rs'; rg -n 'pub const SLOT_NAMES' src/parse/types.rs; rg -n ':= .* \\?$|lex_rank is not here' identities/type.logos",
+        "output": "src/parse/types.rs:582:        // The slot words are the fields `type` declares (identities/type.logos):   (a comment; no Rust reads the file)\nsrc/parse/types.rs:53:pub const SLOT_NAMES: [&str; 5] = [\"parse_rank\", \"lex_rank\", \"associativity\", \"parse\", \"run\"];\nidentities/type.logos:  ... it lives on the binding (14 September 2026).   (\"lex_rank is not here\")\nidentities/type.logos:    parse_rank := f64 ?\nidentities/type.logos:    associativity := ?\nidentities/type.logos:    parse := parse ?\nidentities/type.logos:    run := run ?\nidentities/type.logos:    free := free ?",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'Every field under the .type. scope must be expressed there' DESIGN.md",
+        "output": "DESIGN.md (### Still to be written in type.logos; reflection of fields is open): Direction (23 September 2026, Thobias): type.logos is not done. Every field under the `type` scope must be expressed there, and the definition of `type` must define what `run` and `free` do, much as `parse` is, or the language is not self-contained.",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "The seed never loads `identities/type.logos`: `type` and the slots every type has are hand-built in Rust, the header offsets in `meta.rs` and `SLOT_NAMES` in `types.rs`, a hand-kept list that disagrees with type.logos (it has `lex_rank`, which type.logos says is not a slot, and lacks `free`), so what a type's record holds follows the Rust and nothing ties it to `type`'s body"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:57+02:00",
+      "by": "logoslang-why-P21-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:58+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "accepted as a why of W48, same as W50",
+        "reason": "found blind by A and B: which slots a type's record holds is Rust's choice per kind tag (A: type.logos is never loaded and SLOT_NAMES is hand-kept), not the fields type declares; DESIGN allows one built-in layout, the fixed point's"
+      },
+      {
+        "at": "2026-10-01T01:03+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "why + W54",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W53",
+    "kind": "why",
+    "status": "rejected",
+    "text": "The seed never reads `identities/type.logos`: `type` is built by hand in Rust, its slot words are a hand-kept copy, `SLOT_NAMES` in `parse/types.rs` (`parse_rank`, `lex_rank`, `associativity`, `parse`, `run`; `free` handled apart), which already differs from what `type.logos` declares, so no declared field list of `type` reaches the code that lays out and reads a record",
+    "proposed_for": "W52",
+    "why": null,
+    "anchors": [
+      "SLOT_NAMES",
+      "identities/type.logos",
+      "src/parse/types.rs",
+      "src/identities/meta.rs"
+    ],
+    "design": [
+      "The dyad describes itself down to one fixed point",
+      "Still to be written in type.logos; reflection of fields is open"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'include_str|type\\.logos' src --glob '!*tests.rs'; rg -n 'pub const SLOT_NAMES' src/parse/types.rs",
+        "output": "src/parse/types.rs:582:        // The slot words are the fields `type` declares (identities/type.logos):   (a comment; nothing loads the file)\nsrc/parse/types.rs:53:pub const SLOT_NAMES: [&str; 5] = [\"parse_rank\", \"lex_rank\", \"associativity\", \"parse\", \"run\"];",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n ':= |lex_rank|hand-built' identities/type.logos",
+        "output": "# fills its own below. type.logos alone declares them, ... the ground is hand-built by the seed, and nothing predeclares the slots for\n# it. lex_rank is not here: it lives on the binding (14 September 2026).\ntype := type (\n    parse_rank := f64 ?\n    associativity := ?\n    parse := parse ?\n    run := run ?\n    free := free ?",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:59+02:00",
+      "by": "logoslang-why-P21-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:03+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "rejected",
+        "reason": "fails the direct test: ›The core is one hand-built cyclic graph, not a sequence‹ lets the seed build type in Rust, type.logos being its specification, checked against it later; a hand-built type that declared its fields would end W52 without loading type.logos (A). SLOT_NAMES disagreeing with type.logos is a problem of its own, not a cause of W52"
+      }
+    ]
+  },
+  {
+    "id": "W54",
+    "kind": "why",
+    "status": "accepted",
+    "text": "`type.logos` does not yet declare the slots a type's record holds beyond `parse_rank`, `associativity`, `parse`, `run`, `free` (no `scope`, `fields`, `size_bytes`, pointer type, extent), and DESIGN has no rule yet for what a type exposes about its fields (›Still to be written in type.logos; reflection of fields is open‹: \"type.logos is not done\", the fields reflection Open), so there is no declared shape a record could be read through, and the seed's per-tag offsets stand in",
+    "proposed_for": "W52",
+    "why": [],
+    "anchors": [
+      "identities/type.logos",
+      "src/identities/meta.rs",
+      "record_layout",
+      "src/reflect.rs",
+      "TYPEREC_TAG",
+      "record",
+      "src/identities/mod.rs"
+    ],
+    "design": [
+      "Still to be written in type.logos; reflection of fields is open",
+      "The dyad's read surface: two fields, and the type answers the rest",
+      "The core is one hand-built cyclic graph, not a sequence",
+      "The dyad describes itself down to one fixed point"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n ':= ' identities/type.logos; rg -n 'type.logos is not done|Every field under the .type. scope must be expressed there|what a type exposes to reflection about its fields' DESIGN.md",
+        "output": "identities/type.logos: type := type ( parse_rank := f64 ?, associativity := ?, parse := parse ?, run := run ?, free := free ? )   (nothing else)\nDESIGN.md: Direction (23 September 2026, Thobias): type.logos is not done. Every field under the `type` scope must be expressed there, ...\nDESIGN.md: - **Open:** what a type exposes to reflection about its fields (spelled then `^.fields.length`, ...)",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'extent|pointer type|size_bytes|fields|scope' src/identities/meta.rs | head -8   (the record slots Rust holds that type.logos lacks)",
+        "output": "//! [34..42]   u64  pointer type: the interned `@T` of this type, or 0\n//! [42..50]   u64  extent: a `seed-extent` callable leaf ...\n/// A record type node's record: payload `[scope: @dyad][fields: @dyad][size_bytes: u64]",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'let record = meta::record\\(cx.store, meta::TYPEREC_TAG, meta::prec::READER\\)' src/identities/mod.rs; rg -n 'meta::TYPEREC_TAG \\| meta::DYAD_TAG => Some' src/identities/read.rs",
+        "output": "src/identities/mod.rs:247:        let record = meta::record(cx.store, meta::TYPEREC_TAG, meta::prec::READER);\nsrc/identities/read.rs:172:        meta::TYPEREC_TAG | meta::DYAD_TAG => Some((Read::Container(t), 8)),   (a type value is an 8-byte address, no layout of its own)",
+        "commit": "e14738b"
+      },
+      {
+        "command": "member reads on `type` itself (why-probes/w52.txt): target/release/logos \"$l\"",
+        "output": "== type.size_bytes\nerror: this read does not fit the node's type\n== type.scope\nerror: this read does not fit the node's type\n== type.parse_rank\n92.0   (from the header offset, PREC_OFF)\n== pt := type ( a := i32 ? ), pt.scope\ndyad",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "The hand-built `type` is a bare `TYPEREC_TAG` header (`meta::record(cx.store, meta::TYPEREC_TAG, meta::prec::READER)` in `identities/mod.rs`) that declares no fields, scope or `size_bytes`, so there are no fields of `type` a reader of a type's record could go through, and every reader uses the Rust offsets"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:59+02:00",
+      "by": "logoslang-why-P21-b",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:03+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "accepted as a why of W52, same as W55",
+        "reason": "found blind by A and B: type declares no layout members, neither the hand-built TYPEREC_TAG record (A) nor its specification type.logos (B), so there is no declared shape to read a record through"
+      },
+      {
+        "at": "2026-10-01T01:03+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "asked: no why found",
+        "reason": "root: behind it is only that type.logos is not done (›Still to be written in type.logos; reflection of fields is open‹). DESIGN already puts .size_bytes and .fields on every type (›The dyad's read surface: two fields, and the type answers the rest‹, ›.size_bytes is a u64‹); Open is how a type reflects its fields, and whether type itself declares size_bytes for every type (B's question for Thobias)"
+      }
+    ]
+  },
+  {
+    "id": "W55",
+    "kind": "why",
+    "status": "merged",
+    "text": "The hand-built `type` is a bare `TYPEREC_TAG` header (`meta::record(cx.store, meta::TYPEREC_TAG, meta::prec::READER)` in `identities/mod.rs`) that declares no fields, scope or `size_bytes`, so there are no fields of `type` a reader of a type's record could go through, and every reader uses the Rust offsets",
+    "proposed_for": "W52",
+    "why": null,
+    "anchors": [
+      "TYPEREC_TAG",
+      "record",
+      "src/identities/mod.rs",
+      "src/identities/meta.rs"
+    ],
+    "design": [
+      "The core is one hand-built cyclic graph, not a sequence",
+      "The dyad describes itself down to one fixed point"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'let record = meta::record\\(cx.store, meta::TYPEREC_TAG, meta::prec::READER\\)' src/identities/mod.rs; rg -n 'meta::TYPEREC_TAG \\| meta::DYAD_TAG => Some' src/identities/read.rs",
+        "output": "src/identities/mod.rs:247:        let record = meta::record(cx.store, meta::TYPEREC_TAG, meta::prec::READER);\nsrc/identities/read.rs:172:        meta::TYPEREC_TAG | meta::DYAD_TAG => Some((Read::Container(t), 8)),   (a type value is an 8-byte address, no layout of its own)",
+        "commit": "e14738b"
+      },
+      {
+        "command": "member reads on `type` itself (why-probes/w52.txt): target/release/logos \"$l\"",
+        "output": "== type.size_bytes\nerror: this read does not fit the node's type\n== type.scope\nerror: this read does not fit the node's type\n== type.parse_rank\n92.0   (from the header offset, PREC_OFF)\n== pt := type ( a := i32 ? ), pt.scope\ndyad",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W54",
+    "made": {
+      "at": "2026-10-01T01:00+02:00",
+      "by": "logoslang-why-P21-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:03+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "merged into W54",
+        "reason": "found blind by A and B: type declares no layout members, neither the hand-built TYPEREC_TAG record (A) nor its specification type.logos (B), so there is no declared shape to read a record through"
+      }
+    ]
+  },
+  {
+    "id": "W56",
+    "kind": "why",
+    "status": "rejected",
+    "text": "DESIGN defers backend identities in the seed: ›The seed compiles only when told‹ makes the `backend cranelift (...)` marker later work and ›A small Rust seed starts the system‹ gives the seed \"a path to Cranelift\", so no rule says when the one `LowerTable` must become per-backend rule sets",
+    "proposed_for": "W49",
+    "why": null,
+    "anchors": [
+      "LowerTable",
+      "LowerFn",
+      "src/compile.rs"
+    ],
+    "design": [
+      "The seed compiles only when told: `compile f` (spelled `f.compile()` until 27 September 2026, see ›`fn` is not a primitive‹)",
+      "A small Rust seed starts the system",
+      "Backends are identities, and lowering is keyed by them"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'marker and profile-driven promotion are later work|a path to Cranelift' DESIGN.md",
+        "output": "DESIGN.md (### The seed compiles only when told ...): The `backend cranelift (...)` marker and profile-driven promotion are later work on the same deopt boundary.\nDESIGN.md (### A small Rust seed starts the system): The seed holds the minimum: a parser producing LG nodes, an evaluator for them, enough type machinery to check the kernel, a path to Cranelift.",
+        "commit": "e14738b"
+      },
+      {
+        "command": "rg -n 'pub type LowerTable' src/compile.rs; rg -in 'backend' src --glob '*.rs'",
+        "output": "src/compile.rs:82:pub type LowerTable = HashMap<DyadPtr, LowerFn>;\nsrc/report.rs:477:        CompileError::Cranelift(msg) => format!(\"the backend rejected this: {msg}\"),",
+        "commit": "e14738b"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T01:00+02:00",
+      "by": "logoslang-why-P21-a",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "e14738b",
+      "run": "why-P21",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:03+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "e14738b",
+        "change": "rejected",
+        "reason": "the later work in ›The seed compiles only when told‹ is the backend cranelift (...) marker, not backend identities; ›Backends are identities, and lowering is keyed by them‹ is ruled (July 2026) and has no Seed line, so W49 is the seed diverging from a rule DESIGN has; when the seed gets a backend identity is for the solution talk"
+      }
+    ]
   }
 ]
