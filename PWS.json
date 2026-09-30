@@ -4941,5 +4941,1533 @@
         "reason": "the later work in ›The seed compiles only when told‹ is the backend cranelift (...) marker, not backend identities; ›Backends are identities, and lowering is keyed by them‹ is ruled (July 2026) and has no Seed line, so W49 is the seed diverging from a rule DESIGN has; when the seed gets a backend identity is for the solution talk"
       }
     ]
+  },
+  {
+    "id": "P29",
+    "kind": "problem",
+    "status": "open",
+    "text": "After a call fails inside a compiled function, the next line of the function still runs",
+    "program": "p := alloc 1 of i32 5\ng := fn () -> i32 ( error «stop» )\nf := fn () -> i32 ( g(), p@ = 9, 1 )\nf.compile()\nf()\np@",
+    "output": "logos 0.1.0 — one expression per line, ctrl-d to exit\n» » » » » run error: stop\n» 9\n» \nexit 0",
+    "expected": "`p@` prints `5`, as it does interpreted: the failing call stops the function, and nothing after it runs (›A checked error is a fault: the task that hit it is cancelled‹: \"stopped at its last boundary, pending `defer`s of its live scopes run, no further steps\")",
+    "tier": "compiled (REPL on stdin, after f.compile()); interpreted, p@ prints 5",
+    "found": "logoslang-issue-192-review-2 (session 247213f5), review round 2 of #192, 1 October 2026, dev bb1c561; rerun by Orchestrator (2) on dev bb1c561, release, REPL on stdin",
+    "why": [
+      "W58"
+    ],
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T01:19+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "bb1c561",
+      "run": null,
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:27+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "why + W58",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W57",
+    "kind": "why",
+    "status": "merged",
+    "text": "A compiled call never checks for a parked fault: lower_call_into takes the callee's 0 (left by interpret_call, park_call_depth or a compiled callee) and lowers the next expression, since Context pending is read only by call_compiled when the outermost machine code returns",
+    "proposed_for": "P29",
+    "why": null,
+    "anchors": [
+      "lower_call_into",
+      "interpret_call",
+      "park",
+      "park_call_depth",
+      "call_compiled",
+      "src/compile.rs",
+      "src/run.rs"
+    ],
+    "design": [
+      "A checked error is a fault: the task that hit it is cancelled",
+      "Interpreted by default; any function can be JIT compiled, mutable code included"
+    ],
+    "evidence": [
+      {
+        "command": "grep -rn pending src/compile.rs src/run.rs | grep -v '///'",
+        "output": "src/run.rs:130:    pending: Option<RunError>,\nsrc/run.rs:141:            pending: None,\nsrc/run.rs:247:    (*ctx).pending.get_or_insert(e);\nsrc/run.rs:814:        (*this).ctx.pending = None;\nsrc/run.rs:818:        match self.ctx.pending.take() {\n(no read in src/compile.rs; run.rs:196 says 'The machine code runs on with the 0 and may call back in before the park surfaces')",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "for f in why-probes/s1-compiled-callee.logos why-probes/s2-arg-zero.logos why-probes/s3-depth.logos; do target/release/logos < $f; done",
+        "output": "s1 (h errors, g := fn () -> i32 ( h() ) compiled, f := fn () -> i32 ( g(), p@ = 9, 1 ) compiled): run error: stop / p@ -> 9\ns2 (k := fn (x := i32 ?) -> i32 ( p@ = x, 1 ), f := fn () -> i32 ( k(g()) ) compiled): run error: stop / p@ -> 0 (k ran with the parked zero)\ns3 (r := fn (n := i32 ?) -> i32 ( r(n + 1), p@ = 9, 1 ) compiled): run error: calls nested deeper than 10000 / p@ -> 9\ninterpreted P29: p@ -> 5",
+        "commit": "bb1c561"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W58",
+    "made": {
+      "at": "2026-10-01T01:26+02:00",
+      "by": "logoslang-why-P29-b",
+      "model": "opus",
+      "effort": "high",
+      "commit": "bb1c561",
+      "run": "why-P29",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:27+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "merged into W58",
+        "reason": "Same cause, one fix removes both: after a call, compiled code never tests the parked fault (`lower_call_into` emits no test of `pending`; only `call_compiled` reads it once the outermost machine code returns). Direct test passes: this alone lets the line after the failing call run. A and B reproduced it on dev bb1c561 (compiled p@ 9, interpreted 5) with sibling programs. A's text kept: it names all three places that park (park_null_pointer too). W4 is not the same cause: fixing W58 leaves W4, so W4 is at most a why under it, for the next round."
+      }
+    ]
+  },
+  {
+    "id": "W58",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A fault inside a call from compiled code is parked in the context's `pending` (by `interpret_call`, `park_call_depth`, `park_null_pointer`) and 0 is handed back as the result; `lower_call_into` emits no test of `pending` after the call, so the caller's next line runs, and `pending` is read only by `call_compiled` after the outermost machine code has returned",
+    "proposed_for": "P29",
+    "why": [
+      "W59"
+    ],
+    "anchors": [
+      "lower_call_into",
+      "interpret_call",
+      "park",
+      "park_call_depth",
+      "park_null_pointer",
+      "call_compiled",
+      "Context",
+      "src/compile.rs",
+      "src/run.rs"
+    ],
+    "design": [
+      "A checked error is a fault: the task that hit it is cancelled",
+      "Interpreted by default; any function can be JIT compiled, mutable code included"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'pending' src/run.rs src/compile.rs",
+        "output": "src/run.rs:130:    pending: Option<RunError>,\nsrc/run.rs:141:            pending: None,\nsrc/run.rs:247:    (*ctx).pending.get_or_insert(e);     (park)\nsrc/run.rs:814:        (*this).ctx.pending = None;       (call_compiled, before the jump)\nsrc/run.rs:818:        match self.ctx.pending.take() {    (call_compiled, after the machine code returns)\n(no hit in src/compile.rs: no compiled code reads pending)",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "rg -n 'park_|interpret_call' src/compile.rs",
+        "output": "src/compile.rs:377:                let entry = crate::run::park_null_pointer as *const () as usize;\nsrc/compile.rs:1011:                let entry = crate::run::interpret_call as *const () as usize;\nsrc/compile.rs:1279:            builder.ins().iconst(ptr_ty, crate::run::park_call_depth as *const () as usize as i64);\n(three park sites; after each the lowering goes on to the next node: guard_non_null's doc: 'the faulted call runs on over zeros the runtime discards when it reads the park back')",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "for f in interp named depth; do ./target/release/logos < why-probes/p29-repl-$f.logos | tail -n +2; done   # dev bb1c561, release, REPL; interp: f() uncompiled; named: f := fn () -> i32 ( x := g(), p@ = 9, x ), f.compile(); depth: h := fn (n := i32 ?) -> i32 ( h(n + 1) ), f := fn () -> i32 ( h(1), p@ = 9, 1 ), h.compile(), f.compile()",
+        "output": "interp: » » » » run error: stop\n» 5\nnamed:  » » » » » run error: stop\n» 9\ndepth:  » » » » » » run error: calls nested deeper than 10000: is this recursion ending?\n» 9",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "grep -rn pending src/compile.rs src/run.rs | grep -v '///'",
+        "output": "src/run.rs:130:    pending: Option<RunError>,\nsrc/run.rs:141:            pending: None,\nsrc/run.rs:247:    (*ctx).pending.get_or_insert(e);\nsrc/run.rs:814:        (*this).ctx.pending = None;\nsrc/run.rs:818:        match self.ctx.pending.take() {\n(no read in src/compile.rs; run.rs:196 says 'The machine code runs on with the 0 and may call back in before the park surfaces')",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "for f in why-probes/s1-compiled-callee.logos why-probes/s2-arg-zero.logos why-probes/s3-depth.logos; do target/release/logos < $f; done",
+        "output": "s1 (h errors, g := fn () -> i32 ( h() ) compiled, f := fn () -> i32 ( g(), p@ = 9, 1 ) compiled): run error: stop / p@ -> 9\ns2 (k := fn (x := i32 ?) -> i32 ( p@ = x, 1 ), f := fn () -> i32 ( k(g()) ) compiled): run error: stop / p@ -> 0 (k ran with the parked zero)\ns3 (r := fn (n := i32 ?) -> i32 ( r(n + 1), p@ = 9, 1 ) compiled): run error: calls nested deeper than 10000 / p@ -> 9\ninterpreted P29: p@ -> 5",
+        "commit": "bb1c561"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "A compiled call never checks for a parked fault: lower_call_into takes the callee's 0 (left by interpret_call, park_call_depth or a compiled callee) and lowers the next expression, since Context pending is read only by call_compiled when the outermost machine code returns"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T01:26+02:00",
+      "by": "logoslang-why-P29-a",
+      "model": "opus",
+      "effort": "high",
+      "commit": "bb1c561",
+      "run": "why-P29",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:27+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "accepted as a why of P29, same as W57",
+        "reason": "Same cause, one fix removes both: after a call, compiled code never tests the parked fault (`lower_call_into` emits no test of `pending`; only `call_compiled` reads it once the outermost machine code returns). Direct test passes: this alone lets the line after the failing call run. A and B reproduced it on dev bb1c561 (compiled p@ 9, interpreted 5) with sibling programs. A's text kept: it names all three places that park (park_null_pointer too). W4 is not the same cause: fixing W58 leaves W4, so W4 is at most a why under it, for the next round."
+      },
+      {
+        "at": "2026-10-01T01:32+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "why + W59",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W59",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The seed's rule for a fault in compiled code is park and run on: `park` keeps the first fault and treats later ones as consequences of running on over the zero, `interpret_call` unwinds the interpreter because the machine code runs on and may call back in, and `guard_non_null` states compiled code cannot stop, so no lowering ever branches out on a parked fault, though `lower_return` and the prologue's call-depth arm already leave a function mid-body with `return_`; ›A checked error is a fault: the task that hit it is cancelled‹ asks for no further steps",
+    "proposed_for": "W58",
+    "why": [
+      "W60"
+    ],
+    "anchors": [
+      "park",
+      "interpret_call",
+      "guard_non_null",
+      "lower_return",
+      "call_compiled",
+      "src/run.rs",
+      "src/compile.rs"
+    ],
+    "design": [
+      "A checked error is a fault: the task that hit it is cancelled",
+      "Scheduling, preemption, and cancellation happen at boundaries"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'runs on|run on|cannot simply stop|no trap handler' src/run.rs src/compile.rs; rg -n 'return_' src/compile.rs",
+        "output": "src/run.rs:196:    // The machine code runs on with the 0 and may call back in before the park\nsrc/run.rs:241:/// The first fault parked is the cause: machine code runs on with the zero it left, so a\nsrc/compile.rs:356:    /// yield a zero of `ct`. Compiled code cannot simply stop (a block needs its\nsrc/compile.rs:357:    /// terminator, and there is no trap handler), so the faulted call runs on\n(return_ mid-body: lower_return, and the prologue's fault arm after park_call_depth: 'builder.ins().return_(&[zero]); builder.switch_to_block(body_b)')",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "timeout 10 ./target/release/logos < why-probes/w58-zero.logos; timeout 10 ./target/release/logos < why-probes/w58-loop.logos   # dev bb1c561, release, REPL. zero: p := alloc 1 of i32 5 / g := fn () -> i32 ( error «stop» ) / f := fn () -> i32 ( x := g(), p@ = x + 7, 1 ) / f.compile() / f() / p@. loop: g as above / f := fn () -> i32 ( mut n := g(), while (n < 1) ( n = n ), 1 ) / f() / f.compile() / f()",
+        "output": "zero: » » » » » run error: stop\n» 7          (the parked call's 0 was used as its value)\nloop: » » » run error: stop      (interpreted f() stops)\n» » exit 124   (compiled f() runs on over the 0 and never ends)",
+        "commit": "bb1c561"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T01:29+02:00",
+      "by": "logoslang-why-P29-a",
+      "model": "opus",
+      "effort": "high",
+      "commit": "bb1c561",
+      "run": "why-P29",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:32+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "accepted as a why of W58",
+        "reason": "Direct cause of W58: the compiled tier parks every fault, hands back 0 and runs on, and no lowering branches out on a parked fault; W58 (no test after a call) is that rule at the call. Not the same as W58: it also covers guard_non_null running on, and A's new siblings (a failed call's 0 used as its value; a `while` over it hangs compiled). A found it; B names the same rule (every park site runs on) inside W60."
+      },
+      {
+        "at": "2026-10-01T01:32+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "why + W60",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W60",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The Lowerer has no fault exit, no path that leaves a compiled function at a fault and runs its live scopes' pending defers: lower_return is the one mid-body exit and refuses (NotLowerable) while teardowns > 0, since lower_with_teardowns lowers a scope's defers only on its fall-through, so every park site runs on instead (guard_non_null: 'Compiled code cannot simply stop')",
+    "proposed_for": "W58",
+    "why": [
+      "W62"
+    ],
+    "anchors": [
+      "Lowerer",
+      "lower_return",
+      "lower_with_teardowns",
+      "guard_non_null",
+      "teardowns",
+      "src/compile.rs"
+    ],
+    "design": [
+      "A checked error is a fault: the task that hit it is cancelled",
+      "Scheduling, preemption, and cancellation happen at boundaries"
+    ],
+    "evidence": [
+      {
+        "command": "grep -n 'fn lower_return' -A 4 src/compile.rs; grep -n 'cannot simply stop' src/compile.rs",
+        "output": "891:    pub unsafe fn lower_return(&mut self, value: DyadPtr) -> Result<Value, CompileError> {\n892:        if self.teardowns > 0 {\n893:            return Err(CompileError::NotLowerable(value));\n894:        }\n356:    /// yield a zero of `ct`. Compiled code cannot simply stop (a block needs its\n(lower_with_teardowns, 322-343: lowers the lines, then the defers' inners in reverse, on the fall-through path only)",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "for f in r2-return-defer r2-defer r2-defer-interp; do target/release/logos < why-probes/$f.logos | tail -n +2; done",
+        "output": "r2-return-defer (f := fn () -> i32 ( defer (p@ = 7), return 3, p@ = 9, 1 ), f.compile()): run error: compile() failed: this cannot be compiled yet / f() -> 3, p@ -> 7 (interpreted)\nr2-defer compiled (f := fn () -> i32 ( defer (p@ = p@ + 100), g(), p@ = 9, 1 ), g errors): run error: stop / p@ -> 109 (ran on to p@ = 9, then the defer at fall-through)\nr2-defer-interp (same, not compiled): run error: stop / p@ -> 5",
+        "commit": "bb1c561"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T01:29+02:00",
+      "by": "logoslang-why-P29-b",
+      "model": "opus",
+      "effort": "high",
+      "commit": "bb1c561",
+      "run": "why-P29",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:32+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "accepted as a why of W59",
+        "reason": "Explains W59, not W58 directly: in P29's program no teardown is live, so `lower_return` could leave mid-body and still no test is emitted; the missing step is W59, the run-on rule. W60 is why that rule stands: the only mid-body exit refuses while a teardown is live, and a scope's defers are lowered only on fall-through, so a stop that must run pending defers (›A checked error is a fault‹) has no path. B found it; A named the same fact as its next step (lower_return refuses while teardowns > 0). Not W4: fixing W4 would not give compiled code a way to stop (B checked)."
+      },
+      {
+        "at": "2026-10-01T01:35+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "why + W62",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P30",
+    "kind": "problem",
+    "status": "open",
+    "text": "When a call fails inside a function, the function's pending `defer` does not run",
+    "program": "p := alloc 1 of i32 5\ng := fn () -> i32 ( error «stop» )\nf := fn () -> i32 ( defer (p@ = p@ + 100), g(), p@ = 9, 1 )\nf()\np@",
+    "output": "logos 0.1.0 — one expression per line, ctrl-d to exit\n» » » » run error: stop\n» 5\n» \nexit 0",
+    "expected": "`p@` prints `105`: the failing call stops `f` (so `p@ = 9` never runs) and the `defer` of `f`'s live scope runs (›A checked error is a fault: the task that hit it is cancelled‹: \"stopped at its last boundary, pending `defer`s of its live scopes run, no further steps\")",
+    "tier": "interpreted (REPL on stdin)",
+    "found": "logoslang-why-P29-b (session 7abe37f1), round 2 of the why run on P29, 1 October 2026, dev bb1c561 (why-probes/r2-defer-interp.logos); rerun by Orchestrator (2) on dev bb1c561, release, REPL on stdin",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T01:32+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "bb1c561",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W61",
+    "kind": "why",
+    "status": "merged",
+    "text": "The Lowerer keeps its live scopes' teardowns only as a count (`teardowns: usize`), with the `defer` nodes held in `lower_with_teardowns`'s own local `defers`, so an exit lowered inside the scope (`lower_return`, a fault) has no list to emit and can only refuse; the interpreter's scope `run` holds its `defers` as a list and runs them through `run_teardowns` on its `Return` arm, a second copy of the scope's exit rule the lowering does not mirror",
+    "proposed_for": "W60",
+    "why": null,
+    "anchors": [
+      "Lowerer",
+      "teardowns",
+      "lower_with_teardowns",
+      "lower_return",
+      "run_teardowns",
+      "src/compile.rs",
+      "src/identities/scope.rs"
+    ],
+    "design": [
+      "A checked error is a fault: the task that hit it is cancelled"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'teardowns' src/compile.rs src/identities/scope.rs",
+        "output": "src/compile.rs:142:    /// Scopes being lowered whose exit runs teardowns, which a `return` would jump past.\nsrc/compile.rs:143:    teardowns: usize,\nsrc/compile.rs:322:    pub(crate) unsafe fn lower_with_teardowns(\nsrc/compile.rs:330:        self.teardowns += held;\nsrc/compile.rs:338:        self.teardowns -= held;\nsrc/compile.rs:892:        if self.teardowns > 0 {        (lower_return: NotLowerable)\nsrc/identities/scope.rs:171:                // A `return` leaves through this scope, so the teardowns held so far run.\nsrc/identities/scope.rs:173:                    run_teardowns(rt, &defers)?;\nsrc/identities/scope.rs:176:                // A body error skips the held teardowns.\nsrc/identities/scope.rs:180:        run_teardowns(rt, &defers)?;\n(lower_with_teardowns 327: 'let defers: Vec<DyadPtr> = lines.iter()...filter(defer_)' is local; 340-342 lower them after the lines only)",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "timeout 10 ./target/release/logos < why-probes/w60-defer.logos   # dev bb1c561, release, REPL: p := alloc 1 of i32 5 / g := fn () -> i32 ( error «stop» ) / r := fn () -> i32 ( defer (p@ = 7), return 3, p@ = 9, 1 ) / r() / p@ / r.compile() / e := fn () -> i32 ( defer (p@ = 1), g(), p@ = 9, 1 ) / e() / p@",
+        "output": "» » » » 3\n» 7                                              (interpreted return runs the defer)\n» run error: compile() failed: this cannot be compiled yet   (the same return under a defer, compiled)\n» » run error: stop\n» 7                                              (interpreted fault skips the defer p@ = 1: scope.rs:176)",
+        "commit": "bb1c561"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W62",
+    "made": {
+      "at": "2026-10-01T01:35+02:00",
+      "by": "logoslang-why-P29-a",
+      "model": "opus",
+      "effort": "high",
+      "commit": "bb1c561",
+      "run": "why-P29",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:35+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "merged into W62",
+        "reason": "Same cause, one fix removes both: the Lowerer keeps its live defers only as a count (`teardowns: usize`), the defer nodes local to each `lower_with_teardowns` call, so an exit lowered deeper cannot reach them and `lower_return` can only refuse; the interpreter's scope run holds them as a list and runs them on `Return`. Direct test passes for W60. Probes: A (w60-defer: interpreted `return` runs the defer, compiled refuses) and B (r3-nested-return: a `return` beside a defer fails compile(), without one it compiles). B's text kept, the fact alone; A's \"a second copy of the scope's exit rule\" is the next step, asked next round. Both found no other cause of W59 than W60."
+      }
+    ]
+  },
+  {
+    "id": "W62",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The Lowerer keeps only a count of the live scopes holding defers (teardowns: usize); the defers themselves stay a local Vec inside each lower_with_teardowns call, so an exit lowered deeper in the body cannot reach them and lower_return can only refuse, where the interpreter's scope run catches RunError::Return as it passes and runs its own held defers (run_teardowns)",
+    "proposed_for": "W60",
+    "why": [
+      "W63"
+    ],
+    "anchors": [
+      "Lowerer",
+      "teardowns",
+      "lower_with_teardowns",
+      "lower_return",
+      "run_teardowns",
+      "src/compile.rs",
+      "src/identities/scope.rs"
+    ],
+    "design": [
+      "A checked error is a fault: the task that hit it is cancelled"
+    ],
+    "evidence": [
+      {
+        "command": "grep -n 'teardowns' src/compile.rs; grep -n 'RunError::Return(v)) =>' -A 2 src/identities/scope.rs",
+        "output": "143:    teardowns: usize,\n326:        let defers: Vec<DyadPtr> =\n330:        self.teardowns += held;\n338:        self.teardowns -= held;\n892:        if self.teardowns > 0 {\n893:            return Err(CompileError::NotLowerable(value));\n1382:                teardowns: 0,\nscope.rs:172:                Err(RunError::Return(v)) => {\nscope.rs:173:                    run_teardowns(rt, &defers)?;\nscope.rs:174:                    return Err(RunError::Return(v));",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "target/release/logos < why-probes/r3-nested-return.logos",
+        "output": "f := fn () -> i32 ( defer (p@ = 7), if true ( return 3 ), 1 ) / f.compile(): run error: compile() failed: this cannot be compiled yet / f() -> 3, p@ -> 7 (interpreted runs the outer defer on return)\nh := fn () -> i32 ( if true ( return 3 ), 1 ) / h.compile(): no error / h() -> 3",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "rg -n 'teardowns' src/compile.rs src/identities/scope.rs",
+        "output": "src/compile.rs:142:    /// Scopes being lowered whose exit runs teardowns, which a `return` would jump past.\nsrc/compile.rs:143:    teardowns: usize,\nsrc/compile.rs:322:    pub(crate) unsafe fn lower_with_teardowns(\nsrc/compile.rs:330:        self.teardowns += held;\nsrc/compile.rs:338:        self.teardowns -= held;\nsrc/compile.rs:892:        if self.teardowns > 0 {        (lower_return: NotLowerable)\nsrc/identities/scope.rs:171:                // A `return` leaves through this scope, so the teardowns held so far run.\nsrc/identities/scope.rs:173:                    run_teardowns(rt, &defers)?;\nsrc/identities/scope.rs:176:                // A body error skips the held teardowns.\nsrc/identities/scope.rs:180:        run_teardowns(rt, &defers)?;\n(lower_with_teardowns 327: 'let defers: Vec<DyadPtr> = lines.iter()...filter(defer_)' is local; 340-342 lower them after the lines only)",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "timeout 10 ./target/release/logos < why-probes/w60-defer.logos   # dev bb1c561, release, REPL: p := alloc 1 of i32 5 / g := fn () -> i32 ( error «stop» ) / r := fn () -> i32 ( defer (p@ = 7), return 3, p@ = 9, 1 ) / r() / p@ / r.compile() / e := fn () -> i32 ( defer (p@ = 1), g(), p@ = 9, 1 ) / e() / p@",
+        "output": "» » » » 3\n» 7                                              (interpreted return runs the defer)\n» run error: compile() failed: this cannot be compiled yet   (the same return under a defer, compiled)\n» » run error: stop\n» 7                                              (interpreted fault skips the defer p@ = 1: scope.rs:176)",
+        "commit": "bb1c561"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "The Lowerer keeps its live scopes' teardowns only as a count (`teardowns: usize`), with the `defer` nodes held in `lower_with_teardowns`'s own local `defers`, so an exit lowered inside the scope (`lower_return`, a fault) has no list to emit and can only refuse; the interpreter's scope `run` holds its `defers` as a list and runs them through `run_teardowns` on its `Return` arm, a second copy of the scope's exit rule the lowering does not mirror"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T01:35+02:00",
+      "by": "logoslang-why-P29-b",
+      "model": "opus",
+      "effort": "high",
+      "commit": "bb1c561",
+      "run": "why-P29",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:35+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "accepted as a why of W60, same as W61",
+        "reason": "Same cause, one fix removes both: the Lowerer keeps its live defers only as a count (`teardowns: usize`), the defer nodes local to each `lower_with_teardowns` call, so an exit lowered deeper cannot reach them and `lower_return` can only refuse; the interpreter's scope run holds them as a list and runs them on `Return`. Direct test passes for W60. Probes: A (w60-defer: interpreted `return` runs the defer, compiled refuses) and B (r3-nested-return: a `return` beside a defer fails compile(), without one it compiles). B's text kept, the fact alone; A's \"a second copy of the scope's exit rule\" is the next step, asked next round. Both found no other cause of W59 than W60."
+      },
+      {
+        "at": "2026-10-01T01:39+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "why + W63",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W63",
+    "kind": "why",
+    "status": "accepted",
+    "text": "Neither tier keeps the live scopes' pending teardowns as data: each scope gathers its own `defer`s into a local (`scope.rs` `run`'s `defers`, `lower_with_teardowns`'s `defers`) and `Runtime` holds no stack of them, so the interpreter reaches an outer scope's defers only because an exit travels back through every nested `run` as a Rust `Err`, a `match` arm per exit kind deciding whether they run (`RunError::Return` runs them, any other `Err` skips them); a lowered `return_` passes back through no scope's lowering, so the Lowerer has nothing to emit and keeps a count to refuse",
+    "proposed_for": "W62",
+    "why": [
+      "W64"
+    ],
+    "anchors": [
+      "Runtime",
+      "run_teardowns",
+      "lower_with_teardowns",
+      "Lowerer",
+      "RunError",
+      "src/identities/scope.rs",
+      "src/compile.rs",
+      "src/run.rs"
+    ],
+    "design": [
+      "A value's teardown runs where its life ends; the ending identity reads the type's `free` slot",
+      "Scheduling, preemption, and cancellation happen at boundaries",
+      "A checked error is a fault: the task that hit it is cancelled"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'let (mut )?defers' src; sed -n 164,180p src/identities/scope.rs; sed -n 343,376p src/run.rs | rg -n 'defer|teardown|scope'",
+        "output": "src/compile.rs:327:        let defers: Vec<DyadPtr> =\nsrc/identities/scope.rs:144:        let mut defers: Vec<DyadPtr> = Vec::new();\n(src/parse/types.rs:655 is the parser's, not a run's)\nscope.rs 164-180:  match rt.run(expr) {\n                Ok(v) => { ... }\n                // A `return` leaves through this scope, so the teardowns held so far run.\n                Err(RunError::Return(v)) => { run_teardowns(rt, &defers)?; return Err(RunError::Return(v)); }\n                // A body error skips the held teardowns.\n                Err(e) => return Err(e),\n            }\n        run_teardowns(rt, &defers)?;\nRuntime fields (run.rs 343-376): types, live_allocs, stack, activations, compiler, store, lexer, fragments, constructing, ctor_tape, fresh_this, ctx: no stack of live scopes or their teardowns",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "timeout 10 ./target/release/logos < why-probes/found-fault-skips-defer.logos   # dev bb1c561, release, REPL, interpreted: p := alloc 1 of i32 5 / g := fn () -> i32 ( error «stop» ) / e := fn () -> i32 ( defer (p@ = 1), g(), p@ = 9, 1 ) / e() / p@",
+        "output": "» » » » run error: stop\n» 5      (the fault's exit kind has an arm that skips the defer; ›A checked error is a fault‹ asks that it run, p@ = 1)",
+        "commit": "bb1c561"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T01:37+02:00",
+      "by": "logoslang-why-P29-a",
+      "model": "opus",
+      "effort": "high",
+      "commit": "bb1c561",
+      "run": "why-P29",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:39+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "accepted as a why of W62",
+        "reason": "Direct cause of W62: the pending defers are a local of each scope's own walk (interpreter `run`, Lowerer `lower_with_teardowns`) and `Runtime` keeps no stack of them, so only a Rust `Err` travelling back through each nested `run` reaches an outer scope's defers, and a lowered `return_` passes back through no scope's lowering: the Lowerer has nothing to emit. It also explains the interpreted sibling P30 (a fault's `Err` arm skips them). A found it. B answered existing W4 (the scope's exit rule written once per tier); not linked under W62: two copies do not by themselves make the Lowerer keep a count, since a second copy could keep a list. Whether W4 sits under W63 is asked next round."
+      },
+      {
+        "at": "2026-10-01T01:41+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "why + W64",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W64",
+    "kind": "why",
+    "status": "accepted",
+    "text": "Both tiers are recursive Rust walks that keep a live scope's state in the Rust frame of the walk (scope.rs run calls rt.run per line, lower_with_teardowns calls lower per line), and the one runtime record, Activation { base, cursors }, is per interpreted call with no field for what a live scope still owes at its exit, where ›Scheduling, preemption, and cancellation happen at boundaries‹ makes the task's live state graph data between interpreter steps (Seed: not yet)",
+    "proposed_for": "W63",
+    "why": [
+      "W68"
+    ],
+    "anchors": [
+      "Activation",
+      "Runtime",
+      "FrameStack",
+      "run_teardowns",
+      "lower_with_teardowns",
+      "take_cursor",
+      "src/run.rs",
+      "src/identities/scope.rs",
+      "src/compile.rs",
+      "cursors",
+      "Lowerer"
+    ],
+    "design": [
+      "Scheduling, preemption, and cancellation happen at boundaries",
+      "A checked error is a fault: the task that hit it is cancelled",
+      "The pass runs only as far as it must, in order, and never twice"
+    ],
+    "evidence": [
+      {
+        "command": "grep -n 'struct Activation' -A 4 src/run.rs; grep -n 'rides the Rust call stack' -A 1 src/run.rs; grep -n 'let mut defers\\|match rt.run(expr)' src/identities/scope.rs; grep -n 'let defers\\|last = self.lower(line)' src/compile.rs",
+        "output": "329:struct Activation {\n331:    base: *mut u8,\n332:    cursors: Vec<(DyadPtr, usize)>,\n341:/// A running evaluation. Operand computation rides the Rust call stack; the\n342:/// [`FrameStack`] holds each in-flight interpreted call's frame.\nscope.rs:144:        let mut defers: Vec<DyadPtr> = Vec::new();\nscope.rs:164:            match rt.run(expr) {\ncompile.rs:327:        let defers: Vec<DyadPtr> =\ncompile.rs:333:            last = self.lower(line).map(Some);\n(DESIGN ›Scheduling…‹: 'the runtime can step in at any boundary where the task's live state is graph data: between interpreter steps'; 'Cancelling drops that arena-scoped state like any runtime graph, running its live scopes' pending defers'; Seed: not yet)",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "sed -n 326,342p src/run.rs; sed -n 111,144p src/compile.rs | rg -n 'scope|teardown'",
+        "output": "/// One frame in flight: the program's, then each interpreted call's, innermost last.\n/// DESIGN ›The pass runs only as far as it must, in order, and never twice‹: the frame keeps\n/// the cursor of each scope it has started running.\nstruct Activation {\n    base: *mut u8,\n    cursors: Vec<(DyadPtr, usize)>,\n}\n/// A running evaluation. Operand computation rides the Rust call stack; the\n/// [`FrameStack`] holds each in-flight interpreted call's frame.\nLowerer fields: 142:    /// Scopes being lowered whose exit runs teardowns, which a `return` would jump past.\n                143:    teardowns: usize,      (the only field about scopes)",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "rg -n 'let (mut )?defers' src/identities/scope.rs src/compile.rs",
+        "output": "src/compile.rs:327:        let defers: Vec<DyadPtr> =\nsrc/identities/scope.rs:144:        let mut defers: Vec<DyadPtr> = Vec::new();\n(both Rust locals of one scope's walk; the cursor, by contrast, is frame data via set_cursor/take_cursor on Activation.cursors)",
+        "commit": "bb1c561"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "A running scope has frame data only for its cursor: `Activation` holds `base` and `cursors` and nothing else, and the rest of a scope's run (the `defer`s it holds, the exit under way) lives in Rust locals of the recursive walk, scope.rs `run` riding the Rust call stack (`Runtime`'s doc: 'Operand computation rides the Rust call stack') and `lower_with_teardowns` in a `Lowerer` that records no open scope beyond its `teardowns` count; ›Scheduling, preemption, and cancellation happen at boundaries‹ asks that a task's live state be data ('A paused task *is* its state', cancelling runs 'its live scopes' pending `defer`s'), Seed: not yet"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T01:40+02:00",
+      "by": "logoslang-why-P29-b",
+      "model": "opus",
+      "effort": "high",
+      "commit": "bb1c561",
+      "run": "why-P29",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:41+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "accepted as a why of W63, same as W65",
+        "reason": "Same fact, one fix removes both: a live scope's state rides the Rust frame of a recursive walk in both tiers, and the only per-scope runtime record, `Activation { base, cursors }`, holds the cursor and nothing a scope owes at exit. Direct test passes for W63: the defers are part of that state, so they are locals. Both found it; both checked W4 and found it is not under W63 (a single copy could keep the same local)."
+      },
+      {
+        "at": "2026-10-01T01:47+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "why + W68",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W65",
+    "kind": "why",
+    "status": "merged",
+    "text": "A running scope has frame data only for its cursor: `Activation` holds `base` and `cursors` and nothing else, and the rest of a scope's run (the `defer`s it holds, the exit under way) lives in Rust locals of the recursive walk, scope.rs `run` riding the Rust call stack (`Runtime`'s doc: 'Operand computation rides the Rust call stack') and `lower_with_teardowns` in a `Lowerer` that records no open scope beyond its `teardowns` count; ›Scheduling, preemption, and cancellation happen at boundaries‹ asks that a task's live state be data ('A paused task *is* its state', cancelling runs 'its live scopes' pending `defer`s'), Seed: not yet",
+    "proposed_for": "W63",
+    "why": null,
+    "anchors": [
+      "Activation",
+      "cursors",
+      "take_cursor",
+      "Runtime",
+      "Lowerer",
+      "lower_with_teardowns",
+      "src/run.rs",
+      "src/compile.rs",
+      "src/identities/scope.rs"
+    ],
+    "design": [
+      "Scheduling, preemption, and cancellation happen at boundaries",
+      "The pass runs only as far as it must, in order, and never twice"
+    ],
+    "evidence": [
+      {
+        "command": "sed -n 326,342p src/run.rs; sed -n 111,144p src/compile.rs | rg -n 'scope|teardown'",
+        "output": "/// One frame in flight: the program's, then each interpreted call's, innermost last.\n/// DESIGN ›The pass runs only as far as it must, in order, and never twice‹: the frame keeps\n/// the cursor of each scope it has started running.\nstruct Activation {\n    base: *mut u8,\n    cursors: Vec<(DyadPtr, usize)>,\n}\n/// A running evaluation. Operand computation rides the Rust call stack; the\n/// [`FrameStack`] holds each in-flight interpreted call's frame.\nLowerer fields: 142:    /// Scopes being lowered whose exit runs teardowns, which a `return` would jump past.\n                143:    teardowns: usize,      (the only field about scopes)",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "rg -n 'let (mut )?defers' src/identities/scope.rs src/compile.rs",
+        "output": "src/compile.rs:327:        let defers: Vec<DyadPtr> =\nsrc/identities/scope.rs:144:        let mut defers: Vec<DyadPtr> = Vec::new();\n(both Rust locals of one scope's walk; the cursor, by contrast, is frame data via set_cursor/take_cursor on Activation.cursors)",
+        "commit": "bb1c561"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W64",
+    "made": {
+      "at": "2026-10-01T01:40+02:00",
+      "by": "logoslang-why-P29-a",
+      "model": "opus",
+      "effort": "high",
+      "commit": "bb1c561",
+      "run": "why-P29",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:41+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "merged into W64",
+        "reason": "Same fact, one fix removes both: a live scope's state rides the Rust frame of a recursive walk in both tiers, and the only per-scope runtime record, `Activation { base, cursors }`, holds the cursor and nothing a scope owes at exit. Direct test passes for W63: the defers are part of that state, so they are locals. Both found it; both checked W4 and found it is not under W63 (a single copy could keep the same local)."
+      }
+    ]
+  },
+  {
+    "id": "W66",
+    "kind": "why",
+    "status": "rejected",
+    "text": "DESIGN.md has no v0.1.0 rule for where a live scope's pending teardowns are kept: ›The pass runs only as far as it must, in order, and never twice‹ gives a frame only the cursor and the result per scope, and the one rule asking for live scope state as data, ›Scheduling, preemption, and cancellation happen at boundaries‹, is staged after v1.0.0 and not yet validated, while ›A checked error is a fault: the task that hit it is cancelled‹, in force now, defines its stop by that staged cancel ('pending defers of its live scopes run')",
+    "proposed_for": "W64",
+    "why": null,
+    "anchors": [
+      "Activation",
+      "cursors",
+      "take_cursor",
+      "run_teardowns",
+      "lower_with_teardowns",
+      "src/run.rs",
+      "src/identities/scope.rs",
+      "src/compile.rs"
+    ],
+    "design": [
+      "The pass runs only as far as it must, in order, and never twice",
+      "Scheduling, preemption, and cancellation happen at boundaries",
+      "A checked error is a fault: the task that hit it is cancelled"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'A frame keeps a cursor|the cursor and the result live on the frame|adaptive layer after v1.0.0|as ›Scheduling, preemption, and cancellation‹ cancels a task' DESIGN.md | cut -c1-200",
+        "output": "›The pass runs only as far as it must…‹: 'A frame keeps a cursor, how far the scope it runs has got'; Ruled 28 Sept: 'the cursor and the result live on the frame' (no pending teardowns named)\n›Scheduling…‹: 'Ruled: the two rulings settled in discussion, July 2026, both in the adaptive layer after v1.0.0. The scheduling model: design discussion, not yet validated. Seed: not yet.'\n›A checked error is a fault…‹ (Ruled 30 August 2026): 'The task is cancelled as ›Scheduling, preemption, and cancellation‹ cancels a task: stopped at its last boundary, pending defers of its live scopes run, no further steps'\ncode the gap leaves open: run.rs Activation { base, cursors }; scope.rs:144 let mut defers (local); compile.rs:327 let defers (local)",
+        "commit": "bb1c561"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T01:42+02:00",
+      "by": "logoslang-why-P29-b",
+      "model": "opus",
+      "effort": "high",
+      "commit": "bb1c561",
+      "run": "why-P29",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:47+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "rejected",
+        "reason": "Withdrawn by B: ›The pass runs only as far as it must…‹ (\"A frame keeps a cursor, how far the scope it runs has got\") and ›A value's teardown runs where its life ends…‹ (\"a scope at its exit, for each value a place of the scope still holds … with the scope's authored defers\"; reflection \"derives where a teardown runs\") decide together what a scope owes at any exit, so DESIGN has the rule; B had read only ›Scheduling…‹ and the pass rule's Ruled line."
+      }
+    ]
+  },
+  {
+    "id": "W67",
+    "kind": "why",
+    "status": "rejected",
+    "text": "DESIGN has no v0.1.0 rule for where a live scope's run state beyond its cursor, the `defer`s and teardowns it still owes at exit, waits while it runs: ›The pass runs only as far as it must, in order, and never twice‹ puts only the cursor and the result on the frame, and the one rule that makes live state data, ›Scheduling, preemption, and cancellation happen at boundaries‹, is 'design discussion, not yet validated', in the adaptive layer after v1.0.0, Seed: not yet; ›A checked error is a fault: the task that hit it is cancelled‹ (ruled 30 August, no Seed line) leans on that rule for 'pending `defer`s of its live scopes run', so `Activation` and `Lowerer` were free to leave them in Rust locals",
+    "proposed_for": "W64",
+    "why": null,
+    "anchors": [
+      "Activation",
+      "cursors",
+      "Lowerer",
+      "lower_with_teardowns",
+      "run_teardowns",
+      "src/run.rs",
+      "src/compile.rs",
+      "src/identities/scope.rs"
+    ],
+    "design": [
+      "Scheduling, preemption, and cancellation happen at boundaries",
+      "The pass runs only as far as it must, in order, and never twice",
+      "A checked error is a fault: the task that hit it is cancelled",
+      "A value's teardown runs where its life ends; the ending identity reads the type's `free` slot"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n -i 'pending .?defer' DESIGN.md | cut -c1-120",
+        "output": "623:A task yields at each `.await`. Beyond that, the runtime can step in at any *boundary* where the task's live state is graph data ...\n956:A checked error is never part of a declared type, so it is not a value but a **fault**. ... pending `defer`s of its live scopes run ...\n(the only two mentions; neither says where the pending defers wait during the run. ›A value's teardown runs where its life ends‹ says when and in what LIFO order, not where)",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "rg -n '^- \\*\\*(Ruled|Seed)' DESIGN.md, the lines under the three headings",
+        "output": "›Scheduling…‹ 628: - **Ruled:** the two rulings settled in discussion, July 2026, both in the adaptive layer after v1.0.0. The scheduling model: design discussion, not yet validated.\n›Scheduling…‹ 629: - **Seed:** not yet.\n›A checked error is a fault‹ 957: - **Ruled:** 30 August 2026.   (no Seed line)\n›The pass runs only as far as it must‹ 2024: - **Ruled (28 September 2026, Thobias):** the cursor and the result live on the frame and the graph is untouched\n›The pass runs only as far as it must‹ 2025: - **Seed:** since 28 September 2026 (#167): the cursors live on the frame",
+        "commit": "bb1c561"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T01:42+02:00",
+      "by": "logoslang-why-P29-a",
+      "model": "opus",
+      "effort": "high",
+      "commit": "bb1c561",
+      "run": "why-P29",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:47+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "rejected",
+        "reason": "Withdrawn by A for the same reason as W66: the two rules together make what a scope owes at an exit derivable from its lines and its cursor, so nothing needs a place to wait and DESIGN is not silent."
+      }
+    ]
+  },
+  {
+    "id": "W68",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The seed's frame does not keep the cursor of the scope it runs: set_cursor is written only by the parse pass for a scope it stopped partway, take_cursor removes it when the scope's run starts, and from there scope.rs run tracks its progress as the Rust loop index and gathers its defers into a local, so nothing outside that Rust frame can derive what the scope owes at an exit, which ›The pass runs only as far as it must, in order, and never twice‹ ('A frame keeps a cursor, how far the scope it runs has got') with ›A value's teardown runs where its life ends; the ending identity reads the type's free slot‹ (the defers and held places before that point, last in first out, derived from the ending identity) would decide",
+    "proposed_for": "W64",
+    "why": [
+      "W71"
+    ],
+    "anchors": [
+      "Activation",
+      "cursors",
+      "set_cursor",
+      "take_cursor",
+      "run_teardowns",
+      "src/run.rs",
+      "src/identities/scope.rs",
+      "src/parse/bodies.rs",
+      "drain",
+      "Lowerer",
+      "lower_with_teardowns",
+      "src/compile.rs"
+    ],
+    "design": [
+      "The pass runs only as far as it must, in order, and never twice",
+      "A value's teardown runs where its life ends; the ending identity reads the type's `free` slot",
+      "A checked error is a fault: the task that hit it is cancelled"
+    ],
+    "evidence": [
+      {
+        "command": "grep -rn 'set_cursor(scope\\|take_cursor(\\|swap_remove(i)' src | grep -v '///'; grep -n 'for (i, &expr) in exprs\\|let mut defers' src/identities/scope.rs",
+        "output": "src/parse/bodies.rs:1247:                self.rt.set_cursor(scope, lines);   (the pass, the only writer)\nsrc/identities/scope.rs:142:        let start = rt.take_cursor(node);\nsrc/run.rs:454:            Some(i) => cursors.swap_remove(i).1,   (taken: gone from the frame while the scope runs)\nsrc/identities/scope.rs:144:        let mut defers: Vec<DyadPtr> = Vec::new();\nsrc/identities/scope.rs:148:        for (i, &expr) in exprs.iter().enumerate() {   (the running scope's cursor is this Rust index)\nDESIGN ›The pass runs only as far as it must…‹: 'A frame keeps a cursor, how far the scope it runs has got'\nDESIGN ›A value's teardown runs where its life ends…‹: 'a scope at its exit, for each value a place of the scope still holds, last declared first, in one last-in-first-out order with the scope's authored defers'; 'reflection derives where a teardown runs from the type's slot and the ending identity, as it derives where a body's items run'",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "rg -n 'set_cursor|take_cursor' src --type rust | rg -v 'tests.rs|tape.rs|lex.rs'; sed -n 449,457p src/run.rs",
+        "output": "src/identities/scope.rs:142:        let start = rt.take_cursor(node);      (the scope's own run, at its start)\nsrc/parse/bodies.rs:1247:                self.rt.set_cursor(scope, lines);   (the pass's drain, before the run)\nrun.rs 449-457: /// Where the scope's run starts in this frame: 0 for a scope the pass never touched.\n    /// Taken, since a scope the pass started runs once.\n    pub(crate) fn take_cursor(&mut self, scope: DyadPtr) -> usize {\n        ... Some(i) => cursors.swap_remove(i).1,\n(no other writer: while the scope runs, Activation.cursors holds no entry for it)",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "sed -n 142,161p src/identities/scope.rs",
+        "output": "let start = rt.take_cursor(node);\nlet mut defers: Vec<DyadPtr> = Vec::new();\nfor (i, &expr) in exprs.iter().enumerate() {\n    ...\n    if logos == defer_ty { defers.push(expr); continue; }    (every defer on a line up to i, before the cursor too)\n    // Before the cursor: the pass ran it in this frame already.\n    if i < start { continue; }\n(what the scope owes at an exit is already a function of its lines and its position i; i is a Rust local, not the frame's cursor)",
+        "commit": "bb1c561"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "Neither tier keeps a running scope's position where an exit can read it, though ›The pass runs only as far as it must‹ ('A frame keeps a cursor, how far the scope it runs has got') and ›A value's teardown runs where its life ends‹ (at exit, the places the scope still holds and its authored `defer`s, LIFO, derived 'as it derives where a body's items run') make that position and the scope's graph enough to derive what every live scope owes at any exit: scope.rs `run` takes its cursor off the frame as it starts (`take_cursor`, swap_remove) and walks on with a Rust loop index, gathering the `defer`s it passes into a local, and the `Lowerer` records no scope it is inside, only a `teardowns` count"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T01:46+02:00",
+      "by": "logoslang-why-P29-b",
+      "model": "opus",
+      "effort": "high",
+      "commit": "bb1c561",
+      "run": "why-P29",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:47+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "accepted as a why of W64, same as W69",
+        "reason": "Same fact, one fix removes both: the seed does not keep a running scope's position on its frame, as ›The pass runs only as far as it must…‹ says (\"A frame keeps a cursor, how far the scope it runs has got\"): `take_cursor` removes the cursor as `run` starts and the walk goes on with a Rust loop index, `set_cursor` being written only by the parse pass; the Lowerer records no scope it is inside, only the `teardowns` count. So no exit can derive what the live scopes owe from the graph, and W64's Rust locals hold it instead. Direct test passes for W64. Both found it after the recheck; A's sibling (the parser's third list of owed top-level defers, `cx.open[..].defers`, `take_pending_defers`) is to be probed next round."
+      },
+      {
+        "at": "2026-10-01T01:50+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "why + W71",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W69",
+    "kind": "why",
+    "status": "merged",
+    "text": "Neither tier keeps a running scope's position where an exit can read it, though ›The pass runs only as far as it must‹ ('A frame keeps a cursor, how far the scope it runs has got') and ›A value's teardown runs where its life ends‹ (at exit, the places the scope still holds and its authored `defer`s, LIFO, derived 'as it derives where a body's items run') make that position and the scope's graph enough to derive what every live scope owes at any exit: scope.rs `run` takes its cursor off the frame as it starts (`take_cursor`, swap_remove) and walks on with a Rust loop index, gathering the `defer`s it passes into a local, and the `Lowerer` records no scope it is inside, only a `teardowns` count",
+    "proposed_for": "W64",
+    "why": null,
+    "anchors": [
+      "take_cursor",
+      "set_cursor",
+      "drain",
+      "Activation",
+      "cursors",
+      "Lowerer",
+      "lower_with_teardowns",
+      "src/run.rs",
+      "src/identities/scope.rs",
+      "src/parse/bodies.rs",
+      "src/compile.rs"
+    ],
+    "design": [
+      "The pass runs only as far as it must, in order, and never twice",
+      "A value's teardown runs where its life ends; the ending identity reads the type's `free` slot",
+      "A checked error is a fault: the task that hit it is cancelled"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n 'set_cursor|take_cursor' src --type rust | rg -v 'tests.rs|tape.rs|lex.rs'; sed -n 449,457p src/run.rs",
+        "output": "src/identities/scope.rs:142:        let start = rt.take_cursor(node);      (the scope's own run, at its start)\nsrc/parse/bodies.rs:1247:                self.rt.set_cursor(scope, lines);   (the pass's drain, before the run)\nrun.rs 449-457: /// Where the scope's run starts in this frame: 0 for a scope the pass never touched.\n    /// Taken, since a scope the pass started runs once.\n    pub(crate) fn take_cursor(&mut self, scope: DyadPtr) -> usize {\n        ... Some(i) => cursors.swap_remove(i).1,\n(no other writer: while the scope runs, Activation.cursors holds no entry for it)",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "sed -n 142,161p src/identities/scope.rs",
+        "output": "let start = rt.take_cursor(node);\nlet mut defers: Vec<DyadPtr> = Vec::new();\nfor (i, &expr) in exprs.iter().enumerate() {\n    ...\n    if logos == defer_ty { defers.push(expr); continue; }    (every defer on a line up to i, before the cursor too)\n    // Before the cursor: the pass ran it in this frame already.\n    if i < start { continue; }\n(what the scope owes at an exit is already a function of its lines and its position i; i is a Rust local, not the frame's cursor)",
+        "commit": "bb1c561"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W68",
+    "made": {
+      "at": "2026-10-01T01:47+02:00",
+      "by": "logoslang-why-P29-a",
+      "model": "opus",
+      "effort": "high",
+      "commit": "bb1c561",
+      "run": "why-P29",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:47+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "merged into W68",
+        "reason": "Same fact, one fix removes both: the seed does not keep a running scope's position on its frame, as ›The pass runs only as far as it must…‹ says (\"A frame keeps a cursor, how far the scope it runs has got\"): `take_cursor` removes the cursor as `run` starts and the walk goes on with a Rust loop index, `set_cursor` being written only by the parse pass; the Lowerer records no scope it is inside, only the `teardowns` count. So no exit can derive what the live scopes owe from the graph, and W64's Rust locals hold it instead. Direct test passes for W64. Both found it after the recheck; A's sibling (the parser's third list of owed top-level defers, `cx.open[..].defers`, `take_pending_defers`) is to be probed next round."
+      }
+    ]
+  },
+  {
+    "id": "P31",
+    "kind": "problem",
+    "status": "open",
+    "text": "A program whose type's `parse` marks the next tape cell as built crashes with a segmentation fault",
+    "program": "h := type (share parse_rank = *.parse_rank + 1, share parse = ( tape.is_constructed[1] = true, tape.remove(0) )), h zz, 5",
+    "output": "exit 139 (segmentation fault, nothing printed)",
+    "expected": "a checked error with a message (exit 1), never a crash: ›The tape is Logic Graph with a string extension‹, \"A constructed cell is already a graph dyad\"",
+    "tier": "interpreted (command line); the analysis saw the same crash on every entry point and in the compiled tier, the REPL alone giving a checked error",
+    "found": "logoslang-rca-constructed-null-cell-worker (session cf0f45fd), RCA constructed-null-cell, 30 September 2026, dev 1f68f83, first seen by the #225 worker; about twenty programs crash this way (RCA.md §4); rerun by Orchestrator (2) on dev bb1c561, release",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T01:48+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "bb1c561",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P32",
+    "kind": "problem",
+    "status": "open",
+    "text": "A type's field may take the name of an outer name that is still alive",
+    "program": "x := i32 1, p := type ( x := i32 ? ), print «ok»",
+    "output": "ok\nexit 0",
+    "expected": "an error at the field, as for two sibling fields `x`: ›Fields are read with a dot outside their scope‹, \"no shadowing, fields included. `x := 1, p := type ( x := i32 ? )` is the error\"",
+    "tier": "command line and REPL (checked at parse, so both tiers)",
+    "found": "logoslang-rca-field-outer-shadow-worker (session 1beee50f), RCA field-outer-shadow, 30 September 2026, dev 5a6c160; rerun by Orchestrator (2) on dev bb1c561, release",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T01:48+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "bb1c561",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P33",
+    "kind": "problem",
+    "status": "open",
+    "text": "An unclosed bracket inside a `print` quote's `{…}` is reported when the line is built but not in an `if` arm that does not run",
+    "program": "if false ( print «a {( 1 ]} b» ) else ( print «ok» )",
+    "output": "ok\nexit 0",
+    "expected": "the error the same quote gives when built: `print «a {( 1 ]} b»` gives `<command line>:1:15: error: this bracket is never closed`, exit 1 (›`{ }` is text interpolation‹: \"A string is a scope that builds exactly its braces\")",
+    "tier": "command line; the analysis saw the same in the REPL, in an imported file, in a held `run` body, and compiled in a function",
+    "found": "logoslang-rca-quote-brace-skip-worker (session 4b796d0f), RCA quote-brace-skip, 30 September 2026, dev 67f873e, found by #233's review; rerun by Orchestrator (2) on dev bb1c561 (after #233 merged), release",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T01:48+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "bb1c561",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P34",
+    "kind": "problem",
+    "status": "open",
+    "text": "A type's `share` field is read before any write and gives `0`",
+    "program": "pt := type ( a := i32 ?, share mut s := i32 ? ), pt.s",
+    "output": "0\nexit 0",
+    "expected": "refused at parse, as `mut x := i32 ?, x` is (`x` is read before it is written): ›Reading a place before its first write is refused at parse‹",
+    "tier": "every entry point: top level, function body interpreted and compiled, REPL, an imported type",
+    "found": "logoslang-rca-share-read-before-write-worker (session 26861891), RCA share-read-before-write, 30 September 2026, dev 5a6c160, from review round 1 of RCA untyped-name-write; rerun by Orchestrator (2) on dev bb1c561, release",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T01:48+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "bb1c561",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "W70",
+    "kind": "why",
+    "status": "merged",
+    "text": "How far a scope has got is kept in three places by three walkers: the parser's OpenScope unrun list while the pass runs it, Activation cursors only at the drain's handoff (set_cursor, then take_cursor), and scope.rs run's Rust loop index while it runs, so the frame's cursor is a handoff between two private counters, not the one cursor ›The pass runs only as far as it must, in order, and never twice‹ names ('A frame keeps a cursor, how far the scope it runs has got')",
+    "proposed_for": "W68",
+    "why": null,
+    "anchors": [
+      "unrun",
+      "drain",
+      "set_cursor",
+      "take_cursor",
+      "cursors",
+      "Activation",
+      "src/parse/bodies.rs",
+      "src/parse/driver.rs",
+      "src/identities/scope.rs",
+      "src/run.rs"
+    ],
+    "design": [
+      "The pass runs only as far as it must, in order, and never twice"
+    ],
+    "evidence": [
+      {
+        "command": "grep -rn 'unrun\\|set_cursor(scope\\|take_cursor(node)\\|for (i, &expr) in exprs' src | grep -v '///'",
+        "output": "src/parse/bodies.rs:40:    pub(super) unrun: Vec<DyadPtr>,            (the pass's counter: items parsed, not yet run)\nsrc/parse/driver.rs:684:                        open.unrun.push(item.dyad);\nsrc/parse/bodies.rs:1236:  ... std::mem::take(&mut s.unrun) ...          (drain empties it)\nsrc/parse/bodies.rs:1247:                self.rt.set_cursor(scope, lines);   (handoff to the frame)\nsrc/identities/scope.rs:142:        let start = rt.take_cursor(node);     (the run takes it off the frame)\nsrc/identities/scope.rs:148:        for (i, &expr) in exprs.iter().enumerate() {   (the run's counter)",
+        "commit": "bb1c561"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": "W71",
+    "made": {
+      "at": "2026-10-01T01:49+02:00",
+      "by": "logoslang-why-P29-b",
+      "model": "opus",
+      "effort": "high",
+      "commit": "bb1c561",
+      "run": "why-P29",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:50+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "merged into W71",
+        "reason": "Same fact, one fix removes both: running a scope's lines is written three times, the pass's `drain` (`OpenScope.unrun`, `OpenScope.defers`), scope.rs `run` (a Rust loop index, a local `defers`) and `lower_with_teardowns` (a Rust loop, a local `defers`), each with its own position, owed list and exit; the frame's cursor is only the hand-off from the first to the second. Direct test passes for W68: no one runner owns the scope's position, so the frame holds none while a scope runs. A's text kept: it names the owed lists and exits too, B's the positions only. Not W12 (the parse readers' end rules; A checked)."
+      }
+    ]
+  },
+  {
+    "id": "W71",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A scope's lines are run by three runners, each with its own position, its own list of what the scope owes and its own exit: the pass's `drain` (position: `OpenScope.unrun`; owed: `OpenScope.defers`, binding-site `defer free` only, run by `exit` from `run_line` or per line in `repl`; the top level has no scope node, so no cursor), scope.rs `run` (a Rust loop index and a local `defers`), and `lower_with_teardowns` (a Rust loop and a local `defers`); the frame's cursor is only the hand-off from the first to the second (`set_cursor` in `drain`, `take_cursor` in `run`), never the position of one runner that owns the scope's run",
+    "proposed_for": "W68",
+    "why": [
+      "W72",
+      "W73",
+      "W4"
+    ],
+    "anchors": [
+      "drain",
+      "OpenScope",
+      "unrun",
+      "take_pending_defers",
+      "exit",
+      "run_line",
+      "set_cursor",
+      "take_cursor",
+      "lower_with_teardowns",
+      "src/parse/bodies.rs",
+      "src/identities/scope.rs",
+      "src/compile.rs",
+      "src/main.rs",
+      "cursors",
+      "Activation",
+      "src/parse/driver.rs",
+      "src/run.rs"
+    ],
+    "design": [
+      "The pass runs only as far as it must, in order, and never twice",
+      "A value's teardown runs where its life ends; the ending identity reads the type's `free` slot",
+      "A checked error is a fault: the task that hit it is cancelled"
+    ],
+    "evidence": [
+      {
+        "command": "sed -n 31,43p src/parse/bodies.rs; sed -n 1253,1258p src/parse/bodies.rs; sed -n 1344,1352p src/parse/bodies.rs; rg -n 'let (mut )?defers' src/identities/scope.rs src/compile.rs",
+        "output": "pub(super) struct OpenScope {\n    /// The `defer free <place>` nodes the scope's owning bindings inserted, ...\n    pub(super) defers: Vec<DyadPtr>,\n    /// Items parsed at depth 0 and not yet run: `drain` runs them when the pass needs a value, the scope's own run otherwise.\n    pub(super) unrun: Vec<DyadPtr>,\n    /// ... a drain leaves its cursor on the frame. None at the top level and in a type body.\n    scope: Option<DyadPtr>,\ndrain: || ty == self.types.defer_ ... if skip { continue; }     (an authored defer is skipped by the pass)\n/// The root scope's exit: the top level's teardowns, LIFO. ... for defer_node in self.take_pending_defers().into_iter().rev()\nsrc/compile.rs:327:        let defers: Vec<DyadPtr> =\nsrc/identities/scope.rs:144:        let mut defers: Vec<DyadPtr> = Vec::new();",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "while IFS= read -r l; do ./target/release/logos \"$l\"; echo \"exit $?\"; done < why-probes/w68-toplevel.logos (lines 1-4); timeout 10 ./target/release/logos < why-probes/w68-repl.logos; w68-owned.logos lines 1-2 (bag's free prints «freed»)   # dev bb1c561, release",
+        "output": "defer (print «d»), print «a»            -> a / exit 0          (top-level authored defer never runs: on no runner's list)\n( defer (print «d»), print «a» )        -> a / d / 0 / exit 0  (the same in a block runs)\ndefer (print «d»), error «stop»         -> run error: stop / exit 1\nREPL: defer (print «d») / print «a» / error «stop» / print «b»  -> » 0 » a » run error: stop » b   (d never)\ntop level, b := bag (), print «a»       -> a / freed / exit 0   (binding-site teardown via OpenScope.defers + exit)\ntop level, b := bag (), error «stop»    -> run error: stop / exit 1   (run_line returns before p.exit(): no «freed»)",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "grep -rn 'unrun\\|set_cursor(scope\\|take_cursor(node)\\|for (i, &expr) in exprs' src | grep -v '///'",
+        "output": "src/parse/bodies.rs:40:    pub(super) unrun: Vec<DyadPtr>,            (the pass's counter: items parsed, not yet run)\nsrc/parse/driver.rs:684:                        open.unrun.push(item.dyad);\nsrc/parse/bodies.rs:1236:  ... std::mem::take(&mut s.unrun) ...          (drain empties it)\nsrc/parse/bodies.rs:1247:                self.rt.set_cursor(scope, lines);   (handoff to the frame)\nsrc/identities/scope.rs:142:        let start = rt.take_cursor(node);     (the run takes it off the frame)\nsrc/identities/scope.rs:148:        for (i, &expr) in exprs.iter().enumerate() {   (the run's counter)",
+        "commit": "bb1c561"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "How far a scope has got is kept in three places by three walkers: the parser's OpenScope unrun list while the pass runs it, Activation cursors only at the drain's handoff (set_cursor, then take_cursor), and scope.rs run's Rust loop index while it runs, so the frame's cursor is a handoff between two private counters, not the one cursor ›The pass runs only as far as it must, in order, and never twice‹ names ('A frame keeps a cursor, how far the scope it runs has got')"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T01:50+02:00",
+      "by": "logoslang-why-P29-a",
+      "model": "opus",
+      "effort": "high",
+      "commit": "bb1c561",
+      "run": "why-P29",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:50+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "accepted as a why of W68, same as W70",
+        "reason": "Same fact, one fix removes both: running a scope's lines is written three times, the pass's `drain` (`OpenScope.unrun`, `OpenScope.defers`), scope.rs `run` (a Rust loop index, a local `defers`) and `lower_with_teardowns` (a Rust loop, a local `defers`), each with its own position, owed list and exit; the frame's cursor is only the hand-off from the first to the second. Direct test passes for W68: no one runner owns the scope's position, so the frame holds none while a scope runs. A's text kept: it names the owed lists and exits too, B's the positions only. Not W12 (the parse readers' end rules; A checked)."
+      },
+      {
+        "at": "2026-10-01T01:52+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "why + W72",
+        "reason": null
+      },
+      {
+        "at": "2026-10-01T01:52+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "why + W73",
+        "reason": null
+      },
+      {
+        "at": "2026-10-01T01:52+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "why + W4",
+        "reason": "Both agents: W4 by itself makes the compiled tier a third runner: `lower_with_teardowns` is scope's lowering, the second copy W4 names, with its own loop and its own `defers`, sharing nothing with scope.rs `run` but the `defer_` filter (grep shows exactly the two copies). Unlike W62 in round 4, here the fact explained is the copy itself."
+      }
+    ]
+  },
+  {
+    "id": "P35",
+    "kind": "problem",
+    "status": "open",
+    "text": "A `defer` written at top level never runs",
+    "program": "defer (print «d»), print «a»",
+    "output": "a\nexit 0",
+    "expected": "`a` then `d`, as the same lines in a block print (`( defer (print «d»), print «a» )` gives `a`, `d`): the scope ends after its last line and runs its authored `defer`s (›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹: \"a scope at its exit, … in one last-in-first-out order with the scope's authored `defer`s\")",
+    "tier": "command line; the REPL too (`defer (print «d»)`, then `print «a»`, `error «stop»`, `print «b»` never prints `d`)",
+    "found": "logoslang-why-P29-a (session 9c242ed1), round 7 of the why run on P29, 1 October 2026, dev bb1c561 (why-probes/w68-toplevel.logos, w68-repl.logos); rerun by Orchestrator (2) on dev bb1c561, release",
+    "why": [
+      "W72"
+    ],
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T01:51+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "bb1c561",
+      "run": null,
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:52+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "why + W72",
+        "reason": "Both agents ran P35's program in this round: the top level's only runner is `drain`, which skips `defer` items, and its owed list gets binding-site `defer free` only, so an authored top-level `defer` never runs; in a block, scope.rs `run` runs it (`a`, `d`)."
+      }
+    ]
+  },
+  {
+    "id": "W72",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The top level has a scope node that holds its lines like a block's (core.root_scope, made by scope::mint; here.scope.dyads.size counts the top-level lines), but the parser opens the top level as OpenScope::default() with scope None and never closes root_scope into a sequence (scope::fill), so scope.rs run never runs it and the pass's drain stays the top level's only runner, with its own owed list (OpenScope.defers, binding-site defer free only) and its own exit; ›The pass runs only as far as it must, in order, and never twice‹ says one mechanism serves a block, the top level, a REPL line and an imported file",
+    "proposed_for": "W71",
+    "why": [
+      "W12"
+    ],
+    "anchors": [
+      "root_scope",
+      "OpenScope",
+      "mint",
+      "fill",
+      "drain",
+      "src/parse/mod.rs",
+      "src/parse/bodies.rs",
+      "src/identities/mod.rs",
+      "src/identities/scope.rs",
+      "finish",
+      "exit",
+      "take_pending_defers",
+      "run_line",
+      "src/main.rs"
+    ],
+    "design": [
+      "The pass runs only as far as it must, in order, and never twice",
+      "A value's teardown runs where its life ends; the ending identity reads the type's `free` slot",
+      "The scope's constructor is the driver"
+    ],
+    "evidence": [
+      {
+        "command": "grep -n 'open: vec!\\[OpenScope::default()\\]' src/parse/mod.rs; grep -n 'None at the top level' src/parse/bodies.rs; grep -n 'let root_scope = scope::mint' src/identities/mod.rs",
+        "output": "src/parse/mod.rs:167:            open: vec![OpenScope::default()],\nsrc/parse/bodies.rs:42:    /// later: a drain leaves its cursor on the frame. None at the top level and in a type body.\nsrc/identities/mod.rs:199:        let root_scope = scope::mint(store, scope_, std::ptr::null_mut());\n(a block's OpenScope: bodies.rs:1075 scope: Some(scope))",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "target/release/logos < why-probes/r7-root-dyads.logos   # REPL, dev bb1c561: a := i32 1 / defer (print «d») / here.scope.dyads.size / ( b := i32 1, defer (print «e»), here.scope.dyads.size )",
+        "output": "» » 0\n» 2        (root_scope holds the two top-level lines above, the defer included)\n» e\n2          (the block runs its defer at exit)\n» \n(«d» never prints: the top-level scope's authored defer is on no runner's list)",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "sed -n 41,43p src/parse/bodies.rs; rg -n 'OpenScope \\{' src/parse; sed -n 1338,1347p src/parse/bodies.rs",
+        "output": "    /// The block node whose `dyads` hold the items, when the scope runs as one\n    /// later: a drain leaves its cursor on the frame. None at the top level and in a type body.\n    scope: Option<DyadPtr>,\nsrc/parse/bodies.rs:1075:        self.cx.open.push(OpenScope { narrowed, scope: Some(scope), list, ..OpenScope::default() });   (the only Some; the root is OpenScope::default())\n    /// The end of the program: the root scope's own run (DESIGN ›The scope's constructor is the driver‹), yielding the tail it ran.\n    pub fn finish(&mut self) -> ... { self.drain() }\n    /// The root scope's exit: the top level's teardowns, LIFO. ...\n    pub fn exit(&mut self) -> ... { for defer_node in self.take_pending_defers().into_iter().rev() {",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "./target/release/logos 'defer (print «d»), print «a»'; ./target/release/logos '( defer (print «d»), print «a» )'   # dev bb1c561, release",
+        "output": "a                (top level: the pass skips the defer and exit's list lacks it)\na / d / 0        (a block: its scope run gathers and runs it)",
+        "commit": "bb1c561"
+      }
+    ],
+    "found_by": [
+      "A",
+      "B"
+    ],
+    "aliases": [
+      "The top level is no scope node: its `OpenScope.scope` is `None` ('None at the top level and in a type body'), so no scope.rs `run` ever runs its lines; `finish`, called 'the root scope's own run', is `drain`, and its exit is the parser's `exit` over `OpenScope.defers`, called from `run_line` (per line in `repl`), where ›The scope's constructor is the driver‹ has 'The root scope is run by `import` over a file, and by the command line over its one line' and ›The pass runs only as far as it must, in order, and never twice‹ asks that 'one mechanism serves all four' (a block, the top level, a REPL line, an imported file)"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T01:51+02:00",
+      "by": "logoslang-why-P29-b",
+      "model": "opus",
+      "effort": "high",
+      "commit": "bb1c561",
+      "run": "why-P29",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:52+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "accepted as a why of W71, same as W74",
+        "reason": "Same fact, one fix removes both: the top level's lines are never run by scope.rs `run`: the parser opens the top level as an `OpenScope` whose `scope` is None and never closes `core.root_scope` into a sequence, so `drain` is its only runner, with its own owed list (binding-site `defer free` only) and its own exit, against ›The scope's constructor is the driver‹ and ›The pass runs only as far as it must…‹ Why (2), \"one mechanism serves all four\". B's text kept: its probe shows the root scope node exists and holds the lines (`here.scope.dyads.size` is 2), which A's \"no scope node\" missed. Direct test passes for W71 (the top level's runner)."
+      },
+      {
+        "at": "2026-10-01T01:55+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "why + W12",
+        "reason": "Both agents: the top level's readers (`run_line`, `repl`, `run_imported`) are three of W12's five, each ending the top level by its own rule, and only `parse_block` ties a scope node to its `OpenScope` and closes it (`scope::fill`); one reader owning a scope's lines would remove W72. A probed the imported-file sibling: an imported file's `defer` never runs. B corrected W72's place: the lines land in the `push_section` section above `core.root_scope`; the fact holds."
+      }
+    ]
+  },
+  {
+    "id": "W73",
+    "kind": "why",
+    "status": "accepted",
+    "text": "scope.rs `run` can only run a scope from a start line to its end in one Rust call (it reads `take_cursor` once, then loops to the last line); it cannot be advanced to a given line and paused there, so the pass, which ›The pass runs only as far as it must, in order, and never twice‹ lets run a scope's lines only up to the item being parsed, runs them with a loop of its own (`drain` over `OpenScope.unrun`, `run_on_pass` per item, `defer`s skipped) and hands the scope's run a start with `set_cursor`",
+    "proposed_for": "W71",
+    "why": [
+      "W75"
+    ],
+    "anchors": [
+      "drain",
+      "run_on_pass",
+      "OpenScope",
+      "unrun",
+      "set_cursor",
+      "take_cursor",
+      "src/parse/bodies.rs",
+      "src/identities/scope.rs"
+    ],
+    "design": [
+      "The pass runs only as far as it must, in order, and never twice",
+      "The scope's constructor is the driver"
+    ],
+    "evidence": [
+      {
+        "command": "sed -n 142,148p src/identities/scope.rs; sed -n 1234,1236p src/parse/bodies.rs; sed -n 1253,1271p src/parse/bodies.rs",
+        "output": "scope.rs run: let start = rt.take_cursor(node); ... for (i, &expr) in exprs.iter().enumerate() { ... if i < start { continue; } match rt.run(expr) ... }   (one call, start to end; no stop point)\nbodies.rs drain: pub fn drain(&mut self) -> ... { let lists = self.cx.open.iter_mut().map(|s| (s.scope, std::mem::take(&mut s.unrun))).collect();\n    ... || ty == self.types.defer_ ... if skip { continue; } items.push(node);\n    for (i, node) in items.into_iter().enumerate() { ... let bits = unsafe { self.run_on_pass(node) }.map_err(ParseError::Run)?; ... }\n(two loops over one scope's lines: the pass's own, then the scope's run from set_cursor's start)",
+        "commit": "bb1c561"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T01:51+02:00",
+      "by": "logoslang-why-P29-a",
+      "model": "opus",
+      "effort": "high",
+      "commit": "bb1c561",
+      "run": "why-P29",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:52+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "accepted as a why of W71",
+        "reason": "Direct cause of W71 (why the pass is a runner for every scope): scope.rs `run` runs a scope from a start line to its end in one Rust call and cannot be advanced to a given line and paused, so the pass, which may run a scope only up to the item being parsed (›The pass runs only as far as it must‹), runs lines with its own loop (`drain` over `OpenScope.unrun`, `run_on_pass`, `defer`s skipped) and hands `run` a start by `set_cursor`. A found it; B did not."
+      },
+      {
+        "at": "2026-10-01T01:55+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "why + W75",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W74",
+    "kind": "why",
+    "status": "merged",
+    "text": "The top level is no scope node: its `OpenScope.scope` is `None` ('None at the top level and in a type body'), so no scope.rs `run` ever runs its lines; `finish`, called 'the root scope's own run', is `drain`, and its exit is the parser's `exit` over `OpenScope.defers`, called from `run_line` (per line in `repl`), where ›The scope's constructor is the driver‹ has 'The root scope is run by `import` over a file, and by the command line over its one line' and ›The pass runs only as far as it must, in order, and never twice‹ asks that 'one mechanism serves all four' (a block, the top level, a REPL line, an imported file)",
+    "proposed_for": "W71",
+    "why": null,
+    "anchors": [
+      "OpenScope",
+      "finish",
+      "drain",
+      "exit",
+      "take_pending_defers",
+      "run_line",
+      "src/parse/bodies.rs",
+      "src/main.rs"
+    ],
+    "design": [
+      "The scope's constructor is the driver",
+      "The pass runs only as far as it must, in order, and never twice"
+    ],
+    "evidence": [
+      {
+        "command": "sed -n 41,43p src/parse/bodies.rs; rg -n 'OpenScope \\{' src/parse; sed -n 1338,1347p src/parse/bodies.rs",
+        "output": "    /// The block node whose `dyads` hold the items, when the scope runs as one\n    /// later: a drain leaves its cursor on the frame. None at the top level and in a type body.\n    scope: Option<DyadPtr>,\nsrc/parse/bodies.rs:1075:        self.cx.open.push(OpenScope { narrowed, scope: Some(scope), list, ..OpenScope::default() });   (the only Some; the root is OpenScope::default())\n    /// The end of the program: the root scope's own run (DESIGN ›The scope's constructor is the driver‹), yielding the tail it ran.\n    pub fn finish(&mut self) -> ... { self.drain() }\n    /// The root scope's exit: the top level's teardowns, LIFO. ...\n    pub fn exit(&mut self) -> ... { for defer_node in self.take_pending_defers().into_iter().rev() {",
+        "commit": "bb1c561"
+      },
+      {
+        "command": "./target/release/logos 'defer (print «d»), print «a»'; ./target/release/logos '( defer (print «d»), print «a» )'   # dev bb1c561, release",
+        "output": "a                (top level: the pass skips the defer and exit's list lacks it)\na / d / 0        (a block: its scope run gathers and runs it)",
+        "commit": "bb1c561"
+      }
+    ],
+    "found_by": [
+      "A"
+    ],
+    "aliases": [],
+    "merged_into": "W72",
+    "made": {
+      "at": "2026-10-01T01:52+02:00",
+      "by": "logoslang-why-P29-a",
+      "model": "opus",
+      "effort": "high",
+      "commit": "bb1c561",
+      "run": "why-P29",
+      "agent": "A"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:52+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "merged into W72",
+        "reason": "Same fact, one fix removes both: the top level's lines are never run by scope.rs `run`: the parser opens the top level as an `OpenScope` whose `scope` is None and never closes `core.root_scope` into a sequence, so `drain` is its only runner, with its own owed list (binding-site `defer free` only) and its own exit, against ›The scope's constructor is the driver‹ and ›The pass runs only as far as it must…‹ Why (2), \"one mechanism serves all four\". B's text kept: its probe shows the root scope node exists and holds the lines (`here.scope.dyads.size` is 2), which A's \"no scope node\" missed. Direct test passes for W71 (the top level's runner)."
+      }
+    ]
+  },
+  {
+    "id": "W75",
+    "kind": "why",
+    "status": "accepted",
+    "text": "scope.rs run is one function that both runs a scope's lines and performs its exit (run_teardowns after the loop, and on RunError::Return), with no separate step that runs the lines present so far and leaves the scope open; the pass needs only the first, since drain's own end is the scope's lines parsed so far (exprs_of(scope).len() at set_cursor), so it cannot call run without ending the scope and loops over the lines itself",
+    "proposed_for": "W73",
+    "why": [],
+    "anchors": [
+      "run_teardowns",
+      "take_cursor",
+      "set_cursor",
+      "drain",
+      "exprs_of",
+      "src/identities/scope.rs",
+      "src/parse/bodies.rs"
+    ],
+    "design": [
+      "The pass runs only as far as it must, in order, and never twice",
+      "The scope's constructor is the driver"
+    ],
+    "evidence": [
+      {
+        "command": "grep -n 'let start = rt.take_cursor\\|for (i, &expr) in exprs\\|run_teardowns(rt, &defers)\\|Ok(last)' src/identities/scope.rs; grep -n 'exprs_of(scope)\\|set_cursor(scope, lines)' src/parse/bodies.rs",
+        "output": "src/identities/scope.rs:142:        let start = rt.take_cursor(node);\nsrc/identities/scope.rs:148:        for (i, &expr) in exprs.iter().enumerate() {\nsrc/identities/scope.rs:173:                    run_teardowns(rt, &defers)?;   (exit on return)\nsrc/identities/scope.rs:180:        run_teardowns(rt, &defers)?;       (exit after the last line, same call)\nsrc/identities/scope.rs:181:        Ok(last)\nsrc/parse/bodies.rs:1246:  unsafe { crate::identities::scope::exprs_of(scope) }.map_or(0, <[_]>::len);   (drain's end: the lines parsed so far)\nsrc/parse/bodies.rs:1247:                self.rt.set_cursor(scope, lines);",
+        "commit": "bb1c561"
+      }
+    ],
+    "found_by": [
+      "B"
+    ],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T01:54+02:00",
+      "by": "logoslang-why-P29-b",
+      "model": "opus",
+      "effort": "high",
+      "commit": "bb1c561",
+      "run": "why-P29",
+      "agent": "B"
+    },
+    "history": [
+      {
+        "at": "2026-10-01T01:55+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "accepted as a why of W73",
+        "reason": "Direct cause of W73: scope.rs `run` runs the lines and performs the exit in one function (`run_teardowns` after the loop and on `Return`), with no step that runs the lines present so far and leaves the scope open, while `drain`'s end is exactly the lines parsed so far, so the pass cannot call `run` without ending the scope and loops itself. B found it and rejected the RunFn shape as a cause. A traced W73 to W68 instead, which would close the loop W68 → W71 → W73 → W68, so it is not linked: the runner knot is one structure seen from several sides (a scope's run written three times, its position a Rust local), which ›The pass runs only as far as it must‹ (\"A frame keeps a cursor, how far the scope it runs has got\") already rules."
+      },
+      {
+        "at": "2026-10-01T01:57+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "bb1c561",
+        "change": "asked: no why found",
+        "reason": "Both agents: every why of W75 leads back up the chain (W68: the running scope's position is a Rust local of the one call, which would close the loop W68 → W71 → W73 → W75 → W68) or into history (#167 added the frame cursor only as the pass's hand-off). Not the RunFn shape (a partial step could be a second fn beside it; both checked). Not a DESIGN gap: ›The pass runs only as far as it must…‹ names the partial run and \"A frame keeps a cursor\", ›A value's teardown runs where its life ends…‹ the exit. A's reading for the solution talk: W68, W71, W73 and W75 are one structure, a running scope's position held in a Rust local; its fix is one, keep it on the frame as ›The pass runs…‹ says."
+      }
+    ]
   }
 ]
