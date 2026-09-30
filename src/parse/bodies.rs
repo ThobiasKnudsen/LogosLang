@@ -1157,9 +1157,7 @@ impl<'a> Parser<'a> {
                 Err(e) => {
                     self.cx.scopes.pop();
                     let open = self.cx.open.pop().expect("pushed above");
-                    if matches!(e, ParseError::Run(_)) {
-                        self.end_after_fault(&open);
-                    }
+                    self.end_after_fault(&open);
                     return Err(e);
                 }
             };
@@ -1175,7 +1173,8 @@ impl<'a> Parser<'a> {
         };
         // What the block parsed and did not run runs when the block runs;
         // what it did run stands in the body as its result.
-        let mut exit = self.cx.open.pop().expect("pushed above").exit;
+        let closed = self.cx.open.pop().expect("pushed above");
+        let mut exit = closed.exit.clone();
         // Prose and a `defer` (it runs at exit, never as the tail) are
         // invisible to value flow.
         let defer_ = self.types.defer_;
@@ -1194,6 +1193,7 @@ impl<'a> Parser<'a> {
                     // SAFETY: `e` is a reduced dyad just parsed.
                     && unsafe { contains_return(types, e) }
                 {
+                    self.end_after_fault(&closed);
                     return Err(ParseError::EarlyReturn);
                 }
             }
@@ -1217,10 +1217,12 @@ impl<'a> Parser<'a> {
             // SAFETY: as above.
             let lent = unsafe { crate::identities::drop_model::lent_place(types, place) };
             if lent.and_then(held_at).is_some() {
+                self.end_after_fault(&closed);
                 return Err(ParseError::AddressOfHeld);
             }
             if let Some(at) = held_at(place) {
                 if returned {
+                    self.end_after_fault(&closed);
                     return Err(ParseError::OwningEscape);
                 }
                 exit[at].end = Some(tail);
@@ -1364,8 +1366,8 @@ impl<'a> Parser<'a> {
         Ok(last)
     }
 
-    /// A fault unwinds the parse of an open scope: what the lines the pass ran hold and
-    /// defer ends, and the fault stays the error shown (DESIGN ›A checked error is a fault:
+    /// A fault or a failed parse unwinds the parse of an open scope: what the lines the pass
+    /// ran hold and defer ends, and the fault stays the error shown (DESIGN ›A checked error is a fault:
     /// the task that hit it is cancelled‹). The pass knows which lines ran, so the scope that
     /// holds a name alone decides: a name held from the scope's start is an enclosing
     /// scope's, and one a nested line the pass ran ended is not held.

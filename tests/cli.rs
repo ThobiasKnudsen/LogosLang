@@ -1753,6 +1753,19 @@ fn a_fault_in_the_pass_frees_what_a_nested_line_ended_once() {
 }
 
 #[test]
+fn a_block_that_fails_to_parse_frees_what_its_run_lines_hold() {
+    // As the top level does: the pass ran `b`'s line before the error.
+    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), \
+               h := fn () -> i32 ( 1 )";
+    for tail in ["nosuch", "&b", "return b", "return 1, 2"] {
+        let src = format!("{bag}, x := ( b := bag(2), n := immediate h(), {tail} )");
+        let out = logos().arg(src).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{tail}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "freed 2\n", "{tail}");
+    }
+}
+
+#[test]
 fn an_owning_value_that_nothing_can_free_is_refused() {
     let out = logos().args(["import", "tests/fixtures/unbound_owning.logos"]).output().unwrap();
     assert_eq!(out.status.code(), Some(1));
