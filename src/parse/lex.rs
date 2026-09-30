@@ -402,7 +402,7 @@ impl<'a> Parser<'a> {
         self.brackets().into_iter().find(|&(open, _)| open == opener).map(|(_, close)| close)
     }
 
-    fn is_closer(&self, id: DyadPtr) -> bool {
+    pub(super) fn is_closer(&self, id: DyadPtr) -> bool {
         self.brackets().into_iter().any(|(_, close)| close == id)
     }
 
