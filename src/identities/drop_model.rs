@@ -1238,6 +1238,25 @@ mod tests {
         assert_eq!(free_log(), vec![7]);
     }
 
+    #[test]
+    fn a_fault_in_an_if_s_condition_ends_what_its_arms_end() {
+        // Neither arm runs, so the `if` frees what either would have, last declared first;
+        // then the scope's end frees what it still holds.
+        let g = "g := fn () -> i32 ( error «stop» ),\n";
+        for (tail, freed) in [
+            ("if (g() == 1) ( free a )", vec![7, 8]),
+            ("if (g() == 1) ( free a ) else ( free b )", vec![8, 7]),
+            ("if (g() == 1) ( free b ) else ( c := move a, 0 )", vec![8, 7]),
+            ("if (g() == 1) ( 0 ) else if (g() == 2) ( free a )", vec![7, 8]),
+        ] {
+            let (e, live) =
+                fault(&format!("{g}a := alloc 1 of i32 7,\nb := alloc 1 of i32 8,\n{tail},\n1"));
+            assert!(matches!(e, RunError::Raised(_)), "{tail}: {e:?}");
+            assert_eq!(live, 0, "{tail}");
+            assert_eq!(free_log(), freed, "{tail}");
+        }
+    }
+
     /// The parse error `src` raises; for the fail-closed paths.
     fn parse_err(src: &str) -> ParseError {
         let mut store = Store::new();

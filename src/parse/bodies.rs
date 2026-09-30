@@ -698,20 +698,21 @@ impl<'a> Parser<'a> {
         }
 
         // A held name one arm moved or freed ends on every path: the other arm frees it at
-        // its end, an else-less `if` in the arm it gains (DESIGN ›`move` and `free` are
-        // static: the parse marks the name dead‹, rule 2).
+        // its end, an else-less `if` in the arm it gains, and a condition that leaves before
+        // either arm runs frees it too (DESIGN ›`move` and `free` are static: the parse marks
+        // the name dead‹, rule 2).
         let log_end = self.cx.ended_log.len();
         let then_ends = self.ended_outside(log_then..log_end, if_depth);
         let else_ends = self.ended_outside(log_start..log_then, if_depth);
+        let condition_ends = self.ended_outside(log_start..log_end, if_depth);
         let node = crate::identities::if_mod::build(self.rt.store, types, cond, then, els);
         // SAFETY: `node` was just built; the ends are places the enclosing scopes hold.
         unsafe {
-            crate::identities::if_mod::set_arm_ends(
+            crate::identities::if_mod::set_ends(
                 self.rt.store,
                 types,
                 node,
-                &then_ends,
-                &else_ends,
+                [&then_ends, &else_ends, &condition_ends],
             )
         };
         Ok(node)
