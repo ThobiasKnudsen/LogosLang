@@ -346,11 +346,14 @@ fn repl() -> ExitCode {
                 }
                 _ => None,
             };
-            // A line that ran and failed freed what it ended of an earlier line's, if not before
-            // the fault then as the fault left (DESIGN ›A checked error is a fault: the task
-            // that hit it is cancelled‹): those names stay ended.
-            let ran = matches!(parsed, Err(ParseError::Run(_))) || matches!(value, Some(Err(_)));
-            let freed = if ran { p.end_earlier_holds() } else { Vec::new() };
+            // A line that failed keeps the ends its run made of an earlier line's names (DESIGN
+            // ›A checked error is a fault: the task that hit it is cancelled‹): all of them once
+            // the line itself ran, else those whose ending line the pass ran.
+            let freed = match value {
+                Some(Ok(_)) => Vec::new(),
+                Some(Err(_)) => p.end_earlier_holds(),
+                None => p.end_reached_earlier_holds(),
+            };
             let imports_back = p.take_imports();
             (parsed, end, value, freed, p.into_scopes(), imports_back)
         };

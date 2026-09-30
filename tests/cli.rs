@@ -1717,6 +1717,42 @@ fn a_repl_line_that_faults_keeps_the_end_of_what_it_ended() {
 }
 
 #[test]
+fn a_failed_repl_line_keeps_the_ends_its_pass_ran() {
+    // A parse error after the pass ran the `free` keeps the name ended; a fault the pass
+    // meets before the `free` ran leaves it to the session.
+    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+    let fns = "g := fn () -> i32 ( error «x» )\nh := fn () -> i32 ( 1 )";
+    let (echoes, stderr) = repl(
+        format!(
+            "{bag}\n{fns}\na := bag(1)\n( free a, n := immediate h(), nosuch )\na.n\n\
+             b := bag(2)\n( n := immediate g(), free b, 1 )\nb.n\n"
+        )
+        .as_bytes(),
+    );
+    assert_eq!(echoes, ["freed 1", "2", "freed 2"], "stderr: {stderr}");
+    assert!(stderr.contains("`a` is dead here"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_fault_in_the_pass_frees_what_a_nested_line_ended_once() {
+    // The scope that holds the name decides, from the lines the pass ran.
+    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), \
+               g := fn () -> i32 ( error «x» ), h := fn () -> i32 ( 1 ), a := bag(1)";
+    for tail in [
+        "x := ( free a, n := immediate g(), 1 )",
+        "y := g(), x := ( m := i32 1, free a, n := immediate h(), 1 )",
+        "x := ( m := i32 1, free a, n := immediate g(), 1 )",
+        "x := ( m := immediate g(), free a, 1 )",
+        "x := ( free a, m := immediate h(), i32 1 ) + immediate g()",
+        "x := ( m := immediate h(), free a, i32 1 ) + immediate g()",
+    ] {
+        let out = logos().arg(format!("{bag}, {tail}, 1")).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{tail}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "freed 1\n", "{tail}");
+    }
+}
+
+#[test]
 fn an_owning_value_that_nothing_can_free_is_refused() {
     let out = logos().args(["import", "tests/fixtures/unbound_owning.logos"]).output().unwrap();
     assert_eq!(out.status.code(), Some(1));
