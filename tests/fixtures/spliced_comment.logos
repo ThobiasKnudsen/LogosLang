@@ -1,0 +1,4 @@
+# a `#` spliced at a segment boundary, read through like a written one
+h := type (share parse_rank = *.parse_rank + 1, share parse = ( tape.insert(1, lex «* 2 #»), tape.remove(0) )),
+5 h,
+pub ten := 5 h

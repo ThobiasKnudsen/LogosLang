@@ -275,26 +275,29 @@ impl<'a> Parser<'a> {
         Ok(tape.at(offset).copied())
     }
 
-    /// At the boundary: comment cells lifted out, then the unconstructed cells
-    /// highest parse_rank first, associativity breaking ties, no lookahead;
-    /// what remains is read as operands. Returns the cells in order with their offsets.
+    /// At the boundary: the unconstructed cells built highest parse_rank first,
+    /// associativity breaking ties, no lookahead. Before each, the comment cells
+    /// built so far are lifted out, one a constructor built here included; what
+    /// remains is read as operands. Returns the cells in order with their offsets.
     pub(super) fn construct_segment(
         &mut self,
         tape: &mut ParsingTape,
     ) -> Result<Vec<(Cell, usize)>, ParseError> {
         let comment_ = self.types.comment_;
-        let prose: Vec<(usize, usize, DyadPtr)> = tape
-            .iter()
-            // SAFETY: a constructed cell holds a node from the store.
-            .filter(|(_, c)| c.constructed && unsafe { dyad::ty(c.dyad) } == comment_)
-            .map(|(n, c)| (n, c.start, c.dyad))
-            .collect();
-        for (n, start, d) in prose {
-            self.cx.lifted.push((start, d));
-            tape.center_on(n);
-            tape.remove(0);
-        }
         loop {
+            let prose: Vec<(usize, usize, DyadPtr)> = tape
+                .iter()
+                .filter(|(_, c)| {
+                    // SAFETY: a cell's dyad is null or a dyad from the store.
+                    c.constructed && !c.dyad.is_null() && unsafe { dyad::ty(c.dyad) } == comment_
+                })
+                .map(|(n, c)| (n, c.start, c.dyad))
+                .collect();
+            for (n, start, d) in prose {
+                self.cx.lifted.push((start, d));
+                tape.center_on(n);
+                tape.remove(0);
+            }
             let mut best: Option<(usize, f64, ConstructFn, DyadPtr)> = None;
             for (n, c) in tape.iter() {
                 if c.constructed {
