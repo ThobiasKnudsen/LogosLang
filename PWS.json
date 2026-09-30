@@ -1,1 +1,2916 @@
-[]
+[
+  {
+    "id": "P1",
+    "kind": "problem",
+    "status": "open",
+    "text": "Adding `1.0` to `(return x)` over an `f64` name prints `1`",
+    "program": "x := f64 2.5, (return x) + 1.0",
+    "output": "1\nexit 0",
+    "expected": "A `+` over an `f64` operand computes at `f64`, as `x := f64 2.5, x + 1.0` prints `3.5`; ›A node's output type is per node, and its parse writes it‹: use sites read the type a node gives back from the node",
+    "tier": "interpreted",
+    "found": "first example of #82 (seed review of 9 September 2026, dev 64846c7); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": [
+      "W1"
+    ],
+    "issue": 82,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:20+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:20+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W1",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W1",
+    "kind": "why",
+    "status": "accepted",
+    "text": "`numtype_of` lists `return_` with the comparisons and answers `bool`, physically an i32, for a `return` node, whatever its operand",
+    "proposed_for": "P1",
+    "why": [
+      "W2"
+    ],
+    "anchors": [
+      "numtype_of",
+      "src/identities/mod.rs"
+    ],
+    "design": [
+      "A node's output type is per node, and its parse writes it"
+    ],
+    "evidence": [
+      {
+        "command": "sed -n 693,702p src/identities/mod.rs",
+        "output": "    // A comparison or logical result is `bool`, physically an i32.\n    if logos == types.lt\n        || logos == types.gt\n        ...\n        || logos == types.subset\n        || logos == types.return_",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:20+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:20+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W2",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W2",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A built-in node does not carry the type it gives back, so five functions (`numtype_of`, `node_type_of`, `is_bool_result`, `record_type_of`, `owning_pointee_of`) each keep their own list of node kinds to guess it",
+    "proposed_for": "W1",
+    "why": [],
+    "anchors": [
+      "numtype_of",
+      "node_type_of",
+      "is_bool_result",
+      "record_type_of",
+      "owning_pointee_of"
+    ],
+    "design": [
+      "A node's output type is per node, and its parse writes it"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n \"fn (numtype_of|node_type_of|is_bool_result|record_type_of|owning_pointee_of)\\b\" src",
+        "output": "src/parse/bodies.rs:136:pub(crate) unsafe fn is_bool_result(types: &Core, node: DyadPtr) -> bool {\nsrc/identities/drop_model.rs:576:pub(crate) unsafe fn owning_pointee_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {\nsrc/identities/by_copy.rs:124:pub(crate) unsafe fn record_type_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {\nsrc/identities/mod.rs:663:pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {\nsrc/identities/mod.rs:977:pub(crate) unsafe fn node_type_of(types: &Core, node: DyadPtr) -> Option<DyadPtr> {",
+        "commit": "9fc7634"
+      },
+      {
+        "command": "rg -c \"numtype_of\\(\" src --stats -q",
+        "output": "44 matches\n14 files contained matches",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:20+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:27+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "asked: no why found",
+        "reason": "root cause per #82's analysis and the cross-root review of 30 September 2026; not yet asked by a why run"
+      }
+    ]
+  },
+  {
+    "id": "S1",
+    "kind": "solution",
+    "status": "chosen",
+    "text": "Every built-in's parse writes the type its node gives back, and the five guessing functions become one read of it",
+    "fixes": [
+      "W2"
+    ],
+    "assessment": "Removes numtype_of, node_type_of, is_bool_result, record_type_of and owning_pointee_of (44 numtype_of calls in 14 files) and with them the output-type symptoms of #82 such as (return x) + 1.0; wide (about 50 node kinds) and must run alone; leaves #82's read-kind half (96 readers), and #198, #218, #229, #215, #216 and #224 slice 2 each still need their own rule",
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-01T00:21+02:00",
+      "words": "update the issues accordingly based on your findings",
+      "reason": "the order Thobias set on 30 September 2026, recorded on #82 (issuecomment-5902373996)"
+    },
+    "design": [
+      "A node's output type is per node, and its parse writes it"
+    ],
+    "issue": 82,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T00:21+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:21+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "chosen by Thobias: \"update the issues accordingly based on your findings\"",
+        "reason": "the order Thobias set on 30 September 2026, recorded on #82 (issuecomment-5902373996)"
+      },
+      {
+        "at": "2026-10-01T00:21+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "issue #82",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "S2",
+    "kind": "solution",
+    "status": "rejected",
+    "text": "Give `return_` its own arm in `numtype_of` that reads its operand, and take it off the comparison list",
+    "fixes": [
+      "W1"
+    ],
+    "assessment": "Removes the (return x) + 1.0 symptom only; adds an arm to a list the first slice deletes, and leaves the other four guessing lists",
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-01T00:21+02:00",
+      "words": "update the issues accordingly based on your findings",
+      "reason": "the first slice deletes numtype_of; CLAUDE.md: never fix a symptom in code the root's fix deletes"
+    },
+    "design": [],
+    "issue": 82,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T00:21+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:21+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "rejected by Thobias: \"update the issues accordingly based on your findings\"",
+        "reason": "the first slice deletes numtype_of; CLAUDE.md: never fix a symptom in code the root's fix deletes"
+      },
+      {
+        "at": "2026-10-01T00:21+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "issue #82",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P2",
+    "kind": "problem",
+    "status": "open",
+    "text": "A function that writes a field of a local record hole runs interpreted but its compile fails",
+    "program": "point := type ( mut x := i32 ? ), f := fn () -> i32 ( mut q := point ?, q.x = 3, 0 ), f.compile(), f()",
+    "output": "<command line>: run error: compile() failed: this cannot be compiled yet\nexit 1",
+    "expected": "The compiled tier gives what the interpreter gives: without `f.compile(), ` the program prints `0`, exit 0 (›Backends are identities, and lowering is keyed by them‹)",
+    "tier": "compiled",
+    "found": "row 1 of the symptom comment on #164 from RCA compiled-declines (30 September 2026, dev 5a6c160; finding by review round 1 of RCA record-generic-field); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": [
+      "W3"
+    ],
+    "issue": 164,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:21+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:21+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W3",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W3",
+    "kind": "why",
+    "status": "accepted",
+    "text": "`declare`'s `lower` lowers `declared_of(node)`, the hole's own storage, which its `run` skips, and the compiler refuses a whole read of a record place (`Read::Aggregate` is `NotLowerable`)",
+    "proposed_for": "P2",
+    "why": [
+      "W4"
+    ],
+    "anchors": [
+      "src/identities/declare.rs",
+      "declared_of",
+      "NotLowerable"
+    ],
+    "design": [
+      "Backends are identities, and lowering is keyed by them"
+    ],
+    "evidence": [
+      {
+        "command": "sed -n 97,103p src/identities/declare.rs",
+        "output": "fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {\n    // SAFETY: as [`run`].\n    unsafe {\n        lw.lower(declared_of(node))?;\n    }\n    Ok(lw.const_i32(0))\n}",
+        "commit": "9fc7634"
+      },
+      {
+        "command": "rg -n \"Read::Aggregate \\| Read::Opaque\" src/compile.rs",
+        "output": "src/compile.rs:179:            Read::Aggregate | Read::Opaque | Read::Undefined => Err(CompileError::NotLowerable(op)),",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:21+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:21+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W4",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W4",
+    "kind": "why",
+    "status": "accepted",
+    "text": "Every identity's meaning is written twice, once per tier: its run in the identity and its lowering for Cranelift, kept in agreement only by tests",
+    "proposed_for": "W3",
+    "why": [],
+    "anchors": [
+      "src/compile.rs",
+      "Lowerer"
+    ],
+    "design": [
+      "The Logos IR sits between the Logic Graph and every backend",
+      "Backends are identities, and lowering is keyed by them"
+    ],
+    "evidence": [
+      {
+        "command": "rg -c \"fn lower\" src/identities",
+        "output": "src/identities/while.rs:1\nsrc/identities/this.rs:2\nsrc/identities/for.rs:1\nsrc/identities/drop_model.rs:2\nsrc/identities/tape.rs:2\nsrc/identities/declare.rs:1\nsrc/identities/convert.rs:1\nsrc/identities/by_copy.rs:4\nsrc/identities/not.rs:1\nsrc/identities/scope.rs:1\nsrc/identities/binary.rs:1\nsrc/identities/assign.rs:1\nsrc/identities/return.rs:1\nsrc/identities/and.rs:1",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:21+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:27+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "asked: no why found",
+        "reason": "root cause per #164's analysis and the cross-root review of 30 September 2026; not yet asked by a why run"
+      }
+    ]
+  },
+  {
+    "id": "S3",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "One definition per identity, then one lowering from the graph to a small typed Logos IR, run by an IR interpreter and emitted by Cranelift",
+    "fixes": [
+      "W4"
+    ],
+    "assessment": "Removes the second copy of every meaning: the compiled declines, the per-tier halves of #192 and #224 and #229's pointer slice; leaves every rule checked while parsing (#198, #203, #212, #218, #227), since the IR starts after the parse; needs #192, #127 and group A first, and touches every identity file, so it runs alone",
+    "decision": null,
+    "design": [
+      "The Logos IR sits between the Logic Graph and every backend",
+      "Backends are identities, and lowering is keyed by them"
+    ],
+    "issue": 164,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T00:21+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:21+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "issue #164",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P3",
+    "kind": "problem",
+    "status": "open",
+    "text": "A box made on a line of its own, with no name, never prints its `free`",
+    "program": "boxed := type ( mut p := own @i32 ?, mut size := u64 0, share free = ( print «free», free p ), share parse_rank = dyad.parse_rank, share parse = ( tape.is_constructed[0] = true ) ), box := type ( elements := scope ?, output_type := type ?, share run = ( mut v := output_type ?, v.p = mut alloc elements.dyads.size of i32 ?, for i in 0..elements.dyads.size ( (v.p + i)@ = elements.dyads[i], v.size = i + 1 ), move v ), share parse_rank = dyad.parse_rank, share associativity = left, share parse = ( if tape[1]:type == scope ( for i in 0..tape[1].dyads.size ( if not (tape[1].dyads[i]:type ⊆ i32) error «not an i32» ), tape[0]:type = box, tape[0].elements = tape[1], tape[0].output_type = boxed, tape.remove(1) ) else ( tape[0] = boxed ), tape.is_constructed[0] = true ) ), box (1, 2), print «after»",
+    "output": "after\nexit 0",
+    "expected": "`free`, then `after`: a value nothing takes lives to the end of its line and its type's `free` runs there (Q-0025, Thobias, 30 September 2026, not yet in DESIGN.md; ›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹); the named control `a := box (1, 2), print «after»` prints `after`, `free`",
+    "tier": "interpreted",
+    "found": "first example of #224 (RCA unbound-owning-line, 30 September 2026, dev 1922c65 and 61db292); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": [
+      "W5"
+    ],
+    "issue": 224,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:21+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:21+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W5",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W5",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A line's end only gives back the line's scratch bytes (`stack_release`, once per construct and tier) and records nothing of the values the line made",
+    "proposed_for": "P3",
+    "why": [
+      "W6"
+    ],
+    "anchors": [
+      "stack_release",
+      "src/identities/scope.rs",
+      "src/identities/for.rs",
+      "src/identities/while.rs",
+      "src/identities/if.rs"
+    ],
+    "design": [
+      "A scope's value is what it evaluates to, and `return` is an optional early exit from the enclosing function"
+    ],
+    "evidence": [
+      {
+        "command": "sed -n 162,169p src/identities/scope.rs",
+        "output": "            // A line's scratch is freed with the line; the tail's is the value handed on.\n            let mark = rt.stack_mark();\n            match rt.run(expr) {\n                Ok(v) => {\n                    last = v;\n                    if tail != Some(i) {\n                        rt.stack_release(mark);\n                    }",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:21+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:21+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W6",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W6",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A teardown runs only where the code that took the value inserted one (`own_node`, or a `defer free` built by `declare_here`); the identities that end a value's life run none",
+    "proposed_for": "W5",
+    "why": [],
+    "anchors": [
+      "own_node",
+      "declare_here",
+      "take_pending_defers",
+      "session_defers"
+    ],
+    "design": [
+      "A value's teardown runs where its life ends; the ending identity reads the type's `free` slot"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n \"fn own_node|fn take_pending_defers|session_defers\" src",
+        "output": "src/main.rs:292:    let mut session_defers: Vec<seed::dyad::DyadPtr> = Vec::new();\nsrc/main.rs:304:                for defer_node in session_defers.into_iter().rev() {\nsrc/main.rs:376:        session_defers.extend(line_defers);\nsrc/parse/bodies.rs:1222:    pub fn take_pending_defers(&mut self) -> Vec<DyadPtr> {\nsrc/parse/declare.rs:227:    unsafe fn own_node(&mut self, binding: DyadPtr, place: DyadPtr, free: DyadPtr) {",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:21+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:27+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "asked: no why found",
+        "reason": "root cause per #192's analysis and the cross-root review of 30 September 2026; not yet asked by a why run"
+      }
+    ]
+  },
+  {
+    "id": "P4",
+    "kind": "problem",
+    "status": "open",
+    "text": "A box passed straight to a function's parameter never prints its `free`, and no error is given",
+    "program": "boxed := type ( mut p := own @i32 ?, mut size := u64 0, share free = ( print «free», free p ), share parse_rank = dyad.parse_rank, share parse = ( tape.is_constructed[0] = true ) ), box := type ( elements := scope ?, output_type := type ?, share run = ( mut v := output_type ?, v.p = mut alloc elements.dyads.size of i32 ?, for i in 0..elements.dyads.size ( (v.p + i)@ = elements.dyads[i], v.size = i + 1 ), move v ), share parse_rank = dyad.parse_rank, share associativity = left, share parse = ( if tape[1]:type == scope ( for i in 0..tape[1].dyads.size ( if not (tape[1].dyads[i]:type ⊆ i32) error «not an i32» ), tape[0]:type = box, tape[0].elements = tape[1], tape[0].output_type = boxed, tape.remove(1) ) else ( tape[0] = boxed ), tape.is_constructed[0] = true ) ), f := fn (q := boxed ?) -> i32 ( 1 ), f(box (1, 2)), print «after»",
+    "output": "after\nexit 0",
+    "expected": "`free` before `after`: the parameter holds a value passed straight and it is freed where the parameter's life ends (›Holding is decided at the binding site, parameters included‹); its pointer twin `f(alloc 1 of i32 2)` is refused today",
+    "tier": "interpreted",
+    "found": "first example of #218 (review round 1 of #211, 29 September 2026; RCA block-tail-owner on dev 1922c65); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": [
+      "W7",
+      "W6"
+    ],
+    "issue": 218,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:21+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:21+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W7",
+        "reason": null
+      },
+      {
+        "at": "2026-10-01T00:21+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W6",
+        "reason": "a parameter is a taker that inserts no teardown, so the box it takes is never freed"
+      }
+    ]
+  },
+  {
+    "id": "W7",
+    "kind": "why",
+    "status": "accepted",
+    "text": "Whether a value carries a teardown is tested at each site that takes it, each with its own reader: the call argument and `return` ask `is_owning_value`, which answers for owning pointers only",
+    "proposed_for": "P4",
+    "why": [
+      "W6"
+    ],
+    "anchors": [
+      "is_owning_value",
+      "src/parse/bodies.rs"
+    ],
+    "design": [
+      "Holding is decided at the binding site, parameters included",
+      "Three fail-closed ownership rules, and `-> own @T`"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n is_owning_value src",
+        "output": "src/identities/assign.rs:280:    let rhs_owning = unsafe { super::drop_model::is_owning_value(types, rhs) };\nsrc/identities/drop_model.rs:664:pub(crate) unsafe fn is_owning_value(types: &Core, node: DyadPtr) -> bool {\nsrc/parse/bodies.rs:598:        if crate::identities::drop_model::is_owning_value(types, value) {\nsrc/parse/bodies.rs:952:            if unsafe { crate::identities::drop_model::is_owning_value(self.types, arg) } {",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:21+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:21+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W6",
+        "reason": "each taking site tests the value itself because the teardown is inserted by the taker (cross-root review, group C, \"#218 (its argument half)\")"
+      }
+    ]
+  },
+  {
+    "id": "S4",
+    "kind": "solution",
+    "status": "chosen",
+    "text": "The identities that end a value's life (a scope's exit, `=`, `free`, an `if`'s close) read the type's `free` slot and run it there; nothing is inserted at `:=`",
+    "fixes": [
+      "W6"
+    ],
+    "assessment": "Removes own_node, OpenScope.defers and owned, teardown_scope, retire_teardown, retire_inserted, take_pending_defers, session_defers and the null stand-in; makes #192 and #224 impossible only if built whole, the line end included, while its plan walks named values only; #218's return box (1, 2) rows still need rule 3's refusal, a separate test",
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-01T00:22+02:00",
+      "words": "update the issues accordingly based on your findings",
+      "reason": "the order Thobias set on 30 September 2026, recorded on #82 (issuecomment-5902373996)"
+    },
+    "design": [
+      "A value's teardown runs where its life ends; the ending identity reads the type's `free` slot"
+    ],
+    "issue": 192,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T00:22+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:22+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "chosen by Thobias: \"update the issues accordingly based on your findings\"",
+        "reason": "the order Thobias set on 30 September 2026, recorded on #82 (issuecomment-5902373996)"
+      },
+      {
+        "at": "2026-10-01T00:22+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "issue #192",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "S5",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "The line's end runs the teardown of every value the line made that nothing took, decided in one place for every line, from the maker and what takes it",
+    "fixes": [
+      "W5"
+    ],
+    "assessment": "Removes the leak of every unnamed value on both tiers, the REPL and import, with no arm added to a field read, index, print part or build_call; leaves the if-with-else case (slice 2) to #82's output read, and the order of two frees on one line unruled; runs after #192, in the same files",
+    "decision": null,
+    "design": [
+      "A value's teardown runs where its life ends; the ending identity reads the type's `free` slot",
+      "The pass runs only as far as it must, in order, and never twice"
+    ],
+    "issue": 224,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T00:22+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:22+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "issue #224",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "S6",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "The call argument, `return` and `=` ask `teardown_of`, and the parameter binds its argument as `:=` does and holds it; `is_owning_value` goes",
+    "fixes": [
+      "W7"
+    ],
+    "assessment": "Removes the per-site readers and the two silent leaks (f(box (1, 2)), return box (1, 2)); slice 3 needs #192's holding; leaves a scope's or an if's value (#217, blocked by #82) and a value no name takes (#224)",
+    "decision": null,
+    "design": [
+      "Holding is decided at the binding site, parameters included",
+      "Three fail-closed ownership rules, and `-> own @T`"
+    ],
+    "issue": 218,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T00:22+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:22+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "issue #218",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P5",
+    "kind": "problem",
+    "status": "open",
+    "text": "An `immediate` in a `type (…)` written in a loop body prints at every iteration",
+    "program": "print «start», for 0..3 ( t := type ( share g := immediate ( print «hi», 1 ) ), print «iter» ), print «end»",
+    "output": "start\nhi\niter\nhi\niter\nhi\niter\nend\nexit 0",
+    "expected": "The rule gives `start`, `hi`, `iter`, `iter`, `iter`, `end`: ›A `type (…)` inside a body is built once per set of the values it reads (built each time it runs, until 29 September 2026)‹, and ›`immediate x` runs the expression to its right as soon as it is parsed, and stands as its value (spelled `run x` earlier on 28 September 2026)‹",
+    "tier": "interpreted",
+    "found": "first example of #197 (RCA immediate-in-run-body, 29 September 2026, dev 3f62c33); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": [
+      "W8"
+    ],
+    "issue": 197,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:22+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:22+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W8",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W8",
+    "kind": "why",
+    "status": "accepted",
+    "text": "`construct_held_type` builds a held `type (…)` at every run of its node and keeps no build per set of the values it reads",
+    "proposed_for": "P5",
+    "why": [
+      "W9"
+    ],
+    "anchors": [
+      "construct_held_type",
+      "src/parse/types.rs"
+    ],
+    "design": [
+      "A `type (…)` inside a body is built once per set of the values it reads (built each time it runs, until 29 September 2026)"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n \"fn construct_run_body|fn construct_held_type|run_body::(lookup|insert)\" src",
+        "output": "src/parse/types.rs:762:    pub(super) unsafe fn construct_held_type(\nsrc/parse/types.rs:1131:        let mut spec = crate::identities::run_body::lookup(held, &key);\nsrc/parse/bodies.rs:291:    pub(super) unsafe fn construct_run_body(\nsrc/parse/bodies.rs:315:        crate::identities::run_body::insert(self.rt.store, types, held, key, spec);",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:22+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:22+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W9",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W9",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A body written now and built later is parsed again from its lexed cells by one of two builders: only `construct_run_body` keeps its builds, and neither records where the body was written",
+    "proposed_for": "W8",
+    "why": [],
+    "anchors": [
+      "construct_run_body",
+      "construct_held_type"
+    ],
+    "design": [
+      "A generic function body is lexed once and built once per set of field types",
+      "The pass runs only as far as it must, in order, and never twice"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n \"fn construct_run_body|fn construct_held_type|run_body::(lookup|insert)\" src",
+        "output": "src/parse/types.rs:762:    pub(super) unsafe fn construct_held_type(\nsrc/parse/types.rs:1131:        let mut spec = crate::identities::run_body::lookup(held, &key);\nsrc/parse/bodies.rs:291:    pub(super) unsafe fn construct_run_body(\nsrc/parse/bodies.rs:315:        crate::identities::run_body::insert(self.rt.store, types, held, key, spec);",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:22+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:27+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "asked: no why found",
+        "reason": "root cause per #197's analysis and the cross-root review of 30 September 2026; not yet asked by a why run"
+      }
+    ]
+  },
+  {
+    "id": "P6",
+    "kind": "problem",
+    "status": "open",
+    "text": "A type whose `run` body declares `z` is refused as shadowing when the program declares its own `z` after the type",
+    "program": "u := type ( a := ?, output_type := type ?, share run = ( z := a, f64(z) ), share parse_rank = 60, share parse = ( tape[0]:type = u, tape[0].a = tape[1], tape[0].output_type = f64, tape.remove(1), tape.is_constructed[0] = true ) ), z := i32 0, x := i32 3, print «{u x}»",
+    "output": "<command line>:1:264: error: the run body of `u` could not be constructed for these field types:\n  u := type ( … ), z := i32 0, x := i32 3, print «{u x}»\nrun body of `u`:1:3: error: `z` is already declared and still in scope; declaring it again would leave the first one shadowed (a name ended by `free z` may be declared again)\n  ( z := a, f64(z) )\n    ^\nexit 1",
+    "expected": "`3.0`, exit 0, as without the later `z` (control: the same program without `z := i32 0, ` prints `3.0`); ›Name resolution is scope-filtered, and shadowing is disallowed‹: a candidate is kept when its scope is open and its range covers the point",
+    "tier": "interpreted",
+    "found": "first example of #230 (RCA run-body-outer-shadow, 30 September 2026, dev 5a6c160); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": [
+      "W10"
+    ],
+    "issue": 230,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:22+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:22+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W10",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W10",
+    "kind": "why",
+    "status": "accepted",
+    "text": "`ScopeStack::select` keeps a binding when its scope is open and it is not dead, never reading where its range starts, so a held body built later is checked against names declared after it",
+    "proposed_for": "P6",
+    "why": [
+      "W9"
+    ],
+    "anchors": [
+      "ScopeStack",
+      "src/parse/scopes.rs",
+      "resolve_fresh"
+    ],
+    "design": [
+      "Name resolution is scope-filtered, and shadowing is disallowed",
+      "A binding is live while its scope is open and it is not dead; it carries a range"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n \"is_dead\\(\\)\" src/parse/scopes.rs",
+        "output": "278:                .filter(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead())\n368:            if bindings.iter().any(|&r| self.is_open(fields(r).scope) && !fields(r).is_dead()) {\n471:                Ok(m.bindings.iter().any(|&r| fields(r).scope == scope && !fields(r).is_dead()))",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:22+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:22+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W9",
+        "reason": "the builder does not record where the body was written, so the scope stack it builds over has no point to test a range against (cross-root review, group D)"
+      }
+    ]
+  },
+  {
+    "id": "S7",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A held `type (…)` keeps one build per set of the values it reads from outside, through the same per-set build a `run` body uses, not a second memo",
+    "fixes": [
+      "W8"
+    ],
+    "assessment": "Removes the rebuild at every run (the loop, per-call and mk(i32) == mk(i32) programs); leaves its cache key for floats, records and pointers and the building-in-part timing (#219) as open rulings",
+    "decision": null,
+    "design": [
+      "A `type (…)` inside a body is built once per set of the values it reads (built each time it runs, until 29 September 2026)"
+    ],
+    "issue": 197,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T00:22+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:22+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "issue #197",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "S8",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A held body records its point when it is lexed, and `select` keeps a binding whose scope is open and whose range covers that point; `declare_pattern` asks `select`, and `resolve_fresh`'s depth test goes",
+    "fixes": [
+      "W10"
+    ],
+    "assessment": "Removes the shadowing refusals against later names and the two answers for free y; deletes a copy of the test in declare_pattern and in resolve_fresh; needs a start on every top-level binding; runs after #197, alone",
+    "decision": null,
+    "design": [
+      "Name resolution is scope-filtered, and shadowing is disallowed"
+    ],
+    "issue": 230,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T00:22+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:22+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "issue #230",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P7",
+    "kind": "problem",
+    "status": "open",
+    "text": "A command line holding only a comment is refused",
+    "program": "# hi",
+    "output": "<command line>:1:5: error: nothing to evaluate here\n  # hi\n      ^\nexit 1",
+    "expected": "Nothing printed, exit 0: a comment is void-valued (›Text literals are plain values; `#` is the one comment constructor‹), and a program with nothing in it has no value (Q-0033, Thobias, 30 September 2026, not yet in DESIGN.md); `( # note⏎), 7` and an imported file of comments run clean",
+    "tier": "interpreted",
+    "found": "first example of #234 (RCA comment-only-segment, 30 September 2026, dev 5a6c160 and 1f68f83); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": [
+      "W11"
+    ],
+    "issue": 234,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:23+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:23+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W11",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W11",
+    "kind": "why",
+    "status": "accepted",
+    "text": "`run_line` ends its root scope by its own rule, `ParseError::Empty` when no line ran, where `parse_block` yields unit for a scope with no value-bearing line",
+    "proposed_for": "P7",
+    "why": [
+      "W12"
+    ],
+    "anchors": [
+      "run_line",
+      "parse_block",
+      "src/main.rs"
+    ],
+    "design": [
+      "The scope's constructor is the driver"
+    ],
+    "evidence": [
+      {
+        "command": "sed -n 235,242p src/main.rs",
+        "output": "        // Real work with nothing to show exits clean; a genuinely empty line is an error.\n        None if ran_something => ExitCode::SUCCESS,\n        None => {\n            eprintln!(\n                \"{}\",\n                report::render(path, source, end, &report::parse_message(&ParseError::Empty))\n            );",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:23+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:23+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W12",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W12",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A scope's lines are read by five readers, each with its own end rule (`run_line`, `repl`, `run_imported`, `parse_block`, `parse_within`), so no one reader owns what stands on a scope's lines",
+    "proposed_for": "W11",
+    "why": [],
+    "anchors": [
+      "run_line",
+      "repl",
+      "run_imported",
+      "parse_block",
+      "parse_within"
+    ],
+    "design": [
+      "The scope's constructor is the driver",
+      "The pass runs only as far as it must, in order, and never twice"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n \"fn run_line|fn repl\\b|fn run_imported|fn parse_block|fn parse_within\" src",
+        "output": "src/parse/quotes.rs:208:    fn parse_within(&mut self, from: usize, to: usize) -> Result<DyadPtr, ParseError> {\nsrc/parse/quotes.rs:337:    fn run_imported(&mut self) -> Result<Vec<(String, DyadPtr)>, String> {\nsrc/main.rs:129:fn run_line(source: &str) -> ExitCode {\nsrc/main.rs:280:fn repl() -> ExitCode {\nsrc/parse/bodies.rs:1071:    pub(super) fn parse_block(&mut self, list: bool) -> Result<(DyadPtr, Cell), ParseError> {",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:23+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:27+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "asked: no why found",
+        "reason": "root cause per #234's analysis and the cross-root review of 30 September 2026; not yet asked by a why run"
+      }
+    ]
+  },
+  {
+    "id": "P8",
+    "kind": "problem",
+    "status": "open",
+    "text": "A comment in an `if` condition is counted as a line of the then-body",
+    "program": "if 5 * 2 # «c» == 10 ( 1, here.scope.dyads.size ) else ( 0 )",
+    "output": "2\nexit 0",
+    "expected": "`1`, as without the comment (`if 5 * 2 == 10 ( 1, here.scope.dyads.size ) else ( 0 )` prints `1`): the comment is a line of the scope its text is in (›A scope's `dyads` fill as its lines complete, and hold everything‹; the seed's reading, kept by #225)",
+    "tier": "interpreted",
+    "found": "first example of #237 (RCA spliced-and-raw-reads, dev 67f873e, rerun on a6329bb, 30 September 2026); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": [
+      "W13"
+    ],
+    "issue": 237,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:23+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:23+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W13",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W13",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A comment read through is kept in one parser-wide list, `cx.lifted`, filled by every caller of `construct_segment` and drained only by `next_cell`, in order of `start`, so it goes to whichever line loop runs next",
+    "proposed_for": "P8",
+    "why": [
+      "W12"
+    ],
+    "anchors": [
+      "next_cell",
+      "construct_segment",
+      "src/parse/driver.rs",
+      "src/parse/mod.rs"
+    ],
+    "design": [
+      "A scope's `dyads` fill as its lines complete, and hold everything",
+      "Text literals are plain values; `#` is the one comment constructor"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n lifted src/parse/mod.rs src/parse/driver.rs",
+        "output": "src/parse/mod.rs:111:    lifted: Vec<(usize, DyadPtr)>,\nsrc/parse/driver.rs:297:                self.cx.lifted.push((start, d));\nsrc/parse/driver.rs:705:                    self.cx.lifted.clear();\nsrc/parse/driver.rs:716:                self.cx.lifted.clear();\nsrc/parse/driver.rs:723:            let mut ordered: Vec<(usize, Cell)> = std::mem::take(&mut self.cx.lifted)",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:23+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:23+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W12",
+        "reason": "with no one reader of a scope's lines, no reader owns the comments on its lines, so they wait in a list on the parser (cross-root review, group E: \"#237 only if the one reader also owns the comments on its lines\")"
+      }
+    ]
+  },
+  {
+    "id": "S9",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "One reader of a scope's lines, built into `parse_block` and called for the command line, an imported file, a REPL line and a quote's `{…}`; a root scope with no tail line has no value",
+    "fixes": [
+      "W12"
+    ],
+    "assessment": "Removes run_line's and run_imported's loops, the command line's ParseError::Empty, the REPL's one-expression rule and parse_within's Trailing check, and two of three stray-) checks; makes #234 impossible; #237 only if the one reader also owns the comments on its lines (#237's slice); the value-less tail echoing 0 stays #82's",
+    "decision": null,
+    "design": [
+      "The scope's constructor is the driver",
+      "The command line is Logos source; the binary stays out of the way",
+      "`{ }` is text interpolation"
+    ],
+    "issue": 234,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T00:23+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:23+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "issue #234",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "S10",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "`construct_segment` gives back the comments it lifts with its items, in tape order, and the one reader places them as lines of the scope that holds their text; `cx.lifted` goes",
+    "fixes": [
+      "W13"
+    ],
+    "assessment": "Removes the parser-wide list, its sort, its drain and its two clear() calls, and with them a comment moving into the body after a condition, range or return type and a spliced comment sorting before its expression; builds on #234's one reader",
+    "decision": null,
+    "design": [
+      "A scope's `dyads` fill as its lines complete, and hold everything"
+    ],
+    "issue": 237,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T00:23+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:23+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "issue #237",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P9",
+    "kind": "problem",
+    "status": "open",
+    "text": "A function declared `-> i32` whose body is `f64 2.5` returns `0`",
+    "program": "f := fn () -> i32 ( f64 2.5 ), f()",
+    "output": "0\nexit 0",
+    "expected": "Refused where the function is defined, as the same value into the same place type is at a call argument (`g := fn (a := i32 ?) -> i32 ( a ), g(f64 2.5)` is \"these types do not match\"): ›No implicit coercion; a numeric type applied to a value is the conversion‹",
+    "tier": "interpreted",
+    "found": "first example of #198 (RCA fn-tail-type, 29 September 2026, dev 9e06864); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": [
+      "W14"
+    ],
+    "issue": 198,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:23+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:23+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W14",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W14",
+    "kind": "why",
+    "status": "accepted",
+    "text": "`commit_tail`, the function tail's copy of the landing check, commits a literal and refuses a pointer or a run-time rational, then hands any other concrete leaf back unchecked (`Ok(leaf)`)",
+    "proposed_for": "P9",
+    "why": [
+      "W15"
+    ],
+    "anchors": [
+      "commit_tail",
+      "commit_fn_body"
+    ],
+    "design": [
+      "No implicit coercion; a numeric type applied to a value is the conversion"
+    ],
+    "evidence": [
+      {
+        "command": "sed -n 1429,1437p src/identities/mod.rs",
+        "output": "        // Refused here rather than as an invalid widen at the ABI.\n        if let Operand::Pointer(_) = numtype_of(types, leaf) {\n            return Err(ParseError::TypeMismatch);\n        }\n        // A run-time rational has no machine form until it is converted explicitly.\n        if rational::is_rational_value(types, leaf) {\n            return Err(ParseError::TypeMismatch);\n        }\n        Ok(leaf)",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:23+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:24+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W15",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W15",
+    "kind": "why",
+    "status": "accepted",
+    "text": "\"A value lands in a place of type T\" is written separately at eight sites (call argument, `=`, `p@ =`, `m[k] =`, tape operand, constructor field, `this` write, function tail), each with its own arms around `check_store_type`",
+    "proposed_for": "W14",
+    "why": [],
+    "anchors": [
+      "check_store_type",
+      "commit_fn_body",
+      "build_store",
+      "build_storeptr"
+    ],
+    "design": [
+      "No implicit coercion; a numeric type applied to a value is the conversion"
+    ],
+    "evidence": [
+      {
+        "command": "rg -c \"commit_if_literal\\(|commit_literal_to\\(|check_store_type\\(|commit_fn_body\\(\" src",
+        "output": "src/parse/types.rs:1\nsrc/parse/declare.rs:1\nsrc/identities/this.rs:1\nsrc/parse/bodies.rs:2\nsrc/identities/hashmap.rs:2\nsrc/identities/tape.rs:2\nsrc/identities/assign.rs:2\nsrc/identities/numtype.rs:1\nsrc/identities/mod.rs:10\nsrc/identities/instance.rs:1\nsrc/identities/pointer.rs:2",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:24+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:27+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "asked: no why found",
+        "reason": "root cause per #198's analysis and the cross-root review of 30 September 2026; not yet asked by a why run"
+      }
+    ]
+  },
+  {
+    "id": "S11",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "One landing function, `land(value, place_type)`: commit a literal, else require the value's type to be the place's type; all eight sites call it and lose their own arms",
+    "fixes": [
+      "W15"
+    ],
+    "assessment": "Removes the eight copies and the tail's unchecked arm (f64 2.5 under -> i32, the segfault of -> @i32 ( i32 5 ), the compiled verifier errors); its bool arm leans on is_bool_result until group A lands; leaves the bare-parameter tail (#216) and a ? parameter's tail (a generic body built once)",
+    "decision": null,
+    "design": [
+      "No implicit coercion; a numeric type applied to a value is the conversion"
+    ],
+    "issue": 198,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T00:24+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:24+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "issue #198",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P10",
+    "kind": "problem",
+    "status": "open",
+    "text": "A type's `parse` that writes a call over its narrowed operand line into an `i32` field is refused while parsing",
+    "program": "w := fn (a := i32 ?) -> i32 ( a + 1 ), sq := type ( v := i32 ?, output_type := type ?, share run = ( v ), share parse_rank = *.parse_rank + 1, share parse = ( tape[0]:type = sq, if tape[-1]:type == i32 ( tape[0].v = w(tape[-1]) ), tape[0].output_type = i32, tape.is_constructed[0] = true, tape.remove(-1) ) ), x := i32 7, x sq",
+    "output": "<command line>:1:327: error: this identity's constructor failed while parsing: this cell was checked against `i32`, but it holds no literal or constant of it: only a constant is read as its number\n  w := fn (a := i32 ?) -> i32 ( a + 1 ), sq := type ( v := i32 ?, output_type := type ?, share run = ( v ), share parse_rank = *.parse_rank + 1, share parse = ( tape[0]:type = sq, if tape[-1]:type == i32 ( tape[0].v = w(tape[-1]) ), tape[0].output_type = i32, tape.is_constructed[0] = true, tape.remove(-1) ) ), x := i32 7, x sq\n                                                                                                                                                                                                                                                                                                                                        ^\nexit 1",
+    "expected": "`8`: ›A tape read checked against a number type reads as that number‹: \"Passed to a call a parse places, a narrowed line is the line itself, kept as graph for the call to run and read there as a `T`\"; ›A field is filled at run, per evaluation; its type decides how the operand is used‹",
+    "tier": "interpreted",
+    "found": "first example of #203 (review round 4 of #166, RCA narrowed-call-field on dev 888f97a, rerun on 3f62c33); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": [
+      "W16"
+    ],
+    "issue": 203,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:24+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:24+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W16",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W16",
+    "kind": "why",
+    "status": "accepted",
+    "text": "`this::build_write` runs every number- or pointer-typed right side of a field write in the parse (`numtype_of` decides, then `commit_fn_body` and `store`), so a narrowed line, which holds no constant, is refused there",
+    "proposed_for": "P10",
+    "why": [
+      "W17"
+    ],
+    "anchors": [
+      "build_write",
+      "run_store",
+      "src/identities/this.rs"
+    ],
+    "design": [
+      "A field is filled at run, per evaluation; its type decides how the operand is used"
+    ],
+    "evidence": [
+      {
+        "command": "sed -n 254,260p src/identities/this.rs",
+        "output": "        let yields_value = match super::numtype_of(types, value) {\n            super::Operand::Concrete(_) | super::Operand::Literal => true,\n            super::Operand::Pointer(p) => p != types.dyad_,\n            super::Operand::NonNumeric => false,\n        };\n        if yields_value {\n            let value = super::commit_fn_body(store, types, value, ty)?;",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:24+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:24+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W17",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W17",
+    "kind": "why",
+    "status": "accepted",
+    "text": "What a parse writes into its node is split into \"kept as graph\" and \"run in the parse\" in three places, each by the right side's shape: `this::build_write`, `tape::cell_arg`, `run_placed_call`",
+    "proposed_for": "W16",
+    "why": [],
+    "anchors": [
+      "build_write",
+      "cell_arg",
+      "run_placed_call"
+    ],
+    "design": [
+      "A tape read checked against a number type reads as that number",
+      "A field is filled at run, per evaluation; its type decides how the operand is used"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n \"fn build_write|fn run_store|fn cell_arg|fn run_placed_call|Dispatch::Call\" src/identities/this.rs src/identities/tape.rs",
+        "output": "src/identities/this.rs:233:pub(crate) unsafe fn build_write(\nsrc/identities/this.rs:397:fn run_store(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {\nsrc/identities/tape.rs:256:pub(crate) fn cell_arg(store: &mut Store, types: &Core, cell: DyadPtr) -> DyadPtr {\nsrc/identities/tape.rs:288:    if let super::read::Read::Executable(super::read::Dispatch::Call(_)) = read {\nsrc/identities/tape.rs:296:pub(crate) unsafe fn build_write(\nsrc/identities/tape.rs:937:fn run_placed_call(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {\nsrc/identities/tape.rs:941:        let super::read::Read::Executable(super::read::Dispatch::Call(f)) =",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:24+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:27+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "asked: no why found",
+        "reason": "root cause per #203's analysis and the cross-root review of 30 September 2026; not yet asked by a why run"
+      }
+    ]
+  },
+  {
+    "id": "S12",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "One placing operation for the cell write and a field write on the parse's fresh node: a tape read at any depth that names a line is that line, any other read of the parse's own node or locals runs as placed, everything else stays graph",
+    "fixes": [
+      "W17"
+    ],
+    "assessment": "Deletes cell_arg's Dispatch::Call-only split, run_placed_call's run-now fallback and build_write's store arm in a parse; removes the five symptoms, the silent wrong value and segfault inside a function included; the type check goes through #198's land, so it runs after #198; one test case flips",
+    "decision": null,
+    "design": [
+      "A tape read checked against a number type reads as that number"
+    ],
+    "issue": 203,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T00:24+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:24+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "issue #203",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P11",
+    "kind": "problem",
+    "status": "open",
+    "text": "`alloc 1 of i32 n` over an `i32` parameter `n` is refused, where `alloc 1 of i32 5` gives `5`",
+    "program": "f := fn (n := i32 ?) -> i32 ( x := alloc 1 of i32 n, x@ ), f(4)",
+    "output": "<command line>:1:52: error: this operator cannot compute over these operands\n  f := fn (n := i32 ?) -> i32 ( x := alloc 1 of i32 n, x@ ), f(4)\n                                                     ^\nexit 1",
+    "expected": "`4`: a type takes the operand to its right into an anonymous value of its type (›`,` outranks a type's optional operand: `f(i32 3)` is one argument, `f(i32, 3)` two‹; ›Explicit heap: `alloc n` and `alloc n of T v`‹); the control `alloc 1 of i32(n)` gives `4`",
+    "tier": "interpreted",
+    "found": "first failing example of #212 (review round 2 of #171; RCA alloc-param-deref, 29 September 2026, dev 1eabb7e); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": [
+      "W18"
+    ],
+    "issue": 212,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:24+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:24+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W18",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W18",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The numeric types' reader (`numtype.rs` `construct`) takes to its right only a built rational literal or a bracket; any other cell, a name included, leaves the type standing alone (`stand_as_value`), so `alloc` is handed the type word",
+    "proposed_for": "P11",
+    "why": [
+      "W19"
+    ],
+    "anchors": [
+      "stand_as_value",
+      "src/identities/numtype.rs"
+    ],
+    "design": [
+      "`,` outranks a type's optional operand: `f(i32 3)` is one argument, `f(i32, 3)` two"
+    ],
+    "evidence": [
+      {
+        "command": "sed -n 147,166p src/identities/numtype.rs",
+        "output": "    let node = match right {\n        Some(c)\n            if c.constructed && !c.is_bracket() && unsafe { dyad::ty(c.dyad) } == types.rational =>\n        {\n            let l = c.dyad;\n            tape.remove(1);\n            unsafe { super::commit_literal_to(p.store(), types, l, id) }?\n        }\n        // `i32(x)`: the bracket is this type's to read, a conversion, never `(`'s call.\n        Some(c) if c.is_bracket() => {\n            let scope = c.dyad;\n            let args = unsafe { p.args_of(scope) };\n            tape.remove(1);\n            unsafe { p.build_call(id, &args) }?\n        }",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:24+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:24+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W19",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W19",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A type reading its right side is written three times (`numtype.rs` `construct`, `rational.rs` `convert`, `is_value_word` for a condition's end), and the copies disagree on a name",
+    "proposed_for": "W18",
+    "why": [],
+    "anchors": [
+      "is_value_word",
+      "stand_as_value",
+      "src/identities/rational.rs",
+      "src/identities/numtype.rs"
+    ],
+    "design": [
+      "`,` outranks a type's optional operand: `f(i32 3)` is one argument, `f(i32, 3)` two",
+      "`if` needs no brackets around a complete condition or its body"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n \"fn is_value_word|stand_as_value|right.constructed\" src/identities/numtype.rs src/identities/rational.rs src/parse/operands.rs",
+        "output": "src/identities/rational.rs:373:    if !right.constructed {\nsrc/identities/numtype.rs:166:        _ => p.stand_as_value(tape, id),\nsrc/parse/operands.rs:166:    fn is_value_word(&self, cell: &Cell, id: DyadPtr) -> bool {\nsrc/parse/operands.rs:256:    pub(crate) fn stand_as_value(&self, tape: &ParsingTape, id: DyadPtr) -> DyadPtr {",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:24+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:27+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "asked: no why found",
+        "reason": "root cause per #212's analysis and the cross-root review of 30 September 2026; not yet asked by a why run"
+      }
+    ]
+  },
+  {
+    "id": "S13",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "One read of a type's right operand (`take_right`'s test: a built cell or a name nothing would construct), which the numeric and `rational_number` readers call and `condition_ends` asks; `is_value_word` goes",
+    "fixes": [
+      "W19"
+    ],
+    "assessment": "Removes the three copies and the refusals of i32 n, rational_number r and alloc 1 of i32 n in every position; lands through #198's land, so it runs after #198; leaves three open rulings (i64 m over an i32, records and pointers by juxtaposition, how far the operand reaches: i32 p.a, i32 g(3))",
+    "decision": null,
+    "design": [
+      "`,` outranks a type's optional operand: `f(i32 3)` is one argument, `f(i32, 3)` two"
+    ],
+    "issue": 212,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T00:24+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:24+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "issue #212",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P12",
+    "kind": "problem",
+    "status": "open",
+    "text": "Writing a whole record into a record place with `=` is refused",
+    "program": "q := type ( x := i32 ? ), mut v := q ?, v = q(3), v.x",
+    "output": "<command line>:1:49: error: this is not an assignable place\n  q := type ( x := i32 ? ), mut v := q ?, v = q(3), v.x\n                                                  ^\nexit 1",
+    "expected": "`3`: ›What `=` does is decided by the type of the place on its left‹, and ›`:=` decides nothing about copy or reference; the type's reading rule does‹ (\"A data type reads its value as bytes\"); `=` into a number, pointer or rational place works today",
+    "tier": "interpreted",
+    "found": "first example of #229 (RCA record-aggregate-ops, 30 September 2026, dev 1922c65 and 5a6c160, from record-generic-field \"Found on the way\" 1); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": [
+      "W20"
+    ],
+    "issue": 229,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:24+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:24+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W20",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W20",
+    "kind": "why",
+    "status": "accepted",
+    "text": "`assign::build_store`'s target match has no arm for a plain record place (`Read::Aggregate`): it falls to `_ => BadAssignTarget`",
+    "proposed_for": "P12",
+    "why": [
+      "W21"
+    ],
+    "anchors": [
+      "build_store",
+      "BadAssignTarget",
+      "src/identities/assign.rs"
+    ],
+    "design": [
+      "What `=` does is decided by the type of the place on its left"
+    ],
+    "evidence": [
+      {
+        "command": "sed -n 249,256p src/identities/assign.rs",
+        "output": "        Read::Scalar(_) | Read::Pointer(_) if marked => {}\n        Read::Literal => {\n            // SAFETY: a `Literal` read is a rational node with its fraction blob.\n            return Err(ParseError::AssignToLiteral(Box::new(unsafe {\n                super::rational::spell(lhs_d)\n            })));\n        }\n        _ => return Err(ParseError::BadAssignTarget),",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:24+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:24+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W21",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W21",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A whole value is put into a place by three movers, each with its own list of kinds: `assign::build_store` (a named place), `read::cell_numtype` (a cell through a pointer), `by_copy::record_width` (a call's arguments and result)",
+    "proposed_for": "W20",
+    "why": [],
+    "anchors": [
+      "build_store",
+      "cell_numtype",
+      "record_width"
+    ],
+    "design": [
+      "`:=` decides nothing about copy or reference; the type's reading rule does",
+      "What `=` does is decided by the type of the place on its left"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n \"fn cell_numtype|fn record_width|fn build_store\" src/identities",
+        "output": "src/identities/read.rs:194:pub unsafe fn cell_numtype(types: &Core, t: DyadPtr) -> Option<NumType> {\nsrc/identities/assign.rs:151:pub(super) fn build_store(\nsrc/identities/pointer.rs:202:pub(crate) unsafe fn build_storeptr(\nsrc/identities/by_copy.rs:111:pub(crate) unsafe fn record_width(types: &Core, t: DyadPtr) -> Option<usize> {",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:24+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:27+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "asked: no why found",
+        "reason": "root cause per #229's analysis and the cross-root review of 30 September 2026; not yet asked by a why run"
+      }
+    ]
+  },
+  {
+    "id": "S14",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "One mover beside `place_layout` in `read.rs`: a whole value of T moves as one word at a machine type or as its width in bytes copied; `=`, `:=`, `alloc`, `p@` and `p@ =` ask it, and `cell_numtype` and `record_width` fold into it",
+    "fixes": [
+      "W21"
+    ],
+    "assessment": "Removes the plain-record refusals of =, alloc and p@ = and the alias of w := v; runs after #198, whose land rewrites the same match; leaves a record's move (#193, with #192's holding), its field widths (#221) and == over records (#152)",
+    "decision": null,
+    "design": [
+      "`:=` decides nothing about copy or reference; the type's reading rule does"
+    ],
+    "issue": 229,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T00:24+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:24+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "issue #229",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P13",
+    "kind": "problem",
+    "status": "open",
+    "text": "Taking the address of a field read through a pointer, `&(p@.x)`, is refused, where `&(v.x)` gives `1`",
+    "program": "point := type ( x := i32 ?, y := i32 ? ), mut v := point (1, 2), p := &v, q := &(p@.x), q@",
+    "output": "<command line>:1:87: error: `&` needs a variable to take the address of\n  point := type ( x := i32 ?, y := i32 ? ), mut v := point (1, 2), p := &v, q := &(p@.x), q@\n                                                                                        ^\nexit 1",
+    "expected": "`1`: ›The checker reads a fact base the graph provides; the rules over it are user-definable‹: \"Places. A name, a field path, a dereference, a cell\"; ›Pointer types are prefix `@T`; dereference is postfix `x@`; `&x` is address-of‹: \"`&x` takes the address of a storage-backed place (`&p.x`)\"; `p@.x` is `v.x`'s own bytes",
+    "tier": "interpreted",
+    "found": "slice-2 example of #211 (RCA free-expression-operand, 29 September 2026, dev 1eabb7e); its first example, free (f()), now prints ran then 1 since slice 1 (61db292); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": [
+      "W22"
+    ],
+    "issue": 211,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:25+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:25+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W22",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W22",
+    "kind": "why",
+    "status": "accepted",
+    "text": "`construct_address_of` tests for a place its own way, `read_kind` is Scalar, Pointer or Aggregate and `is_storage` holds, which a field read through a dereference fails",
+    "proposed_for": "P13",
+    "why": [
+      "W23"
+    ],
+    "anchors": [
+      "construct_address_of",
+      "is_storage",
+      "src/parse/fields.rs"
+    ],
+    "design": [
+      "Pointer types are prefix `@T`; dereference is postfix `x@`; `&x` is address-of"
+    ],
+    "evidence": [
+      {
+        "command": "sed -n 958,963p src/parse/fields.rs",
+        "output": "            // blob is not one, nor a node of a code-carrying type (an operand run, no fields).\n            use crate::identities::read::{read_kind, Read};\n            let placed = matches!(\n                read_kind(self.types, node),\n                Read::Scalar(_) | Read::Pointer(_) | Read::Aggregate\n            ) && self.types.is_storage(node);",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:25+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:25+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W23",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W23",
+    "kind": "why",
+    "status": "accepted",
+    "text": "No one place predicate is asked by every place-taking word: `move` and `free` ask `read::place_of`, while `&` and `=` keep their own place tests",
+    "proposed_for": "W22",
+    "why": [],
+    "anchors": [
+      "place_of",
+      "construct_address_of",
+      "build_store",
+      "src/identities/read.rs"
+    ],
+    "design": [
+      "The checker reads a fact base the graph provides; the rules over it are user-definable"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n \"place_of\\(\" src | grep -v \"fn place_of\"",
+        "output": "src/identities/drop_model.rs:566:pub(crate) unsafe fn teardown_place_of(defer_node: DyadPtr) -> DyadPtr {\nsrc/identities/drop_model.rs:1257:            let a = teardown_place_of(defer);\nsrc/identities/assign.rs:191:    if let Some(Place::Call(call)) = unsafe { place_of(types, lhs_d) } {\nsrc/parse/bodies.rs:1102:                        let place = crate::identities::drop_model::teardown_place_of(d);\nsrc/identities/read.rs:305:    match place_of(types, node)? {\nsrc/identities/read.rs:605:            assert_eq!(place_of(types, a), Some(Place::Itself), \"a name\");\nsrc/identities/read.rs:606:            assert_eq!(place_of(types, exprs[8]), Some(Place::Itself), \"a field path\");\nsrc/identities/read.rs:607:            assert_eq!(place_of(types, exprs[9]), Some(Place::Itself), \"a dereference\");\nsrc/identities/read.rs:608:            assert!(matches!(place_of(types, exprs[10]), Some(Place::Call(_))));\nsrc/identities/read.rs:626:                assert_eq!(place_of(types, exprs[k]), None, \"{what}\");",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [
+      "`move` and `free` meet a place through `read::place_node` (`place_of`); `=` asks `place_of` only for a call place and tests the rest itself (`is_storage` arms), and `&` asks it never"
+    ],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:25+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:27+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "asked: no why found",
+        "reason": "root cause per #211's analysis and the cross-root review of 30 September 2026; not yet asked by a why run"
+      },
+      {
+        "at": "2026-10-01T00:28+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "alias +",
+        "reason": "`move` and `free` meet a place through `read::place_node` (`place_of`); `=` asks `place_of` only for a call place and tests the rest itself (`is_storage` arms), and `&` asks it never"
+      }
+    ]
+  },
+  {
+    "id": "S15",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "`&` and `=` ask `read::place_of` and keep only what they demand beyond a place; `&`'s `placed` test and `=`'s `is_storage` arms go",
+    "fixes": [
+      "W23"
+    ],
+    "assessment": "Removes two place tests, so &(a@), &(p@.x) and &(a[0]) give an address; runs after #198 (same match in assign::build_store) and one after the other with #99 in construct_address_of; &(f()) and &(w(7)) stay refused until #210's point 2; whether a dereference is storage-backed for & may be a question for Thobias",
+    "decision": null,
+    "design": [
+      "The checker reads a fact base the graph provides; the rules over it are user-definable"
+    ],
+    "issue": 211,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T00:25+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:25+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "issue #211",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P14",
+    "kind": "problem",
+    "status": "open",
+    "text": "A first write into a name declared `mut x := ?` is refused",
+    "program": "mut x := ?, x = i32 5, x",
+    "output": "<command line>:1:22: error: this is not an assignable place\n  mut x := ?, x = i32 5, x\n                       ^\nexit 1",
+    "expected": "`5`, as `mut x := i32 ?, x = i32 5, x` gives: ›An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value‹: \"a `key := ?` … at the first write\"; ›`?` is one value, the unknown; `key := T ?` declares without a value‹",
+    "tier": "interpreted",
+    "found": "first example of #227 (RCA untyped-name-write, 30 September 2026, dev 1922c65 and 5a6c160); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": [
+      "W24",
+      "W26"
+    ],
+    "issue": 227,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:25+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:25+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W24",
+        "reason": null
+      },
+      {
+        "at": "2026-10-01T00:25+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W26",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W24",
+    "kind": "why",
+    "status": "accepted",
+    "text": "`declare_here` has no case for a bare `?`: it falls to the arm for a type value and `rebind`s the name as another spelling of `?`, which is no place",
+    "proposed_for": "P14",
+    "why": [
+      "W25"
+    ],
+    "anchors": [
+      "declare_here",
+      "rebind",
+      "src/parse/declare.rs"
+    ],
+    "design": [
+      "`?` is one value, the unknown; `key := T ?` declares without a value"
+    ],
+    "evidence": [
+      {
+        "command": "sed -n 684,689p src/parse/declare.rs",
+        "output": "            } else if crate::identities::read::read_kind(self.types, read)\n                == crate::identities::read::Read::Identity\n            {\n                // A type value: the name becomes another spelling of the type.\n                self.cx.scopes.rebind(binding, read);\n                read",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:25+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:25+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W25",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W25",
+    "kind": "why",
+    "status": "accepted",
+    "text": "That a bare `?` is valueless, no type yet, is read by one copy only, the field and parameter list's own test in `types.rs`, which a name's declaration does not ask",
+    "proposed_for": "W24",
+    "why": [],
+    "anchors": [
+      "src/parse/types.rs",
+      "declare_here"
+    ],
+    "design": [
+      "`?` is one value, the unknown; `key := T ?` declares without a value"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n \"no type yet\" src/parse",
+        "output": "src/parse/types.rs:292:                        std::ptr::null_mut() // `name := ?`: no type yet",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:25+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:27+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "asked: no why found",
+        "reason": "root cause per #227's analysis and the cross-root review of 30 September 2026; not yet asked by a why run"
+      }
+    ]
+  },
+  {
+    "id": "W26",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A first write never lays a name out: only `declare_here` (and a named loop counter) call `place_for`, and `assign.rs` calls none, so `=` has no arm for a place with no type",
+    "proposed_for": "P14",
+    "why": [],
+    "anchors": [
+      "place_for",
+      "declare_here",
+      "src/identities/assign.rs"
+    ],
+    "design": [
+      "An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n \"place_for\\(\" src | grep -v \"fn place_for\"; grep -c place_for src/identities/assign.rs",
+        "output": "src/parse/bodies.rs:888:                        var = unsafe { self.place_for(binding, logos, width) };\nsrc/parse/declare.rs:620:                let place = self.place_for(binding, t, 8);\nsrc/parse/declare.rs:637:                let place = self.place_for(binding, t, width);\nsrc/parse/declare.rs:681:                let place = self.place_for(binding, t, width);\nsrc/parse/declare.rs:695:                let place = self.place_for(binding, t, width);\nsrc/parse/declare.rs:705:                let place = self.place_for(binding, t, 8);\nsrc/parse/declare.rs:722:                let place = self.place_for(binding, owning_ty, 8);\nsrc/parse/declare.rs:750:                let place = self.place_for(binding, ty_node, width);\ngrep -c place_for src/identities/assign.rs: 0",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:25+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:27+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "asked: no why found",
+        "reason": "root cause per #227's analysis and the cross-root review of 30 September 2026; not yet asked by a why run"
+      }
+    ]
+  },
+  {
+    "id": "S16",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "`key := ?` declares a name with no node and the read veto, by one bare-`?` test that `declare_here` and the field list both ask; the first write lays the name out by the one function `:=` also calls",
+    "fixes": [
+      "W25",
+      "W26"
+    ],
+    "assessment": "Removes the alias of x := ? to ?, the pinned test line asserting x := ?, x == ?, and the refused first write on every tier and entry point; slice 2 runs after #198 (same match in assign.rs); a first write that is not a sibling write (nested, from outside, a later-built body) waits for a ruling",
+    "decision": null,
+    "design": [
+      "An unknown spelling stays text on the tape; `:=` makes the binding, and the node comes with the value"
+    ],
+    "issue": 227,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T00:25+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:25+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "issue #227",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P15",
+    "kind": "problem",
+    "status": "open",
+    "text": "An unknown name spliced from a `lex` fragment is reported with its caret inside the word `bad` of the outer program",
+    "program": "bad := type (share parse = ( tape.insert(1, lex «    zz»), tape.remove(0) )), x := bad",
+    "output": "<command line>:1:5: error: unknown name `zz`\n  bad := type (share parse = ( tape.insert(1, lex «    zz»), tape.remove(0) )), x := bad\n      ^\nexit 1",
+    "expected": "The error at `zz` in the fragment's own text: ›What `lex` returns: a `parsing_tape` fragment‹ keeps each cell's text and spelling, and ›A `tape[k]` read past the lexed frontier lexes on demand for every constructor‹ gives one reader for every constructor; DESIGN has no rule yet on a diagnostic's form (#223 slice 2, Open)",
+    "tier": "interpreted",
+    "found": "first example of #223 (RCA lex-fragment-caret, 29 to 30 September 2026, dev 1922c65); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": [
+      "W27"
+    ],
+    "issue": 223,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:26+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:26+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W27",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W27",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A parse error is placed by setting the parser's cursor `cx.pos` to the cell's `start` and rendered under the entry point's text, while a cell spliced from a `lex` fragment carries an offset into the fragment's text",
+    "proposed_for": "P15",
+    "why": [
+      "W28"
+    ],
+    "anchors": [
+      "src/parse/lex.rs",
+      "src/report.rs",
+      "lex_fragment"
+    ],
+    "design": [
+      "What `lex` returns: a `parsing_tape` fragment"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n \"cx\\.pos = \" src/parse --count-matches",
+        "output": "src/parse/types.rs:23\nsrc/parse/lex.rs:6\nsrc/parse/quotes.rs:5\nsrc/parse/operands.rs:6\nsrc/parse/fields.rs:6\nsrc/parse/declare.rs:5\nsrc/parse/bodies.rs:2\nsrc/parse/driver.rs:12",
+        "commit": "9fc7634"
+      },
+      {
+        "command": "sed -n 142,144p src/parse/lex.rs",
+        "output": "            self.cx.pos = cell.end();\n            if self.unbuilt(&cell) {\n                self.cx.pos = cell.start;",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:26+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:26+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W28",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W28",
+    "kind": "why",
+    "status": "accepted",
+    "text": "The seed keeps two records of where an appearance is and what follows it, the tape cell's text and span and the parser's cursor into one source text (`cx.source`, `cx.pos`); built-in constructors read their right side and place errors through the cursor (`lex_cell`, `parse_sequence_cell`), not the tape (`cell_at`)",
+    "proposed_for": "W27",
+    "why": [],
+    "anchors": [
+      "lex_cell",
+      "parse_sequence_cell",
+      "cell_at",
+      "src/identities/paren.rs"
+    ],
+    "design": [
+      "A `tape[k]` read past the lexed frontier lexes on demand for every constructor",
+      "What `lex` returns: a `parsing_tape` fragment"
+    ],
+    "evidence": [
+      {
+        "command": "sed -n 17,19p src/identities/paren.rs",
+        "output": "    cx.metas.insert(open, |p, _id, tape| {\n        let body = p.parse_sequence_cell()?;\n        p.expect_close()?;",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:26+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:27+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "asked: no why found",
+        "reason": "root cause per #223's analysis and the cross-root review of 30 September 2026; not yet asked by a why run"
+      }
+    ]
+  },
+  {
+    "id": "S17",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Built-in constructors read what follows them through the tape reader (`cell_at`), `.` and `:` read a member from its cell's spelling, and an error carries the span of the cell it is about; the cursor is only the lexer's frontier",
+    "fixes": [
+      "W28"
+    ],
+    "assessment": "Removes the silent wrong member reads (p.y giving 3), the misplaced carets and the spliced (, fn, if, for, print and error reading the outer program; lands one identity at a time, ( first; the form of a nested diagnostic is an open point for Thobias; a fix that shifts offsets or swaps cx.source is a symptom fix",
+    "decision": null,
+    "design": [
+      "A `tape[k]` read past the lexed frontier lexes on demand for every constructor"
+    ],
+    "issue": 223,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T00:26+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:26+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "issue #223",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P16",
+    "kind": "problem",
+    "status": "open",
+    "text": "A function over a bare parameter `a` that computes `a * 2` is refused",
+    "program": "f := fn (a) -> i64 ( a * 2 ), f(i64 21)",
+    "output": "<command line>:1:28: error: this operator cannot compute over these operands\n  f := fn (a) -> i64 ( a * 2 ), f(i64 21)\n                             ^\nexit 1",
+    "expected": "`42`: ›A function's surface is `fn (params) -> T (body)`, and its parameter list is a record type‹ makes a bare `a` a `dyad ?`, and ›A `dyad ?` place is transparent: a placeholder for a new node of any type‹ reads through to the node it holds",
+    "tier": "interpreted",
+    "found": "first failing example of #216 (drafted by the #199 worker, 29 September 2026, seed 47b464d; its first row, f(42), prints 42 as ruled); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": [
+      "W29"
+    ],
+    "issue": 216,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:26+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:26+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "why + W29",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W29",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A bare parameter `fn (a)` is declared with no type (`types.rs` leaves its type slot null) and read as `?`, and a `dyad ?` place is the node itself, not a transparent place that reads through to the node it holds",
+    "proposed_for": "P16",
+    "why": [],
+    "anchors": [
+      "src/parse/types.rs"
+    ],
+    "design": [
+      "A `dyad ?` place is transparent: a placeholder for a new node of any type",
+      "A function's surface is `fn (params) -> T (body)`, and its parameter list is a record type"
+    ],
+    "evidence": [
+      {
+        "command": "sed -n 272,273p src/parse/types.rs",
+        "output": "            // `name := T ?` declares the field's type through the hole `?`\n            // built; a bare name leaves the type slot undefined. A default,",
+        "commit": "9fc7634"
+      },
+      {
+        "command": "target/release/logos \"g := fn (a := dyad ?) -> i64 ( a * 2 ), g(i64 5)\"; echo \"exit $?\"",
+        "output": "<command line>:1:38: error: this operator cannot compute over these operands\n  g := fn (a := dyad ?) -> i64 ( a * 2 ), g(i64 5)\n                                       ^\nexit 1",
+        "commit": "9fc7634"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T00:26+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:27+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "asked: no why found",
+        "reason": "root cause per #216's analysis and the cross-root review of 30 September 2026; not yet asked by a why run"
+      }
+    ]
+  },
+  {
+    "id": "S18",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A bare parameter declares `dyad ?`; a `dyad ?` place takes any value as a new node and reads go through to it; a function over one is minted per set of argument types at the call's parse",
+    "fixes": [
+      "W29"
+    ],
+    "assessment": "Removes the refusals of a * 2 over a bare or dyad ? parameter and of a.type; waits for #202 (a mint per argument types, itself after #127) and, for text, #213; the tail lands through #198's land; proof.logos's dyad ? fields become @dyad ?",
+    "decision": null,
+    "design": [
+      "A `dyad ?` place is transparent: a placeholder for a new node of any type"
+    ],
+    "issue": 216,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T00:26+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T00:26+02:00",
+        "by": "logoslang-pws-migration",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "commit": "9fc7634",
+        "change": "issue #216",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "P17",
+    "kind": "problem",
+    "status": "open",
+    "text": "Writing a fresh owning pointer into the `own @i32` field of a record hole at top level is refused",
+    "program": "bx := type ( mut p := own @i32 ?, share free = ( free p ), share parse_rank = dyad.parse_rank, share parse = ( tape.is_constructed[0] = true ) ), mut v := bx ?, v.p = mut alloc 1 of i32 ?, print «after»",
+    "output": "<command line>:1:167: error: this read does not fit the node's type\n  bx := type ( mut p := own @i32 ?, share free = ( free p ), share parse_rank = dyad.parse_rank, share parse = ( tape.is_constructed[0] = true ) ), mut v := bx ?, v.p = mut alloc 1 of i32 ?, print «after»\n                                                                                                                                                                        ^\nexit 1",
+    "expected": "`after`, exit 0, as without the write; the same write inside `box`'s `run` body works (›A value of several fields is filled one field at a time‹; ›A field may be `own t ?`, `t` a type whose body fills `share free`‹)",
+    "tier": "interpreted",
+    "found": "queue record-hole-field-write: review round 1 of RCA run-body-outer-shadow (30 September 2026, dev 5a6c160), recorded in rca-queue.md; rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:26+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P18",
+    "kind": "problem",
+    "status": "open",
+    "text": "A plain record's `share` function that dereferences its bare pointer field, `q@`, is refused at parse",
+    "program": "r := type ( mut n := i32 ?, mut q := @i32 ?, share get := fn () -> i32 ( q@ ) ), v := i32 5, mut x := r ?, x.n = 1, x.q = &v, x.get()",
+    "output": "<command line>:1:76: error: this operator cannot compute over these operands\n  r := type ( mut n := i32 ?, mut q := @i32 ?, share get := fn () -> i32 ( q@ ) ), v := i32 5, mut x := r ?, x.n = 1, x.q = &v, x.get()\n                                                                             ^\nexit 1",
+    "expected": "`5`, the value `x.q@` reads from outside (›Pointer types are prefix `@T`; dereference is postfix `x@`; `&x` is address-of‹; ›A bare call of a `share` function works on the value the calling body is about‹)",
+    "tier": "interpreted",
+    "found": "queue record-fn-pointer-deref: review rounds 1 and 2 of RCA record-aggregate-ops (30 September 2026, dev 5a6c160), \"Found on the way\" 1 of record-aggregate-ops.md; rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:26+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P19",
+    "kind": "problem",
+    "status": "open",
+    "text": "After `v.a.x = 1`, reading the record field `v.a` is refused as read before written",
+    "program": "q := type ( mut x := i32 ? ), pt := type ( mut a := q ?, mut b := i32 ? ), mut v := pt ?, v.a.x = 1, v.b = 2, p := &v, w := p@.a, 5",
+    "output": "<command line>:1:93: error: `v.a` is read before it is written: give it a value with `v.a = …` in the same block first\n  q := type ( mut x := i32 ? ), pt := type ( mut a := q ?, mut b := i32 ? ), mut v := pt ?, v.a.x = 1, v.b = 2, p := &v, w := p@.a, 5\n                                                                                              ^\nexit 1",
+    "expected": "`5`, exit 0: ›A value of several fields is filled one field at a time‹; ›Reading a place before its first write is refused at parse‹ (DESIGN does not say whether a nested field write fills `v.a`)",
+    "tier": "interpreted",
+    "found": "queue nested-field-write: review round 2 of RCA record-aggregate-ops (30 September 2026, dev 5a6c160), \"Found on the way\" 5 of record-aggregate-ops.md; rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:26+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P20",
+    "kind": "problem",
+    "status": "open",
+    "text": "Calling a type's `share` function through a name bound to it is refused with an error that names nothing",
+    "program": "t := type (share greet := fn () -> void ( print «hi» )), g := t.greet, g()",
+    "output": "<command line>:1:75: error: `` works on a value of its type: call it through one, `v.(…)`, or bare from that type's `run`, `free` or `share` functions; a parse calls bare only a function that reads no field\n  t := type (share greet := fn () -> void ( print «hi» )), g := t.greet, g()\n                                                                            ^\nexit 1",
+    "expected": "›Resolution is one rule‹: \"a type reads its own `share` members through itself, `point.dims`\"; `hi`, or a refusal whose message names `greet` (the name between the backticks is empty); `t.greet()` gives \"expected one expression, found more\"",
+    "tier": "interpreted",
+    "found": "queue type-share-fn-call: #220 review round 1 (session 022cd8a3, 30 September 2026, dev 5a6c160 and the #220 branch), recorded in rca-queue.md; rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:26+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P21",
+    "kind": "problem",
+    "status": "open",
+    "text": "A name bound to a comparison prints `1`",
+    "program": "x := i32 1, a := x == 1, a",
+    "output": "1\nexit 0",
+    "expected": "`true`, as `a := true, a` prints; the name then works with `and` (›Anything yielding a `bool` is a condition‹; ›A node's output type is per node, and its parse writes it‹); `x := i32 1, a := x == 1, b := true, a and b` gives \"these operands must be bools\"",
+    "tier": "interpreted",
+    "found": "queue comparison-name-reads-number: #197 review round 1 (session 34384c84, 30 September 2026, dev 5a6c160), recorded in rca-queue.md; rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:26+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P22",
+    "kind": "problem",
+    "status": "open",
+    "text": "In the REPL, a type value read from a field echoes nothing",
+    "program": "mk := fn (t := type ?) -> type ( type ( share e := t ) )\nx := mk(i32)\nx.e\nx.e == i32",
+    "output": "logos 0.1.0 — one expression per line, ctrl-d to exit\n» » » » true\n» \nexit 0",
+    "expected": "`x.e` echoes `i32`, as the command line prints for the same lines joined with `,` (›The command line is Logos source; the binary stays out of the way‹: \"the command line is a one-shot REPL line\"; ›A value is shown as the text its type's `print` slot gives back‹)",
+    "tier": "repl",
+    "found": "queue repl-type-field-echo: review round 1 of RCA compiled-declines (30 September 2026, dev 5a6c160), \"Seen on the way\" 2 of compiled-declines.md, probe 43-repl-held-type-field.txt; rerun by logoslang-pws-migration on dev 9fc7634, release, the four lines piped into the REPL",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:27+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P23",
+    "kind": "problem",
+    "status": "open",
+    "text": "A chain of 18 types whose `run` bodies each nest 1,990 brackets and build the next type's node aborts with a stack overflow; 17 links run",
+    "program": "python3 nested-context-depth.py target/release/logos 18 1990   (17 is the control; the generator prints the exit code and two lines of output)\n\nimport subprocess, sys\nBIN, N, DEPTH = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])\ndef ty(i, body):\n    return (f\"t{i} := type (a := i32 ?, share run = ( {body} ), \"\n            f\"share parse_rank = *.parse_rank + 1, \"\n            f\"share parse = ( tape[0]:type = t{i}, tape[0].a = tape[-1], \"\n            f\"tape.is_constructed[0] = true, tape.remove(-1) ))\")\nlines = [ty(N, \"print «leaf»\")]\nfor i in range(N - 1, -1, -1):\n    lines.append(ty(i, \"(\" * DEPTH + f\"3 t{i + 1}\" + \")\" * DEPTH))\nlines.append(\"3 t0\")\np = subprocess.run([BIN, \", \".join(lines)], capture_output=True, text=True)\nprint(p.returncode, (p.stdout + p.stderr).strip().splitlines()[:2])",
+    "output": "18 links: -6 [\"thread '<unknown>' (2250517) has overflowed its stack\", 'fatal runtime error: stack overflow, aborting']\n17 links: 0 ['leaf', '0']\n(-6 is SIGABRT, exit 134 in a shell)",
+    "expected": "The checked error, as a single wall of brackets gets (`if true (` and 2,500 `(` is \"scopes nested deeper than 2000\"), or the program runs; never an abort. DESIGN has no rule on nesting depth; ›A checked error is a fault: the task that hit it is cancelled‹",
+    "tier": "interpreted",
+    "found": "queue nested-context-depth: #233 review round 2 (session bf1d53eb, 30 September 2026, dev 67f873e and #233's branch at 224ea38), recorded in rca-queue.md; rerun by logoslang-pws-migration on dev 9fc7634, release, the generator ~/.claude/orchestrate/state/logoslang/pws-migration/nested-context-depth.py",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:27+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P24",
+    "kind": "problem",
+    "status": "open",
+    "text": "A comment inside an `if` condition with an `else` makes the program print a `0` after `yes`",
+    "program": "if 5 * 2 # «c» == 10 ( print «yes» ) else ( print «no» )",
+    "output": "yes\n0\nexit 0",
+    "expected": "`yes` only, as without the comment: a comment is void-valued and \"value rules … read through it\" (›Text literals are plain values; `#` is the one comment constructor‹)",
+    "tier": "interpreted",
+    "found": "queue condition-comment-echo: #225 review round 1 (session c8746c1f, 30 September 2026, dev 1f68f83 and the #225 branch), recorded in rca-queue.md; the same program is row 2 of the table in #237; rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:27+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P25",
+    "kind": "problem",
+    "status": "open",
+    "text": "Indexing a name that holds a bare list, `x[1]`, is refused",
+    "program": "x := [4, 5], x[1]",
+    "output": "<command line>:1:15: error: expected one expression, found more\n  x := [4, 5], x[1]\n                ^\nexit 1",
+    "expected": "`5`: ›Brackets divide by role‹: \"after a value it indexes, after a type or standing as a value it is a list (`array T [ … ]`, `x = [4, 5]`)\"",
+    "tier": "interpreted",
+    "found": "queue bare-list-index: #233 review round 1 (session 8e7e2b88, 30 September 2026, dev 67f873e), recorded in rca-queue.md; rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T00:27+02:00",
+      "by": "logoslang-pws-migration",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "commit": "9fc7634",
+      "run": "pws-migration",
+      "agent": null
+    },
+    "history": []
+  }
+]
