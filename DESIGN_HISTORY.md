@@ -133,10 +133,12 @@ Nothing moved from this section.
 ### Holding is decided at the binding site, parameters included
 - **History:** heading ›Teardown attaches at the binding site, parameters included‹ until 28 September 2026, when `defer free <place>` stopped being inserted; the binding site still decides who holds.
 - **History:** "A value that reaches no name at all is a checked error" had no exception until 29 September 2026; narrowed by Thobias's ruling on #210, which made `free` and `&` holders of a value no name holds, because unnecessary code is not an error (`free`) and by his choice of option (b) (`&`). Before it, #117 and #99's addendum (12 September 2026) read a constructor's result `w(7)` as having a place for `&` and `&(1 + 2)` as having none; the ruling treats both alike.
+- **History:** until 30 September 2026: "A value that reaches no name at all is a checked error, unless `free` or `&` takes it" (July 2026, kept at the 28 September respelling, narrowed on 29 September). Superseded by Thobias's Q-0025 ruling: the value lives to the end of its line, whose end runs its `free`. Its reason, "nothing runs its `free`", belonged to the teardown inserted at the binding site, which ›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹ replaced on 28 September.
 - **Seed detail (27 September 2026):** covers only *named* owning bindings. A bare owning temporary passed as an argument is rejected: a bug against the ruling.
 
 ### Three fail-closed ownership rules, and `-> own @T`
 - **History:** "ownership may not cross a function return at all" and "a bare `-> @T` returning an owned place stays the checked error": superseded for a last value 25 September 2026.
+- **History:** until 30 September 2026 rule 1 read "An owning value must be bound to a name (else no place holds it and nothing runs its `free`)" (July 2026). Superseded by Thobias's Q-0025 ruling for the same reason as at ›Holding is decided at the binding site, parameters included‹: the line's end runs the `free`.
 - **History:** rule 1 had no exception until 29 September 2026; `free` and `&` became its exceptions by Thobias's ruling on #210 (›Holding is decided at the binding site, parameters included‹).
 
 ### A pointer steps by whole cells
