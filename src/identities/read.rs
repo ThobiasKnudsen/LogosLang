@@ -280,7 +280,8 @@ unsafe fn call_tail(types: &Core, node: DyadPtr) -> Option<CallTail> {
     let body = types.through(body);
     let (tail, line) = if dyad::ty(body) == types.scope {
         let lines = super::scope::exprs_of(body)?;
-        if !super::scope::exit_of(body).is_null() {
+        let exit = super::scope::exit_of(body);
+        if !exit.is_null() && super::drop_model::any_held_somewhere(super::array::items(exit)) {
             return None;
         }
         let i = lines.iter().rposition(|&e| !numtype::is_comment_type(dyad::ty(e)))?;

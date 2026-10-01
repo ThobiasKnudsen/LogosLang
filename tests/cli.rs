@@ -749,6 +749,12 @@ fn an_array_element_is_written_where_the_read_finds_it() {
              g(p, 1) = 3, (p + 1)@",
             "3",
         ),
+        // A name freed before the last line leaves the body's end nothing to run.
+        (
+            "p := alloc 1 of i32 0, \
+             g := fn (r := @i32 ?) -> i32 ( q := alloc 1 of i32 1, free q, r@ ), g(p) = 5, p@",
+            "5",
+        ),
     ] {
         let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
         assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));

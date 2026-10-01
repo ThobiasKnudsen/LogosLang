@@ -699,6 +699,15 @@ impl ExitItem {
     }
 }
 
+/// Whether a scope's end or a `return` runs any of the exit item nodes `items`; a scope whose
+/// items only a failing line runs ends with nothing to run.
+///
+/// # Safety
+/// `items` must be exit item nodes [`ExitItem::build`] made.
+pub(crate) unsafe fn any_held_somewhere(items: &[DyadPtr]) -> bool {
+    items.iter().any(|&item| exit_item_of(item).held_somewhere())
+}
+
 /// Whether two places are one: the same name, or two names laid out over the same bytes, as
 /// an imported `pub` name and the file's own are.
 ///

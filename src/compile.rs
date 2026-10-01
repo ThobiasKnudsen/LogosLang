@@ -328,8 +328,7 @@ impl Lowerer<'_, '_> {
     ) -> Result<Option<Value>, CompileError> {
         use crate::identities::drop_model;
         let defer_ = self.types.defer_;
-        let held =
-            usize::from(exit.iter().any(|&item| drop_model::exit_item_of(item).held_somewhere()));
+        let held = usize::from(drop_model::any_held_somewhere(exit));
         self.teardowns += held;
         let mut last = Ok(None);
         for &line in lines.iter().filter(|&&e| dyad::ty(e) != defer_) {
