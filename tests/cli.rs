@@ -1243,17 +1243,17 @@ fn every_operator_applied_to_a_group_applies_to_each_member() {
 
 #[test]
 fn a_collection_member_demands_its_index_brackets() {
-    let (_echoes, stderr) = repl(b"x := i32 5\n(x + x).operands(0)\n");
+    let (_echoes, stderr) = repl(b"+.roles(0)\n");
     assert!(stderr.contains("element access is `[…]`"), "stderr: {stderr}");
 }
 
 #[test]
 fn a_square_bracket_is_a_paren_that_closes_only_itself() {
-    let (echoes, stderr) = repl(b"x := i32 5\n(x + x).operands[1 - 1]\n");
+    let (echoes, stderr) = repl(b"x := i32 5\ns := here.scope\ns.dyads[1 - 1].rhs\n");
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
     let (_echoes, stderr) = repl(b"(1]\n");
     assert!(stderr.contains("never closed"), "stderr: {stderr}");
-    let (_echoes, stderr) = repl(b"x := i32 5\n(x + x).operands[0)\n");
+    let (_echoes, stderr) = repl(b"+.roles[0)\n");
     assert!(stderr.contains("never closed"), "stderr: {stderr}");
     // Held or skipped, a bracket ends where the built one does: at the stray closer.
     for (src, stray) in [
@@ -3054,14 +3054,26 @@ fn a_nodes_fields_are_read_by_name_without_running_it() {
                  share parse = ( tape[0].type = ^, tape[0].lhs = tape[-1], tape[0].rhs = tape[1], tape[0].output_type = tape[-1].type, \
                  tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) )";
     for (tail, want) in [
-        ("(2 ^ 3).lhs", "2"),
-        ("(2 ^ 3).rhs", "3"),
-        ("f := fn (x := i32 ?) -> i32 ( (x ^ 3).lhs ), f(5)", "5"),
-        ("x := i32 1, (x + 2).lhs", "1"),
+        ("f := fn (x := i32 ?) -> i32 ( b := x ^ 3, b:start.rhs.lhs ), f(5)", "5"),
+        ("f := fn (x := i32 ?) -> i32 ( b := x ^ 3, b:start.rhs.lhs ), f.compile(), f(5)", "5"),
+        ("x := i32 1, c := x + 2, c:start.rhs.lhs", "1"),
     ] {
         let out = logos().arg(format!("{power}, {tail}")).output().unwrap();
         assert!(out.status.success(), "{tail}: {}", String::from_utf8_lossy(&out.stderr));
         assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"), "{tail}");
+    }
+    // Written straight on an expression, `.` reads the number it evaluates to, as on a name.
+    for tail in [
+        "(2 ^ 3).lhs",
+        "f := fn (x := i32 ?) -> i32 ( (x ^ 3).lhs ), f(5)",
+        "f := fn (x := i32 ?) -> i32 ( (x + 3).lhs ), f.compile(), f(5)",
+        "x := i32 1, (x + 2).lhs",
+        "x := i32 1, c := x + 2, c.lhs",
+    ] {
+        let out = logos().arg(format!("{power}, {tail}")).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && out.stdout.is_empty(), "{tail}: {stderr}");
+        assert!(stderr.contains("cannot compute"), "{tail}: {stderr}");
     }
 }
 

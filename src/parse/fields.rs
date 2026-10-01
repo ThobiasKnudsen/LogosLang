@@ -461,8 +461,6 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
-            // `(2 ^ 3).lhs`: the node a comptime value was folded from keeps its fields.
-            let lhs = if left.origin.is_null() { lhs } else { left.origin };
             if dyad::ty(lhs) == self.types.dyad_ {
                 return self.view_member(lhs, name).map(|n| (n, 0));
             }
@@ -499,27 +497,16 @@ impl<'a> Parser<'a> {
             {
                 return Err(ParseError::TypeKnownOnlyAtRun);
             }
-            // An operator node's slots are the fields its own type defines:
-            // `.operands[i]` fetches one, no view involved; a null slot is the checked error until `?`.
-            if name == "operands"
-                && matches!(
-                    crate::identities::meta::kind_of(dyad::ty(lhs)),
-                    Some(crate::identities::meta::TUPLE_TAG | crate::identities::meta::LIST_TAG)
-                )
-            {
-                let i = index.ok_or(ParseError::ExpectedIndexBracket)?;
-                if i >= crate::identities::meta::arity_of(dyad::ty(lhs)) {
-                    return Err(ParseError::BadReflectRead);
+            // A node that is the value has its type's fields; one that runs is read through
+            // what it yields, so `(x + x).lhs` is no slot (DESIGN ›Reading a path runs nothing‹).
+            let runs = matches!(
+                crate::identities::read::read_kind(self.types, lhs),
+                crate::identities::read::Read::Executable(_)
+            );
+            if !runs {
+                if let Some(field) = self.node_field(lhs, name)? {
+                    return Ok((field, 0));
                 }
-                let ops = dyad::value(lhs) as *const DyadPtr;
-                let operand = *ops.add(i);
-                if operand.is_null() {
-                    return Err(ParseError::BadReflectRead);
-                }
-                return Ok((operand, 1));
-            }
-            if let Some(field) = self.node_field(lhs, name)? {
-                return Ok((field, 0));
             }
             // `.compile` is the fn type's shared member (DESIGN ›Execution is
             // function application‹); the name-compare stands in for resolution

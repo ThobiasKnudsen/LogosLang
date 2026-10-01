@@ -172,7 +172,7 @@ pub enum ParseError {
     /// on a view, or a read whose honest answer is undefined (a null
     /// constructor slot).
     BadReflectRead,
-    /// A collection member (`.operands`, `.roles`) without its `[index]`: the
+    /// A collection member (`.roles`) without its `[index]`: the
     /// bare collection as a first-class value waits for the array type.
     ExpectedIndexBracket,
     /// `:dyad` or `:value`: nothing reaches a value's cell as a whole.

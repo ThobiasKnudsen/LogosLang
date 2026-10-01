@@ -8,8 +8,8 @@
 # cell a new ^ node with tape[0].type = ^ and fills it by name, tape[0].lhs; the
 # node it built runs and is never parsed again. The run names the fields bare. It
 # is lexed once here and constructed once per set of field types a ^ node is built
-# with, so `^` over i32 and over f64 is this one definition. A field read such as
-# (a ^ b).lhs walks into the node and runs nothing.
+# with, so `^` over i32 and over f64 is this one definition. A node's fields are
+# read through the graph, b:start.rhs.lhs for b := a ^ c, and that runs nothing.
 #
 # A whole exponent multiplies, a negative one divides; any other exponent goes
 # through exp and ln, in exp.logos and ln.logos. A float on either side, or a fraction as

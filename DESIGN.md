@@ -1978,7 +1978,7 @@ A read that does not fit the node's type (`.text` of a number) is a checked erro
 - **Ruled (29 September 2026, Thobias, #199):** `.type` is read on every value again, as a field `type`'s body declares rather than a metaproperty. This reverses the August retirement of the universal `.type`. **Why:** "since type lives in the same payload as the value now type should always be accessed by .type instead of :type" (Thobias); the retirement's reason, that a value's type "is never one of its own fields", stopped holding with the one-block node (#166).
 - **Ruled (29 September 2026, Thobias, #199):** there is no `.operands`: a two-sided operator's operands are its fields `lhs` and `rhs`, as `:=`'s are. **Why:** Thobias: "btw (x+x).operands should not exist. it should be lhs and rhs for all the other operators as well." `.lhs` written straight on an expression, `(x + x).lhs`, reads what the expression evaluates to, so it is a checked error (›Reading a path runs nothing‹).
 - **Rejected:** a `.kind` field, a second classification axis: redundant with the cell's self-description.
-- **Seed:** since August 2026 (#52 in part). The seed still reads `.operands[i]` (#215).
+- **Seed:** since August 2026 (#52 in part). No `.operands` since 1 October 2026 (#215): an operator node's `lhs` and `rhs` are read on a node a path reaches, and `(x + x).lhs` is the error `x.lhs` gives. A node an all-literal fold replaced is not reachable by path (`b := 2 ^ 3, b:start.rhs.lhs` is that error too).
 - **Open:** in the seed: `.items` and `.text` (the array and string types' own fields), runtime-indexed reads, and runtime-callable method forms.
 - **Source:** DESIGN.md l.213
 
