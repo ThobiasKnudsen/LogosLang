@@ -1748,7 +1748,7 @@ mod tests {
         let items: Vec<ExitItem> = unsafe {
             super::super::scope::exit_items(scope).iter().map(|&i| exit_item_of(i)).collect()
         };
-        assert!(!items.is_empty(), "{src}: the scope's end runs something");
+        assert!(!items.is_empty(), "{src}: the scope has exit items");
         items
     }
 
