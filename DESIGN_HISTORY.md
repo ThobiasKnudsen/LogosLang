@@ -153,6 +153,7 @@ Nothing moved from this section.
 ### A field may be `own t ?`, `t` a type whose body fills `share free`
 - **History:** heading spelled `share drop` until 28 September 2026. Open until then: `=` into an owning field leaked the displaced node (the seed still does, #170); ruled 28 September 2026 that the displaced node is freed before the write.
 - **History:** text writes `this.items` and "fields block"; see renames above.
+- **History:** until 1 October 2026 the rule read "A name works alike: `mut a := own t ?` owns what is written into it, freed at its scope's exit" (Claude's reading of 25 September 2026). Superseded by Thobias's Q-0039 answer "c": an owning `?` is refused on a local name, so a local owner gets its value where it is declared; a parameter keeps it.
 - **Seed detail (27 September 2026):** since 25 September 2026, no array-specific code; `drop items` and `own b.items` run interpreted like every field read. Closed the note "`own array i32 ?` is not in the seed yet".
 
 ### `move` and `free` are static: the parse marks the name dead
