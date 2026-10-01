@@ -6,7 +6,7 @@
 
 use super::*;
 use crate::dyad;
-use crate::identities::drop_model::{teardown_of, Teardown};
+use crate::identities::drop_model::{teardown_of, ExitItem, Teardown};
 
 impl<'a> Parser<'a> {
     /// A gate word marks the declaration that just reduced to its right.
@@ -208,8 +208,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Whether the name owns the node it holds: its binding site inserted the teardown
-    /// that runs the node's instances' `free`, and its binding carries `own`.
+    /// Whether the name owns the node it holds: its binding carries `own`.
     ///
     /// # Safety
     /// `binding` must be a binding dyad from the store.
@@ -217,42 +216,82 @@ impl<'a> Parser<'a> {
         Binding::has_gate(binding, self.types.own_)
     }
 
-    /// The binding site of a node whose type fills the instances' `free`: the name owns
-    /// it, and `defer free <place>` goes into the scope where the ownership lands (DESIGN
-    /// ›Holding is decided at the binding site‹; the inserted defer is a stand-in).
+    /// Whether the binding site made the name an owner: of a block, its place an owning
+    /// pointer's, or of a node, its binding carrying `own`.
     ///
     /// # Safety
-    /// `binding` must be the binding dyad being declared, `place` its node place, `free`
-    /// the instances' `free` of the place's type.
-    unsafe fn own_node(&mut self, binding: DyadPtr, place: DyadPtr, free: DyadPtr) {
+    /// `binding` must be a binding dyad from the store.
+    pub(crate) unsafe fn name_holds(&self, binding: DyadPtr) -> bool {
+        crate::identities::drop_model::is_owning_place(self.types, binding)
+            || self.owns_node(binding)
+    }
+
+    /// The binding site of a node whose type fills the instances' `free`: the name owns it
+    /// and its scope holds it.
+    ///
+    /// # Safety
+    /// `binding` must be the binding dyad being declared, laid out as a node's place.
+    unsafe fn hold_node(&mut self, binding: DyadPtr) {
         Binding::add_gate(self.rt.store, self.types.array_, binding, self.types.own_);
-        let teardown = crate::identities::drop_model::build_instance_free(
-            self.rt.store,
-            self.types,
-            place,
-            free,
-        );
-        let defer_node =
-            crate::identities::drop_model::build_defer(self.rt.store, self.types, teardown);
-        let scope = self.teardown_scope();
-        self.cx.open[scope].defers.push(defer_node);
+        self.hold(binding);
     }
 
-    /// Where a binding's teardown goes: its own scope, or the root for a `share` place,
-    /// which lives as long as the program.
-    fn teardown_scope(&self) -> usize {
-        if self.cx.once_at == Some(self.cx.frames.len()) {
-            0
-        } else {
-            self.cx.open.len() - 1
-        }
+    /// The binding site made `binding` an owner: the scope that holds it runs its value's
+    /// teardown at its end (DESIGN ›Holding is decided at the binding site, parameters
+    /// included‹). That scope is the name's own, or the program for a `share` place, which
+    /// lives as long as the program.
+    fn hold(&mut self, binding: DyadPtr) {
+        let at =
+            if self.cx.once_at == Some(self.cx.frames.len()) { 0 } else { self.cx.open.len() - 1 };
+        let open = &mut self.cx.open[at];
+        open.exit.push(ExitItem { what: binding, from: open.lines + 1, end: None });
     }
 
-    /// `node` has emptied `ended`'s place: its name is dead from here on
-    /// (DESIGN ›Memory and concurrency‹).
+    /// The open scope whose end holds `place`, innermost first.
+    pub(super) fn holder_of(&self, place: DyadPtr) -> Option<usize> {
+        // SAFETY: held places and `place` are dyads from the store.
+        self.cx.open.iter().rposition(|s| s.exit.iter().any(|h| unsafe { self.holds(h, place) }))
+    }
+
+    /// Whether the exit item holds `place` still: the same name, or a name that holds over the
+    /// same bytes, as an imported `pub` name over the file's. A borrow over the same bytes, a
+    /// plain record's second name, is another name.
+    ///
+    /// # Safety
+    /// `place` must be a dyad from the store.
+    pub(super) unsafe fn holds(&self, item: &ExitItem, place: DyadPtr) -> bool {
+        item.end.is_none()
+            && (item.what == place
+                || dyad::ty(place) == self.types.binding_
+                    && self.name_holds(place)
+                    && crate::identities::drop_model::same_place(self.types, item.what, place))
+    }
+
+    /// `node` has emptied `ended`'s place: its name is dead from here on (DESIGN ›`move` and
+    /// `free` are static: the parse marks the name dead‹). Each scope from the one that held it
+    /// inward settles, when its line closes, that it holds the name up to that line, and an
+    /// `if` reads which of its arms ended it.
     pub(crate) fn mark_dead(&mut self, ended: Ended, node: DyadPtr) {
+        if self.cx.dropping > 0 {
+            return;
+        }
         // SAFETY: `ended.binding` is the binding the resolver returned for the operand.
         unsafe { self.cx.scopes.mark_dead(ended.binding, node) };
+        // A borrow ends its name alone.
+        // SAFETY: as above.
+        if !unsafe { self.name_holds(ended.binding) } {
+            return;
+        }
+        let holder = self.holder_of(ended.binding).unwrap_or_else(|| {
+            // An owner no open scope holds is an earlier REPL line's, whose items the
+            // session's scope keeps: held from outside everything this line opened.
+            self.cx.open[0].ended_earlier.push(ended.binding);
+            0
+        });
+        for open in &mut self.cx.open[holder..] {
+            open.ended.push(ended.binding);
+        }
+        self.cx.ended_log.push((ended.binding, holder));
     }
 
     /// `?`'s entry on a binding refuses every read of the value until it is
@@ -619,9 +658,8 @@ impl<'a> Parser<'a> {
                 let node = crate::identities::this::build_copy(self.rt.store, self.types, template);
                 let place = self.place_for(binding, t, 8);
                 let init = crate::identities::build_init(self.rt.store, self.types, place, node)?;
-                let free = crate::identities::meta::instances_free_of(t);
-                if !free.is_null() {
-                    self.own_node(binding, place, free);
+                if !crate::identities::meta::instances_free_of(t).is_null() {
+                    self.hold_node(binding);
                 }
                 // A field with a default starts with it, the empty node's slot holding it.
                 self.leave_fields_unwritten(binding, t, true);
@@ -635,26 +673,16 @@ impl<'a> Parser<'a> {
                 let width = crate::identities::read::place_layout(self.types, t)
                     .map_or(8, |(_, width)| width);
                 let place = self.place_for(binding, t, width);
-                // `a := own t ?`: the owner of whatever node is written into it later.
-                if cell.owning {
-                    let free = crate::identities::meta::instances_free_of(t);
-                    self.own_node(binding, place, free);
+                // `a := own t ?`, and `a := r ?` of a plain record `r` whose body fills `free`:
+                // the owner of whatever is written into it later.
+                let record_free = crate::identities::this::is_plain(self.types, t)
+                    && !crate::identities::meta::instances_free_of(t).is_null();
+                if cell.owning || record_free {
+                    self.hold_node(binding);
                 }
                 // `a := own @T ?`: the owner of whatever block is written into it later.
                 if crate::identities::drop_model::is_owning_place(self.types, place) {
-                    let free_node = crate::identities::drop_model::build_teardown(
-                        self.rt.store,
-                        self.types,
-                        self.types.free_,
-                        place,
-                    )?;
-                    let defer_node = crate::identities::drop_model::build_defer(
-                        self.rt.store,
-                        self.types,
-                        free_node,
-                    );
-                    let scope = self.teardown_scope();
-                    self.cx.open[scope].defers.push(defer_node);
+                    self.hold(binding);
                 }
                 if !crate::identities::hashmap::is_hashmap(self.types, t) {
                     Binding::add_gate(
@@ -673,13 +701,18 @@ impl<'a> Parser<'a> {
             } else if dyad::ty(read) == self.types.construct_
                 || dyad::ty(read) == self.types.by_copy.result
             {
-                // Both make their value into the name's own bytes: the target slot.
+                // Both make their value into the name's own bytes: the target slot. A record
+                // just made or moved out, of a type whose body fills `free`, makes the name its
+                // owner.
                 let t = crate::identities::by_copy::made_type(self.types, read);
                 let width = crate::identities::read::place_layout(self.types, t)
                     .map_or(8, |(_, width)| width)
                     .max(1);
                 let place = self.place_for(binding, t, width);
                 *(dyad::value(read) as *mut DyadPtr) = place;
+                if let Some(Teardown::Node(_)) = teardown_of(self.types, value) {
+                    self.hold_node(binding);
+                }
                 value
             } else if crate::identities::read::read_kind(self.types, read)
                 == crate::identities::read::Read::Identity
@@ -704,14 +737,12 @@ impl<'a> Parser<'a> {
                 // and a value just made or moved makes the name its owner.
                 let place = self.place_for(binding, t, 8);
                 let init = crate::identities::build_init(self.rt.store, self.types, place, value)?;
-                if let Some(Teardown::Node(free)) = teardown_of(self.types, value) {
-                    self.own_node(binding, place, free);
+                if let Some(Teardown::Node(_)) = teardown_of(self.types, value) {
+                    self.hold_node(binding);
                 }
                 init
             } else if let Some(Teardown::Block(pointee)) = teardown_of(self.types, value) {
-                // An owning value lands in a place here, the one site that
-                // knows the name it binds, so the teardown attaches here (DESIGN
-                // ›Explicit heap‹): an owning `@pointee` place, the value in it, `defer free <place>` in this scope.
+                // An owning value lands in a place of an owning `@pointee`, which the scope holds.
                 let owning_ty = crate::identities::pointer::make_owning_pointer_type(
                     self.rt.store,
                     self.types.type_,
@@ -721,19 +752,7 @@ impl<'a> Parser<'a> {
                 // A pointer is 8 bytes (U64-wide), whatever it points at.
                 let place = self.place_for(binding, owning_ty, 8);
                 let init = crate::identities::build_init(self.rt.store, self.types, place, value)?;
-                let free_node = crate::identities::drop_model::build_teardown(
-                    self.rt.store,
-                    self.types,
-                    self.types.free_,
-                    place,
-                )?;
-                let defer_node = crate::identities::drop_model::build_defer(
-                    self.rt.store,
-                    self.types,
-                    free_node,
-                );
-                let scope = self.teardown_scope();
-                self.cx.open[scope].defers.push(defer_node);
+                self.hold(binding);
                 init
             } else if dyad::ty(read) != self.types.rational
                 && matches!(

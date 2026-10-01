@@ -1,0 +1,4 @@
+# A file whose top level defers: the file's scope lives as long as the program,
+# so its `defer` runs where the program ends.
+defer print «file ends»,
+pub k := i32 1

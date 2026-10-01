@@ -681,7 +681,7 @@ impl<'a> Parser<'a> {
                 if self.cx.runtime_depth == 0 {
                     let open = self.cx.open.last_mut().expect("the root scope is open");
                     if !open.list {
-                        open.unrun.push(item.dyad);
+                        open.unrun.push((item.dyad, open.lines, Vec::new()));
                     }
                 }
                 return Some(Ok(item));

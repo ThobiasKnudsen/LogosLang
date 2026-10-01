@@ -1,0 +1,3 @@
+# A file whose top level holds a block it exposes: the file's scope lives as long as
+# the program, so the block is freed at the program's end, once, whoever ends it.
+pub p := alloc 1 of i32 7

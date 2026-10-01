@@ -2,14 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `scope`: the type of a scope node, the parser's membership marker and, for
-//! a block, the sequence node itself: `[exprs, op, parent]`, the parent link
+//! a block, the sequence node itself: `[exprs, op, parent, exit]`, the parent link
 //! set at [`mint`], the expressions (the `dyads` field) pushed as each line
-//! completes, and the op set at [`fill`] when the block closes.
+//! completes, the op set at [`fill`] when the block closes, and the exit, what the
+//! scope's end runs, set when it closes.
 //! DESIGN ›Meta-navigation walks the graph; the scope stack is the graph's own spine‹
 
 use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
+use super::drop_model::ExitItem;
 use super::{array, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
@@ -44,16 +46,19 @@ pub(super) fn register_exec(cx: &mut Cx, scope_: DyadPtr, cs: &Callables) -> Dya
     callable::mint_native(cx.store, cs.callable, run, cs.seed_native)
 }
 
-/// The slots of a scope node's value, `[exprs, op, parent]`.
+/// The slots of a scope node's value, `[exprs, op, parent, exit]`.
 const EXPRS: usize = 0;
 const OP: usize = 1;
 const PARENT: usize = 2;
+/// Null, or an `array` of exit items (`drop_model::exit_item`) in line order.
+const EXIT: usize = 3;
 
 /// The block's membership key while it parses, and the sequence node once
 /// [`fill`] gives it its expressions; `parent` is null at the arche. A scope that
 /// holds names alone (the root, a type's member scope) is minted with no parent.
 pub(crate) fn mint(store: &mut Store, scope_ty: DyadPtr, parent: DyadPtr) -> DyadPtr {
-    store.alloc_words(scope_ty, &[std::ptr::null_mut(), std::ptr::null_mut(), parent])
+    let none = std::ptr::null_mut();
+    store.alloc_words(scope_ty, &[none, none, parent, none])
 }
 
 /// The block closed: it runs as a sequence over its `dyads`.
@@ -121,7 +126,86 @@ pub(crate) unsafe fn with_exprs(
 ) -> DyadPtr {
     let slots = dyad::value(node) as *const DyadPtr;
     let lines = array::build(store, array_ty, exprs);
-    store.alloc_words(dyad::ty(node), &[lines, *slots.add(OP), *slots.add(PARENT)])
+    store
+        .alloc_words(dyad::ty(node), &[lines, *slots.add(OP), *slots.add(PARENT), *slots.add(EXIT)])
+}
+
+/// # Safety
+/// `node` must be a scope node from the store; the store must outlive the returned slice.
+pub(crate) unsafe fn exit_items<'a>(node: DyadPtr) -> &'a [DyadPtr] {
+    let exit = *(dyad::value(node) as *const DyadPtr).add(EXIT);
+    if exit.is_null() {
+        &[]
+    } else {
+        array::items(exit)
+    }
+}
+
+/// Appends `items` to the scope's exit, the array made on first use.
+///
+/// # Safety
+/// `node` must be a scope node from the store; `items` exit items.
+pub(crate) unsafe fn extend_exit(
+    store: &mut Store,
+    array_ty: DyadPtr,
+    node: DyadPtr,
+    items: &[DyadPtr],
+) {
+    if items.is_empty() {
+        return;
+    }
+    let slot = (dyad::value(node) as *mut DyadPtr).add(EXIT);
+    // Empty, so `push` knows its capacity.
+    if (*slot).is_null() {
+        *slot = array::build(store, array_ty, &[]);
+    }
+    for &item in items {
+        array::push(store, *slot, item);
+    }
+}
+
+/// The scope's end, reached after `reached` of its lines completed: every exit item held
+/// there runs, last first, an authored `defer` its expression and a held name its
+/// value's teardown (DESIGN ›A value's teardown runs where its life ends; the ending
+/// identity reads the type's `free` slot‹).
+///
+/// # Safety
+/// `node` must be a scope node from the store, its places laid out in the frame `rt` runs.
+pub(crate) unsafe fn run_exit(
+    rt: &mut Runtime,
+    node: DyadPtr,
+    reached: usize,
+) -> Result<(), RunError> {
+    run_exit_items(rt, node, |_, item| item.held_at(reached))
+}
+
+/// The scope's end after its line `failed` faulted: what [`run_exit`] would run there, and what
+/// that line ended and did not reach (DESIGN ›`free` and `move` end a name; no drop flag‹).
+///
+/// # Safety
+/// As [`run_exit`].
+unsafe fn run_exit_after_fault(
+    rt: &mut Runtime,
+    node: DyadPtr,
+    failed: usize,
+) -> Result<(), RunError> {
+    run_exit_items(rt, node, |types, item| item.held_at_fault(types, failed))
+}
+
+/// # Safety
+/// As [`run_exit`].
+unsafe fn run_exit_items(
+    rt: &mut Runtime,
+    node: DyadPtr,
+    runs: impl Fn(&crate::Core, &ExitItem) -> bool,
+) -> Result<(), RunError> {
+    for &item in exit_items(node).iter().rev() {
+        let item = super::drop_model::exit_item_of(item);
+        if runs(rt.types(), &item) {
+            item.run(rt)?;
+        }
+    }
+    Ok(())
 }
 
 /// Null at the arche.
@@ -141,18 +225,13 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         let defer_ty = rt.types().defer_;
         let start = rt.take_cursor(node);
         let mut last = 0i64;
-        let mut defers: Vec<DyadPtr> = Vec::new();
         let tail = exprs.iter().rposition(|&e| {
             !super::numtype::is_comment_type(dyad::ty(e)) && dyad::ty(e) != defer_ty
         });
         for (i, &expr) in exprs.iter().enumerate() {
             let logos = dyad::ty(expr);
-            // Prose: never run, never the tail.
-            if super::numtype::is_comment_type(logos) {
-                continue;
-            }
-            if logos == defer_ty {
-                defers.push(expr);
+            // Prose never runs; a `defer` runs at the end, from the exit.
+            if super::numtype::is_comment_type(logos) || logos == defer_ty {
                 continue;
             }
             // Before the cursor: the pass ran it in this frame already.
@@ -168,29 +247,23 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
                         rt.stack_release(mark);
                     }
                 }
-                // A `return` leaves through this scope, so the teardowns held so far run.
+                // A `return` leaves through this scope: what it holds at line `i` ends.
                 Err(RunError::Return(v)) => {
-                    run_teardowns(rt, &defers)?;
+                    run_exit(rt, node, i)?;
                     return Err(RunError::Return(v));
                 }
-                // A body error skips the held teardowns.
-                Err(e) => return Err(e),
+                // A fault ends the scope from line `i`; the fault is the error shown, whatever
+                // its cleanup meets (DESIGN ›A checked error is a fault: the task that hit it is
+                // cancelled‹).
+                Err(fault) => {
+                    let _ = run_exit_after_fault(rt, node, i);
+                    return Err(fault);
+                }
             }
         }
-        run_teardowns(rt, &defers)?;
+        run_exit(rt, node, exprs.len())?;
         Ok(last)
     }
-}
-
-/// LIFO, as `defer` runs at scope exit.
-///
-/// # Safety
-/// `defers` must be `defer` nodes from the store.
-unsafe fn run_teardowns(rt: &mut Runtime, defers: &[DyadPtr]) -> Result<(), RunError> {
-    for &d in defers.iter().rev() {
-        rt.run(super::drop_model::deferred_inner_of(d))?;
-    }
-    Ok(())
 }
 
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
@@ -204,6 +277,6 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
             .copied()
             .filter(|&e| !super::numtype::is_comment_type(dyad::ty(e)))
             .collect();
-        lw.lower_with_teardowns(&lines)?.ok_or(CompileError::EmptyScope)
+        lw.lower_with_teardowns(&lines, exit_items(node))?.ok_or(CompileError::EmptyScope)
     }
 }

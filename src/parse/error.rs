@@ -221,10 +221,17 @@ pub enum ParseError {
     /// A `return` hands out a place a scope it leaves owns: the teardowns run on
     /// the way out, so the value would already be freed. A last value moves out instead.
     OwningEscape,
+    /// A scope's value or a `return` is `&x` of a name a scope it leaves holds: that
+    /// scope's end frees the value under the address.
+    AddressOfHeld,
     /// A `return` hands out an owning value, which only a last value moves out to the caller.
     OwnershipAcrossReturn,
     /// `move b` where `b` borrows the node it names: only the owner can move it.
     MoveOfBorrow,
+    /// `move a` of a plain record: its bytes are not copied into a name yet. stand-in for #193
+    RecordMoveNotInSeed,
+    /// `move p.f` or `move p@` of a field or cell that owns nothing. stand-in for #66
+    MoveOfUnownedPath,
     /// A name as a line of a list a type's `parse` builds from, where the value's type fills
     /// a `free`: the built value owns its lines, so the name must be moved in.
     LineNotMoved,

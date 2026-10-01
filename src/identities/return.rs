@@ -1,21 +1,27 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `return`: the node `[value, op]`. Inside a call it leaves the function with
-//! the operand's value, from wherever it stands; outside any function it is a
-//! scope's tail and yields the value.
+//! `return`: the node `[value, ends, op]`. Inside a call it leaves the function with
+//! the operand's value, from wherever it stands, freeing on its way the names its own
+//! line ends after it; outside any function it is a scope's tail and yields the value.
 //! DESIGN ›A scope's value is what it evaluates to, and `return` is an optional
-//! early exit from the enclosing function‹
+//! early exit from the enclosing function‹, ›A value's teardown runs where its life ends;
+//! the ending identity reads the type's `free` slot‹
 
 use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
-use super::{meta, Cx};
+use super::{array, meta, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
 use crate::dyad::DyadPtr;
 use crate::parse::{Assoc, ParseError};
 use crate::run::{RunError, Runtime};
+use crate::store::Store;
+use crate::Core;
+
+/// Null, or an `array` of held places in declaration order.
+const ENDS: usize = 1;
 
 /// Returns `(identity, leaf)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
@@ -24,7 +30,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         meta::TUPLE_TAG,
         meta::prec::RETURN,
         Assoc::Right,
-        &["value", "op"],
+        &["value", "ends", "op"],
     );
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("return", id);
@@ -41,7 +47,7 @@ fn construct(
 ) -> Result<crate::parse::Constructed, ParseError> {
     let operand = p.take_right(tape)?;
     let types = p.types();
-    let node = p.store().alloc_words(id, &[operand, types.ops.return_]);
+    let node = p.store().alloc_words(id, &[operand, std::ptr::null_mut(), types.ops.return_]);
     // SAFETY: `node` is the `return` node just built.
     unsafe { p.note_return(node) }?;
     tape.place(node);
@@ -49,22 +55,45 @@ fn construct(
 }
 
 /// # Safety
-/// `node` must be a `return` node `[value, op]`.
+/// `node` must be a `return` node `[value, ends, op]`.
 unsafe fn operand(node: DyadPtr) -> DyadPtr {
     *(dyad::value(node) as *const DyadPtr)
 }
 
-fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
-    // SAFETY: `node` is a valid return node; its first slot is its operand.
-    let value = unsafe { rt.run(operand(node)) }?;
-    if rt.in_call() {
-        Err(RunError::Return(value))
+/// # Safety
+/// As [`operand`]; the list's store outlives the slice.
+unsafe fn ends_of<'a>(node: DyadPtr) -> &'a [DyadPtr] {
+    let arr = *(dyad::value(node) as *const DyadPtr).add(ENDS);
+    if arr.is_null() {
+        &[]
     } else {
-        Ok(value)
+        array::items(arr)
+    }
+}
+
+/// # Safety
+/// `node` must be a `return` node `construct` built, not yet run; `ends` held places.
+pub(crate) unsafe fn set_ends(store: &mut Store, types: &Core, node: DyadPtr, ends: &[DyadPtr]) {
+    if !ends.is_empty() {
+        *(dyad::value(node) as *mut DyadPtr).add(ENDS) = array::build(store, types.array_, ends);
+    }
+}
+
+fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
+    // SAFETY: `node` is a valid return node; its ends are held places.
+    unsafe {
+        let value = rt.run(operand(node))?;
+        if !rt.in_call() {
+            return Ok(value);
+        }
+        for &place in ends_of(node).iter().rev() {
+            super::drop_model::end_held(rt, place)?;
+        }
+        Err(RunError::Return(value))
     }
 }
 
 fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
-    // SAFETY: `node` is a valid return node; its first slot is its operand.
-    unsafe { lw.lower_return(operand(node)) }
+    // SAFETY: `node` is a valid return node; its ends are held places.
+    unsafe { lw.lower_return(operand(node), ends_of(node)) }
 }

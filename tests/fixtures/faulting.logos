@@ -1,0 +1,6 @@
+# A file whose top level faults after it made a value its scope holds and wrote a
+# `defer`: its scope ends as its normal end would before the import fails.
+r := type ( mut n := i32 ?, share free = ( print «freed» ) ),
+a := r(1),
+defer print «file cleanup»,
+error «file stops»

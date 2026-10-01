@@ -212,14 +212,16 @@ impl ScopeStack {
     }
 
     /// A declaration is removed by spelling *and* declaring scope, so outer
-    /// declarations of the same spelling stay.
-    pub fn rollback(&mut self, trie: &mut RegexTrie) {
+    /// declarations of the same spelling stay. The ends of `freed` stand: the line's run
+    /// freed their values, which no rollback brings back.
+    pub fn rollback(&mut self, trie: &mut RegexTrie, freed: &[DyadPtr]) {
         while let Some(act) = self.journal.pop() {
             match act {
                 Journal::Declared { name, scope } => {
                     // A failed removal means the entry was already pruned.
                     let _ = trie.remove(&name, scope);
                 }
+                Journal::Ended { binding, .. } if freed.contains(&binding) => {}
                 Journal::Ended { binding, prev_end } => {
                     // SAFETY: a journalled binding is a binding dyad from the store.
                     unsafe { Binding::set_end(binding, prev_end) };

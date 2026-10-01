@@ -314,19 +314,21 @@ impl Lowerer<'_, '_> {
         Ok(())
     }
 
-    /// Lower `lines`, a scope's body, then its `defer`s' inners in reverse, as the scope's run
-    /// does at exit; the value is the last line's that is no `defer`.
+    /// Lower `lines`, a scope's body, then its end: the items of `exit` still held after
+    /// the last line, in reverse, as the scope's run does; the value is the last line's that
+    /// is no `defer`. An item only a failing line runs leaves a `return` free to compile.
     ///
     /// # Safety
-    /// `lines` must be reduced dyads from the store, none of them prose.
+    /// `lines` must be reduced dyads from the store, none of them prose; `exit` the scope's
+    /// exit items.
     pub(crate) unsafe fn lower_with_teardowns(
         &mut self,
         lines: &[DyadPtr],
+        exit: &[DyadPtr],
     ) -> Result<Option<Value>, CompileError> {
+        use crate::identities::drop_model;
         let defer_ = self.types.defer_;
-        let defers: Vec<DyadPtr> =
-            lines.iter().copied().filter(|&e| dyad::ty(e) == defer_).collect();
-        let held = usize::from(!defers.is_empty());
+        let held = usize::from(drop_model::any_held_somewhere(exit));
         self.teardowns += held;
         let mut last = Ok(None);
         for &line in lines.iter().filter(|&&e| dyad::ty(e) != defer_) {
@@ -337,8 +339,16 @@ impl Lowerer<'_, '_> {
         }
         self.teardowns -= held;
         let last = last?;
-        for &d in defers.iter().rev() {
-            self.lower(crate::identities::drop_model::deferred_inner_of(d))?;
+        for &item in exit.iter().rev() {
+            let item = drop_model::exit_item_of(item);
+            if !item.held_at(usize::MAX) {
+                continue;
+            }
+            if dyad::ty(item.what) == defer_ {
+                self.lower(drop_model::deferred_inner_of(item.what))?;
+            } else {
+                drop_model::lower_end_held(self, item.what)?;
+            }
         }
         Ok(last)
     }
@@ -693,17 +703,38 @@ impl Lowerer<'_, '_> {
         Ok(result)
     }
 
+    /// Each arm is lowered, then the places it frees at its end; the arm's value is the if's.
+    ///
     /// # Safety
-    /// `cond`/`then`/`els` must be valid dyads from the store.
+    /// `cond` and the arms must be valid dyads from the store, the ends held places.
     pub unsafe fn lower_if(
         &mut self,
         cond: DyadPtr,
-        then: DyadPtr,
-        els: DyadPtr,
+        [(then, then_ends), (els, else_ends)]: [(DyadPtr, &[DyadPtr]); 2],
     ) -> Result<Value, CompileError> {
         let c = self.lower(cond)?;
-        // SAFETY: `then`/`els` are the dyads the caller's contract covers.
-        self.branch(c, |s| unsafe { s.lower(then) }, |s| unsafe { s.lower(els) })
+        // SAFETY: the arms and ends are the dyads the caller's contract covers.
+        self.branch(
+            c,
+            |s| unsafe { s.lower_arm(then, then_ends) },
+            |s| unsafe { s.lower_arm(els, else_ends) },
+        )
+    }
+
+    /// An arm and the places it frees at its end; a `return` inside would leave past them.
+    ///
+    /// # Safety
+    /// `arm` must be a valid dyad from the store, `ends` held places.
+    unsafe fn lower_arm(&mut self, arm: DyadPtr, ends: &[DyadPtr]) -> Result<Value, CompileError> {
+        let held = usize::from(!ends.is_empty());
+        self.teardowns += held;
+        let value = self.lower(arm);
+        self.teardowns -= held;
+        let value = value?;
+        for &place in ends.iter().rev() {
+            crate::identities::drop_model::lower_end_held(self, place)?;
+        }
+        Ok(value)
     }
 
     /// The header re-evaluates the condition, the body jumps back, and the
@@ -861,38 +892,54 @@ impl Lowerer<'_, '_> {
         }
     }
 
-    /// A statement: both arms yield unit, so the merge always agrees.
+    /// A statement: both arms yield unit, so the merge always agrees; the arm the `if` gains
+    /// frees `else_ends`.
     ///
     /// # Safety
-    /// `cond`/`then` must be valid dyads from the store.
+    /// `cond`/`then` must be valid dyads from the store, the ends held places.
     pub unsafe fn lower_if_stmt(
         &mut self,
         cond: DyadPtr,
         then: DyadPtr,
+        then_ends: &[DyadPtr],
+        else_ends: &[DyadPtr],
     ) -> Result<Value, CompileError> {
         let c = self.lower(cond)?;
         self.branch(
             c,
             |s| {
-                // SAFETY: `then` is the dyad the caller's contract covers.
-                unsafe { s.lower(then) }?;
+                // SAFETY: `then` and its ends are the dyads the caller's contract covers.
+                unsafe { s.lower_arm(then, then_ends) }?;
                 Ok(s.const_i32(0))
             },
-            |s| Ok(s.const_i32(0)),
+            |s| {
+                for &place in else_ends.iter().rev() {
+                    // SAFETY: as above.
+                    unsafe { crate::identities::drop_model::lower_end_held(s, place) }?;
+                }
+                Ok(s.const_i32(0))
+            },
         )
     }
 
-    /// `return X` leaves the function from wherever it stands, counting the
-    /// call out as the epilogue does. What follows it is unreachable, so the
+    /// `return X` leaves the function from wherever it stands, freeing `ends` last first and
+    /// counting the call out as the epilogue does. What follows it is unreachable, so the
     /// value handed back to the enclosing lowering is a zero of `X`'s type.
     ///
     /// # Safety
-    /// `value` must be a valid dyad from the store.
-    pub unsafe fn lower_return(&mut self, value: DyadPtr) -> Result<Value, CompileError> {
+    /// `value` must be a valid dyad from the store, `ends` held places.
+    pub unsafe fn lower_return(
+        &mut self,
+        value: DyadPtr,
+        ends: &[DyadPtr],
+    ) -> Result<Value, CompileError> {
         if self.teardowns > 0 {
             return Err(CompileError::NotLowerable(value));
         }
         let v = self.lower(value)?;
+        for &place in ends.iter().rev() {
+            crate::identities::drop_model::lower_end_held(self, place)?;
+        }
         let ret64 = match (self.ret_dest, self.ret) {
             (Some((dest, width)), _) => {
                 self.copy_bytes(dest, v, width);
@@ -913,24 +960,25 @@ impl Lowerer<'_, '_> {
         })
     }
 
-    /// Short-circuit: `b` is not evaluated when `a` is false.
+    /// Both sides run; a lowered `bool` is an `I32` `0` or `1`, so the bitwise `and` is the
+    /// logical one.
     ///
     /// # Safety
     /// `a`/`b` must be valid dyads from the store.
     pub unsafe fn lower_and(&mut self, a: DyadPtr, b: DyadPtr) -> Result<Value, CompileError> {
         let va = self.lower(a)?;
-        // SAFETY: `b` is the dyad the caller's contract covers.
-        self.branch(va, |s| unsafe { s.lower(b) }, |s| Ok(s.const_i32(0)))
+        let vb = self.lower(b)?;
+        Ok(self.builder.ins().band(va, vb))
     }
 
-    /// Short-circuit: `b` is not evaluated when `a` is true.
+    /// Both sides run, as [`Self::lower_and`].
     ///
     /// # Safety
     /// `a`/`b` must be valid dyads from the store.
     pub unsafe fn lower_or(&mut self, a: DyadPtr, b: DyadPtr) -> Result<Value, CompileError> {
         let va = self.lower(a)?;
-        // SAFETY: `b` is the dyad the caller's contract covers.
-        self.branch(va, |s| Ok(s.const_i32(1)), |s| unsafe { s.lower(b) })
+        let vb = self.lower(b)?;
+        Ok(self.builder.ins().bor(va, vb))
     }
 
     /// A self-call is a direct `call` the JIT patches to this function; a callee

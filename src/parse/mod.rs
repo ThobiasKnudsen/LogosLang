@@ -146,6 +146,12 @@ struct Context<'a> {
     /// While a type body's field declaration reads its type: a hole there names the
     /// field's type and needs no place, so a type without one, `square_brackets ?`, may stand.
     field_hole: bool,
+    /// Every held name a `move` or `free` ended, with the index of the open scope that held
+    /// it: an `if` reads which of its arms ended which.
+    ended_log: Vec<(DyadPtr, usize)>,
+    /// While a branch the pass drops is parsed only to find where it ends: it never runs, so
+    /// it ends no name.
+    dropping: usize,
 }
 
 impl<'a> Context<'a> {
@@ -180,6 +186,8 @@ impl<'a> Context<'a> {
             member_fn_depth: None,
             once_at: None,
             field_hole: false,
+            ended_log: Vec::new(),
+            dropping: 0,
         }
     }
 

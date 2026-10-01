@@ -603,7 +603,7 @@ impl<'a> Runtime<'a> {
         self.live_allocs += 1;
     }
 
-    /// Called after freeing a non-null pointer; an emptied place never reaches here.
+    /// Called after freeing a non-null pointer; a place holding nothing never reaches here.
     pub(crate) fn note_free(&mut self) {
         self.live_allocs = self.live_allocs.saturating_sub(1);
     }

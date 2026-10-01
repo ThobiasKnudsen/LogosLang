@@ -595,7 +595,7 @@ fn rollback_undoes_journalled_declarations() {
     scopes.commit();
     unsafe { scopes.declare(&mut trie, "gone", rec(dyad(2))) }.unwrap();
 
-    scopes.rollback(&mut trie);
+    scopes.rollback(&mut trie, &[]);
     assert_eq!(scopes.resolve(&trie, "keep").unwrap().identity, dyad(1));
     assert_eq!(scopes.resolve(&trie, "gone"), Err(ResolveError::Unknown("gone".into())));
     unsafe { scopes.declare(&mut trie, "gone", rec(dyad(3))) }.unwrap();
@@ -612,7 +612,7 @@ fn rebind_points_a_spelling_at_the_original_identity() {
     unsafe { scopes.rebind(alias, dyad(2)) };
     assert_eq!(scopes.resolve(&trie, "alias").unwrap().identity, dyad(2));
     // The declare's journal entry still covers the rebound binding.
-    scopes.rollback(&mut trie);
+    scopes.rollback(&mut trie, &[]);
     assert_eq!(scopes.resolve(&trie, "alias"), Err(ResolveError::Unknown("alias".into())));
 }
 
@@ -659,10 +659,25 @@ fn rollback_restores_a_dead_mark() {
 
     unsafe { scopes.mark_dead(a1, dyad(50)) };
     unsafe { scopes.declare(&mut trie, "a", rec(dyad(2))) }.unwrap();
-    scopes.rollback(&mut trie);
+    scopes.rollback(&mut trie, &[]);
 
     assert_eq!(scopes.resolve(&trie, "a").unwrap().identity, dyad(1));
     assert_eq!(trie.get("a").unwrap().bindings.len(), 1);
+}
+
+#[test]
+fn rollback_keeps_the_dead_mark_of_a_name_the_line_s_run_freed() {
+    let mut trie = RegexTrie::new();
+    let mut scopes = ScopeStack::new();
+    scopes.push(dyad(100));
+    let a1 = rec(dyad(1));
+    unsafe { scopes.declare(&mut trie, "a", a1) }.unwrap();
+    scopes.commit();
+
+    unsafe { scopes.mark_dead(a1, dyad(50)) };
+    scopes.rollback(&mut trie, &[a1]);
+
+    assert_eq!(scopes.resolve(&trie, "a"), Err(ResolveError::Dead("a".into())));
 }
 
 #[test]

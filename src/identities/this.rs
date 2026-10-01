@@ -290,7 +290,7 @@ enum Field {
 ///
 /// # Safety
 /// `owner` must be a type node from the store.
-unsafe fn is_plain(types: &Core, owner: DyadPtr) -> bool {
+pub(crate) unsafe fn is_plain(types: &Core, owner: DyadPtr) -> bool {
     meta::is_record_type(owner)
         && meta::run_body_of(owner).is_null()
         && !meta::is_node_valued(owner, types.fn_type)
@@ -341,17 +341,20 @@ unsafe fn slot_of(
     }
 }
 
-/// The node the slot `read` reaches holds, `None` while the slot is unwritten.
+/// Where a pointer field `read` reaches keeps its eight bytes: a plain record's own bytes, or
+/// the value of the node a slot holds; `None` while the slot is unwritten.
 ///
 /// # Safety
-/// `read` must be a node `is_field_read` accepts, over a value that holds a node.
-pub(crate) unsafe fn field_node(
+/// `read` must be a node `is_field_read` accepts, of a pointer field.
+pub(crate) unsafe fn pointer_bytes(
     rt: &mut Runtime,
     read: DyadPtr,
-) -> Result<Option<DyadPtr>, RunError> {
+) -> Result<Option<*mut u8>, RunError> {
     let owner = owner_of(rt.types(), read);
-    let (slot, _) = slot_of(rt, dyad::value(read) as *const DyadPtr, owner)?;
-    Ok((!(*slot).is_null()).then_some(*slot))
+    Ok(match field_of(rt, dyad::value(read) as *const DyadPtr, owner)? {
+        Field::Bytes(bytes, _) => Some(bytes),
+        Field::Slot(slot, _) => (!(*slot).is_null()).then(|| dyad::value(*slot)),
+    })
 }
 
 /// Where the field `read` reaches lies: a node's slot, the node pointer it holds, or a plain

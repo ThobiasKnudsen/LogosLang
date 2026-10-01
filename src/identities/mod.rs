@@ -47,7 +47,7 @@ pub(crate) mod held_type;
 pub mod here;
 pub(crate) mod hole;
 #[path = "if.rs"]
-mod if_mod;
+pub(crate) mod if_mod;
 mod immediate;
 pub mod import;
 pub(crate) mod instance;
@@ -65,7 +65,7 @@ pub mod print;
 pub(crate) mod rational;
 mod regex_mod;
 #[path = "return.rs"]
-mod return_mod;
+pub(crate) mod return_mod;
 pub(crate) mod run_body;
 pub(crate) mod scope;
 pub(crate) mod string;
@@ -135,6 +135,11 @@ pub struct Core {
     pub move_: DyadPtr,
     pub free_: DyadPtr,
     pub defer_: DyadPtr,
+    /// The type of an item of a scope's exit: a held name or an authored `defer`.
+    pub exit_item: DyadPtr,
+    /// The type of an `=`'s right side over a place that holds: built, then the displaced
+    /// value freed.
+    pub displace_: DyadPtr,
     /// The gate word; its constructor fills the declare node's gate slot.
     pub pub_: DyadPtr,
     pub mut_: DyadPtr,
@@ -319,14 +324,16 @@ impl Core {
         op_leaves.alloc_ = dm.alloc_leaf;
         op_leaves.move_ = dm.move_leaf;
         op_leaves.free_ = dm.free_leaf;
+        op_leaves.held_free_ = dm.held_free_leaf;
         op_leaves.instance_free_ = dm.instance_free_leaf;
         op_leaves.field_free_ = dm.field_free_leaf;
         op_leaves.value_free_ = dm.value_free_leaf;
         op_leaves.value_release_ = dm.value_release_leaf;
         op_leaves.teardown_ = dm.teardown_leaf;
         op_leaves.defer_ = dm.defer_leaf;
-        let (alloc_, own_, move_, free_, defer_, of_) =
-            (dm.alloc_, dm.own_, dm.move_, dm.free_, dm.defer_, dm.of_);
+        op_leaves.displace_ = dm.displace_leaf;
+        let (alloc_, own_, move_, free_, defer_, exit_item, displace_, of_) =
+            (dm.alloc_, dm.own_, dm.move_, dm.free_, dm.defer_, dm.exit_item, dm.displace_, dm.of_);
         let tape = tape::register(&mut cx, &callables, scope_, array_, void);
         let hashmap = hashmap::register(&mut cx, &callables, array_);
         let held_type = held_type::register(&mut cx, &callables);
@@ -424,6 +431,8 @@ impl Core {
             move_,
             free_,
             defer_,
+            exit_item,
+            displace_,
             pub_,
             mut_,
             immut_,
@@ -630,15 +639,16 @@ macro_rules! infix_construct {
 }
 pub(crate) use infix_construct;
 
-/// Exposed so the binary can drain the top level's `defer`s at program exit.
+/// The end of a scope every line of which completed: exposed so the binary can end the
+/// REPL's session.
 ///
 /// # Safety
-/// `defer_node` must be a `defer` node from the store; `rt` its runtime.
-pub unsafe fn run_deferred(
+/// `scope` must be a scope node from the store, its places in the frame `rt` runs.
+pub unsafe fn run_scope_exit(
     rt: &mut crate::run::Runtime,
-    defer_node: DyadPtr,
-) -> Result<i64, crate::run::RunError> {
-    rt.run(drop_model::deferred_inner_of(defer_node))
+    scope: DyadPtr,
+) -> Result<(), crate::run::RunError> {
+    scope::run_exit(rt, scope, usize::MAX)
 }
 
 /// # Safety
@@ -662,18 +672,9 @@ pub(crate) enum Operand {
 /// `node` must be a valid dyad from the store.
 pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     let node = types.through(node);
-    // Storage reads as its declared type; a rational place holds a run-time rational, which
-    // no machine type takes silently, and a bare parameter's container is no number.
+    // Storage reads as its declared type.
     if let Some(t) = types.storage_type(node) {
-        return if t.is_null() || t == types.rational {
-            Operand::NonNumeric
-        } else if numtype::is_pointer_type(t) {
-            Operand::Pointer(numtype::pointee_of(t))
-        } else if is_numtype_node(types, t) {
-            Operand::Concrete(numtype::of_type_node(t))
-        } else {
-            Operand::NonNumeric
-        };
+        return operand_of_type(types, t);
     }
     let logos = types.logos_of(node);
     if logos == types.rational {
@@ -782,13 +783,14 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
     {
         return Operand::NonNumeric;
     }
-    // `alloc`'s pointee sits at operand 0, `move`'s at 1; owning-ness rides the bound
-    // place's type, not this result.
+    // `alloc`'s pointee sits at operand 0; owning-ness rides the bound place's type, not this
+    // result.
     if logos == types.alloc_ {
         return Operand::Pointer(*(dyad::value(node) as *const DyadPtr));
     }
+    // A move yields the value of the type it carries.
     if logos == types.move_ {
-        return Operand::Pointer(*(dyad::value(node) as *const DyadPtr).add(1));
+        return operand_of_type(types, *(dyad::value(node) as *const DyadPtr).add(1));
     }
     if !logos.is_null() && numtype::is_pointer_type(logos) {
         return Operand::Pointer(numtype::pointee_of(logos));
@@ -853,6 +855,23 @@ pub(crate) unsafe fn numtype_of(types: &Core, node: DyadPtr) -> Operand {
         return Operand::Concrete(call_return_numtype(logos));
     }
     Operand::NonNumeric
+}
+
+/// A value of type `t` as an operand: a rational holds a run-time rational, which no machine
+/// type takes silently, and a bare parameter's container (`t` null) is no number.
+///
+/// # Safety
+/// `t` must be null or a type node from the store.
+unsafe fn operand_of_type(types: &Core, t: DyadPtr) -> Operand {
+    if t.is_null() || t == types.rational {
+        Operand::NonNumeric
+    } else if numtype::is_pointer_type(t) {
+        Operand::Pointer(numtype::pointee_of(t))
+    } else if is_numtype_node(types, t) {
+        Operand::Concrete(numtype::of_type_node(t))
+    } else {
+        Operand::NonNumeric
+    }
 }
 
 /// `I32` when the callee declares no output.

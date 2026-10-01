@@ -749,6 +749,12 @@ fn an_array_element_is_written_where_the_read_finds_it() {
              g(p, 1) = 3, (p + 1)@",
             "3",
         ),
+        // A name freed before the last line leaves the body's end nothing to run.
+        (
+            "p := alloc 1 of i32 0, \
+             g := fn (r := @i32 ?) -> i32 ( q := alloc 1 of i32 1, free q, r@ ), g(p) = 5, p@",
+            "5",
+        ),
     ] {
         let out = logos().arg(format!("{array}, {tail}")).output().unwrap();
         assert!(out.status.success(), "{tail}: stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -1710,6 +1716,16 @@ fn the_repl_keeps_an_owning_binding_alive_across_lines() {
 }
 
 #[test]
+fn a_repl_session_frees_each_line_s_value_once_at_its_end() {
+    // The session's exit grows a line at a time, text made between its lines.
+    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+    let lines: String =
+        (1..=5).map(|i| format!("v{i} := bag({i})\nt{i} := «text {i}»\n")).collect();
+    let (echoes, stderr) = repl(format!("{bag}\n{lines}").as_bytes());
+    assert_eq!(echoes, ["freed 5", "freed 4", "freed 3", "freed 2", "freed 1"], "stderr: {stderr}");
+}
+
+#[test]
 fn the_repl_reuses_a_name_after_free() {
     let (echoes, stderr) = repl(b"n := i32 5\nfree n\nn\nn := i32 6\nn\n");
     assert_eq!(echoes, ["6"], "stderr: {stderr}");
@@ -1745,6 +1761,78 @@ fn a_failed_repl_line_restores_a_moved_name() {
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
     assert!(stderr.contains("unknown name"), "stderr: {stderr}");
     assert!(!stderr.contains("dead"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_repl_line_that_faults_keeps_the_end_of_what_it_ended() {
+    // Its run freed the value, before the fault or as the fault left: the session neither
+    // reads it nor frees it again.
+    let (echoes, stderr) =
+        repl(b"a := alloc 1 of i32 5\n( free a, error \xc2\xabx\xc2\xbb )\na@\n");
+    assert!(echoes.is_empty(), "{echoes:?} stderr: {stderr}");
+    assert!(stderr.contains("`a` is dead here"), "stderr: {stderr}");
+    let lines = BOX.replacen("), box := ", ")\nbox := ", 1);
+    let g = "g := fn () -> i32 ( error «x» )\nc := i32 1";
+    for tail in ["( free a, error «x» )", "if (c == 1) ( g(), free a )", "if (g() == 1) ( free a )"]
+    {
+        let (echoes, stderr) =
+            repl(format!("{lines}\n{g}\na := box (1, 2)\n{tail}\na.size\n").as_bytes());
+        assert_eq!(echoes, ["free"], "{tail}: stderr: {stderr}");
+        assert!(stderr.contains("`a` is dead here"), "{tail}: stderr: {stderr}");
+    }
+    // A fault the pass meets before the parse reaches the `free` ends nothing.
+    let (echoes, stderr) =
+        repl(format!("{lines}\n{g}\na := box (1, 2)\n( g(), free a )\na.size\n").as_bytes());
+    assert_eq!(echoes, ["2", "free"], "stderr: {stderr}");
+}
+
+#[test]
+fn a_failed_repl_line_keeps_the_ends_its_pass_ran() {
+    // A parse error after the pass ran the `free` keeps the name ended; a fault the pass
+    // meets before the `free` ran leaves it to the session.
+    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+    let fns = "g := fn () -> i32 ( error «x» )\nh := fn () -> i32 ( 1 )";
+    let (echoes, stderr) = repl(
+        format!(
+            "{bag}\n{fns}\na := bag(1)\n( free a, n := immediate h(), nosuch )\na.n\n\
+             b := bag(2)\n( n := immediate g(), free b, 1 )\nb.n\n"
+        )
+        .as_bytes(),
+    );
+    assert_eq!(echoes, ["freed 1", "2", "freed 2"], "stderr: {stderr}");
+    assert!(stderr.contains("`a` is dead here"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_fault_in_the_pass_frees_what_a_nested_line_ended_once() {
+    // The scope that holds the name decides, from the lines the pass ran.
+    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), \
+               g := fn () -> i32 ( error «x» ), h := fn () -> i32 ( 1 ), a := bag(1)";
+    for tail in [
+        "x := ( free a, n := immediate g(), 1 )",
+        "y := g(), x := ( m := i32 1, free a, n := immediate h(), 1 )",
+        "x := ( m := i32 1, free a, n := immediate g(), 1 )",
+        "x := ( m := immediate g(), free a, 1 )",
+        "x := ( free a, m := immediate h(), i32 1 ) + immediate g()",
+        "x := ( m := immediate h(), free a, i32 1 ) + immediate g()",
+    ] {
+        let out = logos().arg(format!("{bag}, {tail}, 1")).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{tail}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "freed 1\n", "{tail}");
+    }
+}
+
+#[test]
+fn a_block_that_fails_to_parse_frees_what_its_run_lines_hold() {
+    // As the top level does: the pass ran `b`'s line before the error.
+    let bag = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), \
+               h := fn () -> i32 ( 1 )";
+    for tail in ["nosuch", "&b", "return b", "return 1, 2"] {
+        let src = format!("{bag}, x := ( b := bag(2), n := immediate h(), {tail} )");
+        let out = logos().arg(src).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{tail}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "freed 2\n", "{tail}");
+    }
 }
 
 #[test]
@@ -3242,6 +3330,310 @@ fn the_owner_s_scope_end_runs_the_instances_free_once() {
 }
 
 #[test]
+fn the_program_s_end_runs_its_defers_and_what_it_holds_last_first() {
+    for (src, printed) in [
+        ("defer print «hi», 5".to_string(), "hi\n5\n"),
+        ("defer print «a», defer print «b», 1".to_string(), "b\na\n1\n"),
+        (
+            "mut n := i32 1, f := fn () -> void ( print «{n}» ), defer f(), n = 3, 7".to_string(),
+            "3\n7\n",
+        ),
+        (format!("{BOX}, a := box (1, 2), defer print «d», print «made»"), "made\nd\nfree\n"),
+        (
+            "import ./tests/fixtures/deferring.logos, print «main», k".to_string(),
+            "main\nfile ends\n1\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
+        assert_eq!(stdout, printed, "{src}");
+    }
+    let (echoes, stderr) = repl(b"defer print \xc2\xabbye\xc2\xbb\n1\n");
+    assert_eq!(echoes.last().map(String::as_str), Some("bye"), "stderr: {stderr}");
+    // An imported name is the file's own place: ending it ends the file's hold, once.
+    for src in [
+        "import ./tests/fixtures/owning_pub.logos, p@",
+        "import ./tests/fixtures/owning_pub.logos, free p, 1",
+        "import ./tests/fixtures/owning_pub.logos, q := move p, q@",
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
+        assert!(matches!(stdout.trim(), "7" | "1"), "{src}: {stdout}");
+    }
+    let (echoes, stderr) = repl(b"import ./tests/fixtures/owning_pub.logos\nfree p\n1\n");
+    assert_eq!(echoes, ["1"], "stderr: {stderr}");
+}
+
+#[test]
+fn a_fault_ends_every_live_scope_as_its_end_would() {
+    let array = "import ./identities/array.logos";
+    for (tail, printed, error) in [
+        (
+            "f := fn () -> i32 ( a := box (1, 2), defer print «bye», error «stop» ), f()",
+            "bye\nfree\n",
+            "stop",
+        ),
+        ("a := box (1, 2), defer print «bye», error «stop»", "bye\nfree\n", "stop"),
+        // Only what was declared before the fault ends.
+        ("a := box (1, 2), error «stop», b := box (3, 4), print «never»", "free\n", "stop"),
+        // The arm that did not move the name frees it on the fault's way out.
+        (
+            "c := i32 0, a := box (1, 2), if (c == 1) ( b := move a ) else ( error «stop» ), 1",
+            "free\n",
+            "stop",
+        ),
+        ("f := fn () -> i32 ( ( a := box (1, 2), error «in» ), 1 ), f()", "free\n", "in"),
+        // Lines the pass ran early, in a block the fault unwinds.
+        (
+            "g := fn () -> i32 ( error «stop» ), x := ( a := box (1, 2), n := immediate g(), 1 ), 1",
+            "free\n",
+            "stop",
+        ),
+        (
+            "g := fn () -> i32 ( error «stop» ), \
+             x := ( a := box (1, 2), free a, n := immediate g(), 1 ), 1",
+            "free\n",
+            "stop",
+        ),
+        (
+            "f := fn (n := i32 ?) -> i32 ( a := box (1, 2), b := array i32 [1, 2], b[n] ), \
+             f.compile(), f(5)",
+            "free\n",
+            "index out of range",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{array}, {BOX}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(1), printed), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains(error), "{tail}: stderr: {stderr}");
+    }
+    // An imported file that faults ends its own scope before the import fails.
+    let (code, stdout, stderr) = run_line("import ./tests/fixtures/faulting.logos, 1");
+    assert_eq!((code, stdout.as_str()), (Some(1), "file cleanup\nfreed\n"), "stderr: {stderr}");
+    assert!(stderr.contains("file stops"), "stderr: {stderr}");
+    // The stopped function's `defer` runs, the line after the fault does not.
+    let (echoes, stderr) = repl(
+        "p := alloc 1 of i32 5\n\
+         g := fn () -> i32 ( error «stop» )\n\
+         f := fn () -> i32 ( defer (p@ = p@ + 100), g(), p@ = 9, 1 )\n\
+         f()\n\
+         p@\n"
+            .as_bytes(),
+    );
+    assert_eq!(echoes.last().map(String::as_str), Some("105"), "{echoes:?} {stderr}");
+    assert!(stderr.contains("stop"), "stderr: {stderr}");
+}
+
+#[test]
+fn assignment_frees_the_value_it_displaces() {
+    for (tail, printed) in [
+        ("mut x := box (1, 2), x = box (3, 4), print «after»", "free\nafter\nfree\n"),
+        (
+            "f := fn () -> i32 ( mut x := box (1, 2), x = box (3, 4), 1 ), f.compile(), f(), \
+             print «after»",
+            "free\nfree\nafter\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{BOX}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout, printed, "{tail}");
+    }
+}
+
+/// A plain record whose type fills `share free`, its free printing the one field.
+const RECORD: &str = "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) )";
+
+#[test]
+fn a_plain_record_s_owner_runs_its_free_once() {
+    for (tail, printed) in [
+        // The scope's end runs it; the program's before the tail shows.
+        ("a := bag(1), 1", "freed 1\n1\n"),
+        ("f := fn () -> i32 ( a := bag(2), 1 ), f()", "freed 2\n1\n"),
+        (
+            "f := fn () -> i32 ( a := bag(3), 1 ), print «before», f(), f(), print «after»",
+            "before\nfreed 3\nfreed 3\nafter\n",
+        ),
+        (
+            "f := fn () -> i32 ( a := bag(4), 1 ), f.compile(), print «before», f(), print «after»",
+            "before\nfreed 4\nafter\n",
+        ),
+        // `bag ?` owns too: the end runs its free over whatever was written.
+        (
+            "f := fn () -> i32 ( mut a := bag ?, a.n = 5, 1 ), f(), print «after»",
+            "freed 5\nafter\n",
+        ),
+        // An early `free` tears down now, and the end finds nothing held.
+        ("a := bag(6), free a, print «after»", "freed 6\nafter\n"),
+        ("a := bag(7), if true ( free a ), print «after»", "freed 7\nafter\n"),
+        ("c := i32 0, a := bag(15), if (c == 1) ( free a ), print «after»", "freed 15\nafter\n"),
+        // A borrow frees nothing: one free, by the owner; `free` of the borrow ends its name.
+        ("a := bag(8), b := a, print «borrowed»", "borrowed\nfreed 8\n"),
+        ("a := bag(14), b := a, free b, print «after»", "after\nfreed 14\n"),
+        (
+            "a := bag(9), f := fn (q := bag ?) -> i32 ( q.n ), f(a), print «after»",
+            "after\nfreed 9\n",
+        ),
+        // The last value moves out: the caller's name is the owner.
+        ("mk := fn () -> bag ( bag(10) ), m := mk(), print «got»", "got\nfreed 10\n"),
+        ("mk := fn () -> bag ( a := bag(11), a ), m := mk(), print «got»", "got\nfreed 11\n"),
+        // A returned borrow is no owner: the callee's own record is freed as it returns.
+        (
+            "mk := fn () -> bag ( a := bag(12), b := a, b ), m := mk(), print «got»",
+            "freed 12\ngot\n",
+        ),
+        ("free (bag(16)), print «after»", "freed 16\nafter\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!((code, stdout.as_str()), (Some(0), printed), "{tail}: stderr: {stderr}");
+    }
+    for (tail, expect) in [
+        ("a := bag(1), free a, a", "`a` is dead here"),
+        ("a := bag(1), b := a, free b, b", "`b` is dead here"),
+        ("a := bag(1), b := move a, 1", "moving a plain record is not in the seed yet"),
+    ] {
+        let (code, _, stderr) = run_line(&format!("{RECORD}, {tail}"));
+        assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+        assert!(stderr.contains(expect), "{tail}: stderr: {stderr}");
+    }
+    // A later REPL line frees what an earlier one holds, and the session's end frees it no more.
+    let (echoes, stderr) = repl(format!("{RECORD}\na := bag(13)\nfree a\n").as_bytes());
+    assert_eq!(echoes, ["freed 13"], "stderr: {stderr}");
+}
+
+#[test]
+fn a_plain_record_s_owning_field_keeps_its_pointer_in_its_own_bytes() {
+    let r = "r := type ( mut p := own @i32 ?, share free = ( free p ), \
+             share set := fn () -> i32 ( a := alloc 1 of i32 5, p = move a, 1 ), \
+             share s := fn () -> i32 ( free p, 2 ) ), mut x := r ?";
+    for (tail, printed) in [
+        ("x.set(), x.s()", "2"),
+        ("a := alloc 1 of i32 5, x.p = move a, x.s()", "2"),
+        ("x.s()", "2"),
+        ("a := alloc 1 of i32 5, x.p = move a, b := alloc 1 of i32 6, x.p = move b, x.p@", "6"),
+        // Moved out, the field is empty, so the record's own free frees nothing twice.
+        ("a := alloc 1 of i32 5, x.p = move a, b := move x.p, b@", "5"),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{r}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout.trim(), printed, "{tail}");
+    }
+}
+
+#[test]
+fn an_if_frees_what_one_arm_moved_at_the_end_of_the_other() {
+    for (tail, printed) in [
+        (
+            "f := fn (c := i32 ?) -> i32 ( a := box (1, 2), if (c == 1) ( b := move a, 1 ), 3 ), \
+             f.compile(), f(0), f(1), print «after»",
+            "free\nfree\nafter\n",
+        ),
+        (
+            "f := fn (c := i32 ?) -> i32 ( a := box (1, 2), \
+             if (c == 1) ( b := move a, 1 ) else ( return 2 ), 3 ), f(0), f(1), print «after»",
+            "free\nfree\nafter\n",
+        ),
+        (
+            "c := i32 0, a := box (1, 2), if (c == 1) ( free a ) else ( print «kept» ), \
+             print «after»",
+            "kept\nfree\nafter\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{BOX}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout, printed, "{tail}");
+    }
+    // A REPL line ends a name an earlier line holds: the session's end frees it no more.
+    let lines = BOX.replacen("), box := ", ")\nbox := ", 1);
+    for (tail, last) in [
+        ("a := box (1, 2)\nb := move a\nprint «end»\n", "free"),
+        ("a := box (1, 2)\nfree a\nprint «end»\n", "end"),
+        ("a := box (1, 2)\nc := i32 0\nif (c == 1) ( b := move a )\nprint «end»\n", "end"),
+    ] {
+        let (echoes, stderr) = repl(format!("{lines}\n{tail}").as_bytes());
+        assert_eq!(
+            echoes.iter().filter(|l| *l == "free").count(),
+            1,
+            "{tail}: {echoes:?} {stderr}"
+        );
+        assert_eq!(echoes.last().map(String::as_str), Some(last), "{tail}: {echoes:?}");
+    }
+}
+
+#[test]
+fn and_and_or_run_both_sides() {
+    for (tail, printed) in [
+        (
+            "c := i32 0, a := box (1, 2), x := (c == 1) and ( free a, c == 0 ), print «after {x}»",
+            "free\nafter 0\n",
+        ),
+        (
+            "c := i32 1, a := box (1, 2), x := (c == 1) or ( free a, c == 0 ), print «after {x}»",
+            "free\nafter 1\n",
+        ),
+        (
+            "f := fn (c := i32 ?) -> i32 ( a := box (1, 2), x := (c == 1) and ( free a, c == 0 ), 7 ), \
+             f.compile(), print «after {f(0)}»",
+            "free\nafter 7\n",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_line(&format!("{BOX}, {tail}"));
+        assert_eq!(code, Some(0), "{tail}: stderr: {stderr}");
+        assert_eq!(stdout, printed, "{tail}");
+    }
+}
+
+#[test]
+fn a_return_frees_what_its_line_ends_after_it_compiled_or_not() {
+    let ret = "(if (c == 1) (return 5) else (i32 2))";
+    for (body, other) in [
+        (format!("x := {ret} + (free a, i32 1)"), 3),
+        (format!("x := ( {ret}, 7 ) + (free a, i32 1)"), 8),
+        (format!("x := ( {ret} + (free a, i32 1), 7 )"), 7),
+    ] {
+        for compile in ["", "f.compile(), "] {
+            let (code, stdout, stderr) = run_line(&format!(
+                "{BOX}, f := fn (c := i32 ?) -> i32 ( a := box (1, 2), {body}, x ), \
+                 {compile}print «got {{f(1)}}», print «got {{f(0)}}»"
+            ));
+            assert_eq!(code, Some(0), "{compile}{body}: stderr: {stderr}");
+            assert_eq!(stdout, format!("free\ngot 5\nfree\ngot {other}\n"), "{compile}{body}");
+        }
+    }
+}
+
+#[test]
+fn a_line_that_fails_frees_a_node_it_ended_and_did_not_reach() {
+    let g = "g := fn () -> i32 ( error «stop» )";
+    for line in [
+        "x := g() + (free a, i32 1)",
+        "x := (free a, i32 1) + g()",
+        "x := g() + (b := move a, i32 1)",
+        "x := (b := move a, i32 1) + g()",
+    ] {
+        for tail in [
+            format!("f := fn () -> i32 ( a := box (1, 2), {line}, x ), print «before», f()"),
+            format!("print «before», a := box (1, 2), {line}, 1"),
+        ] {
+            let (code, stdout, stderr) = run_line(&format!("{BOX}, {g}, {tail}"));
+            assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+            assert!(stderr.contains("run error: stop"), "{tail}: stderr: {stderr}");
+            assert_eq!(stdout, "before\nfree\n", "{tail}");
+        }
+    }
+    // A REPL line that stopped before its `free` leaves the name live, so the session's end
+    // frees it; one that reached it leaves the name ended.
+    let session =
+        format!("{}\n{g}\na := box (1, 2)\n", BOX.replacen("), box := type", ")\nbox := type", 1));
+    for (line, echoes) in [
+        ("x := g() + (free a, i32 1)", ["after", "free"]),
+        ("x := (free a, i32 1) + g()", ["free", "after"]),
+    ] {
+        let (echoed, stderr) = repl(format!("{session}{line}\nprint «after»\n").as_bytes());
+        assert_eq!(echoed, echoes, "{line}: stderr: {stderr}");
+        assert!(stderr.contains("run error: stop"), "{line}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn an_array_holds_arrays_as_their_addresses() {
     let array = "import ./identities/array.logos, x := array i32 [1, 2], y := array i32 [3, 4], \
                  t := array i32, b := array t [move x, move y]";
@@ -3357,7 +3749,8 @@ fn an_owning_field_is_freed_once_by_the_owner_s_free() {
         ("g := bag (), h := g, print «borrowed»", "borrowed\nbag\nfree\n"),
         // A move out of the field leaves the bag's free nothing to free there.
         ("g := bag (), y := move g.b, print «moved»", "moved\nfree\nbag\n"),
-        ("g := bag (), x := box (8, 1), g.b = move x, print «set»", "set\nbag\nfree\n"),
+        // `=` frees the box it displaces before the write.
+        ("g := bag (), x := box (8, 1), g.b = move x, print «set»", "free\nset\nbag\nfree\n"),
         ("l := array bagged [bag (), bag ()], print «made»", "made\nbag\nfree\nbag\nfree\n"),
         ("g := bag (), l := array bagged [move g], print «made»", "made\nbag\nfree\n"),
         ("mut a := own box ?, a = box (3, 1), print «set»", "set\nfree\n"),

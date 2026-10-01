@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::dyad;
+use crate::identities::drop_model::ExitItem;
 use crate::identities::string::Piece;
 
 /// The once-per-run import registry: a file loads once per run, every
@@ -305,9 +306,22 @@ impl<'a> Parser<'a> {
         let g = self.enter(cx);
         // An import is text dropped in place (DESIGN ›Importing is dropping the text there‹):
         // it shares the importer's bracket stack, so its `drain` runs the items in source order.
+        // Its top level is a scope of its own, which lives as long as the program: what it
+        // still holds at its end, and its `defer`s, join the program's exit.
         g.0.cx.open = std::mem::take(&mut g.0.outer.last_mut().expect("pushed by enter").open);
+        g.0.cx.open.push(OpenScope::default());
         let inner = g.0.run_imported();
         let inner_pos = g.0.cx.pos;
+        let file = g.0.cx.open.pop().expect("pushed above");
+        if inner.is_err() {
+            g.0.end_after_fault(&file);
+        } else {
+            let program = g.0.cx.open.first_mut().expect("the program's scope is open");
+            let from = program.lines + 1;
+            program.exit.extend(
+                file.exit.into_iter().filter(|h| h.end.is_none()).map(|h| ExitItem { from, ..h }),
+            );
+        }
         g.0.outer.last_mut().expect("pushed by enter").open = std::mem::take(&mut g.0.cx.open);
         drop(g);
 

@@ -126,6 +126,7 @@ Nothing moved from this section.
 
 ### `free` and `move` end a name; no drop flag
 - **History:** heading ›`drop` and `own` end a name; the teardown is removed or moved at parse; no drop flag‹ until 28 September 2026; the moving and removing of an inserted teardown node at parse retired with the insertion itself (›A value's teardown runs where its life ends; the ending identity reads the type's `free` slot‹), nothing standing at the declaration to move.
+- **History:** until 1 October 2026 the rule read "leaving the source `undefined`" and "compiled code checks nothing", with no case in which a place is read. A line that failed before its own `free` or `move` then left the value unfreed, since the parse counted the name ended by that line: `x := g() + ( free a, i32 1 )` faulting in `g()` never freed `a`. Thobias ruled that `free` and `move` write NULL and that a failing line's cleanup frees what is not NULL (Q-0043, "a"); lines that finish still check nothing.
 - **History:** first a sanctioned no-op over a null drop flag, "all with no graph edit"; replaced 7 September 2026. `own` as an access kind: gone 7 September 2026. The null stand-in, binding-site attachment and the `share` direction: settled in discussion, July 2026.
 - **Seed detail (27 September 2026):** stand-in: a place is emptied by writing a **null pointer**, and the scope-exit teardown does nothing on null, a run-time check the ruled model lacks; removing it is pending. `alloc`/`own`/`drop`/`free`/`defer` exist; the teardown runs last-in-first-out at scope exit as body structure. The owning heap pointer is the first identity with a non-null `drop` slot; a `&x` borrow mints the same `@T` with a null destructor, so owning-ness rides on the node `alloc` built, not on `@T`.
 
@@ -157,6 +158,7 @@ Nothing moved from this section.
 ### `move` and `free` are static: the parse marks the name dead
 - **History:** heading ›`own` and `drop` are static: the parse marks the name dead‹ until 28 September 2026 (›`move` is the act, `own` the gate word, `free` the end‹); rule 2 relocated an inserted defer node into the non-moving arms, now the `if` runs the `free` there.
 - **History:** maybe-moved reading ("the phase bit still decides at run time whether the teardown fires"): superseded 7 September 2026, since every legal `own` ends a lifetime at a point the parse can name.
+- **History:** until 1 October 2026 rule 2 read "nothing is looked up at scope exit" with no exception; a line that fails may stop before or after its own `free` or `move`, which the parse cannot name, so since Thobias's ruling (Q-0043) a failing line's cleanup reads whether the place is NULL (›`free` and `move` end a name; no drop flag‹).
 
 ### A call is a use of every outer name the callee's body reads
 - **Seed detail (27 September 2026):** since 15 September 2026 (#125): the list is the fn value's trailing `outer` slot, filled by the body's parse (identities it dispatches, operands it takes, once each), read wherever a node that runs a body comes to exist: a call, a node of a `run`-carrying type (applied or built by its constructor), a Logos-written constructor's run. A name from a section on no caller's stack counts as live: an imported `pub` function reads its private siblings after the section's parse ended, and importers share the one loaded scope (›Importing is dropping the text there‹). A scope that the code asking for a body stands in (a held `type (…)` built when its function runs, a run body built for a field-type set) counts as open while that body is built, since that code runs inside it: Claude's fix 25 September 2026, open to Thobias (`array bag` built the mint's held body in array.logos's scopes alone, so `bag`, whose `parse` calls a `fill` reading the command line's `array`, was refused "`array` is not in scope here"). Callee outer names join the caller's list.
@@ -208,6 +210,7 @@ Nothing moved from this section.
 
 ### Scheduling, preemption and cancellation happen at boundaries
 - **Seed detail (27 September 2026):** the bootstrap can ship cooperative `.await` yielding and add boundary preemption as the compiled tier matures.
+- **History:** until 30 September 2026 cancelling was "running its live scopes' pending `defer`s", and rule 1 read "inserted as reflectable structure, the same law as constructor-inserted teardown". Both dated from the July 2026 mechanism, where every value's teardown was a `defer` its constructor inserted; since 28 September 2026 nothing is inserted, so the first left a value's `free` unsaid at a cancel and the second compared with a mechanism that no longer exists (Thobias, Q-0035, "a").
 
 ### Case study: an RCU library's comment-only rules become machine-checked
 - **History:** "on failure ownership stays with the caller": superseded 3 September 2026 (›An `own` argument is consumed at the call‹); in v0.1.0 a failed call is a fault.
@@ -333,6 +336,9 @@ Nothing moved from this section.
 - **History:** supersedes the 2 September 2026 staging-out below.
 - **Quotes:** Why: "its rather just only a name without and type or value … in one scope you can define error.X and in another you can defined the same error name error.X and they are actually different … maybe a better word is error category".
 
+### A checked error is a fault: the task that hit it is cancelled
+- **History:** until 30 September 2026 a fault ran "pending `defer`s of its live scopes". Written 30 August 2026, when every value's teardown was a `defer` inserted at the declaration, so the defers were the whole teardown; since 28 September 2026 a value's `free` is run by the scope's end and no `defer` carries it, so the wording no longer said whether it runs at a fault. Thobias ruled that it does, each live scope ending as its normal end does (Q-0035, "a").
+
 ### There is no bare `error «…»`; `abort «…»` stops the program; `alloc` returns `@T!`
 - **Seed detail (27 September 2026):** `error «…»` is the fault today and becomes `abort «…»`; `alloc` is not `!` yet; both pending.
 
@@ -349,7 +355,11 @@ Nothing moved from this section.
 - **History:** until 28 September 2026 the seed carried a run-time rational as the address of a literal node made per operation, a `dyad` view boxing a literal; the sixteen-byte value in its place superseded that (#165).
 
 ### No implicit coercion; a numeric type applied to a value is the conversion
+- **History:** until 1 October 2026 the rule also read "Logical operators short-circuit"; that sentence went to its own rule, ›`and` and `or` run both sides; `if` is the one identity that skips‹, reversed.
 - **Seed detail (27 September 2026):** `not` takes a bracketed operand, a parsing shortcut, not a keep.
+
+### `and` and `or` run both sides; `if` is the one identity that skips
+- **History:** until 1 October 2026 ›No implicit coercion; a numeric type applied to a value is the conversion‹ read "Logical operators short-circuit", with no reason recorded. A skipped right side left what it would have ended alive, and nothing freed it: `x := (c == 1) and ( free a, c == 0 )` never freed `a`. Thobias ruled that both sides run, `if` being the one identity that skips (Q-0043: "why would "and" skips its right side? it shouldnt", then "a").
 
 ### `-` before an operand is negation: one identity that reads its left side
 - **History:** first worded "binds tighter than the binary arithmetic operators"; corrected 5 Sept, since one rank cannot do that.
@@ -816,6 +826,7 @@ Nothing moved from this section.
 - ›A value owns what its elements hold, and drops it‹ merged into ›A value owns what its elements hold and drops it‹ on 27 September 2026
 - ›A list's lines move into the value built from it‹ merged into ›A value owns what its elements hold and drops it‹ on 27 September 2026
 - **Seed detail (27 September 2026):** the refusal stands where a type's parse hands a bracket to the call it places, for every type written in Logos; a callee that only reads its list is refused alike.
+- **History:** until 30 September 2026 a freed cell was emptied "as `free a` does for an owner"; since 28 September 2026 a freed name is left `undefined`, not emptied, so the comparison no longer held (Thobias, Q-0035, "a").
 - **History:** until 29 September 2026 "the inert free" over a cell did not say whether the code that finds the cell runs. #211's first slice read it as running nothing, so `free (a[5])` passed silently over an `i32` array and was the index error over an array of boxes, whose free must read the cell. Thobias ruled that the cell is reached whatever its type, because the element type could be anything (`dyad`) and an out-of-range index is an error anyway.
 
 ### `a[k]` is an application, exactly as `a(k)`
@@ -949,6 +960,9 @@ Nothing moved from this section.
 
 ### A durable store, in files, managed by Logos code alone
 - **Seed detail (27 September 2026):** owes only file syscalls, already in the `native` floor. Formats, manifests, compaction, policy are stdlib or third-party Logos; the manifest is graph values.
+
+### A checkpoint is saved task state
+- **History:** until 30 September 2026 "(same law as constructor-inserted teardown and boundary placement)"; since 28 September 2026 no teardown is inserted, so only boundary placement stays as the comparison (Thobias, Q-0035, "a").
 
 ## Feasibility and effort
 

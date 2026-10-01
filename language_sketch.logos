@@ -501,7 +501,7 @@ Englogos (
 Englogos (
     when C obe, (osay «C ois. »).   # watch the creation (be), announce the state (is)
     osay «C lais and ois not but should ilbe. ».
-    C obe.   # be creates; obe's constructor inserts the defer that ends C at scope exit
+    C obe.   # be creates; C's scope ends it at its exit
     when C change then C ois not, osay «C ois not but lais.\n».
 ) -> «C lais and ois not but should ilbe. C ois. C ois not but lais.\n»
 

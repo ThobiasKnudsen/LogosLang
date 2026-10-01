@@ -261,7 +261,8 @@ unsafe fn is_owning_slot(node: DyadPtr) -> bool {
 }
 
 /// A body holding a `return` could leave with a value where the place owes an address, and
-/// one holding a `defer` would free what the address points at before the place is used.
+/// one whose end runs something would free what the address points at before the place is
+/// used.
 ///
 /// # Safety
 /// As `place_of`.
@@ -279,7 +280,7 @@ unsafe fn call_tail(types: &Core, node: DyadPtr) -> Option<CallTail> {
     let body = types.through(body);
     let (tail, line) = if dyad::ty(body) == types.scope {
         let lines = super::scope::exprs_of(body)?;
-        if lines.iter().any(|&e| dyad::ty(e) == types.defer_) {
+        if super::drop_model::any_held_somewhere(super::scope::exit_items(body)) {
             return None;
         }
         let i = lines.iter().rposition(|&e| !numtype::is_comment_type(dyad::ty(e)))?;

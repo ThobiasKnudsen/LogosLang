@@ -1076,8 +1076,8 @@ fn logical_operators_match_between_tiers() {
 }
 
 #[test]
-fn logical_operators_short_circuit_on_the_interpreter() {
-    // Observed via a right operand that would error but is skipped.
+fn logical_operators_run_both_sides_on_the_interpreter() {
+    // Observed via a right operand that errors although the left side decides.
     let (mut store, mut trie, core) = new_core();
     {
         let mut s = ScopeStack::new();
@@ -1101,7 +1101,7 @@ fn logical_operators_short_circuit_on_the_interpreter() {
         let mut p = Parser::new("false and y < 1", rt.store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
-    assert_eq!(unsafe { rt.run(and_sc) }.unwrap(), 0);
+    assert_eq!(unsafe { rt.run(and_sc) }, Err(crate::run::RunError::NoWholeRead));
 
     let or_sc = {
         let mut s = ScopeStack::new();
@@ -1109,7 +1109,7 @@ fn logical_operators_short_circuit_on_the_interpreter() {
         let mut p = Parser::new("true or y < 1", rt.store, &mut trie, &core, s);
         p.parse_expression().unwrap()
     };
-    assert_eq!(unsafe { rt.run(or_sc) }.unwrap(), 1);
+    assert_eq!(unsafe { rt.run(or_sc) }, Err(crate::run::RunError::NoWholeRead));
 }
 
 #[test]
