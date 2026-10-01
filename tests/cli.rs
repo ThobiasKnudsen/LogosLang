@@ -1623,6 +1623,42 @@ fn a_quote_shows_a_name_read_through_a_path() {
 fn a_binding_has_no_field_type() {
     let (echoes, stderr) = repl(b"x := i32 5\nx:type\n");
     assert!(echoes.is_empty() && stderr.contains("`type` is not in scope"), "stderr: {stderr}");
+    let (code, _, stderr) =
+        run_line("f := fn (x := i32 ?) -> bool ( x:type == i32 ), f.compile(), f(1)");
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert!(stderr.contains("`type` is not in scope"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_value_reads_its_type_with_a_dot_on_both_tiers() {
+    let sq = "sq := type ( a := ?, output_type := type ?, share run = ( a * a ), \
+              share parse = ( tape[0].type = sq, tape[0].a = tape[-1], \
+              tape[0].output_type = tape[-1].type, tape.is_constructed[0] = true, tape.remove(-1) ) )";
+    for (src, want) in [
+        ("x := i32 3, x.type == i32".to_string(), "true"),
+        ("f := fn (x := i32 ?) -> bool ( x.type == i32 ), f.compile(), f(1)".into(), "true"),
+        ("x := i32 3, (x + i32 1).type == i32".into(), "true"),
+        (
+            "f := fn (x := f64 ?) -> bool ( (x + 1.0).type == f64 ), f.compile(), f(1.0)".into(),
+            "true",
+        ),
+        // The tape operand's type picks the node's output type.
+        (format!("{sq}, x := f64 1.5, x sq"), "2.25"),
+        (format!("{sq}, f := fn (x := f64 ?) -> f64 ( x sq ), f.compile(), f(1.5)"), "2.25"),
+        (format!("{sq}, x := i32 3, (x sq).type == i32"), "true"),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!((code, stdout.trim()), (Some(0), want), "{src}: {stderr}");
+    }
+    // An untyped parameter's type is known only per call: a checked error, never a crash.
+    for param in ["a", "a := ?"] {
+        for tail in ["f(1)", "f.compile(), f(1)"] {
+            let src = format!("f := fn ({param}) -> bool ( a.type == i32 ), {tail}");
+            let (code, _, stderr) = run_line(&src);
+            assert_eq!(code, Some(1), "{src}: {stderr}");
+            assert!(stderr.contains("known only when the program runs"), "{src}: {stderr}");
+        }
+    }
 }
 
 #[test]
