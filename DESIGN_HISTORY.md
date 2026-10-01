@@ -1,9 +1,12 @@
 # DESIGN_HISTORY.md
 
-**What this is.** The archive of DESIGN.md: the History lines, the superseded-record rules, the seed detail and the extra quotes that left DESIGN.md on 27 September 2026, keyed by the same `##` sections and `###` rule headings, so a rule's past is found under the heading DESIGN.md gives it. Under a heading, **History** holds the moved History bullets verbatim, **Superseded record** a rule deleted whole, **Seed detail (27 September 2026)** the seed status as it stood before DESIGN.md's Seed line was shortened, and **Quotes** the passages of Thobias's speech that left the rule, each marked with the line it came from. `DESIGN.md l.N` in it means line N of the paragraph form at git commit e75bcdc. Nothing here rules; DESIGN.md does.
+**What this is.** The archive of DESIGN.md: the History lines, the superseded-record rules, the seed detail and the extra quotes that left DESIGN.md on 27 September 2026, keyed by the same `##` sections and `###` rule headings, so a rule's past is found under the heading DESIGN.md gives it. Under a heading, **History** holds the moved History bullets verbatim, **Superseded record** a rule deleted whole, **Seed detail (27 September 2026)** the seed status as it stood before DESIGN.md's Seed line was shortened, and **Quotes** the passages of Thobias's speech that left the rule, each marked with the line it came from. `DESIGN.md at e75bcdc` in it means the paragraph form at that git commit, read with `git show e75bcdc:DESIGN.md`. Nothing here rules; DESIGN.md does.
+
+**How to read a rule.**
+- **History:** until 1 October 2026 a rule in DESIGN.md ended in a **Source** bullet, `- **Source:** DESIGN.md l.N`, naming the lines of the paragraph form at e75bcdc it came from, and DESIGN.md's header said what they meant; this file wrote such marks as `l.N` too. The bullets went, and this file's marks became the commit hash, because they read like the line pointers DESIGN.md had stopped using and served only to check the rewrite against the old text, a check that is done, while git keeps the old file (Thobias, 30 September 2026: "do choice a. delete them"; for this file, "it would be better to remove those as well and show commit hash instead so that it can be looked up in git history").
 
 ### Versions are named vX.Y.Z
-- **History:** *v1* and *Core* respelled by meaning, 5 September 2026. (l.89 still says "Core".)
+- **History:** *v1* and *Core* respelled by meaning, 5 September 2026. (DESIGN.md at e75bcdc still says "Core".)
 
 ## The core vision
 
@@ -20,7 +23,7 @@ Nothing moved from this section.
 - **Seed detail (27 September 2026):** the 23 Sept text calls `hashmap` "a native the seed owes, pending"; the 25 Sept seed note (#137, below) describes it as present.
 
 ### A declared hashmap is the empty map: `m := hashmap K -> V`
-- **History:** first a top-level `array_mints := …`; inside `get_mint` with the mark since 25 September 2026. The mark `shared` was renamed `share` on 26 September 2026 (l.207).
+- **History:** first a top-level `array_mints := …`; inside `get_mint` with the mark since 25 September 2026. The mark `shared` was renamed `share` on 26 September 2026 (DESIGN.md at e75bcdc).
 - **Seed detail (27 September 2026):** (#137) `hashmap K -> V` places a fresh empty map, and the interned type only where `?` follows, so `(w := hashmap K -> V ?)` stays a parameter. The type is read off a map: `m:type` or `(hashmap K -> V):type`.
 
 ## The rewriting engine
@@ -50,7 +53,7 @@ Nothing moved from this section.
   - **Ruled:** in discussion, 6/7 September 2026; left/right precision and `is` 8 September 2026.
   - **Rejected:** `== generic_number` (`==` on types is identity, and inheritance is rejected); `where (a := generic_number ?, …)` (a hole's type is a premise).
   - **History:** `a:dyad.type` respelled `a:type` 23 September 2026. August spellings superseded by this form (see ›A proof is its own type‹).
-  - **Source:** DESIGN.md l.69
+  - **Source:** DESIGN.md at e75bcdc
 
 ### A derivation is a chain of `->` steps (superseded record, 27 September 2026: a chain of relations, see the first rule of this section)
 - **Superseded record:**
@@ -58,7 +61,7 @@ Nothing moved from this section.
   `proof ( (a + a) / a -> double(a + a) / a -> mul_div_assoc((2 * a) / a) -> 2 * div_self(a / a) -> mul_one(2 * 1) -> 2 )` (`div_self`'s premise `a != 0` is `half`'s own).
   - **Rejected, to stay rejected:** a relation symbol or implication symbol between lines. The mapper is what a step is; the relation it preserves is the cited rule's.
   - **Ruled:** in discussion, 6/7 September 2026.
-  - **Source:** DESIGN.md l.69
+  - **Source:** DESIGN.md at e75bcdc
 
 ### The relation a mapping preserves is fixed by what it maps (superseded record, 27 September 2026: steps carry their relation and compose by the table, see the first rule of this section)
 - **Superseded record:**
@@ -68,7 +71,7 @@ Nothing moved from this section.
   - **Why:** it follows from the recognizer reading with nothing added (for a value the sides are equal; for a boolean the right side is what is left to show). Goal reduction is the direction the coherentist backward search already walks, so written and searched proofs read alike. A relation slot would add a spelling and a composition table for a case the boolean chain covers.
   - **Ruled:** 8 September 2026.
   - **History:** superseded 8 September 2026: the composed relation ("`==` with `<=` is `<=`", `x <= x^2 + 1` proved by mapping `x` to `x^2 + 1`) and "steps cite truth rules only: a value rule is the reading of an accepted equation, never a second object".
-  - **Source:** DESIGN.md l.69
+  - **Source:** DESIGN.md at e75bcdc
 
 ### `where` is checked where it can be
 - **History:** "fn a type, proof a shape" superseded: both arrows are followed by a shape, a bare type being the shape "a value of that type".
@@ -80,8 +83,8 @@ Nothing moved from this section.
 - **Superseded record:**
   A **truth rule** states any proposition whatever.
   - **Ruled:** 27 September 2026, Thobias: dissolved. A conjecture is one boolean statement, and calling it yields the other side of a fact (›A conjecture states a boolean…‹); there is no value rule beside a truth twin.
-  - **History:** l.71 (August 2026): "The truth rule is the primitive: a value rule is accepted exactly when its truth counterpart holds." l.69 (6 to 8 September 2026): "two recognizers, two conjectures, never one object read two ways". Both superseded.
-  - **Source:** DESIGN.md l.69, l.71
+  - **History:** DESIGN.md at e75bcdc (August 2026): "The truth rule is the primitive: a value rule is accepted exactly when its truth counterpart holds." DESIGN.md at e75bcdc (6 to 8 September 2026): "two recognizers, two conjectures, never one object read two ways". Both superseded.
+  - **Source:** DESIGN.md at e75bcdc
 
 ### Application is the rewriting engine unchanged; matching is fail-closed
 - **History:** wording amended in discussion 30 August 2026: "by address" is the case with nothing yet proven.
@@ -90,7 +93,7 @@ Nothing moved from this section.
 - **History:** superseded 30 August 2026, because proofs as rewrite rules involve no type of types: the `universe_of` classification stored per node beside `type_of` (the Lean/Coq universe treatment); the predicative tower `Universe 0 : Universe 1 : …`; `Prop` as impredicative, proof-irrelevant, erased before codegen; connectives (`False`, `And`, `Or`, implication, `Forall`, `Exists`, equality) as inductive and function types; Curry-Howard at the representation level; kernel obligations (checking stored universes, strict positivity, definitional equality only on the terminating tagged fragment, no elimination from `type : type` into `Prop`). The June 2026 open question (proof-irrelevant `Prop` needing the large-elimination restriction, or proof-relevance) is closed by the proof-relevant reading above.
 
 ### The sound layer can reason about any node, but not its own consistency
-- **History:** the same paragraph defined a theorem as "a definition whose type is a proposition and whose value is a kernel-checked term" and an axiom as "a proposition declared with an empty value slot": propositions-as-types, superseded August 2026 (l.71). Now theorem/axiom/open are states (›No proof means derivation `?`‹).
+- **History:** the same paragraph defined a theorem as "a definition whose type is a proposition and whose value is a kernel-checked term" and an axiom as "a proposition declared with an empty value slot": propositions-as-types, superseded August 2026 (DESIGN.md at e75bcdc). Now theorem/axiom/open are states (›No proof means derivation `?`‹).
 
 ### The proof layer ships in v1.0.0's standard library, not in the seed
 - **History:** ›Feasibility‹'s "not needed for an initial release", superseded 5 September 2026.
@@ -102,9 +105,9 @@ Nothing moved from this section.
 
 ### Branches and universes (superseded record)
 - **Superseded record:**
-  - **Ruled:** 27 September 2026, Thobias: l.99 superseded. Branches stand alone; the universe remark returns only if the paradox case of ›Proofs are a layer over the Logic Graph‹ ever appears. Reason: the 30 August ruling already says when stratification comes back.
-  - **History:** l.99 (June 2026 direction): "It composes with the universe kernel rather than replacing it. The two are orthogonal layers over the one graph: *universes* stop self-referential paradox **within** a theory (the stratified `universe_of` tower above); *branches* manage incompatible assumptions **across** theories. They meet at one productive point: large-cardinal axioms, which assert that taller universes exist, so there 'which branch am I in?' and 'how tall is the universe tower?' are the same choice, settled (as in real mathematics) by fruitfulness, i.e. by the coherentist layer." l.75 (ruled 30 August 2026): "the `universe_of` tower, `Prop` as an erased proof-irrelevant universe, and the June proof-relevance question below are no longer live spec … Stratification re-enters only if rules quantifying over rules … is shown to admit a paradox, not before."
-  - **Source:** DESIGN.md l.99, l.75
+  - **Ruled:** 27 September 2026, Thobias: the June passage of DESIGN.md at e75bcdc superseded. Branches stand alone; the universe remark returns only if the paradox case of ›Proofs are a layer over the Logic Graph‹ ever appears. Reason: the 30 August ruling already says when stratification comes back.
+  - **History:** DESIGN.md at e75bcdc (June 2026 direction): "It composes with the universe kernel rather than replacing it. The two are orthogonal layers over the one graph: *universes* stop self-referential paradox **within** a theory (the stratified `universe_of` tower above); *branches* manage incompatible assumptions **across** theories. They meet at one productive point: large-cardinal axioms, which assert that taller universes exist, so there 'which branch am I in?' and 'how tall is the universe tower?' are the same choice, settled (as in real mathematics) by fruitfulness, i.e. by the coherentist layer." DESIGN.md at e75bcdc (ruled 30 August 2026): "the `universe_of` tower, `Prop` as an erased proof-irrelevant universe, and the June proof-relevance question below are no longer live spec … Stratification re-enters only if rules quantifying over rules … is shown to admit a paradox, not before."
+  - **Source:** DESIGN.md at e75bcdc
 
 ## Memory and concurrency
 
@@ -146,7 +149,7 @@ Nothing moved from this section.
 
 ### A filled `share free` is the value's teardown; one name owns each value
 - **History:** heading ›A filled `share drop` is the constructor's teardown; one name owns each value‹ until 28 September 2026; `defer drop a` was inserted where ownership landed, now the holder's scope runs the value's `free`.
-- **History:** text spells the mark `shared drop`: renamed `share` 26 September 2026 (l.207). Text says "fields block fills": the fields block was removed 25 September 2026 (l.203); members stand in the type body. Text uses `this.ptr` and "`this` bound to the instance": `this` removed 26 September 2026 (l.207).
+- **History:** text spells the mark `shared drop`: renamed `share` 26 September 2026 (DESIGN.md at e75bcdc). Text says "fields block fills": the fields block was removed 25 September 2026 (DESIGN.md at e75bcdc); members stand in the type body. Text uses `this.ptr` and "`this` bound to the instance": `this` removed 26 September 2026 (DESIGN.md at e75bcdc).
 - **Seed detail (27 September 2026):** since 25 September 2026. The owner's binding carries `own` in its gate set, read by `a:gate` and consulted by `own a` and `drop a` (Claude's choice, open to Thobias: the gate set is where a name's other facts live, and it outlasts one REPL line). A move writes the null stand-in, and `free ptr` in the drop empties the field; so a borrow's `b[0]` after the owner's drop is the checked null-pointer error, while `b[1]` steps a cell past the null and faults (the hole in full). Not freed yet: a value that moves out and reaches no name (`mk()` as a statement); a value just made passed straight to a call (`f(array i32 (1, 2))`). A value a type's own `parse` places as the node itself, not a call on it, gets no owner (text: "places as `this` itself"). `own` on a parameter, which would consume the argument, is not built: checked error meanwhile.
 
 ### A field may be `own @T ?`
@@ -192,7 +195,7 @@ Nothing moved from this section.
 - **History:** "erased before codegen" amended 5 September 2026 to "resident, never resolved by running code".
 
 ### Two access kinds: read and write, on a path
-- **History:** first an open set: `call`, `own`, and "more (borrow, alias, drop, observe-for-proof) admitted the same way"; superseded 7 September 2026. Text writes `f.code` (slot renamed `run` 17 September 2026, l.189) and `x:dyad` (`:type` since 23 September 2026, l.108).
+- **History:** first an open set: `call`, `own`, and "more (borrow, alias, drop, observe-for-proof) admitted the same way"; superseded 7 September 2026. Text writes `f.code` (slot renamed `run` 17 September 2026, DESIGN.md at e75bcdc) and `x:dyad` (`:type` since 23 September 2026, DESIGN.md at e75bcdc).
 
 ### Effect signatures keep the classification honest; gates run on the stack they analyze
 - **Seed detail (27 September 2026):** the chokepoint, the lexical tier and the classified `?` seam only; **no prover**. Borrow checker and proof layer bolt onto `?` later.
@@ -381,7 +384,7 @@ Nothing moved from this section.
 - **History:** replaced one-token-lookahead shift/reduce. "Operator precedence" gave way to the slot name `parse_rank` 10 Sept 2026.
 
 ### `parse_rank` is one `f64` on one shared axis, and may be relative
-- **History:** written without `share` until 26 Sept 2026 (l.207: slot fills carry `share`).
+- **History:** written without `share` until 26 Sept 2026 (DESIGN.md at e75bcdc: slot fills carry `share`).
 
 ### Expressions are self-delimiting; `,` stands between every two expressions of a scope
 - **History:** before 26 Sept: "between independent expressions nothing at all stands, while between dependent ones the `,` is required", which disagreed with the seed's rule (›The scope's constructor is the driver‹).
@@ -404,14 +407,14 @@ Nothing moved from this section.
 - **History:** first: "Everything runnable is a `fn`", two branches only.
 
 ### A user-defined operator is a `type` that fills its own slots, `run` included
-- **History:** 4 Sept: `code = fn (a := i32 ?, b := i32 ?)` over a positional operand record; "`constructor`, `destructor`, and `code` are three slots of one shape, each holding a function". 16 Sept: `run` holds a body (next rule). 17 Sept: renamed `run`; the `fn` type's member `run` gave up its name (running a node is the evaluation rule; `f.run` is the body it runs). 19 Sept: `shared run = (…)` in the fields block, bare `run = (…)` the type's own. 25 Sept (l.203): fields block gone, `^.run` not `^.fields.run`. 26 Sept (l.207): mark spelled `share`, required on every slot fill; an unmarked fill is the checked error.
+- **History:** 4 Sept: `code = fn (a := i32 ?, b := i32 ?)` over a positional operand record; "`constructor`, `destructor`, and `code` are three slots of one shape, each holding a function". 16 Sept: `run` holds a body (next rule). 17 Sept: renamed `run`; the `fn` type's member `run` gave up its name (running a node is the evaluation rule; `f.run` is the body it runs). 19 Sept: `shared run = (…)` in the fields block, bare `run = (…)` the type's own. 25 Sept (DESIGN.md at e75bcdc): fields block gone, `^.run` not `^.fields.run`. 26 Sept (DESIGN.md at e75bcdc): mark spelled `share`, required on every slot fill; an unmarked fill is the checked error.
 - **Seed detail (27 September 2026):** the 4 Sept shape ran beside the new (#126) until #133 slice 9 deleted it, as ruled 20 Sept 2026: "to be deleted, not kept beside the new one, once the new shape runs".
 
 ### `run` is a bare body over the node's own fields
-- **History:** fields declared in `fields = (…)` 16-25 Sept (l.203); read as `this.f` 17-26 Sept (l.207).
+- **History:** fields declared in `fields = (…)` 16-25 Sept (DESIGN.md at e75bcdc); read as `this.f` 17-26 Sept (DESIGN.md at e75bcdc).
 
 ### A parse connects each operand to a field by name and removes the cells it took
-- **History:** 16 Sept: `tape[0]:dyad.value.lhs = tape[-1]`, stamp `tape[0]:dyad.type = ^` (respelling ›The preview milestone‹'s 9 Sept "so that .operands is valid"). 17 Sept: `this` = shorthand for `tape[0]:dyad.value`; first write into `this` built the node (so a self-typed node needed no stamp: "the stamp said it twice"); `this` legal only in a constructor or `run` body inside `type (…)`, found by walking up the scope spine (#123); first use converted the cell ("this needs real lots of reflection on the LG"). 18 Sept, Thobias: `this` a separate fresh node placed by `tape[0] = this` (reason: placement written where it happens, no act on a first use), the write word.logos's own `parse` already made with `tape[0] = dyad (type, definition)`; it could be placed anywhere (`tape[1] = this`, `tape.insert(k, this)`) or nowhere (edit-and-leave error, #81). 19 Sept: in the instances' `parse`, `this` was the instance that appeared. 23 Sept: `:dyad` retired for `a:type` (Thobias had disliked writing `:dyad` first). 26 Sept: `this` removed (l.207). Declined 18 Sept: `value` as `this`'s name (it is the slot name in the same body, would name the block inside a `fields = (…)` line, and `tape[0] = value` places a bare value needing its type back); `node` noted as the only alternative.
+- **History:** 16 Sept: `tape[0]:dyad.value.lhs = tape[-1]`, stamp `tape[0]:dyad.type = ^` (respelling ›The preview milestone‹'s 9 Sept "so that .operands is valid"). 17 Sept: `this` = shorthand for `tape[0]:dyad.value`; first write into `this` built the node (so a self-typed node needed no stamp: "the stamp said it twice"); `this` legal only in a constructor or `run` body inside `type (…)`, found by walking up the scope spine (#123); first use converted the cell ("this needs real lots of reflection on the LG"). 18 Sept, Thobias: `this` a separate fresh node placed by `tape[0] = this` (reason: placement written where it happens, no act on a first use), the write word.logos's own `parse` already made with `tape[0] = dyad (type, definition)`; it could be placed anywhere (`tape[1] = this`, `tape.insert(k, this)`) or nowhere (edit-and-leave error, #81). 19 Sept: in the instances' `parse`, `this` was the instance that appeared. 23 Sept: `:dyad` retired for `a:type` (Thobias had disliked writing `:dyad` first). 26 Sept: `this` removed (DESIGN.md at e75bcdc). Declined 18 Sept: `value` as `this`'s name (it is the slot name in the same body, would name the block inside a `fields = (…)` line, and `tape[0] = value` places a bare value needing its type back); `node` noted as the only alternative.
 
 ### `tape` is a word the `parse` slot declares into its body
 - **History:** replaced the `fn (tape := parsing_tape ?) -> void` wrapper. `this` was declared the same way 17-26 Sept (in `parse`, `run`, `drop`); a helper read it as an outer name under "a call is a use of every outer name" (#125).
@@ -453,8 +456,8 @@ Nothing moved from this section.
 - **History:** a third reason (the callee is asleep while `(` builds, so `x = X` hits an undeclared name) was superseded 3 Sept 2026: a callable reads its own bracket (›The scope's constructor is the driver‹).
 
 ### A type stores its shared data once; what differs per value is stored per value
-- **History:** July 2026: `shared` was a placeholder, not real syntax; placement was to be *derived* from mutability (a never-`mut` member is the same in every value, so stored once), and `shared` would disappear once `mut` and `pub` landed, reflection reading "shared" off "immutable". Changed August 2026 (l.201): since a per-value constructor is immutable yet differs per value, placement is written structure and can no longer be derived from mutability. Changed 19 September 2026: `shared` is real syntax, the one mark of placement; reflection reads the mark. Respelled `share` 26 September 2026 (l.207).
-- **History:** 18 September 2026: bringing back `shared` for a member all values share and may write was proposed and withdrawn, because the case behind it (a generic's memo of its mintings) was a plain variable, not value data. 19 September: shared-and-mutable state became a `shared mut` member of the fields block, the memo staying a plain variable beside its chooser. 26 September (l.205): the memo is `array`'s own `share` member.
+- **History:** July 2026: `shared` was a placeholder, not real syntax; placement was to be *derived* from mutability (a never-`mut` member is the same in every value, so stored once), and `shared` would disappear once `mut` and `pub` landed, reflection reading "shared" off "immutable". Changed August 2026 (DESIGN.md at e75bcdc): since a per-value constructor is immutable yet differs per value, placement is written structure and can no longer be derived from mutability. Changed 19 September 2026: `shared` is real syntax, the one mark of placement; reflection reads the mark. Respelled `share` 26 September 2026 (DESIGN.md at e75bcdc).
+- **History:** 18 September 2026: bringing back `shared` for a member all values share and may write was proposed and withdrawn, because the case behind it (a generic's memo of its mintings) was a plain variable, not value data. 19 September: shared-and-mutable state became a `shared mut` member of the fields block, the memo staying a plain variable beside its chooser. 26 September (DESIGN.md at e75bcdc): the memo is `array`'s own `share` member.
 
 ### The constructors drive the tape
 - **History:** a schedule byte stood in until the constructors drove the tape; retired July 2026. The seed's NaN / finite / +infinity three-way classification of `parse_rank` was superseded 30 August 2026 by "every identity has a `parse_rank`".
@@ -473,7 +476,7 @@ Nothing moved from this section.
 - **Seed detail (27 September 2026):** since 14 September 2026 (#122): `x:lex_rank` reads, `x:lex_rank = …` writes, the lexer ranks every match by its binding, the two fresh patterns carry theirs from the start, and the head's slot is gone. Stand-in: a `lex_rank = …` line in a `type (…)` body writes the binding of the declaration the body is the value of; the checked error where no declaration is being filled. Kept because a pattern identity has no other spelling to be written on; to be deleted once it has.
 
 ### A slot is filled with `=`; `:=` declares a member of your own
-- **History:** a further reason was given for the fields block: `^.parse_rank` probed the `fields = (…)` scope before `^`'s own bare members, so a redeclared member would be found second or never (block gone 25 September 2026). `:=` spellings of these slots in earlier sketches were respelled. `fields` (spelled `value` 17 to 19 September, `instance` 19 to 23 September) was a slot too, until 25 September 2026. l.201 wrote the fills without the mark (`parse_rank = …`).
+- **History:** a further reason was given for the fields block: `^.parse_rank` probed the `fields = (…)` scope before `^`'s own bare members, so a redeclared member would be found second or never (block gone 25 September 2026). `:=` spellings of these slots in earlier sketches were respelled. `fields` (spelled `value` 17 to 19 September, `instance` 19 to 23 September) was a slot too, until 25 September 2026. DESIGN.md at e75bcdc wrote the fills without the mark (`parse_rank = …`).
 
 ### Slot words are known only inside a type body
 - **History:** earlier 19 September 2026: the slot names were the core words, known everywhere, `=` with one on its left filled the innermost definition's slot, and outside any definition it was the checked error. Superseded the same day.
@@ -485,7 +488,7 @@ Nothing moved from this section.
 - **Seed detail (27 September 2026):** `=`'s constructor, not `drop`'s, takes a lone `drop` to its left as the slot's name, since `=` constructs at discovery before a prefix keyword's turn (divergence). #130 closed into #132.
 
 ### Fields are read with a dot outside their scope
-- **History:** l.201 (30 August 2026) had "a field's declaration is checked only against its siblings"; superseded.
+- **History:** DESIGN.md at e75bcdc (30 August 2026) had "a field's declaration is checked only against its siblings"; superseded.
 
 ### Sketches for type bodies
 - **Seed detail (27 September 2026):** `run` is installed on the type as the body's lexed cells, with the functions constructed from them per field-type set kept beside them (since #133 slice 8; the `fn` form deleted since slice 9). A `share` member is read through the type alone, `g.y`, not `inst.y` (#116); Thobias, 23 September: "the shared fields are also readable from per instance its just that its the same across all instances".
@@ -525,14 +528,14 @@ Nothing moved from this section.
   - **19 September 2026, the block holds instances' data and behaviour:** every block started with predeclared slots (`parse_rank`, `associativity`, `parse`, `run`, `drop`, `instance`) filled with `shared … = (…)`; a bare `run = (…)` or `drop = (…)` filled the type's own slot. Reason then: `run` and `drop` are about the instances as much as their fields. Closed the 16 September open "where `run` is stored", the 18 September open on `parse := parse (…)`, and the #130 spelling. The `run` fill was held as its lexed tape until a node's field types are known (*Deferral is authored*, 20 September 2026). Superseded 25 September 2026.
   - **23 September 2026, `run` not a slot of the type itself:** "remove type.run. run should only be inside instance" (Thobias); the values' body was read `^.fields.run`, `^.run` the checked error; shared members read `g.fields.y`. Reason then: nothing wanted the type's own run, and it stood as an empty slot in front of the shared fill. Seed #141 (24 September) read `^.fields.run` through a `dyad` view. Superseded 25 September 2026: `^.run` and `point.dims`, `run` again a slot of the type holding its values' body.
   - **A type body as a plain scope (August):** `g := type (y := 3, z := y + 3)` saw `y` in `z`'s line, members reached `g.y`. 19 September: spelled `g := type (fields = (shared y := 3, shared z := y + 3))`. Since 25 September members stand in the body again (spelled with `share` since 26 September).
-  - **Source:** DESIGN.md l.199, l.201, l.203
+  - **Source:** DESIGN.md at e75bcdc
 
 ### Plain substrate words: dyad, `.type`, `.value`
-- **History:** the view read was first written `(dyad a).type`, superseded 8 September 2026 by `a:dyad.type`, which `a:type` replaced (l.213). `logos` first survived in three places (the ground identity's name, the definition keyword, the language's name); superseded 4 September 2026: the first two are `type`'s (*Substrate vocabulary*).
+- **History:** the view read was first written `(dyad a).type`, superseded 8 September 2026 by `a:dyad.type`, which `a:type` replaced (DESIGN.md at e75bcdc). `logos` first survived in three places (the ground identity's name, the definition keyword, the language's name); superseded 4 September 2026: the first two are `type`'s (*Substrate vocabulary*).
 - **History:** "The view read is `a:type`" until 29 September 2026, when a value's type became `a.type` (#199).
 
 ### Text is the quote: `lex «…»` hands back the tape, unconstructed
-- **History:** the founding example was respelled 2 September 2026, `:` having left the declaration surface. l.209 writes the field read `if.constructor`; the slot is `parse` since 17 September 2026.
+- **History:** the founding example was respelled 2 September 2026, `:` having left the declaration surface. DESIGN.md at e75bcdc writes the field read `if.constructor`; the slot is `parse` since 17 September 2026.
 
 ### What `lex` returns: a `parsing_tape` fragment
 - **History:** 2 September 2026: the fragment was an `array @dyad`. Superseded 14 September 2026 by `parsing_tape`.
@@ -568,7 +571,7 @@ Nothing moved from this section.
 - **Quotes:** Why: "square_brackets should be an identity just like scope is an identity".
 
 ### `a[k]` is an application, exactly as `a(k)`
-- **History:** the first array.logos read the parse's own locals after the parse had returned, `tape[0] = scope ( … index … this … )`; superseded by this ruling. The 25 September spelling was `tape[0] = this.at(tape[1].dyads[0])` with `shared at := fn (index := u64 ?) -> element_type ( if index >= this.size error «…», (this.ptr + index)@ )`; since 26 September 2026 there is no `this` and the mark is `share` (a value in the cell is `tape[0]`, `tape[0].at(k)`; fields named bare in the function body, see l.207).
+- **History:** the first array.logos read the parse's own locals after the parse had returned, `tape[0] = scope ( … index … this … )`; superseded by this ruling. The 25 September spelling was `tape[0] = this.at(tape[1].dyads[0])` with `shared at := fn (index := u64 ?) -> element_type ( if index >= this.size error «…», (this.ptr + index)@ )`; since 26 September 2026 there is no `this` and the mark is `share` (a value in the cell is `tape[0]`, `tape[0].at(k)`; fields named bare in the function body, see DESIGN.md at e75bcdc).
 - **History:** until 29 September 2026 the rule read "A node's operands are the collection its type defines, `(x + x).operands[0]`". Superseded by Thobias (#199): "(x+x).operands should not exist. it should be lhs and rhs for all the other operators as well."
 
 ### A placed call keeps its tape lines as operands
@@ -582,25 +585,25 @@ Nothing moved from this section.
 - **Seed detail (27 September 2026):** since 25 September 2026, `=` over such a call builds a copy of `f` whose body ends in `p` and returns `@T`, and stores through that copy's call; no array-specific code. A fault a compiled caller parks is the first one, so the null guard over the zero an interpreted callee's error left does not replace that error.
 
 ### A name of a type with an instances' `parse` wakes it, as the instance does, and so does any expression of the type
-- **History:** the 25 September wording said "a type whose fields block fills the instances' `parse`" and "`this` there is that name's value"; since 25/26 September a type has one parse and no fields block (l.203) and there is no `this` (l.207).
+- **History:** the 25 September wording said "a type whose fields block fills the instances' `parse`" and "`this` there is that name's value"; since 25/26 September a type has one parse and no fields block (DESIGN.md at e75bcdc) and there is no `this` (DESIGN.md at e75bcdc).
 - **Seed detail (27 September 2026):** since 25 September 2026 (#137): names, parameters, call results and brackets wake, interpreted and compiled; `a[1]`, `b := a, b[1]`, and `f := fn (p := array i32 ?) -> i32 ( p[1] ), f(a)` work, the last also after `f.compile()`. A field read wakes too (later on 25 September; before, `this.items[1]` over a field was refused).
 
 ### A list's elements are filled when the code runs
 - **History:** the mint's fill loop read each line's number at parse, which refused a name among them; superseded 25 September 2026.
 
 ### A bracket goes to the call whole
-- **History:** 25 September: the mint's parse placed `tape[0] = this.fill(tape[1])` with `fill := fn (elements) -> this:type (…)`. Since 26 September 2026 (l.205) `fill` is gone: `array T [ … ]` is a node of `array` whose `elements` field holds the bracket and whose run does the work.
+- **History:** 25 September: the mint's parse placed `tape[0] = this.fill(tape[1])` with `fill := fn (elements) -> this:type (…)`. Since 26 September 2026 (DESIGN.md at e75bcdc) `fill` is gone: `array T [ … ]` is a node of `array` whose `elements` field holds the bracket and whose run does the work.
 - **History:** 30 August to 28 September 2026 the sentence read "At top level, where lines run as they are parsed": the eager top level, which ›The pass runs only as far as it must‹ superseded on 13 September without this sentence being updated. Reworded 28 September 2026.
 
 ### The array's list is written in square brackets
-- **History:** `t := array i32, x := t [4, 5]` was also valid on 25 September; since 26 September a mint is not written before a bracket but assigned one, `x = [4, 5]` (l.205).
+- **History:** `t := array i32, x := t [4, 5]` was also valid on 25 September; since 26 September a mint is not written before a bracket but assigned one, `x = [4, 5]` (DESIGN.md at e75bcdc).
 - **Seed detail (27 September 2026):** identities/array.logos since 25 September 2026, no Rust change.
 
 ### A field of such a type holds the node's address
 - **Seed detail (27 September 2026):** since 25 September 2026, no array-specific code. A function holding the field read stays interpreted, as every field read does (only the per-run copy lowers); a compiled callee handed `b.items` runs compiled.
 
 ### Each evaluation of an array expression makes a new array
-- **History:** 25 September: "the placed call returns the mint": the call yielded the mint as a pointer; Claude's spelling (open to Thobias) named the mint `this:type` inside its own fields block, and a call a type's parse placed on its `this` took a per-run copy of that node, begun as the parse left it. Superseded 26 September 2026 (l.205): the array expression is a node of `array` whose run makes the value; `fill` and its per-run copy are gone. Before the sealed read, the mint lexed past the return type into the body, and a function returning an array had to name the type first, `t := array i32, … -> t ( … )`.
+- **History:** 25 September: "the placed call returns the mint": the call yielded the mint as a pointer; Claude's spelling (open to Thobias) named the mint `this:type` inside its own fields block, and a call a type's parse placed on its `this` took a per-run copy of that node, begun as the parse left it. Superseded 26 September 2026 (DESIGN.md at e75bcdc): the array expression is a node of `array` whose run makes the value; `fill` and its per-run copy are gone. Before the sealed read, the mint lexed past the return type into the body, and a function returning an array had to name the type first, `t := array i32, … -> t ( … )`.
 - **Seed detail (27 September 2026):** since 25 September 2026 (#137): `array i32 [x, y, 3]` fills at run; a function that makes an array compiles (the bracket's number lines run in the compiled frame; the new bracket and the per-run copy, nodes of the store, are made by a call from machine code back into the seed; the builder runs interpreted as any uncompiled callee does). A return type spelled `-> array i32 ( … )` stops before the body's bracket (the mint's `tape[1]` reads `void`), so `mk := fn () -> array i32 ( array i32 [1, 2] )` returns the array.
 
 ### `alloc n of T`, for such a `T`, gives n cells of its address
@@ -611,7 +614,7 @@ Nothing moved from this section.
 - **Seed detail (27 September 2026):** the refusal stands where a type's parse hands a bracket to the call it places, for every type written in Logos; a callee that only reads its list is refused alike.
 
 ### The element type decides how a line becomes an element
-- **History:** 25 September, Claude's spelling (open to Thobias): two tape affordances, `tape.construct(T, v)` (construct the two cells `T v` as the driver does a segment, give the one node, else the checked error) and `tape[k].dyads[i] = v` (replace line i of bracket cell k); array.logos wrote `if tape[1].dyads[i]:type == square_brackets or tape[1].dyads[i]:type == scope ( tape[1].dyads[i] = tape.construct(element_type, tape[1].dyads[i]) )`. Reasons then: the construct is the driver's own act ("the driver wakes by the flag and the cell's `parse_rank`", 19 September), offered to every Logos type; the line write was the 20 September "mutate the dyad array inside scope". Both deleted later on 25 September 2026 (l.203): elements are built by assignment, `(ptr + i)@ = elements.dyads[i]`, and `=` constructs each by the element type's parse.
+- **History:** 25 September, Claude's spelling (open to Thobias): two tape affordances, `tape.construct(T, v)` (construct the two cells `T v` as the driver does a segment, give the one node, else the checked error) and `tape[k].dyads[i] = v` (replace line i of bracket cell k); array.logos wrote `if tape[1].dyads[i]:type == square_brackets or tape[1].dyads[i]:type == scope ( tape[1].dyads[i] = tape.construct(element_type, tape[1].dyads[i]) )`. Reasons then: the construct is the driver's own act ("the driver wakes by the flag and the cell's `parse_rank`", 19 September), offered to every Logos type; the line write was the 20 September "mutate the dyad array inside scope". Both deleted later on 25 September 2026 (DESIGN.md at e75bcdc): elements are built by assignment, `(ptr + i)@ = elements.dyads[i]`, and `=` constructs each by the element type's parse.
 
 ### At top level, a `[…]` line of a list is not run early
 - **Seed detail (27 September 2026):** 25 September 2026, the top level's pending run skips a `[…]` line.
@@ -650,7 +653,7 @@ Nothing moved from this section.
 - **Seed detail (27 September 2026):** #129, in the seed since #133 slice 7.
 
 ### `X (…)` is one spelling, and X's constructor decides what the bracket is
-- **History:** a type's constructor also took declaration lines as new shared members, per-instance fields locking at first instantiation (*Two muts*). Struck for `type (…)` 19 September 2026: a bare declaration line in a type body was not allowed, members being declared in the fields block. (The fields block itself is gone since 25 September 2026, l.203.)
+- **History:** a type's constructor also took declaration lines as new shared members, per-instance fields locking at first instantiation (*Two muts*). Struck for `type (…)` 19 September 2026: a bare declaration line in a type body was not allowed, members being declared in the fields block. (The fields block itself is gone since 25 September 2026, DESIGN.md at e75bcdc.)
 
 ### A scope's lines are its one field, `dyads`
 - **History:** spelled `self` from the 2 September sketch until 24 September 2026, no reason recorded.
@@ -677,7 +680,7 @@ Nothing moved from this section.
 - **Seed detail (27 September 2026):** 25 September 2026 (#147). A tape read to its end point is sealed, so a later read past it gives `void`.
 
 ### Seed stand-ins that remain
-- **History:** l.211 described a `type (…)` body with four slots filled by `=` and a `fields = (…)` block (spelled `instance` in the seed until #128) taking holes and bare names only, stored-once members there waiting. The fields block is gone since 25 September 2026 (l.203; seed #150).
+- **History:** DESIGN.md at e75bcdc described a `type (…)` body with four slots filled by `=` and a `fields = (…)` block (spelled `instance` in the seed until #128) taking holes and bare names only, stored-once members there waiting. The fields block is gone since 25 September 2026 (DESIGN.md at e75bcdc; seed #150).
 
 ### The dyad's read surface: two fields, and the type answers the rest
 - **History:** until 29 September 2026 the rule said "The fields exist only where `s` is a dyad", gave as its Why "A value's type is never one of its own fields, so a universal `.type` on every value would be `.` doing a second job", and listed as Rejected "The universal `.type` metaproperty on every value: retired." Superseded by Thobias (#199): `.type` is read on every value, as a field `type`'s own body declares, because "type lives in the same payload as the value now" (the one-block node, #166). `.value` still exists only on a dyad.
@@ -786,7 +789,7 @@ Nothing moved from this section.
 - **Seed detail (27 September 2026):** converged August 2026 (#58): argv-as-source with file-path mode removed, `import` with pub-only exposure, once-per-run DAG loading, the fresh-view section boundary (command line and REPL each run as their own section), file-relative path resolution.
 
 ### `import` is the one identity that loads a file
-- **History:** l.221 had "v0.1.0 has no gates and an importer sees every top-level name" (4 September 2026); superseded.
+- **History:** DESIGN.md at e75bcdc had "v0.1.0 has no gates and an importer sees every top-level name" (4 September 2026); superseded.
 
 ### `print «…»` is the output word
 - **Seed detail (27 September 2026):** since 24 September 2026 (#140): each run writes the quote and a newline and yields unit, a statement the echo rule keeps silent.
@@ -893,14 +896,14 @@ Nothing moved from this section.
 ## Identity recognition
 
 ### How an operation is defined for its operand types is OPEN
-- **Seed detail (27 September 2026):** hard-codes it for core types. `=` is handed to the `parse` of the type of the place on its left (the l.189 sentence), which stands as seed practice but is in question. A square-bracket literal goes into an array's place in Rust, like number literals. Seed and spec issue #152.
+- **Seed detail (27 September 2026):** hard-codes it for core types. `=` is handed to the `parse` of the type of the place on its left (the sentence in DESIGN.md at e75bcdc), which stands as seed practice but is in question. A square-bracket literal goes into an array's place in Rust, like number literals. Seed and spec issue #152.
 
 ### A scope node stores only its enclosing scope, spelled `back`
 - **History:** link spelled `.scope` (`here.scope.scope`) until 24 September 2026.
 - **Seed detail (27 September 2026):** since #123 every scope is minted `[exprs, op, parent]`; `ScopeStack.open` is the cache. `.scope` on any `@dyad` value reads the link when it runs (`.back` since 24 September 2026), null at the arche, checked error past it. Addresses compare with `==`.
 
 ### `here` is where a line is written; `caller` is where it was called from
-- **History:** `this` joined them 17 September 2026 (a name the slot's type declared, from 18 September); `this` is gone since 26 September 2026 (l.207).
+- **History:** `this` joined them 17 September 2026 (a name the slot's type declared, from 18 September); `this` is gone since 26 September 2026 (DESIGN.md at e75bcdc).
 - **Seed detail (27 September 2026):** `here`, `caller` are identities. `here.scope` folds to the scope open at the appearance, as `x:scope` does. `caller.scope` answers the pass's position while a constructor runs, checked error elsewhere: stand-in for the per-call read. Not carried: bare `caller` as a value; the section-boundary stop (waits for gates); a one-item group, which the seed elides, so `here` inside one names a scope no path reaches.
 
 ### The meta-access surface is `:` and `.`
@@ -973,7 +976,7 @@ The effort table:
 - **History:** dependent types were "not needed for an initial release" until 5 September 2026.
 
 ### How a Logos constructor builds its node (step 3's first question)
-- **History:** 9 September: `tape[0]:dyad.type = ^` then `tape[0]:dyad.value.operands.append(tape[-1] and tape[1])` (the and-group distributing so both append, *The proof layer* 7 September; that and-group ruling stands on its own); the operand record was the null-terminated run call arguments travel in. 16 September: named fields. 17/18 September: `this.lhs = tape[-1]`, `this` placed by `tape[0] = this`. `this` gone 26 September (l.207); `:dyad.type` → `:type` 23 September.
+- **History:** 9 September: `tape[0]:dyad.type = ^` then `tape[0]:dyad.value.operands.append(tape[-1] and tape[1])` (the and-group distributing so both append, *The proof layer* 7 September; that and-group ruling stands on its own); the operand record was the null-terminated run call arguments travel in. 16 September: named fields. 17/18 September: `this.lhs = tape[-1]`, `this` placed by `tape[0] = this`. `this` gone 26 September (DESIGN.md at e75bcdc); `:dyad.type` → `:type` 23 September.
 
 ### The LSP server comes after v0.1.0
 - **History:** before: "A thin LSP server gates v0.1.0's public release, not the demo."
