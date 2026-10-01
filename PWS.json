@@ -6489,7 +6489,9 @@
     "found_by": [
       "B"
     ],
-    "aliases": [],
+    "aliases": [
+      "At ac86218: scope.rs run is one function that both runs a scope's lines and performs its exit (run_exit after the loop and on RunError::Return, run_exit_after_fault on a fault), with no separate step that runs the lines present so far and leaves the scope open; the pass needs only the first, so it cannot call run and keeps a second runner of the same lines: drain's own loop over OpenScope.unrun, its own position (OpenScope.ran, set_cursor at exprs_of(scope).len()), its own record of what a run line ended (OpenScope.reached) and its own fault exit (end_after_fault), beside run's loop index and run_exit_after_fault {run_exit, run_exit_after_fault, take_cursor, set_cursor, drain, OpenScope, unrun, ran, reached, end_after_fault, src/identities/scope.rs, src/parse/bodies.rs}"
+    ],
     "merged_into": null,
     "made": {
       "at": "2026-10-01T01:54+02:00",
@@ -6518,6 +6520,15 @@
         "commit": "bb1c561",
         "change": "asked: no why found",
         "reason": "Both agents: every why of W75 leads back up the chain (W68: the running scope's position is a Rust local of the one call, which would close the loop W68 → W71 → W73 → W75 → W68) or into history (#167 added the frame cursor only as the pass's hand-off). Not the RunFn shape (a partial step could be a second fn beside it; both checked). Not a DESIGN gap: ›The pass runs only as far as it must…‹ names the partial run and \"A frame keeps a cursor\", ›A value's teardown runs where its life ends…‹ the exit. A's reading for the solution talk: W68, W71, W73 and W75 are one structure, a running scope's position held in a Rust local; its fix is one, keep it on the frame as ›The pass runs…‹ says."
+      },
+      {
+        "at": "2026-10-01T21:17+02:00",
+        "by": "logoslang-solve-W75",
+        "model": "opus",
+        "effort": "high",
+        "commit": "ac86218",
+        "change": "alias +",
+        "reason": "At ac86218: scope.rs run is one function that both runs a scope's lines and performs its exit (run_exit after the loop and on RunError::Return, run_exit_after_fault on a fault), with no separate step that runs the lines present so far and leaves the scope open; the pass needs only the first, so it cannot call run and keeps a second runner of the same lines: drain's own loop over OpenScope.unrun, its own position (OpenScope.ran, set_cursor at exprs_of(scope).len()), its own record of what a run line ended (OpenScope.reached) and its own fault exit (end_after_fault), beside run's loop index and run_exit_after_fault {run_exit, run_exit_after_fault, take_cursor, set_cursor, drain, OpenScope, unrun, ran, reached, end_after_fault, src/identities/scope.rs, src/parse/bodies.rs}"
       }
     ]
   },
