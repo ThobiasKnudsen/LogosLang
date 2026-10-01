@@ -1558,13 +1558,10 @@ impl<'a> Parser<'a> {
         let ended = std::mem::take(&mut self.cx.open[0].ended_earlier);
         // SAFETY: `top` is a scope node the driver minted, its exit null or exit items.
         unsafe {
-            let exit = scope::exit_of(top);
-            if !exit.is_null() {
-                for &node in crate::identities::array::items(exit) {
-                    let item = drop_model::exit_item_of(node);
-                    if ended.iter().any(|&name| self.holds(&item, name)) {
-                        drop_model::end_exit_item(self.rt.store, self.types, node);
-                    }
+            for &node in scope::exit_items(top) {
+                let item = drop_model::exit_item_of(node);
+                if ended.iter().any(|&name| self.holds(&item, name)) {
+                    drop_model::end_exit_item(self.rt.store, self.types, node);
                 }
             }
         }

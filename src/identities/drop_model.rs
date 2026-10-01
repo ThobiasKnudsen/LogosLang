@@ -1745,11 +1745,11 @@ mod tests {
             p.parse_sequence().expect("parse")
         };
         // SAFETY: `scope` is the sequence node just parsed; its exit holds exit items.
-        unsafe {
-            let exit = super::super::scope::exit_of(scope);
-            assert!(!exit.is_null(), "{src}: the scope's end runs something");
-            super::super::array::items(exit).iter().map(|&i| exit_item_of(i)).collect()
-        }
+        let items: Vec<ExitItem> = unsafe {
+            super::super::scope::exit_items(scope).iter().map(|&i| exit_item_of(i)).collect()
+        };
+        assert!(!items.is_empty(), "{src}: the scope's end runs something");
+        items
     }
 
     #[test]

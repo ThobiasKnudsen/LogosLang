@@ -130,12 +130,15 @@ pub(crate) unsafe fn with_exprs(
         .alloc_words(dyad::ty(node), &[lines, *slots.add(OP), *slots.add(PARENT), *slots.add(EXIT)])
 }
 
-/// Null for a scope whose end runs nothing.
-///
 /// # Safety
 /// `node` must be a scope node from the store.
-pub(crate) unsafe fn exit_of(node: DyadPtr) -> DyadPtr {
-    *(dyad::value(node) as *const DyadPtr).add(EXIT)
+pub(crate) unsafe fn exit_items<'a>(node: DyadPtr) -> &'a [DyadPtr] {
+    let exit = *(dyad::value(node) as *const DyadPtr).add(EXIT);
+    if exit.is_null() {
+        &[]
+    } else {
+        array::items(exit)
+    }
 }
 
 /// Appends `items` to the scope's exit, the array made on first use.
@@ -196,11 +199,7 @@ unsafe fn run_exit_items(
     node: DyadPtr,
     runs: impl Fn(&crate::Core, &ExitItem) -> bool,
 ) -> Result<(), RunError> {
-    let exit = exit_of(node);
-    if exit.is_null() {
-        return Ok(());
-    }
-    for &item in array::items(exit).iter().rev() {
+    for &item in exit_items(node).iter().rev() {
         let item = super::drop_model::exit_item_of(item);
         if runs(rt.types(), &item) {
             item.run(rt)?;
@@ -278,8 +277,6 @@ fn lower(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
             .copied()
             .filter(|&e| !super::numtype::is_comment_type(dyad::ty(e)))
             .collect();
-        let exit = exit_of(node);
-        let exit = if exit.is_null() { &[][..] } else { array::items(exit) };
-        lw.lower_with_teardowns(&lines, exit)?.ok_or(CompileError::EmptyScope)
+        lw.lower_with_teardowns(&lines, exit_items(node))?.ok_or(CompileError::EmptyScope)
     }
 }
