@@ -4,7 +4,7 @@
 # The station #30 north-star, and it runs: a `-> type` function computes a
 # type at comptime (resolved inline in the one pass), a declaration takes the
 # computed type (`a : metatype(…)` — the dependent declaration), and a comptime
-# `if` dispatches on `a.type` (a value's type is read with `.`),
+# `if` dispatches on that type, compared by identity with `==`,
 # dropping the untaken branches unparsed — each arm parses only in the world
 # where it can run. Every argument works: 0 → i32 place, prints 9; 1/2 →
 # f32/f64 place, prints 9.9; 3 → `type`, so `a` is a TYPE
@@ -22,8 +22,9 @@ metatype := fn (i := i32 ?) -> type (
 # metatype(2) call below jumps to the installed machine code.
 metatype.compile(),
 b := type,
-mut a := metatype(2) ?,
-a = if (a.type == i32) (9)
-    else if (a.type == f32 or a.type == f64) (9.9)
+t := metatype(2),
+mut a := t ?,
+a = if (t == i32) (9)
+    else if (t == f32 or t == f64) (9.9)
     else (i32),
 print «{a}»

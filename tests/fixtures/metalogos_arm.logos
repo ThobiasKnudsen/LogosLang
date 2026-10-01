@@ -8,8 +8,9 @@ metalogos := fn (i := i32 ?) -> logos (
     else if (i==2) (f64)
     else (logos)
 ),
-mut a := metalogos(3) ?,
-a = if (a.type == i32) (9)
-    else if (a.type == f32 or a.type == f64) (9.9)
+t := metalogos(3),
+mut a := t ?,
+a = if (t == i32) (9)
+    else if (t == f32 or t == f64) (9.9)
     else (i32),
 print «{a}»

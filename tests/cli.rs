@@ -1475,7 +1475,7 @@ fn inclusion_the_design_leaves_open_is_a_checked_error() {
 
 #[test]
 fn a_parse_body_checks_that_an_index_type_fits_the_size_type() {
-    let q = "q := type ( share size := u64 ?, share parse_rank = 60, share parse = ( \
+    let q = "q := type ( share size := u64 0, share parse_rank = 60, share parse = ( \
              if (not tape[1].type ⊆ tape[0].size.type) \
              (error «the index type is not within the size type»), \
              tape.remove(1), tape[0] = i32 1, tape.is_constructed[0] = true ) )";
@@ -2070,7 +2070,7 @@ fn a_type_call_with_a_runtime_argument_yields_a_type_at_run() {
 
 #[test]
 fn a_logos_declaration_declares_a_place_of_that_type() {
-    let (echoes, stderr) = repl(b"mut a := i32 ?\na.type == i32\na = 9\na\n");
+    let (echoes, stderr) = repl(b"mut a := i32 ?\na = 9\na.type == i32\na\n");
     assert_eq!(echoes, ["true", "9"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
@@ -2079,7 +2079,7 @@ fn a_logos_declaration_declares_a_place_of_that_type() {
 fn a_dependent_typed_declaration_takes_a_computed_type() {
     let (echoes, stderr) = repl(
         b"metalogos := fn (i := i32 ?) -> logos (if (i==0)(i32) else (f64))\n\
-          mut b := metalogos(1) ?\nb.type == f64\nb = 7\nb\n",
+          mut b := metalogos(1) ?\nb = 7\nb.type == f64\nb\n",
     );
     assert_eq!(echoes, ["true", "7.0"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
@@ -2110,7 +2110,7 @@ fn a_logos_declaration_names_the_non_numeric_gap() {
 #[test]
 fn a_logos_variable_declares_fills_once_and_becomes_the_type() {
     let (echoes, stderr) =
-        repl(b"mut a := logos ?\na.type == logos\na = i32\na == i32\ny := a 5\ny\n");
+        repl(b"mut a := logos ?\na = i32\na.type == logos\na == i32\ny := a 5\ny\n");
     assert_eq!(echoes, ["true", "true", "5"], "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
     let (echoes, stderr) = repl(b"mut a := logos ?\na == i32\n");

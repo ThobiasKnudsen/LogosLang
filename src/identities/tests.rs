@@ -2089,7 +2089,7 @@ fn a_valueless_place_is_read_only_after_a_sibling_write() {
     assert_eq!(script_parse_err("x := i32 ?, x"), unwritten("x"));
     assert_eq!(script_parse_err("mut x := i32 ?, x = x + 1, x"), unwritten("x"));
     assert_eq!(run_script("mut x := i32 ?, x = 4, x + 1"), 5);
-    assert_eq!(run_script("mut x := i32 ?, x.type == i32"), 1);
+    assert_eq!(script_parse_err("mut x := i32 ?, x.type == i32"), unwritten("x"));
     // A write nested in a group, an `if`, a loop or a `fn` body does not fill.
     assert_eq!(script_parse_err("mut x := i32 ?, (x = 4), x"), unwritten("x"));
     assert_eq!(script_parse_err("mut x := i32 ?, if (true) (x = 4), x"), unwritten("x"));
