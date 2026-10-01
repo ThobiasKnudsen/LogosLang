@@ -1610,6 +1610,18 @@ fn a_condition_ending_in_a_type_is_bracketed_before_a_name_body() {
 }
 
 #[test]
+fn a_condition_ending_in_a_member_ends_before_its_body() {
+    for src in [
+        "x := i32 3, if i32 == x.type ( print «yes» ), 7",
+        "if here.scope == here.scope ( print «yes» ), 7",
+    ] {
+        let out = logos().args([src]).output().unwrap();
+        assert!(out.status.success(), "{src}: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "yes\n7\n", "{src}");
+    }
+}
+
+#[test]
 fn a_quote_shows_a_name_read_through_a_path() {
     let src = "g := ( a := i32 1, b := a + 1, b ), s := g:start.rhs, \
                print «{s.dyads[0].lhs:name} and {s.dyads[1].rhs.lhs:name}», \
