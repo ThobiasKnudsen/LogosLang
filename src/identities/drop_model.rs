@@ -756,7 +756,7 @@ pub(crate) unsafe fn exit_item_of(node: DyadPtr) -> ExitItem {
 
 /// Whether a place of type `ty` holds its value by address, an owning pointer or a node, so
 /// that 0 is its NULL. A record kept in its own bytes has no NULL form yet, so a line that
-/// fails before its own `free` or `move` of one leaves it: stand-in for #240.
+/// fails cannot tell whether its own `free` or `move` of one ran: stand-in for #240.
 ///
 /// # Safety
 /// `ty` must be null or a type node from the store.
