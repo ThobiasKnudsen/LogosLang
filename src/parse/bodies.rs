@@ -1285,16 +1285,15 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        let exit: Vec<DyadPtr> =
-            closed.exit.iter().map(|h| h.build(self.rt.store, self.types)).collect();
         // One line, and nothing for the end to run: the line stands as itself.
-        // SAFETY: `exit` holds the exit item nodes just built.
-        let ends_run = unsafe { crate::identities::drop_model::any_held_somewhere(&exit) };
+        let ends_run = closed.exit.iter().any(ExitItem::held_somewhere);
         if values > 0 && exprs.len() == 1 && !ends_run {
             // SAFETY: `exprs` are reduced dyads from the store.
             let expr = unsafe { Cell::built(exprs[0]) };
             return Ok((scope, if last.dyad == exprs[0] { last } else { expr }));
         }
+        let exit: Vec<DyadPtr> =
+            closed.exit.iter().map(|h| h.build(self.rt.store, self.types)).collect();
         // SAFETY: `scope` was minted by `open_scope` above and is unaliased.
         let cell = unsafe {
             crate::identities::scope::fill(scope, self.types.ops.scope_);
