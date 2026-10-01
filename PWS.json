@@ -8457,5 +8457,29 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P53",
+    "kind": "problem",
+    "status": "open",
+    "text": "In a type's parse, the type of a field declared bare `?` cannot be read after the parse wrote it: `tape[0].output_type = tape[0].lhs:type`, right after `tape[0].lhs = tape[-1]`, is refused with \"this read does not fit the node's type\". With the fields declared `i32 ?` the same read gives the answer, and `tape[-1]:type` in its place does too.",
+    "program": "pw := type ( lhs := ?, rhs := ?, output_type := type ?, share run = ( lhs * rhs ), share parse_rank = *.parse_rank + 1, share parse = ( tape[0]:type = pw, tape[0].lhs = tape[-1], tape[0].rhs = tape[1], tape[0].output_type = tape[0].lhs:type, tape.is_constructed[0] = true, tape.remove(1), tape.remove(-1) ) ), x := i32 3, y := i32 4, x pw y",
+    "output": "<command line>:1:241: error: this read does not fit the node's type\n  (the program's line, the caret under `tape[0].lhs:type`'s `:`)\nexit 1",
+    "expected": "`12`, as the program prints with `tape[-1]:type` in place of `tape[0].lhs:type`, or with `lhs := i32 ?, rhs := i32 ?`. DESIGN ›`a.type` reads the type of the value a name stands for (spelled `a:type` from 23 to 29 September 2026)‹: `.type` is read with `.` \"like the value's other fields\"; ›A parse connects each operand to a field by name and removes the cells it took‹: \"the parse writes `tape[0].lhs = tape[-1]`\".",
+    "tier": "interpreted",
+    "found": "logoslang-issue-215-review-2, on dev df47956 (`:type` spelling) and on issue-215-type-dot-rename at c6369a1 (`.type`); rerun by Orchestrator (2) on 6b3a673 code (solve-W85 release build), control with `i32 ?` fields printing 12",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T22:25+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "1734dfa",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
