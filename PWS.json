@@ -8529,5 +8529,53 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P56",
+    "kind": "problem",
+    "status": "open",
+    "text": "An `=` into a record name declared `?` and never written runs the type's `free` on the unwritten value first: with `<BOX>` the `boxed`/`box` fixture of `tests/cli.rs` (its `free` prints `free`), `mut w := boxed ?, w = box (1, 2), print «after»` prints `free`, `after`, `free`. The scope-end half of the same name is P42.",
+    "program": "<BOX>, mut w := boxed ?, w = box (1, 2), print «after»",
+    "output": "free\nafter\nfree\nexit 0",
+    "expected": "`after`, `free`: one value was written, so one `free` runs. Which of \"starts empty and frees nothing\" or \"refused at the declaration\" is Q-0056, open since 1 October 2026; either way the unwritten value is not freed (DESIGN ›Reading a place before its first write is refused at parse‹: a place has no value before its first write).",
+    "tier": "interpreted",
+    "found": "relink helper of Orchestrator (2), 1 October 2026, dev 0388214; rerun by Orchestrator (2)",
+    "why": null,
+    "issue": 224,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-02T00:08+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "9b8edb7",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P57",
+    "kind": "problem",
+    "status": "open",
+    "text": "A function whose body has a `print` cannot be compiled: `f := fn () -> i32 ( print «hi», 1 ), f.compile(), f()` stops with \"compile() failed: this cannot be compiled yet\", while the same without `f.compile()` prints `hi` and `1`.",
+    "program": "f := fn () -> i32 ( print «hi», 1 ), f.compile(), f()",
+    "output": "<command line>: run error: compile() failed: this cannot be compiled yet\nexit 1",
+    "expected": "`hi`, then `1`, as interpreted: DESIGN ›Compilation reads frozen structure; a structural write is deoptimization‹: \"interpret versus compile is profitability, not meaning\".",
+    "tier": "compiled",
+    "found": "relink helper of Orchestrator (2), 1 October 2026, dev 0388214; rerun by Orchestrator (2)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-02T00:08+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "9b8edb7",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
