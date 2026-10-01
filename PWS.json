@@ -6493,5 +6493,140 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P37",
+    "kind": "problem",
+    "status": "open",
+    "text": "A local name declared as an owning hole is accepted: `mut a := own @i32 ?` declares an owner that starts empty",
+    "program": "mut a := own @i32 ?, a = alloc 1 of i32 5, a@",
+    "output": "5\nexit 0",
+    "expected": "Refused at the declaration: an owning hole is legal on a field and a parameter only, and a local owner gets its value where it is declared (Thobias, Q-0039 answer 1, 1 October 2026: \"c\"). Not in DESIGN yet, which allows it on a name at ›A field may be `own @T ?`‹ and ›A field may be `own t ?`, `t` a type whose body fills `share free`‹",
+    "tier": "interpreted (command-line source)",
+    "found": "Q-0039, asked by #192 worker c727a831 on 30 September 2026; rerun by Orchestrator (2) on dev 267ebaa (code 224ea38), 1 October 2026",
+    "why": [
+      "W76"
+    ],
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T02:38+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "267ebaa",
+      "run": null,
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T02:38+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "267ebaa",
+        "change": "why + W76",
+        "reason": null
+      }
+    ]
+  },
+  {
+    "id": "W76",
+    "kind": "why",
+    "status": "accepted",
+    "text": "DESIGN.md allows an owning hole on any name, a local one included (`mut a := own @i32 ?`, `mut a := own t ?`), and has no rule that a local owner gets its value at its declaration",
+    "proposed_for": "P37",
+    "why": [],
+    "anchors": [
+      "DESIGN.md"
+    ],
+    "design": [
+      "`move` is the act, `own` the gate word, `free` the end",
+      "A field may be `own @T ?`",
+      "A field may be `own t ?`, `t` a type whose body fills `share free`",
+      "Gate spelling: words left of `:=`; ownership in the reference type"
+    ],
+    "evidence": [
+      {
+        "command": "rg -n -o 'mut a := own [^`]*' DESIGN.md",
+        "output": "439:mut a := own @i32 ?\n443:mut a := own t ?",
+        "commit": "267ebaa"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T02:38+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "267ebaa",
+      "run": null,
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T02:38+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "267ebaa",
+        "change": "asked: no why found",
+        "reason": "a rule the ruling document does not have yet; Thobias ruled it in Q-0039 (\"c\"), so there is nothing further to ask"
+      }
+    ]
+  },
+  {
+    "id": "S19",
+    "kind": "solution",
+    "status": "chosen",
+    "text": "Refuse an owning hole on a local name; keep it for a field and a parameter, so a local owner always gets its value at its declaration",
+    "fixes": [
+      "W76"
+    ],
+    "assessment": "Removes P37: the parser refuses `mut a := own @i32 ?` and `mut a := own t ?` on a local name, while `fn (p := own @i32 ?)` and a field `mut items := own t ?` stay legal. DESIGN: a Ruled line at ›`move` is the act, `own` the gate word, `free` the end‹, and the two name sentences at ›A field may be `own @T ?`‹ (its Seed line) and ›A field may be `own t ?`…‹ (\"A name works alike\") change. Small: the `own` reader at a local declaration plus tests. Shares the declaration code with #192, so it builds after #192 merges.",
+    "decision": {
+      "by": "Thobias",
+      "at": "2026-10-01T02:39+02:00",
+      "words": "c",
+      "reason": "Q-0039 option (c), as he chose it: a local owner then always gets its value at its declaration (`a := alloc 1 of i32 5` already makes `a` the owner), so it never starts empty"
+    },
+    "design": [
+      "`move` is the act, `own` the gate word, `free` the end",
+      "A field may be `own @T ?`",
+      "A field may be `own t ?`, `t` a type whose body fills `share free`"
+    ],
+    "issue": 241,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T02:38+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "267ebaa",
+      "run": null,
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T02:39+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "267ebaa",
+        "change": "chosen by Thobias: \"c\"",
+        "reason": "Q-0039 option (c), as he chose it: a local owner then always gets its value at its declaration (`a := alloc 1 of i32 5` already makes `a` the owner), so it never starts empty"
+      },
+      {
+        "at": "2026-10-01T02:39+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "267ebaa",
+        "change": "issue #241",
+        "reason": null
+      }
+    ]
   }
 ]
