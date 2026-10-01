@@ -1218,8 +1218,6 @@ impl<'a> Parser<'a> {
         // what it did run stands in the body as its result.
         let mut closed = self.cx.open.pop().expect("pushed above");
         self.close_returns(self.cx.open.len());
-        // Handed back unchanged to the closed scope by an error below, for its fault's end.
-        let mut exit = std::mem::take(&mut closed.exit);
         // Prose and a `defer` (it runs at exit, never as the tail) are
         // invisible to value flow.
         let defer_ = self.types.defer_;
@@ -1238,7 +1236,6 @@ impl<'a> Parser<'a> {
                     // SAFETY: `e` is a reduced dyad just parsed.
                     && unsafe { contains_return(types, e) }
                 {
-                    closed.exit = exit;
                     self.end_after_fault(&closed);
                     return Err(ParseError::EarlyReturn);
                 }
@@ -1259,21 +1256,19 @@ impl<'a> Parser<'a> {
             // SAFETY: `tail_value` is a reduced dyad from the store.
             let place = unsafe { types.through(tail_value) };
             // SAFETY: held places and `place` are dyads from the store.
-            let held_at = |p: DyadPtr| exit.iter().position(|h| unsafe { self.holds(h, p) });
+            let held_at = |p: DyadPtr| closed.exit.iter().position(|h| unsafe { self.holds(h, p) });
             // SAFETY: as above.
             let lent = unsafe { crate::identities::drop_model::lent_place(types, place) };
             if lent.and_then(held_at).is_some() {
-                closed.exit = exit;
                 self.end_after_fault(&closed);
                 return Err(ParseError::AddressOfHeld);
             }
             if let Some(at) = held_at(place) {
                 if returned {
-                    closed.exit = exit;
                     self.end_after_fault(&closed);
                     return Err(ParseError::OwningEscape);
                 }
-                exit[at].end = Some(tail);
+                closed.exit[at].end = Some(tail);
                 // A plain record moves out as its bytes' address, which the taker copies.
                 // SAFETY: `place` is a place this scope's binding site laid out, and
                 // `tail` indexes the scope's own lines, which nothing else reads yet.
@@ -1290,7 +1285,8 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        let exit: Vec<DyadPtr> = exit.iter().map(|h| h.build(self.rt.store, self.types)).collect();
+        let exit: Vec<DyadPtr> =
+            closed.exit.iter().map(|h| h.build(self.rt.store, self.types)).collect();
         // One line, and nothing for the end to run: the line stands as itself.
         // SAFETY: `exit` holds the exit item nodes just built.
         let ends_run = unsafe { crate::identities::drop_model::any_held_somewhere(&exit) };
