@@ -889,11 +889,7 @@ impl<'a> Parser<'a> {
             Some(t) => {
                 // The valueless marker `[T][null]`: the name `:=` gives it is laid out at
                 // the type's width by the reading rule, so allocation and read cannot
-                // disagree; a `bool` place is refused since its literals cannot yet be stored into one.
-                // SAFETY: `t` is a type node from the store.
-                if t == types.bool_ {
-                    return Err(ParseError::NonNumericDeclaredType);
-                }
+                // disagree.
                 // SAFETY: `t` is a type node from the store.
                 if unsafe { crate::identities::read::place_layout(types, t) }.is_none()
                     && !self.cx.field_hole

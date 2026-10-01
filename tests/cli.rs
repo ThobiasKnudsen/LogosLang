@@ -2152,7 +2152,7 @@ fn a_logos_declaration_rejects_a_non_type() {
 
 #[test]
 fn a_logos_declaration_names_the_non_numeric_gap() {
-    let (_echoes, stderr) = repl(b"a := bool ?\n");
+    let (_echoes, stderr) = repl(b"a := scope ?\n");
     assert!(stderr.contains("non-numeric types are not in the seed yet"), "stderr: {stderr}");
 }
 
@@ -2536,7 +2536,7 @@ fn declaring_from_a_box_copies_it() {
     assert_eq!(echoes, ["true", "true", "true", "true"], "stderr: {stderr}");
     let (echoes, stderr) = repl(b"t := i32\ny := t 5\ny\n");
     assert_eq!(echoes, ["5"], "stderr: {stderr}");
-    let (_e, stderr) = repl(b"b := bool ?\n");
+    let (_e, stderr) = repl(b"b := scope ?\n");
     assert!(stderr.contains("not in the seed yet"), "stderr: {stderr}");
 }
 
@@ -4483,6 +4483,31 @@ fn a_node_gives_back_the_type_its_parse_wrote_on_both_tiers() {
         ("x := i32 1, (x == 1) + 1", "this operator cannot compute over these operands"),
         ("x := i32 1, mut a := i32 0, a = x == 1, a", "these types do not match"),
         ("x := i32 1, mut a := x == 1, a = i32 1, a", "these types do not match"),
+    ] {
+        let (code, _, stderr) = run_line(src);
+        assert_eq!(code, Some(1), "{src}");
+        assert!(stderr.contains(error), "{src}: stderr: {stderr}");
+    }
+}
+
+#[test]
+fn a_bool_hole_is_a_bool_place_on_both_tiers() {
+    for (src, want) in [
+        ("mut a := bool ?, a = true, a", "true\n"),
+        (
+            "f := fn (x := i32 ?) -> bool ( mut a := bool ?, a = x == 1, a ), \
+             f.compile(), print «{f(1)} {f(2)}»",
+            "true false\n",
+        ),
+        ("pt := type ( ok := bool ?, n := i32 ? ), p := pt(true, 3), p.ok", "true\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(src);
+        assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
+        assert_eq!(stdout, want, "{src}");
+    }
+    for (src, error) in [
+        ("a := bool ?, a", "`a` is read before it is written"),
+        ("mut a := bool ?, a = i32 1, a", "these types do not match"),
     ] {
         let (code, _, stderr) = run_line(src);
         assert_eq!(code, Some(1), "{src}");
