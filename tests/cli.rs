@@ -4516,6 +4516,35 @@ fn a_bool_hole_is_a_bool_place_on_both_tiers() {
 }
 
 #[test]
+fn free_and_move_read_the_type_a_dereference_gives_back() {
+    let r = "r := type ( mut p := own @i32 ?, share free = ( free p ) )";
+    let q = "q := alloc 1 of own @i32 ?, a := alloc 1 of i32 5, q@ = move a";
+    let x = "mut x := r ?, a := alloc 1 of i32 5, x.p = move a";
+    for src in [
+        format!("{r}, {x}, pp := &x, free pp@.p, x.p@"),
+        format!("{r}, f := fn (pp := @r ?) -> i32 ( free pp@.p, 1 ), {x}, f(&x), x.p@"),
+        format!("{q}, free q@, q@@"),
+    ] {
+        let (code, _, stderr) = run_line(&src);
+        assert_eq!(code, Some(1), "{src}");
+        assert!(stderr.contains("this pointer holds nothing yet"), "{src}: stderr: {stderr}");
+    }
+    for (src, want) in [
+        (format!("{r}, {x}, pp := &x, b := move pp@.p, b@"), "5\n"),
+        (format!("{q}, b := move q@, b@"), "5\n"),
+        (
+            format!("{BOX}, g := fn () -> i32 ( b := box (5, 6), y := move b.p, y@ ), g()"),
+            "free\n5\n",
+        ),
+        ("x := 5, move x".to_string(), "5\n"),
+    ] {
+        let (code, stdout, stderr) = run_line(&src);
+        assert_eq!(code, Some(0), "{src}: stderr: {stderr}");
+        assert_eq!(stdout, want, "{src}");
+    }
+}
+
+#[test]
 fn a_generic_body_is_keyed_by_the_type_its_operand_gives_back() {
     let isbool = "isbool := type ( a := ?, output_type := type ?, \
                   share run = ( if (a.type == bool) (i32 1) else (i32 2) ), \

@@ -117,8 +117,10 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
             }
         };
         let types = p.types();
-        // SAFETY: `place` is a resolved dyad whose type is a valid type node.
-        if unsafe { super::this::is_plain(types, types.type_of(place)) } {
+        // SAFETY: `place` is a resolved dyad from the store.
+        let ty = unsafe { super::read::output_type(types, place) };
+        // SAFETY: `ty` is null or a type node from the store.
+        if unsafe { super::this::is_plain(types, ty) } {
             return Err(ParseError::RecordMoveNotInSeed);
         }
         // A name moves whatever it holds, a borrowed node's name excepted: it holds none.
@@ -129,7 +131,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> DropModel {
                 ended.as_ref().is_some_and(|e| p.owns_node(e.binding))
                     || p.is_owning_read(place)
                     || is_owning_place(types, place),
-                meta::is_node_valued(types.type_of(place), types.fn_type),
+                meta::is_node_valued(ty, types.fn_type),
             )
         };
         if !owner && node_valued && ended.is_some() {
@@ -350,17 +352,17 @@ fn free_node(store: &mut Store, types: &Core, slots: [DyadPtr; 3]) -> DyadPtr {
 /// # Safety
 /// `place` must be a reduced dyad from the store whose type is an owning pointer type.
 unsafe fn build_block_free(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
-    let pointee = numtype::pointee_of(types.type_of(place));
+    let pointee = numtype::pointee_of(super::read::output_type(types, place));
     free_node(store, types, [place, pointee, types.ops.free_])
 }
 
 /// A pointer type whose `destructor` slot is set, as opposed to a borrow or a plain
 /// value. `place` must be a reduced dyad from the store.
 pub(crate) fn is_owning_place(types: &Core, place: DyadPtr) -> bool {
-    // SAFETY: `place` is a reduced dyad; its type is a valid type node.
+    // SAFETY: `place` is a reduced dyad; its output type is null or a type node.
     unsafe {
-        let logos = types.type_of(place);
-        !logos.is_null() && numtype::is_pointer_type(logos) && !meta::destructor_of(logos).is_null()
+        let ty = super::read::output_type(types, place);
+        numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null()
     }
 }
 
@@ -396,7 +398,7 @@ fn own_hole(p: &mut crate::parse::Parser, hole: DyadPtr) -> Result<bool, ParseEr
 /// # Safety
 /// `place` must be a reduced dyad from the store.
 pub(crate) unsafe fn build_move(store: &mut Store, types: &Core, place: DyadPtr) -> DyadPtr {
-    let ty = super::read::output_type(types, place);
+    let ty = super::read::handed_on(types, place);
     store.alloc_words(types.move_, &[place, ty, types.ops.move_, ty])
 }
 
@@ -1018,7 +1020,7 @@ fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 fn run_teardown(rt: &mut Runtime, place: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `place` is a place of an owning pointer type.
     unsafe {
-        let slot = rt.place_addr(place).ok_or(RunError::NoActivation)?;
+        let slot = owned_slot(rt, place)?;
         if slot.is_null() {
             return Err(RunError::Uninitialized);
         }
@@ -1029,7 +1031,7 @@ fn run_teardown(rt: &mut Runtime, place: DyadPtr) -> Result<i64, RunError> {
         // Tests observe teardown order (LIFO) by the value each freed block held.
         #[cfg(test)]
         {
-            let pointee = numtype::pointee_of(rt.types().type_of(place));
+            let pointee = numtype::pointee_of(super::read::output_type(rt.types(), place));
             let held = numtype::read_scalar(pointee, ptr);
             FREE_LOG.with(|log| log.borrow_mut().push(held));
         }
@@ -1053,7 +1055,7 @@ fn run_free(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
             reached_slot(rt, place)?;
             return Ok(0);
         }
-        let dtor = meta::destructor_of(rt.types().type_of(place));
+        let dtor = meta::destructor_of(super::read::output_type(rt.types(), place));
         if dtor.is_null() || !callable::is_callable(dtor) {
             return Err(RunError::NoDestructor(place));
         }

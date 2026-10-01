@@ -141,8 +141,8 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
     }
 }
 
-/// What a sequence, an arm or a `return` hands on from `node`: its output, a plain number read
-/// as an `i32`: stand-in for #214.
+/// What a sequence, an arm, a `return` or a `move` hands on from `node`: its output, a plain
+/// number read as an `i32`: stand-in for #214.
 ///
 /// # Safety
 /// `node` must be a reduced dyad from the store.
