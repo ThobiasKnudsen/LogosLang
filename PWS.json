@@ -767,7 +767,7 @@
     "tier": "interpreted",
     "found": "first example of #197 (RCA immediate-in-run-body, 29 September 2026, dev 3f62c33); rerun by logoslang-pws-migration on dev 9fc7634, release, command line",
     "why": [
-      "W8"
+      "W77"
     ],
     "issue": 197,
     "fixed": null,
@@ -789,18 +789,34 @@
         "commit": "9fc7634",
         "change": "why + W8",
         "reason": null
+      },
+      {
+        "at": "2026-10-01T02:56+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "c8a654c",
+        "change": "why + W77",
+        "reason": null
+      },
+      {
+        "at": "2026-10-01T02:56+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "c8a654c",
+        "change": "why - W8",
+        "reason": "W8 rejected: not a defect since Q-0044.6 and Q-0046 (Thobias, 1 October 2026): a type (…) is a new type each time its body runs, 'there is nothing defined to do minting of anything a function runs'; P5's cause is W77"
       }
     ]
   },
   {
     "id": "W8",
     "kind": "why",
-    "status": "accepted",
+    "status": "rejected",
     "text": "`construct_held_type` builds a held `type (…)` at every run of its node and keeps no build per set of the values it reads",
     "proposed_for": "P5",
-    "why": [
-      "W9"
-    ],
+    "why": null,
     "anchors": [
       "construct_held_type",
       "src/parse/types.rs"
@@ -836,6 +852,15 @@
         "commit": "9fc7634",
         "change": "why + W9",
         "reason": null
+      },
+      {
+        "at": "2026-10-01T02:56+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "c8a654c",
+        "change": "rejected, its whys were W9",
+        "reason": "not a defect since Q-0044.6 and Q-0046 (Thobias, 1 October 2026): a type (…) is a new type each time its body runs, 'there is nothing defined to do minting of anything a function runs'; P5's cause is W77"
       }
     ]
   },
@@ -975,9 +1000,7 @@
     "kind": "solution",
     "status": "proposed",
     "text": "A held `type (…)` keeps one build per set of the values it reads from outside, through the same per-set build a `run` body uses, not a second memo",
-    "fixes": [
-      "W8"
-    ],
+    "fixes": [],
     "assessment": "Removes the rebuild at every run (the loop, per-call and mk(i32) == mk(i32) programs); leaves its cache key for floats, records and pointers and the building-in-part timing (#219) as open rulings",
     "decision": null,
     "design": [
@@ -1003,6 +1026,15 @@
         "commit": "9fc7634",
         "change": "issue #197",
         "reason": null
+      },
+      {
+        "at": "2026-10-01T02:56+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "c8a654c",
+        "change": "fixes - W8, rejected",
+        "reason": "not a defect since Q-0044.6 and Q-0046 (Thobias, 1 October 2026): a type (…) is a new type each time its body runs, 'there is nothing defined to do minting of anything a function runs'; P5's cause is W77"
       }
     ]
   },
@@ -6628,5 +6660,426 @@
         "reason": null
       }
     ]
+  },
+  {
+    "id": "S20",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Split the scope identity's run in two: advance(scope, upto) runs its lines from the frame's cursor up to a given line, moves the cursor and leaves the scope open; #192's run_exit(scope, reached) is the exit; run = advance to the last line, then the exit. The pass's drain calls advance per open scope up to the lines parsed so far, so its own loop, OpenScope.unrun and the set_cursor/take_cursor hand-off go; the root gets a scope node through S9's one reader",
+    "fixes": [
+      "W75",
+      "W73"
+    ],
+    "assessment": "Root fix: one runner of an interpreted scope's lines, the frame's cursor its only position (written by advance, never taken), which is what 'A frame keeps a cursor, how far the scope it runs has got' says; removes W73 and the pass's runner of W71. Leaves lower_with_teardowns (W4/S3) and the compiled fault exit (W58-W60), so P29 stays. Blocked by #192 (adds run_exit, rewrites scope.rs and bodies.rs) and #234/S9 (the root has no scope node); #176's drain scratch moves into advance. A type body's lines (no scope node) to be checked in the slice. About 150 lines in scope.rs, bodies.rs, run.rs; no rule change",
+    "decision": null,
+    "design": [
+      "The pass runs only as far as it must, in order, and never twice",
+      "The scope's constructor is the driver"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T02:42+02:00",
+      "by": "logoslang-solve-W75",
+      "model": "opus",
+      "effort": "high",
+      "commit": "c8a654c",
+      "run": "solve-W75",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S21",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Give scope.rs run a mode: a stop line and an exit flag, run(scope, upto, exit: bool); drain calls it with exit off, the scope's own run with exit on",
+    "fixes": [
+      "W75"
+    ],
+    "assessment": "Symptom fix: the two jobs stay in one function behind a flag, a branch per caller, and drain still decides what it skips (defers, brackets) and keeps its own list per scope. Smallest diff (scope.rs, bodies.rs, about 40 lines) and not blocked by #234, but adds a mode where the rule wants one step; recommended against",
+    "decision": null,
+    "design": [
+      "The pass runs only as far as it must, in order, and never twice"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T02:42+02:00",
+      "by": "logoslang-solve-W75",
+      "model": "opus",
+      "effort": "high",
+      "commit": "c8a654c",
+      "run": "solve-W75",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S22",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "S20, and the frame keeps a stack of its live scopes (scope node, cursor) as data: advance pushes and moves, the exit pops; a return, a fault or a cancel ends every live scope above its target from that stack, not by a Rust Err passing back through each scope's run",
+    "fixes": [
+      "W75",
+      "W73",
+      "W68"
+    ],
+    "assessment": "Also removes W68 and the interpreter half of W63/W64: what a live scope owes is derived from the frame, as 'running its live scopes' pending defers' (Scheduling, preemption, and cancellation happen at boundaries) needs. Twice S20's size, touches run.rs's Activation and every RunError exit arm; the compiled half (W58-W62) and P29 stay. That rule is 'Seed: not yet' and in the adaptive layer after v1.0.0, so better as a later slice once S20 lands",
+    "decision": null,
+    "design": [
+      "The pass runs only as far as it must, in order, and never twice",
+      "Scheduling, preemption, and cancellation happen at boundaries"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T02:42+02:00",
+      "by": "logoslang-solve-W75",
+      "model": "opus",
+      "effort": "high",
+      "commit": "c8a654c",
+      "run": "solve-W75",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S23",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "type.logos declares every field a type's record holds (parse_rank, associativity, parse, run, free, print, scope, fields, size_bytes, extent) and nothing else stays in the record: the interned @T moves to @'s mints, per-kind payloads (pointee, arity, roles) become share members of that type's own body, the kind byte goes (#101); Rust keeps only type's layout, the fixed point, checked against type.logos by a test; t.fields is the list of the type's per-value field bindings in declaration order",
+    "fixes": [
+      "W54"
+    ],
+    "assessment": "Removes the cause: one declared shape, every record read by a field type declares, so W52/W48/W43/W42 cannot recur and the bool-borrows-i32 chain (W40, W35) goes with the kind byte; satisfies 'Every field under the type scope must be expressed there' and 'whose layout is the seed's only built-in knowledge'. Large (meta.rs offsets, 33 record_layout/is_record_type and 39 kind_of readers, pointer.rs) and runs alone in src/identities; P21/P26/P27 come sooner through S1 (W2). Needs a ruling on field reflection (DESIGN Open) and touches #135's spelling question.",
+    "decision": null,
+    "design": [
+      "Still to be written in type.logos; reflection of fields is open"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T02:42+02:00",
+      "by": "logoslang-solve-W54",
+      "model": "opus",
+      "effort": "high",
+      "commit": "c8a654c",
+      "run": "solve-W54",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S24",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Spec only now: write the field-reflection rule and complete type.logos with every field a type's record holds; the seed keeps its Rust offsets until later work",
+    "fixes": [
+      "W54"
+    ],
+    "assessment": "Fixes the DESIGN half (B) of W54 cheaply and unblocks the seed work, with no file conflicts; but the seed half (A) stays, so W52/W48/W43/W42 and their problems remain and the Rust offsets keep being a second, unchecked statement of the shape. A first slice of S20 rather than a different answer.",
+    "decision": null,
+    "design": [
+      "Still to be written in type.logos; reflection of fields is open"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T02:42+02:00",
+      "by": "logoslang-solve-W54",
+      "model": "opus",
+      "effort": "high",
+      "commit": "c8a654c",
+      "run": "solve-W54",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S25",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A backend is an identity: mint a cranelift backend in Core whose record holds the lowering rule set, the 23 lower.insert fills register on it, and compile lowers through the backend it is given",
+    "fixes": [
+      "W49"
+    ],
+    "assessment": "Satisfies the letter of 'Backends are identities' (no global LowerTable, nothing hard-codes one backend); about 20 files, one line each plus compile.rs and Core, collides with #192 on compile.rs and mod.rs. Removes no problem: P26 goes with S1 (W2), the op choice stays in build_op (W47, W45). With one backend it is mostly a rename, and S3 (#164) deletes the per-identity Cranelift LowerFns it would re-home",
+    "decision": null,
+    "design": [
+      "Backends are identities, and lowering is keyed by them"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T02:42+02:00",
+      "by": "logoslang-solve-W49",
+      "model": "opus",
+      "effort": "high",
+      "commit": "c8a654c",
+      "run": "solve-W49",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S26",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Machine operations become identities and one rule set, keyed by (operator, operand type), fills each operator node's op slot; build_op's Family match and the arith_leaf/cmp_leaf tables go",
+    "fixes": [
+      "W49",
+      "W47",
+      "W45"
+    ],
+    "assessment": "Removes W47 and W45 at the root (a new numeric type is new rules, never an edit to +), as 'Which machine operation an operator is ... is a lowering rule' asks. Blocked: #152 ('How an operation is defined for its operand types is OPEN', nothing concluded) covers the same question; that rule says the slot fills 'the first time the node is lowered or run' while 'A generic function body is lexed once and built once per set of field types' resolves op slots at construction; and the interpreter needs the same rule, so whether the rule set belongs to a backend is unruled. binary.rs, ops.rs, mod.rs; after S1 (#82), which rewrites the same type reads",
+    "decision": null,
+    "design": [
+      "Which machine operation an operator is (`+` over `i32` → `add_i32`) is a lowering rule",
+      "How an operation is defined for its operand types is OPEN",
+      "A generic function body is lexed once and built once per set of field types"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T02:43+02:00",
+      "by": "logoslang-solve-W49",
+      "model": "opus",
+      "effort": "high",
+      "commit": "c8a654c",
+      "run": "solve-W49",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S27",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Make the backend an identity at the Logos IR boundary, as part of S3 (#164): every identity lowers once to the IR, backend-free, and the cranelift backend identity carries the IR-op-to-emission rules; nothing is built on the graph-node LowerTable now",
+    "fixes": [
+      "W49"
+    ],
+    "assessment": "Satisfies 'Backends are identities' and 'One backend interface' ('Anything taking Logos IR') together, and builds nothing in code S3 deletes. Removes no problem now; none waits on it (P26 goes with S1). Cost: W49 stays open until S3, which is only proposed, needs #192, #127 and group A first and runs alone. Shows a wording tension to rule: 'Backends are identities' maps 'node kinds', 'One backend interface' takes IR",
+    "decision": null,
+    "design": [
+      "Backends are identities, and lowering is keyed by them",
+      "One backend interface",
+      "The Logos IR sits between the Logic Graph and every backend"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T02:43+02:00",
+      "by": "logoslang-solve-W49",
+      "model": "opus",
+      "effort": "high",
+      "commit": "c8a654c",
+      "run": "solve-W49",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S28",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "One held body and one builder: a body written now and built later (a type's run body, a type (…) in a body, later a generic fn body) is one identity holding its cells, the scope and the body item where it was written, the fn frames open there, and its builds keyed by what the build read; one function looks a build up or builds it over the scopes as they stood at that item, and construct_run_body and construct_held_type become its two callers",
+    "fixes": [
+      "W9"
+    ],
+    "assessment": "Root fix: deletes the second copy of the hold-and-build rule, so W8 (no memo for a held type: P5, mk(i32) == mk(i32) false) and W10 (no point, so names declared after the body are seen: P6) both become impossible, and #202's generic fn and #219's build-in-part land on the one builder. Lands in src/identities/held_type.rs + run_body.rs (merged), src/parse/bodies.rs, types.rs, scopes.rs (select reads range start when not at the frontier). Needs #197's seed slices and #192 (584 lines of bodies.rs) first; the memo key for a float, record, pointer or text stays the Open line under the type-in-a-body rule.",
+    "decision": null,
+    "design": [
+      "A generic function body is lexed once and built once per set of field types",
+      "A `type (…)` inside a body is built once per set of the values it reads (built each time it runs, until 29 September 2026)",
+      "Name resolution is scope-filtered, and shadowing is disallowed"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T02:43+02:00",
+      "by": "logoslang-solve-W9",
+      "model": "opus",
+      "effort": "high",
+      "commit": "c8a654c",
+      "run": "solve-W9",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "S29",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "Keep the two builders and patch each: give construct_held_type its own memo keyed by the values it read, store the body item where each body was written on both held nodes, and pass that point to ScopeStack::select",
+    "fixes": [
+      "W9"
+    ],
+    "assessment": "Symptom fix: removes P5 and P6 today but writes the memo and the point twice, once per builder, so the rule stays written twice (W9 itself stays) and #202's generic fn would need a third copy. Smaller now (no merge of held_type.rs and run_body.rs), same files and same wait on #197 and #192. Not recommended.",
+    "decision": null,
+    "design": [
+      "A generic function body is lexed once and built once per set of field types",
+      "Name resolution is scope-filtered, and shadowing is disallowed"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T02:43+02:00",
+      "by": "logoslang-solve-W9",
+      "model": "opus",
+      "effort": "high",
+      "commit": "c8a654c",
+      "run": "solve-W9",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P38",
+    "kind": "problem",
+    "status": "open",
+    "text": "A `type (…)` in a loop body whose `share` fn declares `z` is refused as shadowing when the program declares its own `z` after the loop",
+    "program": "for 0..2 ( t := type ( share g := fn () -> i32 ( z := i32 2, z ) ), print «x» ), z := i32 0, print «end»",
+    "output": "<command line>: run error: building this `type (…)` failed:\ntype body:1:29: error: `z` is already declared and still in scope; declaring it again would leave the first one shadowed (a name ended by `free z` may be declared again)\n  ( share g := fn () -> i32 ( z := i32 2, z ) )\n                              ^\nexit 1",
+    "expected": "x, x, end, exit 0, as without the later z (control: the same program without `z := i32 0, ` prints x x end); ›Name resolution is scope-filtered, and shadowing is disallowed‹: a candidate is kept when its scope is open and its range covers the point",
+    "tier": "interpreted",
+    "found": "logoslang-solve-W9, predicting a sibling of P6 through construct_held_type, dev c8a654c",
+    "why": [
+      "W10"
+    ],
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T02:54+02:00",
+      "by": "logoslang-solve-W9",
+      "model": "opus",
+      "effort": "high",
+      "commit": "c8a654c",
+      "run": "solve-W9",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T02:54+02:00",
+        "by": "logoslang-solve-W9",
+        "model": "opus",
+        "effort": "high",
+        "commit": "c8a654c",
+        "change": "why + W10",
+        "reason": "the same refusal as P6, reached through construct_held_type instead of construct_run_body: the build sees a z declared after the place the body was written"
+      }
+    ]
+  },
+  {
+    "id": "W77",
+    "kind": "why",
+    "status": "accepted",
+    "text": "A held body is only lexed where it is written: construct_held_type and construct_run_body parse all of its cells at the build, so an `immediate` in it runs at each build, never once where it is written",
+    "proposed_for": "P5",
+    "why": [
+      "W9"
+    ],
+    "anchors": [
+      "construct_held_type",
+      "construct_run_body",
+      "Feed"
+    ],
+    "design": [
+      "`immediate x` runs the expression to its right as soon as it is parsed, and stands as its value (spelled `run x` earlier on 28 September 2026)",
+      "A generic function body is lexed once and built once per set of field types"
+    ],
+    "evidence": [
+      {
+        "command": "grep -rn \"Feed { cells\" src/parse",
+        "output": "src/parse/bodies.rs:318:            feed: Some(Feed { cells, next: 0, base_depth, in_run_order: false }),\nsrc/parse/types.rs:799:            feed: Some(Feed { cells, next: 0, base_depth, in_run_order: true }),",
+        "commit": "c8a654c"
+      }
+    ],
+    "found_by": [],
+    "aliases": [],
+    "merged_into": null,
+    "made": {
+      "at": "2026-10-01T02:54+02:00",
+      "by": "logoslang-solve-W9",
+      "model": "opus",
+      "effort": "high",
+      "commit": "c8a654c",
+      "run": "solve-W9",
+      "agent": null
+    },
+    "history": [
+      {
+        "at": "2026-10-01T02:56+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "c8a654c",
+        "change": "accepted as a why of P5",
+        "reason": "P5 rerun on dev c8a654c prints start hi iter hi iter hi iter end: the immediate runs at each of the three builds; both builders feed all lexed cells at the build (bodies.rs:318, types.rs:799)"
+      },
+      {
+        "at": "2026-10-01T02:56+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "c8a654c",
+        "change": "why + W9",
+        "reason": "the whole body is parsed at the build because only its lexed cells and scope are kept from where it was written (solve-W9's tree)"
+      }
+    ]
+  },
+  {
+    "id": "S30",
+    "kind": "solution",
+    "status": "proposed",
+    "text": "A held body is parsed in part where it is written (#219's seed change): its names are resolved, its declarations checked and its `immediate`s run there, at that point; a build only finishes what needs a call's or a node's types, over what was resolved there, and never reads the scopes again",
+    "fixes": [
+      "W9",
+      "W10"
+    ],
+    "assessment": "Root fix under Q-0044/Q-0046 (a type is new each time its body runs, no memo): removes the lost place of writing itself, so P5 (immediate per build, draft W77), P6 and P38 (later z seen) become impossible in both builders at once; S8's point in select is then needed only if something else resolves off the frontier. Licensed by the #197 branch's ›immediate‹ text 'built as far as it can be where it is written' (Q-0028, Q-0029), not yet on dev. Lands in bodies.rs, types.rs, the held cells (resolved bindings kept per cell); waits for #197's merge, #192 (bodies.rs) and #202 for the fn half; it is #219 widened to name resolution.",
+    "decision": null,
+    "design": [
+      "`immediate x` runs the expression to its right as soon as it is parsed, and stands as its value (spelled `run x` earlier on 28 September 2026)",
+      "A generic function body is lexed once and built once per set of field types",
+      "Name resolution is scope-filtered, and shadowing is disallowed"
+    ],
+    "issue": null,
+    "done": null,
+    "made": {
+      "at": "2026-10-01T02:55+02:00",
+      "by": "logoslang-solve-W9",
+      "model": "opus",
+      "effort": "high",
+      "commit": "c8a654c",
+      "run": "solve-W9",
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P39",
+    "kind": "problem",
+    "status": "open",
+    "text": "A record whose `free` already ran on a line is freed a second time when that line then fails",
+    "program": "bag := type ( mut n := i32 ?, share free = ( print «freed {n}» ) ), g := fn () -> i32 ( error «stop» ), a := bag(1), x := immediate ( free a, g() ), 1",
+    "output": "freed 1\nfreed 1\n<command line>: run error: stop\nexit 1",
+    "expected": "freed 1 once, then the run error, exit 1: ›`free` and `move` end a name; no drop flag‹ \"no teardown runs over an emptied place\"; Thobias asked for this case to be recorded (Q-0045.3, 1 October 2026): \"a problem should be recorded that sometimes free could be called multiple times on one name when it isnt a pointer\"",
+    "tier": "interpreted",
+    "found": "logoslang-issue-192-review-3 on branch issue-192-teardown-at-life-end at b3fc006 (the REPL does the same); not on dev c8a654c, where a plain record is not held; rerun by Orchestrator (2) at b3fc006",
+    "why": null,
+    "issue": 240,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T02:59+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "c8a654c",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
