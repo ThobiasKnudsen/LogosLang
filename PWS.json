@@ -5297,7 +5297,7 @@
   {
     "id": "P30",
     "kind": "problem",
-    "status": "open",
+    "status": "fixed",
     "text": "When a call fails inside a function, the function's pending `defer` does not run",
     "program": "p := alloc 1 of i32 5\ng := fn () -> i32 ( error «stop» )\nf := fn () -> i32 ( defer (p@ = p@ + 100), g(), p@ = 9, 1 )\nf()\np@",
     "output": "logos 0.1.0 — one expression per line, ctrl-d to exit\n» » » » run error: stop\n» 5\n» \nexit 0",
@@ -5306,7 +5306,7 @@
     "found": "logoslang-why-P29-b (session 7abe37f1), round 2 of the why run on P29, 1 October 2026, dev bb1c561 (why-probes/r2-defer-interp.logos); rerun by Orchestrator (2) on dev bb1c561, release, REPL on stdin",
     "why": null,
     "issue": null,
-    "fixed": null,
+    "fixed": "ac86218",
     "made": {
       "at": "2026-10-01T01:32+02:00",
       "by": "Orchestrator (2)",
@@ -5316,7 +5316,17 @@
       "run": null,
       "agent": null
     },
-    "history": []
+    "history": [
+      {
+        "at": "2026-10-01T03:33+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "ac86218",
+        "change": "fixed at ac86218",
+        "reason": "#192's teardown at life end: the failing call's pending defer runs; the REPL program now gives 105 (branch head e012778, the tree that landed)"
+      }
+    ]
   },
   {
     "id": "W61",
@@ -6193,7 +6203,7 @@
   {
     "id": "P35",
     "kind": "problem",
-    "status": "open",
+    "status": "fixed",
     "text": "A `defer` written at top level never runs",
     "program": "defer (print «d»), print «a»",
     "output": "a\nexit 0",
@@ -6204,7 +6214,7 @@
       "W72"
     ],
     "issue": null,
-    "fixed": null,
+    "fixed": "ac86218",
     "made": {
       "at": "2026-10-01T01:51+02:00",
       "by": "Orchestrator (2)",
@@ -6223,6 +6233,15 @@
         "commit": "bb1c561",
         "change": "why + W72",
         "reason": "Both agents ran P35's program in this round: the top level's only runner is `drain`, which skips `defer` items, and its owed list gets binding-site `defer free` only, so an authored top-level `defer` never runs; in a block, scope.rs `run` runs it (`a`, `d`)."
+      },
+      {
+        "at": "2026-10-01T03:33+02:00",
+        "by": "Orchestrator (2)",
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "commit": "ac86218",
+        "change": "fixed at ac86218",
+        "reason": "#192's teardown at life end: a top-level defer runs at the program's end; the program now prints a, then d (branch head e012778, the tree that landed)"
       }
     ]
   },
@@ -7077,6 +7096,54 @@
       "model": "claude-opus-5-5",
       "effort": "max",
       "commit": "c8a654c",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P40",
+    "kind": "problem",
+    "status": "open",
+    "text": "`@` written right after a block of more than one line is refused, while the same block named first dereferences",
+    "program": "p := alloc 1 of i32 4, x := (i32 1, p)@, print «{x}»",
+    "output": "<command line>:1:40: error: this operator cannot compute over these operands\n  p := alloc 1 of i32 4, x := (i32 1, p)@, print «{x}»\n                                         ^\nexit 1",
+    "expected": "4, exit 0, as the control `p := alloc 1 of i32 4, q := (i32 1, p), print «{q@}»` prints 4; a block yields its last line, and `@` reads through the pointer it yields",
+    "tier": "interpreted",
+    "found": "logoslang-issue-192-review-4 on dev c8a654c (the same on the #192 branch); `(i32 1, p)@ = 5` is refused the same way; the one-line `(p)@` works; rerun by Orchestrator (2) on dev c8a654c",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T03:07+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "2080af6",
+      "run": null,
+      "agent": null
+    },
+    "history": []
+  },
+  {
+    "id": "P41",
+    "kind": "problem",
+    "status": "open",
+    "text": "A function body whose only line declares a name gives back a pointer that holds nothing, while the same body with the name as its last line gives the value back",
+    "program": "f := fn () -> @i32 ( p := alloc 1 of i32 7 ), q := f(), q@",
+    "output": "<command line>: run error: this pointer holds nothing yet\nexit 1",
+    "expected": "either 7, as the control `f := fn () -> @i32 ( p := alloc 1 of i32 7, p ), q := f(), q@` prints, or a refusal at the definition if a declaration line gives back no value: DESIGN does not say what a `:=` line gives back (›`=` sits beside `:=`, and returns nothing‹ speaks of `=` only); a run error is neither",
+    "tier": "interpreted",
+    "found": "logoslang-issue-192-review-4 on dev c8a654c (the same on the #192 branch); `x := ( p := alloc 1 of i32 7 ), print «{x@}»` is refused with \"this operator cannot compute over these operands\"; rerun by Orchestrator (2) on dev c8a654c",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T03:15+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "2080af6",
       "run": null,
       "agent": null
     },
