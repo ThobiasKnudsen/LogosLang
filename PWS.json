@@ -6469,5 +6469,29 @@
         "reason": "Both agents: every why of W75 leads back up the chain (W68: the running scope's position is a Rust local of the one call, which would close the loop W68 → W71 → W73 → W75 → W68) or into history (#167 added the frame cursor only as the pass's hand-off). Not the RunFn shape (a partial step could be a second fn beside it; both checked). Not a DESIGN gap: ›The pass runs only as far as it must…‹ names the partial run and \"A frame keeps a cursor\", ›A value's teardown runs where its life ends…‹ the exit. A's reading for the solution talk: W68, W71, W73 and W75 are one structure, a running scope's position held in a Rust local; its fix is one, keep it on the frame as ›The pass runs…‹ says."
       }
     ]
+  },
+  {
+    "id": "P36",
+    "kind": "problem",
+    "status": "open",
+    "text": "In the REPL, a `defer` line echoes `0`",
+    "program": "defer (print «d»)\nprint «a»",
+    "output": "logos 0.1.0 — one expression per line, ctrl-d to exit\n» 0\n» a\n» \nexit 0",
+    "expected": "no echo for the `defer` line, since it gives no value (Q-0033, Thobias, 30 September 2026: a REPL line is a program line, and an empty one is no value); the same class as #187, where a `for` or `while` loop as the tail echoes `0`",
+    "tier": "interpreted, REPL on stdin; on #192's branch (02c0759) too, where `d` then prints at session end",
+    "found": "logoslang-issue-192-review-2 (session 247213f5), review round 2 of #192, 1 October 2026, branch 02c0759; rerun by Orchestrator (2) on dev df1c3ac, release, REPL on stdin",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T01:59+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "df1c3ac",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
