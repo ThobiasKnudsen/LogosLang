@@ -131,7 +131,7 @@ pub(crate) unsafe fn with_exprs(
 }
 
 /// # Safety
-/// `node` must be a scope node from the store.
+/// `node` must be a scope node from the store; the store must outlive the returned slice.
 pub(crate) unsafe fn exit_items<'a>(node: DyadPtr) -> &'a [DyadPtr] {
     let exit = *(dyad::value(node) as *const DyadPtr).add(EXIT);
     if exit.is_null() {
