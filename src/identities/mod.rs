@@ -260,7 +260,7 @@ impl Core {
             meta::TUPLE_TAG,
             meta::prec::READER,
             Assoc::Left,
-            &["exprs", "op"],
+            &["exprs", "op", "output_type"],
         );
         // SAFETY: `scope_` was minted above and nothing has read its value yet.
         unsafe {
@@ -1416,6 +1416,7 @@ unsafe fn walk_tail(
     if dyad::ty(node) == types.return_ {
         let ops = dyad::value(node) as *mut DyadPtr;
         *ops = walk_tail(types, *ops, leaf)?;
+        return_mod::refresh_output(types, node);
         return Ok(node);
     }
     // An else-less `if` yields unit, so it cannot be a value function's tail.
@@ -1428,6 +1429,7 @@ unsafe fn walk_tail(
         let else_c = walk_tail(types, *ops.add(2), leaf)?;
         *ops.add(1) = then_c;
         *ops.add(2) = else_c;
+        if_mod::refresh_output(types, node);
         return Ok(node);
     }
     // Trailing prose is invisible to value flow, so the tail is the last non-comment expression.
@@ -1445,6 +1447,7 @@ unsafe fn walk_tail(
                 }
                 i -= 1;
             }
+            scope::refresh_output(types, node);
         }
         return Ok(node);
     }

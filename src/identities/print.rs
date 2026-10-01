@@ -30,7 +30,7 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> PrintIds {
         meta::TUPLE_TAG,
         meta::prec::IMPORT,
         crate::parse::Assoc::Left,
-        &["parts", "op"],
+        &["parts", "op", "output_type"],
     );
     let print = cx.store.alloc_head(cx.type_, record);
     cx.declare("print", print);
@@ -41,7 +41,7 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> PrintIds {
 
 pub(crate) fn build(store: &mut Store, types: &Core, parts: &[DyadPtr]) -> DyadPtr {
     let parts = super::array::build(store, types.array_, parts);
-    store.alloc_words(types.print.print, &[parts, types.print.leaf])
+    store.alloc_words(types.print.print, &[parts, types.print.leaf, types.void_])
 }
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {

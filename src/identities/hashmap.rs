@@ -51,8 +51,8 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables, array_ty: DyadPtr) -> Hashma
         let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
         (id, leaf)
     };
-    let (get, get_leaf) = op(cx, &["map", "key", "op"], run_get);
-    let (put, put_leaf) = op(cx, &["map", "key", "value", "op"], run_put);
+    let (get, get_leaf) = op(cx, &["map", "key", "op", "output_type"], run_get);
+    let (put, put_leaf) = op(cx, &["map", "key", "value", "op", "output_type"], run_put);
     HashmapIds { hashmap, mints, get, get_leaf, put, put_leaf }
 }
 
@@ -237,12 +237,12 @@ pub(crate) unsafe fn build_get(
     if !types.is_storage(place) {
         return Ok(None);
     }
-    let Some((k, _)) = params_of(types, types.type_of(place)) else {
+    let Some((k, v)) = params_of(types, types.type_of(place)) else {
         return Ok(None);
     };
     let key = accept(store, types, k, key)?;
     let map = super::pointer::build_addr(store, types, place);
-    Ok(Some(store.alloc_words(types.hashmap.get, &[map, key, types.hashmap.get_leaf])))
+    Ok(Some(store.alloc_words(types.hashmap.get, &[map, key, types.hashmap.get_leaf, v])))
 }
 
 /// # Safety
@@ -256,7 +256,8 @@ pub(crate) unsafe fn build_put(
     let v = value_type_of(types, get).expect("a get node's map is a hashmap place");
     let value = accept(store, types, v, value)?;
     let ops = dyad::value(get) as *const DyadPtr;
-    Ok(store.alloc_words(types.hashmap.put, &[*ops, *ops.add(1), value, types.hashmap.put_leaf]))
+    let put = [*ops, *ops.add(1), value, types.hashmap.put_leaf, types.void_];
+    Ok(store.alloc_words(types.hashmap.put, &put))
 }
 
 /// The slot the instance's table pointer lives in.

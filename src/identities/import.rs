@@ -14,8 +14,13 @@ use crate::run::{RunError, Runtime};
 
 /// Returns `(import identity, run leaf)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
-    let record =
-        meta::operand_record(cx, meta::TUPLE_TAG, meta::prec::IMPORT, Assoc::Left, &["path", "op"]);
+    let record = meta::operand_record(
+        cx,
+        meta::TUPLE_TAG,
+        meta::prec::IMPORT,
+        Assoc::Left,
+        &["path", "op", "output_type"],
+    );
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("import", id);
     cx.metas.insert(id, |p, _id, tape| p.construct_import(tape));

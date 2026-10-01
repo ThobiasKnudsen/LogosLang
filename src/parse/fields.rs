@@ -523,12 +523,9 @@ impl<'a> Parser<'a> {
                     0,
                     self.types.conv_container,
                 );
-                return Ok((
-                    self.rt
-                        .store
-                        .alloc_words(self.types.compile_, &[lhs, code, self.types.ops.compile_]),
-                    1,
-                ));
+                let types = self.types;
+                let ops = [lhs, code, types.ops.compile_, types.void_];
+                return Ok((self.rt.store.alloc_words(types.compile_, &ops), 1));
             }
         }
         // A tape's natives, members of `parsing_tape`'s scope that are not

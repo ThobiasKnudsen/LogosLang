@@ -869,7 +869,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The node is `{type: not, value: operand}`.
+    /// The node is `[operand, op, bool]`.
     ///
     /// # Safety
     /// `operand` must be a reduced dyad from the store.
@@ -891,7 +891,7 @@ impl<'a> Parser<'a> {
                 !v,
             ));
         }
-        Ok(self.rt.store.alloc_words(not_id, &[operand, self.types.ops.not_]))
+        Ok(self.rt.store.alloc_words(not_id, &[operand, types.ops.not_, types.bool_]))
     }
 
     /// `while cond body`: the node is `[cond, body]`, a statement yielding
@@ -910,7 +910,7 @@ impl<'a> Parser<'a> {
         if self.cx.frames.is_empty() && unsafe { contains_return(types, body) } {
             return Err(ParseError::EarlyReturn);
         }
-        Ok(self.rt.store.alloc_words(while_id, &[cond, body, self.types.ops.while_]))
+        Ok(self.rt.store.alloc_words(while_id, &[cond, body, types.ops.while_, types.void_]))
     }
 
     fn parse_while_parts(&mut self) -> Result<(DyadPtr, DyadPtr), ParseError> {
@@ -1019,7 +1019,8 @@ impl<'a> Parser<'a> {
             return Err(ParseError::EarlyReturn);
         }
 
-        Ok(self.rt.store.alloc_words(for_id, &[var, start, end, step, body, self.types.ops.for_]))
+        let ops = [var, start, end, step, body, types.ops.for_, types.void_];
+        Ok(self.rt.store.alloc_words(for_id, &ops))
     }
 
     /// The cell after `for` decides: a spelling followed by `in` is the name;
@@ -1296,7 +1297,7 @@ impl<'a> Parser<'a> {
             closed.exit.iter().map(|h| h.build(self.rt.store, self.types)).collect();
         // SAFETY: `scope` was minted by `open_scope` above and is unaliased.
         let cell = unsafe {
-            crate::identities::scope::fill(scope, self.types.ops.scope_);
+            crate::identities::scope::fill(self.types, scope);
             crate::identities::scope::extend_exit(self.rt.store, array_, scope, &exit);
             Cell::built(scope)
         };

@@ -21,7 +21,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         meta::TUPLE_TAG,
         meta::prec::NOT,
         Assoc::Right,
-        &["operand", "op"],
+        &["operand", "op", "output_type"],
     );
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("not", id);

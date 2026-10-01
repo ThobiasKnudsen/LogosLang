@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `if cond then` with an optional `else else`, each branch a bracket or the
-//! next expression: the node is `[cond, then, else, then_ends, else_ends, condition_ends]`,
+//! next expression: the node is `[cond, then, else, then_ends, else_ends, condition_ends, op,
+//! output_type]`,
 //! the else slot null when absent, each arm's `_ends` the names it frees at its end because
 //! the other arm moved or freed them, and `condition_ends` both, freed by a condition that
 //! leaves before either arm runs (DESIGN ›`move` and `free` are static: the parse marks the
@@ -28,6 +29,7 @@ const IF_ELSE: usize = 2;
 const IF_THEN_ENDS: usize = 3;
 const IF_ELSE_ENDS: usize = 4;
 const IF_CONDITION_ENDS: usize = 5;
+const IF_OUTPUT: usize = 7;
 
 /// Returns `(identity, leaf, else token)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPtr) {
@@ -36,7 +38,16 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr, DyadPt
         meta::TUPLE_TAG,
         meta::prec::READER,
         Assoc::Left,
-        &["condition", "then", "else", "then_ends", "else_ends", "condition_ends", "op"],
+        &[
+            "condition",
+            "then",
+            "else",
+            "then_ends",
+            "else_ends",
+            "condition_ends",
+            "op",
+            "output_type",
+        ],
     );
     let if_ = cx.store.alloc_head(cx.type_, record);
     cx.declare("if", if_);
@@ -65,7 +76,27 @@ pub(crate) fn build(
     els: DyadPtr,
 ) -> DyadPtr {
     let none = std::ptr::null_mut();
-    store.alloc_words(types.if_, &[cond, then, els, none, none, none, types.ops.if_])
+    // SAFETY: `then` and `els` are null or reduced dyads from the store.
+    let output = unsafe { arms_output(types, then, els) };
+    store.alloc_words(types.if_, &[cond, then, els, none, none, none, types.ops.if_, output])
+}
+
+/// After an arm was rewritten in place.
+///
+/// # Safety
+/// `node` must be an `if` node [`build`] made.
+pub(crate) unsafe fn refresh_output(types: &Core, node: DyadPtr) {
+    let (_, then, els) = branches(node);
+    *(dyad::value(node) as *mut DyadPtr).add(IF_OUTPUT) = arms_output(types, then, els);
+}
+
+/// # Safety
+/// `then` must be a reduced dyad from the store, `els` null or one.
+unsafe fn arms_output(types: &Core, then: DyadPtr, els: DyadPtr) -> DyadPtr {
+    if els.is_null() {
+        return types.void_;
+    }
+    super::read::handed_on(types, then)
 }
 
 /// # Safety

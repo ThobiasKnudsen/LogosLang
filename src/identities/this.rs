@@ -54,12 +54,13 @@ pub struct ThisIds {
 /// name in a `free` or `share` function builds it too, and `=` the write over it.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     let op = |cx: &mut Cx, roles: &[&str], run: crate::run::RunFn| {
+        let roles: Vec<&str> = roles.iter().copied().chain(["output_type"]).collect();
         let record = meta::operand_record(
             cx,
             meta::TUPLE_TAG,
             meta::prec::INERT,
             crate::parse::Assoc::Left,
-            roles,
+            &roles,
         );
         let id = cx.store.alloc_head(cx.type_, record);
         let leaf = callable::mint_native(cx.store, cs.callable, run, cs.seed_native);
@@ -95,9 +96,15 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> ThisIds {
     }
 }
 
-fn node(store: &mut Store, op: DyadPtr, leaf: DyadPtr, operands: &[DyadPtr]) -> DyadPtr {
+fn node(
+    store: &mut Store,
+    op: DyadPtr,
+    leaf: DyadPtr,
+    operands: &[DyadPtr],
+    output: DyadPtr,
+) -> DyadPtr {
     let mut v = operands.to_vec();
-    v.push(leaf);
+    v.extend([leaf, output]);
     store.alloc_words(op, &v)
 }
 
@@ -112,13 +119,19 @@ pub(crate) fn build_slot(
     fill: DyadPtr,
     owner: DyadPtr,
 ) -> DyadPtr {
-    node(store, types.this.slot, types.this.slot_leaf, &[this, k, binding, fill, owner])
+    // SAFETY: `dyad_` is a type node `Core::build` minted.
+    let output = unsafe { super::pointer::make_pointer_type(store, types.type_, types.dyad_) };
+    let ops = [this, k, binding, fill, owner];
+    node(store, types.this.slot, types.this.slot_leaf, &ops, output)
 }
 
 /// A type's own `parse` placing a call on its fresh node: each run of the call takes its own
 /// instance, begun as the parse left the node.
-pub(crate) fn build_copy(store: &mut Store, types: &Core, template: DyadPtr) -> DyadPtr {
-    node(store, types.this.copy, types.this.copy_leaf, &[template])
+///
+/// # Safety
+/// `template` must be a node from the store.
+pub(crate) unsafe fn build_copy(store: &mut Store, types: &Core, template: DyadPtr) -> DyadPtr {
+    node(store, types.this.copy, types.this.copy_leaf, &[template], dyad::ty(template))
 }
 
 /// A node of `ty` with each field at its default or null, then the run's terminator and
@@ -178,7 +191,7 @@ pub(crate) fn build_load(
     fill: DyadPtr,
     owner: DyadPtr,
 ) -> DyadPtr {
-    node(store, types.this.load, types.this.load_leaf, &[this, k, ty, binding, fill, owner])
+    node(store, types.this.load, types.this.load_leaf, &[this, k, ty, binding, fill, owner], ty)
 }
 
 /// Either field read.
@@ -244,12 +257,8 @@ pub(crate) unsafe fn build_write(
             if super::node_type_of(types, value) != Some(ty) {
                 return Err(crate::parse::ParseError::TypeMismatch);
             }
-            return Ok(node(
-                store,
-                types.this.write,
-                types.this.write_leaf,
-                &[this, k, value, owner],
-            ));
+            let ops = [this, k, value, owner];
+            return Ok(node(store, types.this.write, types.this.write_leaf, &ops, types.void_));
         }
         let yields_value = match super::numtype_of(types, value) {
             super::Operand::Concrete(_) | super::Operand::Literal => true,
@@ -267,16 +276,13 @@ pub(crate) unsafe fn build_write(
             if !fits {
                 return Err(crate::parse::ParseError::TypeMismatch);
             }
-            return Ok(node(
-                store,
-                types.this.store,
-                types.this.store_leaf,
-                &[this, k, value, ty, owner],
-            ));
+            let ops = [this, k, value, ty, owner];
+            return Ok(node(store, types.this.store, types.this.store_leaf, &ops, types.void_));
         }
     }
     let value = super::tape::cell_arg(store, types, value);
-    Ok(node(store, types.this.write, types.this.write_leaf, &[this, k, value, owner]))
+    let ops = [this, k, value, owner];
+    Ok(node(store, types.this.write, types.this.write_leaf, &ops, types.void_))
 }
 
 /// Where field `k` of the value lies: a node's slot, or the bytes of a plain record,
@@ -468,7 +474,7 @@ pub(crate) fn build_pack(
     places: &[DyadPtr],
 ) -> DyadPtr {
     let places = super::array::build(store, types.array_, places);
-    node(store, types.this.pack, types.this.pack_leaf, &[ty, places])
+    node(store, types.this.pack, types.this.pack_leaf, &[ty, places], ty)
 }
 
 /// A number or pointer is held as a node of its type, as a field write stores it; any other

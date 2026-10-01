@@ -1,7 +1,7 @@
 // Copyright 2026 Thobias Melfjord Knudsen
 // SPDX-License-Identifier: Apache-2.0
 
-//! `return`: the node `[value, ends, op]`. Inside a call it leaves the function with
+//! `return`: the node `[value, ends, op, output_type]`. Inside a call it leaves the function with
 //! the operand's value, from wherever it stands, freeing on its way the names its own
 //! line ends after it; outside any function it is a scope's tail and yields the value.
 //! DESIGN ›A scope's value is what it evaluates to, and `return` is an optional
@@ -22,6 +22,7 @@ use crate::Core;
 
 /// Null, or an `array` of held places in declaration order.
 const ENDS: usize = 1;
+const OUTPUT: usize = 3;
 
 /// Returns `(identity, leaf)`.
 pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
@@ -30,7 +31,7 @@ pub(super) fn register(cx: &mut Cx, cs: &Callables) -> (DyadPtr, DyadPtr) {
         meta::TUPLE_TAG,
         meta::prec::RETURN,
         Assoc::Right,
-        &["value", "ends", "op"],
+        &["value", "ends", "op", "output_type"],
     );
     let id = cx.store.alloc_head(cx.type_, record);
     cx.declare("return", id);
@@ -47,7 +48,10 @@ fn construct(
 ) -> Result<crate::parse::Constructed, ParseError> {
     let operand = p.take_right(tape)?;
     let types = p.types();
-    let node = p.store().alloc_words(id, &[operand, std::ptr::null_mut(), types.ops.return_]);
+    // SAFETY: `operand` is the constructed cell just taken off the tape.
+    let output = unsafe { super::read::handed_on(types, operand) };
+    let node =
+        p.store().alloc_words(id, &[operand, std::ptr::null_mut(), types.ops.return_, output]);
     // SAFETY: `node` is the `return` node just built.
     unsafe { p.note_return(node) }?;
     tape.place(node);
@@ -55,9 +59,17 @@ fn construct(
 }
 
 /// # Safety
-/// `node` must be a `return` node `[value, ends, op]`.
+/// `node` must be a `return` node `[value, ends, op, output_type]`.
 unsafe fn operand(node: DyadPtr) -> DyadPtr {
     *(dyad::value(node) as *const DyadPtr)
+}
+
+/// After the operand was rewritten in place.
+///
+/// # Safety
+/// As [`operand`].
+pub(crate) unsafe fn refresh_output(types: &Core, node: DyadPtr) {
+    *(dyad::value(node) as *mut DyadPtr).add(OUTPUT) = super::read::handed_on(types, operand(node));
 }
 
 /// # Safety

@@ -141,6 +141,58 @@ pub unsafe fn read_kind(types: &Core, node: DyadPtr) -> Read {
     }
 }
 
+/// What a sequence, an arm or a `return` hands on from `node`: its output, a plain number read
+/// as an `i32`: stand-in for #214.
+///
+/// # Safety
+/// `node` must be a reduced dyad from the store.
+pub(crate) unsafe fn handed_on(types: &Core, node: DyadPtr) -> DyadPtr {
+    if dyad::ty(types.through(node)) == types.rational {
+        return types.i32_;
+    }
+    output_type(types, node)
+}
+
+/// The type `node` gives back when it runs, read from the node: a place's declared type, a
+/// call's `-> T`, the output a Logos-written type's set was built for, the `output_type` slot
+/// a built-in's parse wrote; a node of no other kind is a value and gives back its own type.
+/// Null where nothing knows it before the program runs. DESIGN ›A node's output type is per
+/// node, and its parse writes it‹.
+///
+/// # Safety
+/// `node` must be null or a reduced dyad from the store.
+pub unsafe fn output_type(types: &Core, node: DyadPtr) -> DyadPtr {
+    use crate::parse::FN_OUTPUT;
+    let node = types.through(node);
+    if node.is_null() {
+        return node;
+    }
+    if let Some(t) = types.storage_type(node) {
+        return t;
+    }
+    let op = dyad::ty(node);
+    if dyad::ty(op) == types.fn_type {
+        return *(dyad::value(op) as *const DyadPtr).add(FN_OUTPUT);
+    }
+    // A function standing as a value is a `fn`; its own `output_type` field is what its calls
+    // give back.
+    if op == types.fn_type {
+        return op;
+    }
+    if meta::is_record_type(op) && !meta::run_body_of(op).is_null() {
+        let spec = super::run_body::spec_of(node);
+        return if spec.is_null() {
+            spec
+        } else {
+            *(dyad::value(spec) as *const DyadPtr).add(FN_OUTPUT)
+        };
+    }
+    match meta::output_slot_of(op) {
+        Some(i) => *(dyad::value(node) as *const DyadPtr).add(i),
+        None => types.logos_of(node),
+    }
+}
+
 /// How storage declared `t` reads: at the type's own layout, or as the eight-byte
 /// container every other type's place holds (a node's address, a bare parameter's operand).
 ///
@@ -323,7 +375,7 @@ pub unsafe fn call_place(store: &mut Store, types: &Core, call: CallTail) -> Dya
         Some(i) => {
             let mut lines = super::array::items(super::scope::exprs_array(call.body)).to_vec();
             lines[i] = address;
-            super::scope::with_exprs(store, types.array_, call.body, &lines)
+            super::scope::with_exprs(store, types, call.body, &lines)
         }
     };
     let fields = dyad::value(call.callee) as *const DyadPtr;
@@ -485,8 +537,8 @@ mod tests {
             let spec = crate::identities::run_body::spec_of(exprs[2]);
             assert!(!spec.is_null());
             assert_eq!(read_kind(types, exprs[2]), Read::Executable(Dispatch::Call(spec)));
-            let leafless =
-                store.alloc_words(core.plus, &[exprs[2], exprs[2], std::ptr::null_mut()]);
+            let leafless = store
+                .alloc_words(core.plus, &[exprs[2], exprs[2], std::ptr::null_mut(), core.i32_]);
             assert_eq!(read_kind(types, leafless), Read::Executable(Dispatch::None));
         }
     }

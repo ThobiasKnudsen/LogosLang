@@ -780,14 +780,8 @@ impl<'a> Parser<'a> {
                 read
             }
         };
-        let node = crate::identities::declare::build(
-            self.rt.store,
-            self.types.declare_,
-            self.types.ops.declare_,
-            binding,
-            value,
-            declared,
-        );
+        let node =
+            crate::identities::declare::build(self.rt.store, self.types, binding, value, declared);
         tape.remove(-1); // the name token, consumed
         tape.place(node);
         Ok(Constructed::Placed)

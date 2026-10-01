@@ -952,14 +952,7 @@ impl<'a> Parser<'a> {
             SlotKind::Free => def.free_marker,
             kind => def.slots[kind as usize],
         };
-        crate::identities::declare::build(
-            self.rt.store,
-            types.declare_,
-            types.ops.declare_,
-            target,
-            rhs,
-            marker,
-        )
+        crate::identities::declare::build(self.rt.store, types, target, rhs, marker)
     }
 
     /// A slot body read bare, no parameter list (DESIGN ›Execution is function

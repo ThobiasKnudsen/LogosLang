@@ -26,7 +26,7 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> ErrorIds {
         meta::TUPLE_TAG,
         meta::prec::IMPORT,
         crate::parse::Assoc::Left,
-        &["parts", "op"],
+        &["parts", "op", "output_type"],
     );
     let error = cx.store.alloc_head(cx.type_, record);
     cx.declare("error", error);
@@ -37,7 +37,7 @@ pub(crate) fn register(cx: &mut Cx, cs: &Callables) -> ErrorIds {
 
 pub(crate) fn build(store: &mut Store, types: &Core, parts: &[DyadPtr]) -> DyadPtr {
     let parts = super::array::build(store, types.array_, parts);
-    store.alloc_words(types.error.error, &[parts, types.error.leaf])
+    store.alloc_words(types.error.error, &[parts, types.error.leaf, types.void_])
 }
 
 fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
