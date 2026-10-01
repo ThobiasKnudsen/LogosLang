@@ -8313,5 +8313,29 @@
       "agent": null
     },
     "history": []
+  },
+  {
+    "id": "P47",
+    "kind": "problem",
+    "status": "open",
+    "text": "Inside a function, a node whose parse copies one of its fields into another, `tape[0].rhs = tape[0].lhs`, runs with a number in the copied field that changes from run to run: `f(4)` prints 34664372 on one run and 1481789364 on the next, interpreted and after `f.compile()` alike. At the top level the same node over `x := i32 3` prints 6, and in the function `tape[0].rhs = tape[-1]` prints 8.",
+    "program": "pr := type ( lhs := i32 ?, rhs := i32 ?, output_type := type ?, share run = ( lhs + rhs ), share parse_rank = *.parse_rank + 1, share parse = ( tape[0]:type = pr, tape[0].lhs = tape[-1], tape[0].rhs = tape[0].lhs, tape[0].output_type = i32, tape.is_constructed[0] = true, tape.remove(-1) ) ), f := fn (x := i32 ?) -> i32 ( x pr ), f(4)",
+    "output": "34664372\nexit 0\n(a second run: 1481789364, exit 0)",
+    "expected": "`8`: the parse filled `rhs` with what `lhs` holds, the parameter `x` (4), as the top level gives `6` for `x := i32 3` and the function gives `8` with `tape[0].rhs = tape[-1]`. DESIGN ›A parse connects each operand to a field by name and removes the cells it took‹: \"the parse writes `tape[0].lhs = tape[-1]` and removes the consumed cells\".",
+    "tier": "interpreted and compiled",
+    "found": "logoslang-issue-215-review-1, reviewing #215, on dev b4c6bf4 (release built from git archive) and on issue-215-type-dot-rename spelled `.type`; rerun by Orchestrator (2) on 6b3a673 code (solve-W85 release build)",
+    "why": null,
+    "issue": null,
+    "fixed": null,
+    "made": {
+      "at": "2026-10-01T22:10+02:00",
+      "by": "Orchestrator (2)",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "commit": "4698d3d",
+      "run": null,
+      "agent": null
+    },
+    "history": []
   }
 ]
