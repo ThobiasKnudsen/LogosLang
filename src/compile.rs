@@ -316,7 +316,7 @@ impl Lowerer<'_, '_> {
 
     /// Lower `lines`, a scope's body, then its end: the items of `exit` still held after
     /// the last line, in reverse, as the scope's run does; the value is the last line's that
-    /// is no `defer`.
+    /// is no `defer`. An item only a failing line runs leaves a `return` free to compile.
     ///
     /// # Safety
     /// `lines` must be reduced dyads from the store, none of them prose; `exit` the scope's
@@ -328,7 +328,8 @@ impl Lowerer<'_, '_> {
     ) -> Result<Option<Value>, CompileError> {
         use crate::identities::drop_model;
         let defer_ = self.types.defer_;
-        let held = usize::from(!exit.is_empty());
+        let held =
+            usize::from(exit.iter().any(|&item| drop_model::exit_item_of(item).held_somewhere()));
         self.teardowns += held;
         let mut last = Ok(None);
         for &line in lines.iter().filter(|&&e| dyad::ty(e) != defer_) {

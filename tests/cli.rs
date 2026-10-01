@@ -3595,6 +3595,39 @@ fn a_return_frees_what_its_line_ends_after_it_compiled_or_not() {
 }
 
 #[test]
+fn a_line_that_fails_frees_a_node_it_ended_and_did_not_reach() {
+    let g = "g := fn () -> i32 ( error «stop» )";
+    for line in [
+        "x := g() + (free a, i32 1)",
+        "x := (free a, i32 1) + g()",
+        "x := g() + (b := move a, i32 1)",
+        "x := (b := move a, i32 1) + g()",
+    ] {
+        for tail in [
+            format!("f := fn () -> i32 ( a := box (1, 2), {line}, x ), print «before», f()"),
+            format!("print «before», a := box (1, 2), {line}, 1"),
+        ] {
+            let (code, stdout, stderr) = run_line(&format!("{BOX}, {g}, {tail}"));
+            assert_eq!(code, Some(1), "{tail}: stderr: {stderr}");
+            assert!(stderr.contains("run error: stop"), "{tail}: stderr: {stderr}");
+            assert_eq!(stdout, "before\nfree\n", "{tail}");
+        }
+    }
+    // A REPL line that stopped before its `free` leaves the name live, so the session's end
+    // frees it; one that reached it leaves the name ended.
+    let session =
+        format!("{}\n{g}\na := box (1, 2)\n", BOX.replacen("), box := type", ")\nbox := type", 1));
+    for (line, echoes) in [
+        ("x := g() + (free a, i32 1)", ["after", "free"]),
+        ("x := (free a, i32 1) + g()", ["free", "after"]),
+    ] {
+        let (echoed, stderr) = repl(format!("{session}{line}\nprint «after»\n").as_bytes());
+        assert_eq!(echoed, echoes, "{line}: stderr: {stderr}");
+        assert!(stderr.contains("run error: stop"), "{line}: stderr: {stderr}");
+    }
+}
+
+#[test]
 fn an_array_holds_arrays_as_their_addresses() {
     let array = "import ./identities/array.logos, x := array i32 [1, 2], y := array i32 [3, 4], \
                  t := array i32, b := array t [move x, move y]";

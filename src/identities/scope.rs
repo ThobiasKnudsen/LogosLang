@@ -11,6 +11,7 @@
 use cranelift_codegen::ir::Value;
 
 use super::callable::{self, Callables};
+use super::drop_model::ExitItem;
 use super::{array, Cx};
 use crate::compile::{CompileError, Lowerer};
 use crate::dyad;
@@ -172,13 +173,36 @@ pub(crate) unsafe fn run_exit(
     node: DyadPtr,
     reached: usize,
 ) -> Result<(), RunError> {
+    run_exit_items(rt, node, |_, item| item.held_at(reached))
+}
+
+/// The scope's end after its line `failed` faulted: what [`run_exit`] would run there, and what
+/// that line ended and did not reach (DESIGN ›`free` and `move` end a name; no drop flag‹).
+///
+/// # Safety
+/// As [`run_exit`].
+unsafe fn run_exit_after_fault(
+    rt: &mut Runtime,
+    node: DyadPtr,
+    failed: usize,
+) -> Result<(), RunError> {
+    run_exit_items(rt, node, |types, item| item.held_at_fault(types, failed))
+}
+
+/// # Safety
+/// As [`run_exit`].
+unsafe fn run_exit_items(
+    rt: &mut Runtime,
+    node: DyadPtr,
+    runs: impl Fn(&crate::Core, &ExitItem) -> bool,
+) -> Result<(), RunError> {
     let exit = exit_of(node);
     if exit.is_null() {
         return Ok(());
     }
     for &item in array::items(exit).iter().rev() {
         let item = super::drop_model::exit_item_of(item);
-        if item.held_at(reached) {
+        if runs(rt.types(), &item) {
             item.run(rt)?;
         }
     }
@@ -229,11 +253,11 @@ fn run(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
                     run_exit(rt, node, i)?;
                     return Err(RunError::Return(v));
                 }
-                // A fault ends the scope as its end would, from line `i`; the fault is the error
-                // shown, whatever its cleanup meets (DESIGN ›A checked error is a fault: the
-                // task that hit it is cancelled‹).
+                // A fault ends the scope from line `i`; the fault is the error shown, whatever
+                // its cleanup meets (DESIGN ›A checked error is a fault: the task that hit it is
+                // cancelled‹).
                 Err(fault) => {
-                    let _ = run_exit(rt, node, i);
+                    let _ = run_exit_after_fault(rt, node, i);
                     return Err(fault);
                 }
             }

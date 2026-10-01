@@ -1216,9 +1216,10 @@ impl<'a> Parser<'a> {
         };
         // What the block parsed and did not run runs when the block runs;
         // what it did run stands in the body as its result.
-        let closed = self.cx.open.pop().expect("pushed above");
+        let mut closed = self.cx.open.pop().expect("pushed above");
         self.close_returns(self.cx.open.len());
-        let mut exit = closed.exit.clone();
+        // Handed back unchanged to the closed scope by an error below, for its fault's end.
+        let mut exit = std::mem::take(&mut closed.exit);
         // Prose and a `defer` (it runs at exit, never as the tail) are
         // invisible to value flow.
         let defer_ = self.types.defer_;
@@ -1237,6 +1238,7 @@ impl<'a> Parser<'a> {
                     // SAFETY: `e` is a reduced dyad just parsed.
                     && unsafe { contains_return(types, e) }
                 {
+                    closed.exit = exit;
                     self.end_after_fault(&closed);
                     return Err(ParseError::EarlyReturn);
                 }
@@ -1261,11 +1263,13 @@ impl<'a> Parser<'a> {
             // SAFETY: as above.
             let lent = unsafe { crate::identities::drop_model::lent_place(types, place) };
             if lent.and_then(held_at).is_some() {
+                closed.exit = exit;
                 self.end_after_fault(&closed);
                 return Err(ParseError::AddressOfHeld);
             }
             if let Some(at) = held_at(place) {
                 if returned {
+                    closed.exit = exit;
                     self.end_after_fault(&closed);
                     return Err(ParseError::OwningEscape);
                 }
@@ -1286,11 +1290,7 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        let exit: Vec<DyadPtr> = exit
-            .iter()
-            .filter(|h| h.end.is_none_or(|end| end > h.from))
-            .map(|h| h.build(self.rt.store, self.types))
-            .collect();
+        let exit: Vec<DyadPtr> = exit.iter().map(|h| h.build(self.rt.store, self.types)).collect();
         // One line, and nothing for the end to run: the line stands as itself.
         if values > 0 && exprs.len() == 1 && exit.is_empty() {
             // SAFETY: `exprs` are reduced dyads from the store.
@@ -1433,6 +1433,7 @@ impl<'a> Parser<'a> {
     /// holds a name alone decides: a name held from the scope's start is an enclosing
     /// scope's, and one a nested line the pass ran ended is not held.
     pub(super) fn end_after_fault(&mut self, open: &OpenScope) {
+        let types = self.types;
         // SAFETY: held places and reached names are dyads from the store.
         let reached =
             |item: &ExitItem| open.reached.iter().any(|&n| unsafe { self.holds(item, n) });
@@ -1440,7 +1441,10 @@ impl<'a> Parser<'a> {
             .exit
             .iter()
             .rev()
-            .filter(|item| item.from > 0 && item.held_at(open.ran) && !reached(item))
+            // SAFETY: as above.
+            .filter(|item| unsafe {
+                item.from > 0 && item.held_at_fault(types, open.ran) && !reached(item)
+            })
             .copied()
             .collect();
         for item in ends {
@@ -1568,6 +1572,17 @@ impl<'a> Parser<'a> {
             }
         }
         ended
+    }
+
+    /// [`Self::end_earlier_holds`] for a line that ran and failed: only the names whose `free` or
+    /// `move` it reached (DESIGN ›`free` and `move` end a name; no drop flag‹).
+    pub fn end_failed_earlier_holds(&mut self) -> Vec<DyadPtr> {
+        let rt = &self.rt;
+        // SAFETY: the ended names are places an earlier line laid out in the program frame.
+        self.cx.open[0]
+            .ended_earlier
+            .retain(|&name| unsafe { crate::identities::drop_model::ended_at_run(rt, name) });
+        self.end_earlier_holds()
     }
 
     /// [`Self::end_earlier_holds`] for a line that never ran as a whole: only the names whose

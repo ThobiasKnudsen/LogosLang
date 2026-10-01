@@ -612,14 +612,21 @@ unsafe fn require_frame_place(
     }
 }
 
-/// The move reads the place; the parse ended its name, so nothing is written.
+/// The move reads the place, NULL from here when it holds an address.
 fn lower_move(lw: &mut Lowerer, node: DyadPtr) -> Result<Value, CompileError> {
     // SAFETY: `node` is a `move` node `[place, type, op]`.
     let place = unsafe { *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_PLACE) };
     // SAFETY: `place` is a reduced dyad from the store.
     unsafe { require_frame_place(lw, node, place) }?;
-    // SAFETY: `place` is a frame place, read by its type.
-    unsafe { lw.lower(place) }
+    // SAFETY: `place` is a frame place, read by its type; one holding an address is 8 bytes.
+    unsafe {
+        let value = lw.lower(place)?;
+        if holds_by_address(lw.types(), lw.types().type_of(place)) {
+            let null = lw.const_i64(0);
+            lw.write_place(place, types::I64, null)?;
+        }
+        Ok(value)
+    }
 }
 
 pub(crate) fn build_defer(store: &mut Store, types: &Core, inner: DyadPtr) -> DyadPtr {
@@ -651,6 +658,25 @@ impl ExitItem {
     /// Whether the scope's end, reached after `reached` of its lines completed, runs it.
     pub(crate) fn held_at(&self, reached: usize) -> bool {
         self.from <= reached && self.end.is_none_or(|end| end > reached)
+    }
+
+    /// Whether the scope's end or a `return` runs it after some line; else only a line that
+    /// fails can.
+    pub(crate) fn held_somewhere(&self) -> bool {
+        self.end.is_none_or(|end| end > self.from)
+    }
+
+    /// Whether the end of a scope whose line `failed` faulted runs it: held there, or ended by
+    /// that line, which may have stopped before its own `free` or `move`; the place says which,
+    /// being NULL once one ran (DESIGN ›`free` and `move` end a name; no drop flag‹).
+    ///
+    /// # Safety
+    /// `what` must be a `defer` node or a place from the store.
+    pub(crate) unsafe fn held_at_fault(&self, types: &Core, failed: usize) -> bool {
+        self.held_at(failed)
+            || self.from <= failed
+                && self.end == Some(failed)
+                && holds_by_address(types, types.type_of(self.what))
     }
 
     /// # Safety
@@ -719,11 +745,36 @@ pub(crate) unsafe fn exit_item_of(node: DyadPtr) -> ExitItem {
     }
 }
 
+/// Whether a place of type `ty` holds its value by address, an owning pointer or a node, so
+/// that 0 is its NULL. A record kept in its own bytes has no NULL form yet, so a line that
+/// fails before its own `free` or `move` of one leaves it: stand-in for #192.
+///
+/// # Safety
+/// `ty` must be null or a type node from the store.
+pub(crate) unsafe fn holds_by_address(types: &Core, ty: DyadPtr) -> bool {
+    !ty.is_null()
+        && (numtype::is_pointer_type(ty) && !meta::destructor_of(ty).is_null()
+            || meta::is_record_type(ty) && !super::this::is_plain(types, ty))
+}
+
+/// Whether a held place has gone NULL: a `free` or `move` of it ran. One that cannot say, a
+/// record kept in its own bytes ([`holds_by_address`]), counts as ended.
+///
+/// # Safety
+/// `place` must be a held place from the store, laid out in the frame `rt` runs.
+pub(crate) unsafe fn ended_at_run(rt: &Runtime, place: DyadPtr) -> bool {
+    let types = rt.types();
+    !holds_by_address(types, types.type_of(place))
+        || rt
+            .place_addr(place)
+            .is_none_or(|slot| slot.is_null() || std::ptr::read_unaligned(slot as *const i64) == 0)
+}
+
 /// The one teardown of the value a held place holds, the `free` slot of the place's type run
 /// over it: an owning pointer's destructor frees its block, a type that fills `free` runs it
 /// over the value, a node by its address and a plain record by its bytes' address, as a
-/// `share` function takes its receiver. A place that holds no node, never written, frees
-/// nothing.
+/// `share` function takes its receiver. A place holding an address is NULL from here; one
+/// already NULL frees nothing.
 ///
 /// # Safety
 /// `place` must be a place the binding site made an owner, laid out in the frame `rt` runs.
@@ -741,7 +792,9 @@ pub(crate) unsafe fn end_held(rt: &mut Runtime, place: DyadPtr) -> Result<(), Ru
     let held = if super::this::is_plain(rt.types(), ty) {
         slot as i64
     } else {
-        std::ptr::read_unaligned(slot as *const i64)
+        let held = std::ptr::read_unaligned(slot as *const i64);
+        std::ptr::write_unaligned(slot as *mut i64, 0);
+        held
     };
     if held != 0 {
         rt.apply_values(meta::instances_free_of(ty), &[held])?;
@@ -762,7 +815,10 @@ pub(crate) unsafe fn lower_end_held(lw: &mut Lowerer, place: DyadPtr) -> Result<
     let this = if super::this::is_plain(lw.types(), ty) {
         lw.place_addr(place)?
     } else {
-        lw.read_place(place, types::I64)?
+        let held = lw.read_place(place, types::I64)?;
+        let null = lw.const_i64(0);
+        lw.write_place(place, types::I64, null)?;
+        held
     };
     let free = lw.node_addr(meta::instances_free_of(ty));
     lw.call_seed(compiled_instance_free as *const () as usize, &[this, free]);
@@ -962,8 +1018,7 @@ fn run_alloc(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
 }
 
 /// The owning pointer's destructor, run over the place that holds the pointer: frees the
-/// block once, a null pointer freeing nothing. A field or cell is emptied, so the free of
-/// what holds it finds nothing there; a name is left as it is, its end the parse's.
+/// block once and leaves the place NULL, a NULL pointer freeing nothing.
 fn run_teardown(rt: &mut Runtime, place: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `place` is a place of an owning pointer type.
     unsafe {
@@ -984,9 +1039,7 @@ fn run_teardown(rt: &mut Runtime, place: DyadPtr) -> Result<i64, RunError> {
         }
         heap_free(ptr);
         rt.note_free();
-        if dyad::ty(place) != rt.types().binding_ {
-            std::ptr::write_unaligned(slot as *mut i64, 0);
-        }
+        std::ptr::write_unaligned(slot as *mut i64, 0);
         Ok(0)
     }
 }
@@ -1119,15 +1172,17 @@ unsafe fn reached_slot(rt: &mut Runtime, place: DyadPtr) -> Result<Option<*mut u
     Ok(None)
 }
 
-/// A move reads the value; the parse ended a moved name. A field moved out is emptied, so its
-/// owner's free skips it: stand-in for #66.
+/// A move reads the value; the parse ended a moved name, whose place is NULL from here when it
+/// holds an address. A field moved out is emptied, so its owner's free skips it:
+/// stand-in for #66.
 fn run_move(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is a `move` node `[place, type, op]` from the store; a field or cell it
-    // reaches is an owning one, eight bytes wide.
+    // reaches is an owning one, eight bytes wide, as is a name that holds an address.
     unsafe {
         let place = *(dyad::value(node) as *const DyadPtr).add(TEARDOWN_PLACE);
         let value = rt.run(place)?;
-        if dyad::ty(place) != rt.types().binding_ {
+        let types = rt.types();
+        if dyad::ty(place) != types.binding_ || holds_by_address(types, types.type_of(place)) {
             let slot = owned_slot(rt, place)?;
             std::ptr::write_unaligned(slot as *mut i64, 0);
         }
@@ -1254,6 +1309,31 @@ mod tests {
             assert!(matches!(e, RunError::Raised(_)), "{tail}: {e:?}");
             assert_eq!(live, 0, "{tail}");
             assert_eq!(free_log(), freed, "{tail}");
+        }
+    }
+
+    #[test]
+    fn a_line_that_fails_frees_what_it_ended_and_did_not_reach() {
+        // Before its `free` or `move` the place is not NULL and the failing line's cleanup
+        // frees it; after, it is NULL and nothing frees it twice.
+        let g = "g := fn () -> i32 ( error «stop» ),\n";
+        for line in [
+            "x := g() + (free a, i32 1)",
+            "x := (free a, i32 1) + g()",
+            "x := g() + (b := move a, i32 1)",
+            "x := (b := move a, i32 1) + g()",
+            "x := ( c := i32 1, y := g() + (free a, i32 1), 2 )",
+            "x := ( c := i32 1, y := (free a, i32 1) + g(), 2 )",
+        ] {
+            for src in [
+                format!("{g}f := fn () -> i32 ( a := alloc 1 of i32 7, {line}, x ),\nf()"),
+                format!("{g}a := alloc 1 of i32 7,\n{line},\n1"),
+            ] {
+                let (e, live) = fault(&src);
+                assert!(matches!(e, RunError::Raised(_)), "{src}: {e:?}");
+                assert_eq!(live, 0, "{src}");
+                assert_eq!(free_log(), vec![7], "{src}");
+            }
         }
     }
 
