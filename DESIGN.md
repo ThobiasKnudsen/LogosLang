@@ -1066,7 +1066,11 @@ A plain number literal is a `rational_number`, a type of its own. Every `int`, `
 
 ### No implicit coercion; a numeric type applied to a value is the conversion
 `i32(a)` is the conversion, per constructor, reusing token consumption; there is no `cast` identity. Comparisons resolve operands the same way and yield `bool`.
-- **Seed:** stand-in (`not` takes a bracketed operand).
+A type followed by a value, `i64 m`, is read by that type's own `parse`: it takes the value to its right (`tape[1]`), decides whether that value may become one of its own, and defines how it converts. A number type's `parse` says so explicitly, so `m := i32 3, i64 m` converts, every `i32` being an `i64`. A type whose `parse` says nothing for it refuses it: `pt := type ( a := i32 ?, b := i32 ? ), p := pt(1, 2), pt p` is refused. The value to the right is finished first: `i32 p.a` is `i32 (p.a)`, and so are `i32 q@` and `i32 g(3)`.
+- **Ruled (30 September 2026, Thobias, Q-0020, #212):** (1) `i64 m` converts: "b obviously. i32 is a subset of i64 so that conversion is allowed"; (2) the type's own `parse` decides: "this is defined in parse of pt, so this is actually not allowed since pt.parse doesnt really define anything here. it could be defined to take in tape[1] and check if itself is a subset of the type of RHS (tape[1]) and if so it allows the conversion and defines how it should be converted … this will also be explisitly defined in the parse for primitive types like f32 and u8"; (3) `.`, `@` and a call bind tighter than the type: "in all these cases . @ g and - should have higher precedence". **Why:** the type decides what it takes, not a reader written once per kind; (1) chosen over brackets as the one way to write a conversion.
+- **Open (for Thobias, to ask when #212 starts):** which way the subset check runs. Answer (1) allows a value whose type lies inside the target's ("i32 is a subset of i64"); answer (2)'s words check the target inside the value's type ("if itself is a subset of the type of RHS"). Whether `i32 m` over an `i64` is refused follows from it.
+- **Open (his direction, not a rule):** `i32 -m`. Spacing would tell unary from binary minus: "maybe there should be a regex for "-"|"- "|" - " meaning on identity and " -" is another? i think that would solve the problem".
+- **Seed:** stand-in (`not` takes a bracketed operand). A type followed by a name is refused, `m := i32 3, i32 m` (#212).
 - **Source:** DESIGN.md l.166
 
 ### `and` and `or` run both sides; `if` is the one identity that skips
