@@ -30,9 +30,9 @@ pub enum ParseError {
     ShareNeedsDeclaration,
     /// A field named bare inside a parse, where it goes through `tape[0]`.
     BareFieldInParse(Box<String>),
-    /// `tape[0]:type = …` anywhere but on a parse's own cell.
+    /// `tape[0].type = …` anywhere but on a parse's own cell.
     StampOutsideParse,
-    /// `tape[0]:type = T` for a `T` other than the type being defined.
+    /// `tape[0].type = T` for a `T` other than the type being defined.
     StampOtherType,
     /// A `share` function that works on a value, called bare where no value is at hand.
     ShareFnNeedsValue(Box<String>),
@@ -172,12 +172,9 @@ pub enum ParseError {
     /// on a view, or a read whose honest answer is undefined (a null
     /// constructor slot).
     BadReflectRead,
-    /// A collection member (`.operands`, `.roles`) without its `[index]`: the
+    /// A collection member (`.roles`) without its `[index]`: the
     /// bare collection as a first-class value waits for the array type.
     ExpectedIndexBracket,
-    /// `.type` on something that is not a dyad: a value's type is never one of
-    /// its own fields; `:` reads it, `x:type`.
-    TypeIsColonRead,
     /// `:dyad` or `:value`: nothing reaches a value's cell as a whole.
     CellNotReachable,
     /// `⊆` over two different types that are not both integer types.

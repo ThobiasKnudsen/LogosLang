@@ -65,7 +65,10 @@ impl<'a> Parser<'a> {
         }
         let cells: Vec<Cell> = tape.iter().map(|(_, c)| *c).collect();
         let Some(last) = cells.last() else { return false };
-        if self.ends_value(last) {
+        // A member is its spelling, never the identity it spells: `x.type` ends a value;
+        // stand-in for #236.
+        let member = cells.len() > 1 && self.is_unbuilt_tight_read(&cells[cells.len() - 2]);
+        if member || self.ends_value(last) {
             return true;
         }
         if open && self.applied_to_bracket(last) {

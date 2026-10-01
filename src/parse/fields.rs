@@ -21,12 +21,14 @@ struct Member {
 impl<'a> Parser<'a> {
     /// The cell before is an unbuilt `.` or `:`, whose right side is a member's spelling.
     pub(super) fn after_tight_read(&self, tape: &ParsingTape) -> bool {
-        tape.last().is_some_and(|l| {
-            !l.constructed && {
-                let id = self.cell_identity(l);
-                id == self.types.dot_ || id == self.types.colon_
-            }
-        })
+        tape.last().is_some_and(|l| self.is_unbuilt_tight_read(l))
+    }
+
+    pub(super) fn is_unbuilt_tight_read(&self, cell: &Cell) -> bool {
+        !cell.constructed && {
+            let id = self.cell_identity(cell);
+            id == self.types.dot_ || id == self.types.colon_
+        }
     }
 
     /// Inside a `free` or a `share` function a field of the value is named bare (DESIGN
@@ -60,7 +62,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `tape[0]:type = T`: the fresh node placed in the parse's own cell, from where its
+    /// `tape[0].type = T`: the fresh node placed in the parse's own cell, from where its
     /// fields are written by name (DESIGN ›There is no `this`‹). The seed stamps only the
     /// type being defined.
     ///
@@ -393,6 +395,9 @@ impl<'a> Parser<'a> {
             // member reads then need.
             let source = self.cx.source;
             let name = &source[nstart..nstart + nlen];
+            if name == "type" {
+                return self.type_read(lhs).map(|t| (t, 0));
+            }
             // `tape[0].f` inside a parse body: a field of the node the parse builds or reads
             // (DESIGN ›There is no `this`‹); `.dyads` is the cell's own.
             if name != "dyads" && self.is_node_cell(lhs) {
@@ -456,8 +461,6 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
-            // `(2 ^ 3).lhs`: the node a comptime value was folded from keeps its fields.
-            let lhs = if left.origin.is_null() { lhs } else { left.origin };
             if dyad::ty(lhs) == self.types.dyad_ {
                 return self.view_member(lhs, name).map(|n| (n, 0));
             }
@@ -494,30 +497,16 @@ impl<'a> Parser<'a> {
             {
                 return Err(ParseError::TypeKnownOnlyAtRun);
             }
-            if name == "type" {
-                return Err(ParseError::TypeIsColonRead);
-            }
-            // An operator node's slots are the fields its own type defines:
-            // `.operands[i]` fetches one, no view involved; a null slot is the checked error until `?`.
-            if name == "operands"
-                && matches!(
-                    crate::identities::meta::kind_of(dyad::ty(lhs)),
-                    Some(crate::identities::meta::TUPLE_TAG | crate::identities::meta::LIST_TAG)
-                )
-            {
-                let i = index.ok_or(ParseError::ExpectedIndexBracket)?;
-                if i >= crate::identities::meta::arity_of(dyad::ty(lhs)) {
-                    return Err(ParseError::BadReflectRead);
+            // A node that is the value has its type's fields; one that runs is read through
+            // what it yields, so `(x + x).lhs` is no slot (DESIGN ›Reading a path runs nothing‹).
+            let runs = matches!(
+                crate::identities::read::read_kind(self.types, lhs),
+                crate::identities::read::Read::Executable(_)
+            );
+            if !runs {
+                if let Some(field) = self.node_field(lhs, name)? {
+                    return Ok((field, 0));
                 }
-                let ops = dyad::value(lhs) as *const DyadPtr;
-                let operand = *ops.add(i);
-                if operand.is_null() {
-                    return Err(ParseError::BadReflectRead);
-                }
-                return Ok((operand, 1));
-            }
-            if let Some(field) = self.node_field(lhs, name)? {
-                return Ok((field, 0));
             }
             // `.compile` is the fn type's shared member (DESIGN ›Execution is
             // function application‹); the name-compare stands in for resolution
@@ -1066,11 +1055,9 @@ impl<'a> Parser<'a> {
         crate::identities::group::join(self.rt.store, self.types, connective, a, b)
     }
 
-    /// On a binding, `type` is the type of the dyad the name stands for,
-    /// `start` the declaring line once it is complete, and any other field the
-    /// instance-field read in `binding`'s own scope; on a constructed node
-    /// `type` is its own and the path answers the rest (DESIGN ›Meta-navigation‹),
-    /// `start`/`end` null.
+    /// On a binding, `start` is the declaring line once it is complete, and any other
+    /// field the instance-field read in `binding`'s own scope; on a constructed node the
+    /// path answers (DESIGN ›Meta-navigation‹), `start`/`end` null.
     ///
     /// # Safety
     /// `lhs` must be a valid dyad from the store.
@@ -1093,14 +1080,7 @@ impl<'a> Parser<'a> {
         } else {
             self.known_node(lhs, std::ptr::null_mut()).unwrap_or(lhs)
         };
-        // Read when the constructor runs.
-        if dyad::ty(lhs) == types.tape.cell_dyad_at && name == "type" {
-            return Ok(crate::identities::tape::build_cell_type(self.rt.store, types, lhs));
-        }
         if crate::identities::tape::is_cell_read(types, lhs) {
-            if name == "type" {
-                return Ok(crate::identities::tape::build_cell_type(self.rt.store, types, lhs));
-            }
             // `t[k]:name`: the spelling of the binding the cell holds.
             if name == "name" {
                 return Ok(crate::identities::tape::build_slot_name(self.rt.store, types, lhs));
@@ -1108,15 +1088,6 @@ impl<'a> Parser<'a> {
             return Err(ParseError::ExpectedField);
         }
         if dyad::ty(lhs) == types.binding_ {
-            if name == "type" {
-                // Through a settled box: the type of what the name holds; storage answers
-                // with its declared type.
-                let cell = self.settled_type(Binding::read(lhs).names(lhs));
-                if cell.is_null() {
-                    return Err(ParseError::BadReflectRead);
-                }
-                return Ok(types.type_of(cell));
-            }
             // `b:start`: the declaring line, once it is complete, is a node
             // like any other (DESIGN ›The dyad's read surface‹).
             let start = Binding::read(lhs).start;
@@ -1134,23 +1105,7 @@ impl<'a> Parser<'a> {
                 field_binding,
             ));
         }
-        // `tape[0].f:type` is the field's declared type, not the type of the read that reaches it;
-        // an untyped field's type is the written value's, unknown until the constructor runs.
-        if crate::identities::this::is_field_read(types, lhs) && name == "type" {
-            let declared = if crate::identities::this::is_fill(types, lhs) {
-                crate::identities::hole::type_in(
-                    Binding::read(crate::identities::this::field_binding_of(types, lhs)).dyad,
-                )
-            } else {
-                std::ptr::null_mut()
-            };
-            if declared.is_null() {
-                return Err(ParseError::BadReflectRead);
-            }
-            return Ok(declared);
-        }
         let value = match name {
-            "type" => return Ok(types.type_of(lhs)),
             "scope" => self.cx.scopes.current().unwrap_or(std::ptr::null_mut()),
             "start" | "end" | "gate" => std::ptr::null_mut(),
             _ => {
@@ -1225,6 +1180,43 @@ impl<'a> Parser<'a> {
         }
         let node = *(stored as *const DyadPtr);
         (!node.is_null()).then_some(node)
+    }
+
+    /// `.type`, read on every value (DESIGN ›`a.type` reads the type of the value a name
+    /// stands for…‹): a tape cell's when the constructor runs, a field's declared type through
+    /// `tape[0]`, a node reached by path its own, a view the viewed node's, and anything else
+    /// the type of what it yields.
+    ///
+    /// # Safety
+    /// `lhs` must be a reduced dyad from the store.
+    unsafe fn type_read(&mut self, lhs: DyadPtr) -> Result<DyadPtr, ParseError> {
+        use crate::identities::{tape, this};
+        let types = self.types;
+        if dyad::ty(lhs) == types.tape.cell_dyad_at || tape::is_cell_read(types, lhs) {
+            return Ok(tape::build_cell_type(self.rt.store, types, lhs));
+        }
+        // An untyped field's type is the written value's, unknown until the constructor runs.
+        if this::is_field_read(types, lhs) {
+            let declared = if this::is_fill(types, lhs) {
+                crate::identities::hole::type_in(
+                    Binding::read(this::field_binding_of(types, lhs)).dyad,
+                )
+            } else {
+                std::ptr::null_mut()
+            };
+            return if declared.is_null() { Err(ParseError::BadReflectRead) } else { Ok(declared) };
+        }
+        if let Some(node) = self.known_node(lhs, self.cx.member_root) {
+            return Ok(types.type_of(node));
+        }
+        if dyad::ty(lhs) == types.dyad_ {
+            return self.view_member(lhs, "type");
+        }
+        let t = crate::identities::yielded_type(types, lhs);
+        if t.is_null() {
+            return Err(ParseError::TypeKnownOnlyAtRun);
+        }
+        Ok(t)
     }
 
     /// Exactly the cell's two fields, `.type` and `.value` (DESIGN ›The dyad's
@@ -1321,7 +1313,6 @@ impl<'a> Parser<'a> {
                 .rt
                 .store
                 .alloc_head(self.types.dyad_, meta::record_scope_of(logos) as *mut u8)),
-            "type" => Err(ParseError::TypeIsColonRead),
             _ if self.share_member_of(logos, name).is_some() => {
                 Ok(self.share_member_read(logos, name).expect("found just above"))
             }

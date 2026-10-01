@@ -16,10 +16,10 @@
     share parse_rank = *.parse_rank + 1,
     share associativity = right,
     share parse = (
-        tape[0]:type = ^,
+        tape[0].type = ^,
         tape[0].lhs = tape[-1],
         tape[0].rhs = tape[1],
-        tape[0].output_type = tape[-1]:type,
+        tape[0].output_type = tape[-1].type,
         tape.is_constructed[0] = true,
         tape.remove(1),
         tape.remove(-1)

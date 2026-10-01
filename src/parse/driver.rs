@@ -555,12 +555,8 @@ impl<'a> Parser<'a> {
                 // SAFETY: the node is the one `run_logos_ctor` minted for `id`, `[field…, null, spec]`.
                 let folded =
                     unsafe { self.resolve_specialization(cell.dyad, cell.start, &spelling)? };
-                // A comptime node folded: its literal stands in the cell, the node it came
-                // from beside it for `.`.
                 if let Some(lit) = folded {
-                    let origin = cell.dyad;
                     tape.place(lit);
-                    tape.at_mut(0).expect("placed above").origin = origin;
                     return Ok(());
                 }
             }

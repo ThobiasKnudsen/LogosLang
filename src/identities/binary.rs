@@ -263,7 +263,7 @@ fn build_identity_compare(
         let truth = if matches!(c, CmpOp::Eq) { same } else { !same };
         return Some(bool_mod::literal_node(store, types.bool_, truth));
     }
-    // A tape cell compares as the identity it names, read at run as its `:type` is.
+    // A tape cell compares as the identity it names, read at run as its `.type` is.
     // SAFETY: as above.
     let mut cell = |n: DyadPtr| unsafe {
         if dyad::ty(types.through(n)) == types.tape.slot {

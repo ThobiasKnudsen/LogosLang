@@ -216,8 +216,8 @@ pub(crate) unsafe fn bool_literal_value(types: &Core, node: DyadPtr) -> Option<b
 /// A cell or line of the tape, by the tape's place, a literal index and the line.
 pub(crate) type CellKey = (DyadPtr, i32, crate::identities::tape::Line);
 
-/// `tape[k]:type == T` or `!=` with `T` a number type or `type`, either side first, or
-/// `tape[k]:type ⊆ T` with `T` a number type, each under any number of `not`: the cell
+/// `tape[k].type == T` or `!=` with `T` a number type or `type`, either side first, or
+/// `tape[k].type ⊆ T` with `T` a number type, each under any number of `not`: the cell
 /// checked, the type it narrows to, and whether the branch that holds is the `then`.
 ///
 /// # Safety

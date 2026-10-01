@@ -465,9 +465,9 @@ mod tests {
                  share parse_rank = *.parse_rank + 1,\n\
                  share associativity = right,\n\
                  share parse = (\n\
-                     tape[0]:type = pw, tape[0].a = tape[-1],\n\
+                     tape[0].type = pw, tape[0].a = tape[-1],\n\
                      tape[0].b = tape[1],\n\
-                     tape[0].output_type = tape[-1]:type,\n\
+                     tape[0].output_type = tape[-1].type,\n\
                      ,\n\
                      tape.is_constructed[0] = true,\n\
                      tape.remove(1),\n\

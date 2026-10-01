@@ -134,12 +134,9 @@ pub fn parse_message(e: &ParseError) -> String {
         ParseError::ExpectedIndexBracket => {
             "expected `[index]` — element access is `[…]`, `(…)` is application".into()
         }
-        ParseError::TypeIsColonRead => {
-            "a value's type is not one of its fields — read it with `:`: x:type".into()
-        }
         ParseError::CellNotReachable => {
             "nothing reaches a value's cell as a whole — read its type with \
-             `x:type` and its fields with `x.f`"
+             `x.type` and its fields with `x.f`"
                 .into()
         }
         ParseError::UnsettledInclusion => {
@@ -220,10 +217,10 @@ pub fn parse_message(e: &ParseError) -> String {
             format!("a parse writes and reads a field through its cell, `tape[0].{name}`, never bare")
         }
         ParseError::StampOutsideParse => {
-            "`tape[0]:type = T` starts a node only in a parse, on its own cell `tape[0]`".into()
+            "`tape[0].type = T` starts a node only in a parse, on its own cell `tape[0]`".into()
         }
         ParseError::StampOtherType => {
-            "`tape[0]:type = T` for a type other than the one being defined is not in the seed yet"
+            "`tape[0].type = T` for a type other than the one being defined is not in the seed yet"
                 .into()
         }
         ParseError::ShareFnNeedsValue(name) => format!(
@@ -418,7 +415,7 @@ pub fn run_message(e: &RunError) -> String {
         RunError::NoFragment => "insert takes a tape fragment".into(),
         RunError::NoThis => "no value holds this field here".into(),
         RunError::FieldBeforeStamp => {
-            "`tape[0]` still holds the type: `tape[0]:type = T` makes it a new node first".into()
+            "`tape[0]` still holds the type: `tape[0].type = T` makes it a new node first".into()
         }
         RunError::UnfilledField(i) => format!(
             "field {} of this node's type body was never written by its constructor",
