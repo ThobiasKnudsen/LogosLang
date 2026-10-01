@@ -3,7 +3,7 @@
 
 //! `⊆`: inclusion between types, `A ⊆ B` true when every value of `A` is a value of `B`
 //! (DESIGN ›Inclusion between types is `⊆`‹). Two types known at parse fold to a `bool`; a type
-//! read at run, such as `tape[1]:type`, builds `[lhs, rhs, op]`, run interpreted.
+//! read at run, such as `tape[1].type`, builds `[lhs, rhs, op]`, run interpreted.
 
 use super::callable::{self, Callables};
 use super::read::Read;
@@ -54,7 +54,7 @@ fn build(
     Err(ParseError::UnsupportedOperands)
 }
 
-/// A type standing as a value, a `type` box, or a tape cell's `:type`: each reads as a
+/// A type standing as a value, a `type` box, or a tape cell's `.type`: each reads as a
 /// type's address.
 ///
 /// # Safety

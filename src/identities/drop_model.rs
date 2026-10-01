@@ -1699,8 +1699,8 @@ mod tests {
             share parse_rank = dyad.parse_rank, \
             share associativity = left, \
             share parse = ( \
-                if tape[1]:type == scope ( \
-                    tape[0]:type = bag, tape[0].output_type = bagged, tape.remove(1) \
+                if tape[1].type == scope ( \
+                    tape[0].type = bag, tape[0].output_type = bagged, tape.remove(1) \
                 ) else ( tape[0] = bagged ), \
                 tape.is_constructed[0] = true \
             ) ),\n";
@@ -2007,7 +2007,7 @@ mod tests {
                 share parse_rank = *.parse_rank + 1,\n\
                 share associativity = right,\n\
                 share parse = (\n\
-                    tape[0]:type = ^, tape[0].a = tape[-1],\n\
+                    tape[0].type = ^, tape[0].a = tape[-1],\n\
                     tape[0].b = tape[1],\n\
                     tape[0].output_type = i32,\n\
                     ,\n\

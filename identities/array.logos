@@ -33,15 +33,15 @@ pub array := type (
             share parse_rank = dyad.parse_rank,
             share associativity = left,
             share parse = (
-                if tape[0]:type != type and tape[1]:type == square_brackets (
+                if tape[0].type != type and tape[1].type == square_brackets (
                     # A signed index goes to `at_signed`, whose bounds check refuses a negative value.
-                    if tape[1].dyads[0]:type ⊆ tape[0].size:type (
+                    if tape[1].dyads[0].type ⊆ tape[0].size.type (
                         tape[0] = tape[0].at(tape[1].dyads[0])
                     ) else (
                         # A literal's value is known now, so one outside the size type is refused now.
-                        if tape[1].dyads[0]:type == rational_number
+                        if tape[1].dyads[0].type == rational_number
                             error «the index type is not within the size type, so the index could lie outside the array»,
-                        if not tape[1].dyads[0]:type ⊆ i64
+                        if not tape[1].dyads[0].type ⊆ i64
                             error «the index is not an integer»,
                         tape[0] = tape[0].at_signed(tape[1].dyads[0])
                     ),
@@ -76,22 +76,22 @@ pub array := type (
         if tape[1] == ? (
             tape.is_constructed[0] = true
         ) else (
-            if tape[1]:type != type
+            if tape[1].type != type
                 error «id after array is not a type»,
             t := tape[1],
             mint := get_mint(t),
-            if tape[2]:type == scope
+            if tape[2].type == scope
                 error «the list is written in square brackets, `array i32 [1, 2]`, not `array i32 (1, 2)`»,
             # Right of another `array` this one is the element type, and the list is the outer one's.
-            if tape[2]:type == square_brackets and tape[-1] != array (
+            if tape[2].type == square_brackets and tape[-1] != array (
                 # A bracket line is checked when the run's `=` builds it.
                 for i in 0..tape[2].dyads.size (
-                    if tape[2].dyads[i]:type != square_brackets and tape[2].dyads[i]:type != scope (
-                        if not (tape[2].dyads[i]:type ⊆ t)
+                    if tape[2].dyads[i].type != square_brackets and tape[2].dyads[i].type != scope (
+                        if not (tape[2].dyads[i].type ⊆ t)
                             error «an element does not fit the element type»
                     )
                 ),
-                tape[0]:type = array,
+                tape[0].type = array,
                 tape[0].element_type = t,
                 tape[0].elements = tape[2],
                 tape[0].output_type = mint,

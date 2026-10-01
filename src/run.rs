@@ -369,7 +369,7 @@ pub struct Runtime<'a> {
     /// past its frontier lexes on demand (DESIGN ›The scope's constructor is the driver‹).
     ctor_tape: Option<*mut crate::parse::ParsingTape>,
     /// The fresh node a type's own `parse` is running over, whose placed calls take a copy
-    /// of it made each time they run, and whether `tape[0]:type = T` has stamped it yet.
+    /// of it made each time they run, and whether `tape[0].type = T` has stamped it yet.
     fresh_this: Option<(DyadPtr, bool)>,
     /// Handed to every jump into machine code.
     pub(crate) ctx: Context,

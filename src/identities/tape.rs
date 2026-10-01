@@ -3,7 +3,7 @@
 
 //! `parsing_tape` and the tape's affordances as identities: `t[k]` read and write,
 //! `t.is_constructed[k]`, `t.spelling[k]`, `t.insert`, `t.remove`, `t.recenter`, and
-//! the cell reads `t[k]:name`, `t[k]:type`, a `t[k]` checked to hold a type as that
+//! the cell reads `t[k]:name`, `t[k].type`, a `t[k]` checked to hold a type as that
 //! type or checked against a number type as that number, and a scope or `[…]` cell's
 //! `t[k].dyads`, `t[k].dyads.size` and `t[k].dyads[i]`, whose line reads as a cell does,
 //! and a call written into a cell, placed with its tape lines as operands. The type's one field,
@@ -46,7 +46,7 @@ pub struct TapeIds {
     /// `t[k]:name`: the spelling of the binding the cell holds, a string node.
     pub slot_name: DyadPtr,
     pub slot_name_leaf: DyadPtr,
-    /// `t[k]:type`: the type of the dyad the cell names, read; `[tape, k, i]`, `i` null
+    /// `t[k].type`: the type of the dyad the cell names, read; `[tape, k, i]`, `i` null
     /// for the cell itself or the line `t[k].dyads[i]`, as in the two reads below.
     pub cell_type: DyadPtr,
     pub cell_type_leaf: DyadPtr,
@@ -337,7 +337,7 @@ unsafe fn read_parts(types: &Core, read: DyadPtr) -> (DyadPtr, DyadPtr, DyadPtr)
     (recv, k, i)
 }
 
-/// `t[k]:type` or `t[k].dyads[i]:type`.
+/// `t[k].type` or `t[k].dyads[i].type`.
 ///
 /// # Safety
 /// As `read_parts`.
@@ -715,8 +715,8 @@ pub(crate) unsafe fn read_target(
     }
 }
 
-/// An expression's type is the type of what it yields, a name's its declared type; a bracket
-/// is a `scope` or `square_brackets`, whose lines the constructor reads.
+/// A bracket is a `scope` or `square_brackets`, whose lines the constructor reads; any other
+/// cell's type is the type of what it yields.
 fn run_cell_type(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
     // SAFETY: `node` is an application built by this file's helpers; `tape_of` checks the handle.
     unsafe {
@@ -725,16 +725,7 @@ fn run_cell_type(rt: &mut Runtime, node: DyadPtr) -> Result<i64, RunError> {
         if dyad::ty(target) == types.scope || dyad::ty(target) == types.square_brackets {
             return Ok(dyad::ty(target) as i64);
         }
-        if crate::parse::is_bool_result(types, target) {
-            return Ok(types.bool_ as i64);
-        }
-        if let Some(t) = super::node_type_of(types, target) {
-            return Ok(t as i64);
-        }
-        Ok(match numtype_of(types, target) {
-            Operand::Concrete(nt) => types.numtypes[nt as usize],
-            _ => types.type_of(target),
-        } as i64)
+        Ok(super::yielded_type(types, target) as i64)
     }
 }
 

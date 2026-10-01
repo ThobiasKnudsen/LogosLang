@@ -905,9 +905,9 @@ fn an_if_condition_is_its_first_complete_expression() {
     assert_eq!(run_script("mut m := type ?, m = ?, if m != ? (1) else (2)"), 2);
     assert_eq!(run_script("mut m := type ?, m = i32, if m != ? 1 else 2"), 1);
     // Right of a comparison a `(` is the body, though the identity could take it.
-    assert_eq!(run_script("x := i32 1, if x:type == scope (10) else (20)"), 20);
-    assert_eq!(run_script("x := i32 1, if x:type == i32 (10) else (20)"), 10);
-    assert_eq!(run_script("x := i32 1, p := &x, if p:type == @i32 (10) else (20)"), 10);
+    assert_eq!(run_script("x := i32 1, if x.type == scope (10) else (20)"), 20);
+    assert_eq!(run_script("x := i32 1, if x.type == i32 (10) else (20)"), 10);
+    assert_eq!(run_script("x := i32 1, p := &x, if p.type == @i32 (10) else (20)"), 10);
     // A value word is still the type's, and a condition not yet complete keeps its `(`.
     assert_eq!(run_script("x := i32 1, if x == i32 1 (10) else (20)"), 10);
     assert_eq!(run_script("f := fn (a := i32 ?) -> i32 (a), if f(1) == 1 (10) else (20)"), 10);
@@ -929,8 +929,8 @@ fn an_if_condition_is_its_first_complete_expression() {
         ParseError::NonBoolCondition
     );
     // Bare bodies on their own lines, as identities/array.logos writes them.
-    assert_eq!(run_script("x := i32 1,\nif not x:type == i32\n    error «not i32»,\n5"), 5);
-    assert!(run_script_result("x := i32 1,\nif x:type == i32\n    error «is i32»,\n5").is_err());
+    assert_eq!(run_script("x := i32 1,\nif not x.type == i32\n    error «not i32»,\n5"), 5);
+    assert!(run_script_result("x := i32 1,\nif x.type == i32\n    error «is i32»,\n5").is_err());
     // A bare branch is a scope, as a bracket is.
     assert!(matches!(script_parse_err("x := i32 1, if x == 1 y := 2, y"), ParseError::Resolve(_)));
     assert_eq!(script_parse_err("if 1 == 1 else 2"), ParseError::Empty);
@@ -957,7 +957,7 @@ fn logos_comparison(field: &str, rank: &str) -> String {
             share run = ( lhs == rhs ),\n\
             share parse_rank = {rank},\n\
             share parse = (\n\
-                tape[0]:type = ≈, tape[0].lhs = tape[-1],\n\
+                tape[0].type = ≈, tape[0].lhs = tape[-1],\n\
                 tape[0].rhs = tape[1],\n\
                 tape[0].output_type = bool,\n\
                 ,\n\
@@ -977,8 +977,8 @@ fn a_comparison_written_in_logos_ends_a_bare_condition() {
     let g = "g := fn (y := i32 ?) -> i32 ( mut n := i32 0, while not n ≈ y n = n + 1, n ),\n";
     assert_eq!(run_script(&format!("{eq}{g}before := g(4), g.compile(), before * 10 + g(4)")), 44);
     let types = logos_comparison("type", "==.parse_rank");
-    assert_eq!(run_script(&format!("{types}x := i32 1, if x:type ≈ i32 (10) else (20)")), 10);
-    assert_eq!(run_script(&format!("{types}x := i32 1, if x:type ≈ scope (10) else (20)")), 20);
+    assert_eq!(run_script(&format!("{types}x := i32 1, if x.type ≈ i32 (10) else (20)")), 10);
+    assert_eq!(run_script(&format!("{types}x := i32 1, if x.type ≈ scope (10) else (20)")), 20);
 }
 
 /// Where a condition's bool cannot be known before its operator is built: a type standing
@@ -987,11 +987,11 @@ fn a_comparison_written_in_logos_ends_a_bare_condition() {
 fn a_type_right_of_an_infix_outside_the_comparisons_takes_its_bracket() {
     let plus_ranked = logos_comparison("type", "+.parse_rank");
     assert_eq!(
-        script_parse_err(&format!("{plus_ranked}x := i32 1, if x:type ≈ i32 (10) else (20)")),
+        script_parse_err(&format!("{plus_ranked}x := i32 1, if x.type ≈ i32 (10) else (20)")),
         ParseError::NonBoolCondition
     );
     assert_eq!(
-        run_script(&format!("{plus_ranked}x := i32 1, if (x:type ≈ i32) (10) else (20)")),
+        run_script(&format!("{plus_ranked}x := i32 1, if (x.type ≈ i32) (10) else (20)")),
         10
     );
 }
@@ -1962,7 +1962,7 @@ fn a_bool_literal_agrees_across_tiers() {
 fn a_type_read_agrees_across_tiers() {
     assert_eq!(
         run_script(
-            "x := i32 5, f := fn () -> bool ( x:type == i32 ), a := f(), f.compile(), a == f()"
+            "x := i32 5, f := fn () -> bool ( x.type == i32 ), a := f(), f.compile(), a == f()"
         ),
         1
     );
@@ -2089,7 +2089,7 @@ fn a_valueless_place_is_read_only_after_a_sibling_write() {
     assert_eq!(script_parse_err("x := i32 ?, x"), unwritten("x"));
     assert_eq!(script_parse_err("mut x := i32 ?, x = x + 1, x"), unwritten("x"));
     assert_eq!(run_script("mut x := i32 ?, x = 4, x + 1"), 5);
-    assert_eq!(run_script("mut x := i32 ?, x:type == i32"), 1);
+    assert_eq!(run_script("mut x := i32 ?, x.type == i32"), 1);
     // A write nested in a group, an `if`, a loop or a `fn` body does not fill.
     assert_eq!(script_parse_err("mut x := i32 ?, (x = 4), x"), unwritten("x"));
     assert_eq!(script_parse_err("mut x := i32 ?, if (true) (x = 4), x"), unwritten("x"));
@@ -2325,10 +2325,10 @@ const POW_TYPE: &str = "pw := type (\n\
      share parse_rank = *.parse_rank + 1,\n\
      share associativity = right,\n\
      share parse = (\n\
-         if tape[-1]:type == void error «pw takes a left operand»,\n\
-         tape[0]:type = pw, tape[0].a = tape[-1],\n\
+         if tape[-1].type == void error «pw takes a left operand»,\n\
+         tape[0].type = pw, tape[0].a = tape[-1],\n\
          tape[0].b = tape[1],\n\
-         tape[0].output_type = tape[-1]:type,\n\
+         tape[0].output_type = tape[-1].type,\n\
          ,\n\
          tape.is_constructed[0] = true,\n\
          tape.remove(1),\n\
@@ -2374,7 +2374,7 @@ fn a_run_hands_a_bare_share_call_its_own_value_in_both_tiers() {
     let (mut store, mut trie, core) = new_core();
     let src = "inc := type ( a := i32 ?, output_type := type ?, \
         share twice := fn () -> i32 ( a * 2 ), share run = ( twice() + 1 ), \
-        share parse_rank = *.parse_rank + 1, share parse = ( tape[0]:type = inc, \
+        share parse_rank = *.parse_rank + 1, share parse = ( tape[0].type = inc, \
         tape[0].a = tape[-1], tape[0].output_type = i32, tape.is_constructed[0] = true, \
         tape.remove(-1) ) ),\nf := fn (y := i32 ?) -> i32 ( y inc ),\nf(5)";
     let seq = {
@@ -2820,10 +2820,8 @@ fn a_type_read_reaches_roles_at_the_graph_level() {
 
     let mut s = ScopeStack::new();
     s.push(core.root_scope);
-    let (x, _x_val) = place(&mut store, &core, core.i32_, &5i32.to_ne_bytes());
-    unsafe { s.declare(&mut trie, "x", x) }.unwrap();
 
-    let mut p = Parser::new("(x + x):type.roles[0]", &mut store, &mut trie, &core, s);
+    let mut p = Parser::new("+.roles[0]", &mut store, &mut trie, &core, s);
     let role = p.parse_expression().unwrap();
     // SAFETY: `role` is the role-name string node the read just yielded.
     unsafe {
@@ -3059,14 +3057,14 @@ fn a_name_is_written_only_if_declared_mut() {
     );
     assert_eq!(
         parse_err(
-            "t := type (immut a := i32 ?, share parse = ( tape[0]:type = t, tape[0].a = tape[-1] ))"
+            "t := type (immut a := i32 ?, share parse = ( tape[0].type = t, tape[0].a = tape[-1] ))"
         ),
         ParseError::Immutable(Box::new("a".into()))
     );
     // An `immut` sibling never written blocks nothing: the other fill parses.
     assert_eq!(
         run_script(
-            "t := type (a := i32 ?, immut b := i32 ?, share parse = ( tape[0]:type = t, tape[0].a = tape[-1], tape.is_constructed[0] = true, tape.remove(-1) )),\n1"
+            "t := type (a := i32 ?, immut b := i32 ?, share parse = ( tape[0].type = t, tape[0].a = tape[-1], tape.is_constructed[0] = true, tape.remove(-1) )),\n1"
         ),
         1
     );

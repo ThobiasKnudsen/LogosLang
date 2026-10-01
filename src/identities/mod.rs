@@ -1029,6 +1029,29 @@ pub(crate) unsafe fn node_type_of(types: &Core, node: DyadPtr) -> Option<DyadPtr
     meta::is_node_valued(ty, types.fn_type).then_some(ty)
 }
 
+/// The type of what `node` yields: a name's declared type, an operator's or a call's result,
+/// the record a construction makes. Null for a place whose type nothing knows before the
+/// program runs, as a bare parameter's.
+///
+/// # Safety
+/// `node` must be a valid dyad from the store.
+pub(crate) unsafe fn yielded_type(types: &Core, node: DyadPtr) -> DyadPtr {
+    let node = types.through(node);
+    if crate::parse::is_bool_result(types, node) {
+        return types.bool_;
+    }
+    if let Some(t) = node_type_of(types, node) {
+        return t;
+    }
+    if dyad::ty(node) == types.construct_ || dyad::ty(node) == types.by_copy.result {
+        return by_copy::made_type(types, node);
+    }
+    match numtype_of(types, node) {
+        Operand::Concrete(nt) => types.numtypes[nt as usize],
+        _ => types.type_of(node),
+    }
+}
+
 /// A `-> type` call's argument the pass can run now: a type, or a literal.
 ///
 /// # Safety

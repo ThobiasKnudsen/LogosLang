@@ -329,7 +329,7 @@ fn a_logos_constructor_runs_when_its_identity_appears() {
         "squared := type ( \
             a := i32 ?, output_type := type ?, share run = ( sq(a) ), \
             share parse_rank = *.parse_rank + 1, \
-            share parse = ( tape[0]:type = squared, tape[0].a = tape[-1], tape[0].output_type = i32, \
+            share parse = ( tape[0].type = squared, tape[0].a = tape[-1], tape[0].output_type = i32, \
                       tape.is_constructed[0] = true, tape.remove(-1) ) )",
         &mut store,
         &mut trie,
@@ -378,7 +378,7 @@ fn a_constructor_writes_a_cell_from_logos() {
         let rec = tape_name(&mut store, &core, tape);
         scopes.declare(&mut trie, "t", rec).unwrap();
 
-        let (v, s) = go("t[0]:type", &mut store, &mut trie, types, scopes);
+        let (v, s) = go("t[0].type", &mut store, &mut trie, types, scopes);
         assert_eq!(v as DyadPtr, core.type_, "an identity's type is the root");
 
         let (_, s) = go(

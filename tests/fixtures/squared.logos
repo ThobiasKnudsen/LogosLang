@@ -1,6 +1,6 @@
 # A postfix operator defined in Logos and used in the same file: an
 # appearance of `squared` runs its parse, written here, during the parse.
-# The parse makes its cell a new `squared` node with `tape[0]:type = squared`,
+# The parse makes its cell a new `squared` node with `tape[0].type = squared`,
 # fills it by field name, the operand from the cell to its left,
 # `tape[0].a = tape[-1]`, and marks it done itself; its parse_rank sits one above `*`'s,
 # so `2 * x squared` squares first. Its run calls an ordinary function, `sq`,
@@ -12,7 +12,7 @@ squared := type (
     share parse_rank = *.parse_rank + 1,
     share associativity = left,
     share parse = (
-        tape[0]:type = squared,
+        tape[0].type = squared,
         tape[0].a = tape[-1],
         tape[0].output_type = i32,
         tape.is_constructed[0] = true,
@@ -26,7 +26,7 @@ plus2 := type (
     share parse_rank = +.parse_rank,
     share associativity = left,
     share parse = (
-        tape[0]:type = plus2,
+        tape[0].type = plus2,
         tape[0].a = tape[-1],
         tape[0].b = tape[1],
         tape[0].output_type = i32,

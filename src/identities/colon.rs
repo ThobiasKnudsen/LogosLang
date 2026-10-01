@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `:`, the binding read: `a:scope`, `a:name` read a name's binding itself, bypassing
-//! its reading rule, and `a:type` the type of the dyad it stands for, at `.`'s
-//! precedence, so `a:type.arity` is `(a:type).arity`. The reads live in
-//! [`crate::parse::Parser::construct_binding_read`].
-//! DESIGN ›The dyad's read surface‹
+//! its reading rule, at `.`'s precedence, so `b:start.rhs` is `(b:start).rhs`. The reads
+//! live in [`crate::parse::Parser::construct_binding_read`].
+//! DESIGN ›`:` reads a name's binding, `.` reads a thing's own fields‹
 
 use super::{meta, Cx};
 use crate::dyad::DyadPtr;

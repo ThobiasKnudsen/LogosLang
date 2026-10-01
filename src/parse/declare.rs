@@ -296,7 +296,8 @@ impl<'a> Parser<'a> {
 
     /// `?`'s entry on a binding refuses every read of the value until it is
     /// written: the target of `x = …` passes, and so does `x:…`, which reads
-    /// the binding (DESIGN ›Declarations are immutable by default‹).
+    /// the binding, and `x.type`, the type the declaration gave (DESIGN
+    /// ›Declarations are immutable by default‹).
     pub(super) fn check_unwritten(&mut self, cell: &Cell) -> Result<(), ParseError> {
         let binding = cell.binding(self.types);
         // SAFETY: a non-null cell binding is a binding dyad from the store.
@@ -304,6 +305,7 @@ impl<'a> Parser<'a> {
             return Ok(());
         }
         if matches!(self.peek_token(), Some((t, _)) if t == self.types.assign || t == self.types.colon_)
+            || self.dot_type_next()
         {
             return Ok(());
         }
@@ -317,6 +319,14 @@ impl<'a> Parser<'a> {
         self.cx.pos = cell.start;
         // SAFETY: as above.
         Err(ParseError::Unwritten(Box::new(unsafe { Binding::spelling(binding) })))
+    }
+
+    fn dot_type_next(&mut self) -> bool {
+        let save = self.cx.pos;
+        let member = if self.consume_token(self.types.dot_) { self.lex_spelling() } else { None };
+        let found = member.is_some_and(|(s, n)| &self.cx.source[s..s + n] == "type");
+        self.cx.pos = save;
+        found
     }
 
     /// The `=` just built, with the name and field its target `v.f` fills when the

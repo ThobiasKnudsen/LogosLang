@@ -94,11 +94,11 @@ pick(0) == i32                 # true
 
 ### Reflection
 
-`.` reads the fields a value's type defines, and a value's type is not one of them. Its type is read with `:`, which reads a name's binding rather than its value: `x:type` is the type of what `x` holds, `x:scope` the scope `x` was declared in, `x:name` its spelling.
+`.` reads a value's own fields, and its type is one of them: `x.type` is the type of what `x` holds. `:` reads a name's binding rather than its value: `x:scope` the scope `x` was declared in, `x:name` its spelling.
 
 ```logos
 x := i32 5,
-x:type == i32 and i32:type == type      # true: a type's type is the root
+x.type == i32 and i32.type == type      # true: a type's type is the root
 ```
 
 ### Pointers and the heap
@@ -160,10 +160,10 @@ This is what the first public preview is built to show. An operator is a type wi
     share parse_rank = *.parse_rank + 1,     # binds tighter than *
     share associativity = right,
     share parse = (                          # runs at every appearance of ^
-        tape[0]:type = ^,                    # its own cell becomes a new ^ node
+        tape[0].type = ^,                    # its own cell becomes a new ^ node
         tape[0].lhs = tape[-1],              # filled by name
         tape[0].rhs = tape[1],
-        tape[0].output_type = tape[-1]:type, # the result follows the base's type
+        tape[0].output_type = tape[-1].type, # the result follows the base's type
         tape.is_constructed[0] = true,       # and marked done, by the constructor itself
         tape.remove(1),
         tape.remove(-1)
@@ -174,7 +174,7 @@ f.compile(),
 f(2)
 ```
 
-The parser hands every constructor the *parsing tape*, the cells around it: `tape[0]` is its own cell, negative offsets are to its left, positive to its right, and it may read, write, insert, and remove, and read the text a cell was lexed from, `tape.spelling[k]`. Text is the quote: `lex «…»` is the lexer as an identity, handing back the text's cells unconstructed as a tape fragment, and `tape.insert(k, lex «* 2»)` splices them in with their spellings, so a constructor can write code as text and let the driver construct it. `tape[0]:type = T` makes the constructor's own cell a new node of its type, whose fields it writes by name, `tape[0].lhs`, and once built the node runs and is never parsed again, while a value of the type that appears later, a name or a call's result, runs the same parse with that value as `tape[0]`, which is how `a[1]` reads an array; a write into a cell replaces the pointer and nothing more, and the constructor says when its cell is done with `tape.is_constructed[0] = true`. Precedence is one number per identity, so a new operator slots between any two existing ones by writing its number relative to theirs. `fn` is the shorthand for a type whose parse_rank, associativity, and constructor are the defaults of a call. Everything above runs today. A slot body has no parameter list: `parse` runs over `tape`, `run`, `free` and the type's `share` functions name the fields bare, and `share run = (…)` is lexed once at the definition and constructed once per set of field types a node is built with, so `^` over i32 and over f64 is one definition.
+The parser hands every constructor the *parsing tape*, the cells around it: `tape[0]` is its own cell, negative offsets are to its left, positive to its right, and it may read, write, insert, and remove, and read the text a cell was lexed from, `tape.spelling[k]`. Text is the quote: `lex «…»` is the lexer as an identity, handing back the text's cells unconstructed as a tape fragment, and `tape.insert(k, lex «* 2»)` splices them in with their spellings, so a constructor can write code as text and let the driver construct it. `tape[0].type = T` makes the constructor's own cell a new node of its type, whose fields it writes by name, `tape[0].lhs`, and once built the node runs and is never parsed again, while a value of the type that appears later, a name or a call's result, runs the same parse with that value as `tape[0]`, which is how `a[1]` reads an array; a write into a cell replaces the pointer and nothing more, and the constructor says when its cell is done with `tape.is_constructed[0] = true`. Precedence is one number per identity, so a new operator slots between any two existing ones by writing its number relative to theirs. `fn` is the shorthand for a type whose parse_rank, associativity, and constructor are the defaults of a call. Everything above runs today. A slot body has no parameter list: `parse` runs over `tape`, `run`, `free` and the type's `share` functions name the fields bare, and `share run = (…)` is lexed once at the definition and constructed once per set of field types a node is built with, so `^` over i32 and over f64 is one definition.
 
 ## What runs today, and what does not
 
